@@ -1,0 +1,19 @@
+{
+  "name": "site-analyzer",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "cd site-analyzer && npm run dev",
+    "build": "cd site-analyzer && npm run build",
+    "start": "cd site-analyzer && npm run start",
+    "lint": "cd site-analyzer && npm run lint",
+    "install-deps": "cd site-analyzer && npm install"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1",
+    "next": "^15.2.0",
+    "portkey-ai": "^1.7.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  }
+}
