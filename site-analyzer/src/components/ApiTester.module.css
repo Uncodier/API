@@ -9,6 +9,9 @@
   overflow: hidden;
   max-width: 100%;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+  height: auto;
 }
 
 /* Estilos de Card */
@@ -21,6 +24,10 @@
   transition: all 0.3s ease;
   margin: 0;
   padding: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  height: auto;
 }
 
 .cardTitle {
@@ -194,7 +201,7 @@
 .requestTime {
   display: inline-flex;
   align-items: center;
-  margin-bottom: 12px;
+  margin-bottom: 0;
   padding: 6px 12px;
   background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.05));
   border-radius: 20px;
@@ -202,12 +209,11 @@
   color: var(--nextra-primary-text-color, #495057);
   font-weight: 500;
   transition: background-color 0.3s ease;
+  gap: 6px;
 }
 
-.requestTime::before {
-  content: "⏱️";
-  margin-right: 6px;
-  font-size: 1rem;
+.timeIcon {
+  color: var(--nextra-primary-color, #0d6efd);
 }
 
 /* Estilos de Response Header */
@@ -263,6 +269,7 @@
   margin-bottom: 8px;
   font-weight: 500;
   color: var(--nextra-primary-text-color, #212529);
+  transition: color 0.3s ease;
 }
 
 .formControl {
@@ -456,13 +463,13 @@
 
 .responseContainer {
   background-color: var(--nextra-card-background, #f8f9fa);
-  border-radius: 4px;
+  border-radius: 8px;
   padding: 16px;
-  margin-top: 0;
   border: 1px solid var(--nextra-border-color, #eaeaea);
-  transition: all 0.3s ease;
-  width: 100%;
-  overflow: auto;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
 .responseContainer:hover {
@@ -471,19 +478,16 @@
 }
 
 .pre {
+  background-color: var(--nextra-inline-code-bg, rgba(0, 0, 0, 0.05));
+  border-radius: 4px;
+  padding: 16px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.9em;
+  overflow-x: auto;
   white-space: pre-wrap;
   word-wrap: break-word;
-  background-color: var(--nextra-code-bg, #f5f5f5);
-  padding: 16px;
-  border-radius: 4px;
-  overflow-x: auto;
   margin: 0;
-  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-  font-size: 14px;
-  line-height: 1.7;
-  color: var(--nextra-code-color, #212529);
-  transition: background-color 0.3s ease;
-  border: 1px solid var(--nextra-border-color, #eaeaea);
+  overflow-y: auto;
 }
 
 .required {
@@ -627,8 +631,11 @@
 }
 
 .tabContent {
-  padding: 16px 0;
-  width: 100%;
+  padding: 20px 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
 }
 
 /* Estilos específicos para tema oscuro */
@@ -689,6 +696,7 @@
 }
 
 :global(.dark) .responseContainer {
+  background-color: var(--nextra-card-background, #1a1a1a);
   border-color: var(--nextra-border-color, #333);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
@@ -731,33 +739,44 @@
 .formAndPreview {
   display: flex;
   flex-direction: column;
-  gap: 24px;
-  width: 100%;
+  gap: 20px;
+  flex: 1;
+  overflow: hidden;
 }
 
 @media (min-width: 1024px) {
   .formAndPreview {
     flex-direction: row;
+    gap: 30px;
+    height: auto;
     align-items: flex-start;
   }
   
   .form {
-    flex: 1;
+    flex: 0 0 50%;
     max-width: 50%;
+    overflow-y: auto;
+    padding-right: 15px;
   }
   
   .requestPreview {
     flex: 1;
     position: sticky;
-    top: 24px;
+    top: 0;
+    overflow-y: auto;
+    align-self: stretch;
+    display: flex;
+    flex-direction: column;
   }
 }
 
 .requestPreview {
-  background-color: var(--nextra-card-background, #f9f9f9);
+  background-color: var(--nextra-card-background, #f8f9fa);
   border-radius: 8px;
-  padding: 0;
+  padding: 16px;
+  margin-top: 20px;
   border: 1px solid var(--nextra-border-color, #eaeaea);
+  overflow-y: auto;
   display: flex;
   flex-direction: column;
 }
@@ -766,6 +785,8 @@
   display: flex;
   flex-direction: column;
   gap: 20px;
+  flex: 1;
+  height: 100%;
 }
 
 .requestSection {
@@ -774,6 +795,18 @@
   border-radius: 4px;
   padding: 16px;
   transition: all 0.3s ease;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 16px;
+}
+
+.requestSection:last-child {
+  margin-bottom: 0;
+  flex: 1;
+}
+
+.requestSection pre {
+  min-height: 50px;
 }
 
 .requestSection:hover {
@@ -860,8 +893,10 @@
 }
 
 .tabContent {
-  flex: 1;
-  overflow: hidden;
+  padding: 20px 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 :global(.dark) .requestPreview {
@@ -1017,15 +1052,17 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 6px 12px;
+  padding: 6px;
   background-color: var(--nextra-primary-color, #0d6efd);
   color: white;
   border: none;
   border-radius: 4px;
-  font-size: 0.9rem;
+  font-size: 1rem;
   font-weight: 500;
   cursor: pointer;
   transition: all 0.3s ease;
+  width: 36px;
+  height: 36px;
 }
 
 .copyButton:hover {
@@ -1060,4 +1097,86 @@
 :global(.dark) .checkbox:focus + .checkboxLabel:before {
   border-color: var(--nextra-primary-color, #0d6efd);
   box-shadow: none;
+}
+
+/* JSON Response Styling */
+.jsonResponse {
+  background-color: var(--nextra-inline-code-bg, rgba(0, 0, 0, 0.05));
+  border-radius: 4px;
+  padding: 16px;
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 0.9em;
+  line-height: 1.5;
+  tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-x: auto;
+  overflow-y: auto;
+  width: 100%;
+}
+
+.jsonResponse code {
+  font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+  font-size: 1em;
+  line-height: 1.6;
+  display: block;
+  width: 100%;
+}
+
+/* JSON Syntax Highlighting */
+.string {
+  color: #008000;
+}
+
+.number {
+  color: #0000ff;
+}
+
+.boolean {
+  color: #b22222;
+}
+
+.null {
+  color: #808080;
+}
+
+.key {
+  color: #a52a2a;
+  font-weight: bold;
+}
+
+:global(.dark) .string {
+  color: #7ec699;
+}
+
+:global(.dark) .number {
+  color: #6897bb;
+}
+
+:global(.dark) .boolean {
+  color: #cc7832;
+}
+
+:global(.dark) .null {
+  color: #a0a0a0;
+}
+
+:global(.dark) .key {
+  color: #cf9fff;
+}
+
+:global(.dark) .jsonResponse {
+  background-color: var(--nextra-code-bg, #1e1e1e);
+}
+
+:global(.dark) .jsonResponse code {
+  color: var(--nextra-primary-text-color, #f8f9fa);
+}
+
+:global(.dark) .timeIcon {
+  color: var(--nextra-primary-color, #0d6efd);
+}
+
+:global(.dark) .formGroup label {
+  color: var(--nextra-primary-text-color, #e6e6e6);
 } 

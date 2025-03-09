@@ -33,14 +33,17 @@ export interface UnifiedApiTesterProps {
   defaultUrl?: string;
   showJsonOption?: boolean;
   showScreenshotOption?: boolean;
+  showSiteUrlField?: boolean;
   
   // Additional customization
   additionalFields?: {
     name: string;
     label: string;
-    type: 'text' | 'checkbox' | 'select' | 'textarea';
+    type: 'text' | 'checkbox' | 'select' | 'textarea' | 'number';
     options?: { value: string; label: string }[];
-    defaultValue?: string | boolean;
+    defaultValue?: string | boolean | number;
+    min?: number;
+    max?: number;
   }[];
 }
 
@@ -102,6 +105,7 @@ export function UnifiedApiTester({
   defaultUrl = '',
   showJsonOption = true,
   showScreenshotOption = true,
+  showSiteUrlField = true,
   
   // Additional customization
   additionalFields = []
@@ -124,7 +128,8 @@ export function UnifiedApiTester({
     defaultTimeout,
     defaultDepth,
     defaultUrl,
-    showScreenshotOption
+    showScreenshotOption,
+    showSiteUrlField
   });
 
   // Ref para controlar si ya se inicializaron los campos adicionales
@@ -256,8 +261,11 @@ export function UnifiedApiTester({
       if (apiType === 'general') {
         // General API (conversation)
         body = { 
-          message: message,
-          model: modelId
+          messages: [
+            { role: 'user', content: message }
+          ],
+          modelType: modelType,
+          modelId: modelId
         };
         
         if (siteUrl) body.url = siteUrl;
@@ -311,7 +319,12 @@ export function UnifiedApiTester({
       if (additionalFields.length > 0 && Object.keys(additionalFieldValues).length > 0) {
         additionalFields.forEach(field => {
           if (additionalFieldValues[field.name] !== undefined) {
-            body[field.name] = additionalFieldValues[field.name];
+            // Convert string values to numbers for number fields
+            if (field.type === 'number') {
+              body[field.name] = Number(additionalFieldValues[field.name]);
+            } else {
+              body[field.name] = additionalFieldValues[field.name];
+            }
           }
         });
       }
@@ -361,12 +374,30 @@ export function UnifiedApiTester({
       
       const data = await response.json();
       
-      if (!response.ok) {
-        throw new Error(data.error || 'Error en la solicitud');
-      }
-      
+      // Siempre mostrar la respuesta, incluso si hay un error
       setResponse(JSON.stringify(data, null, 2));
       setActiveTab('response'); // Switch to response tab automatically
+      
+      if (!response.ok) {
+        // Construir un mensaje de error más detallado
+        let errorMessage = data.error || 'Error en la solicitud';
+        
+        // Añadir detalles adicionales si están disponibles
+        if (data.message) {
+          errorMessage += `: ${data.message}`;
+        }
+        
+        // Añadir información sobre errores de validación si están disponibles
+        if (data.validationErrors) {
+          const validationErrors = Object.entries(data.validationErrors)
+            .map(([field, message]) => `${field}: ${message}`)
+            .join(', ');
+          
+          errorMessage += `. Errores de validación: ${validationErrors}`;
+        }
+        
+        throw new Error(errorMessage);
+      }
       
       // Save conversation ID if present
       if (data.conversationId) {
@@ -374,7 +405,8 @@ export function UnifiedApiTester({
       }
     } catch (error: any) {
       setError(`Error: ${error.message}`);
-      setResponse('');
+      // No limpiar la respuesta para que el usuario pueda ver los detalles del error
+      // setResponse('');
     } finally {
       setIsLoading(false);
     }
@@ -454,17 +486,53 @@ export function UnifiedApiTester({
               />
             </div>
             
-            <div className={styles.formGroup}>
-              <label htmlFor="siteUrl">URL del Sitio (opcional)</label>
-              <input
-                type="text"
-                id="siteUrl"
-                value={siteUrl}
-                onChange={(e) => setSiteUrl(e.target.value)}
-                className={styles.formControl}
-                placeholder="https://ejemplo.com"
-              />
-            </div>
+            {showModelOptions && (
+              <>
+                <div className={styles.formGroup}>
+                  <label htmlFor="modelType">Proveedor del Modelo</label>
+                  <select
+                    id="modelType"
+                    value={modelType}
+                    onChange={(e) => setModelType(e.target.value as ModelProviderType)}
+                    className={styles.formControl}
+                  >
+                    <option value="anthropic">Anthropic</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="gemini">Google (Gemini)</option>
+                  </select>
+                </div>
+                
+                <div className={styles.formGroup}>
+                  <label htmlFor="modelId">Modelo</label>
+                  <select
+                    id="modelId"
+                    value={modelId}
+                    onChange={(e) => setModelId(e.target.value)}
+                    className={styles.formControl}
+                  >
+                    {MODEL_OPTIONS[modelType].map(option => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
+            
+            {showSiteUrlField && (
+              <div className={styles.formGroup}>
+                <label htmlFor="siteUrl">URL del Sitio (opcional)</label>
+                <input
+                  type="text"
+                  id="siteUrl"
+                  value={siteUrl}
+                  onChange={(e) => setSiteUrl(e.target.value)}
+                  className={styles.formControl}
+                  placeholder="https://ejemplo.com"
+                />
+              </div>
+            )}
             
             <div className={styles.formGroup}>
               <label htmlFor="conversationId">ID de Conversación (opcional)</label>
@@ -578,17 +646,19 @@ export function UnifiedApiTester({
               </>
             )}
             
-            <div className={styles.formGroup}>
-              <label htmlFor="siteUrl">URL del Sitio (opcional)</label>
-              <input
-                type="text"
-                id="siteUrl"
-                value={siteUrl}
-                onChange={(e) => setSiteUrl(e.target.value)}
-                className={styles.formControl}
-                placeholder="https://ejemplo.com"
-              />
-            </div>
+            {showSiteUrlField && (
+              <div className={styles.formGroup}>
+                <label htmlFor="siteUrl">URL del Sitio (opcional)</label>
+                <input
+                  type="text"
+                  id="siteUrl"
+                  value={siteUrl}
+                  onChange={(e) => setSiteUrl(e.target.value)}
+                  className={styles.formControl}
+                  placeholder="https://ejemplo.com"
+                />
+              </div>
+            )}
             
             {(showJsonOption || showScreenshotOption) && (
               <div className={styles.formGroup}>
@@ -839,6 +909,19 @@ export function UnifiedApiTester({
                   rows={4}
                 />
               </>
+            ) : field.type === 'number' ? (
+              <>
+                <label htmlFor={field.name}>{field.label}</label>
+                <input
+                  type="number"
+                  id={field.name}
+                  value={additionalFieldValues[field.name] || ''}
+                  onChange={(e) => handleAdditionalFieldChange(field.name, Number(e.target.value))}
+                  className={styles.formControl}
+                  min={field.min}
+                  max={field.max}
+                />
+              </>
             ) : (
               <>
                 <label htmlFor={field.name}>{field.label}</label>
@@ -859,6 +942,27 @@ export function UnifiedApiTester({
 
   // Render request preview
   const renderRequestPreview = () => {
+    // Función para formatear JSON con resaltado de sintaxis
+    const formatJsonWithSyntax = (json: any) => {
+      const jsonString = JSON.stringify(json, null, 2);
+      
+      return jsonString.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+        let cls = 'number';
+        if (/^"/.test(match)) {
+          if (/:$/.test(match)) {
+            cls = 'key';
+          } else {
+            cls = 'string';
+          }
+        } else if (/true|false/.test(match)) {
+          cls = 'boolean';
+        } else if (/null/.test(match)) {
+          cls = 'null';
+        }
+        return `<span class="${styles[cls]}">${match}</span>`;
+      });
+    };
+    
     return (
       <div className={styles.requestPreview}>
         <div className={styles.requestDetails}>
@@ -869,18 +973,22 @@ export function UnifiedApiTester({
             </div>
             <div className={styles.requestHeaders}>
               <strong>Headers:</strong>
-              <pre className={styles.pre}>
-                {JSON.stringify({
-                  'Content-Type': 'application/json'
-                }, null, 2)}
+              <pre className={`${styles.pre} ${styles.jsonResponse}`}>
+                <code dangerouslySetInnerHTML={{ 
+                  __html: formatJsonWithSyntax({
+                    'Content-Type': 'application/json'
+                  }) 
+                }}></code>
               </pre>
             </div>
           </div>
           
           <div className={styles.requestSection}>
             <h4>Body:</h4>
-            <pre className={styles.pre}>
-              {JSON.stringify(requestBody, null, 2)}
+            <pre className={`${styles.pre} ${styles.jsonResponse}`}>
+              <code dangerouslySetInnerHTML={{ 
+                __html: formatJsonWithSyntax(requestBody) 
+              }}></code>
             </pre>
           </div>
         </div>
@@ -890,6 +998,49 @@ export function UnifiedApiTester({
 
   // Render response content
   const renderResponseContent = () => {
+    // Check if response is valid JSON for syntax highlighting
+    let formattedResponse = response;
+    let isJsonResponse = false;
+    
+    try {
+      if (response && (response.trim().startsWith('{') || response.trim().startsWith('['))) {
+        const parsedJson = JSON.parse(response);
+        formattedResponse = JSON.stringify(parsedJson, null, 2);
+        isJsonResponse = true;
+      }
+    } catch (e) {
+      // Not valid JSON, use the original response
+    }
+    
+    // Function to add syntax highlighting to JSON
+    const highlightJson = (json: string) => {
+      // Primero asegurarse de que el JSON esté bien formateado con indentación
+      try {
+        const parsedJson = JSON.parse(json);
+        json = JSON.stringify(parsedJson, null, 2);
+      } catch (e) {
+        // Si no es un JSON válido, mantener el original
+      }
+      
+      // Reemplazar con regex para añadir spans con clases apropiadas
+      return json
+        .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, (match) => {
+          let cls = 'number';
+          if (/^"/.test(match)) {
+            if (/:$/.test(match)) {
+              cls = 'key';
+            } else {
+              cls = 'string';
+            }
+          } else if (/true|false/.test(match)) {
+            cls = 'boolean';
+          } else if (/null/.test(match)) {
+            cls = 'null';
+          }
+          return `<span class="${styles[cls]}">${match}</span>`;
+        });
+    };
+    
     return (
       <div className={styles.responseContainer}>
         {responseStatus && (
@@ -898,27 +1049,45 @@ export function UnifiedApiTester({
             <div className={styles.responseActions}>
               {requestTime !== null && (
                 <div className={styles.requestTime}>
-                  Tiempo de respuesta: {requestTime.toFixed(0)} ms
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={styles.timeIcon}>
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
+                  </svg>
+                  {requestTime.toFixed(0)} ms
                 </div>
               )}
               <button 
                 className={styles.copyButton} 
                 onClick={copyToClipboard}
                 title="Copiar respuesta"
+                aria-label="Copiar respuesta"
               >
-                {isCopied ? '✓ Copiado' : 'Copiar'}
+                {isCopied ? (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                  </svg>
+                ) : (
+                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                  </svg>
+                )}
               </button>
             </div>
           </div>
         )}
-        <pre className={styles.pre}>
+        <pre className={`${styles.pre} ${isJsonResponse ? styles.jsonResponse : ''}`}>
           {isLoading ? (
             <div className={styles.loadingIndicator}>
               <div className={styles.loadingSpinner}></div>
               <span>Procesando solicitud...</span>
             </div>
           ) : (
-            response
+            isJsonResponse ? (
+              <code dangerouslySetInnerHTML={{ __html: highlightJson(formattedResponse) }}></code>
+            ) : (
+              formattedResponse
+            )
           )}
         </pre>
       </div>
@@ -949,7 +1118,7 @@ export function UnifiedApiTester({
         </div>
         
         <div className={styles.tabContent}>
-          {activeTab === 'request' && (
+          {activeTab === 'request' ? (
             <div className={styles.formAndPreview}>
               <form onSubmit={handleSubmit} className={styles.form}>
                 <div className={styles.formGrid}>
@@ -976,9 +1145,9 @@ export function UnifiedApiTester({
               
               {renderRequestPreview()}
             </div>
+          ) : (
+            renderResponseContent()
           )}
-          
-          {activeTab === 'response' && renderResponseContent()}
         </div>
         
         {error && (
