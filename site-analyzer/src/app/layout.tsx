@@ -1,25 +1,50 @@
-import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
-import { Toaster } from 'react-hot-toast'
+import { Footer, Layout, Navbar } from 'nextra-theme-docs'
+import { Banner, Head } from 'nextra/components'
+import { getPageMap } from 'nextra/page-map'
 import './globals.css'
+import 'nextra-theme-docs/style.css'
+import { ReactNode } from 'react'
 
-const inter = Inter({ subsets: ['latin'] })
-
-export const metadata: Metadata = {
-  title: 'Site Analyzer - Herramienta de análisis web',
-  description: 'API para analizar sitios web y obtener información relevante',
+export const metadata = {
+  // Define your metadata here
+  // For more information on metadata API, see: https://nextjs.org/docs/app/building-your-application/optimizing/metadata
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+const banner = <Banner storageKey="some-key">Uncodie Site Analyzer está disponible 🎉</Banner>
+const navbar = (
+  <Navbar
+    logo={<b>Uncodie</b>}
+    // ... Your additional navbar options
+  />
+)
+const footer = <Footer>MIT {new Date().getFullYear()} © Uncodie.</Footer>
+
+export default async function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="es">
-      <body className={inter.className}>
-        <Toaster position="top-right" />
-        {children}
+    <html
+      // Not required, but good for SEO
+      lang="en"
+      // Required to be set
+      dir="ltr"
+      // Suggested by `next-themes` package https://github.com/pacocoursey/next-themes#with-app
+      suppressHydrationWarning
+    >
+      <Head
+      // ... Your additional head options
+      >
+        {/* Your additional tags should be passed as `children` of `<Head>` element */}
+      </Head>
+      <body>
+        <Layout
+          banner={banner}
+          navbar={navbar}
+          pageMap={await getPageMap()}
+          docsRepositoryBase="https://github.com/shuding/nextra/tree/main/docs"
+          footer={footer}
+          // ... Your additional layout options
+        >
+          {children}
+        </Layout>
       </body>
     </html>
   )

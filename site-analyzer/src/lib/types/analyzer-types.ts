@@ -19,9 +19,14 @@ export interface AnalyzeRequest {
 export interface BlockInfo {
   id: string;          // ID del bloque (si existe)
   type: string;        // Tipo de bloque (header, nav, main, section, footer, etc.)
+  section_type?: string; // Propósito funcional (navigation, content, cta, form, etc.)
   selector: string;    // Selector CSS para identificar el bloque
   classes: string[];   // Clases CSS aplicadas al bloque
   content_type: string; // Tipo de contenido (texto, imagen, formulario, etc.)
+  description?: string; // Descripción del propósito y contenido del bloque
+  business_objective?: string; // Objetivo de negocio que cumple este bloque
+  user_need?: string;  // Necesidad del usuario que satisface este bloque
+  ux_role?: string;    // Rol UX del bloque (information, conversion, navigation, etc.)
   relevance: {
     score: number;     // Puntuación de relevancia (0-100)
     reason: string;    // Razón por la que este bloque es relevante
@@ -35,15 +40,21 @@ export interface BlockInfo {
       left: number;
     };
   };
+  content_list?: string[]; // Lista de contenido textual relevante del bloque
   sub_blocks?: SubBlockInfo[]; // Información sobre sub-bloques importantes
+  subBlocks?: SubBlockInfo[]; // Alias para compatibilidad
 }
 
 // Interface para la información de sub-bloques
 export interface SubBlockInfo {
-  type: 'cta' | 'menu_item' | 'link' | 'form_field' | 'button' | 'icon' | 'interactive' | 'other';
+  type: 'cta' | 'menu_item' | 'link' | 'form_field' | 'button' | 'icon' | 'interactive' | 'heading' | 'paragraph' | 'image' | 'video' | 'other';
   text: string;        // Texto del sub-bloque (si existe)
   selector: string;    // Selector CSS para identificar el sub-bloque
+  function?: string;   // Función específica del sub-bloque (title, description, action, etc.)
+  purpose?: string;    // Propósito desde la perspectiva del usuario (informar, guiar, convertir, etc.)
   action?: string;     // Acción que realiza (navegación, envío de formulario, etc.)
+  interactive?: boolean; // Si el elemento es interactivo
+  prominence?: 'high' | 'medium' | 'low'; // Prominencia visual del elemento
   relevance: number;   // Puntuación de relevancia (0-100)
   location: string;    // Ubicación relativa dentro del bloque padre
   attributes?: {       // Atributos relevantes
@@ -53,6 +64,12 @@ export interface SubBlockInfo {
     class?: string[];  // Clases del elemento
     [key: string]: any; // Otros atributos
   };
+  nested_elements?: Array<{
+    type: string;
+    role: string;
+    interactive: boolean;
+    purpose?: string;  // Propósito específico de este elemento anidado
+  }>;
 }
 
 // Interface para la respuesta de análisis estructurado
@@ -67,12 +84,22 @@ export interface StructuredAnalysisResponse {
   hierarchy: {
     main_sections: string[];     // Array de los principales bloques funcionales
     navigation_structure: any[]; // Estructura de navegación
+    user_flow?: {
+      primary_path: string[];    // Descripción del recorrido principal del usuario
+    };
+  };
+  ux_analysis?: {
+    cta_elements?: Array<any>;   // Elementos de llamada a la acción
+    navigation_elements?: Array<any>; // Elementos de navegación
+    forms?: Array<any>;          // Formularios
   };
   overview: {
     total_blocks: number;
     primary_content_blocks: number;
     navigation_blocks: number;
     interactive_elements: number;
+    key_ux_patterns?: string[];  // Patrones UX clave identificados
+    design_system_characteristics?: string[]; // Características del sistema de diseño
   };
   metadata: {
     analyzed_by: string;

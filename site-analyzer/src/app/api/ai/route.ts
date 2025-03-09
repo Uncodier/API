@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import Portkey from 'portkey-ai';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
+import { handleIncompleteJsonResponse } from '@/lib/utils/api-utils';
 
 // Verificar claves disponibles
 if (!process.env.PORTKEY_API_KEY) {
@@ -85,7 +86,10 @@ export async function POST(request: NextRequest) {
       ...modelOptions
     });
     
-    return NextResponse.json(response);
+    // Verificar si la respuesta contiene un JSON incompleto y manejarlo
+    const processedResponse = await handleIncompleteJsonResponse(response, messages, modelType, modelId);
+    
+    return NextResponse.json(processedResponse);
   } catch (error: any) {
     console.error('[AI API] Error:', error);
     return NextResponse.json(
@@ -93,4 +97,29 @@ export async function POST(request: NextRequest) {
       { status: 500 }
     );
   }
+}
+
+// Agregar método GET
+/**
+ * Endpoint GET para proporcionar información sobre la API de IA
+ * @param request Solicitud HTTP
+ * @returns Información sobre cómo usar la API de IA
+ */
+export async function GET(request: NextRequest) {
+  return NextResponse.json(
+    { 
+      message: 'API de IA',
+      usage: 'Envía una solicitud POST con un objeto JSON que contenga los mensajes, el tipo de modelo y el ID del modelo',
+      example: {
+        messages: [
+          { role: 'user', content: 'Hola, ¿puedes ayudarme con mi sitio web?' }
+        ],
+        modelType: 'anthropic',
+        modelId: 'claude-3-5-sonnet-20240620'
+      },
+      available_providers: ['anthropic', 'openai', 'gemini'],
+      documentation: '/api/docs'
+    },
+    { status: 200 }
+  );
 } 

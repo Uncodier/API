@@ -1,0 +1,16 @@
+{
+  "index": {
+    "title": "Inicio",
+    "type": "page"
+  },
+  "demo": {
+    "title": "Demo",
+    "type": "page",
+    "display": "hidden"
+  },
+  "docs": {
+    "title": "Documentación",
+    "type": "page",
+    "display": "hidden"
+  }
+} 

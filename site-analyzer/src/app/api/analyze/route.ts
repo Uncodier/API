@@ -2,6 +2,29 @@ import { NextRequest, NextResponse } from 'next/server'
 import { analyzeSiteAction } from '@/lib/actions/analyze-site'
 import { z } from 'zod'
 
+/**
+ * API BÁSICA DE ANÁLISIS DE SITIOS WEB
+ * 
+ * Esta es la implementación básica de la API de análisis de sitios web.
+ * 
+ * DIFERENCIAS CON LA API AVANZADA (/api/site/analyze):
+ * 1. Esta API utiliza la función 'analyzeSiteAction' para realizar el análisis,
+ *    mientras que la API avanzada utiliza servicios especializados.
+ * 2. Esta API no permite configurar opciones avanzadas como tipo de análisis,
+ *    profundidad, timeout, proveedor de IA, etc.
+ * 3. Esta API devuelve una estructura de respuesta más simple.
+ * 4. Esta API implementa un sistema de manejo de errores más básico.
+ * 
+ * NOTA: Esta API y la API avanzada (/api/site/analyze) son implementaciones
+ * completamente independientes con diferentes enfoques y arquitecturas.
+ * No comparten código entre ellas.
+ * 
+ * Para casos de uso más avanzados, se recomienda utilizar la API avanzada
+ * /api/site/analyze.
+ * 
+ * Documentación completa: /docs/api/analysis/basic-analyze
+ */
+
 // Esquema para validar el cuerpo de la solicitud
 const RequestSchema = z.object({
   url: z.string().url('Debe ser una URL válida'),
@@ -71,7 +94,8 @@ export async function GET(request: NextRequest) {
       usage: 'Envía una solicitud POST con un objeto JSON que contenga la URL a analizar: { "url": "https://ejemplo.com" }',
       endpoints: {
         '/api/analyze': 'POST - Analiza la estructura y contenido de un sitio web'
-      }
+      },
+      note: 'Esta es la API básica de análisis. Para opciones avanzadas, utiliza /api/site/analyze'
     },
     { status: 200 }
   )

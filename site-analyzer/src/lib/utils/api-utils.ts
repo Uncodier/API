@@ -203,9 +203,11 @@ export async function callApiWithMessage(
     // Determinar si estamos en el cliente o en el servidor
     const isClient = typeof window !== 'undefined';
     
+    let response;
+    
     if (isClient) {
       // En el cliente, usamos la API route
-      const response = await fetch('/api/ai', {
+      const apiResponse = await fetch('/api/ai', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -217,12 +219,12 @@ export async function callApiWithMessage(
         }),
       });
       
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `Error en la API: ${response.status}`);
+      if (!apiResponse.ok) {
+        const errorData = await apiResponse.json();
+        throw new Error(errorData.error || `Error en la API: ${apiResponse.status}`);
       }
       
-      return await response.json();
+      response = await apiResponse.json();
     } else {
       // En el servidor, llamamos directamente a la API de Portkey
       // Importar Portkey usando require para evitar problemas
@@ -282,18 +284,23 @@ export async function callApiWithMessage(
       console.log(`[callApiWithMessage] Modelo: ${modelOptions.model}, Max tokens: ${modelOptions.max_tokens}, Proveedor: ${modelType}, Clave virtual: ${virtualKey}`);
       
       try {
-        const response = await portkey.chat.completions.create({
+        response = await portkey.chat.completions.create({
           messages: messages,
           ...modelOptions
         });
         
         console.log(`[callApiWithMessage] Respuesta de Portkey recibida correctamente`);
-        return response;
       } catch (portkeyError) {
         console.error(`[callApiWithMessage] Error de Portkey:`, portkeyError);
         throw portkeyError;
       }
     }
+    
+    // Verificar si la respuesta contiene un JSON incompleto y manejarlo
+    // Esto solo se aplica a respuestas que parecen ser JSON (comienzan con '{')
+    const processedResponse = await handleIncompleteJsonResponse(response, messages, modelType, modelId);
+    
+    return processedResponse;
   } catch (error) {
     console.error('[callApiWithMessage] Error:', error);
     throw error;
@@ -310,4 +317,223 @@ export function prepareApiMessage(
   provider: 'anthropic' | 'openai' | 'gemini' = 'anthropic'
 ): any[] {
   return createVisionMessage(textContent, imageUrl, systemPrompt, provider);
+}
+
+/**
+ * Verifica si una respuesta es un JSON incompleto y solicita su continuación
+ * @param response La respuesta original de la API
+ * @param messages Los mensajes originales enviados a la API
+ * @param modelType El tipo de modelo utilizado
+ * @param modelId El ID del modelo utilizado
+ * @returns La respuesta completa como objeto JSON
+ */
+export async function handleIncompleteJsonResponse(
+  response: any,
+  messages: any[],
+  modelType: 'anthropic' | 'openai' | 'gemini' = 'anthropic',
+  modelId?: string
+): Promise<any> {
+  // Extraer el contenido de la respuesta según el proveedor
+  let content = '';
+  
+  if (modelType === 'anthropic') {
+    content = response.content?.[0]?.text || '';
+  } else if (modelType === 'openai') {
+    content = response.choices?.[0]?.message?.content || '';
+  } else if (modelType === 'gemini') {
+    content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  }
+  
+  // Verificar si la respuesta parece ser un JSON incompleto
+  if (content && content.trim().startsWith('{') && !isValidJson(content)) {
+    console.log('[handleIncompleteJsonResponse] Detectada respuesta JSON incompleta, solicitando continuación...');
+    
+    // Crear un nuevo mensaje para solicitar la continuación
+    const continuationMessage = [
+      ...messages,
+      { role: 'assistant', content: content },
+      { 
+        role: 'user', 
+        content: 'La respuesta JSON está incompleta. Por favor, continúa exactamente donde te quedaste sin repetir lo que ya has enviado. Completa el JSON.'
+      }
+    ];
+    
+    // Realizar una nueva llamada a la API para obtener la continuación
+    const continuationResponse = await callApiWithMessage(continuationMessage, modelType, modelId);
+    
+    // Extraer el contenido de la continuación según el proveedor
+    let continuationContent = '';
+    
+    if (modelType === 'anthropic') {
+      continuationContent = continuationResponse.content?.[0]?.text || '';
+    } else if (modelType === 'openai') {
+      continuationContent = continuationResponse.choices?.[0]?.message?.content || '';
+    } else if (modelType === 'gemini') {
+      continuationContent = continuationResponse.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    }
+    
+    // Concatenar la respuesta original con la continuación
+    const combinedContent = content + continuationContent;
+    
+    // Verificar si la respuesta combinada es un JSON válido
+    if (isValidJson(combinedContent)) {
+      console.log('[handleIncompleteJsonResponse] Respuesta JSON completada correctamente');
+      
+      // Actualizar la respuesta con el contenido combinado
+      if (modelType === 'anthropic') {
+        response.content[0].text = combinedContent;
+      } else if (modelType === 'openai') {
+        response.choices[0].message.content = combinedContent;
+      } else if (modelType === 'gemini') {
+        response.candidates[0].content.parts[0].text = combinedContent;
+      }
+      
+      return response;
+    } else {
+      // Si aún no es válido, intentar extraer un JSON válido
+      console.log('[handleIncompleteJsonResponse] La respuesta combinada aún no es un JSON válido, intentando extraer...');
+      const extractedJson = extractValidJson(combinedContent);
+      
+      if (extractedJson) {
+        console.log('[handleIncompleteJsonResponse] JSON válido extraído correctamente');
+        
+        // Actualizar la respuesta con el JSON extraído
+        if (modelType === 'anthropic') {
+          response.content[0].text = extractedJson;
+        } else if (modelType === 'openai') {
+          response.choices[0].message.content = extractedJson;
+        } else if (modelType === 'gemini') {
+          response.candidates[0].content.parts[0].text = extractedJson;
+        }
+      }
+      
+      return response;
+    }
+  }
+  
+  // Si la respuesta ya es válida, devolverla sin cambios
+  return response;
+}
+
+/**
+ * Verifica si una cadena es un JSON válido
+ * @param str La cadena a verificar
+ * @returns true si es un JSON válido, false en caso contrario
+ */
+function isValidJson(str: string): boolean {
+  try {
+    JSON.parse(str);
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
+ * Intenta extraer un objeto JSON válido de una cadena
+ * @param str La cadena que contiene un JSON potencialmente incompleto
+ * @returns El JSON extraído como cadena o null si no se pudo extraer
+ */
+function extractValidJson(str: string): string | null {
+  // Buscar el inicio del JSON
+  const startIndex = str.indexOf('{');
+  if (startIndex === -1) return null;
+  
+  // Contar llaves para encontrar el final del JSON
+  let openBraces = 0;
+  let endIndex = -1;
+  
+  for (let i = startIndex; i < str.length; i++) {
+    if (str[i] === '{') openBraces++;
+    else if (str[i] === '}') {
+      openBraces--;
+      if (openBraces === 0) {
+        endIndex = i + 1;
+        break;
+      }
+    }
+  }
+  
+  // Si encontramos un JSON completo, extraerlo
+  if (endIndex !== -1) {
+    const jsonStr = str.substring(startIndex, endIndex);
+    if (isValidJson(jsonStr)) {
+      return jsonStr;
+    }
+  }
+  
+  return null;
+}
+
+/**
+ * Formatea y estructura una respuesta JSON para la API de conversación
+ * 
+ * @param content El contenido de la respuesta que puede contener JSON
+ * @param requestedJson Indica si se solicitó explícitamente una respuesta en formato JSON
+ * @returns Un objeto con la respuesta procesada y metadatos sobre el formato JSON
+ */
+export function formatJsonResponse(content: string, requestedJson: boolean = false): {
+  content: string;
+  extractedJson: any | null;
+  isJsonResponse: boolean;
+  formattedJson: string | null;
+} {
+  // Resultado por defecto
+  const result = {
+    content,
+    extractedJson: null,
+    isJsonResponse: false,
+    formattedJson: null as string | null
+  };
+
+  // Si no hay contenido, devolver el resultado por defecto
+  if (!content) return result;
+
+  // Verificar si el contenido es un JSON completo
+  if (isValidJson(content)) {
+    try {
+      const jsonData = JSON.parse(content);
+      result.extractedJson = jsonData;
+      result.isJsonResponse = true;
+      result.formattedJson = JSON.stringify(jsonData, null, 2);
+      return result;
+    } catch (e) {
+      // Si hay un error al parsear, continuar con la extracción
+    }
+  }
+
+  // Intentar extraer JSON del contenido
+  const jsonPattern = /```(?:json)?\s*({[\s\S]*?})\s*```|({[\s\S]*?})/g;
+  let match;
+  let extractedJson = null;
+
+  while ((match = jsonPattern.exec(content)) !== null) {
+    const jsonStr = (match[1] || match[2]).trim();
+    if (isValidJson(jsonStr)) {
+      extractedJson = JSON.parse(jsonStr);
+      break;
+    }
+  }
+
+  // Si no se encontró JSON con el patrón, intentar con extractValidJson
+  if (!extractedJson) {
+    const validJsonStr = extractValidJson(content);
+    if (validJsonStr) {
+      extractedJson = JSON.parse(validJsonStr);
+    }
+  }
+
+  // Si se encontró JSON, actualizar el resultado
+  if (extractedJson) {
+    result.extractedJson = extractedJson;
+    result.isJsonResponse = true;
+    result.formattedJson = JSON.stringify(extractedJson, null, 2);
+
+    // Si se solicitó explícitamente JSON, reemplazar el contenido con el JSON formateado
+    if (requestedJson) {
+      result.content = result.formattedJson || content;
+    }
+  }
+
+  return result;
 } 

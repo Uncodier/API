@@ -1,0 +1,229 @@
+# API de Conversación
+
+El endpoint `/api/conversation` permite gestionar conversaciones con la IA para análisis de sitios web.
+
+## Métodos disponibles
+
+### POST /api/conversation
+
+Inicia una nueva conversación o continúa una existente con la IA.
+
+#### Parámetros de solicitud
+
+```json
+{
+  "message": "¿Qué problemas de SEO tiene mi sitio?", 
+  "conversationId": "conv_123456", 
+  "url": "https://ejemplo.com", 
+  "model": "gpt-4", 
+  "context": { 
+    "siteAnalysis": "...",
+    "userPreferences": "..."
+  }
+}
+```
+
+#### Respuesta
+
+```json
+{
+  "conversationId": "conv_123456",
+  "message": "He analizado tu sitio y he encontrado los siguientes problemas de SEO...",
+  "model": "gpt-4",
+  "tokens": {
+    "prompt": 520,
+    "completion": 380,
+    "total": 900
+  },
+  "processingTime": "2.8s"
+}
+```
+
+### GET /api/conversation/:id
+
+Obtiene el historial de una conversación específica.
+
+#### Parámetros de ruta
+
+- `id`: Identificador único de la conversación
+
+#### Respuesta
+
+```json
+{
+  "conversationId": "conv_123456",
+  "url": "https://ejemplo.com",
+  "model": "gpt-4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "¿Qué problemas de SEO tiene mi sitio?",
+      "timestamp": "2023-06-15T14:30:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "He analizado tu sitio y he encontrado los siguientes problemas de SEO...",
+      "timestamp": "2023-06-15T14:30:05Z"
+    },
+    {
+      "role": "user",
+      "content": "¿Cómo puedo solucionarlos?",
+      "timestamp": "2023-06-15T14:31:00Z"
+    },
+    {
+      "role": "assistant",
+      "content": "Para solucionar estos problemas, te recomiendo...",
+      "timestamp": "2023-06-15T14:31:10Z"
+    }
+  ],
+  "created": "2023-06-15T14:30:00Z",
+  "updated": "2023-06-15T14:31:10Z"
+}
+```
+
+### DELETE /api/conversation/:id
+
+Elimina una conversación específica.
+
+#### Parámetros de ruta
+
+- `id`: Identificador único de la conversación
+
+#### Respuesta
+
+```json
+{
+  "success": true,
+  "message": "Conversación eliminada correctamente"
+}
+```
+
+## Límites de uso
+
+- Máximo 20 mensajes por conversación
+- Máximo 10 conversaciones activas por usuario
+- Máximo 50 solicitudes por hora por IP
+
+## Ejemplos de uso
+
+### Iniciar una nueva conversación
+
+```javascript
+const response = await fetch('https://tudominio.com/api/conversation', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: "¿Qué problemas de SEO tiene mi sitio?",
+    url: "https://ejemplo.com"
+  })
+});
+
+const data = await response.json();
+const conversationId = data.conversationId;
+console.log(data.message);
+```
+
+### Continuar una conversación existente
+
+```javascript
+const response = await fetch('https://tudominio.com/api/conversation', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    message: "¿Cómo puedo solucionarlos?",
+    conversationId: "conv_123456"
+  })
+});
+
+const data = await response.json();
+console.log(data.message);
+```
+
+## Prueba la API
+
+import { UnifiedApiTester } from '@/components';
+
+<UnifiedApiTester apiType="general" />
+
+### Ejemplos de código
+
+Si prefieres probar el API usando tu propio código, aquí tienes algunos ejemplos:
+
+#### Usando Fetch API (Navegador)
+
+```javascript
+// Usando Fetch API en el navegador
+async function testConversationAPI() {
+  const response = await fetch('/api/conversation', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      message: "¿Qué problemas de SEO tiene mi sitio?",
+      url: "https://ejemplo.com",
+      model: "gpt-4"
+    })
+  });
+  
+  const data = await response.json();
+  console.log(data);
+  return data;
+}
+
+// Ejecuta esta función en la consola de tu navegador
+testConversationAPI().then(data => console.log("Respuesta:", data));
+```
+
+#### Usando Axios
+
+```javascript
+// Usando Axios
+import axios from 'axios';
+
+async function testConversationAPI() {
+  try {
+    const response = await axios.post('/api/conversation', {
+      message: "¿Qué problemas de SEO tiene mi sitio?",
+      url: "https://ejemplo.com",
+      model: "gpt-4"
+    });
+    
+    console.log(response.data);
+    return response.data;
+  } catch (error) {
+    console.error('Error:', error.response?.data || error.message);
+  }
+}
+
+testConversationAPI();
+```
+
+#### Usando cURL
+
+```bash
+curl -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"message":"¿Qué problemas de SEO tiene mi sitio?","url":"https://ejemplo.com","model":"gpt-4"}' \
+  https://tudominio.com/api/conversation
+```
+
+### Respuesta de ejemplo
+
+```json
+{
+  "conversationId": "conv_123456",
+  "message": "He analizado tu sitio y he encontrado los siguientes problemas de SEO: 1) Falta de etiquetas meta description en varias páginas, 2) Tiempos de carga lentos en dispositivos móviles, 3) Problemas de contenido duplicado en categorías de productos...",
+  "model": "gpt-4",
+  "tokens": {
+    "prompt": 520,
+    "completion": 380,
+    "total": 900
+  },
+  "processingTime": "2.8s"
+}
+``` 

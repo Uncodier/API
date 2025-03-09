@@ -97,6 +97,104 @@ export async function preprocessHtml(
       });
     }
     
+    // Limpiar elementos del head que no son relevantes para el análisis UX
+    if (options.cleanHead) {
+      // Preservar solo los elementos importantes del head
+      const title = $('head title').text();
+      const metaDescription = $('head meta[name="description"]').attr('content') || '';
+      const metaKeywords = $('head meta[name="keywords"]').attr('content') || '';
+      const metaViewport = $('head meta[name="viewport"]').attr('content') || '';
+      const favicon = $('head link[rel="icon"], head link[rel="shortcut icon"]').attr('href') || '';
+      
+      // Limpiar todo el head
+      $('head').empty();
+      
+      // Restaurar solo los elementos importantes
+      if (title) $('head').append(`<title>${title}</title>`);
+      if (metaDescription) $('head').append(`<meta name="description" content="${metaDescription}">`);
+      if (metaKeywords) $('head').append(`<meta name="keywords" content="${metaKeywords}">`);
+      if (metaViewport) $('head').append(`<meta name="viewport" content="${metaViewport}">`);
+      if (favicon) $('head').append(`<link rel="icon" href="${favicon}">`);
+      
+      // Añadir un comentario para indicar que el head ha sido simplificado
+      $('head').prepend('<!-- Head content simplified for analysis -->');
+    }
+    
+    // Limpiar elementos del footer que no son relevantes para el análisis UX
+    if (options.cleanFooter) {
+      $('footer').each(function() {
+        const footer = $(this);
+        
+        // Preservar elementos importantes del footer
+        const navigationLinks: string[] = [];
+        const ctaElements: string[] = [];
+        const contactInfo: string[] = [];
+        
+        // Preservar enlaces de navegación importantes
+        footer.find('a').each(function() {
+          const link = $(this);
+          const href = link.attr('href') || '';
+          const text = link.text().trim();
+          
+          if (text && !options.footerExcludePatterns.some(pattern => 
+            text.toLowerCase().includes(pattern.toLowerCase()) || 
+            href.toLowerCase().includes(pattern.toLowerCase())
+          )) {
+            navigationLinks.push(`<a href="${href}">${text}</a>`);
+          }
+        });
+        
+        // Preservar CTAs
+        footer.find('button, .btn, .button, .cta, a.btn, a.button, a.cta').each(function() {
+          const cta = $(this);
+          const text = cta.text().trim();
+          const className = cta.attr('class') || '';
+          
+          if (text && !options.footerExcludePatterns.some(pattern => 
+            text.toLowerCase().includes(pattern.toLowerCase())
+          )) {
+            ctaElements.push(`<button class="${className}">${text}</button>`);
+          }
+        });
+        
+        // Preservar información de contacto
+        footer.find('address, .contact, .contact-info, [itemprop="address"], [itemprop="telephone"], [itemprop="email"]').each(function() {
+          contactInfo.push($(this).prop('outerHTML') || '');
+        });
+        
+        // Limpiar todo el footer
+        footer.empty();
+        
+        // Restaurar solo los elementos importantes
+        if (navigationLinks.length > 0) {
+          footer.append('<div class="footer-nav">');
+          navigationLinks.forEach(link => {
+            footer.find('.footer-nav').append(link);
+          });
+          footer.append('</div>');
+        }
+        
+        if (ctaElements.length > 0) {
+          footer.append('<div class="footer-cta">');
+          ctaElements.forEach(cta => {
+            footer.find('.footer-cta').append(cta);
+          });
+          footer.append('</div>');
+        }
+        
+        if (contactInfo.length > 0) {
+          footer.append('<div class="footer-contact">');
+          contactInfo.forEach(info => {
+            footer.find('.footer-contact').append(info);
+          });
+          footer.append('</div>');
+        }
+        
+        // Añadir un comentario para indicar que el footer ha sido simplificado
+        footer.prepend('<!-- Footer content simplified for analysis -->');
+      });
+    }
+    
     // Preservar elementos de navegación y sus enlaces
     if (options.preserveNavigation) {
       // Identificar elementos de navegación
@@ -296,6 +394,10 @@ export interface PreprocessingOptions {
   preserveCTAs: boolean;
   maxTextNodeLength: number;
   maxTextLength: number;
+  cleanHead: boolean;
+  cleanFooter: boolean;
+  headExcludePatterns: string[];
+  footerExcludePatterns: string[];
 }
 
 /**
@@ -337,7 +439,17 @@ export const defaultOptions: PreprocessingOptions = {
   preserveNavigation: true,
   preserveCTAs: true,
   maxTextNodeLength: 50,
-  maxTextLength: 100000
+  maxTextLength: 100000,
+  cleanHead: true,
+  cleanFooter: true,
+  headExcludePatterns: [
+    'analytics', 'tracking', 'pixel', 'facebook', 'twitter', 'google', 
+    'gtm', 'ga', 'tag manager', 'hotjar', 'optimize', 'schema.org'
+  ],
+  footerExcludePatterns: [
+    'privacy policy', 'terms', 'cookies', 'copyright', 'all rights reserved',
+    'sitemap', 'legal', 'gdpr', 'accessibility', 'preferences'
+  ]
 };
 
 /**
@@ -351,7 +463,17 @@ export const aggressiveOptions: PreprocessingOptions = {
   preserveForms: false,
   preserveLinks: false,
   preserveImages: false,
-  maxTextLength: 30000
+  maxTextLength: 30000,
+  cleanHead: true,
+  cleanFooter: true,
+  headExcludePatterns: [
+    ...defaultOptions.headExcludePatterns,
+    'meta', 'charset', 'http-equiv', 'preload', 'prefetch'
+  ],
+  footerExcludePatterns: [
+    ...defaultOptions.footerExcludePatterns,
+    'newsletter', 'subscribe', 'follow us', 'social'
+  ]
 };
 
 /**
@@ -365,5 +487,9 @@ export const conservativeOptions: PreprocessingOptions = {
   removeInlineStyles: false,
   removeDataAttributes: false,
   simplifyClassNames: false,
-  maxTextLength: 100000
+  maxTextLength: 100000,
+  cleanHead: true,
+  cleanFooter: false,
+  headExcludePatterns: defaultOptions.headExcludePatterns,
+  footerExcludePatterns: []
 }; 

@@ -5,6 +5,29 @@ import { performDetailedAnalysis } from '@/lib/services/detailed-analyzer-servic
 import { performStructuredAnalysis } from '@/lib/services/structured-analyzer-service'
 import puppeteer from 'puppeteer'
 
+/**
+ * API AVANZADA DE ANÁLISIS DE SITIOS WEB
+ * 
+ * Esta es la implementación avanzada de la API de análisis de sitios web.
+ * 
+ * DIFERENCIAS CON LA API BÁSICA (/api/analyze):
+ * 1. Esta API utiliza servicios especializados (performInitialAnalysis,
+ *    performDetailedAnalysis, performStructuredAnalysis) en lugar de la
+ *    función 'analyzeSiteAction'.
+ * 2. Esta API permite configurar múltiples opciones avanzadas como tipo de
+ *    análisis, profundidad, timeout, proveedor de IA, etc.
+ * 3. Esta API devuelve una estructura de respuesta más detallada con
+ *    metadatos adicionales.
+ * 4. Esta API implementa un sistema de manejo de errores más sofisticado
+ *    con tipos de errores específicos.
+ * 
+ * NOTA: Esta API y la API básica (/api/analyze) son implementaciones
+ * completamente independientes con diferentes enfoques y arquitecturas.
+ * No comparten código entre ellas.
+ * 
+ * Documentación completa: /docs/api/analysis/advanced-analyze
+ */
+
 // Definición de la interfaz AnalyzeRequest
 interface AnalyzeRequest {
   url: string;
@@ -598,22 +621,10 @@ export async function GET(request: NextRequest) {
           'ANALYSIS_ERROR',
           'VALIDATION_ERROR',
           'SERVER_ERROR'
-        ],
-        statuses: [
-          '200 - OK (análisis completo)', 
-          '206 - Partial Content (análisis parcial)', 
-          '400 - Bad Request (error de validación)', 
-          '422 - Unprocessable Content (error en el análisis)',
-          '500 - Internal Server Error (error del servidor)'
         ]
       },
-      bestPractices: [
-        'Implementar try-catch en cada función de análisis',
-        'Validar selectores antes de usarlos (con safeSelectors=true)',
-        'Usar un sistema modular que permita análisis parciales',
-        'Continuar con partes del análisis incluso si otras fallan'
-      ],
-      apiVersion: '1.0.5'
+      documentation: '/docs/api/analysis/advanced-analyze',
+      note: 'Esta es la API avanzada de análisis. Existe también una API básica en /api/analyze con funcionalidad más limitada.'
     },
     { status: 200 }
   )

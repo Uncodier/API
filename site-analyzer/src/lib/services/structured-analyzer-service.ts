@@ -3,6 +3,7 @@ import { AnalyzeRequest, StructuredAnalysisResponse } from '../types/analyzer-ty
 import { STRUCTURED_ANALYZER_SYSTEM_PROMPT } from '../config/analyzer-config';
 import { prepareAnalysisData, callApiWithMessage, prepareApiMessage } from '../utils/api-utils';
 import { captureScreenshot } from '../utils/image-utils';
+import { createBasicMessage } from '../utils/message-utils';
 
 /**
  * Genera un análisis estructurado básico para una URL
@@ -11,23 +12,139 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
   return {
     site_info: {
       url: url,
-      title: 'Pendiente de análisis',
-      description: 'Pendiente de análisis',
-      language: 'es'
+      title: 'Pending analysis',
+      description: 'Pending analysis',
+      language: 'en'
     },
-    blocks: [],
+    blocks: [
+      {
+        id: 'header-block',
+        type: 'header',
+        section_type: 'navigation',
+        selector: 'header',
+        classes: [],
+        content_type: 'mixed',
+        description: 'Main header with navigation',
+        business_objective: 'navigation',
+        user_need: 'site navigation',
+        ux_role: 'navigation',
+        relevance: {
+          score: 90,
+          reason: 'Primary navigation element'
+        },
+        children: 0,
+        text_length: 0,
+        location: {
+          position: 'top',
+          coordinates: {
+            top: 0,
+            left: 0
+          }
+        },
+        content_list: ['Site navigation'],
+        sub_blocks: []
+      },
+      {
+        id: 'main-content',
+        type: 'content',
+        section_type: 'content',
+        selector: 'main',
+        classes: [],
+        content_type: 'text',
+        description: 'Main content area',
+        business_objective: 'information',
+        user_need: 'access information',
+        ux_role: 'information',
+        relevance: {
+          score: 85,
+          reason: 'Primary content area'
+        },
+        children: 0,
+        text_length: 0,
+        location: {
+          position: 'middle',
+          coordinates: {
+            top: 100,
+            left: 0
+          }
+        },
+        content_list: ['Main content'],
+        sub_blocks: []
+      },
+      {
+        id: 'footer-block',
+        type: 'footer',
+        section_type: 'navigation',
+        selector: 'footer',
+        classes: [],
+        content_type: 'mixed',
+        description: 'Footer with additional links',
+        business_objective: 'navigation',
+        user_need: 'additional resources',
+        ux_role: 'navigation',
+        relevance: {
+          score: 70,
+          reason: 'Secondary navigation element'
+        },
+        children: 0,
+        text_length: 0,
+        location: {
+          position: 'bottom',
+          coordinates: {
+            top: 500,
+            left: 0
+          }
+        },
+        content_list: ['Footer links'],
+        sub_blocks: []
+      }
+    ],
     hierarchy: {
-      main_sections: [],
-      navigation_structure: []
+      main_sections: ['header', 'content', 'footer'],
+      navigation_structure: [
+        {
+          name: 'Main menu',
+          location: 'header',
+          items: []
+        },
+        {
+          name: 'Footer menu',
+          location: 'footer',
+          items: []
+        }
+      ],
+      user_flow: {
+        primary_path: []
+      }
+    },
+    ux_analysis: {
+      cta_elements: [],
+      navigation_elements: [
+        {
+          type: 'main-menu',
+          location: 'header',
+          style: 'horizontal',
+          items: [],
+          mobile_behavior: 'collapses',
+          prominence: 'high'
+        }
+      ],
+      forms: []
     },
     overview: {
-      total_blocks: 0,
-      primary_content_blocks: 0,
-      navigation_blocks: 0,
-      interactive_elements: 0
+      total_blocks: 3,
+      primary_content_blocks: 1,
+      navigation_blocks: 2,
+      interactive_elements: 0,
+      key_ux_patterns: [
+        'Standard header-content-footer layout'
+      ],
+      design_system_characteristics: [
+        'Not analyzed'
+      ]
     },
     metadata: {
-      analyzed_by: 'Sistema',
+      analyzed_by: 'System',
       timestamp: new Date().toISOString(),
       model_used: 'none',
       status: 'pending'
@@ -36,10 +153,66 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
 }
 
 /**
+ * Solicita a otro agente que sanee un JSON malformado
+ */
+async function sanitizeJsonWithAgent(jsonString: string, provider: 'anthropic' | 'openai' | 'gemini' = 'anthropic', modelId?: string): Promise<string> {
+  console.log('[sanitizeJsonWithAgent] Requesting JSON sanitization from another agent');
+  
+  // Crear un mensaje para solicitar la corrección del JSON
+  const userMessage = `
+  I need you to fix and sanitize the following malformed JSON:
+  
+  \`\`\`
+  ${jsonString}
+  \`\`\`
+  
+  Please fix any syntax errors, such as:
+  - Missing or improperly closed quotes
+  - Unclosed brackets or braces
+  - Incorrect commas
+  - Malformed escape characters
+  - Comments that shouldn't be in a JSON
+  
+  Return ONLY the corrected JSON, without any explanations or additional comments.
+  `;
+  
+  // Sistema prompt para el agente de saneamiento
+  const systemPrompt = `You are an expert in JSON correction. Your task is to fix malformed JSONs and return them in a valid format.
+  Do not include explanations, comments, or markdown in your response. Return ONLY the corrected JSON.`;
+  
+  // Preparar el mensaje para la API
+  const messages = createBasicMessage(userMessage, systemPrompt);
+  
+  try {
+    // Usar el mismo proveedor y modelo que se pasó como parámetro
+    const response = await callApiWithMessage(
+      messages,
+      provider,
+      modelId
+    );
+    
+    // Extraer el contenido de la respuesta
+    const responseContent = response.choices[0]?.message?.content || '';
+    
+    // Extraer el JSON de la respuesta (puede estar rodeado de texto)
+    const jsonMatch = responseContent.match(/```(?:json)?\s*([\s\S]*?)\s*```|(\{[\s\S]*\})/);
+    const sanitizedJsonString = jsonMatch ? (jsonMatch[1] || jsonMatch[2]) : responseContent;
+    
+    console.log('[sanitizeJsonWithAgent] Sanitized JSON received');
+    
+    return sanitizedJsonString;
+  } catch (error) {
+    console.error(`[sanitizeJsonWithAgent] Error sanitizing JSON: ${error}`);
+    // Si falla, devolver el JSON original
+    return jsonString;
+  }
+}
+
+/**
  * Realiza un análisis estructurado de un sitio web
  */
 export async function structuredAnalyzerAgent(request: AnalyzeRequest): Promise<StructuredAnalysisResponse> {
-  console.log(`[structuredAnalyzerAgent] Iniciando análisis estructurado para: ${request.url}`);
+  console.log(`[structuredAnalyzerAgent] Starting structured analysis for: ${request.url}`);
   
   try {
     // Preparar los datos para el análisis
@@ -47,145 +220,93 @@ export async function structuredAnalyzerAgent(request: AnalyzeRequest): Promise<
     
     // Crear el mensaje para la API
     const userMessage = `
-    Analiza la estructura del siguiente sitio web y proporciona un análisis detallado en formato JSON:
+    Analyze the structure of the following website and provide a comprehensive analysis in JSON format:
     URL: ${request.url}
     
-    ${htmlContent ? `HTML (estructura del sitio): 
+    ${htmlContent ? `HTML (site structure): 
 \`\`\`html
 ${htmlContent}
 \`\`\`
-` : 'HTML no disponible'}
+` : 'HTML not available'}
     
-    IMPORTANTE: Este HTML ha sido capturado del DOM renderizado y preprocesado para mantener la estructura completa:
+    IMPORTANT: This HTML has been captured from the rendered DOM and preprocessed to maintain the complete structure.
     
-    1. El HTML representa el DOM final después de la ejecución de JavaScript, no el HTML inicial.
-    2. Se han preservado todos los elementos estructurales, IDs, clases y URLs.
-    3. Los textos largos han sido truncados con "..." para reducir el tamaño.
-    4. Los SVGs han sido simplificados (atributos preservados pero contenido interno eliminado).
-    5. Los elementos de navegación y CTAs han sido preservados completamente, incluyendo sus textos y URLs.
-    6. Los scripts y estilos han sido eliminados.
-    7. Se han expandido elementos colapsados como menús de navegación para capturar su estructura.
+    FOCUS ON FUNCTIONAL BLOCKS AND THEIR CONTENT:
+    - Identify the main sections such as header, hero, features, testimonials, pricing, footer
+    - For each block, extract the MAIN TEXT CONTENT and organize it as a simple list
+    - Include headings, paragraphs, and important text from interactive elements
+    - Maintain the overall structure analysis (navigation, CTAs, forms, etc.)
     
-    ENFÓCATE EN BLOQUES ESTRUCTURALES, NO EN ELEMENTOS INDIVIDUALES:
-    - Identifica las secciones principales como header, hero, características, testimonios, precios, footer
-    - Agrupa elementos relacionados en bloques lógicos (ej. un "bloque de características" puede contener título, descripción, imagen y CTA)
-    - Reconoce patrones comunes de diseño web (secciones hero, grids de características, testimonios, etc.)
-    - Analiza la relación jerárquica entre bloques (relaciones padre-hijo)
-    - Identifica el propósito y función de cada bloque principal
-    - Busca elementos contenedores que agrupen contenido relacionado (div con clases como "section", "container", "block", etc.)
-    - Presta atención a elementos HTML semánticos (header, nav, main, section, article, footer)
-    - Identifica patrones estructurales repetidos que indiquen reutilización de componentes
+    EXTRACT DOM IDs AND SELECTORS:
+    - For EACH block, extract the actual DOM 'id' attribute if available (not making one up)
+    - If an element doesn't have an id attribute in the DOM, use a descriptive selector that uniquely identifies it
+    - For navigation elements, identify them based on HTML structure (nav, menu, ul/li patterns in headers/footers)
+    - Ensure that ALL detected menu/navigation elements are included in the navigation_elements section
     
-    NO te enfoques en elementos individuales a menos que sean componentes independientes significativos. Por ejemplo:
-    - SÍ incluye un menú de navegación como un bloque, NO cada elemento de menú individual
-    - SÍ incluye una sección de características como un bloque, NO cada característica individual
-    - SÍ incluye un carrusel de testimonios como un bloque, NO cada testimonio individual
-    - SÍ incluye un footer como un bloque, NO cada enlace individual del footer
+    YOUR PRIMARY GOAL is to provide a comprehensive analysis that includes:
+    1. All major functional blocks with their content as simple text lists
+    2. The hierarchy and relationship between these blocks
+    3. The navigation structure
+    4. Call-to-action elements
+    5. Forms
+    6. Key UX patterns and findings
     
-    SECCIONES OBLIGATORIAS QUE DEBES INCLUIR:
-    1. "cta_elements" - Identifica TODOS los elementos de llamada a la acción (botones, enlaces prominentes, etc.)
-    2. "navigation_elements" - Analiza TODOS los menús de navegación (principal, footer, móvil, etc.)
-    3. "key_ux_patterns" - Identifica al menos 3-5 patrones UX clave del sitio
-    4. "design_system_characteristics" - Documenta al menos 3-5 características del sistema de diseño
-    
-    Estas secciones son CRÍTICAS para el análisis y deben estar presentes incluso si son mínimas.
-    
-    Tu tarea es analizar esta estructura HTML y proporcionar un análisis detallado que incluya:
-    1. Todos los BLOQUES PRINCIPALES del sitio (header, hero, características, testimonios, footer, etc.)
-    2. La jerarquía y relación entre estos bloques
-    3. Los componentes interactivos principales (formularios, carruseles, menús desplegables)
-    4. La estructura de navegación completa
-    5. Patrones de diseño y componentes reutilizados
-    
-    Responde con un objeto JSON que siga exactamente esta estructura:
+    Respond with a JSON object that follows exactly this structure:
     
     {
       "site_info": {
-        "url": "URL del sitio",
-        "title": "Título de la página",
-        "description": "Descripción o propósito del sitio",
-        "language": "Idioma principal del sitio"
+        "url": "Site URL",
+        "title": "Page title",
+        "description": "Site description or purpose",
+        "language": "Main site language"
       },
       "blocks": [
         {
-          "id": "ID del bloque (si existe)",
-          "type": "Tipo de bloque (header, hero, features, testimonials, pricing, footer, etc.)",
-          "section_type": "Propósito funcional (navigation, content, cta, form, etc.)",
-          "selector": "Selector CSS para identificar el bloque",
-          "classes": ["Clases CSS aplicadas al bloque"],
-          "content_type": "Tipo de contenido principal (text, image, video, mixed, etc.)",
-          "description": "Descripción del propósito y contenido del bloque",
-          "ux_role": "Rol UX del bloque (information, conversion, navigation, etc.)",
-          "relevance": {
-            "score": 85,
-            "reason": "Razón por la que este bloque es relevante"
-          },
-          "children": 5,
-          "text_length": 250,
-          "location": {
-            "position": "top/middle/bottom",
-            "coordinates": {
-              "top": 10,
-              "left": 0
-            }
-          },
+          "id": "actual-dom-id-if-available", // Use the actual DOM id attribute, NOT a generated one
+          "type": "Block type (header, hero, features, etc.)",
+          "section_type": "Functional purpose (navigation, content, cta, form, etc.)",
+          "selector": "CSS selector that uniquely identifies this element",
+          "description": "Description of the block's purpose and content",
+          "business_objective": "Business objective this block fulfills",
+          "user_need": "User need this block satisfies",
+          "content_list": [
+            "First important text element in this block",
+            "Second important text element in this block",
+            "Third important text element in this block"
+          ],
           "sub_blocks": [
             {
-              "type": "Tipo de sub-bloque (heading, paragraph, image, cta, form, etc.)",
-              "text": "Texto principal del sub-bloque",
-              "function": "Función del sub-bloque (title, description, action, etc.)",
-              "selector": "Selector CSS",
-              "action": "Acción que realiza (si es interactivo)",
-              "interactive": true/false,
-              "prominence": "high/medium/low",
-              "relevance": 90,
-              "location": "Ubicación relativa dentro del bloque padre",
-              "attributes": {
-                "href": "URL destino (para enlaces)",
-                "target": "_blank/_self (para enlaces)",
-                "id": "ID del elemento",
-                "class": ["Clases del elemento"]
-              },
-              "nested_elements": [
-                {
-                  "type": "Tipo de elemento anidado",
-                  "role": "Rol del elemento anidado",
-                  "interactive": true/false
-                }
-              ]
+              "type": "Sub-block type (heading, paragraph, image, cta, form, button, etc.)",
+              "selector": "CSS selector for this sub-element",
+              "text": "Main text of the sub-block",
+              "function": "Specific function of the sub-block",
+              "interactive": true/false
             }
           ]
         }
       ],
       "hierarchy": {
-        "main_sections": ["Principales bloques funcionales"],
+        "main_sections": ["Main functional blocks"],
         "navigation_structure": [
           {
-            "name": "Menú principal",
+            "name": "Main menu",
             "location": "header",
-            "items": ["Inicio", "Productos", "Contacto"]
+            "items": ["Home", "Products", "Contact"]
           }
         ],
         "user_flow": {
-          "primary_path": ["Página inicial", "Catálogo", "Detalle de producto", "Carrito", "Checkout"]
+          "primary_path": ["Homepage", "Catalog", "Product Detail", "Cart", "Checkout"]
         }
       },
       "ux_analysis": {
         "cta_elements": [
           {
-            "text": "Comprar ahora",
+            "text": "Buy now",
             "type": "primary",
             "purpose": "purchase",
             "location": "hero",
             "prominence": "high",
-            "design_pattern": "button",
-            "urgency_factor": "none",
-            "contrast_level": "high",
-            "visual_style": "solid",
-            "size": "large",
-            "mobile_adaptation": "responsive",
-            "effectiveness_score": 90,
-            "selector": ".btn-primary"
+            "selector": "CSS selector for this CTA"
           }
         ],
         "navigation_elements": [
@@ -193,9 +314,8 @@ ${htmlContent}
             "type": "main-menu",
             "location": "header",
             "style": "horizontal",
-            "items": ["Inicio", "Productos", "Servicios", "Contacto"],
-            "mobile_behavior": "collapses",
-            "prominence": "high"
+            "items": ["Home", "Products", "Services", "Contact"],
+            "selector": "CSS selector for this navigation element"
           }
         ],
         "forms": [
@@ -203,8 +323,7 @@ ${htmlContent}
             "purpose": "contact",
             "fields": ["name", "email", "message"],
             "location": "footer",
-            "user_friction": "low",
-            "validation_type": "on-submit"
+            "selector": "CSS selector for this form"
           }
         ]
       },
@@ -214,33 +333,34 @@ ${htmlContent}
         "navigation_blocks": 2,
         "interactive_elements": 8,
         "key_ux_patterns": [
-          "Header con navegación horizontal y CTA prominente",
-          "Hero con propuesta de valor clara y CTA contrastante",
-          "Grid de características con iconos y descripciones breves"
+          "Header with horizontal navigation and prominent CTA",
+          "Hero with clear value proposition and contrasting CTA",
+          "Feature grid with icons and brief descriptions"
         ],
         "design_system_characteristics": [
-          "Uso consistente de bordes redondeados en elementos interactivos",
-          "Paleta de colores limitada con azul como color primario",
-          "Tipografía sans-serif para todo el contenido con variaciones de peso para jerarquía"
+          "Consistent use of rounded corners for interactive elements",
+          "Limited color palette with blue as primary color",
+          "Sans-serif typography for all content with weight variations for hierarchy"
         ]
       },
       "metadata": {
-        "analyzed_by": "Nombre del modelo",
-        "timestamp": "Fecha y hora del análisis",
-        "model_used": "Modelo utilizado",
+        "analyzed_by": "Model name",
+        "timestamp": "Analysis date and time",
+        "model_used": "Model used",
         "status": "success/error/pending"
       }
     }
     
-    RECUERDA: Enfócate en BLOQUES ESTRUCTURALES, no en elementos individuales. Cada elemento en el array "blocks" debe ser una sección o componente principal del sitio, no elementos HTML individuales.
+    IMPORTANT GUIDELINES:
+    1. Make sure each block includes a "content_list" field with actual text content
+    2. Extract ALL meaningful text from each section
+    3. Keep the overall structure analysis (navigation, CTAs, forms, etc.)
+    4. Focus on user-facing content
+    5. Include all major sections of the page
+    6. For each block, use the actual DOM id if available, otherwise create a meaningful selector
+    7. ALL detected menus/navigation elements MUST be included in the navigation_elements section
     
-    NO OLVIDES incluir las secciones obligatorias:
-    - "cta_elements" con todos los elementos de llamada a la acción
-    - "navigation_elements" con todos los menús de navegación
-    - "key_ux_patterns" con patrones UX clave
-    - "design_system_characteristics" con características del sistema de diseño
-    
-    Asegúrate de que el JSON sea válido y siga exactamente la estructura proporcionada.
+    Make sure the JSON is valid and follows exactly the structure provided.
     `;
     
     // Preparar el mensaje para la API
@@ -284,38 +404,127 @@ ${htmlContent}
           .replace(/,\s*]/g, ']');                       // Eliminar comas finales en arrays
         
         console.log('[structuredAnalyzerAgent] Intentando parsear JSON limpio:', cleanedJsonString.substring(0, 200) + '...');
-        parsedResponse = JSON.parse(cleanedJsonString);
+        
+        try {
+          parsedResponse = JSON.parse(cleanedJsonString);
+        } catch (cleanedParseError) {
+          console.error('[structuredAnalyzerAgent] Error al parsear JSON limpio:', cleanedParseError);
+          
+          // Si la limpieza básica falló, intentar con el agente de saneamiento
+          console.log('[structuredAnalyzerAgent] Solicitando saneamiento de JSON a otro agente');
+          const sanitizedJsonString = await sanitizeJsonWithAgent(
+            jsonString, 
+            request.options?.provider as 'anthropic' | 'openai' | 'gemini' || 'anthropic',
+            request.options?.modelId
+          );
+          
+          try {
+            parsedResponse = JSON.parse(sanitizedJsonString);
+            console.log('[structuredAnalyzerAgent] JSON saneado parseado correctamente');
+          } catch (sanitizedParseError) {
+            console.error('[structuredAnalyzerAgent] Error al parsear JSON saneado:', sanitizedParseError);
+            // Si todo falla, lanzar el error original
+            throw parseError;
+          }
+        }
       }
       
       console.log('[structuredAnalyzerAgent] JSON parseado correctamente. Claves:', Object.keys(parsedResponse));
       
       // Asegurarse de que la respuesta tiene la estructura esperada
       if (parsedResponse.site_info && Array.isArray(parsedResponse.blocks)) {
-        console.log(`[structuredAnalyzerAgent] Estructura válida. Bloques encontrados: ${parsedResponse.blocks.length}`);
+        console.log(`[structuredAnalyzerAgent] Valid structure. Blocks found: ${parsedResponse.blocks.length}`);
         
-        // Añadir metadatos
-        parsedResponse.metadata = {
-          analyzed_by: `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Estructurado)`,
-          timestamp: new Date().toISOString(),
-          model_used: request.options?.modelId || (request.options?.provider === 'openai' ? 'gpt-4-vision-preview' : 'claude-3-opus-20240229'),
-          status: 'success'
+        // Convertir la respuesta al formato completo esperado
+        const fullResponse: StructuredAnalysisResponse = {
+          site_info: parsedResponse.site_info,
+          blocks: parsedResponse.blocks.map((block: any) => {
+            // Asegurarse de que cada bloque tenga un content_list
+            if (!block.content_list) {
+              block.content_list = [];
+              
+              // Intentar extraer contenido de texto de sub_blocks si existe
+              if (block.sub_blocks && Array.isArray(block.sub_blocks)) {
+                block.sub_blocks.forEach((subBlock: any) => {
+                  if (subBlock.text) {
+                    block.content_list.push(subBlock.text);
+                  }
+                });
+              }
+            }
+            
+            // Crear un objeto BlockInfo completo
+            return {
+              id: block.id || `block-${Math.random().toString(36).substring(2, 9)}`,
+              type: block.type || 'unknown',
+              section_type: block.section_type || 'content',
+              selector: block.selector || 'body',
+              classes: block.classes || [],
+              content_type: block.content_type || 'text',
+              description: block.description || `${block.type} section`,
+              business_objective: block.business_objective || 'information',
+              user_need: block.user_need || 'access information',
+              ux_role: block.ux_role || 'information',
+              relevance: block.relevance || {
+                score: 80,
+                reason: 'Automatically assigned relevance'
+              },
+              children: block.children || 0,
+              text_length: block.text_length || (block.content_list ? block.content_list.join(' ').length : 0),
+              location: block.location || {
+                position: 'middle',
+                coordinates: {
+                  top: 0,
+                  left: 0
+                }
+              },
+              content_list: block.content_list || [],
+              sub_blocks: block.sub_blocks || []
+            };
+          }),
+          hierarchy: parsedResponse.hierarchy || {
+            main_sections: parsedResponse.blocks.map((block: any) => block.type),
+            navigation_structure: [],
+            user_flow: {
+              primary_path: []
+            }
+          },
+          ux_analysis: parsedResponse.ux_analysis || {
+            cta_elements: [],
+            navigation_elements: [],
+            forms: []
+          },
+          overview: parsedResponse.overview || {
+            total_blocks: parsedResponse.blocks.length,
+            primary_content_blocks: parsedResponse.blocks.length,
+            navigation_blocks: 0,
+            interactive_elements: 0,
+            key_ux_patterns: [],
+            design_system_characteristics: []
+          },
+          metadata: {
+            analyzed_by: `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Comprehensive)`,
+            timestamp: new Date().toISOString(),
+            model_used: request.options?.modelId || (request.options?.provider === 'openai' ? 'gpt-4-vision-preview' : 'claude-3-opus-20240229'),
+            status: 'success'
+          }
         };
         
-        return parsedResponse;
+        return fullResponse;
       } else {
-        console.error('[structuredAnalyzerAgent] La respuesta no tiene la estructura esperada:', 
+        console.error('[structuredAnalyzerAgent] The response does not have the expected structure:', 
           'site_info:', !!parsedResponse.site_info, 
-          'blocks:', Array.isArray(parsedResponse.blocks) ? parsedResponse.blocks.length : 'no es array');
+          'blocks:', Array.isArray(parsedResponse.blocks) ? parsedResponse.blocks.length : 'not an array');
         
         // Intentar recuperar la estructura si es posible
         if (parsedResponse.structuredAnalysis && 
             parsedResponse.structuredAnalysis.site_info && 
             Array.isArray(parsedResponse.structuredAnalysis.blocks)) {
-          console.log('[structuredAnalyzerAgent] Encontrada estructura anidada en structuredAnalysis');
+          console.log('[structuredAnalyzerAgent] Found nested structure in structuredAnalysis');
           return {
             ...parsedResponse.structuredAnalysis,
             metadata: {
-              analyzed_by: `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Estructurado)`,
+              analyzed_by: `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Simplified)`,
               timestamp: new Date().toISOString(),
               model_used: request.options?.modelId || (request.options?.provider === 'openai' ? 'gpt-4-vision-preview' : 'claude-3-opus-20240229'),
               status: 'success'
@@ -326,17 +535,17 @@ ${htmlContent}
         // Devolver un análisis básico en caso de error
         const basicAnalysis = generateBasicStructuredAnalysis(request.url);
         basicAnalysis.metadata.status = 'error';
-        basicAnalysis.metadata.analyzed_by = `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Error en estructurado)`;
+        basicAnalysis.metadata.analyzed_by = `${request.options?.provider === 'openai' ? 'GPT' : 'Claude'} (Error in structured analysis)`;
         basicAnalysis.metadata.model_used = request.options?.modelId || (request.options?.provider === 'openai' ? 'gpt-4-vision-preview' : 'claude-3-opus-20240229');
         
         return basicAnalysis;
       }
     } catch (error) {
-      console.error(`[structuredAnalyzerAgent] Error al procesar la respuesta JSON: ${error}`);
-      throw new Error(`Error al procesar la respuesta JSON: ${error}`);
+      console.error(`[structuredAnalyzerAgent] Error processing JSON response: ${error}`);
+      throw new Error(`Error processing JSON response: ${error}`);
     }
   } catch (error) {
-    console.error(`[structuredAnalyzerAgent] Error en el análisis estructurado: ${error}`);
+    console.error(`[structuredAnalyzerAgent] Error in structured analysis: ${error}`);
     
     // Devolver un análisis básico en caso de error
     const basicAnalysis = generateBasicStructuredAnalysis(request.url);
@@ -359,7 +568,7 @@ export async function performStructuredAnalysis(
     modelId?: string;
   } = {}
 ): Promise<StructuredAnalysisResponse> {
-  console.log(`[performStructuredAnalysis] Iniciando análisis estructurado para ${url}`);
+  console.log(`[performStructuredAnalysis] Starting structured analysis for ${url}`);
   
   // Construir el objeto de solicitud
   const analyzeRequest: AnalyzeRequest = {
@@ -374,14 +583,14 @@ export async function performStructuredAnalysis(
   
   // Capturar screenshot solo si no está explícitamente desactivado
   if (options.includeScreenshot !== false) {
-    console.log(`[performStructuredAnalysis] Capturando screenshot para ${url}...`);
+    console.log(`[performStructuredAnalysis] Capturing screenshot for ${url}...`);
     try {
       analyzeRequest.screenshot = await captureScreenshot(url, { timeout: options.timeout });
     } catch (error) {
-      console.error(`[performStructuredAnalysis] Error al capturar screenshot: ${error}`);
+      console.error(`[performStructuredAnalysis] Error capturing screenshot: ${error}`);
     }
   } else {
-    console.log(`[performStructuredAnalysis] Screenshot desactivado por el usuario para ${url}`);
+    console.log(`[performStructuredAnalysis] Screenshot disabled by user for ${url}`);
   }
   
   // Realizar el análisis estructurado
@@ -390,8 +599,8 @@ export async function performStructuredAnalysis(
     
     // Verificar que el resultado tenga la estructura esperada
     if (!result.site_info || !Array.isArray(result.blocks)) {
-      console.error('[performStructuredAnalysis] El resultado no tiene la estructura esperada');
-      console.log('[performStructuredAnalysis] Estructura recibida:', Object.keys(result));
+      console.error('[performStructuredAnalysis] The result does not have the expected structure');
+      console.log('[performStructuredAnalysis] Received structure:', Object.keys(result));
       
       // Intentar recuperar la estructura si está anidada
       if (result && 
@@ -402,7 +611,7 @@ export async function performStructuredAnalysis(
           'site_info' in result.structuredAnalysis && 
           'blocks' in result.structuredAnalysis && 
           Array.isArray(result.structuredAnalysis.blocks)) {
-        console.log('[performStructuredAnalysis] Encontrada estructura anidada en structuredAnalysis');
+        console.log('[performStructuredAnalysis] Found nested structure in structuredAnalysis');
         return result.structuredAnalysis as StructuredAnalysisResponse;
       }
       
@@ -412,13 +621,13 @@ export async function performStructuredAnalysis(
     
     // Asegurarse de que blocks sea un array
     if (!Array.isArray(result.blocks)) {
-      console.warn('[performStructuredAnalysis] blocks no es un array, corrigiendo...');
+      console.warn('[performStructuredAnalysis] blocks is not an array, fixing...');
       result.blocks = [];
     }
     
     // Asegurarse de que hierarchy y overview existan
     if (!result.hierarchy) {
-      console.warn('[performStructuredAnalysis] hierarchy no existe, inicializando...');
+      console.warn('[performStructuredAnalysis] hierarchy does not exist, initializing...');
       result.hierarchy = {
         main_sections: [],
         navigation_structure: []
@@ -426,7 +635,7 @@ export async function performStructuredAnalysis(
     }
     
     if (!result.overview) {
-      console.warn('[performStructuredAnalysis] overview no existe, inicializando...');
+      console.warn('[performStructuredAnalysis] overview does not exist, initializing...');
       result.overview = {
         total_blocks: result.blocks.length,
         primary_content_blocks: 0,
@@ -437,19 +646,19 @@ export async function performStructuredAnalysis(
     
     // Asegurarse de que metadata exista
     if (!result.metadata) {
-      console.warn('[performStructuredAnalysis] metadata no existe, inicializando...');
+      console.warn('[performStructuredAnalysis] metadata does not exist, initializing...');
       result.metadata = {
-        analyzed_by: `${options.provider === 'openai' ? 'GPT' : 'Claude'} (Estructurado)`,
+        analyzed_by: `${options.provider === 'openai' ? 'GPT' : 'Claude'} (Simplified)`,
         timestamp: new Date().toISOString(),
         model_used: options.modelId || (options.provider === 'openai' ? 'gpt-4-vision-preview' : 'claude-3-opus-20240229'),
         status: 'success'
       };
     }
     
-    console.log(`[performStructuredAnalysis] Análisis completado con éxito. Bloques: ${result.blocks.length}`);
+    console.log(`[performStructuredAnalysis] Analysis completed successfully. Blocks: ${result.blocks.length}`);
     return result;
   } catch (error) {
-    console.error(`[performStructuredAnalysis] Error en el análisis estructurado: ${error}`);
+    console.error(`[performStructuredAnalysis] Error in structured analysis: ${error}`);
     
     // Devolver un análisis básico en caso de error
     const basicAnalysis = generateBasicStructuredAnalysis(url);

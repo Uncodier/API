@@ -1,0 +1,435 @@
+---
+title: API de Análisis de Segmentos Rentables
+description: Documentación completa para la API de análisis y creación de segmentos rentables para sitios web
+---
+
+# API de Análisis de Segmentos Rentables
+
+El endpoint `/api/site/segments` permite analizar un sitio web para identificar los segmentos de audiencia más rentables, evaluando patrones de comportamiento, demografía y oportunidades de monetización. Además, puede crear automáticamente estos segmentos en la base de datos del usuario si no existen.
+
+## Características principales
+
+- Análisis conversacional con respuestas en formato JSON estructurado
+- Identificación de los N segmentos más rentables para un sitio web
+- Creación automática de segmentos en la base de datos del usuario
+- Análisis basado en múltiples fuentes de datos (comportamiento, demografía, intereses)
+- Soporte para diferentes modelos de IA para el análisis
+- Personalización de criterios de rentabilidad y relevancia
+
+import { UnifiedApiTester } from '@/components';
+
+<UnifiedApiTester 
+  apiType="segments" 
+  title="Analizador de Segmentos Rentables"
+  description="Prueba el API de análisis de segmentos rentables con tus propios parámetros."
+  defaultEndpoint="/api/site/segments"
+  defaultMethod="POST"
+  defaultUrl="https://ejemplo.com"
+  defaultSegmentCount={5}
+  defaultTimeout="45000"
+  showModelOptions={true}
+  defaultModelType="openai"
+  defaultModel="gpt-4o"
+  additionalFields={[
+    {
+      name: "createSegments",
+      label: "Crear segmentos automáticamente",
+      type: "checkbox",
+      defaultValue: true
+    },
+    {
+      name: "segmentsToCreate",
+      label: "Número de segmentos a crear",
+      type: "number",
+      defaultValue: 10,
+      min: 1,
+      max: 20
+    },
+    {
+      name: "profitabilityMetrics",
+      label: "Métricas de rentabilidad",
+      type: "multiselect",
+      options: [
+        { value: "conversionRate", label: "Tasa de conversión" },
+        { value: "aov", label: "Valor promedio de pedido" },
+        { value: "ltv", label: "Valor de vida del cliente" },
+        { value: "engagementRate", label: "Tasa de engagement" },
+        { value: "adRevenue", label: "Ingresos por publicidad" }
+      ],
+      defaultValue: ["conversionRate", "ltv"]
+    },
+    {
+      name: "additionalInstructions",
+      label: "Indicaciones adicionales",
+      type: "textarea",
+      placeholder: "Proporciona cualquier información adicional o instrucciones específicas para el análisis...",
+      rows: 4
+    },
+    {
+      name: "aiProvider",
+      label: "Proveedor de IA para análisis",
+      type: "select",
+      options: [
+        { value: "openai", label: "OpenAI" },
+        { value: "anthropic", label: "Anthropic" },
+        { value: "gemini", label: "Google (Gemini)" }
+      ],
+      defaultValue: "openai"
+    },
+    {
+      name: "aiModel",
+      label: "Modelo de IA para análisis",
+      type: "select",
+      options: [
+        { value: "gpt-4o", label: "GPT-4o" },
+        { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+        { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
+        { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" }
+      ],
+      defaultValue: "gpt-4o"
+    }
+  ]}
+/>
+
+## Modos de operación
+
+### Análisis de segmentos (`analyze`)
+
+Analiza el sitio web y devuelve los segmentos más rentables identificados, sin crearlos en la base de datos.
+
+### Creación de segmentos (`create`)
+
+Analiza el sitio web, identifica los segmentos más rentables y los crea automáticamente en la base de datos del usuario si no existen.
+
+### Actualización de segmentos (`update`)
+
+Analiza el sitio web, identifica los segmentos más rentables y actualiza los existentes en la base de datos con nueva información.
+
+## Métodos disponibles
+
+### POST /api/site/segments
+
+Analiza un sitio web para identificar los segmentos más rentables y opcionalmente los crea en la base de datos.
+
+#### Parámetros de solicitud
+
+```json
+{
+  "url": "https://ejemplo.com", // URL del sitio (obligatorio)
+  "segmentCount": 5, // Número de segmentos a identificar (1-20)
+  "mode": "create", // Modo de operación: 'analyze', 'create', 'update'
+  "createSegments": true, // Crear segmentos automáticamente en la DB
+  "segmentsToCreate": 10, // Número de segmentos a crear en la DB (1-20, por defecto 10)
+  "timeout": 45000, // Tiempo máximo de espera en milisegundos
+  "profitabilityMetrics": ["conversionRate", "ltv", "aov"], // Métricas para evaluar rentabilidad
+  "minConfidenceScore": 0.7, // Puntuación mínima de confianza (0-1)
+  "includeRationale": true, // Incluir explicación para cada segmento
+  "segmentAttributes": ["demographic", "behavioral", "psychographic"], // Atributos a considerar
+  "industryContext": "ecommerce", // Contexto de industria para el análisis
+  "additionalInstructions": "Enfocarse en segmentos con alto potencial de compra recurrente y analizar patrones de navegación en dispositivos móviles.", // Indicaciones adicionales en formato texto
+  "aiProvider": "openai", // Proveedor de IA: 'openai', 'anthropic', 'gemini'
+  "aiModel": "gpt-4o", // Modelo específico de IA a utilizar
+  "conversationMode": "json" // Modo de conversación: 'json', 'text'
+}
+```
+
+#### Respuesta
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segmentsAnalyzed": 5,
+  "segmentsCreated": 3, // Número de segmentos nuevos creados (si mode=create)
+  "segmentsUpdated": 0, // Número de segmentos actualizados (si mode=update)
+  "segments": [
+    {
+      "id": "seg_prof_tech_enthusiasts",
+      "name": "Entusiastas de la tecnología",
+      "description": "Profesionales de 25-45 años con alto interés en tecnología y gadgets",
+      "estimatedSize": "15%", // Porcentaje estimado de la audiencia total
+      "profitabilityScore": 0.89, // Puntuación de rentabilidad (0-1)
+      "confidenceScore": 0.92, // Confianza en la predicción (0-1)
+      "attributes": {
+        "demographic": {
+          "ageRange": "25-45",
+          "income": "alto",
+          "education": "universitaria",
+          "occupation": "profesionales de tecnología"
+        },
+        "behavioral": {
+          "purchaseFrequency": "alta",
+          "averageOrderValue": "$250+",
+          "preferredDevices": ["desktop", "tablet"],
+          "browsingPatterns": ["comparación detallada", "lectura de reseñas"]
+        },
+        "psychographic": {
+          "interests": ["tecnología", "innovación", "productividad"],
+          "values": ["calidad", "rendimiento", "exclusividad"]
+        }
+      },
+      "monetizationOpportunities": [
+        {
+          "type": "producto premium",
+          "potentialRevenue": "alto",
+          "implementationDifficulty": "media",
+          "description": "Ofrecer versiones premium con características avanzadas"
+        },
+        {
+          "type": "programa de fidelización",
+          "potentialRevenue": "medio",
+          "implementationDifficulty": "media",
+          "description": "Crear un programa de recompensas para compras frecuentes"
+        }
+      ],
+      "recommendedActions": [
+        {
+          "action": "Crear landing pages específicas",
+          "priority": "alta",
+          "expectedImpact": "Aumento del 25% en conversiones"
+        },
+        {
+          "action": "Desarrollar contenido técnico detallado",
+          "priority": "media",
+          "expectedImpact": "Mejora del 15% en engagement"
+        }
+      ],
+      "createdInDatabase": true, // Si el segmento fue creado en la DB
+      "databaseId": "db_seg_123456", // ID en la base de datos (si fue creado)
+      "rationale": "Este segmento muestra un alto valor de vida del cliente (LTV) y una tasa de conversión superior al promedio. Su comportamiento indica disposición a pagar por características premium y lealtad a la marca." // Explicación de por qué es rentable
+    },
+    // Otros segmentos identificados...
+  ],
+  "siteContext": {
+    "industry": "tecnología",
+    "businessModel": "ecommerce",
+    "primaryAudience": "profesionales",
+    "competitivePosition": "media"
+  },
+  "analysisMetadata": {
+    "timestamp": "2023-06-15T14:30:00Z",
+    "aiModel": "gpt-4o",
+    "confidenceOverall": 0.85,
+    "processingTime": 12345
+  },
+  "nextSteps": [
+    {
+      "action": "Configurar campañas de marketing segmentadas",
+      "priority": "alta",
+      "resources": ["Guía de configuración", "Plantillas de campañas"]
+    },
+    {
+      "action": "Personalizar la experiencia del sitio para cada segmento",
+      "priority": "media",
+      "resources": ["Herramienta de personalización", "Mejores prácticas"]
+    }
+  ],
+  "errors": [
+    {
+      "code": "DATA_LIMITATION",
+      "message": "Datos limitados para el análisis demográfico",
+      "affectedSegments": ["seg_prof_tech_enthusiasts"],
+      "severity": "baja"
+    }
+  ]
+}
+```
+
+### GET /api/site/segments
+
+Obtiene información sobre el servicio de análisis de segmentos.
+
+#### Respuesta
+
+```json
+{
+  "service": "AI Segment Analyzer",
+  "version": "1.0.0",
+  "status": "operational",
+  "capabilities": [
+    "segment-identification",
+    "profitability-analysis",
+    "database-integration",
+    "multi-model-support"
+  ],
+  "limits": {
+    "maxSegmentsPerRequest": 20,
+    "requestsPerDay": 50,
+    "maxTimeout": 60000
+  },
+  "supportedProfitabilityMetrics": [
+    "conversionRate",
+    "aov",
+    "ltv",
+    "engagementRate",
+    "adRevenue"
+  ]
+}
+```
+
+### GET /api/site/segments/user
+
+Obtiene los segmentos creados para el usuario autenticado.
+
+#### Respuesta
+
+```json
+{
+  "userId": "user_123456",
+  "totalSegments": 12,
+  "segments": [
+    {
+      "id": "db_seg_123456",
+      "name": "Entusiastas de la tecnología",
+      "description": "Profesionales de 25-45 años con alto interés en tecnología y gadgets",
+      "createdAt": "2023-06-15T14:30:00Z",
+      "updatedAt": "2023-06-15T14:30:00Z",
+      "profitabilityScore": 0.89,
+      "siteUrl": "https://ejemplo.com",
+      "inUse": true,
+      "campaigns": 3
+    },
+    // Otros segmentos del usuario...
+  ]
+}
+```
+
+## Integración con la base de datos
+
+Cuando se utiliza el modo `create` o `update`, la API se integra con la base de datos del usuario para:
+
+1. **Verificar existencia**: Comprueba si ya existen segmentos similares
+2. **Crear nuevos segmentos**: Crea registros para segmentos que no existen
+3. **Actualizar segmentos**: Actualiza información de segmentos existentes
+4. **Mantener historial**: Registra cambios en los segmentos a lo largo del tiempo
+
+El esquema de la base de datos para los segmentos incluye:
+
+```sql
+CREATE TABLE segments (
+  id VARCHAR(255) PRIMARY KEY,
+  user_id VARCHAR(255) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  attributes JSONB,
+  profitability_score FLOAT,
+  confidence_score FLOAT,
+  estimated_size VARCHAR(50),
+  site_url VARCHAR(255),
+  monetization_opportunities JSONB,
+  recommended_actions JSONB,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+```
+
+## Modo de conversación JSON
+
+Esta API utiliza un modo de conversación JSON que permite:
+
+1. **Respuestas estructuradas**: Todas las respuestas siguen un formato JSON consistente
+2. **Procesamiento automatizado**: Facilita la integración con sistemas y herramientas
+3. **Validación de esquema**: Garantiza que las respuestas cumplan con el esquema esperado
+4. **Extensibilidad**: Permite añadir nuevos campos y funcionalidades manteniendo compatibilidad
+
+Para activar el modo JSON, establece `conversationMode` a `"json"` en la solicitud.
+
+## Diferencias con otras APIs
+
+Esta API de segmentos rentables difiere de las APIs básicas y avanzadas en:
+
+1. **Enfoque en segmentación**: Se centra específicamente en identificar segmentos de audiencia rentables
+2. **Integración con base de datos**: Puede crear y actualizar segmentos directamente en la base de datos
+3. **Análisis de rentabilidad**: Utiliza métricas específicas para evaluar la rentabilidad de cada segmento
+4. **Modo conversacional JSON**: Proporciona respuestas estructuradas en formato JSON para facilitar la integración
+
+> **Nota:** Si necesitas un análisis general del sitio, utiliza la [API de Análisis de UX de Sitios Web](/api/analysis/site). Para análisis más específicos de estructura, utiliza la [API de Análisis Estructural](/api/analysis/site#post-apisiteanalyzestructure).
+
+## Códigos de estado
+
+- `200 OK`: La solicitud se completó correctamente
+- `201 Created`: Los segmentos se crearon correctamente en la base de datos
+- `400 Bad Request`: Parámetros de solicitud inválidos
+- `401 Unauthorized`: No autorizado para acceder a este recurso
+- `403 Forbidden`: Prohibido el acceso a este recurso
+- `404 Not Found`: El recurso solicitado no existe
+- `409 Conflict`: Conflicto con segmentos existentes
+- `429 Too Many Requests`: Se ha excedido el límite de solicitudes
+- `500 Internal Server Error`: Error en el servidor durante el análisis
+- `504 Gateway Timeout`: Tiempo de espera agotado durante el análisis
+
+## Ejemplos de uso
+
+### Analizar segmentos sin crearlos
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer tu_token_api'
+  },
+  body: JSON.stringify({
+    url: 'https://ejemplo.com',
+    segmentCount: 5,
+    mode: 'analyze',
+    createSegments: false,
+    profitabilityMetrics: ['conversionRate', 'ltv', 'engagementRate'],
+    includeRationale: true,
+    additionalInstructions: "Enfocarse en segmentos con alto potencial de compra recurrente",
+    aiProvider: 'openai',
+    aiModel: 'gpt-4o',
+    conversationMode: 'json'
+  })
+});
+
+const data = await response.json();
+console.log(data.segments); // Segmentos identificados
+console.log(data.siteContext); // Contexto del sitio
+```
+
+### Crear segmentos automáticamente
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer tu_token_api'
+  },
+  body: JSON.stringify({
+    url: 'https://ejemplo.com',
+    segmentCount: 10,
+    mode: 'create',
+    createSegments: true,
+    segmentsToCreate: 8, // Crear solo 8 segmentos en la base de datos
+    profitabilityMetrics: ['conversionRate', 'aov', 'ltv'],
+    segmentAttributes: ['demographic', 'behavioral', 'psychographic'],
+    industryContext: 'ecommerce',
+    additionalInstructions: "Identificar segmentos con alto potencial de monetización a través de suscripciones y analizar patrones de uso en dispositivos móviles.",
+    aiProvider: 'anthropic',
+    aiModel: 'claude-3-5-sonnet-20240620',
+    conversationMode: 'json'
+  })
+});
+
+const data = await response.json();
+console.log(`Segmentos creados: ${data.segmentsCreated}`);
+console.log(data.segments.filter(s => s.createdInDatabase)); // Segmentos creados en la DB
+```
+
+### Obtener segmentos del usuario
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments/user', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer tu_token_api'
+  }
+});
+
+const data = await response.json();
+console.log(`Total de segmentos: ${data.totalSegments}`);
+console.log(data.segments); // Todos los segmentos del usuario
+``` 
