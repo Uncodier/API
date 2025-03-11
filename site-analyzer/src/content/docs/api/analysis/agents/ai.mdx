@@ -105,16 +105,19 @@ console.log(data.choices[0].message.content);
 
 Puedes probar el endpoint directamente desde aquí:
 
-import { UnifiedApiTester } from '@/components';
+import { UnifiedApiTester } from '@/components/ApiTester';
 
 <UnifiedApiTester 
   apiType="ai"
   defaultEndpoint="/api/ai"
   title="Prueba el endpoint de IA"
   description="Utiliza este formulario para probar el endpoint de IA con diferentes parámetros y ver la respuesta en tiempo real."
-  defaultMessage="Hola, ¿puedes ayudarme con mi sitio web?"
+  defaultQuery="Hola, ¿puedes ayudarme con mi sitio web?"
   defaultModel="claude-3-5-sonnet-20240620"
   defaultModelType="anthropic"
   showModelOptions={true}
   showScreenshotOption={false}
+  defaultUrl=""
+  showJsonOption={false}
+  showSiteUrlField={false}
 /> 

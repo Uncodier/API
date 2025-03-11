@@ -8,11 +8,13 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import Portkey from 'portkey-ai';
+import { Portkey } from 'portkey-ai';
 import { getRequestOptions } from '@/lib/config/analyzer-config';
 import { handleIncompleteJsonResponse, formatJsonResponse } from '@/lib/utils/api-utils';
 import { fetchHtml } from '@/lib/utils/html-utils';
 import { captureScreenshot, prepareImageForAPI } from '@/lib/utils/image-utils';
+import { prepareAnalysisData } from '@/lib/utils/api-utils';
+import { AnalyzeRequest } from '@/lib/types/analyzer-types';
 
 // Verificar claves disponibles
 if (!process.env.PORTKEY_API_KEY) {
@@ -36,97 +38,110 @@ const PROVIDER_TO_VIRTUAL_KEY: Record<string, string> = {
 };
 
 /**
- * Maneja las solicitudes POST al endpoint de conversación
+ * Procesa una solicitud de conversación con modelos de IA
+ * Esta función puede ser utilizada internamente por otros servicios sin necesidad de hacer una solicitud HTTP
  * 
- * @param {NextRequest} request - La solicitud HTTP entrante
- * @returns {Promise<NextResponse>} Respuesta HTTP con el resultado de la conversación
- * 
- * @example
- * Ejemplo de cuerpo de solicitud:
- * ```json
- * {
- *   "messages": [
- *     { "role": "user", "content": "Hola, ¿puedes ayudarme con mi sitio web?" }
- *   ],
- *   "modelType": "anthropic",
- *   "modelId": "claude-3-5-sonnet-20240620",
- *   "includeScreenshot": false,
- *   "siteUrl": "https://example.com",
- *   "responseFormat": "json" // Opcional: solicitar respuesta en formato JSON
- * }
- * ```
+ * @param options Opciones para la conversación
+ * @returns Respuesta del modelo de IA
  */
-export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { 
-      messages, 
-      modelType = 'anthropic', 
-      modelId, 
-      includeScreenshot = false, 
-      siteUrl,
-      responseFormat
-    } = body;
-    
-    // Verificar si se solicita una respuesta en formato JSON
-    const requestJsonResponse = responseFormat === 'json';
-    
-    if (!messages || !Array.isArray(messages)) {
-      return NextResponse.json(
-        { error: 'Se requiere un array de mensajes' },
-        { status: 400 }
-      );
-    }
-    
-    // Obtener la clave virtual para el proveedor seleccionado
-    const virtualKey = PROVIDER_TO_VIRTUAL_KEY[modelType] || PROVIDER_TO_VIRTUAL_KEY['anthropic'];
-    
-    // Crear un cliente Portkey con la API key y virtual key específica
-    const portkey = new Portkey({
-      apiKey: process.env.PORTKEY_API_KEY || '',
-      virtualKey: virtualKey,
-      baseURL: 'https://api.portkey.ai/v1'
-    });
-    
-    // Obtener opciones de solicitud
-    const requestOptions = getRequestOptions(modelType, modelId);
-    
-    // Configurar opciones del modelo según el tipo
-    let modelOptions;
-    
-    switch(modelType) {
-      case 'anthropic':
-        modelOptions = {
-          model: requestOptions.anthropic.model,
-          max_tokens: requestOptions.anthropic.max_tokens,
-        };
-        break;
-      case 'openai':
-        modelOptions = {
-          model: requestOptions.openai.model,
-          max_tokens: requestOptions.openai.max_tokens,
-        };
-        break;
-      case 'gemini':
-        modelOptions = {
-          model: requestOptions.gemini.model,
-          max_tokens: requestOptions.gemini.max_tokens,
-        };
-        break;
-      default:
-        modelOptions = {
-          model: requestOptions.anthropic.model,
-          max_tokens: requestOptions.anthropic.max_tokens,
-        };
-    }
-    
-    // Si se incluye la URL del sitio, añadir información contextual
-    let enhancedMessages = [...messages];
-    
-    // Si se solicita una respuesta en formato JSON, añadir instrucciones específicas
-    if (requestJsonResponse) {
-      // Añadir instrucciones para formato JSON según el proveedor
-      const jsonInstructions = `
+export async function processConversation(options: {
+  messages: Array<{
+    role: 'system' | 'user' | 'assistant';
+    content: string | any;
+  }>;
+  modelType: 'anthropic' | 'openai' | 'gemini';
+  modelId: string;
+  includeScreenshot?: boolean;
+  siteUrl?: string;
+  responseFormat?: 'json' | 'text';
+  timeout?: number;
+}) {
+  console.log('[Conversation Service] Iniciando procesamiento con opciones:', JSON.stringify({
+    modelType: options.modelType,
+    modelId: options.modelId,
+    includeScreenshot: options.includeScreenshot,
+    siteUrl: options.siteUrl,
+    responseFormat: options.responseFormat,
+    messagesCount: options.messages?.length,
+    timeout: options.timeout
+  }));
+  
+  const { 
+    messages, 
+    modelType = 'anthropic', 
+    modelId, 
+    includeScreenshot = false, 
+    siteUrl,
+    responseFormat,
+    timeout = 45000
+  } = options;
+  
+  // Verificar si se solicita una respuesta en formato JSON
+  const requestJsonResponse = responseFormat === 'json';
+  console.log('[Conversation Service] JSON response requested:', requestJsonResponse);
+  
+  if (!messages || !Array.isArray(messages)) {
+    console.log('[Conversation Service] Error: Se requiere un array de mensajes');
+    throw new Error('Se requiere un array de mensajes');
+  }
+  
+  // Obtener la clave virtual para el proveedor seleccionado
+  const virtualKey = PROVIDER_TO_VIRTUAL_KEY[modelType] || PROVIDER_TO_VIRTUAL_KEY['anthropic'];
+  console.log('[Conversation Service] Using provider:', modelType);
+  console.log('[Conversation Service] Virtual key available:', !!virtualKey);
+  
+  // Crear un cliente Portkey con la API key y virtual key específica
+  console.log('[Conversation Service] Creating Portkey client');
+  const portkey = new Portkey({
+    apiKey: process.env.PORTKEY_API_KEY || '',
+    virtualKey: virtualKey,
+    baseURL: 'https://api.portkey.ai/v1'
+  });
+  console.log('[Conversation Service] Portkey client created');
+  
+  // Obtener opciones de solicitud
+  console.log('[Conversation Service] Getting request options for model:', modelType, modelId);
+  const requestOptions = getRequestOptions(modelType, modelId);
+  console.log('[Conversation Service] Request options obtained');
+  
+  // Configurar opciones del modelo según el tipo
+  let modelOptions;
+  
+  switch(modelType) {
+    case 'anthropic':
+      modelOptions = {
+        model: requestOptions.anthropic.model,
+        max_tokens: requestOptions.anthropic.max_tokens,
+      };
+      break;
+    case 'openai':
+      modelOptions = {
+        model: requestOptions.openai.model,
+        max_tokens: requestOptions.openai.max_tokens,
+      };
+      break;
+    case 'gemini':
+      modelOptions = {
+        model: requestOptions.gemini.model,
+        max_tokens: requestOptions.gemini.max_tokens,
+      };
+      break;
+    default:
+      modelOptions = {
+        model: requestOptions.anthropic.model,
+        max_tokens: requestOptions.anthropic.max_tokens,
+      };
+  }
+  console.log('[Conversation Service] Model options configured:', JSON.stringify(modelOptions));
+  
+  // Si se incluye la URL del sitio, añadir información contextual
+  let enhancedMessages = [...messages];
+  
+  // Si se solicita una respuesta en formato JSON, añadir instrucciones específicas
+  if (requestJsonResponse) {
+    console.log('[Conversation Service] Adding JSON format instructions');
+    // Añadir instrucciones para formato JSON según el proveedor
+    const jsonInstructions = `
 Cuando se solicite una respuesta en formato JSON, sigue estas instrucciones:
 
 1. Estructura tu respuesta como un objeto JSON válido.
@@ -191,283 +206,258 @@ Para respuestas de preguntas generales:
 
 Asegúrate de que tu respuesta sea un JSON válido y completo.`;
 
-      switch(modelType) {
-        case 'anthropic':
-          enhancedMessages.unshift({
-            role: 'system',
-            content: jsonInstructions
-          });
-          break;
-        case 'openai':
-          enhancedMessages.unshift({
-            role: 'system',
-            content: jsonInstructions
-          });
-          break;
-        case 'gemini':
-          // Gemini usa 'user' para el primer mensaje del sistema
-          enhancedMessages.unshift({
-            role: 'user',
-            content: jsonInstructions
-          });
-          break;
+    switch(modelType) {
+      case 'anthropic':
+        enhancedMessages.unshift({
+          role: 'system',
+          content: jsonInstructions
+        });
+        break;
+      case 'openai':
+        enhancedMessages.unshift({
+          role: 'system',
+          content: jsonInstructions
+        });
+        break;
+      case 'gemini':
+        // Gemini usa 'user' para el primer mensaje del sistema
+        enhancedMessages.unshift({
+          role: 'user',
+          content: jsonInstructions
+        });
+        break;
+    }
+  }
+  
+  // Si se incluye la URL del sitio, añadir información contextual
+  if (siteUrl) {
+    console.log('[Conversation Service] Site URL provided, adding context');
+    
+    // Crear una solicitud de análisis para obtener datos del sitio
+    const analyzeRequest: AnalyzeRequest = {
+      url: siteUrl,
+      options: {
+        includeScreenshot,
+        timeout,
+        provider: modelType,
+        modelId
       }
+    };
+    
+    console.log(`[Conversation Service] Configuración de analyzeRequest:`, {
+      url: analyzeRequest.url,
+      timeout: analyzeRequest.options?.timeout,
+      includeScreenshot: analyzeRequest.options?.includeScreenshot,
+      provider: analyzeRequest.options?.provider,
+      modelId: analyzeRequest.options?.modelId
+    });
+    
+    // Utilizar la función prepareAnalysisData para obtener HTML y screenshot de manera consistente
+    console.log(`[Conversation Service] Obteniendo datos del sitio con prepareAnalysisData`);
+    const analysisData = await prepareAnalysisData(analyzeRequest);
+    console.log(`[Conversation Service] Datos del sitio obtenidos`);
+    
+    // Añadir HTML al contexto si está disponible
+    if (analysisData.htmlContent) {
+      console.log(`[Conversation Service] Añadiendo HTML al contexto (${analysisData.htmlContent.length} bytes)`);
+      enhancedMessages.unshift({
+        role: 'user',
+        content: `Aquí está el HTML del sitio ${siteUrl} para tu análisis:\n\n${analysisData.htmlContent}`
+      });
     }
     
-    // Si se incluye la URL del sitio, añadir información contextual
-    if (siteUrl) {
-      console.log(`[Conversation API] Procesando sitio web: ${siteUrl}`);
+    // Añadir screenshot al contexto si está disponible y se solicitó
+    if (includeScreenshot && analysisData.screenshotData) {
+      console.log(`[Conversation Service] Añadiendo screenshot al contexto`);
       
-      try {
-        // Obtener HTML del sitio si se proporciona una URL
-        let htmlContent = '';
-        let screenshotBase64 = '';
+      // Preparar la imagen para la API según el proveedor
+      const imageData = await prepareImageForAPI(analysisData.screenshotData);
+      
+      if (imageData) {
+        console.log(`[Conversation Service] Imagen preparada para ${modelType}`);
         
-        // Capturar HTML del sitio
-        try {
-          htmlContent = await fetchHtml(siteUrl, { timeout: 30000 });
-          console.log(`[Conversation API] HTML obtenido (${htmlContent.length} bytes)`);
-        } catch (htmlError) {
-          console.warn(`[Conversation API] Error al obtener HTML: ${htmlError}`);
-          htmlContent = '';
-        }
-        
-        // Capturar screenshot si se solicita
-        if (includeScreenshot) {
-          try {
-            screenshotBase64 = await captureScreenshot(siteUrl, { timeout: 30000 }) || '';
-            console.log(`[Conversation API] Screenshot capturado (${screenshotBase64.length} bytes)`);
-          } catch (screenshotError) {
-            console.warn(`[Conversation API] Error al capturar screenshot: ${screenshotError}`);
-            screenshotBase64 = '';
-          }
-        }
-        
-        // Añadir información contextual sobre el sitio según el proveedor
-        switch(modelType) {
+        switch (modelType) {
           case 'anthropic':
-            enhancedMessages.unshift({
-              role: 'system',
-              content: `Esta conversación está relacionada con el análisis del sitio web: ${siteUrl}. Proporciona respuestas útiles y específicas sobre este sitio cuando sea relevante.`
-            });
-            break;
-          case 'openai':
-            enhancedMessages.unshift({
-              role: 'system',
-              content: `Esta conversación está relacionada con el análisis del sitio web: ${siteUrl}. Proporciona respuestas útiles y específicas sobre este sitio cuando sea relevante.`
-            });
-            break;
-          case 'gemini':
-            // Gemini usa 'user' para el primer mensaje del sistema
             enhancedMessages.unshift({
               role: 'user',
-              content: `Esta conversación está relacionada con el análisis del sitio web: ${siteUrl}. Proporciona respuestas útiles y específicas sobre este sitio cuando sea relevante.`
+              content: [
+                {
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: 'image/png',
+                    data: imageData
+                  }
+                },
+                {
+                  type: 'text',
+                  text: `Aquí hay una captura de pantalla del sitio ${siteUrl} para tu análisis.`
+                }
+              ]
+            });
+            break;
+          case 'openai':
+            enhancedMessages.unshift({
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: `Aquí hay una captura de pantalla del sitio ${siteUrl} para tu análisis.`
+                },
+                {
+                  type: 'image_url',
+                  image_url: {
+                    url: imageData.startsWith('data:image/') ? imageData : `data:image/png;base64,${imageData}`
+                  }
+                }
+              ]
+            });
+            break;
+          case 'gemini':
+            enhancedMessages.unshift({
+              role: 'user',
+              content: `Aquí hay una captura de pantalla del sitio ${siteUrl} para tu análisis: [IMAGE: ${imageData.startsWith('data:image/') ? imageData : `data:image/png;base64,${imageData}`}]`
             });
             break;
         }
-        
-        // Añadir HTML como contexto si está disponible
-        if (htmlContent) {
-          // Limitar el tamaño del HTML para evitar exceder los límites del contexto
-          const maxHtmlLength = 50000; // Ajustar según los límites del modelo
-          const truncatedHtml = htmlContent.length > maxHtmlLength 
-            ? htmlContent.substring(0, maxHtmlLength) + '... [HTML truncado por tamaño]' 
-            : htmlContent;
-          
-          // Añadir HTML según el formato del proveedor
-          switch(modelType) {
-            case 'anthropic':
-              enhancedMessages.unshift({
-                role: 'system',
-                content: `HTML del sitio web (puede estar truncado):\n\`\`\`html\n${truncatedHtml}\n\`\`\``
-              });
-              break;
-            case 'openai':
-              // Para OpenAI, podemos usar tanto system como user para texto plano
-              enhancedMessages.unshift({
-                role: 'system',
-                content: `HTML del sitio web (puede estar truncado):\n\`\`\`html\n${truncatedHtml}\n\`\`\``
-              });
-              break;
-            case 'gemini':
-              // Gemini usa 'user' para mensajes del sistema
-              enhancedMessages.unshift({
-                role: 'user',
-                content: `HTML del sitio web (puede estar truncado):\n\`\`\`html\n${truncatedHtml}\n\`\`\``
-              });
-              break;
-          }
-        }
-        
-        // Añadir screenshot como imagen si está disponible
-        if (screenshotBase64 && includeScreenshot) {
-          // Preparar la imagen para el modelo
-          const processedImage = prepareImageForAPI(screenshotBase64);
-          
-          if (processedImage) {
-            // Añadir imagen según el formato del proveedor
-            switch(modelType) {
-              case 'anthropic':
-                // Para Claude, añadir la imagen como un mensaje con contenido mixto
-                enhancedMessages.unshift({
-                  role: 'system',
-                  content: [
-                    {
-                      type: 'image',
-                      source: {
-                        type: 'base64',
-                        media_type: 'image/png',
-                        data: processedImage.replace(/^data:image\/[^;]+;base64,/, '')
-                      }
-                    },
-                    {
-                      type: 'text',
-                      text: 'Captura de pantalla del sitio web para referencia visual.'
-                    }
-                  ]
-                });
-                break;
-              case 'openai':
-                // Para OpenAI, añadir la imagen como un mensaje con contenido mixto
-                // IMPORTANTE: OpenAI solo permite imágenes en mensajes con role 'user'
-                enhancedMessages.unshift({
-                  role: 'user',
-                  content: [
-                    {
-                      type: 'text',
-                      text: 'Captura de pantalla del sitio web para referencia visual:'
-                    },
-                    {
-                      type: 'image_url',
-                      image_url: {
-                        url: processedImage
-                      }
-                    }
-                  ]
-                });
-                break;
-              case 'gemini':
-                // Para Gemini, añadir la imagen como texto (no soporta imágenes directamente en este contexto)
-                enhancedMessages.unshift({
-                  role: 'user',
-                  content: 'Se ha capturado una imagen del sitio web, pero este modelo no puede procesarla directamente en este contexto.'
-                });
-                break;
-            }
-          }
-        }
-      } catch (siteProcessingError) {
-        console.error(`[Conversation API] Error al procesar el sitio: ${siteProcessingError}`);
-        // Continuar con la conversación sin el contexto del sitio
       }
     }
+  }
+  
+  // Configurar el controlador de tiempo de espera
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    console.warn(`[Conversation Service] Timeout excedido (${timeout}ms)`);
+    controller.abort();
+  }, timeout);
+  
+  try {
+    // Registrar inicio del análisis con timestamp para medir duración
+    const startTime = Date.now();
+    console.log(`[Conversation Service] Iniciando solicitud a las ${new Date(startTime).toISOString()}`);
     
-    // Realizar la solicitud a la API
-    console.log(`[Conversation API] Enviando solicitud a ${modelType} ${modelId || 'default'} usando clave virtual ${virtualKey}...`);
+    // Realizar la solicitud a la API del modelo
+    console.log('[Conversation Service] Sending request to model API');
+    const result = await portkey.chat.completions.create({
+      ...modelOptions,
+      messages: enhancedMessages,
+      temperature: 0.7,
+      stream: false
+    });
     
-    // Verificar y adaptar el formato de los mensajes según el proveedor
-    const adaptedMessages = enhancedMessages.map(msg => {
-      // Asegurarse de que el contenido tenga el formato correcto para cada proveedor
-      if (typeof msg.content === 'string') {
-        return msg;
-      } else if (Array.isArray(msg.content)) {
-        // Para contenido estructurado (como imágenes)
-        switch(modelType) {
-          case 'anthropic':
-            // Claude acepta contenido estructurado
-            return msg;
-          case 'openai':
-            // OpenAI acepta contenido estructurado pero solo en mensajes 'user'
-            if (msg.role !== 'user' && msg.content.some((item: any) => item.type === 'image_url')) {
-              console.warn('[Conversation API] OpenAI solo permite imágenes en mensajes con role "user". Cambiando role a "user".');
-              return {
-                ...msg,
-                role: 'user'
-              };
-            }
-            return msg;
-          case 'gemini':
-            // Gemini no acepta contenido estructurado, convertir a texto
-            return {
-              role: msg.role,
-              content: 'Contenido multimedia no soportado por este modelo'
-            };
-          default:
-            return msg;
-        }
+    // Registrar fin del análisis y calcular duración
+    const endTime = Date.now();
+    const duration = (endTime - startTime) / 1000; // en segundos
+    console.log(`[Conversation Service] Request completed in ${duration.toFixed(2)} seconds`);
+    
+    // Limpiar el timeout
+    clearTimeout(timeoutId);
+    
+    // Procesar la respuesta según el formato solicitado
+    console.log('[Conversation Service] Processing response');
+    
+    // Añadir metadatos de la solicitud
+    const responseWithMetadata = {
+      ...result,
+      _requestMetadata: {
+        timestamp: new Date().toISOString(),
+        duration: duration,
+        modelType: modelType,
+        modelId: modelId,
+        siteUrl: siteUrl,
+        includeScreenshot: includeScreenshot
       }
-      return msg;
-    });
+    };
     
-    // Registrar la estructura de los mensajes para depuración
-    console.log(`[Conversation API] Estructura de mensajes adaptados para ${modelType}:`);
-    adaptedMessages.forEach((msg, index) => {
-      const contentType = typeof msg.content === 'string' ? 'texto' : 'estructurado';
-      console.log(`[Conversation API] Mensaje ${index}: role=${msg.role}, tipo=${contentType}`);
-    });
+    return responseWithMetadata;
+  } catch (apiError: any) {
+    // Limpiar el timeout
+    clearTimeout(timeoutId);
+    
+    console.error('[Conversation Service] Error calling model API:', apiError);
+    throw new Error(`Error calling model API: ${apiError.message || 'Unknown error'}`);
+  }
+}
+
+/**
+ * Maneja las solicitudes POST al endpoint de conversación
+ * 
+ * @param {NextRequest} request - La solicitud HTTP entrante
+ * @returns {Promise<NextResponse>} Respuesta HTTP con el resultado de la conversación
+ * 
+ * @example
+ * Ejemplo de cuerpo de solicitud:
+ * ```json
+ * {
+ *   "messages": [
+ *     { "role": "user", "content": "Hola, ¿puedes ayudarme con mi sitio web?" }
+ *   ],
+ *   "modelType": "anthropic",
+ *   "modelId": "claude-3-5-sonnet-20240620",
+ *   "includeScreenshot": false,
+ *   "siteUrl": "https://example.com",
+ *   "responseFormat": "json" // Opcional: solicitar respuesta en formato JSON
+ * }
+ * ```
+ */
+export async function POST(request: NextRequest) {
+  console.log('[API:conversation] POST request received');
+  try {
+    console.log('[API:conversation] Parsing request body');
+    const body = await request.json();
+    
+    // Log completo del body para depuración
+    console.log('[API:conversation] Request body completo:', JSON.stringify(body));
+    
+    console.log('[API:conversation] Request body parsed:', JSON.stringify({
+      modelType: body.modelType,
+      modelId: body.modelId,
+      includeScreenshot: body.includeScreenshot,
+      siteUrl: body.siteUrl,
+      url: body.url, // Añadir log para url
+      responseFormat: body.responseFormat,
+      toJSON: body.toJSON, // Añadir log para toJSON
+      messagesCount: body.messages?.length
+    }));
+    
+    const { 
+      messages, 
+      modelType = 'anthropic', 
+      modelId, 
+      includeScreenshot = false, 
+      siteUrl = body.url, // Usar url como fallback para siteUrl
+      responseFormat,
+      toJSON,
+      timeout = 45000
+    } = body;
     
     try {
-      const response = await portkey.chat.completions.create({
-        messages: adaptedMessages,
-        ...modelOptions
+      // Usar la función processConversation para procesar la solicitud
+      const result = await processConversation({
+        messages,
+        modelType,
+        modelId,
+        includeScreenshot,
+        siteUrl,
+        // Si responseFormat no está definido pero toJSON sí, usar toJSON para determinar el formato
+        responseFormat: responseFormat || (toJSON !== undefined ? (toJSON ? 'json' : 'text') : undefined),
+        timeout
       });
       
-      // Verificar si la respuesta contiene un JSON incompleto y manejarlo
-      const processedResponse = await handleIncompleteJsonResponse(response, adaptedMessages, modelType, modelId);
-      
-      // Extraer el contenido de la respuesta según el proveedor
-      let content = '';
-      
-      if (modelType === 'anthropic') {
-        content = processedResponse.content?.[0]?.text || '';
-      } else if (modelType === 'openai') {
-        content = processedResponse.choices?.[0]?.message?.content || '';
-      } else if (modelType === 'gemini') {
-        content = processedResponse.candidates?.[0]?.content?.parts?.[0]?.text || '';
-      }
-      
-      // Procesar la respuesta para formato JSON si se solicitó
-      const formattedResponse = formatJsonResponse(content, requestJsonResponse);
-      
-      // Actualizar la respuesta con el contenido formateado
-      if (modelType === 'anthropic') {
-        processedResponse.content[0].text = formattedResponse.content;
-      } else if (modelType === 'openai') {
-        processedResponse.choices[0].message.content = formattedResponse.content;
-      } else if (modelType === 'gemini') {
-        processedResponse.candidates[0].content.parts[0].text = formattedResponse.content;
-      }
-      
-      // Añadir metadatos de JSON a la respuesta
-      return NextResponse.json({
-        ...processedResponse,
-        _metadata: {
-          isJsonResponse: formattedResponse.isJsonResponse,
-          extractedJson: formattedResponse.extractedJson,
-          requestedJsonFormat: requestJsonResponse
-        }
-      });
-    } catch (apiError: any) {
-      console.error('[Conversation API] Error al llamar a la API:', apiError);
-      
-      // Proporcionar un mensaje de error más detallado
-      let errorMessage = apiError.message || 'Error desconocido al procesar la solicitud';
-      
-      // Si hay información adicional en el error, incluirla
-      if (apiError.response?.data) {
-        errorMessage = JSON.stringify(apiError.response.data);
-      }
-      
+      // Devolver la respuesta
+      return NextResponse.json(result);
+    } catch (error: any) {
+      console.error('[API:conversation] Error processing conversation:', error);
       return NextResponse.json(
-        { error: errorMessage },
+        { error: error.message || 'Error al procesar la conversación' },
         { status: 500 }
       );
     }
   } catch (error: any) {
-    console.error('[Conversation API] Error:', error);
+    console.error('[API:conversation] Error parsing request:', error);
     return NextResponse.json(
-      { error: error.message || 'Error al procesar la solicitud' },
-      { status: 500 }
+      { error: 'Error al procesar la solicitud' },
+      { status: 400 }
     );
   }
 }
@@ -493,12 +483,13 @@ export async function GET(request: NextRequest) {
         modelId: 'claude-3-5-sonnet-20240620',
         includeScreenshot: false,
         siteUrl: 'https://example.com',
-        responseFormat: 'json' // Opcional: solicitar respuesta en formato JSON
+        responseFormat: 'json', // Opcional: solicitar respuesta en formato JSON
+        toJSON: true // Alternativa a responseFormat: 'json'
       },
       features: {
         html_processing: "Si se proporciona una URL en siteUrl, se capturará automáticamente el HTML del sitio y se incluirá como contexto en la conversación",
         screenshot: "Si includeScreenshot es true y se proporciona una URL en siteUrl, se capturará una imagen del sitio y se incluirá como contexto visual (solo compatible con modelos que soporten imágenes)",
-        json_format: "Si responseFormat es 'json', se solicitará al modelo que estructure su respuesta como un objeto JSON y se devolverá formateado",
+        json_format: "Si responseFormat es 'json' o toJSON es true, se solicitará al modelo que estructure su respuesta como un objeto JSON y se devolverá formateado",
         providers: {
           anthropic: "Soporta HTML y capturas de pantalla como imágenes",
           openai: "Soporta HTML y capturas de pantalla como imágenes",

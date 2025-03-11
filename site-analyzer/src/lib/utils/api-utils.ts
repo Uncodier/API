@@ -16,21 +16,36 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
 }> {
   // Aumentar el timeout por defecto para dar más tiempo a la carga de contenido dinámico
   const timeout = request.options?.timeout || 60000; // Aumentar a 60 segundos para sitios complejos
-  const includeScreenshot = request.options?.includeScreenshot !== false;
+  const includeScreenshot = request.options?.includeScreenshot === true; // Asegurarse de que sea booleano
   
-  console.log(`[prepareAnalysisData] includeScreenshot: ${includeScreenshot}, timeout: ${timeout}ms`);
+  console.log(`[prepareAnalysisData] Iniciando preparación de datos para ${request.url}`);
+  console.log(`[prepareAnalysisData] Opciones recibidas:`, request.options);
+  console.log(`[prepareAnalysisData] Opciones procesadas: includeScreenshot=${includeScreenshot}, timeout=${timeout}ms`);
   
   // Capturar screenshot si no se proporcionó y si no está explícitamente desactivado
   let screenshotData = request.screenshot;
   if (!screenshotData && includeScreenshot) {
     console.log('[prepareAnalysisData] Capturando screenshot...');
-    screenshotData = await captureScreenshot(request.url, { timeout });
+    try {
+      screenshotData = await captureScreenshot(request.url, { timeout });
+      console.log(`[prepareAnalysisData] Screenshot capturado: ${screenshotData ? screenshotData.length : 0} bytes`);
+    } catch (error) {
+      console.error(`[prepareAnalysisData] Error al capturar screenshot: ${error}`);
+      screenshotData = undefined;
+    }
   } else if (!includeScreenshot) {
     console.log('[prepareAnalysisData] Screenshot desactivado por el usuario');
+  } else {
+    console.log(`[prepareAnalysisData] Usando screenshot proporcionado: ${screenshotData ? screenshotData.length : 0} bytes`);
   }
   
   // Preparar la imagen para la API solo si tenemos screenshot
-  const processedImage = screenshotData ? prepareImageForAPI(screenshotData) : undefined;
+  let processedImage;
+  if (screenshotData) {
+    console.log('[prepareAnalysisData] Procesando imagen para API...');
+    processedImage = prepareImageForAPI(screenshotData);
+    console.log(`[prepareAnalysisData] Imagen procesada: ${processedImage ? 'disponible' : 'no disponible'}`);
+  }
   
   // Obtener el HTML si no se proporcionó
   let htmlContent = request.htmlContent;
@@ -55,7 +70,11 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
         preserveNavigation: true,
         preserveCTAs: true,
         maxTextNodeLength: 30, // Reducir para ahorrar espacio en textos
-        maxTextLength: 200000 // Aumentar para asegurar que se capture la estructura completa
+        maxTextLength: 200000, // Aumentar para asegurar que se capture la estructura completa
+        cleanHead: true,
+        cleanFooter: true,
+        headExcludePatterns: [],
+        footerExcludePatterns: []
       };
       
       const preprocessResult = await preprocessHtml(request.url, preprocessOptions);

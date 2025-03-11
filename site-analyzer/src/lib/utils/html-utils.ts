@@ -10,6 +10,11 @@ export async function fetchHtml(url: string, options?: { timeout?: number }): Pr
   const timeout = options?.timeout || 30000;
   console.log(`[fetchHtml] Obteniendo HTML de ${url} con timeout ${timeout}ms`);
   
+  if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+    console.error(`[fetchHtml] URL inválida: ${url}`);
+    throw new Error(`URL inválida: ${url}`);
+  }
+  
   // Primero intentamos con Puppeteer para sitios con JavaScript
   try {
     console.log(`[fetchHtml] Intentando obtener HTML con Puppeteer...`);

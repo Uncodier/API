@@ -197,11 +197,19 @@ export function validateImageForVision(imageData: string | undefined): boolean {
  * Captura una screenshot de la URL proporcionada utilizando Puppeteer
  */
 export async function captureScreenshot(url: string, options?: { timeout?: number }): Promise<string | undefined> {
+  const timeout = options?.timeout || 30000;
   console.log(`[captureScreenshot] Iniciando captura de screenshot para: ${url}`);
+  console.log(`[captureScreenshot] Opciones: timeout=${timeout}ms`);
+  
+  if (!url || typeof url !== 'string' || !url.startsWith('http')) {
+    console.error(`[captureScreenshot] URL inválida: ${url}`);
+    return undefined;
+  }
   
   let browser;
   try {
     // Configurar el navegador
+    console.log(`[captureScreenshot] Lanzando navegador Puppeteer...`);
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -212,19 +220,24 @@ export async function captureScreenshot(url: string, options?: { timeout?: numbe
         '--disable-web-security'
       ]
     });
+    console.log(`[captureScreenshot] Navegador lanzado correctamente`);
     
     // Crear una nueva página
+    console.log(`[captureScreenshot] Creando nueva página...`);
     const page = await browser.newPage();
+    console.log(`[captureScreenshot] Página creada correctamente`);
     
     // Configurar viewport para capturar una buena parte de la página
+    console.log(`[captureScreenshot] Configurando viewport...`);
     await page.setViewport({
       width: 1280,
       height: 1024,
       deviceScaleFactor: 1,
     });
+    console.log(`[captureScreenshot] Viewport configurado correctamente`);
     
     // Configurar timeout
-    const timeout = options?.timeout || 30000;
+    console.log(`[captureScreenshot] Configurando timeout: ${timeout}ms`);
     await page.setDefaultNavigationTimeout(timeout);
     
     // Navegar a la URL
@@ -233,17 +246,20 @@ export async function captureScreenshot(url: string, options?: { timeout?: numbe
       waitUntil: 'networkidle2',
       timeout: timeout
     });
+    console.log(`[captureScreenshot] Navegación completada correctamente`);
     
     // Esperar un poco para que se carguen elementos dinámicos
+    console.log(`[captureScreenshot] Esperando 2 segundos para elementos dinámicos...`);
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     // Tomar screenshot
     console.log('[captureScreenshot] Tomando screenshot...');
     const screenshot = await page.screenshot({ type: 'png' });
+    console.log(`[captureScreenshot] Screenshot tomado: ${screenshot.length} bytes`);
     
     // Convertir a base64
     const base64Image = Buffer.from(screenshot).toString('base64');
-    console.log(`[captureScreenshot] Screenshot capturado: ${base64Image.length} bytes`);
+    console.log(`[captureScreenshot] Screenshot convertido a base64: ${base64Image.length} bytes`);
     
     return `data:image/png;base64,${base64Image}`;
   } catch (error) {
@@ -252,8 +268,12 @@ export async function captureScreenshot(url: string, options?: { timeout?: numbe
   } finally {
     // Cerrar el navegador
     if (browser) {
-      await browser.close();
-      console.log('[captureScreenshot] Navegador cerrado');
+      try {
+        await browser.close();
+        console.log('[captureScreenshot] Navegador cerrado en bloque finally');
+      } catch (closeError) {
+        console.error(`[captureScreenshot] Error al cerrar el navegador: ${closeError}`);
+      }
     }
   }
 } 
