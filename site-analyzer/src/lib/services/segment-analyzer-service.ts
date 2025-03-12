@@ -1,6 +1,7 @@
 import { createSegmentInDatabase, updateSegment, findSimilarSegments } from '@/lib/database/segment-db'
 import { generateSegmentId } from '../utils/id-generator'
-import { analyzeWithConversationApi } from './conversation-client'
+import { analyzeWithConversationApi, sendConversationRequest } from './conversation-client'
+import { continueJsonGeneration, isIncompleteJson, attemptJsonRepair } from './continuation-service'
 
 interface SegmentAnalysisOptions {
   url: string;
@@ -16,6 +17,7 @@ interface SegmentAnalysisOptions {
   aiProvider: 'openai' | 'anthropic' | 'gemini';
   aiModel: string;
   userId: string;
+  site_id?: string;
   includeScreenshot?: boolean;
 }
 
@@ -26,8 +28,8 @@ interface SegmentAnalysisResult {
     description: string;
     summary: string;
     estimatedSize: string;
-    profitabilityScore: number;
-    confidenceScore: number;
+    profitabilityScore?: number;
+    confidenceScore?: number;
     targetAudience: string | string[];
     audienceProfile?: Record<string, any>;
     language: string;
@@ -79,39 +81,200 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
     const prompt = prepareSegmentAnalysisPrompt(options);
     console.log('[SegmentAnalyzer] Prompt prepared, length:', prompt.length);
     
+    // Aumentar el timeout para respuestas grandes
+    const effectiveTimeout = Math.max(options.timeout || 45000, 120000); // Al menos 120 segundos (2 minutos)
+    console.log('[SegmentAnalyzer] Using effective timeout:', effectiveTimeout);
+    
     // Llamar a la API de conversación
     console.log('[SegmentAnalyzer] Calling conversation API with model:', options.aiModel);
     
     let aiResponse;
     try {
+      console.log('[SegmentAnalyzer] Iniciando solicitud a la API de conversación...');
       aiResponse = await analyzeWithConversationApi(
         prompt,
         options.aiProvider,
         options.aiModel,
         options.url,
         options.includeScreenshot,
-        options.timeout,
+        effectiveTimeout,  // Usar el timeout aumentado
         false,  // debugMode
         true    // toJSON - asegurar que siempre se solicita JSON
       );
       console.log('[SegmentAnalyzer] Received response from conversation API');
       
+      // Verificar si la respuesta tiene metadatos y si la conversación está cerrada o no
+      if (aiResponse && typeof aiResponse === 'object' && aiResponse._requestMetadata) {
+        console.log('[SegmentAnalyzer] Respuesta contiene metadatos:', 
+          JSON.stringify({
+            conversationId: aiResponse._requestMetadata.conversationId,
+            closed: aiResponse._requestMetadata.closed
+          }));
+        
+        // Si la conversación no está cerrada, intentar continuar con el mismo conversationId
+        if (aiResponse._requestMetadata.closed === false && aiResponse._requestMetadata.conversationId) {
+          console.log('[SegmentAnalyzer] La conversación no está cerrada, iniciando bucle de continuación');
+          
+          const conversationId = aiResponse._requestMetadata.conversationId;
+          let isClosed = false;
+          let continuationResponse = aiResponse;
+          let maxAttempts = 5; // Máximo número de intentos de continuación
+          let attemptCount = 0;
+          
+          // Bucle de continuación: seguir intentando hasta que la conversación esté cerrada o se alcance el máximo de intentos
+          while (!isClosed && attemptCount < maxAttempts) {
+            attemptCount++;
+            console.log(`[SegmentAnalyzer] Intento de continuación ${attemptCount} de ${maxAttempts}`);
+            
+            // Usar un timeout aún mayor para la continuación, aumentando con cada intento
+            const continuationTimeout = effectiveTimeout * (1.5 + (attemptCount * 0.1)); // Aumentar 10% por cada intento
+            console.log(`[SegmentAnalyzer] Usando timeout extendido para continuación: ${continuationTimeout}ms`);
+            
+            try {
+              // Preparar un mensaje simple para continuar la conversación
+              const continuationMessage = {
+                role: 'user' as 'system' | 'user' | 'assistant',
+                content: 'Por favor, continúa exactamente donde te quedaste y completa la respuesta JSON.'
+              };
+              
+              // Esperar un tiempo antes de intentar de nuevo para dar tiempo al servicio
+              const waitTime = 1000 * attemptCount; // Espera creciente: 1s, 2s, 3s...
+              console.log(`[SegmentAnalyzer] Esperando ${waitTime}ms antes del siguiente intento...`);
+              await new Promise(resolve => setTimeout(resolve, waitTime));
+              
+              // Llamar de nuevo a la API con el mismo conversationId para continuar
+              console.log(`[SegmentAnalyzer] Continuando conversación con ID (intento ${attemptCount}):`, conversationId);
+              const response = await sendConversationRequest({
+                messages: [continuationMessage],
+                modelType: options.aiProvider,
+                modelId: options.aiModel,
+                includeScreenshot: options.includeScreenshot,
+                siteUrl: options.url,
+                responseFormat: 'json',
+                timeout: continuationTimeout,
+                conversationId: conversationId
+              });
+              
+              console.log('[SegmentAnalyzer] Respuesta de continuación recibida para intento', attemptCount);
+              
+              // Si la respuesta de continuación es válida, actualizarla
+              if (response && typeof response === 'object') {
+                continuationResponse = response;
+                
+                // Verificar si la conversación ahora está cerrada
+                if (continuationResponse._requestMetadata && continuationResponse._requestMetadata.closed === true) {
+                  console.log('[SegmentAnalyzer] Conversación cerrada exitosamente después de', attemptCount, 'intentos');
+                  isClosed = true;
+                  
+                  // Usar la respuesta final y salir del bucle
+                  aiResponse = continuationResponse;
+                } else {
+                  console.log('[SegmentAnalyzer] La conversación aún no está cerrada, continuando el bucle');
+                }
+              } else {
+                console.error('[SegmentAnalyzer] Respuesta de continuación inválida, intentando de nuevo');
+              }
+            } catch (continuationError) {
+              console.error(`[SegmentAnalyzer] Error en intento ${attemptCount} al continuar conversación:`, continuationError);
+              // No salir del bucle, intentar de nuevo si quedan intentos
+            }
+          }
+          
+          // Al salir del bucle, verificar los resultados
+          if (isClosed) {
+            console.log('[SegmentAnalyzer] Bucle de continuación completado con éxito');
+          } else {
+            console.warn('[SegmentAnalyzer] Máximo de intentos alcanzado sin cerrar la conversación');
+            // Utilizar la última respuesta obtenida, aunque no esté marcada como cerrada
+            aiResponse = continuationResponse;
+          }
+        }
+      }
+      
       // Verificar que la respuesta sea un objeto válido
       if (!aiResponse || typeof aiResponse !== 'object') {
         console.error('[SegmentAnalyzer] Invalid AI response format:', aiResponse);
-        aiResponse = {
-          segments: [{
-            id: `error-format-${Date.now()}`,
-            name: "Error de formato",
-            description: "La respuesta de la IA no tiene el formato esperado.",
-            summary: "Error de formato en la respuesta",
-            estimatedSize: "N/A",
-            profitabilityScore: 0,
-            confidenceScore: 0,
-            targetAudience: "N/A",
-            language: "N/A"
-          }]
-        };
+        
+        // Verificar si la respuesta es un string que podría ser un JSON incompleto
+        if (typeof aiResponse === 'string' && isIncompleteJson(aiResponse)) {
+          console.log('[SegmentAnalyzer] Detected incomplete JSON response, attempting to continue generation');
+          
+          // Usar un timeout aún mayor para la continuación
+          const continuationTimeout = effectiveTimeout * 1.5; // 50% más de tiempo para la continuación
+          console.log(`[SegmentAnalyzer] Using extended timeout for continuation: ${continuationTimeout}ms`);
+          
+          // Intentar continuar la generación del JSON incompleto
+          console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON...');
+          const continuationResult = await continueJsonGeneration({
+            incompleteJson: aiResponse,
+            modelType: options.aiProvider,
+            modelId: options.aiModel,
+            siteUrl: options.url,
+            includeScreenshot: options.includeScreenshot,
+            timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
+            maxRetries: 3
+          });
+          
+          console.log('[SegmentAnalyzer] Proceso de continuación completado, verificando resultado...');
+          
+          if (continuationResult.success && continuationResult.completeJson) {
+            console.log('[SegmentAnalyzer] Successfully completed JSON generation after', 
+              continuationResult.retries, 'retries');
+            aiResponse = continuationResult.completeJson;
+            console.log('[SegmentAnalyzer] JSON completo obtenido, continuando con el procesamiento');
+          } else {
+            console.error('[SegmentAnalyzer] Failed to complete JSON generation:', 
+              continuationResult.error);
+            
+            // Si no se pudo completar, intentar reparar el JSON
+            console.log('[SegmentAnalyzer] Intentando reparar JSON incompleto...');
+            const repairedJson = attemptJsonRepair(aiResponse);
+            if (repairedJson) {
+              console.log('[SegmentAnalyzer] Successfully repaired incomplete JSON');
+              aiResponse = repairedJson;
+            } else {
+              console.log('[SegmentAnalyzer] No se pudo reparar el JSON, creando objeto de error');
+              // Si no se pudo reparar, crear un objeto de error
+              aiResponse = {
+                segments: [{
+                  id: `error-format-${Date.now()}`,
+                  name: "Error de formato",
+                  description: "La respuesta de la IA no tiene el formato esperado.",
+                  summary: "Error de formato en la respuesta",
+                  estimatedSize: "0",
+                  targetAudience: "N/A",
+                  language: "N/A",
+                  createdInDatabase: false,
+                  error: true,
+                  errorDetails: {
+                    message: "La respuesta de la IA no es un JSON válido",
+                    rawResponse: aiResponse ? String(aiResponse).substring(0, 500) : "N/A"
+                  }
+                }]
+              };
+            }
+          }
+        } else {
+          // Si no es un JSON incompleto, crear un objeto de error
+          console.log('[SegmentAnalyzer] La respuesta no es un JSON incompleto, creando objeto de error');
+          aiResponse = {
+            segments: [{
+              id: `error-format-${Date.now()}`,
+              name: "Error de formato",
+              description: "La respuesta de la IA no tiene el formato esperado.",
+              summary: "Error de formato en la respuesta",
+              estimatedSize: "0",
+              targetAudience: "N/A",
+              language: "N/A",
+              createdInDatabase: false,
+              error: true,
+              errorDetails: {
+                message: "La respuesta de la IA no es un JSON válido",
+                rawResponse: aiResponse ? String(aiResponse).substring(0, 500) : "N/A"
+              }
+            }]
+          };
+        }
       } else {
         // Registrar la estructura de la respuesta para depuración
         console.log('[SegmentAnalyzer] AI response structure:', Object.keys(aiResponse));
@@ -119,14 +282,78 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
         // Si la respuesta tiene una propiedad 'content', intentar extraer JSON
         if (aiResponse.content && typeof aiResponse.content === 'string') {
           console.log('[SegmentAnalyzer] Response has content property, attempting to parse as JSON');
-          try {
-            const parsedContent = JSON.parse(aiResponse.content);
-            if (parsedContent && typeof parsedContent === 'object') {
-              console.log('[SegmentAnalyzer] Successfully parsed content as JSON');
-              aiResponse = parsedContent;
+          
+          // Verificar si el contenido es un JSON incompleto
+          if (isIncompleteJson(aiResponse.content)) {
+            console.log('[SegmentAnalyzer] Detected incomplete JSON in content, attempting to continue generation');
+            
+            // Usar un timeout aún mayor para la continuación
+            const continuationTimeout = effectiveTimeout * 1.5; // 50% más de tiempo para la continuación
+            console.log(`[SegmentAnalyzer] Using extended timeout for continuation: ${continuationTimeout}ms`);
+            
+            // Intentar continuar la generación del JSON incompleto
+            console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON desde content...');
+            const continuationResult = await continueJsonGeneration({
+              incompleteJson: aiResponse.content,
+              modelType: options.aiProvider,
+              modelId: options.aiModel,
+              siteUrl: options.url,
+              includeScreenshot: options.includeScreenshot,
+              timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
+              maxRetries: 3
+            });
+            
+            console.log('[SegmentAnalyzer] Proceso de continuación de content completado, verificando resultado...');
+            
+            if (continuationResult.success && continuationResult.completeJson) {
+              console.log('[SegmentAnalyzer] Successfully completed JSON generation after', 
+                continuationResult.retries, 'retries');
+              aiResponse = continuationResult.completeJson;
+              console.log('[SegmentAnalyzer] JSON completo obtenido desde content, continuando con el procesamiento');
+            } else {
+              console.error('[SegmentAnalyzer] Failed to complete JSON generation from content:', 
+                continuationResult.error);
+              
+              // Intentar reparar el JSON incompleto
+              console.log('[SegmentAnalyzer] Intentando reparar JSON incompleto desde content...');
+              const repairedJson = attemptJsonRepair(aiResponse.content);
+              if (repairedJson) {
+                console.log('[SegmentAnalyzer] Successfully repaired incomplete JSON in content');
+                aiResponse = repairedJson;
+              } else {
+                // Continuar con el proceso normal de análisis
+                try {
+                  // Intentar extraer JSON de la respuesta si está en formato markdown
+                  console.log('[SegmentAnalyzer] Intentando extraer JSON de markdown en content...');
+                  const jsonMatch = aiResponse.content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                  const jsonString = jsonMatch ? jsonMatch[1] : aiResponse.content;
+                  
+                  const parsedContent = JSON.parse(jsonString);
+                  if (parsedContent && typeof parsedContent === 'object') {
+                    console.log('[SegmentAnalyzer] Successfully parsed content as JSON');
+                    aiResponse = parsedContent;
+                  }
+                } catch (parseError) {
+                  console.log('[SegmentAnalyzer] Content is not valid JSON, continuing with original response');
+                }
+              }
             }
-          } catch (parseError) {
-            console.log('[SegmentAnalyzer] Content is not valid JSON, continuing with original response');
+          } else {
+            // Proceso normal para contenido JSON válido
+            try {
+              // Intentar extraer JSON de la respuesta si está en formato markdown
+              console.log('[SegmentAnalyzer] Intentando extraer JSON de markdown en content válido...');
+              const jsonMatch = aiResponse.content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+              const jsonString = jsonMatch ? jsonMatch[1] : aiResponse.content;
+              
+              const parsedContent = JSON.parse(jsonString);
+              if (parsedContent && typeof parsedContent === 'object') {
+                console.log('[SegmentAnalyzer] Successfully parsed content as JSON');
+                aiResponse = parsedContent;
+              }
+            } catch (parseError) {
+              console.log('[SegmentAnalyzer] Content is not valid JSON, continuing with original response');
+            }
           }
         }
         
@@ -138,20 +365,84 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
           if (messageContent) {
             console.log('[SegmentAnalyzer] Found message content in choices');
             
-            // Si el contenido es un string, intentar parsearlo como JSON
+            // Si el contenido es un string, verificar si es un JSON incompleto
             if (typeof messageContent === 'string') {
-              try {
-                const parsedContent = JSON.parse(messageContent);
-                if (parsedContent && typeof parsedContent === 'object') {
-                  console.log('[SegmentAnalyzer] Successfully parsed message content as JSON');
-                  aiResponse = parsedContent;
+              if (isIncompleteJson(messageContent)) {
+                console.log('[SegmentAnalyzer] Detected incomplete JSON in message content, attempting to continue generation');
+                
+                // Usar un timeout aún mayor para la continuación
+                const continuationTimeout = effectiveTimeout * 1.5; // 50% más de tiempo para la continuación
+                console.log(`[SegmentAnalyzer] Using extended timeout for continuation: ${continuationTimeout}ms`);
+                
+                // Intentar continuar la generación del JSON incompleto
+                console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON desde message content...');
+                const continuationResult = await continueJsonGeneration({
+                  incompleteJson: messageContent,
+                  modelType: options.aiProvider,
+                  modelId: options.aiModel,
+                  siteUrl: options.url,
+                  includeScreenshot: options.includeScreenshot,
+                  timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
+                  maxRetries: 3
+                });
+                
+                console.log('[SegmentAnalyzer] Proceso de continuación de message content completado, verificando resultado...');
+                
+                if (continuationResult.success && continuationResult.completeJson) {
+                  console.log('[SegmentAnalyzer] Successfully completed JSON generation after', 
+                    continuationResult.retries, 'retries');
+                  aiResponse = continuationResult.completeJson;
+                  console.log('[SegmentAnalyzer] JSON completo obtenido desde message content, continuando con el procesamiento');
+                } else {
+                  console.error('[SegmentAnalyzer] Failed to complete JSON generation from message content:', 
+                    continuationResult.error);
+                  
+                  // Intentar reparar el JSON incompleto
+                  console.log('[SegmentAnalyzer] Intentando reparar JSON incompleto desde message content...');
+                  const repairedJson = attemptJsonRepair(messageContent);
+                  if (repairedJson) {
+                    console.log('[SegmentAnalyzer] Successfully repaired incomplete JSON in message content');
+                    aiResponse = repairedJson;
+                  } else {
+                    // Intentar extraer JSON de la respuesta si está en formato markdown
+                    try {
+                      console.log('[SegmentAnalyzer] Intentando extraer JSON de markdown en message content...');
+                      const jsonMatch = messageContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                      if (jsonMatch) {
+                        const parsedJson = JSON.parse(jsonMatch[1]);
+                        console.log('[SegmentAnalyzer] Successfully extracted JSON from markdown in message content');
+                        aiResponse = parsedJson;
+                      } else {
+                        console.log('[SegmentAnalyzer] No JSON found in markdown format, continuing with original response');
+                      }
+                    } catch (extractError) {
+                      console.error('[SegmentAnalyzer] Failed to extract JSON from message content');
+                    }
+                  }
                 }
-              } catch (parseError) {
-                console.log('[SegmentAnalyzer] Message content is not valid JSON, continuing with original response');
+              } else {
+                // Intentar extraer JSON de la respuesta si está en formato markdown
+                try {
+                  console.log('[SegmentAnalyzer] Intentando extraer JSON de markdown en message content válido...');
+                  const jsonMatch = messageContent.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+                  if (jsonMatch) {
+                    const parsedJson = JSON.parse(jsonMatch[1]);
+                    console.log('[SegmentAnalyzer] Successfully extracted JSON from markdown in message content');
+                    aiResponse = parsedJson;
+                  } else {
+                    // Intentar parsear directamente
+                    try {
+                      const parsedContent = JSON.parse(messageContent);
+                      console.log('[SegmentAnalyzer] Successfully parsed message content as JSON');
+                      aiResponse = parsedContent;
+                    } catch (parseError) {
+                      console.log('[SegmentAnalyzer] Message content is not valid JSON, continuing with original response');
+                    }
+                  }
+                } catch (extractError) {
+                  console.log('[SegmentAnalyzer] Failed to extract JSON from message content, continuing with original response');
+                }
               }
-            } else if (typeof messageContent === 'object') {
-              console.log('[SegmentAnalyzer] Message content is already an object');
-              aiResponse = messageContent;
             }
           }
         }
@@ -166,18 +457,20 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
           name: "Error en la API",
           description: `Error en la API de conversación: ${conversationError.message || 'Error desconocido'}`,
           summary: "Error al comunicarse con la IA",
-          estimatedSize: "N/A",
-          profitabilityScore: 0,
-          confidenceScore: 0,
+          estimatedSize: "0",
           targetAudience: "N/A",
           language: "N/A",
           createdInDatabase: false,
-          error: true
+          error: true,
+          errorDetails: {
+            message: `Error en la API de conversación: ${conversationError.message || 'Error desconocido'}`,
+            affectedSegments: [],
+            severity: "alta"
+          }
         }],
         segmentsCreated: 0,
         segmentsUpdated: 0,
         siteContext: {},
-        confidenceOverall: 0,
         nextSteps: [],
         errors: [{
           code: "CONVERSATION_API_ERROR",
@@ -198,12 +491,10 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
     const normalizedSegments = segments.map(segment => normalizeSegment(segment, options));
     console.log('[SegmentAnalyzer] Segments normalized');
     
-    // Filtrar segmentos según la puntuación de confianza mínima
-    console.log('[SegmentAnalyzer] Filtering segments by confidence score');
-    const filteredSegments = normalizedSegments.filter(segment => 
-      segment.confidenceScore >= options.minConfidenceScore
-    );
-    console.log('[SegmentAnalyzer] Filtered segments count:', filteredSegments.length);
+    // Ya no filtramos por confidenceScore ya que lo hemos eliminado
+    console.log('[SegmentAnalyzer] Skipping confidence score filtering as it has been removed');
+    const filteredSegments = normalizedSegments;
+    console.log('[SegmentAnalyzer] Segments count after processing:', filteredSegments.length);
     
     // Determinar el número de segmentos a limitar
     const segmentCountToUse = options.segmentCount;
@@ -224,21 +515,46 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
           if (options.mode === 'create') {
             console.log('[SegmentAnalyzer] Creating segment in database:', segment.id);
             try {
+              // Extraer keywords y hot_topics del análisis si están disponibles
+              const keywords = [];
+              const hotTopics = [];
+              
+              // Intentar extraer keywords de diferentes fuentes en el segmento
+              if (segment.attributes?.psychographic?.interests) {
+                keywords.push(...(Array.isArray(segment.attributes.psychographic.interests) 
+                  ? segment.attributes.psychographic.interests 
+                  : [segment.attributes.psychographic.interests]));
+              }
+              
+              if (segment.attributes?.behavioral?.topics) {
+                hotTopics.push(...(Array.isArray(segment.attributes.behavioral.topics) 
+                  ? segment.attributes.behavioral.topics 
+                  : [segment.attributes.behavioral.topics]));
+              }
+              
+              // Si hay audienceProfile con intereses, agregarlos a keywords
+              if (segment.audienceProfile?.adPlatforms?.googleAds?.interests) {
+                keywords.push(...(Array.isArray(segment.audienceProfile.adPlatforms.googleAds.interests) 
+                  ? segment.audienceProfile.adPlatforms.googleAds.interests 
+                  : [segment.audienceProfile.adPlatforms.googleAds.interests]));
+              }
+              
               // Preparar los datos del segmento para la base de datos
               const segmentData = {
-                id: segment.id,
                 name: segment.name,
                 description: segment.description,
                 audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                 size: parseFloat(segment.estimatedSize) || 0,
                 is_active: true,
-                keywords: [],
-                hot_topics: [],
-                site_id: generateSegmentId(options.url),
+                keywords: keywords.length > 0 ? keywords : [],
+                hot_topics: hotTopics.length > 0 ? hotTopics : [],
+                site_id: options.site_id || generateSegmentId(options.url),
                 user_id: options.userId,
                 language: segment.language,
                 url: options.url
               };
+              
+              console.log('[SegmentAnalyzer] Segment data prepared for database:', JSON.stringify(segmentData));
               
               const result = await createSegmentInDatabase(segmentData);
               if (result && typeof result === 'object' && 'id' in result) {
@@ -246,9 +562,13 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                 segment.databaseId = result.id;
                 segmentsCreated++;
                 console.log('[SegmentAnalyzer] Segment created successfully:', segment.id);
+              } else {
+                console.error('[SegmentAnalyzer] Failed to create segment in database:', segment.id);
+                segment.createdInDatabase = false;
               }
             } catch (dbError) {
               console.error('[SegmentAnalyzer] Error creating segment in database:', dbError);
+              segment.createdInDatabase = false;
             }
           } else if (options.mode === 'update') {
             console.log('[SegmentAnalyzer] Finding similar segments for update');
@@ -265,15 +585,43 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                 if (targetSegment && typeof targetSegment === 'object' && 'id' in targetSegment) {
                   console.log('[SegmentAnalyzer] Updating segment:', targetSegment.id);
                   
+                  // Extraer keywords y hot_topics del análisis si están disponibles
+                  const keywords = [];
+                  const hotTopics = [];
+                  
+                  // Intentar extraer keywords de diferentes fuentes en el segmento
+                  if (segment.attributes?.psychographic?.interests) {
+                    keywords.push(...(Array.isArray(segment.attributes.psychographic.interests) 
+                      ? segment.attributes.psychographic.interests 
+                      : [segment.attributes.psychographic.interests]));
+                  }
+                  
+                  if (segment.attributes?.behavioral?.topics) {
+                    hotTopics.push(...(Array.isArray(segment.attributes.behavioral.topics) 
+                      ? segment.attributes.behavioral.topics 
+                      : [segment.attributes.behavioral.topics]));
+                  }
+                  
+                  // Si hay audienceProfile con intereses, agregarlos a keywords
+                  if (segment.audienceProfile?.adPlatforms?.googleAds?.interests) {
+                    keywords.push(...(Array.isArray(segment.audienceProfile.adPlatforms.googleAds.interests) 
+                      ? segment.audienceProfile.adPlatforms.googleAds.interests 
+                      : [segment.audienceProfile.adPlatforms.googleAds.interests]));
+                  }
+                  
                   // Preparar los datos de actualización
                   const updates = {
                     name: segment.name,
                     description: segment.description,
                     audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                     size: parseFloat(segment.estimatedSize) || 0,
+                    keywords: keywords.length > 0 ? keywords : undefined,
+                    hot_topics: hotTopics.length > 0 ? hotTopics : undefined,
                     language: segment.language,
                     url: options.url
                   };
+                  
+                  console.log('[SegmentAnalyzer] Segment update data prepared:', JSON.stringify(updates));
                   
                   const result = await updateSegment(targetSegment.id, updates);
                   if (result) {
@@ -281,25 +629,53 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                     segment.databaseId = targetSegment.id;
                     segmentsUpdated++;
                     console.log('[SegmentAnalyzer] Segment updated successfully:', targetSegment.id);
+                  } else {
+                    console.error('[SegmentAnalyzer] Failed to update segment in database:', targetSegment.id);
+                    segment.createdInDatabase = false;
                   }
                 }
               } else {
                 console.log('[SegmentAnalyzer] No similar segments found, creating new');
+                // Extraer keywords y hot_topics del análisis si están disponibles
+                const keywords = [];
+                const hotTopics = [];
+                
+                // Intentar extraer keywords de diferentes fuentes en el segmento
+                if (segment.attributes?.psychographic?.interests) {
+                  keywords.push(...(Array.isArray(segment.attributes.psychographic.interests) 
+                    ? segment.attributes.psychographic.interests 
+                    : [segment.attributes.psychographic.interests]));
+                }
+                
+                if (segment.attributes?.behavioral?.topics) {
+                  hotTopics.push(...(Array.isArray(segment.attributes.behavioral.topics) 
+                    ? segment.attributes.behavioral.topics 
+                    : [segment.attributes.behavioral.topics]));
+                }
+                
+                // Si hay audienceProfile con intereses, agregarlos a keywords
+                if (segment.audienceProfile?.adPlatforms?.googleAds?.interests) {
+                  keywords.push(...(Array.isArray(segment.audienceProfile.adPlatforms.googleAds.interests) 
+                    ? segment.audienceProfile.adPlatforms.googleAds.interests 
+                    : [segment.audienceProfile.adPlatforms.googleAds.interests]));
+                }
+                
                 // Preparar los datos del segmento para la base de datos
                 const segmentData = {
-                  id: segment.id,
                   name: segment.name,
                   description: segment.description,
                   audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                   size: parseFloat(segment.estimatedSize) || 0,
                   is_active: true,
-                  keywords: [],
-                  hot_topics: [],
-                  site_id: generateSegmentId(options.url),
+                  keywords: keywords.length > 0 ? keywords : [],
+                  hot_topics: hotTopics.length > 0 ? hotTopics : [],
+                  site_id: options.site_id || generateSegmentId(options.url),
                   user_id: options.userId,
                   language: segment.language,
                   url: options.url
                 };
+                
+                console.log('[SegmentAnalyzer] New segment data prepared for database:', JSON.stringify(segmentData));
                 
                 const result = await createSegmentInDatabase(segmentData);
                 if (result && typeof result === 'object' && 'id' in result) {
@@ -307,10 +683,14 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                   segment.databaseId = result.id;
                   segmentsCreated++;
                   console.log('[SegmentAnalyzer] New segment created:', segment.id);
+                } else {
+                  console.error('[SegmentAnalyzer] Failed to create new segment in database:', segment.id);
+                  segment.createdInDatabase = false;
                 }
               }
             } catch (dbError) {
               console.error('[SegmentAnalyzer] Error in database operation:', dbError);
+              segment.createdInDatabase = false;
             }
           }
         } catch (error) {
@@ -319,9 +699,9 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
       }
     }
     
-    // Calcular la puntuación de confianza general
-    console.log('[SegmentAnalyzer] Calculating overall confidence score');
-    const confidenceOverall = limitedSegments.reduce((sum, segment) => sum + segment.confidenceScore, 0) / limitedSegments.length;
+    // Ya no calculamos confidenceOverall basado en confidenceScore ya que lo hemos eliminado
+    console.log('[SegmentAnalyzer] Setting default confidenceOverall value');
+    const confidenceOverall = 0.5; // Valor por defecto
     
     console.log('[SegmentAnalyzer] Analysis completed successfully');
     return {
@@ -341,25 +721,18 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
         name: "Error interno",
         description: "Error al analizar segmentos",
         summary: "Error al analizar segmentos",
-        estimatedSize: "N/A",
-        profitabilityScore: 0,
-        confidenceScore: 0,
+        estimatedSize: "0",
         targetAudience: "N/A",
         language: "N/A",
         createdInDatabase: false,
-        error: true
+        error: true,
+        errorDetails: {
+          message: "Error al analizar segmentos",
+          rawResponse: typeof error === 'object' ? JSON.stringify(error) : String(error)
+        }
       }],
       segmentsCreated: 0,
       segmentsUpdated: 0,
-      siteContext: {},
-      confidenceOverall: 0,
-      nextSteps: [],
-      errors: [{
-        code: "INTERNAL_ERROR",
-        message: "Error al analizar segmentos",
-        affectedSegments: [],
-        severity: "alta"
-      }]
     };
   }
 }
@@ -380,16 +753,12 @@ function prepareSegmentAnalysisPrompt(options: SegmentAnalysisOptions): string {
 For each segment, provide:
 - A descriptive name
 - A detailed description
-- A concise summary
-- Estimated size (percentage)
-- Profitability score (0-1)
-- Confidence score (0-1)
+- A concise summary of the segment
+- Estimated SAM size by segment, refined by the target audience in the region and language (units)
 - Target audience
 - Audience profile
 - Language
 - Attributes (demographic, behavioral, etc.)
-- Monetization opportunities
-- Recommended actions
 
 IMPORTANT: Your response MUST be a valid JSON object with the following structure:
 
@@ -401,10 +770,8 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
       "name": "Digital Content Creators",
       "description": "Professionals and enthusiasts aged 20-40 dedicated to creating digital content for social media and online platforms",
       "summary": "Highly profitable segment of digital creators with specific needs for professional tools and willingness to invest in solutions that improve their creative workflow.",
-      "estimatedSize": "15%",
-      "profitabilityScore": 0.88,
-      "confidenceScore": 0.93,
       "targetAudience": "media_entertainment",
+      "size": "189,000",
       "audienceProfile": {
         "adPlatforms": {
           "googleAds": {
@@ -427,7 +794,18 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
               "Video Editing Software",
               "Photography Equipment",
               "Computer Hardware"
-            ]
+            ],
+            "locations": [
+              "United States",
+              "Canada",
+              "United Kingdom",
+              "Australia"
+            ],
+            "geoTargeting": {
+              "countries": ["US", "CA", "UK", "AU"],
+              "regions": ["California", "New York", "Texas", "Ontario", "London"],
+              "cities": ["San Francisco", "New York", "Los Angeles", "Toronto", "London"]
+            }
           },
           "facebookAds": {
             "demographics": {
@@ -441,7 +819,14 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
               "Digital marketing",
               "Video production",
               "Photography"
-            ]
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["California", "New York", "Texas", "Florida", "Illinois"],
+              "cities": ["Los Angeles", "New York", "Chicago", "Toronto", "London"],
+              "zips": ["90210", "10001", "60601", "M5V", "SW1A"]
+            },
+            "languages": ["English"]
           },
           "linkedInAds": {
             "demographics": {
@@ -462,7 +847,12 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
               "Design",
               "Information Technology"
             ],
-            "companySize": ["11-50", "51-200", "201-500"]
+            "companySize": ["11-50", "51-200", "201-500"],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["West Coast", "East Coast", "Midwest", "Southeast"],
+              "metropolitanAreas": ["San Francisco Bay Area", "Greater New York City Area", "Greater Los Angeles Area"]
+            }
           },
           "tiktokAds": {
             "demographics": {
@@ -488,47 +878,55 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
               "Digital Artists",
               "Tutorial Creators",
               "Productivity Influencers"
-            ]
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["California", "New York", "Texas", "Ontario", "London"],
+              "cities": ["Los Angeles", "New York", "Miami", "Toronto", "London"]
+            },
+            "languages": ["English"]
           }
         }
       },
       "language": "en",
 }
 
-Make sure your response is a valid JSON and follows this structure exactly. Do not include additional explanations outside the JSON. Replace the example data with real information based on your analysis of the website.`;
+Make sure your response is a valid JSON and follows this structure exactly. Do not include additional explanations outside the JSON. Replace the example data with real information based on your analysis of the website.
+
+IMPORTANT: Each segment must have EXACTLY ONE language specified in the "language" field. All countries and regions listed in the segment's audience profile MUST primarily speak the language specified for that segment. Do not include countries or regions that primarily speak a different language than the one specified for the segment. For example, if a segment has "language": "en", only include English-speaking countries and regions in the locations.`;
 
   // Add audience list options
   prompt += `\n\nFor the targetAudience field, please select from the following options:
-- Enterprise
-- Small & Medium Business
-- Startups
-- B2B SaaS
-- E-commerce
-- Technology
-- Financial Services
-- Healthcare
-- Education
-- Manufacturing
-- Retail
-- Real Estate
-- Hospitality & Tourism
-- Automotive
-- Media & Entertainment
-- Telecommunications
-- Energy & Utilities
-- Agriculture
-- Construction
-- Logistics & Transportation
-- Professional Services
-- Government
-- Non-Profit
-- Legal Services
-- Pharmaceutical
-- Insurance
-- Consulting
-- Research & Development
-- Aerospace & Defense
-- Gaming & Entertainment`;
+enterprise
+smb
+startup
+b2b_saas
+e_commerce
+tech
+finance
+healthcare
+education
+manufacturing
+retail
+real_estate
+hospitality
+automotive
+media
+telecom
+energy
+agriculture
+construction
+logistics
+professional
+government
+nonprofit
+legal
+pharma
+insurance
+consulting
+research
+aerospace
+gaming`;
 
   // Add profitability metrics if specified
   if (options.profitabilityMetrics && options.profitabilityMetrics.length > 0) {
@@ -582,9 +980,7 @@ function processAIResponse(aiResponse: any, options: SegmentAnalysisOptions): an
         name: "Error de formato",
         description: "La respuesta de la IA no es un JSON válido.",
         summary: "Error al procesar la respuesta de la IA",
-        estimatedSize: "N/A",
-        profitabilityScore: 0,
-        confidenceScore: 0,
+        estimatedSize: "0",
         targetAudience: "N/A",
         language: "N/A",
         createdInDatabase: false,
@@ -638,9 +1034,7 @@ function processAIResponse(aiResponse: any, options: SegmentAnalysisOptions): an
       name: "Error en el análisis",
       description: "No se pudieron identificar segmentos válidos en la respuesta de la IA.",
       summary: "Error en el análisis de segmentos",
-      estimatedSize: "N/A",
-      profitabilityScore: 0,
-      confidenceScore: 0,
+      estimatedSize: "0",
       targetAudience: "N/A",
       language: "N/A",
       createdInDatabase: false,
@@ -660,9 +1054,7 @@ function processAIResponse(aiResponse: any, options: SegmentAnalysisOptions): an
   const validSegments = segments.filter((segment: any) => {
     const hasRequiredFields = 
       segment.name && 
-      segment.description && 
-      segment.profitabilityScore !== undefined &&
-      segment.confidenceScore !== undefined;
+      segment.description;
     
     if (!hasRequiredFields) {
       console.warn('[SegmentAnalyzer] Segment missing required fields:', segment);
@@ -680,9 +1072,7 @@ function processAIResponse(aiResponse: any, options: SegmentAnalysisOptions): an
       name: "Segmentos incompletos",
       description: "Los segmentos identificados no contienen todos los campos requeridos.",
       summary: "Segmentos con datos incompletos",
-      estimatedSize: "N/A",
-      profitabilityScore: 0,
-      confidenceScore: 0,
+      estimatedSize: "0",
       targetAudience: "N/A",
       language: "N/A",
       createdInDatabase: false,
@@ -719,19 +1109,23 @@ function normalizeSegment(segment: any, options: SegmentAnalysisOptions): any {
     segment.id = generateSegmentId(segment.name);
   }
   
-  // Asegurarse de que el segmento tenga una puntuación de rentabilidad
-  if (segment.profitabilityScore === undefined) {
-    segment.profitabilityScore = 0.5; // Valor por defecto
+  // Eliminar las puntuaciones de rentabilidad y confianza ya que no se utilizan
+  if (segment.profitabilityScore !== undefined) {
+    delete segment.profitabilityScore;
   }
   
-  // Asegurarse de que el segmento tenga una puntuación de confianza
-  if (segment.confidenceScore === undefined) {
-    segment.confidenceScore = 0.5; // Valor por defecto
+  if (segment.confidenceScore !== undefined) {
+    delete segment.confidenceScore;
   }
   
   // Asegurarse de que el segmento tenga un tamaño estimado
+  // Usar el campo size si está disponible
   if (!segment.estimatedSize) {
-    segment.estimatedSize = "10%"; // Valor por defecto
+    if (segment.size) {
+      segment.estimatedSize = String(segment.size);
+    } else {
+      segment.estimatedSize = "0"; // Valor por defecto
+    }
   }
   
   // Asegurarse de que el segmento tenga un idioma
@@ -752,10 +1146,6 @@ function normalizeSegment(segment: any, options: SegmentAnalysisOptions): any {
   // Inicializar el estado de creación en la base de datos
   segment.createdInDatabase = false;
   
-  // Incluir justificación si se solicita
-  if (!segment.rationale && options.includeRationale) {
-    segment.rationale = `This segment was identified as profitable based on the analysis of the site ${options.url}.`;
-  }
   
   return segment;
 } 

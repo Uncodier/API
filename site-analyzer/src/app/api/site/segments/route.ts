@@ -59,6 +59,8 @@ const RequestSchema = z.object({
   minConfidenceScore: z.number().min(0).max(1).default(0.7),
   includeRationale: z.boolean().default(true),
   segmentAttributes: z.array(z.enum(SegmentAttributes)).optional(),
+  user_id: z.string().optional(),
+  site_id: z.string().optional(),
   industryContext: z.string().optional(),
   additionalInstructions: z.string().optional(),
   aiProvider: z.enum(AiProviders).default('openai'),
@@ -83,6 +85,8 @@ interface SegmentResponse {
   segmentsAnalyzed: number;
   segmentsCreated?: number;
   segmentsUpdated?: number;
+  user_id?: string;
+  site_id?: string;
   segments: Array<{
     id: string;
     name: string;
@@ -119,6 +123,11 @@ interface SegmentResponse {
     createdInDatabase: boolean;
     databaseId?: string;
     rationale?: string;
+    databaseInfo?: {
+      databaseId: string;
+      createdAt: string;
+      updatedAt: string;
+    };
   }>;
   siteContext?: {
     industry?: string;
@@ -177,6 +186,150 @@ interface UserSegmentsResponse {
 }
 
 /**
+ * Transforma los segmentos del formato del servicio al formato esperado por la respuesta de la API
+ */
+function transformSegmentsForResponse(segments: Array<any>): Array<{
+  id: string;
+  name: string;
+  description: string;
+  summary: string;
+  estimatedSize: string;
+  profitabilityScore: number;
+  confidenceScore: number;
+  targetAudience: string | string[];
+  audienceProfile?: {
+    adPlatforms?: Record<string, any>;
+    crossPlatformAudience?: Record<string, any>;
+  };
+  language: string;
+  attributes?: {
+    demographic?: Record<string, any>;
+    behavioral?: Record<string, any>;
+    psychographic?: Record<string, any>;
+    technographic?: Record<string, any>;
+  };
+  monetizationOpportunities?: Array<{
+    type: string;
+    potentialRevenue: string;
+    implementationDifficulty: string;
+    description: string;
+    estimatedConversionRate?: string;
+  }>;
+  recommendedActions?: Array<{
+    action: string;
+    priority: string;
+    expectedImpact: string;
+    timeframe?: string;
+  }>;
+  createdInDatabase: boolean;
+  databaseId?: string;
+  rationale?: string;
+  databaseInfo?: {
+    databaseId: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+}> {
+  return segments.map(segment => {
+    // Transformar monetizationOpportunities si existe
+    const monetizationOpportunities = segment.monetizationOpportunities?.map((opportunity: any) => ({
+      type: opportunity.type || 'unknown',
+      potentialRevenue: opportunity.potentialRevenue || 'unknown',
+      implementationDifficulty: opportunity.implementationDifficulty || 'medium',
+      description: opportunity.description || '',
+      estimatedConversionRate: opportunity.estimatedConversionRate
+    })) || undefined;
+
+    // Transformar recommendedActions si existe
+    const recommendedActions = segment.recommendedActions?.map((action: any) => ({
+      action: action.action || action.name || 'unknown',
+      priority: action.priority || 'medium',
+      expectedImpact: action.expectedImpact || action.impact || 'medium',
+      timeframe: action.timeframe
+    })) || undefined;
+
+    // Transformar audienceProfile si existe
+    const audienceProfile = segment.audienceProfile ? {
+      adPlatforms: segment.audienceProfile.adPlatforms,
+      crossPlatformAudience: segment.audienceProfile.crossPlatformAudience
+    } : undefined;
+
+    // Transformar attributes si existe
+    const attributes = segment.attributes ? {
+      demographic: segment.attributes.demographic,
+      behavioral: segment.attributes.behavioral,
+      psychographic: segment.attributes.psychographic,
+      technographic: segment.attributes.technographic
+    } : undefined;
+
+    // Información sobre la creación en la base de datos
+    const createdInDatabase = segment.createdInDatabase === true;
+    const databaseId = segment.databaseId;
+    const databaseInfo = createdInDatabase && databaseId ? {
+      databaseId: databaseId,
+      createdAt: segment.createdAt || new Date().toISOString(),
+      updatedAt: segment.updatedAt || new Date().toISOString()
+    } : undefined;
+
+    return {
+      id: segment.id,
+      name: segment.name,
+      description: segment.description,
+      summary: segment.summary,
+      estimatedSize: segment.estimatedSize,
+      profitabilityScore: segment.profitabilityScore,
+      confidenceScore: segment.confidenceScore,
+      targetAudience: segment.targetAudience,
+      audienceProfile,
+      language: segment.language,
+      attributes,
+      monetizationOpportunities,
+      recommendedActions,
+      createdInDatabase,
+      databaseId,
+      rationale: segment.rationale,
+      databaseInfo
+    };
+  });
+}
+
+/**
+ * Transforma los nextSteps del formato del servicio al formato esperado por la respuesta de la API
+ */
+function transformNextStepsForResponse(nextSteps?: Array<Record<string, any>>): Array<{
+  action: string;
+  priority: string;
+  resources?: string[];
+}> | undefined {
+  if (!nextSteps) return undefined;
+  
+  return nextSteps.map(step => ({
+    action: step.action || step.name || 'unknown',
+    priority: step.priority || 'medium',
+    resources: Array.isArray(step.resources) ? step.resources : undefined
+  }));
+}
+
+/**
+ * Transforma los errors del formato del servicio al formato esperado por la respuesta de la API
+ */
+function transformErrorsForResponse(errors?: Array<Record<string, any>>): Array<{
+  code: string;
+  message: string;
+  affectedSegments?: string[];
+  severity: string;
+}> | undefined {
+  if (!errors) return undefined;
+  
+  return errors.map(error => ({
+    code: error.code || 'UNKNOWN_ERROR',
+    message: error.message || 'Unknown error',
+    affectedSegments: Array.isArray(error.affectedSegments) ? error.affectedSegments : undefined,
+    severity: error.severity || 'error'
+  }));
+}
+
+/**
  * POST /api/site/segments
  * 
  * Analiza un sitio web para identificar los segmentos más rentables
@@ -213,12 +366,24 @@ export async function POST(request: NextRequest) {
       aiModel: params.aiModel
     }));
     
+    // Verificar que se proporcionen user_id y site_id cuando el modo es 'create'
+    if (params.mode === 'create' && (!params.user_id || !params.site_id)) {
+      console.log('[API:segments] Missing required parameters for create mode');
+      return NextResponse.json(
+        { 
+          error: 'Parámetros faltantes', 
+          details: 'Se requieren user_id y site_id para el modo create' 
+        },
+        { status: 400 }
+      );
+    }
+    
     // Iniciar timestamp para tracking de tiempo
     const startTime = Date.now();
     console.log('[API:segments] Analysis started at:', new Date(startTime).toISOString());
     
-    // Usar un ID de usuario temporal para sistemas m2m
-    const tempUserId = 'system_m2m_user';
+    // Usar el ID de usuario proporcionado o un ID temporal para sistemas m2m
+    const userId = params.user_id || 'system_m2m_user';
     
     // Realizar el análisis de segmentos
     console.log('[API:segments] Calling analyzeSiteSegments function');
@@ -235,7 +400,8 @@ export async function POST(request: NextRequest) {
       additionalInstructions: params.additionalInstructions,
       aiProvider: params.aiProvider,
       aiModel: params.aiModel,
-      userId: tempUserId,
+      userId: userId,
+      site_id: params.site_id,
       includeScreenshot: params.includeScreenshot
     });
     console.log('[API:segments] analyzeSiteSegments function returned successfully');
@@ -244,6 +410,26 @@ export async function POST(request: NextRequest) {
     const processingTime = Date.now() - startTime;
     console.log('[API:segments] Analysis completed in', processingTime, 'ms');
     
+    // Verificar si los segmentos se crearon correctamente en la base de datos
+    if (params.mode === 'create') {
+      const createdSegments = segmentAnalysis.segments.filter(segment => segment.createdInDatabase);
+      console.log('[API:segments] Segments created in database:', createdSegments.length);
+      
+      if (createdSegments.length === 0) {
+        console.warn('[API:segments] No segments were created in the database');
+      } else if (createdSegments.length < segmentAnalysis.segments.length) {
+        console.warn('[API:segments] Some segments were not created in the database');
+      }
+      
+      // Actualizar el contador de segmentos creados
+      segmentAnalysis.segmentsCreated = createdSegments.length;
+    }
+    
+    // Transformar los segmentos para la respuesta
+    const transformedSegments = transformSegmentsForResponse(segmentAnalysis.segments);
+    const transformedNextSteps = transformNextStepsForResponse(segmentAnalysis.nextSteps);
+    const transformedErrors = transformErrorsForResponse(segmentAnalysis.errors);
+    
     // Construir respuesta
     console.log('[API:segments] Building response object');
     const response: SegmentResponse = {
@@ -251,7 +437,9 @@ export async function POST(request: NextRequest) {
       segmentsAnalyzed: segmentAnalysis.segments.length,
       segmentsCreated: segmentAnalysis.segmentsCreated,
       segmentsUpdated: segmentAnalysis.segmentsUpdated,
-      segments: segmentAnalysis.segments,
+      user_id: params.user_id,
+      site_id: params.site_id,
+      segments: transformedSegments,
       siteContext: segmentAnalysis.siteContext,
       analysisMetadata: {
         timestamp: new Date().toISOString(),
@@ -259,8 +447,8 @@ export async function POST(request: NextRequest) {
         confidenceOverall: segmentAnalysis.confidenceOverall || 0.8,
         processingTime
       },
-      nextSteps: segmentAnalysis.nextSteps,
-      errors: segmentAnalysis.errors
+      nextSteps: transformedNextSteps,
+      errors: transformedErrors
     };
     console.log('[API:segments] Response built, returning with status 200');
     
