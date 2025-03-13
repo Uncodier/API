@@ -10,7 +10,7 @@ import styles from '../ApiTester.module.css';
 
 // Definimos la interfaz de props
 export interface UnifiedApiTesterProps {
-  apiType?: 'general' | 'ai' | 'site' | 'segments';
+  apiType?: 'general' | 'ai' | 'site' | 'segments' | 'tester' | 'icp' | 'content';
   title?: string;
   description?: string;
   defaultEndpoint?: string;
@@ -27,6 +27,12 @@ export interface UnifiedApiTesterProps {
   defaultDepth?: string;
   defaultSegmentCount?: number;
   defaultUrl?: string;
+  defaultTestType?: 'success' | 'error' | 'partial' | 'timeout';
+  defaultDelay?: number;
+  defaultResponseSize?: 'small' | 'medium' | 'large';
+  defaultSegmentId?: string;
+  defaultMode?: 'analyze' | 'create' | 'update';
+  defaultLimit?: number;
   showSiteUrlField?: boolean;
   showUrlField?: boolean;
   showJsonOption?: boolean;
@@ -56,6 +62,12 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
     defaultDepth = '2',
     defaultSegmentCount = 10,
     defaultUrl = '',
+    defaultTestType = 'success',
+    defaultDelay = 0,
+    defaultResponseSize = 'medium',
+    defaultSegmentId = '',
+    defaultMode = 'analyze',
+    defaultLimit = 10,
     showSiteUrlField = true,
     showUrlField = true,
     showJsonOption = apiType !== 'segments',

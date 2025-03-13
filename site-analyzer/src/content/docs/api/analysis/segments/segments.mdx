@@ -1,0 +1,951 @@
+---
+title: API de Análisis de Segmentos Rentables
+description: Documentación completa para la API de análisis y creación de segmentos rentables para sitios web
+---
+
+# API de Análisis de Segmentos Rentables
+
+El endpoint `/api/site/segments` permite analizar un sitio web para identificar los segmentos de audiencia más rentables, evaluando patrones de comportamiento, demografía y oportunidades de monetización. Además, puede crear automáticamente estos segmentos en la base de datos del usuario si no existen.
+
+> 🚀 **Potencia tu estrategia de segmentación** 
+> 
+> Esta API utiliza modelos avanzados de IA para identificar segmentos de audiencia altamente rentables, 
+> analizar su comportamiento y proponer estrategias de monetización específicas para cada uno.
+> Integra perfectamente con plataformas publicitarias como Google Ads, Facebook Ads, TikTok Ads y LinkedIn Ads.
+
+## Características principales
+
+- Análisis conversacional con respuestas en formato JSON estructurado
+- Identificación de los N segmentos más rentables para un sitio web
+- Creación automática de segmentos en la base de datos del usuario
+- Análisis basado en múltiples fuentes de datos (comportamiento, demografía, intereses)
+- Soporte para diferentes modelos de IA para el análisis
+- Personalización de criterios de rentabilidad y relevancia
+- Captura y análisis de capturas de pantalla del sitio web
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiType="segments" 
+  title="Analizador de Segmentos Rentables"
+  description="Prueba el API de análisis de segmentos rentables con tus propios parámetros."
+  defaultEndpoint="/api/site/segments"
+  defaultMethod="POST"
+  defaultUrl="https://ejemplo.com"
+  defaultSegmentCount={5}
+  defaultTimeout="45000"
+  showModelOptions={true}
+  defaultModelType="openai"
+  defaultModel="gpt-4o"
+  showSiteUrlField={true}
+  additionalFields={[
+    {
+      name: "url",
+      label: "URL del sitio a analizar",
+      type: "text",
+      defaultValue: "https://ejemplo.com",
+      placeholder: "https://tusitio.com",
+      required: true
+    },
+    {
+      name: "mode",
+      label: "Modo de operación",
+      type: "select",
+      options: [
+        { value: "analyze", label: "Análisis (sin crear segmentos)" },
+        { value: "create", label: "Creación (crear segmentos nuevos)" },
+        { value: "update", label: "Actualización (actualizar segmentos existentes)" }
+      ],
+      defaultValue: "analyze"
+    },
+    {
+      name: "segmentCount",
+      label: "Número de segmentos a crear",
+      type: "number",
+      defaultValue: 5,
+      min: 1,
+      max: 20
+    },
+    {
+      name: "timeout",
+      label: "Timeout (ms)",
+      type: "number",
+      defaultValue: 45000,
+      min: 5000,
+      max: 120000
+    },
+    {
+      name: "user_id",
+      label: "ID de Usuario (opcional)",
+      type: "text",
+      placeholder: "user_123456"
+    },
+    {
+      name: "site_id",
+      label: "ID del Sitio (opcional)",
+      type: "text",
+      placeholder: "site_789012"
+    },
+    {
+      name: "includeScreenshot",
+      label: "Incluir captura de pantalla",
+      type: "checkbox",
+      defaultValue: true
+    },
+    {
+      name: "profitabilityMetrics",
+      label: "Métricas de rentabilidad",
+      type: "multiselect",
+      options: [
+        { value: "conversionRate", label: "Tasa de conversión" },
+        { value: "aov", label: "Valor promedio de pedido" },
+        { value: "ltv", label: "Valor de vida del cliente" },
+        { value: "engagementRate", label: "Tasa de engagement" },
+        { value: "adRevenue", label: "Ingresos por publicidad" }
+      ],
+      defaultValue: ["conversionRate", "ltv"]
+    },
+    {
+      name: "minConfidenceScore",
+      label: "Puntuación mínima de confianza",
+      type: "number",
+      defaultValue: 0.7,
+      min: 0,
+      max: 1,
+      step: 0.1
+    },
+    {
+      name: "segmentAttributes",
+      label: "Atributos de segmentos",
+      type: "multiselect",
+      options: [
+        { value: "demographic", label: "Demográficos" },
+        { value: "behavioral", label: "Comportamiento" },
+        { value: "psychographic", label: "Psicográficos" },
+        { value: "technographic", label: "Tecnográficos" },
+        { value: "firmographic", label: "Firmográficos (B2B)" }
+      ],
+      defaultValue: ["demographic", "behavioral"]
+    },
+    {
+      name: "industryContext",
+      label: "Contexto de industria",
+      type: "select",
+      options: [
+        { value: "ecommerce", label: "Comercio electrónico" },
+        { value: "saas", label: "Software como servicio" },
+        { value: "finance", label: "Finanzas" },
+        { value: "healthcare", label: "Salud" },
+        { value: "education", label: "Educación" },
+        { value: "retail", label: "Venta minorista" },
+        { value: "travel", label: "Viajes" },
+        { value: "media", label: "Medios" },
+        { value: "tech", label: "Tecnología" }
+      ],
+      defaultValue: "ecommerce"
+    },
+    {
+      name: "additionalInstructions",
+      label: "Indicaciones adicionales",
+      type: "textarea",
+      placeholder: "Proporciona cualquier información adicional o instrucciones específicas para el análisis...",
+      rows: 4
+    },
+    {
+      name: "aiProvider",
+      label: "Proveedor de IA para análisis",
+      type: "select",
+      options: [
+        { value: "openai", label: "OpenAI" },
+        { value: "anthropic", label: "Anthropic" },
+        { value: "gemini", label: "Google (Gemini)" }
+      ],
+      defaultValue: "openai"
+    },
+    {
+      name: "aiModel",
+      label: "Modelo de IA para análisis",
+      type: "select",
+      options: [
+        { value: "gpt-4o", label: "GPT-4o" },
+        { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
+        { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
+        { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
+        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" }
+      ],
+      defaultValue: "gpt-4o"
+    }
+  ]}
+/>
+
+## Funcionamiento interno
+
+> 🔄 **Integración con API de Conversación**
+> 
+> Esta API utiliza internamente la API de Conversación para analizar el sitio web.
+> Esto permite aprovechar todas las capacidades de los modelos de IA multimodales,
+> incluyendo el análisis de capturas de pantalla y contenido HTML del sitio.
+> Cuando se proporciona una URL, siempre se realiza un análisis real del sitio.
+
+El flujo de procesamiento de la API es el siguiente:
+
+1. **Recepción de parámetros**: La API recibe la URL del sitio y los parámetros de configuración
+2. **Captura de datos**: Se obtiene el HTML y opcionalmente una captura de pantalla del sitio
+3. **Análisis con IA**: Se utiliza la API de Conversación para analizar los datos con el modelo seleccionado
+4. **Procesamiento de resultados**: Se estructuran los segmentos identificados
+5. **Operaciones en base de datos**: Según el modo seleccionado, se crean o actualizan segmentos
+6. **Respuesta estructurada**: Se devuelve un JSON con los segmentos y metadatos del análisis
+
+## Modos de operación
+
+> 💡 **Selecciona el modo adecuado para tu caso de uso**
+> 
+> La API ofrece tres modos de operación que determinan cómo se procesan los segmentos identificados.
+> Elige el que mejor se adapte a tus necesidades de integración y flujo de trabajo.
+
+| Modo | Parámetro | Descripción | Caso de uso típico |
+|------|-----------|-------------|-------------------|
+| **Análisis** | `mode: "analyze"` | Analiza el sitio web y devuelve los segmentos más rentables identificados, sin crearlos en la base de datos. | Cuando solo necesitas información sobre segmentos potenciales sin almacenarlos. |
+| **Creación** | `mode: "create"` | Analiza el sitio web, identifica los segmentos más rentables y los crea automáticamente en la base de datos del usuario si no existen. | Para iniciar una estrategia de segmentación desde cero. |
+| **Actualización** | `mode: "update"` | Analiza el sitio web, identifica los segmentos más rentables y actualiza los existentes en la base de datos con nueva información. | Para mantener tus segmentos actualizados con los últimos datos. |
+
+## Métodos disponibles
+
+### POST /api/site/segments
+
+Analiza un sitio web para identificar los segmentos más rentables y opcionalmente los crea en la base de datos según el modo de operación seleccionado.
+
+#### Parámetros de solicitud
+
+```json
+{
+  "url": "https://ejemplo.com", // URL del sitio (obligatorio)
+  "segmentCount": 5, // Número de segmentos a identificar (1-20)
+  "mode": "create", // Modo de operación: 'analyze', 'create', 'update'
+  "timeout": 45000, // Tiempo máximo de espera en milisegundos
+  "user_id": "user_123456", // ID del usuario para asociar los segmentos (opcional)
+  "site_id": "site_789012", // ID del sitio para asociar los segmentos (opcional)
+  "includeScreenshot": true, // Incluir captura de pantalla en el análisis
+  "profitabilityMetrics": ["conversionRate", "ltv", "aov"], // Métricas para evaluar rentabilidad
+  "minConfidenceScore": 0.7, // Puntuación mínima de confianza (0-1)
+  "segmentAttributes": ["demographic", "behavioral", "psychographic"], // Atributos a considerar
+  "industryContext": "ecommerce", // Contexto de industria para el análisis
+  "additionalInstructions": "Enfocarse en segmentos con alto potencial de compra recurrente y analizar patrones de uso en dispositivos móviles. Incluir información detallada sobre perfiles de audiencia para plataformas publicitarias como Google Ads, Facebook Ads, LinkedIn Ads y TikTok Ads.", // Indicaciones adicionales en formato texto
+  "aiProvider": "openai", // Proveedor de IA: 'openai', 'anthropic', 'gemini'
+  "aiModel": "gpt-4o" // Modelo específico de IA a utilizar
+}
+```
+
+> 📝 **Nota sobre los IDs de usuario y sitio**
+> 
+> Los campos `user_id` y `site_id` permiten asociar los segmentos analizados con un usuario y sitio específicos
+> en tu sistema. Esto es especialmente útil cuando utilizas los modos `create` o `update` para gestionar
+> segmentos en la base de datos. Si no se proporcionan, se utilizará un ID temporal para operaciones sin
+> autenticación.
+
+#### Respuesta
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segmentsAnalyzed": 5,
+  "segmentsCreated": 3,
+  "segmentsUpdated": 0,
+  "user_id": "user_123456",
+  "site_id": "site_789012",
+  "segments": [
+    {
+      "id": "seg_content_creators",
+      "name": "Creadores de Contenido Digital",
+      "description": "Profesionales y aficionados de 20-40 años dedicados a la creación de contenido digital para redes sociales y plataformas online",
+      "summary": "Segmento altamente rentable de creadores digitales con necesidades específicas de herramientas profesionales.",
+      "estimatedSize": "189,000",
+      "estimated_value": "9,000,000",
+      "targetAudience": "media_entertainment",
+      "language": "en",
+      "audienceProfile": {
+        "adPlatforms": {
+          "googleAds": {
+            "demographics": {
+              "ageRanges": ["25-34", "35-44"],
+              "gender": ["male", "female"],
+              "parentalStatus": ["parent"],
+              "householdIncome": ["top 10%", "top 20%"]
+            },
+            "interests": [
+              "Digital Content Creation",
+              "Video Production",
+              "Photography",
+              "Graphic Design"
+            ],
+            "inMarketSegments": [
+              "Software",
+              "Creative Software",
+              "Video Editing Software"
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"]
+            }
+          }
+        }
+      },
+      "attributes": {
+        "demographic": {
+          "ageRange": "20-40",
+          "gender": "mixed",
+          "income": "medium-high",
+          "education": "higher education"
+        },
+        "behavioral": {
+          "deviceUsage": ["laptop (70%)", "smartphone (25%)", "tablet (5%)"],
+          "softwarePreference": ["Adobe Creative Suite", "DaVinci Resolve"]
+        }
+      },
+      "createdInDatabase": true,
+      "databaseId": "db_seg_123456",
+      "databaseInfo": {
+        "databaseId": "db_seg_123456",
+        "createdAt": "2023-06-15T14:30:00Z",
+        "updatedAt": "2023-06-15T14:30:00Z"
+      }
+    },
+    {
+      "id": "seg_luxury_mobile_shoppers",
+      "name": "Compradores de lujo en móvil",
+      "description": "Profesionales urbanos de 30-50 años con alto poder adquisitivo que prefieren comprar desde dispositivos móviles",
+      "summary": "Segmento premium con alto poder adquisitivo que realiza compras desde dispositivos móviles.",
+      "estimatedSize": "97,500",
+      "estimated_value": "5,200,000",
+      "targetAudience": "retail",
+      "language": "es",
+      "audienceProfile": {
+        "adPlatforms": {
+          "googleAds": {
+            "demographics": {
+              "ageRanges": ["35-44", "45-54"],
+              "gender": ["male", "female"],
+              "householdIncome": ["top 10%"]
+            },
+            "interests": [
+              "Luxury Goods",
+              "High-End Fashion",
+              "Luxury Travel"
+            ]
+          }
+        }
+      },
+      "createdInDatabase": true,
+      "databaseId": "db_seg_789012",
+      "databaseInfo": {
+        "databaseId": "db_seg_789012",
+        "createdAt": "2023-06-15T14:30:00Z",
+        "updatedAt": "2023-06-15T14:30:00Z"
+      }
+    }
+  ],
+  "siteContext": {
+    "industry": "tecnología",
+    "businessModel": "ecommerce",
+    "primaryAudience": "profesionales"
+  },
+  "analysisMetadata": {
+    "timestamp": "2023-06-15T14:30:00Z",
+    "aiModel": "gpt-4o",
+    "confidenceOverall": 0.85,
+    "processingTime": 12345
+  }
+}
+```
+
+## Prompt enviado al modelo de IA
+
+> 💡 **Estructura del prompt**
+> 
+> A continuación se muestra el prompt exacto que se envía al modelo de IA para el análisis de segmentos.
+> Este prompt está diseñado para obtener una respuesta estructurada en formato JSON con información
+> detallada sobre los segmentos más rentables para el sitio web analizado.
+
+```
+Analyze the website https://ejemplo.com and identify the 5 most profitable audience segments.
+
+For each segment, provide:
+- A descriptive name
+- A detailed description
+- A concise summary of the segment
+- Estimated SAM size by segment, refined by the target audience in the region and language (units)
+- Estimated SAM value by segment, refined by the target audience in the region and language (USD)
+- Target audience
+- Audience profile
+- Language
+- Attributes (demographic, behavioral, etc.)
+
+IMPORTANT: Your response MUST be a valid JSON object with the following structure:
+
+{
+  "url": "https://ejemplo.com",
+  "segmentsAnalyzed": 5,
+  "segments": [
+    {
+      "name": "Digital Content Creators",
+      "description": "Professionals and enthusiasts aged 20-40 dedicated to creating digital content for social media and online platforms",
+      "summary": "Highly profitable segment of digital creators with specific needs for professional tools and willingness to invest in solutions that improve their creative workflow.",
+      "targetAudience": "media_entertainment",
+      "size": "189,000",
+      "estimated_value": "9,000,000",      
+      "audienceProfile": {
+        "adPlatforms": {
+          "googleAds": {
+            "demographics": {
+              "ageRanges": ["25-34", "35-44"],
+              "gender": ["male", "female"],
+              "parentalStatus": ["parent"],
+              "householdIncome": ["top 10%", "top 20%"]
+            },
+            "interests": [
+              "Digital Content Creation",
+              "Video Production",
+              "Photography",
+              "Graphic Design",
+              "Technology Early Adopters"
+            ],
+            "inMarketSegments": [
+              "Software",
+              "Creative Software",
+              "Video Editing Software",
+              "Photography Equipment",
+              "Computer Hardware"
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["California", "New York", "Texas", "Ontario", "London"],
+              "cities": ["San Francisco", "New York", "Los Angeles", "Toronto", "London"]
+            }
+          },
+          "facebookAds": {
+            "demographics": {
+              "age": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+              "education": ["College grad", "In grad school", "Master's degree"],
+              "generation": ["Millennials", "Gen Z"]
+            },
+            "interests": [
+              "Adobe Creative Cloud",
+              "Content creation",
+              "Digital marketing",
+              "Video production",
+              "Photography"
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["California", "New York", "Texas", "Florida", "Illinois"],
+              "cities": ["Los Angeles", "New York", "Chicago", "Toronto", "London"]
+            },
+            "languages": ["English"]
+          },
+          "linkedInAds": {
+            "demographics": {
+              "age": ["25-34", "35-54"],
+              "education": ["Bachelor's Degree", "Master's Degree"],
+              "jobExperience": ["Mid-Senior level", "Director"]
+            },
+            "jobTitles": [
+              "Creative Director",
+              "Content Producer",
+              "Digital Marketing Manager",
+              "Graphic Designer",
+              "Video Editor"
+            ],
+            "industries": [
+              "Marketing and Advertising",
+              "Media Production",
+              "Design",
+              "Information Technology"
+            ],
+            "companySize": ["11-50", "51-200", "201-500"],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["West Coast", "East Coast", "Midwest", "Southeast"],
+              "metropolitanAreas": ["San Francisco Bay Area", "Greater New York City Area", "Greater Los Angeles Area"]
+            }
+          },
+          "tiktokAds": {
+            "demographics": {
+              "age": ["18-24", "25-34"],
+              "gender": ["male", "female"],
+              "location": ["Urban areas", "Creative hubs"]
+            },
+            "interests": [
+              "Content Creation",
+              "Video Editing",
+              "Creative Tools",
+              "Digital Art",
+              "Tech Gadgets"
+            ],
+            "behaviors": [
+              "App installs: Creative tools",
+              "Engagement: Tutorial videos",
+              "Shopping: Tech accessories",
+              "Creator economy participants"
+            ],
+            "creatorCategories": [
+              "Tech Reviewers",
+              "Digital Artists",
+              "Tutorial Creators",
+              "Productivity Influencers"
+            ],
+            "locations": {
+              "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+              "regions": ["California", "New York", "Texas", "Ontario", "London"],
+              "cities": ["Los Angeles", "New York", "Miami", "Toronto", "London"]
+            },
+            "languages": ["English"]
+          }
+        }
+      },
+      "language": "en"
+    }
+  ]
+}
+
+Make sure your response is a valid JSON and follows this structure exactly. Do not include additional explanations outside the JSON. Replace the example data with real information based on your analysis of the website.
+
+IMPORTANT: Each segment must have EXACTLY ONE language specified in the "language" field. All countries and regions listed in the segment's audience profile MUST primarily speak the language specified for that segment. Do not include countries or regions that primarily speak a different language than the one specified for the segment. For example, if a segment has "language": "en", only include English-speaking countries and regions in the locations.
+
+For the targetAudience field, please select from the following options:
+enterprise
+smb
+startup
+b2b_saas
+e_commerce
+tech
+finance
+healthcare
+education
+manufacturing
+retail
+real_estate
+hospitality
+automotive
+media
+telecom
+energy
+agriculture
+construction
+logistics
+professional
+government
+nonprofit
+legal
+pharma
+insurance
+consulting
+research
+aerospace
+gaming
+```
+
+> 📝 **Personalización del prompt**
+> 
+> El prompt anterior es la versión básica. La API permite personalizar varios aspectos:
+> 
+> - **Métricas de rentabilidad**: Se pueden especificar métricas específicas para evaluar la rentabilidad
+> - **Atributos de segmentos**: Se pueden solicitar atributos específicos para cada segmento
+> - **Contexto de industria**: Se puede proporcionar información sobre la industria del sitio
+> - **Instrucciones adicionales**: Se pueden añadir instrucciones específicas para el análisis
+> - **Modo de operación**: Se pueden incluir instrucciones específicas según el modo (create/update)
+
+## Formato de respuesta esperado
+
+> 🔍 **Estructura de la respuesta**
+> 
+> La respuesta del modelo de IA debe seguir una estructura JSON específica que incluye información
+> detallada sobre cada segmento identificado. A continuación se muestra un ejemplo de la estructura
+> esperada para un segmento.
+
+```json
+{
+  "name": "Digital Content Creators",
+  "description": "Professionals and enthusiasts aged 20-40 dedicated to creating digital content for social media and online platforms",
+  "summary": "Highly profitable segment of digital creators with specific needs for professional tools and willingness to invest in solutions that improve their creative workflow.",
+  "targetAudience": "media_entertainment",
+  "size": "189,000",
+  "estimated_value": "9,000,000",      
+  "audienceProfile": {
+    "adPlatforms": {
+      "googleAds": {
+        "demographics": {
+          "ageRanges": ["25-34", "35-44"],
+          "gender": ["male", "female"],
+          "parentalStatus": ["parent"],
+          "householdIncome": ["top 10%", "top 20%"]
+        },
+        "interests": [
+          "Digital Content Creation",
+          "Video Production",
+          "Photography",
+          "Graphic Design",
+          "Technology Early Adopters"
+        ],
+        "inMarketSegments": [
+          "Software",
+          "Creative Software",
+          "Video Editing Software",
+          "Photography Equipment",
+          "Computer Hardware"
+        ],
+        "locations": {
+          "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+          "regions": ["California", "New York", "Texas", "Ontario", "London"],
+          "cities": ["San Francisco", "New York", "Los Angeles", "Toronto", "London"]
+        }
+      },
+      "facebookAds": {
+        "demographics": {
+          "age": [25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40],
+          "education": ["College grad", "In grad school", "Master's degree"],
+          "generation": ["Millennials", "Gen Z"]
+        },
+        "interests": [
+          "Adobe Creative Cloud",
+          "Content creation",
+          "Digital marketing",
+          "Video production",
+          "Photography"
+        ],
+        "locations": {
+          "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+          "regions": ["California", "New York", "Texas", "Florida", "Illinois"],
+          "cities": ["Los Angeles", "New York", "Chicago", "Toronto", "London"]
+        },
+        "languages": ["English"]
+      },
+      "linkedInAds": {
+        "demographics": {
+          "age": ["25-34", "35-54"],
+          "education": ["Bachelor's Degree", "Master's Degree"],
+          "jobExperience": ["Mid-Senior level", "Director"]
+        },
+        "jobTitles": [
+          "Creative Director",
+          "Content Producer",
+          "Digital Marketing Manager",
+          "Graphic Designer",
+          "Video Editor"
+        ],
+        "industries": [
+          "Marketing and Advertising",
+          "Media Production",
+          "Design",
+          "Information Technology"
+        ],
+        "companySize": ["11-50", "51-200", "201-500"],
+        "locations": {
+          "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+          "regions": ["West Coast", "East Coast", "Midwest", "Southeast"],
+          "metropolitanAreas": ["San Francisco Bay Area", "Greater New York City Area", "Greater Los Angeles Area"]
+        }
+      },
+      "tiktokAds": {
+        "demographics": {
+          "age": ["18-24", "25-34"],
+          "gender": ["male", "female"],
+          "location": ["Urban areas", "Creative hubs"]
+        },
+        "interests": [
+          "Content Creation",
+          "Video Editing",
+          "Creative Tools",
+          "Digital Art",
+          "Tech Gadgets"
+        ],
+        "behaviors": [
+          "App installs: Creative tools",
+          "Engagement: Tutorial videos",
+          "Shopping: Tech accessories",
+          "Creator economy participants"
+        ],
+        "creatorCategories": [
+          "Tech Reviewers",
+          "Digital Artists",
+          "Tutorial Creators",
+          "Productivity Influencers"
+        ],
+        "locations": {
+          "countries": ["United States", "Canada", "United Kingdom", "Australia"],
+          "regions": ["California", "New York", "Texas", "Ontario", "London"],
+          "cities": ["Los Angeles", "New York", "Miami", "Toronto", "London"]
+        },
+        "languages": ["English"]
+      }
+    }
+  },
+  "attributes": {
+    "demographic": {
+      "ageRange": "20-40",
+      "gender": "mixed",
+      "income": "medium-high",
+      "education": "higher education"
+    },
+    "behavioral": {
+      "deviceUsage": ["laptop (70%)", "smartphone (25%)", "tablet (5%)"],
+      "softwarePreference": ["Adobe Creative Suite", "DaVinci Resolve"]
+    },
+    "psychographic": {
+      "interests": ["Digital creation", "Technology", "Visual arts"],
+      "values": ["Creativity", "Innovation", "Quality"]
+    }
+  },
+  "language": "en"
+}
+```
+
+### GET /api/site/segments
+
+Obtiene información sobre el servicio de análisis de segmentos.
+
+#### Respuesta
+
+```json
+{
+  "service": "AI Segment Analyzer",
+  "version": "1.0.0",
+  "status": "operational",
+  "capabilities": [
+    "segment-identification",
+    "profitability-analysis",
+    "database-integration",
+    "multi-model-support"
+  ],
+  "limits": {
+    "maxSegmentsPerRequest": 20,
+    "requestsPerDay": 50,
+    "maxTimeout": 60000
+  },
+  "supportedProfitabilityMetrics": [
+    "conversionRate",
+    "aov",
+    "ltv",
+    "engagementRate",
+    "adRevenue"
+  ]
+}
+```
+
+### GET /api/site/segments/user
+
+Obtiene o genera segmentos para un ID de usuario específico.
+Si se proporciona una URL, genera nuevos segmentos basados en el análisis real de esa URL.
+
+#### Parámetros de consulta
+
+| Parámetro | Tipo | Descripción | Requerido | Valor por defecto |
+|-----------|------|-------------|-----------|-------------------|
+| url | string | URL del sitio a analizar | No | - |
+| segmentCount | number | Número de segmentos a crear (1-20) | No | 5 |
+| userId | string | ID del usuario para asociar los segmentos | No | system_m2m_user |
+| debug | boolean | Si es true, incluye información adicional de depuración | No | false |
+
+> 📝 **Nota importante sobre el análisis**
+> 
+> Cuando se proporciona una URL, la API siempre realiza un análisis real del sitio web.
+> El análisis incluye la captura del HTML y una captura de pantalla del sitio, y utiliza
+> modelos avanzados de IA para identificar los segmentos más rentables.
+> 
+> Si no se proporciona una URL, la API devuelve datos simulados para fines de prueba.
+
+#### Ejemplo de solicitud
+
+```
+GET /api/site/segments/user?url=https://ejemplo.com&segmentCount=5&userId=client_123&debug=true
+```
+
+#### Respuesta
+
+```json
+{
+  "userId": "client_123",
+  "totalSegments": 5,
+  "siteUrl": "https://ejemplo.com",
+  "segmentCount": 5,
+  "debug": true,
+  "processingTime": "12.45 segundos",
+  "isDirectApiCall": true,
+  "segments": [
+    {
+      "id": "seg_content_creators",
+      "name": "Creadores de Contenido Digital",
+      "description": "Profesionales y aficionados de 20-40 años dedicados a la creación de contenido digital para redes sociales y plataformas online",
+      "summary": "Segmento altamente rentable de creadores digitales con necesidades específicas de herramientas profesionales y disposición a invertir en soluciones que mejoren su flujo de trabajo creativo.",
+      "estimatedSize": "15%",
+      "estimated_value": "9,000,000",
+      "profitabilityScore": 0.88,
+      "confidenceScore": 0.93,
+      "targetAudience": "media_entertainment",
+      // ... otros campos del segmento
+    },
+    // ... otros segmentos
+  ],
+  "siteContext": {
+    "industry": "technology",
+    "businessModel": "saas",
+    "primaryAudience": "professionals",
+    "competitivePosition": "leader"
+  },
+  "nextSteps": [
+    {
+      "action": "Implementar campañas específicas para el segmento de creadores de contenido",
+      "priority": "high",
+      "resources": ["marketing_team", "content_strategy"]
+    }
+  ]
+}
+```
+
+## Integración con la base de datos
+
+Cuando se utiliza el modo `create` o `update`, la API se integra con la base de datos del usuario para:
+
+1. **Verificar existencia**: Comprueba si ya existen segmentos similares
+2. **Crear nuevos segmentos**: Crea registros para segmentos que no existen
+3. **Actualizar segmentos**: Actualiza información de segmentos existentes
+4. **Mantener historial**: Registra cambios en los segmentos a lo largo del tiempo
+
+> 📊 **Persistencia automática de segmentos**
+> 
+> La API no solo identifica segmentos rentables, sino que también puede crearlos y actualizarlos 
+> automáticamente en tu base de datos. Esto te permite construir un repositorio de segmentos 
+> que evoluciona con el tiempo y se mantiene sincronizado con los cambios en tu sitio web.
+
+El esquema de la base de datos para los segmentos incluye:
+
+```sql
+CREATE TABLE segments (
+  id VARCHAR(255) PRIMARY KEY,
+  user_id VARCHAR(255) NOT NULL,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  attributes JSONB,
+  profitability_score FLOAT,
+  confidence_score FLOAT,
+  estimated_size VARCHAR(50),
+  site_url VARCHAR(255),
+  monetization_opportunities JSONB,
+  recommended_actions JSONB,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id)
+);
+```
+
+## Ejemplos de uso
+
+> 💻 **Código listo para usar**
+> 
+> Los siguientes ejemplos te muestran cómo integrar la API de Segmentos Rentables en tu aplicación.
+> Copia, pega y adapta estos fragmentos de código para comenzar a identificar y monetizar 
+> segmentos de audiencia valiosos en cuestión de minutos.
+
+### Analizar segmentos sin crearlos
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer tu_token_api'
+  },
+  body: JSON.stringify({
+    url: 'https://ejemplo.com',
+    segmentCount: 5,
+    mode: 'analyze',
+    includeScreenshot: true,
+    profitabilityMetrics: ['conversionRate', 'ltv', 'engagementRate'],
+    segmentAttributes: ['demographic', 'behavioral', 'psychographic'],
+    industryContext: 'ecommerce',
+    additionalInstructions: "Enfocarse en segmentos con alto potencial de compra recurrente y analizar patrones de uso en dispositivos móviles.",
+    aiProvider: 'openai',
+    aiModel: 'gpt-4o',
+    timeout: 45000
+  })
+});
+
+const data = await response.json();
+console.log(data.segments); // Segmentos identificados
+console.log(data.siteContext); // Contexto del sitio
+```
+
+### Crear segmentos automáticamente
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer tu_token_api'
+  },
+  body: JSON.stringify({
+    url: 'https://ejemplo.com',
+    segmentCount: 8, // Crear solo 8 segmentos en la base de datos
+    mode: 'create',
+    includeScreenshot: true, // Incluir captura de pantalla para análisis visual
+    profitabilityMetrics: ['conversionRate', 'aov', 'ltv'],
+    segmentAttributes: ['demographic', 'behavioral', 'psychographic'],
+    industryContext: 'ecommerce',
+    additionalInstructions: "Identificar segmentos con alto potencial de monetización a través de suscripciones y analizar patrones de uso en dispositivos móviles. Incluir información detallada sobre perfiles de audiencia para plataformas publicitarias como Google Ads, Facebook Ads, LinkedIn Ads y TikTok Ads.",
+    aiProvider: 'anthropic',
+    aiModel: 'claude-3-5-sonnet-20240620',
+    timeout: 60000,
+    user_id: 'user_123456',
+    site_id: 'site_789012'
+  })
+});
+
+const data = await response.json();
+console.log(`Segmentos creados: ${data.segmentsCreated}`);
+console.log(data.segments.filter(s => s.createdInDatabase)); // Segmentos creados en la DB
+```
+
+### Obtener segmentos del usuario
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments/user?userId=user_123456', {
+  method: 'GET',
+  headers: {
+    'Authorization': 'Bearer tu_token_api'
+  }
+});
+
+const data = await response.json();
+console.log(`Total de segmentos: ${data.totalSegments}`);
+console.log(data.segments); // Todos los segmentos del usuario
+```
+
+### Actualizar segmentos existentes
+
+```javascript
+const response = await fetch('https://tudominio.com/api/site/segments', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer tu_token_api'
+  },
+  body: JSON.stringify({
+    url: 'https://ejemplo.com',
+    segmentCount: 5,
+    mode: 'update',
+    includeScreenshot: true,
+    profitabilityMetrics: ['conversionRate', 'ltv', 'engagementRate', 'adRevenue'],
+    segmentAttributes: ['demographic', 'behavioral', 'psychographic', 'technographic'],
+    industryContext: 'media',
+    additionalInstructions: "Actualizar información de targeting específica para cada segmento incluyendo audiencias detalladas para Google Ads, Facebook Ads, LinkedIn Ads y TikTok Ads. Enfocarse en los cambios de comportamiento de los segmentos en el último trimestre.",
+    aiProvider: 'gemini',
+    aiModel: 'gemini-1.5-pro',
+    timeout: 50000,
+    user_id: 'user_123456',
+    site_id: 'site_789012'
+  })
+});
+
+const data = await response.json();
+console.log(`Segmentos actualizados: ${data.segmentsUpdated}`);
+console.log(data.segments); // Información actualizada de segmentos
+``` 

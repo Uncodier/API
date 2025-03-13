@@ -545,6 +545,7 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                 description: segment.description,
                 audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                 size: parseFloat(segment.estimatedSize) || 0,
+                estimated_value: segment.estimated_value || segment.size_value || "0",
                 is_active: true,
                 keywords: keywords.length > 0 ? keywords : [],
                 hot_topics: hotTopics.length > 0 ? hotTopics : [],
@@ -615,6 +616,7 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                     description: segment.description,
                     audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                     size: parseFloat(segment.estimatedSize) || 0,
+                    estimated_value: segment.estimated_value || segment.size_value || "0",
                     keywords: keywords.length > 0 ? keywords : undefined,
                     hot_topics: hotTopics.length > 0 ? hotTopics : undefined,
                     language: segment.language,
@@ -666,6 +668,7 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                   description: segment.description,
                   audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
                   size: parseFloat(segment.estimatedSize) || 0,
+                  estimated_value: segment.estimated_value || segment.size_value || "0",
                   is_active: true,
                   keywords: keywords.length > 0 ? keywords : [],
                   hot_topics: hotTopics.length > 0 ? hotTopics : [],
@@ -755,6 +758,7 @@ For each segment, provide:
 - A detailed description
 - A concise summary of the segment
 - Estimated SAM size by segment, refined by the target audience in the region and language (units)
+- Estimated SAM Market value by segment, refined by the target audience in the region and language (USD)
 - Target audience
 - Audience profile
 - Language
@@ -772,6 +776,7 @@ IMPORTANT: Your response MUST be a valid JSON object with the following structur
       "summary": "Highly profitable segment of digital creators with specific needs for professional tools and willingness to invest in solutions that improve their creative workflow.",
       "targetAudience": "media_entertainment",
       "size": "189,000",
+      "estimated_value": "9,000,000",      
       "audienceProfile": {
         "adPlatforms": {
           "googleAds": {
@@ -1125,6 +1130,16 @@ function normalizeSegment(segment: any, options: SegmentAnalysisOptions): any {
       segment.estimatedSize = String(segment.size);
     } else {
       segment.estimatedSize = "0"; // Valor por defecto
+    }
+  }
+  
+  // Asegurarse de que el segmento tenga un valor estimado
+  // Usar el campo estimated_value si está disponible, o size_value como alternativa
+  if (!segment.estimated_value) {
+    if (segment.size_value) {
+      segment.estimated_value = String(segment.size_value);
+    } else {
+      segment.estimated_value = "0"; // Valor por defecto
     }
   }
   

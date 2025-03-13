@@ -12,4 +12,5 @@ export interface ConversationOptions {
   siteUrl?: string;
   responseFormat?: 'json' | 'text';
   timeout?: number;
+  conversationId?: string; // ID para mantener el contexto de la conversación
 } 

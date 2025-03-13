@@ -3,5 +3,7 @@
   "analyze": "Análisis de Sitios",
   "ai": "Inteligencia Artificial",
   "site": "Gestión de Sitios",
-  "conversation": "Conversación"
+  "conversation": "Conversación",
+  "visitors": "Tracking de Visitantes",
+  "experiments": "Experimentos y Testing A/B"
 } 

@@ -5,6 +5,7 @@ import { captureScreenshot, prepareImageForAPI } from './image-utils';
 import { preprocessHtml } from './html-preprocessor';
 import { createVisionMessage } from './message-utils';
 import * as cheerio from 'cheerio';
+import { continueJsonGeneration, isIncompleteJson as isJsonIncomplete, attemptJsonRepair } from '@/lib/services/continuation-service';
 
 /**
  * Prepara los datos para un análisis (screenshot y HTML)
@@ -339,12 +340,10 @@ export function prepareApiMessage(
 }
 
 /**
- * Verifica si una respuesta es un JSON incompleto y solicita su continuación
- * @param response La respuesta original de la API
- * @param messages Los mensajes originales enviados a la API
- * @param modelType El tipo de modelo utilizado
- * @param modelId El ID del modelo utilizado
- * @returns La respuesta completa como objeto JSON
+ * Maneja respuestas JSON incompletas utilizando el servicio de continuación
+ * 
+ * Esta función detecta si una respuesta contiene un JSON incompleto y utiliza
+ * el servicio de continuación para completarlo.
  */
 export async function handleIncompleteJsonResponse(
   response: any,
@@ -364,8 +363,67 @@ export async function handleIncompleteJsonResponse(
   }
   
   // Verificar si la respuesta parece ser un JSON incompleto
-  if (content && content.trim().startsWith('{') && !isValidJson(content)) {
-    console.log('[handleIncompleteJsonResponse] Detectada respuesta JSON incompleta, solicitando continuación...');
+  if (content && content.trim().startsWith('{') && isJsonIncomplete(content)) {
+    console.log('[handleIncompleteJsonResponse] Detectada respuesta JSON incompleta');
+    
+    // Intentar primero con el método de reparación rápida
+    const repairedJson = attemptJsonRepair(content);
+    if (repairedJson) {
+      console.log('[handleIncompleteJsonResponse] JSON reparado exitosamente sin usar IA');
+      
+      // Actualizar la respuesta con el JSON reparado
+      if (modelType === 'anthropic') {
+        response.content[0].text = JSON.stringify(repairedJson);
+      } else if (modelType === 'openai') {
+        response.choices[0].message.content = JSON.stringify(repairedJson);
+      } else if (modelType === 'gemini') {
+        response.candidates[0].content.parts[0].text = JSON.stringify(repairedJson);
+      }
+      
+      return response;
+    }
+    
+    console.log('[handleIncompleteJsonResponse] Intentando completar JSON con el servicio de continuación');
+    
+    try {
+      // Usar el servicio de continuación para completar el JSON
+      const continuationResult = await continueJsonGeneration({
+        incompleteJson: content,
+        modelType,
+        modelId: modelId || getDefaultModelId(modelType),
+        siteUrl: 'https://example.com', // URL genérica para contexto
+        timeout: 30000,
+        maxRetries: 2
+      });
+      
+      if (continuationResult.success && continuationResult.completeJson) {
+        console.log('[handleIncompleteJsonResponse] JSON completado exitosamente con el servicio de continuación');
+        
+        // Actualizar la respuesta con el JSON completo
+        const completedJsonString = typeof continuationResult.completeJson === 'string' 
+          ? continuationResult.completeJson 
+          : JSON.stringify(continuationResult.completeJson);
+        
+        if (modelType === 'anthropic') {
+          response.content[0].text = completedJsonString;
+        } else if (modelType === 'openai') {
+          response.choices[0].message.content = completedJsonString;
+        } else if (modelType === 'gemini') {
+          response.candidates[0].content.parts[0].text = completedJsonString;
+        }
+        
+        return response;
+      }
+      
+      // Si el servicio de continuación falló, intentar con el método tradicional
+      console.log('[handleIncompleteJsonResponse] El servicio de continuación falló, intentando con el método tradicional');
+    } catch (error) {
+      console.error('[handleIncompleteJsonResponse] Error en el servicio de continuación:', error);
+      console.log('[handleIncompleteJsonResponse] Intentando con el método tradicional');
+    }
+    
+    // Método tradicional: solicitar continuación con un nuevo mensaje
+    console.log('[handleIncompleteJsonResponse] Solicitando continuación con un nuevo mensaje');
     
     // Crear un nuevo mensaje para solicitar la continuación
     const continuationMessage = [
@@ -395,7 +453,7 @@ export async function handleIncompleteJsonResponse(
     const combinedContent = content + continuationContent;
     
     // Verificar si la respuesta combinada es un JSON válido
-    if (isValidJson(combinedContent)) {
+    if (!isJsonIncomplete(combinedContent)) {
       console.log('[handleIncompleteJsonResponse] Respuesta JSON completada correctamente');
       
       // Actualizar la respuesta con el contenido combinado
@@ -432,6 +490,22 @@ export async function handleIncompleteJsonResponse(
   
   // Si la respuesta ya es válida, devolverla sin cambios
   return response;
+}
+
+/**
+ * Obtiene el ID de modelo predeterminado para un proveedor
+ */
+function getDefaultModelId(modelType: 'anthropic' | 'openai' | 'gemini'): string {
+  switch (modelType) {
+    case 'anthropic':
+      return 'claude-3-opus-20240229';
+    case 'openai':
+      return 'gpt-4-turbo';
+    case 'gemini':
+      return 'gemini-pro';
+    default:
+      return 'claude-3-opus-20240229';
+  }
 }
 
 /**

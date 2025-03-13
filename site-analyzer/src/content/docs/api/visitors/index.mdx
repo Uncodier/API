@@ -1,0 +1,42 @@
+# API de Tracking de Visitantes
+
+Esta sección proporciona documentación detallada sobre los endpoints de tracking de visitantes para el Site Analyzer. Estos endpoints son utilizados por nuestro script de tracking para registrar eventos de usuarios, segmentos y analíticas en tiempo real.
+
+## Descripción general
+
+El sistema de tracking de visitantes permite recopilar datos cruciales sobre el comportamiento de los usuarios en los sitios web monitoreados. El script de tracking, que se instala en los sitios cliente, envía datos al backend para su procesamiento en segundo plano.
+
+### Características principales
+
+- Seguimiento de visitantes únicos y sesiones
+- Registro de eventos personalizados
+- Segmentación de usuarios por comportamiento
+- Análisis en tiempo real
+- Bajo impacto en el rendimiento de la página
+
+## Integración básica
+
+Para integrar el sistema de tracking en un sitio web, incluye el siguiente script en el `<head>` del HTML:
+
+```html
+<script async src="https://cdn.site-analyzer.com/tracker.js" id="site-analyzer-script" data-site-id="TU_SITE_ID"></script>
+```
+
+Reemplaza `TU_SITE_ID` con el identificador único proporcionado al registrar tu sitio en el dashboard.
+
+## Endpoints disponibles
+
+- [/api/visitors/track](/api/visitors/track) - Endpoint principal para el registro de eventos
+- [/api/visitors/session](/api/visitors/session) - Gestión de sesiones de usuarios
+- [/api/visitors/segment](/api/visitors/segment) - Segmentación de usuarios
+- [/api/visitors/identify](/api/visitors/identify) - Identificación de usuarios
+
+## Consideraciones de privacidad
+
+El sistema de tracking cumple con las regulaciones GDPR y CCPA. Es importante implementar las medidas adecuadas de consentimiento de cookies y privacidad de datos en los sitios donde se utilice el script de tracking.
+
+## Limitaciones
+
+- Máximo 100 eventos por minuto por IP
+- Tamaño máximo de payload: 100KB
+- Máximo 50 propiedades personalizadas por evento 

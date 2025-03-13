@@ -1,4 +1,4 @@
-import { supabase } from './supabase-client'
+import { supabaseAdmin } from './supabase-client'
 
 /**
  * Interfaz para los segmentos en la base de datos
@@ -9,6 +9,7 @@ interface DbSegment {
   description: string | null;
   audience: string | null;
   size: number | null;
+  estimated_value: string | null;
   engagement: number | null;
   is_active: boolean | null;
   keywords: any[] | null;
@@ -25,11 +26,12 @@ interface DbSegment {
  * Interfaz para crear un nuevo segmento
  */
 interface CreateSegmentParams {
-  id: string;
+  id?: string;
   name: string;
   description: string;
   audience: string;
   size: number;
+  estimated_value?: string;
   is_active: boolean;
   keywords: any[];
   hot_topics: any[];
@@ -47,14 +49,14 @@ interface CreateSegmentParams {
  */
 export async function createSegmentInDatabase(segmentData: CreateSegmentParams): Promise<DbSegment | null> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('segments')
       .insert([{
-        id: segmentData.id,
         name: segmentData.name,
         description: segmentData.description,
         audience: segmentData.audience,
         size: segmentData.size,
+        estimated_value: segmentData.estimated_value || "0",
         engagement: 0, // Valor inicial
         is_active: segmentData.is_active,
         keywords: segmentData.keywords || [],
@@ -91,7 +93,7 @@ export async function updateSegment(
   updates: Partial<Omit<DbSegment, 'id' | 'created_at' | 'updated_at'>>
 ): Promise<boolean> {
   try {
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('segments')
       .update({
         ...updates,
@@ -126,7 +128,7 @@ export async function findSimilarSegments(
 ): Promise<DbSegment[]> {
   try {
     // Buscar por coincidencia exacta de nombre y sitio
-    const { data: exactMatch, error: exactError } = await supabase
+    const { data: exactMatch, error: exactError } = await supabaseAdmin
       .from('segments')
       .select('*')
       .eq('user_id', userId)
@@ -143,7 +145,7 @@ export async function findSimilarSegments(
     }
     
     // Si no hay coincidencia exacta, buscar por similitud en el nombre
-    const { data: similarMatch, error: similarError } = await supabase
+    const { data: similarMatch, error: similarError } = await supabaseAdmin
       .from('segments')
       .select('*')
       .eq('user_id', userId)
@@ -172,7 +174,7 @@ export async function findSimilarSegments(
  */
 export async function getSegmentsBySite(siteId: string, userId: string): Promise<DbSegment[]> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('segments')
       .select('*')
       .eq('site_id', siteId)
@@ -205,7 +207,7 @@ export async function setSegmentActive(
   userId: string
 ): Promise<boolean> {
   try {
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('segments')
       .update({
         is_active: isActive,

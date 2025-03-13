@@ -1,4 +1,4 @@
-# Site Analyzer
+# Market Fit
 
 Una aplicación web para analizar sitios web utilizando modelos de IA avanzados.
 

@@ -1,0 +1,174 @@
+# Endpoint de Sesiones
+
+El endpoint `/api/visitors/session` permite gestionar las sesiones de los visitantes. Una sesión representa un periodo de actividad continua de un usuario en un sitio web.
+
+## Especificación de la API
+
+- **URL**: `/api/visitors/session`
+- **Métodos**: `POST`, `GET`, `PUT`
+- **Formato de datos**: JSON
+- **Autenticación**: API Key en encabezado `X-SA-API-KEY`
+
+## Crear una nueva sesión (POST)
+
+### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `site_id` | string | Sí | Identificador único del sitio |
+| `visitor_id` | string | Sí | ID único del visitante |
+| `landing_url` | string | Sí | URL inicial de la sesión |
+| `referrer` | string | No | URL de referencia |
+| `utm_source` | string | No | Fuente UTM |
+| `utm_medium` | string | No | Medio UTM |
+| `utm_campaign` | string | No | Campaña UTM |
+| `utm_term` | string | No | Término UTM |
+| `utm_content` | string | No | Contenido UTM |
+| `device` | object | No | Información del dispositivo |
+| `browser` | object | No | Información del navegador |
+| `location` | object | No | Información geográfica (país, región, ciudad) |
+
+### Ejemplo de payload
+
+```json
+{
+  "site_id": "site_123abc",
+  "visitor_id": "vis_abcd1234",
+  "landing_url": "https://ejemplo.com/landing-page",
+  "referrer": "https://google.com",
+  "utm_source": "google",
+  "utm_medium": "cpc",
+  "utm_campaign": "spring_sale",
+  "device": {
+    "type": "desktop",
+    "screen_size": "1920x1080"
+  },
+  "browser": {
+    "name": "Chrome",
+    "version": "98.0.4758.102",
+    "language": "es-ES"
+  },
+  "location": {
+    "country": "ES",
+    "region": "Madrid",
+    "city": "Madrid"
+  }
+}
+```
+
+### Respuesta
+
+```json
+{
+  "success": true,
+  "session_id": "sess_xyz789",
+  "created_at": 1646123456789,
+  "expires_at": 1646152256789
+}
+```
+
+## Obtener datos de una sesión (GET)
+
+### Parámetros de URL
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `session_id` | string | Sí | ID de la sesión a consultar |
+| `site_id` | string | Sí | Identificador único del sitio |
+
+### Ejemplo de URL
+
+```
+/api/visitors/session?session_id=sess_xyz789&site_id=site_123abc
+```
+
+### Respuesta
+
+```json
+{
+  "session_id": "sess_xyz789",
+  "visitor_id": "vis_abcd1234",
+  "site_id": "site_123abc",
+  "landing_url": "https://ejemplo.com/landing-page",
+  "referrer": "https://google.com",
+  "utm_source": "google",
+  "utm_medium": "cpc",
+  "utm_campaign": "spring_sale",
+  "created_at": 1646123456789,
+  "last_activity": 1646123789456,
+  "page_views": 3,
+  "total_time": 245,
+  "events": [
+    {
+      "event_id": "evt_12345a",
+      "event_type": "pageview",
+      "url": "https://ejemplo.com/landing-page",
+      "timestamp": 1646123456789
+    },
+    {
+      "event_id": "evt_12345b",
+      "event_type": "pageview",
+      "url": "https://ejemplo.com/productos",
+      "timestamp": 1646123556789
+    }
+  ]
+}
+```
+
+## Actualizar una sesión (PUT)
+
+El endpoint permite actualizar los datos de una sesión existente, como por ejemplo extender su duración.
+
+### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `session_id` | string | Sí | ID de la sesión a actualizar |
+| `site_id` | string | Sí | Identificador único del sitio |
+| `last_activity` | number | No | Nueva marca de tiempo de última actividad |
+| `custom_data` | object | No | Datos personalizados a añadir a la sesión |
+
+### Ejemplo de payload
+
+```json
+{
+  "session_id": "sess_xyz789",
+  "site_id": "site_123abc",
+  "last_activity": 1646123999999,
+  "custom_data": {
+    "user_preference": "dark_mode",
+    "active_filters": ["category_1", "price_range_2"]
+  }
+}
+```
+
+### Respuesta
+
+```json
+{
+  "success": true,
+  "session_id": "sess_xyz789",
+  "updated_at": 1646124000000,
+  "expires_at": 1646152800000
+}
+```
+
+## Duración de sesiones
+
+Por defecto, una sesión expira después de 30 minutos de inactividad. Cada vez que se recibe un evento o se actualiza la sesión, se renueva este tiempo de expiración.
+
+## Límites de sesión
+
+- **Máximo de eventos por sesión**: 1,000
+- **Duración máxima de sesión**: 24 horas
+- **Tamaño máximo de custom_data**: 50KB
+
+## Buenas prácticas
+
+1. **Mantener sesiones activas**: Envía ping de actividad cada 5 minutos mientras el usuario esté activo en la página.
+
+2. **Reiniciar sesiones correctamente**: Si un usuario regresa después de que su sesión ha expirado, crea una nueva sesión en lugar de intentar reactivar la anterior.
+
+3. **Preservar el visitor_id**: Aunque las sesiones caduquen, el ID de visitante debe mantenerse para poder rastrear el comportamiento del usuario a lo largo del tiempo.
+
+4. **Almacenamiento local**: Guarda el ID de sesión en localStorage para recuperarlo en caso de recarga de página o navegación entre pestañas. 

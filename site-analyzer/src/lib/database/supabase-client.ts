@@ -9,13 +9,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase URL o Anon Key no están definidas en las variables de entorno');
 }
 
-// Crear y exportar el cliente de Supabase
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-  },
-});
+// Add the service role key for admin operations
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+// Create and export the admin client using the service role key
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
+
+// Create and export the regular client using the anon key
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // Función para verificar la conexión a Supabase
 export async function checkSupabaseConnection(): Promise<boolean> {

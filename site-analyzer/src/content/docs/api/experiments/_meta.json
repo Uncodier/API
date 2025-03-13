@@ -1,0 +1,7 @@
+{
+  "index": "Introducción",
+  "list": "Endpoint de Lista",
+  "expose": "Endpoint de Exposición",
+  "convert": "Endpoint de Conversión",
+  "query": "Endpoint de Consulta"
+} 
