@@ -79,9 +79,10 @@ export interface StructuredAnalysisResponse {
     title: string;
     description: string;
     language: string;
+    main_purpose?: string;
   };
   blocks: BlockInfo[];
-  hierarchy: {
+  hierarchy?: {
     main_sections: string[];     // Array de los principales bloques funcionales
     navigation_structure: any[]; // Estructura de navegación
     user_flow?: {
@@ -93,13 +94,28 @@ export interface StructuredAnalysisResponse {
     navigation_elements?: Array<any>; // Elementos de navegación
     forms?: Array<any>;          // Formularios
   };
-  overview: {
+  overview?: {
     total_blocks: number;
     primary_content_blocks: number;
     navigation_blocks: number;
     interactive_elements: number;
     key_ux_patterns?: string[];  // Patrones UX clave identificados
     design_system_characteristics?: string[]; // Características del sistema de diseño
+  };
+  structure_analysis?: {
+    hierarchy_score: number;
+    clarity_score: number;
+    consistency_score: number;
+    navigation_score: number;
+    overall_structure_score: number;
+    strengths: string[];
+    weaknesses: string[];
+    recommendations: Array<{
+      issue: string;
+      recommendation: string;
+      impact: string;
+      priority: string;
+    }>;
   };
   metadata: {
     analyzed_by: string;

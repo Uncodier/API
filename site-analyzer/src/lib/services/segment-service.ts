@@ -16,10 +16,11 @@ export interface DbSegment {
   description: string | null;
   audience: string | null;
   size: number | null;
+  estimated_value?: number | null;
   engagement: number | null;
   is_active: boolean | null;
-  keywords: any[] | null;
-  hot_topics: any[] | null;
+  analysis: any[] | null;
+  topics: any[] | null;
   site_id: string;
   user_id: string;
   created_at: string;
@@ -109,11 +110,12 @@ export async function getUserSegments(
         name: segment.name || 'Segmento sin nombre',
         description: segment.description || null,
         audience: segment.targetAudience || null,
-        size: segment.estimatedSize ? parseInt(segment.estimatedSize) : null,
+        size: segment.estimatedSize ? parseNumericValue(segment.estimatedSize) : null,
+        estimated_value: segment.estimatedValue ? parseNumericValue(segment.estimatedValue) : null,
         engagement: segment.confidenceScore ? Math.round(segment.confidenceScore * 100) : null,
         is_active: true,
-        keywords: segment.attributes?.keywords || [],
-        hot_topics: segment.attributes?.hotTopics || [],
+        analysis: segment.attributes?.analysis || [],
+        topics: segment.attributes?.topics || [],
         site_id: `site_${Date.now()}`,
         user_id: userId || 'system_m2m_user',
         created_at: new Date().toISOString(),
@@ -140,10 +142,11 @@ export async function getUserSegments(
           description: "Profesionales y aficionados de 20-40 años dedicados a la creación de contenido digital para redes sociales y plataformas online",
           audience: "media_entertainment",
           size: 15,
+          estimated_value: 150000,
           engagement: 85,
           is_active: true,
-          keywords: ["contenido digital", "creadores", "redes sociales"],
-          hot_topics: ["monetización", "herramientas creativas", "workflow"],
+          analysis: ["contenido digital", "creadores", "redes sociales"],
+          topics: ["monetización", "herramientas creativas", "workflow"],
           site_id: "site_123",
           user_id: userId || 'system_m2m_user',
           created_at: "2023-06-15T14:30:00Z",
@@ -160,10 +163,11 @@ export async function getUserSegments(
           description: "Profesionales urbanos de 30-50 años con alto poder adquisitivo que prefieren comprar desde dispositivos móviles",
           audience: "retail",
           size: 8,
+          estimated_value: 250000,
           engagement: 92,
           is_active: true,
-          keywords: ["lujo", "móvil", "compras"],
-          hot_topics: ["experiencia móvil", "exclusividad", "personalización"],
+          analysis: ["lujo", "móvil", "compras"],
+          topics: ["experiencia móvil", "exclusividad", "personalización"],
           site_id: "site_123",
           user_id: userId || 'system_m2m_user',
           created_at: "2023-07-20T10:15:00Z",
@@ -180,10 +184,11 @@ export async function getUserSegments(
           description: "Profesionales de 25-45 años con alto interés en tecnología y gadgets",
           audience: "technology",
           size: 20,
+          estimated_value: 180000,
           engagement: 78,
           is_active: true,
-          keywords: ["tecnología", "gadgets", "innovación"],
-          hot_topics: ["IA", "realidad virtual", "dispositivos inteligentes"],
+          analysis: ["tecnología", "gadgets", "innovación"],
+          topics: ["IA", "realidad virtual", "dispositivos inteligentes"],
           site_id: "site_123",
           user_id: userId || 'system_m2m_user',
           created_at: "2023-05-10T09:45:00Z",
@@ -252,10 +257,11 @@ export async function getSegmentById(segmentId: string): Promise<DbSegment | nul
       description: "Profesionales y aficionados de 20-40 años dedicados a la creación de contenido digital para redes sociales y plataformas online",
       audience: "media_entertainment",
       size: 15,
+      estimated_value: 150000,
       engagement: 85,
       is_active: true,
-      keywords: ["contenido digital", "creadores", "redes sociales"],
-      hot_topics: ["monetización", "herramientas creativas", "workflow"],
+      analysis: ["contenido digital", "creadores", "redes sociales"],
+      topics: ["monetización", "herramientas creativas", "workflow"],
       site_id: "site_123",
       user_id: "system_m2m_user",
       created_at: "2023-06-15T14:30:00Z",
@@ -271,10 +277,11 @@ export async function getSegmentById(segmentId: string): Promise<DbSegment | nul
       description: "Profesionales urbanos de 30-50 años con alto poder adquisitivo que prefieren comprar desde dispositivos móviles",
       audience: "retail",
       size: 8,
+      estimated_value: 250000,
       engagement: 92,
       is_active: true,
-      keywords: ["lujo", "móvil", "compras"],
-      hot_topics: ["experiencia móvil", "exclusividad", "personalización"],
+      analysis: ["lujo", "móvil", "compras"],
+      topics: ["experiencia móvil", "exclusividad", "personalización"],
       site_id: "site_123",
       user_id: "system_m2m_user",
       created_at: "2023-07-20T10:15:00Z",
@@ -336,4 +343,31 @@ export async function updateUserSegment(
   };
   
   return updatedSegment;
+}
+
+/**
+ * Convierte un valor de string a número, eliminando caracteres no numéricos
+ * como comas, espacios, símbolos de moneda, etc.
+ * 
+ * @param value Valor a convertir
+ * @returns Valor numérico o 0 si no se puede convertir
+ */
+function parseNumericValue(value: any): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+  
+  if (!value || typeof value !== 'string') {
+    return 0;
+  }
+  
+  // Eliminar caracteres no numéricos excepto puntos decimales
+  // Esto elimina comas, símbolos de moneda, espacios, etc.
+  const cleanedValue = value.replace(/[^0-9.]/g, '');
+  
+  // Convertir a número
+  const numericValue = parseFloat(cleanedValue);
+  
+  // Devolver el valor numérico o 0 si no es un número válido
+  return isNaN(numericValue) ? 0 : numericValue;
 } 

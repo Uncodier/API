@@ -9,14 +9,20 @@ interface ApiImplementationProps {
   requestBody: any;
   method: string;
   endpoint: string;
+  headers?: Record<string, string>;
 }
 
-const ApiImplementation: React.FC<ApiImplementationProps> = ({ requestBody, method, endpoint }) => {
+const ApiImplementation: React.FC<ApiImplementationProps> = ({ 
+  requestBody, 
+  method, 
+  endpoint,
+  headers = { 'Content-Type': 'application/json' }
+}) => {
   const [codeLanguage, setCodeLanguage] = useState<'curl' | 'javascript' | 'python' | 'php'>('curl');
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
-    const code = codeExamples[codeLanguage](requestBody, method, endpoint);
+    const code = codeExamples[codeLanguage](requestBody, method, endpoint, headers);
     navigator.clipboard.writeText(code);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
@@ -103,7 +109,7 @@ const ApiImplementation: React.FC<ApiImplementationProps> = ({ requestBody, meth
           style={{ margin: 0 }}
           dangerouslySetInnerHTML={{ 
             __html: highlightCode(
-              codeExamples[codeLanguage](requestBody, method, endpoint),
+              codeExamples[codeLanguage](requestBody, method, endpoint, headers),
               codeLanguage
             ) 
           }} 

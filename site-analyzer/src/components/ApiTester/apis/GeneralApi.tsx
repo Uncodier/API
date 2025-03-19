@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField, SectionLabel } from '../utils';
 
 // Props específicas para la API General
 export interface GeneralApiProps {
@@ -14,15 +14,12 @@ export interface GeneralApiProps {
   showModelOptions?: boolean;
   defaultUrl?: string;
   showSiteUrlField?: boolean;
+  defaultMethod?: 'GET' | 'POST';
 }
 
 // Estado específico para la API General
 export interface GeneralApiState {
-  message: string;
-  conversationId: string;
-  context: string;
-  modelType: ModelProviderType;
-  modelId: string;
+  method: 'GET' | 'POST';
   siteUrl: string;
   includeScreenshot: boolean;
   jsonResponse: boolean;
@@ -38,11 +35,7 @@ const GeneralApi: BaseApiConfig = {
   // Obtener el estado inicial
   getInitialState: (props: GeneralApiProps): GeneralApiState => {
     return {
-      message: props.defaultMessage || '',
-      conversationId: props.defaultConversationId || '',
-      context: props.defaultContext || '',
-      modelType: (props.defaultModelType as ModelProviderType) || 'anthropic',
-      modelId: props.defaultModel || 'claude-3-5-sonnet-20240620',
+      method: props.defaultMethod || 'POST',
       siteUrl: props.defaultUrl || '',
       includeScreenshot: false,
       jsonResponse: false
@@ -160,31 +153,31 @@ const GeneralApi: BaseApiConfig = {
           rows={4}
         />
         
+        {/* Opciones adicionales */}
         {(showJsonOption || showScreenshotOption) && (
-          <div style={{ marginBottom: '1rem' }}>
-            <label>Opciones adicionales</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {showJsonOption && (
-                <FormField
-                  label="Respuesta en formato JSON"
-                  id="jsonResponse"
-                  type="checkbox"
-                  value={state.jsonResponse}
-                  onChange={(value) => handleChange('jsonResponse', value)}
-                />
-              )}
-              
-              {showScreenshotOption && (
-                <FormField
-                  label="Incluir captura"
-                  id="includeScreenshot"
-                  type="checkbox"
-                  value={state.includeScreenshot}
-                  onChange={(value) => handleChange('includeScreenshot', value)}
-                />
-              )}
-            </div>
-          </div>
+          <>
+            <SectionLabel>Opciones adicionales</SectionLabel>
+            
+            {showJsonOption && (
+              <FormField
+                label="Respuesta en formato JSON"
+                id="jsonResponse"
+                type="checkbox"
+                value={state.jsonResponse}
+                onChange={(value) => handleChange('jsonResponse', value)}
+              />
+            )}
+            
+            {showScreenshotOption && (
+              <FormField
+                label="Incluir captura"
+                id="includeScreenshot"
+                type="checkbox"
+                value={state.includeScreenshot}
+                onChange={(value) => handleChange('includeScreenshot', value)}
+              />
+            )}
+          </>
         )}
       </>
     );

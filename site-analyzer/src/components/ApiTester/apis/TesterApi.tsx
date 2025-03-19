@@ -58,8 +58,8 @@ const TesterApi: BaseApiConfig = {
       responseSize: state.responseSize
     };
     
-    if (state.modelType) body.aiProvider = state.modelType;
-    if (state.modelId) body.aiModel = state.modelId;
+    if (state.modelType) body.provider = state.modelType;
+    if (state.modelId) body.modelId = state.modelId;
     
     // Agregar campos específicos para errores si se solicita
     if (state.simulateError) {

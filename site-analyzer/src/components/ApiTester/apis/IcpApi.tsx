@@ -65,8 +65,8 @@ const IcpApi: BaseApiConfig = {
       includeScreenshot: state.includeScreenshot
     };
     
-    if (state.modelType) body.aiProvider = state.modelType;
-    if (state.modelId) body.aiModel = state.modelId;
+    if (state.modelType) body.provider = state.modelType;
+    if (state.modelId) body.modelId = state.modelId;
     
     // Agregar campos específicos según el modo
     if (state.mode === 'create' || state.mode === 'update') {

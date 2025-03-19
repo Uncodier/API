@@ -9,11 +9,11 @@ interface DbSegment {
   description: string | null;
   audience: string | null;
   size: number | null;
-  estimated_value: string | null;
+  estimated_value: number | null;
   engagement: number | null;
   is_active: boolean | null;
-  keywords: any[] | null;
-  hot_topics: any[] | null;
+  analysis: any[] | null;
+  topics: any[] | null;
   site_id: string;
   user_id: string;
   created_at?: string;
@@ -31,10 +31,10 @@ interface CreateSegmentParams {
   description: string;
   audience: string;
   size: number;
-  estimated_value?: string;
+  estimated_value?: number;
   is_active: boolean;
-  keywords: any[];
-  hot_topics: any[];
+  analysis: any[];
+  topics: any[];
   site_id: string;
   user_id: string;
   language: string;
@@ -56,11 +56,11 @@ export async function createSegmentInDatabase(segmentData: CreateSegmentParams):
         description: segmentData.description,
         audience: segmentData.audience,
         size: segmentData.size,
-        estimated_value: segmentData.estimated_value || "0",
+        estimated_value: segmentData.estimated_value || 0,
         engagement: 0, // Valor inicial
         is_active: segmentData.is_active,
-        keywords: segmentData.keywords || [],
-        hot_topics: segmentData.hot_topics || [],
+        analysis: segmentData.analysis || [],
+        topics: segmentData.topics || [],
         site_id: segmentData.site_id,
         user_id: segmentData.user_id,
         language: segmentData.language,

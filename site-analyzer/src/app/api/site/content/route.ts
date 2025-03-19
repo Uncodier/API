@@ -57,24 +57,25 @@ const RequestSchema = z.object({
   // Parámetros básicos
   url: z.string().url('Debe ser una URL válida'),
   segment_id: z.string().min(1, 'El ID del segmento es requerido'),
+  content_types: z.array(z.enum(ContentTypes)).optional().default(["posts", "videos"]),
   
-  // Filtros de contenido
-  content_types: z.array(z.enum(ContentTypes)).optional(),
-  limit: z.number().int().min(1).max(50).default(10),
-  user_id: z.string().optional(),
-  site_id: z.string().optional(),
-  funnel_stage: z.enum(FunnelStages).default('all'),
-  topics: z.array(z.string()).optional(),
+  // Parámetros de configuración
+  limit: z.number().int().min(1).max(50).optional().default(10),
+  funnel_stage: z.enum(FunnelStages).optional().default('all'),
+  timeout: z.number().int().min(5000).max(120000).optional().default(30000),
+  include_metadata: z.boolean().optional().default(true),
+  sort_by: z.enum(SortOptions).optional().default('relevance'),
   
-  // Parámetros de IA
-  aiProvider: z.enum(AiProviders).optional().default('anthropic'),
-  aiModel: z.string().optional().default('claude-3-5-sonnet-20240620'),
+  // Parámetros de configuración de IA
+  provider: z.enum(AiProviders).optional().default('anthropic'),
+  modelId: z.string().optional().default('claude-3-5-sonnet-20240620'),
   
   // Parámetros adicionales
-  timeout: z.number().int().min(5000).max(120000).default(30000),
-  include_metadata: z.boolean().optional().default(true),
-  sort_by: z.enum(SortOptions).default('relevance'),
-  includeScreenshot: z.boolean().optional().default(false)
+  user_id: z.string().optional(),
+  site_id: z.string().optional(),
+  includeScreenshot: z.boolean().optional().default(true),
+  topics: z.array(z.string()).optional().default([]),
+  debug: z.boolean().optional().default(false)
 });
 
 // Interfaz para la respuesta de contenido
@@ -296,8 +297,8 @@ function processAIResponse(aiResponse: any, params: z.infer<typeof RequestSchema
     
     if (!aiResponse.metadata.analysis) {
       aiResponse.metadata.analysis = {
-        modelUsed: params.aiModel,
-        aiProvider: params.aiProvider,
+        modelUsed: params.modelId,
+        aiProvider: params.provider,
         processingTime: `${processingTimeMs} ms`,
         segmentDataSource: `${params.segment_id} (last updated: ${new Date().toISOString().split('T')[0]})`,
         contentInventorySize: aiResponse.total_results || aiResponse.recommendations.length * 10,
@@ -406,8 +407,8 @@ function generateFallbackResponse(params: z.infer<typeof RequestSchema>, process
         }
       },
       analysis: {
-        modelUsed: params.aiModel,
-        aiProvider: params.aiProvider,
+        modelUsed: params.modelId,
+        aiProvider: params.provider,
         processingTime: `${processingTimeMs} ms (fallback response)`,
         segmentDataSource: `${params.segment_id} (fallback data)`,
         contentInventorySize: recommendations.length * 5,
@@ -459,19 +460,19 @@ export async function POST(request: NextRequest) {
     const prompt = prepareContentAnalysisPrompt(params);
     
     // Llamar a la API de conversación para obtener el análisis
-    console.log('[API:content] Calling conversation API with model:', params.aiModel);
+    console.log('[API:content] Calling conversation API with model:', params.modelId);
     
     let aiResponse;
     try {
       console.log('[API:content] Initiating request to conversation API...');
       aiResponse = await analyzeWithConversationApi(
         prompt,
-        params.aiProvider,
-        params.aiModel,
+        params.provider,
+        params.modelId,
         params.url,
         params.includeScreenshot,
         params.timeout,
-        false, // debug mode
+        params.debug,
         true // toJSON: true para asegurar que la respuesta sea JSON
       );
       console.log('[API:content] Received response from conversation API');

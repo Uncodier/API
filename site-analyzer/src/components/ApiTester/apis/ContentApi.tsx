@@ -109,8 +109,8 @@ const ContentApi: BaseApiConfig = {
       includeScreenshot: state.includeScreenshot
     };
     
-    if (state.modelType) body.aiProvider = state.modelType;
-    if (state.modelId) body.aiModel = state.modelId;
+    if (state.modelType) body.provider = state.modelType;
+    if (state.modelId) body.modelId = state.modelId;
     if (state.user_id) body.user_id = state.user_id;
     if (state.site_id) body.site_id = state.site_id;
     if (state.topics && state.topics.length > 0) body.topics = state.topics;

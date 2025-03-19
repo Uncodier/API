@@ -49,8 +49,8 @@ const RequestSchema = z.object({
   minConfidenceScore: z.number().min(0).max(1).default(0.7),
   
   // Parámetros de configuración de IA
-  aiProvider: z.enum(AiProviders).optional().default('anthropic'),
-  aiModel: z.string().optional().default('claude-3-5-sonnet-20240620'),
+  provider: z.enum(AiProviders).optional().default('anthropic'),
+  modelId: z.string().optional().default('claude-3-5-sonnet-20240620'),
   
   // Parámetros adicionales
   user_id: z.string().optional(),
@@ -598,8 +598,8 @@ function processAIResponse(aiResponse: any, params: z.infer<typeof RequestSchema
       },
       createdInDatabase: false,
       analysisMetadata: {
-        modelUsed: params.aiModel,
-        aiProvider: params.aiProvider,
+        modelUsed: params.modelId,
+        aiProvider: params.provider,
         confidenceLevel: "High",
         analysisDate: new Date().toISOString(),
         processingTime: `${processingTimeMs} ms`,
@@ -612,7 +612,7 @@ function processAIResponse(aiResponse: any, params: z.infer<typeof RequestSchema
   
   // Si la respuesta no tiene la estructura esperada, crear una respuesta de fallback
   console.log('[API:icp] AI response does not have expected structure, using fallback');
-  return generateSampleProfile(params.url, params.segment_id, params.personalizationMetrics, params.aiModel, params.aiProvider, processingTimeMs);
+  return generateSampleProfile(params.url, params.segment_id, params.personalizationMetrics, params.modelId, params.provider, processingTimeMs);
 }
 
 // Función para generar datos de ejemplo para un perfil de cliente ideal
@@ -1076,15 +1076,15 @@ export async function POST(request: NextRequest) {
     const prompt = prepareIcpAnalysisPrompt(params);
     
     // Llamar a la API de conversación para obtener el análisis
-    console.log('[API:icp] Calling conversation API with model:', params.aiModel);
+    console.log('[API:icp] Calling conversation API with model:', params.modelId);
     
     let aiResponse;
     try {
       console.log('[API:icp] Initiating request to conversation API...');
       aiResponse = await analyzeWithConversationApi(
         prompt,
-        params.aiProvider,
-        params.aiModel,
+        params.provider,
+        params.modelId,
         params.url,
         params.includeScreenshot,
         params.timeout,

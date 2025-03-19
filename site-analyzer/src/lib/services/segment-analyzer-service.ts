@@ -14,8 +14,8 @@ interface SegmentAnalysisOptions {
   segmentAttributes?: string[];
   industryContext?: string;
   additionalInstructions?: string;
-  aiProvider: 'openai' | 'anthropic' | 'gemini';
-  aiModel: string;
+  provider: 'openai' | 'anthropic' | 'gemini';
+  modelId: string;
   userId: string;
   site_id?: string;
   includeScreenshot?: boolean;
@@ -68,8 +68,8 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
   console.log('[SegmentAnalyzer] Analysis options:', JSON.stringify({
     segmentCount: options.segmentCount,
     mode: options.mode,
-    aiProvider: options.aiProvider,
-    aiModel: options.aiModel,
+    provider: options.provider,
+    modelId: options.modelId,
     timeout: options.timeout
   }));
   
@@ -86,15 +86,15 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
     console.log('[SegmentAnalyzer] Using effective timeout:', effectiveTimeout);
     
     // Llamar a la API de conversación
-    console.log('[SegmentAnalyzer] Calling conversation API with model:', options.aiModel);
+    console.log('[SegmentAnalyzer] Calling conversation API with model:', options.modelId);
     
     let aiResponse;
     try {
       console.log('[SegmentAnalyzer] Iniciando solicitud a la API de conversación...');
       aiResponse = await analyzeWithConversationApi(
         prompt,
-        options.aiProvider,
-        options.aiModel,
+        options.provider,
+        options.modelId,
         options.url,
         options.includeScreenshot,
         effectiveTimeout,  // Usar el timeout aumentado
@@ -146,8 +146,8 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
               console.log(`[SegmentAnalyzer] Continuando conversación con ID (intento ${attemptCount}):`, conversationId);
               const response = await sendConversationRequest({
                 messages: [continuationMessage],
-                modelType: options.aiProvider,
-                modelId: options.aiModel,
+                modelType: options.provider,
+                modelId: options.modelId,
                 includeScreenshot: options.includeScreenshot,
                 siteUrl: options.url,
                 responseFormat: 'json',
@@ -207,8 +207,8 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
           console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON...');
           const continuationResult = await continueJsonGeneration({
             incompleteJson: aiResponse,
-            modelType: options.aiProvider,
-            modelId: options.aiModel,
+            modelType: options.provider,
+            modelId: options.modelId,
             siteUrl: options.url,
             includeScreenshot: options.includeScreenshot,
             timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
@@ -295,8 +295,8 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
             console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON desde content...');
             const continuationResult = await continueJsonGeneration({
               incompleteJson: aiResponse.content,
-              modelType: options.aiProvider,
-              modelId: options.aiModel,
+              modelType: options.provider,
+              modelId: options.modelId,
               siteUrl: options.url,
               includeScreenshot: options.includeScreenshot,
               timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
@@ -378,8 +378,8 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                 console.log('[SegmentAnalyzer] Iniciando proceso de continuación de JSON desde message content...');
                 const continuationResult = await continueJsonGeneration({
                   incompleteJson: messageContent,
-                  modelType: options.aiProvider,
-                  modelId: options.aiModel,
+                  modelType: options.provider,
+                  modelId: options.modelId,
                   siteUrl: options.url,
                   includeScreenshot: options.includeScreenshot,
                   timeout: continuationTimeout, // Usar un timeout aún mayor para la continuación
@@ -539,16 +539,19 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                   : [segment.audienceProfile.adPlatforms.googleAds.interests]));
               }
               
-              // Preparar los datos del segmento para la base de datos
+              // Modificar esta parte donde se preparan los datos para crear un segmento
               const segmentData = {
                 name: segment.name,
                 description: segment.description,
                 audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
-                size: parseFloat(segment.estimatedSize) || 0,
-                estimated_value: segment.estimated_value || segment.size_value || "0",
+                size: parseNumericValue(segment.estimatedSize) || 0,
+                estimated_value: parseNumericValue(segment.estimated_value || segment.size_value) || 0,
                 is_active: true,
-                keywords: keywords.length > 0 ? keywords : [],
-                hot_topics: hotTopics.length > 0 ? hotTopics : [],
+                // Solo guardar audienceProfile en analysis, sin incluir keywords
+                analysis: segment.audienceProfile 
+                  ? [{ type: 'audienceProfile', data: segment.audienceProfile }]
+                  : [],
+                topics: hotTopics.length > 0 ? hotTopics : [],
                 site_id: options.site_id || generateSegmentId(options.url),
                 user_id: options.userId,
                 language: segment.language,
@@ -610,15 +613,18 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                       : [segment.audienceProfile.adPlatforms.googleAds.interests]));
                   }
                   
-                  // Preparar los datos de actualización
+                  // Modificar esta parte donde se preparan los datos para actualizar un segmento
                   const updates = {
                     name: segment.name,
                     description: segment.description,
                     audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
-                    size: parseFloat(segment.estimatedSize) || 0,
-                    estimated_value: segment.estimated_value || segment.size_value || "0",
-                    keywords: keywords.length > 0 ? keywords : undefined,
-                    hot_topics: hotTopics.length > 0 ? hotTopics : undefined,
+                    size: parseNumericValue(segment.estimatedSize) || 0,
+                    estimated_value: parseNumericValue(segment.estimated_value || segment.size_value) || 0,
+                    // Solo guardar audienceProfile en analysis, sin incluir keywords
+                    analysis: segment.audienceProfile 
+                      ? [{ type: 'audienceProfile', data: segment.audienceProfile }]
+                      : undefined,
+                    topics: hotTopics.length > 0 ? hotTopics : undefined,
                     language: segment.language,
                     url: options.url
                   };
@@ -662,16 +668,19 @@ export async function analyzeSiteSegments(options: SegmentAnalysisOptions): Prom
                     : [segment.audienceProfile.adPlatforms.googleAds.interests]));
                 }
                 
-                // Preparar los datos del segmento para la base de datos
+                // Modificar esta parte donde se preparan los datos para crear un nuevo segmento durante la actualización
                 const segmentData = {
                   name: segment.name,
                   description: segment.description,
                   audience: Array.isArray(segment.targetAudience) ? segment.targetAudience.join(', ') : segment.targetAudience,
-                  size: parseFloat(segment.estimatedSize) || 0,
-                  estimated_value: segment.estimated_value || segment.size_value || "0",
+                  size: parseNumericValue(segment.estimatedSize) || 0,
+                  estimated_value: parseNumericValue(segment.estimated_value || segment.size_value) || 0,
                   is_active: true,
-                  keywords: keywords.length > 0 ? keywords : [],
-                  hot_topics: hotTopics.length > 0 ? hotTopics : [],
+                  // Solo guardar audienceProfile en analysis, sin incluir keywords
+                  analysis: segment.audienceProfile 
+                    ? [{ type: 'audienceProfile', data: segment.audienceProfile }]
+                    : [],
+                  topics: hotTopics.length > 0 ? hotTopics : [],
                   site_id: options.site_id || generateSegmentId(options.url),
                   user_id: options.userId,
                   language: segment.language,
@@ -1131,16 +1140,26 @@ function normalizeSegment(segment: any, options: SegmentAnalysisOptions): any {
     } else {
       segment.estimatedSize = "0"; // Valor por defecto
     }
+  } else if (typeof segment.estimatedSize === 'string') {
+    // Mantener estimatedSize como string pero asegurarse de que el valor numérico
+    // se procese correctamente al guardar en la base de datos
+    const numericSize = parseNumericValue(segment.estimatedSize);
+    // No modificamos segment.estimatedSize aquí para mantener el formato original
+    // pero aseguramos que se procese correctamente al guardar en la base de datos
   }
   
   // Asegurarse de que el segmento tenga un valor estimado
   // Usar el campo estimated_value si está disponible, o size_value como alternativa
   if (!segment.estimated_value) {
     if (segment.size_value) {
-      segment.estimated_value = String(segment.size_value);
+      // Convertir a número si es string
+      segment.estimated_value = parseNumericValue(segment.size_value);
     } else {
-      segment.estimated_value = "0"; // Valor por defecto
+      segment.estimated_value = 0; // Valor por defecto como número
     }
+  } else if (typeof segment.estimated_value === 'string') {
+    // Asegurarse de que estimated_value sea un número
+    segment.estimated_value = parseNumericValue(segment.estimated_value);
   }
   
   // Asegurarse de que el segmento tenga un idioma
@@ -1161,6 +1180,32 @@ function normalizeSegment(segment: any, options: SegmentAnalysisOptions): any {
   // Inicializar el estado de creación en la base de datos
   segment.createdInDatabase = false;
   
-  
   return segment;
+}
+
+/**
+ * Convierte un valor de string a número, eliminando caracteres no numéricos
+ * como comas, espacios, símbolos de moneda, etc.
+ * 
+ * @param value Valor a convertir
+ * @returns Valor numérico o 0 si no se puede convertir
+ */
+function parseNumericValue(value: any): number {
+  if (typeof value === 'number') {
+    return value;
+  }
+  
+  if (!value || typeof value !== 'string') {
+    return 0;
+  }
+  
+  // Eliminar caracteres no numéricos excepto puntos decimales
+  // Esto elimina comas, símbolos de moneda, espacios, etc.
+  const cleanedValue = value.replace(/[^0-9.]/g, '');
+  
+  // Convertir a número
+  const numericValue = parseFloat(cleanedValue);
+  
+  // Devolver el valor numérico o 0 si no es un número válido
+  return isNaN(numericValue) ? 0 : numericValue;
 } 

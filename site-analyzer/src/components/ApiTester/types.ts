@@ -24,6 +24,7 @@ export interface BaseApiConfig {
   defaultEndpoint: string;
   renderFields: (props: any) => JSX.Element;
   buildRequestBody: (state: any) => Record<string, any>;
+  buildRequestHeaders?: (state: any) => Record<string, string>;
   getInitialState: (props: any) => Record<string, any>;
 }
 
@@ -63,24 +64,26 @@ export const MODEL_OPTIONS: Record<ModelProviderType, Array<{value: string, labe
 
 // Ejemplos de código para diferentes tecnologías
 export const codeExamples = {
-  curl: (requestBody: any, method: string, apiUrl: string) => `# Ejemplo con cURL
+  curl: (requestBody: any, method: string, apiUrl: string, headers: Record<string, string> = { 'Content-Type': 'application/json' }) => {
+    // Construir las cabeceras para cURL
+    const headerString = Object.entries(headers)
+      .map(([key, value]) => `-H "${key}: ${value}"`)
+      .join(' \\\n  ');
+    
+    return `# Ejemplo con cURL
 curl -X ${method} "${apiUrl}" \\
-  -H "Content-Type: application/json" \\
-  -H "x-api-key: YOUR_API_KEY" \\
-  -H "x-api-secret: YOUR_API_SECRET" \\
-  -d '${JSON.stringify(requestBody, null, 2)}'`,
+  ${headerString} \\
+  -d '${JSON.stringify(requestBody, null, 2)}'`;
+  },
   
-  javascript: (requestBody: any, method: string, apiUrl: string) => `// Ejemplo con JavaScript (Fetch API)
-const apiKey = "YOUR_API_KEY";
-const apiSecret = "YOUR_API_SECRET";
-
+  javascript: (requestBody: any, method: string, apiUrl: string, headers: Record<string, string> = { 'Content-Type': 'application/json' }) => {
+    // Construir las cabeceras para JavaScript
+    const headersObj = JSON.stringify(headers, null, 2);
+    
+    return `// Ejemplo con JavaScript (Fetch API)
 fetch("${apiUrl}", {
   method: "${method}",
-  headers: {
-    "Content-Type": "application/json",
-    "x-api-key": apiKey,
-    "x-api-secret": apiSecret
-  },
+  headers: ${headersObj},
   body: JSON.stringify(${JSON.stringify(requestBody, null, 2)})
 })
 .then(response => {
@@ -88,19 +91,17 @@ fetch("${apiUrl}", {
   return response.json();
 })
 .then(data => console.log("Respuesta:", data))
-.catch(error => console.error("Error:", error));`,
+.catch(error => console.error("Error:", error));`;
+  },
   
-  python: (requestBody: any, method: string, apiUrl: string) => `# Ejemplo con Python (requiere: pip install requests)
+  python: (requestBody: any, method: string, apiUrl: string, headers: Record<string, string> = { 'Content-Type': 'application/json' }) => {
+    // Construir las cabeceras para Python
+    const headersObj = JSON.stringify(headers, null, 4);
+    
+    return `# Ejemplo con Python (requiere: pip install requests)
 import requests
 
-api_key = "YOUR_API_KEY"
-api_secret = "YOUR_API_SECRET"
-
-headers = {
-    "Content-Type": "application/json",
-    "x-api-key": api_key,
-    "x-api-secret": api_secret
-}
+headers = ${headersObj}
 
 data = ${JSON.stringify(requestBody, null, 4)}
 
@@ -114,12 +115,24 @@ try:
     result = response.json()
     print("Respuesta:", result)
 except requests.exceptions.RequestException as e:
-    print(f"Error: {e}")`,
+    print(f"Error: {e}")`;
+  },
   
-  php: (requestBody: any, method: string, apiUrl: string) => `<?php
+  php: (requestBody: any, method: string, apiUrl: string, headers: Record<string, string> = { 'Content-Type': 'application/json' }) => {
+    // Construir las cabeceras para PHP
+    const headerString = Object.entries(headers)
+      .map(([key, value]) => `        "${key}: " . ${key === 'Content-Type' ? `"${value}"` : `$${key.replace(/-/g, '_')}`}`)
+      .join(',\n');
+    
+    // Construir las variables para PHP
+    const variables = Object.entries(headers)
+      .filter(([key]) => key !== 'Content-Type')
+      .map(([key]) => `$${key.replace(/-/g, '_')} = "${headers[key]}";`)
+      .join('\n');
+    
+    return `<?php
 // Ejemplo con PHP (requiere extensión cURL)
-$apiKey = "YOUR_API_KEY";
-$apiSecret = "YOUR_API_SECRET";
+${variables}
 $url = "${apiUrl}";
 $data = ${JSON.stringify(requestBody, null, 2)};
 
@@ -130,9 +143,7 @@ curl_setopt_array($curl, [
     CURLOPT_CUSTOMREQUEST => "${method}",
     CURLOPT_POSTFIELDS => json_encode($data),
     CURLOPT_HTTPHEADER => [
-        "Content-Type: application/json",
-        "x-api-key: " . $apiKey,
-        "x-api-secret: " . $apiSecret
+${headerString}
     ],
 ]);
 
@@ -147,7 +158,8 @@ if ($err) {
     echo "Respuesta: ";
     print_r($responseData);
 }
-?>`
+?>`;
+  }
 };
 
 // Interfaz para el estado del formulario

@@ -25,42 +25,12 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   defaultEndpoint="/api/site/analyze"
   defaultMethod="POST"
   defaultUrl="https://ejemplo.com"
-  defaultAnalysisType="complete"
   defaultTimeout="30000"
   showScreenshotOption={true}
   showModelOptions={true}
   defaultModelType="openai"
   defaultModel="gpt-4o"
-  additionalFields={[
-    {
-      name: "options.aiProvider",
-      label: "Proveedor de IA para análisis",
-      type: "select",
-      options: [
-        { value: "openai", label: "OpenAI" },
-        { value: "anthropic", label: "Anthropic" },
-        { value: "gemini", label: "Google (Gemini)" }
-      ],
-      defaultValue: "openai"
-    },
-    {
-      name: "options.aiModel",
-      label: "Modelo de IA para análisis",
-      type: "select",
-      options: [
-        { value: "gpt-4o", label: "GPT-4o" },
-        { value: "gpt-4-turbo", label: "GPT-4 Turbo" },
-        { value: "gpt-3.5-turbo", label: "GPT-3.5 Turbo" },
-        { value: "claude-3-5-sonnet-20240620", label: "Claude 3.5 Sonnet" },
-        { value: "claude-3-opus-20240229", label: "Claude 3 Opus" },
-        { value: "claude-3-sonnet-20240229", label: "Claude 3 Sonnet" },
-        { value: "claude-3-haiku-20240307", label: "Claude 3 Haiku" },
-        { value: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
-        { value: "gemini-1.5-flash", label: "Gemini 1.5 Flash" }
-      ],
-      defaultValue: "gpt-4o"
-    }
-  ]}
+  showAnalysisTypeField={false}
 />
 
 ## Tipos de análisis

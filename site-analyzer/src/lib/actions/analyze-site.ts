@@ -8,6 +8,7 @@ import { completeAnalysis } from '@/lib/agents/analyzer-agent'
 const AnalyzeSiteParamsSchema = z.object({
   url: z.string().url(),
   ip: z.string(),
+  includeRawHtml: z.boolean().optional().default(false),
 })
 
 // Tipos para la respuesta
@@ -76,12 +77,17 @@ type SectionType =
 export async function analyzeSiteAction(params: z.infer<typeof AnalyzeSiteParamsSchema>): Promise<AnalyzeSiteResult> {
   try {
     // Validar parámetros
-    const { url, ip } = AnalyzeSiteParamsSchema.parse(params)
+    const { url, ip, includeRawHtml } = AnalyzeSiteParamsSchema.parse(params)
     
     // TODO: Implementar rate limiting basado en IP
     
     // Analizar el sitio web
     const analysis = await getDetailedSiteAnalysis(url)
+    
+    // Si no se solicita el HTML raw, lo eliminamos de la respuesta
+    if (!includeRawHtml && analysis.rawHtml) {
+      delete analysis.rawHtml;
+    }
     
     return {
       success: true,

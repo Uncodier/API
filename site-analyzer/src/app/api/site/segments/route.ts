@@ -49,23 +49,27 @@ const AiProviders = [
   'gemini'
 ] as const;
 
-// Esquema para validar el cuerpo de la solicitud POST
+// Esquema para validar el cuerpo de la solicitud
 const RequestSchema = z.object({
   url: z.string().url('Debe ser una URL válida'),
-  segmentCount: z.number().int().min(1).max(20).optional().default(5),
+  segmentCount: z.number().int().min(1).max(20).default(5),
   mode: z.enum(OperationModes).default('analyze'),
-  timeout: z.number().int().min(5000).max(60000).default(45000),
-  profitabilityMetrics: z.array(z.enum(ProfitabilityMetrics)).optional(),
-  minConfidenceScore: z.number().min(0).max(1).default(0.7),
-  includeRationale: z.boolean().default(true),
-  segmentAttributes: z.array(z.enum(SegmentAttributes)).optional(),
+  
+  // Parámetros de configuración de IA
+  provider: z.enum(AiProviders).optional().default('anthropic'),
+  modelId: z.string().optional().default('claude-3-5-sonnet-20240620'),
+  
+  // Parámetros adicionales
   user_id: z.string().optional(),
   site_id: z.string().optional(),
+  includeScreenshot: z.boolean().optional().default(true),
+  profitabilityMetrics: z.array(z.enum(ProfitabilityMetrics)).optional(),
+  segmentAttributes: z.array(z.enum(SegmentAttributes)).optional(),
+  minConfidenceScore: z.number().min(0).max(1).optional().default(0.7),
+  timeout: z.number().int().min(5000).max(120000).optional().default(45000),
+  includeRationale: z.boolean().optional().default(true),
   industryContext: z.string().optional(),
-  additionalInstructions: z.string().optional(),
-  aiProvider: z.enum(AiProviders).default('openai'),
-  aiModel: z.string().default('gpt-4o'),
-  includeScreenshot: z.boolean().default(true)
+  additionalInstructions: z.string().optional()
 });
 
 // Mantener la transformación para compatibilidad con versiones anteriores
@@ -128,6 +132,8 @@ interface SegmentResponse {
       createdAt: string;
       updatedAt: string;
     };
+    topics?: string[];
+    analysis?: Record<string, any>;
   }>;
   siteContext?: {
     industry?: string;
@@ -229,6 +235,8 @@ function transformSegmentsForResponse(segments: Array<any>): Array<{
     createdAt: string;
     updatedAt: string;
   };
+  topics?: string[];
+  analysis?: Record<string, any>;
 }> {
   return segments.map(segment => {
     // Transformar monetizationOpportunities si existe
@@ -271,16 +279,41 @@ function transformSegmentsForResponse(segments: Array<any>): Array<{
       updatedAt: segment.updatedAt || new Date().toISOString()
     } : undefined;
 
+    // Transformar hot_topics a topics y keywords a analysis
+    const topics = segment.topics || segment.hot_topics || undefined;
+    
+    // Incluir audienceProfile completo dentro de analysis
+    const analysis = {
+      ...(segment.analysis || segment.keywords || {}),
+      ...(segment.audienceProfile ? { audienceProfile: segment.audienceProfile } : {})
+    };
+
+    // Si el analysis es un array, buscar si contiene un objeto de tipo 'audienceProfile'
+    if (Array.isArray(segment.analysis)) {
+      const audienceProfileItem = segment.analysis.find((item: { type: string; data: any }) => item.type === 'audienceProfile');
+      if (audienceProfileItem && audienceProfileItem.data) {
+        analysis.audienceProfile = audienceProfileItem.data;
+      }
+    }
+
+    // Asegurar que profitabilityScore y confidenceScore sean números
+    const profitabilityScore = typeof segment.profitabilityScore === 'number' 
+      ? segment.profitabilityScore 
+      : (parseFloat(segment.profitabilityScore) || 0);
+    
+    const confidenceScore = typeof segment.confidenceScore === 'number' 
+      ? segment.confidenceScore 
+      : (parseFloat(segment.confidenceScore) || 0);
+
     return {
       id: segment.id,
       name: segment.name,
       description: segment.description,
       summary: segment.summary,
       estimatedSize: segment.estimatedSize,
-      profitabilityScore: segment.profitabilityScore,
-      confidenceScore: segment.confidenceScore,
+      profitabilityScore,
+      confidenceScore,
       targetAudience: segment.targetAudience,
-      audienceProfile,
       language: segment.language,
       attributes,
       monetizationOpportunities,
@@ -288,7 +321,9 @@ function transformSegmentsForResponse(segments: Array<any>): Array<{
       createdInDatabase,
       databaseId,
       rationale: segment.rationale,
-      databaseInfo
+      databaseInfo,
+      topics,
+      analysis
     };
   });
 }
@@ -362,8 +397,8 @@ export async function POST(request: NextRequest) {
       url: params.url,
       segmentCount: params.segmentCount,
       mode: params.mode,
-      aiProvider: params.aiProvider,
-      aiModel: params.aiModel
+      provider: params.provider,
+      modelId: params.modelId
     }));
     
     // Verificar que se proporcionen user_id y site_id cuando el modo es 'create'
@@ -398,8 +433,8 @@ export async function POST(request: NextRequest) {
       segmentAttributes: params.segmentAttributes,
       industryContext: params.industryContext,
       additionalInstructions: params.additionalInstructions,
-      aiProvider: params.aiProvider,
-      aiModel: params.aiModel,
+      provider: params.provider,
+      modelId: params.modelId,
       userId: userId,
       site_id: params.site_id,
       includeScreenshot: params.includeScreenshot
@@ -443,7 +478,7 @@ export async function POST(request: NextRequest) {
       siteContext: segmentAnalysis.siteContext,
       analysisMetadata: {
         timestamp: new Date().toISOString(),
-        aiModel: params.aiModel,
+        aiModel: params.modelId,
         confidenceOverall: segmentAnalysis.confidenceOverall || 0.8,
         processingTime
       },

@@ -3,6 +3,8 @@ title: API Básica de Análisis
 description: Documentación para la ruta /api/analyze
 ---
 
+import { UnifiedApiTester } from '@/components/ApiTester'
+
 # API Básica de Análisis (`/api/analyze`)
 
 Esta API proporciona una forma sencilla de analizar un sitio web mediante una solicitud POST.
@@ -13,6 +15,15 @@ Esta API proporciona una forma sencilla de analizar un sitio web mediante una so
 - Utiliza la función `analyzeSiteAction` para realizar el análisis
 - Enfocada en identificar secciones del sitio (hero, features, testimonials, etc.)
 - Manejo básico de errores con validación de esquema Zod
+
+## Prueba la API
+
+<UnifiedApiTester 
+  apiId="basic-analyze"
+  title="API Básica de Análisis"
+  description="Analiza un sitio web de forma simple y directa. Puedes solicitar el HTML completo activando la opción 'Include Raw HTML'."
+  defaultEndpoint="/api/analyze"
+/>
 
 ## Endpoint
 
@@ -25,12 +36,14 @@ POST /api/analyze
 | Parámetro | Tipo   | Descripción                   | Requerido |
 |-----------|--------|-------------------------------|-----------|
 | url       | string | URL del sitio web a analizar  | Sí        |
+| includeRawHtml | boolean | Incluir el HTML crudo en la respuesta | No (por defecto: false) |
 
 ## Ejemplo de solicitud
 
 ```json
 {
-  "url": "https://ejemplo.com"
+  "url": "https://ejemplo.com",
+  "includeRawHtml": false
 }
 ```
 
@@ -46,6 +59,8 @@ La respuesta incluye el resultado del análisis o un mensaje de error.
   "url": "https://ejemplo.com",
   "analysis": {
     // Datos del análisis del sitio
+    // Si includeRawHtml es true, incluirá:
+    "rawHtml": "<!DOCTYPE html><html>...</html>"
   }
 }
 ```

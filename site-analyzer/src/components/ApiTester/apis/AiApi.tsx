@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField, SectionLabel } from '../utils';
 
 // Props específicas para la API de IA
 export interface AiApiProps {
@@ -125,31 +125,31 @@ const AiApi: BaseApiConfig = {
           />
         )}
         
+        {/* Opciones adicionales */}
         {(showJsonOption || showScreenshotOption) && (
-          <div style={{ marginBottom: '1rem' }}>
-            <label>Opciones adicionales</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {showJsonOption && (
-                <FormField
-                  label="Respuesta en formato JSON"
-                  id="jsonResponse"
-                  type="checkbox"
-                  value={state.jsonResponse}
-                  onChange={(value) => handleChange('jsonResponse', value)}
-                />
-              )}
-              
-              {showScreenshotOption && (
-                <FormField
-                  label="Incluir captura"
-                  id="includeScreenshot"
-                  type="checkbox"
-                  value={state.includeScreenshot}
-                  onChange={(value) => handleChange('includeScreenshot', value)}
-                />
-              )}
-            </div>
-          </div>
+          <>
+            <SectionLabel>Opciones adicionales</SectionLabel>
+            
+            {showJsonOption && (
+              <FormField
+                label="Respuesta en formato JSON"
+                id="jsonResponse"
+                type="checkbox"
+                value={state.jsonResponse}
+                onChange={(value) => handleChange('jsonResponse', value)}
+              />
+            )}
+            
+            {showScreenshotOption && (
+              <FormField
+                label="Incluir captura"
+                id="includeScreenshot"
+                type="checkbox"
+                value={state.includeScreenshot}
+                onChange={(value) => handleChange('includeScreenshot', value)}
+              />
+            )}
+          </>
         )}
       </>
     );

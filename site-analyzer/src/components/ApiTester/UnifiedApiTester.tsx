@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import apiRegistry from './apis';
 import { codeExamples } from './types';
-import { formatJsonWithSyntax, highlightCode } from './utils';
+import { formatJsonWithSyntax, highlightCode, FormField } from './utils';
 import ApiResults from './components/ApiResults';
 import ApiImplementation from './components/ApiImplementation';
 import styles from '../ApiTester.module.css';
@@ -11,6 +11,7 @@ import styles from '../ApiTester.module.css';
 // Definimos la interfaz de props
 export interface UnifiedApiTesterProps {
   apiType?: 'general' | 'ai' | 'site' | 'segments' | 'tester' | 'icp' | 'content';
+  apiId?: string;  // For direct API selection by ID
   title?: string;
   description?: string;
   defaultEndpoint?: string;
@@ -37,6 +38,7 @@ export interface UnifiedApiTesterProps {
   showUrlField?: boolean;
   showJsonOption?: boolean;
   showScreenshotOption?: boolean;
+  showAnalysisTypeField?: boolean;
   additionalFields?: any[];
 }
 
@@ -46,6 +48,7 @@ export interface UnifiedApiTesterProps {
 const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
   const {
     apiType = 'general',
+    apiId,
     title = 'API Tester',
     description = 'Este componente te permite probar diferentes endpoints de API.',
     defaultEndpoint = '',
@@ -72,6 +75,7 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
     showUrlField = true,
     showJsonOption = apiType !== 'segments',
     showScreenshotOption = true,
+    showAnalysisTypeField = true,
     additionalFields = []
   } = props;
 
@@ -93,15 +97,30 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
   // Estado para controlar la pestaña activa
   const [activeTab, setActiveTab] = useState<'request' | 'implementation' | 'result'>('request');
 
+  const initialEndpoint = React.useMemo(() => {
+    return defaultEndpoint || (apiConfig?.defaultEndpoint ?? '/api');
+  }, [defaultEndpoint, apiConfig]);
+
+  // Asegurarnos de que el endpoint siempre esté correcto en el formState
+  React.useEffect(() => {
+    if (apiConfig && formState && formState.endpoint !== initialEndpoint) {
+      setFormState((prevState: Record<string, any>) => ({
+        ...prevState,
+        endpoint: initialEndpoint
+      }));
+    }
+  }, [initialEndpoint, apiConfig]);
+
   // Efecto para cargar la configuración de la API seleccionada
   useEffect(() => {
-    const config = apiRegistry.get(apiType);
+    // First try to load API by ID if provided, otherwise fall back to apiType
+    const config = apiId ? apiRegistry.get(apiId) : apiRegistry.get(apiType);
     
     if (config) {
       setApiConfig(config);
       
       try {
-        // Inicializar el estado del formulario
+        // Inicializar el estado del formulario con los valores por defecto
         const initialState = config.getInitialState({
           defaultUrl,
           defaultMessage,
@@ -120,61 +139,91 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
           showUrlField,
           showJsonOption,
           showScreenshotOption,
+          showAnalysisTypeField,
           additionalFields
         });
         
-        setFormState(initialState);
+        // No modificamos el objeto initialState directamente para evitar bucles de renderizado
+        setFormState({ 
+          ...initialState, 
+          endpoint: initialEndpoint 
+        });
+        
+        // Limpiar cualquier error previo
+        setError(null);
       } catch (error) {
-        console.error('Error initializing form state:', error);
+        console.error(`Error initializing API form state for ${apiId || apiType}:`, error);
         setError('Error al inicializar el formulario. Consulta la consola para más detalles.');
       }
     } else {
-      console.error('API type not found:', apiType);
+      console.warn(`API not found for ${apiId || apiType}`);
+      setError(`No se encontró la configuración para la API: "${apiId || apiType}". Verifica que el ID o tipo de API sea válido.`);
     }
-  }, [apiType]);
+    // Incluimos solo las dependencias mínimas necesarias
+  }, [apiId, apiType]);
 
   // Función para manejar cambios en el formulario
-  const handleFormChange = (newState: any) => {
-    setFormState(newState);
-  };
+  const handleFormChange = React.useCallback((newState: any) => {
+    setFormState((prevState: Record<string, any>) => ({ ...prevState, ...newState }));
+  }, []);
+
+  // Función para manejar cambios en los campos de la API
+  const handleApiFieldChange = React.useCallback((updatedFields: Record<string, any>) => {
+    setFormState((prevState: Record<string, any>) => ({ ...prevState, ...updatedFields }));
+  }, []);
 
   // Función para enviar la solicitud a la API
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmit = React.useCallback(async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     
-    if (!apiConfig) return;
-    
+    if (!apiConfig) {
+      setError('No se ha seleccionado una API válida.');
+      return;
+    }
+
     setLoading(true);
     setError(null);
-    
+    setApiResponse(null);
+
     try {
-      // Construir el cuerpo de la solicitud
+      // Construir el cuerpo de la solicitud según la configuración de la API
       const requestBody = apiConfig.buildRequestBody(formState);
       
-      // Realizar la solicitud
-      const response = await fetch(formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint, {
-        method: formState.method || 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(requestBody),
-      });
+      // Construir los encabezados según la configuración de la API
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
       
-      if (!response.ok) {
-        throw new Error(`Error HTTP: ${response.status}`);
+      // Si la API tiene una función para construir cabeceras, usarla
+      if (apiConfig.buildRequestHeaders) {
+        const customHeaders = apiConfig.buildRequestHeaders(formState);
+        Object.assign(headers, customHeaders);
       }
       
-      const data = await response.json();
-      setApiResponse(data);
+      // Realizar la solicitud a la API
+      const response = await fetch(formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint, {
+        method: formState.method || 'POST',
+        headers: headers,
+        body: JSON.stringify(requestBody)
+      });
       
-      // Cambiar automáticamente a la pestaña de resultados después de una solicitud exitosa
+      // Procesar la respuesta
+      const data = await response.json();
+      
+      if (!response.ok) {
+        throw new Error(data.message || 'Error en la solicitud');
+      }
+      
+      // Actualizar el estado con la respuesta
+      setApiResponse(data);
       setActiveTab('result');
-    } catch (err: any) {
-      setError(err.message || 'Error al realizar la solicitud');
+    } catch (error: any) {
+      console.error('Error al enviar la solicitud:', error);
+      setError(error.message || 'Error desconocido al procesar la solicitud.');
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiConfig, formState, defaultEndpoint]);
 
   // Si no hay configuración de API, mostrar un mensaje
   if (!apiConfig) {
@@ -189,9 +238,9 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
           borderRadius: '4px',
           marginTop: '10px'
         }}>
-          <p><strong>Error:</strong> No se pudo cargar la configuración para el tipo de API: "{apiType}"</p>
-          <p>Asegúrate de que el tipo de API sea válido y que esté registrado correctamente.</p>
-          <p>Tipos de API disponibles: {apiRegistry.getAll().map(api => `"${api.id}"`).join(', ')}</p>
+          <p><strong>Error:</strong> {error || `No se pudo cargar la configuración para la API: "${apiId || apiType}"`}</p>
+          <p>Asegúrate de que el ID o tipo de API sea válido y que esté registrado correctamente.</p>
+          <p>APIs disponibles: {apiRegistry.getAll().map(api => `"${api.id}"`).join(', ')}</p>
         </div>
       </div>
     );
@@ -199,58 +248,83 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
 
   // Renderizar el componente de pestañas
   const renderTabContent = () => {
+    if (!apiConfig) return null;
+    
+    // Construir el cuerpo de la solicitud para mostrar en la implementación
+    const requestBody = apiConfig.buildRequestBody(formState);
+    
+    // Construir las cabeceras para mostrar en la implementación
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    // Si la API tiene una función para construir cabeceras, usarla
+    if (apiConfig.buildRequestHeaders) {
+      const customHeaders = apiConfig.buildRequestHeaders(formState);
+      Object.assign(headers, customHeaders);
+    }
+    
     switch (activeTab) {
       case 'request':
         return (
           <div className={styles.innerCard}>
-            <h3>Configuración de la API</h3>
-            <form onSubmit={handleSubmit}>
-              {apiConfig.renderFields({ 
-                state: formState, 
-                setState: handleFormChange,
-                showModelOptions,
-                showSiteUrlField,
-                showUrlField,
+            <h3 className={styles.implementationTitle}>Solicitud</h3>
+            <form onSubmit={handleSubmit} className={styles.formInCard}>
+              {/* Campos comunes */}
+              <FormField
+                label="Endpoint"
+                id="endpoint"
+                type="text"
+                value={formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint}
+                onChange={(value: string) => {/* No hacemos nada, es de solo lectura */}}
+                placeholder="/api/endpoint"
+                required
+                readOnly={true}
+              />
+              
+              {/* Renderizar los campos específicos de la API */}
+              {apiConfig.renderFields({
+                state: formState,
+                setState: handleApiFieldChange,
                 showJsonOption,
                 showScreenshotOption,
+                showModelOptions,
+                showAnalysisTypeField,
                 additionalFields
               })}
               
-              <div style={{ marginTop: '20px' }}>
+              <div className={styles.formActions}>
                 <button 
                   type="submit" 
+                  className={styles.submitButton}
                   disabled={loading}
-                  className={`${styles.button} ${styles.primary}`}
                 >
-                  {loading ? (
-                    <>
-                      <div className={styles.loadingSpinner}></div>
-                      <span>Enviando...</span>
-                    </>
-                  ) : (
-                    <span>Enviar solicitud</span>
-                  )}
+                  {loading ? 'Enviando...' : 'Enviar solicitud'}
                 </button>
               </div>
             </form>
           </div>
         );
+      
       case 'implementation':
         return (
-          <ApiImplementation
-            requestBody={apiConfig.buildRequestBody(formState)}
-            method={formState.method || 'POST'}
+          <ApiImplementation 
+            requestBody={requestBody} 
+            method={formState.method || 'POST'} 
             endpoint={formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint}
+            headers={headers}
           />
         );
+      
       case 'result':
         return (
-          <ApiResults
+          <ApiResults 
+            apiResponse={apiResponse} 
+            error={error} 
             loading={loading}
-            error={error}
-            apiResponse={apiResponse}
           />
         );
+      
       default:
         return null;
     }

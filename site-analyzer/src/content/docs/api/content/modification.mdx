@@ -1,0 +1,267 @@
+---
+title: API de Modificación de Contenido con IA
+description: Documentación para el API de modificación y transformación de contenido utilizando inteligencia artificial
+---
+
+# API de Modificación de Contenido con IA
+
+El endpoint `/api/content/modify` permite transformar y mejorar contenido textual utilizando inteligencia artificial. Esta API es útil para ajustar el tono, expandir, resumir, simplificar o mejorar cualquier tipo de contenido textual de manera automática y personalizada.
+
+> 🤖 **Transformación inteligente de contenido** 
+> 
+> Esta API utiliza modelos avanzados de IA para modificar contenido según necesidades específicas,
+> permitiendo ajustar el tono, estilo, longitud y claridad del texto. Ideal para creadores de contenido,
+> editores, marketers y cualquier profesional que necesite optimizar textos para diferentes audiencias
+> y propósitos.
+
+## Características principales
+
+- Ajuste de tono y estilo (formal, casual, persuasivo, informativo, etc.)
+- Expansión de contenido para desarrollar ideas o conceptos
+- Resumen inteligente manteniendo los puntos clave
+- Simplificación de textos complejos
+- Corrección gramatical y mejora de redacción
+- Adaptación a diferentes audiencias y contextos
+- Optimización SEO de contenido
+- Localización y adaptación cultural
+- Soporte para diferentes modelos de IA
+- Preservación de formato y estructura original cuando se requiera
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiType="content-modification" 
+  title="Modificador de Contenido con IA"
+  description="Prueba el API de modificación de contenido con tus propios parámetros."
+  defaultEndpoint="/api/content/modify"
+  defaultMethod="POST"
+  showModelOptions={true}
+  defaultModelType="anthropic"
+  defaultModel="claude-3-5-sonnet-20240620"
+/>
+
+## Parámetros de solicitud
+
+| Parámetro | Tipo | Descripción | Valores posibles | Requerido |
+|-----------|------|-------------|------------------|-----------|
+| `content` | string | Texto a modificar | Cualquier texto | Sí |
+| `operation` | string | Tipo de modificación a realizar | `tone`, `expand`, `summarize`, `simplify`, `improve`, `localize`, `seo_optimize`, `correct` | Sí |
+| `tone` | string | Tono deseado (solo para operation=tone) | `formal`, `casual`, `persuasive`, `informative`, `friendly`, `professional`, `technical`, `creative`, `enthusiastic` | No |
+| `target_length` | string/number | Longitud objetivo para expansión o resumen | `short`, `medium`, `long` o número específico de palabras/caracteres | No |
+| `target_audience` | string | Audiencia objetivo para la adaptación | `general`, `technical`, `academic`, `children`, `professionals`, `seniors`, `beginners` | No |
+| `language` | string | Idioma para localización | Código ISO de idioma (ej. `es`, `en`, `fr`) | No |
+| `region` | string | Región para localización | Código de país (ej. `ES`, `MX`, `US`) | No |
+| `preserve_structure` | boolean | Si se debe preservar la estructura original | `true`, `false` | No (default: `true`) |
+| `keywords` | array | Palabras clave para optimización SEO | Array de strings | No |
+| `format` | string | Formato de salida | `html`, `markdown`, `plain` | No (default: `plain`) |
+| `aiProvider` | string | Proveedor del modelo de IA | `openai`, `anthropic`, `gemini` | No |
+| `aiModel` | string | ID del modelo de IA | Depende del proveedor | No |
+| `max_tokens` | number | Número máximo de tokens en la respuesta | 100-4000 | No (default: 1000) |
+| `temperature` | number | Temperatura para generación (creatividad) | 0.0-1.0 | No (default: 0.7) |
+| `user_id` | string | ID del usuario | Cualquier ID válido | No |
+| `site_id` | string | ID del sitio | Cualquier ID válido | No |
+| `timeout` | number | Tiempo máximo de espera en ms | 5000-120000 | No (default: 30000) |
+
+## Ejemplos de uso
+
+### Cambio de tono
+
+```json
+{
+  "content": "Hemos detectado un error en su cuenta. Debe corregirlo inmediatamente para evitar la suspensión del servicio.",
+  "operation": "tone",
+  "tone": "friendly",
+  "preserve_structure": true
+}
+```
+
+### Expansión de contenido
+
+```json
+{
+  "content": "La inteligencia artificial está transformando el marketing digital.",
+  "operation": "expand",
+  "target_length": "medium",
+  "target_audience": "professionals",
+  "keywords": ["machine learning", "personalización", "automatización", "análisis predictivo"]
+}
+```
+
+### Resumen de texto
+
+```json
+{
+  "content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.",
+  "operation": "summarize",
+  "target_length": 50,
+  "format": "markdown"
+}
+```
+
+### Optimización SEO
+
+```json
+{
+  "content": "Nuestra empresa ofrece soluciones de software.",
+  "operation": "seo_optimize",
+  "keywords": ["soluciones empresariales", "software personalizado", "desarrollo ágil", "transformación digital"],
+  "target_audience": "professionals"
+}
+```
+
+### Localización de contenido
+
+```json
+{
+  "content": "Our company provides cutting-edge solutions for your business needs.",
+  "operation": "localize",
+  "language": "es",
+  "region": "MX",
+  "preserve_structure": true
+}
+```
+
+## Respuesta
+
+La respuesta incluye los siguientes campos:
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `original_content` | string | Contenido original enviado |
+| `modified_content` | string | Contenido modificado según la operación solicitada |
+| `operation` | string | Operación realizada |
+| `stats` | object | Estadísticas sobre el contenido original y modificado |
+| `metadata` | object | Metadatos de la solicitud y procesamiento |
+
+### Ejemplo de respuesta completa
+
+```json
+{
+  "original_content": "Hemos detectado un error en su cuenta. Debe corregirlo inmediatamente para evitar la suspensión del servicio.",
+  "modified_content": "Notamos que hay un pequeño inconveniente en tu cuenta. ¿Podrías revisarlo cuando tengas un momento? Nos encantaría ayudarte a resolverlo para que puedas seguir disfrutando de nuestro servicio sin interrupciones.",
+  "operation": "tone",
+  "stats": {
+    "original": {
+      "character_count": 105,
+      "word_count": 17,
+      "sentence_count": 2,
+      "readability_score": 68.5
+    },
+    "modified": {
+      "character_count": 189,
+      "word_count": 32,
+      "sentence_count": 3,
+      "readability_score": 72.3
+    },
+    "difference": {
+      "character_count": 84,
+      "word_count": 15,
+      "sentence_count": 1,
+      "readability_score": 3.8
+    }
+  },
+  "metadata": {
+    "request": {
+      "timestamp": "2024-07-15T16:42:18Z",
+      "parameters": {
+        "operation": "tone",
+        "tone": "friendly",
+        "preserve_structure": true
+      }
+    },
+    "processing": {
+      "modelUsed": "claude-3-5-sonnet-20240620",
+      "aiProvider": "anthropic",
+      "processingTime": "0.85 seconds",
+      "tokenCount": {
+        "input": 28,
+        "output": 42,
+        "total": 70
+      },
+      "status": "success"
+    }
+  }
+}
+```
+
+## Operaciones disponibles
+
+### Ajuste de tono (`tone`)
+
+Modifica el tono y estilo del contenido manteniendo el significado original.
+
+**Parámetros específicos:**
+- `tone`: El tono deseado (formal, casual, persuasivo, etc.)
+
+### Expansión (`expand`)
+
+Desarrolla y amplía el contenido original con información relevante y detalles adicionales.
+
+**Parámetros específicos:**
+- `target_length`: Longitud objetivo del contenido expandido
+- `keywords`: Palabras clave a incluir en la expansión
+
+### Resumen (`summarize`)
+
+Condensa el contenido manteniendo los puntos clave y la información esencial.
+
+**Parámetros específicos:**
+- `target_length`: Longitud objetivo del resumen
+- `preserve_key_points`: Si se deben preservar explícitamente los puntos clave (default: true)
+
+### Simplificación (`simplify`)
+
+Hace que el contenido sea más fácil de entender, reduciendo la complejidad léxica y sintáctica.
+
+**Parámetros específicos:**
+- `target_audience`: Audiencia objetivo para determinar el nivel de simplificación
+- `readability_level`: Nivel de legibilidad objetivo (básico, intermedio, avanzado)
+
+### Mejora general (`improve`)
+
+Mejora la calidad general del contenido, corrigiendo errores, mejorando la claridad y el flujo.
+
+**Parámetros específicos:**
+- `focus_areas`: Áreas específicas a mejorar (gramática, claridad, estructura, etc.)
+
+### Localización (`localize`)
+
+Adapta el contenido a un idioma y/o región específica, considerando aspectos culturales.
+
+**Parámetros específicos:**
+- `language`: Idioma objetivo
+- `region`: Región objetivo
+- `cultural_adaptation_level`: Nivel de adaptación cultural (básico, moderado, completo)
+
+### Optimización SEO (`seo_optimize`)
+
+Optimiza el contenido para motores de búsqueda manteniendo la legibilidad y calidad.
+
+**Parámetros específicos:**
+- `keywords`: Palabras clave para optimización
+- `keyword_density`: Densidad objetivo de palabras clave (default: "natural")
+
+### Corrección (`correct`)
+
+Corrige errores gramaticales, ortográficos y de puntuación sin cambiar el contenido.
+
+**Parámetros específicos:**
+- `correction_level`: Nivel de corrección (básico, estándar, exhaustivo)
+
+## Códigos de estado
+
+| Código | Descripción |
+|--------|-------------|
+| 200 | Solicitud exitosa |
+| 400 | Parámetros inválidos |
+| 413 | Contenido demasiado grande |
+| 422 | Operación no soportada o parámetros incompatibles |
+| 429 | Límite de solicitudes excedido |
+| 500 | Error interno del servidor |
+
+## Limitaciones
+
+- Tamaño máximo de contenido: 10,000 caracteres por solicitud
+- Límite de solicitudes: 100 por hora para cuentas gratuitas, 1,000 por hora para cuentas premium
+- Algunas operaciones pueden tener restricciones adicionales según el modelo de IA utilizado
+- El contenido debe cumplir con nuestras políticas de uso aceptable 

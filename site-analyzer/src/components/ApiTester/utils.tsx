@@ -258,4 +258,13 @@ export const FormField = ({
       )}
     </div>
   );
+};
+
+// Componente para renderizar una etiqueta de sección
+export const SectionLabel = ({ children }: { children: React.ReactNode }) => {
+  return (
+    <label className={styles.sectionLabel}>
+      {children}
+    </label>
+  );
 }; 

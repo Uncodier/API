@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField, SectionLabel } from '../utils';
 
 // Props específicas para la API de Segmentos
 export interface SegmentsApiProps {
@@ -24,6 +24,7 @@ export interface SegmentsApiState {
   user_id?: string;
   site_id?: string;
   mode: 'analyze' | 'create' | 'update';
+  includeFullText: boolean;
 }
 
 // Configuración de la API de Segmentos
@@ -43,7 +44,8 @@ const SegmentsApi: BaseApiConfig = {
       includeScreenshot: false,
       user_id: '',
       site_id: '',
-      mode: props.defaultMode || 'analyze'
+      mode: props.defaultMode || 'analyze',
+      includeFullText: false
     };
   },
 
@@ -55,8 +57,8 @@ const SegmentsApi: BaseApiConfig = {
       mode: state.mode
     };
     
-    if (state.modelType) body.aiProvider = state.modelType;
-    if (state.modelId) body.aiModel = state.modelId;
+    if (state.modelType) body.provider = state.modelType;
+    if (state.modelId) body.modelId = state.modelId;
     if (state.includeScreenshot) body.includeScreenshot = state.includeScreenshot;
     
     // Agregar campos específicos según el modo
@@ -177,18 +179,43 @@ const SegmentsApi: BaseApiConfig = {
         )}
         
         {showScreenshotOption && (
-          <div style={{ marginBottom: '1rem' }}>
-            <label>Opciones adicionales</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              <FormField
-                label="Incluir captura"
-                id="includeScreenshot"
-                type="checkbox"
-                value={state.includeScreenshot}
-                onChange={(value) => handleChange('includeScreenshot', value)}
-              />
-            </div>
-          </div>
+          <>
+            <SectionLabel>Opciones adicionales</SectionLabel>
+            
+            <FormField
+              label="Incluir captura"
+              id="includeScreenshot"
+              type="checkbox"
+              value={state.includeScreenshot}
+              onChange={(value) => handleChange('includeScreenshot', value)}
+            />
+          </>
+        )}
+
+        {/* Opciones adicionales según el modo */}
+        {showModelOptions && state.mode === 'analyze' && !showScreenshotOption && (
+          <>
+            <SectionLabel>Opciones adicionales</SectionLabel>
+            
+            <FormField
+              label="Incluir texto completo"
+              id="includeFullText"
+              type="checkbox"
+              value={state.includeFullText}
+              onChange={(value) => handleChange('includeFullText', value)}
+            />
+          </>
+        )}
+
+        {/* Incluir texto completo sin encabezado si ya hay otro encabezado */}
+        {showModelOptions && state.mode === 'analyze' && showScreenshotOption && (
+          <FormField
+            label="Incluir texto completo"
+            id="includeFullText"
+            type="checkbox"
+            value={state.includeFullText}
+            onChange={(value) => handleChange('includeFullText', value)}
+          />
         )}
       </>
     );

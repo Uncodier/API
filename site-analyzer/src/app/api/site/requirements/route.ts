@@ -63,8 +63,8 @@ const RequestSchema = z.object({
   site_id: z.string().optional(),
   priority_level: z.enum(PriorityLevels).optional().default('all'),
   device_type: z.enum(DeviceTypes).optional().default('all'),
-  aiProvider: z.enum(AiProviders).optional().default('anthropic'),
-  aiModel: z.string().optional().default('claude-3-5-sonnet-20240620'),
+  provider: z.enum(AiProviders).optional().default('anthropic'),
+  modelId: z.string().optional().default('claude-3-5-sonnet-20240620'),
   timeout: z.number().int().min(5000).max(120000).optional().default(30000),
   include_implementation: z.boolean().optional().default(true),
   include_conformity: z.boolean().optional().default(true),
@@ -293,8 +293,8 @@ function processAIResponse(aiResponse: any, params: z.infer<typeof RequestSchema
           parameters: params
         },
         analysis: {
-          modelUsed: params.aiModel,
-          aiProvider: params.aiProvider,
+          modelUsed: params.modelId,
+          aiProvider: params.provider,
           processingTime,
           segmentDataSource: `${params.segment_id} (last updated: ${new Date().toISOString().split('T')[0]})`,
           siteScanDate: new Date().toISOString(),
@@ -311,8 +311,8 @@ function processAIResponse(aiResponse: any, params: z.infer<typeof RequestSchema
       // Actualizar solo los campos faltantes en los metadatos
       parsedResponse.metadata.analysis = {
         ...parsedResponse.metadata.analysis,
-        modelUsed: parsedResponse.metadata.analysis.modelUsed || params.aiModel,
-        aiProvider: parsedResponse.metadata.analysis.aiProvider || params.aiProvider,
+        modelUsed: parsedResponse.metadata.analysis.modelUsed || params.modelId,
+        aiProvider: parsedResponse.metadata.analysis.aiProvider || params.provider,
         processingTime: parsedResponse.metadata.analysis.processingTime || processingTime
       };
     }
@@ -476,8 +476,8 @@ function generateFallbackResponse(params: z.infer<typeof RequestSchema>, process
         parameters: params
       },
       analysis: {
-        modelUsed: params.aiModel,
-        aiProvider: params.aiProvider,
+        modelUsed: params.modelId,
+        aiProvider: params.provider,
         processingTime,
         segmentDataSource: `${params.segment_id} (last updated: ${new Date().toISOString().split('T')[0]})`,
         siteScanDate: timestamp,
@@ -525,8 +525,8 @@ export async function POST(request: NextRequest) {
     // Llamar a la API de conversación para obtener el análisis
     const aiResponse = await analyzeWithConversationApi(
       prompt,
-      params.aiProvider,
-      params.aiModel,
+      params.provider,
+      params.modelId,
       params.url,
       params.includeScreenshot,
       params.timeout,
@@ -570,8 +570,8 @@ export async function GET(request: NextRequest) {
     const site_id = request.nextUrl.searchParams.get('site_id') || undefined;
     const priority_level = request.nextUrl.searchParams.get('priority_level') as z.infer<typeof RequestSchema>['priority_level'];
     const device_type = request.nextUrl.searchParams.get('device_type') as z.infer<typeof RequestSchema>['device_type'];
-    const aiProvider = request.nextUrl.searchParams.get('aiProvider') as z.infer<typeof RequestSchema>['aiProvider'];
-    const aiModel = request.nextUrl.searchParams.get('aiModel') || undefined;
+    const provider = request.nextUrl.searchParams.get('provider') as z.infer<typeof RequestSchema>['provider'];
+    const modelId = request.nextUrl.searchParams.get('modelId') || undefined;
     const timeout = request.nextUrl.searchParams.get('timeout') ? parseInt(request.nextUrl.searchParams.get('timeout')!) : undefined;
     const include_implementation = request.nextUrl.searchParams.get('include_implementation') === 'true';
     const include_conformity = request.nextUrl.searchParams.get('include_conformity') === 'true';
@@ -587,8 +587,8 @@ export async function GET(request: NextRequest) {
       site_id,
       priority_level,
       device_type,
-      aiProvider,
-      aiModel,
+      provider,
+      modelId,
       timeout,
       include_implementation,
       include_conformity,
@@ -619,8 +619,8 @@ export async function GET(request: NextRequest) {
     // Llamar a la API de conversación para obtener el análisis
     const aiResponse = await analyzeWithConversationApi(
       prompt,
-      validatedParams.aiProvider,
-      validatedParams.aiModel,
+      validatedParams.provider,
+      validatedParams.modelId,
       validatedParams.url,
       validatedParams.includeScreenshot,
       validatedParams.timeout,

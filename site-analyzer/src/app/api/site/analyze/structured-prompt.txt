@@ -1,0 +1,70 @@
+Analiza la estructura del siguiente sitio web:
+URL: {url}
+
+Proporciona un análisis estructurado detallado del sitio web, identificando los bloques principales, su jerarquía, y su propósito. Devuelve tu análisis en formato JSON con la siguiente estructura:
+
+```json
+{
+  "site_info": {
+    "url": "URL del sitio",
+    "title": "Título del sitio",
+    "description": "Descripción breve del sitio",
+    "language": "Idioma principal del sitio (código ISO)",
+    "main_purpose": "Propósito principal del sitio"
+  },
+  "blocks": [
+    {
+      "id": "identificador-único-del-bloque",
+      "type": "header|content|footer|sidebar|cta|form|gallery|testimonial|etc",
+      "section_type": "navigation|content|form|media|etc",
+      "selector": "Selector CSS que identifica este bloque",
+      "classes": ["clase1", "clase2"],
+      "content_type": "text|image|video|mixed",
+      "description": "Descripción del bloque y su función",
+      "business_objective": "Objetivo de negocio que cumple este bloque",
+      "user_need": "Necesidad del usuario que satisface",
+      "ux_role": "Rol en la experiencia de usuario",
+      "relevance": {
+        "score": 0-100,
+        "reason": "Razón de la puntuación de relevancia"
+      },
+      "children": 0,
+      "text_length": 0,
+      "location": {
+        "position": "top|middle|bottom|left|right",
+        "coordinates": {
+          "top": 0,
+          "left": 0
+        }
+      },
+      "content_list": ["Elemento 1", "Elemento 2"],
+      "sub_blocks": []
+    }
+  ],
+  "structure_analysis": {
+    "hierarchy_score": 0-100,
+    "clarity_score": 0-100,
+    "consistency_score": 0-100,
+    "navigation_score": 0-100,
+    "overall_structure_score": 0-100,
+    "strengths": [
+      "Fortaleza 1 de la estructura",
+      "Fortaleza 2 de la estructura"
+    ],
+    "weaknesses": [
+      "Debilidad 1 de la estructura",
+      "Debilidad 2 de la estructura"
+    ],
+    "recommendations": [
+      {
+        "issue": "Problema identificado",
+        "recommendation": "Recomendación para mejorar",
+        "impact": "Impacto esperado",
+        "priority": "alta|media|baja"
+      }
+    ]
+  }
+}
+```
+
+Asegúrate de que tu respuesta sea un JSON válido y estructurado exactamente como se muestra arriba. Identifica al menos 5-7 bloques principales del sitio y proporciona un análisis detallado de la estructura general. 

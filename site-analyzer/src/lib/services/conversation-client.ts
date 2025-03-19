@@ -169,7 +169,7 @@ export async function sendConversationRequest(options: ConversationOptions): Pro
 
 export async function analyzeWithConversationApi(
   prompt: string,
-  modelType: 'anthropic' | 'openai' | 'gemini',
+  provider: 'anthropic' | 'openai' | 'gemini',
   modelId: string,
   siteUrl: string,
   includeScreenshot: boolean = true,
@@ -179,7 +179,7 @@ export async function analyzeWithConversationApi(
   conversationId?: string // Nuevo parámetro para mantener el contexto de la conversación
 ): Promise<any> {
   console.log('[Conversation Client] analyzeWithConversationApi - Iniciando análisis con parámetros:', {
-    modelType,
+    provider,
     modelId,
     siteUrl,
     includeScreenshot,
@@ -197,7 +197,7 @@ export async function analyzeWithConversationApi(
     throw new Error('Se requiere un prompt para el análisis');
   }
 
-  if (!modelType) {
+  if (!provider) {
     console.error('[Conversation Client] Error: Se requiere el tipo de modelo');
     throw new Error('Se requiere el tipo de modelo');
   }
@@ -217,7 +217,7 @@ export async function analyzeWithConversationApi(
           content: prompt
         }
       ],
-      modelType,
+      modelType: provider,
       modelId,
       siteUrl,
       includeScreenshot,

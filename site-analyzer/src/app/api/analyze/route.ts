@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { analyzeSiteAction } from '@/lib/actions/analyze-site'
 import { z } from 'zod'
+import { validateApiKey } from '@/lib/api-keys'
 
 /**
  * API BÁSICA DE ANÁLISIS DE SITIOS WEB
@@ -28,7 +29,32 @@ import { z } from 'zod'
 // Esquema para validar el cuerpo de la solicitud
 const RequestSchema = z.object({
   url: z.string().url('Debe ser una URL válida'),
+  includeRawHtml: z.boolean().optional().default(false),
 })
+
+/**
+ * Función para validar la autenticación de la API
+ * @param request Solicitud HTTP
+ * @returns Booleano indicando si la autenticación es válida
+ */
+const validateAuth = (request: NextRequest): boolean => {
+  // En desarrollo, podemos omitir la autenticación
+  if (process.env.NODE_ENV === 'development') {
+    return true;
+  }
+  
+  // Obtener las cabeceras de autenticación
+  const apiKey = request.headers.get('x-api-key');
+  const apiSecret = request.headers.get('x-api-secret');
+  
+  // Si no hay cabeceras de autenticación, rechazar
+  if (!apiKey || !apiSecret) {
+    return false;
+  }
+  
+  // Validar las credenciales
+  return validateApiKey(apiKey, apiSecret);
+};
 
 /**
  * Endpoint POST para analizar un sitio web
@@ -37,6 +63,14 @@ const RequestSchema = z.object({
  */
 export async function POST(request: NextRequest) {
   try {
+    // Validar autenticación
+    if (!validateAuth(request)) {
+      return NextResponse.json(
+        { error: 'Credenciales de API inválidas o faltantes' },
+        { status: 401 }
+      );
+    }
+    
     // Obtener la IP del cliente para rate limiting
     const ip = request.headers.get('x-forwarded-for') || 
                request.headers.get('x-real-ip') || 
@@ -47,13 +81,13 @@ export async function POST(request: NextRequest) {
     const body = await request.json()
     
     try {
-      const { url } = RequestSchema.parse(body)
+      const { url, includeRawHtml } = RequestSchema.parse(body)
       
       // Log de la solicitud
       console.log(`Analizando sitio: ${url} (IP: ${ip})`)
       
       // Llamar a la acción del servidor para analizar el sitio
-      const result = await analyzeSiteAction({ url, ip })
+      const result = await analyzeSiteAction({ url, ip, includeRawHtml })
       
       if (!result.success) {
         return NextResponse.json(
@@ -92,6 +126,7 @@ export async function GET(request: NextRequest) {
     { 
       message: 'Analizador de sitios web',
       usage: 'Envía una solicitud POST con un objeto JSON que contenga la URL a analizar: { "url": "https://ejemplo.com" }',
+      authentication: 'Se requieren las cabeceras x-api-key y x-api-secret para autenticar las solicitudes',
       endpoints: {
         '/api/analyze': 'POST - Analiza la estructura y contenido de un sitio web'
       },

@@ -1,0 +1,44 @@
+Analiza el siguiente sitio web:
+URL: {url}
+
+Proporciona:
+1. Un resumen conciso del propósito y contenido del sitio (3-5 oraciones)
+2. 3-5 insights sobre el diseño, usabilidad y contenido del sitio
+3. 2-3 recomendaciones específicas para mejorar el sitio
+
+Por favor, proporciona tu respuesta en formato JSON con la siguiente estructura:
+```json
+{
+  "summary": "Resumen del sitio aquí...",
+  "insights": [
+    {
+      "title": "Título del insight 1",
+      "description": "Descripción detallada del insight 1"
+    },
+    {
+      "title": "Título del insight 2",
+      "description": "Descripción detallada del insight 2"
+    },
+    {
+      "title": "Título del insight 3",
+      "description": "Descripción detallada del insight 3"
+    }
+  ],
+  "recommendations": [
+    {
+      "issue": "Problema identificado 1",
+      "recommendation": "Recomendación detallada 1",
+      "impact": "Impacto esperado de implementar esta recomendación",
+      "priority": "alta|media|baja"
+    },
+    {
+      "issue": "Problema identificado 2",
+      "recommendation": "Recomendación detallada 2",
+      "impact": "Impacto esperado de implementar esta recomendación",
+      "priority": "alta|media|baja"
+    }
+  ]
+}
+```
+
+Asegúrate de que tu respuesta sea un JSON válido y estructurado exactamente como se muestra arriba. 

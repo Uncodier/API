@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { BaseApiConfig } from '../types';
-import { FormField } from '../utils';
+import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
+import { FormField, SectionLabel } from '../utils';
 
 // Props específicas para la API de Sitio
 export interface SiteApiProps {
@@ -11,6 +11,10 @@ export interface SiteApiProps {
   defaultMethod?: 'GET' | 'POST';
   defaultTimeout?: string;
   defaultDepth?: string;
+  defaultModelType?: string;
+  defaultModel?: string;
+  showModelOptions?: boolean;
+  showAnalysisTypeField?: boolean;
 }
 
 // Estado específico para la API de Sitio
@@ -27,6 +31,8 @@ export interface SiteApiState {
   includeScreenshot: boolean;
   jsonResponse: boolean;
   htmlContent: string;
+  modelType: ModelProviderType;
+  modelId: string;
 }
 
 // Configuración de la API de Sitio
@@ -50,7 +56,9 @@ const SiteApi: BaseApiConfig = {
       safeSelectors: true,
       includeScreenshot: false,
       jsonResponse: false,
-      htmlContent: ''
+      htmlContent: '',
+      modelType: (props.defaultModelType as ModelProviderType) || 'openai',
+      modelId: props.defaultModel || 'gpt-4o'
     };
   },
 
@@ -61,22 +69,42 @@ const SiteApi: BaseApiConfig = {
     }
     
     const body: Record<string, any> = { url: state.siteUrl };
+    const options: Record<string, any> = {};
     
     if (state.analysisType === 'complete') {
-      if (state.timeout) body.timeout = parseInt(state.timeout);
-      if (state.userAgent) body.userAgent = state.userAgent;
-      if (state.ignoreSSL) body.ignoreSSL = state.ignoreSSL;
-      if (state.failOnError) body.failOnError = state.failOnError;
-      if (!state.safeSelectors) body.safeSelectors = state.safeSelectors;
-      if (state.includeScreenshot) body.includeScreenshot = state.includeScreenshot;
+      if (state.timeout) options.timeout = parseInt(state.timeout);
+      if (state.userAgent) options.userAgent = state.userAgent;
+      if (state.ignoreSSL) options.ignoreSSL = state.ignoreSSL;
+      if (state.failOnError) options.failOnError = state.failOnError;
+      if (!state.safeSelectors) options.safeSelectors = state.safeSelectors;
+      if (state.includeScreenshot) options.includeScreenshot = state.includeScreenshot;
+      if (state.modelType) options.provider = state.modelType;
+      if (state.modelId) options.modelId = state.modelId;
     } 
     else if (state.analysisType === 'structure') {
-      if (state.depth) body.depth = parseInt(state.depth);
-      if (state.includeScreenshot) body.includeScreenshot = state.includeScreenshot;
-      if (state.htmlContent) body.html = state.htmlContent;
+      if (state.depth) options.depth = parseInt(state.depth);
+      if (state.includeScreenshot) options.includeScreenshot = state.includeScreenshot;
+      if (state.modelType) options.provider = state.modelType;
+      if (state.modelId) options.modelId = state.modelId;
     }
     
+    if (Object.keys(options).length > 0) {
+      body.options = options;
+    }
+    
+    if (state.htmlContent) body.htmlContent = state.htmlContent;
+    
     return body;
+  },
+
+  // Construir las cabeceras de la solicitud
+  buildRequestHeaders: (state: SiteApiState): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    
+    // Si se necesitan cabeceras específicas para la API de sitio,
+    // se pueden agregar aquí
+    
+    return headers;
   },
 
   // Renderizar los campos del formulario
@@ -85,21 +113,14 @@ const SiteApi: BaseApiConfig = {
     setState: React.Dispatch<React.SetStateAction<SiteApiState>>;
     showJsonOption: boolean;
     showScreenshotOption: boolean;
+    showModelOptions: boolean;
+    showAnalysisTypeField?: boolean;
     additionalFields?: any[];
   }) => {
-    const { state, setState, showJsonOption, showScreenshotOption } = props;
+    const { state, setState, showJsonOption, showScreenshotOption, showModelOptions, showAnalysisTypeField = true } = props;
     
     const handleChange = (field: keyof SiteApiState, value: any) => {
-      setState(prev => {
-        const newState = { ...prev, [field]: value };
-        
-        // Actualizar el endpoint cuando cambia el tipo de análisis
-        if (field === 'analysisType') {
-          // No necesitamos actualizar el endpoint aquí, se manejará en el componente principal
-        }
-        
-        return newState;
-      });
+      setState({ ...state, [field]: value });
     };
     
     return (
@@ -126,17 +147,45 @@ const SiteApi: BaseApiConfig = {
           ]}
         />
         
-        <FormField
-          label="Tipo de Análisis"
-          id="analysisType"
-          type="select"
-          value={state.analysisType}
-          onChange={(value) => handleChange('analysisType', value)}
-          options={[
-            { value: 'complete', label: 'Completo' },
-            { value: 'structure', label: 'Solo Estructura' }
-          ]}
-        />
+        {showAnalysisTypeField && (
+          <FormField
+            label="Tipo de Análisis"
+            id="analysisType"
+            type="select"
+            value={state.analysisType}
+            onChange={(value) => handleChange('analysisType', value)}
+            options={[
+              { value: 'complete', label: 'Completo' },
+              { value: 'structure', label: 'Solo Estructura' }
+            ]}
+          />
+        )}
+        
+        {showModelOptions && (
+          <>
+            <FormField
+              label="Proveedor del Modelo"
+              id="modelType"
+              type="select"
+              value={state.modelType}
+              onChange={(value) => handleChange('modelType', value)}
+              options={[
+                { value: 'anthropic', label: 'Anthropic' },
+                { value: 'openai', label: 'OpenAI' },
+                { value: 'gemini', label: 'Google (Gemini)' }
+              ]}
+            />
+            
+            <FormField
+              label="Modelo"
+              id="modelId"
+              type="select"
+              value={state.modelId}
+              onChange={(value) => handleChange('modelId', value)}
+              options={MODEL_OPTIONS[state.modelType]}
+            />
+          </>
+        )}
         
         <FormField
           label="Timeout (ms)"
@@ -167,9 +216,10 @@ const SiteApi: BaseApiConfig = {
           placeholder="Mozilla/5.0..."
         />
         
-        <div style={{ marginBottom: '1rem' }}>
-          <label>Opciones adicionales</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+        {(showJsonOption || showScreenshotOption || showModelOptions) && (
+          <>
+            <SectionLabel>Opciones adicionales</SectionLabel>
+            
             {showScreenshotOption && (
               <FormField
                 label="Incluir captura"
@@ -213,8 +263,8 @@ const SiteApi: BaseApiConfig = {
                 onChange={(value) => handleChange('jsonResponse', value)}
               />
             )}
-          </div>
-        </div>
+          </>
+        )}
         
         <FormField
           label="Contenido HTML (opcional)"

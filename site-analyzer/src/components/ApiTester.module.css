@@ -286,6 +286,11 @@
   margin-bottom: 20px;
 }
 
+/* Estilo más compacto para los FormGroup que contienen checkboxes */
+.formGroup:has(.checkboxWrapper) {
+  margin-bottom: 10px;
+}
+
 .formGroup label {
   display: block;
   margin-bottom: 8px;
@@ -349,6 +354,47 @@
   background-color: var(--nextra-card-background, #f8f9fa);
   opacity: 0.8;
   cursor: not-allowed;
+  border-style: dashed;
+  border-color: var(--nextra-border-color, #ced4da);
+  color: var(--nextra-secondary-text-color, #6c757d);
+}
+
+/* Estilo específico para readonly, que se ve un poco diferente a disabled */
+.formControl[readonly] {
+  border-style: solid;
+  border-width: 1px;
+  border-color: var(--nextra-border-color, #dee2e6);
+  background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.05));
+  cursor: default;
+  color: var(--nextra-primary-text-color, #333);
+  opacity: 1;
+}
+
+/* Asegurar que el campo de solo lectura tenga un estilo distinto al pasar el mouse */
+.formControl[readonly]:hover {
+  border-color: var(--nextra-border-color, #dee2e6);
+  background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.05));
+}
+
+/* Estilos para tema oscuro */
+:global(.dark) .formControl:disabled,
+:global(.dark) .formControl[readonly] {
+  background-color: var(--nextra-card-background, #222);
+  border-color: var(--nextra-border-color, #444);
+  color: var(--nextra-secondary-text-color, #aaa);
+}
+
+/* Estilo específico para readonly en modo oscuro */
+:global(.dark) .formControl[readonly] {
+  background-color: rgba(13, 110, 253, 0.1);
+  color: var(--nextra-primary-text-color, #eee);
+  border-color: var(--nextra-border-color, #444);
+  opacity: 1;
+}
+
+:global(.dark) .formControl[readonly]:hover {
+  background-color: rgba(13, 110, 253, 0.1);
+  border-color: var(--nextra-border-color, #444);
 }
 
 .formControl::placeholder {
@@ -481,8 +527,70 @@
 .buttonContainer {
   display: flex;
   justify-content: center;
+  gap: 10px;
+  margin-top: 24px;
   width: 100%;
-  margin-top: 20px;
+}
+
+.formActions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 24px;
+  width: 100%;
+}
+
+.formInCard {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.submitButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 20px;
+  font-size: 1rem;
+  font-weight: 500;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: none;
+  background-color: var(--nextra-primary-color, #0d6efd);
+  color: white;
+  margin-top: 16px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.submitButton:hover {
+  background-color: var(--nextra-primary-color-dark, #0b5ed7);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+  transform: translateY(-1px);
+}
+
+.submitButton:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.submitButton:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  background-color: var(--nextra-disabled-color, #6c757d);
+  box-shadow: none;
+}
+
+:global(.dark) .submitButton {
+  background-color: var(--nextra-primary-color, #0d6efd);
+  color: white;
+}
+
+:global(.dark) .submitButton:hover {
+  background-color: var(--nextra-primary-color-dark, #0b5ed7);
+}
+
+:global(.dark) .submitButton:disabled {
+  background-color: var(--nextra-disabled-color, #495057);
 }
 
 .primary {
@@ -550,18 +658,17 @@
 .checkboxWrapper {
   display: flex;
   align-items: center;
-  margin-bottom: 10px;
-  margin-top: 4px;
-}
-
-.checkboxWrapper:last-child {
-  margin-bottom: 0;
+  margin-bottom: 2px;
+  margin-top: 2px;
 }
 
 .checkboxGroup {
-  padding: 4px 0;
+  padding: 0;
   border: none;
   margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
 
 .checkboxText {
@@ -1353,4 +1460,22 @@
   align-items: center;
   gap: 6px;
   font-size: 0.9rem;
+}
+
+/* Nuevo estilo para etiquetas de sección */
+.sectionLabel {
+  font-weight: 600;
+  color: var(--nextra-primary-text-color, #212529);
+  font-size: 1.05rem;
+  margin-top: 16px;
+  margin-bottom: 8px;
+  padding: 6px 10px;
+  background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.05));
+  border-radius: 4px;
+  display: block;
+}
+
+:global(.dark) .sectionLabel {
+  color: var(--nextra-primary-text-color, #e6e6e6);
+  background-color: rgba(13, 110, 253, 0.1);
 } 
