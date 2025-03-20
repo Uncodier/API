@@ -23,6 +23,28 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
   console.log(`[prepareAnalysisData] Opciones recibidas:`, request.options);
   console.log(`[prepareAnalysisData] Opciones procesadas: includeScreenshot=${includeScreenshot}, timeout=${timeout}ms`);
   
+  // Log all properties of the request object to check what's available
+  console.log(`[prepareAnalysisData] Propiedades del objeto request: ${JSON.stringify(Object.keys(request))}`);
+  
+  // Specially check for htmlContent in request
+  if ('htmlContent' in request) {
+    console.log(`[prepareAnalysisData] htmlContent encontrado como propiedad directa de request`);
+    if (request.htmlContent) {
+      console.log(`[prepareAnalysisData] htmlContent tiene valor y longitud: ${request.htmlContent.length}`);
+    } else {
+      console.log(`[prepareAnalysisData] htmlContent está presente pero es undefined o null`);
+    }
+  } else {
+    console.log(`[prepareAnalysisData] htmlContent NO está presente como propiedad de request`);
+  }
+  
+  // Maybe it's in the options?
+  if (request.options && 'htmlContent' in request.options) {
+    console.log(`[prepareAnalysisData] htmlContent encontrado en request.options con longitud: ${(request.options as any).htmlContent.length}`);
+  }
+  
+  console.log(`[prepareAnalysisData] Solicitud HTML en entrada: ${request.htmlContent ? `Si (${request.htmlContent.length} bytes)` : 'No'}`);
+  
   // Capturar screenshot si no se proporcionó y si no está explícitamente desactivado
   let screenshotData = request.screenshot;
   if (!screenshotData && includeScreenshot) {
@@ -51,7 +73,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
   // Obtener el HTML si no se proporcionó
   let htmlContent = request.htmlContent;
   if (!htmlContent) {
-    console.log('[prepareAnalysisData] Obteniendo HTML...');
+    console.log('[prepareAnalysisData] No se proporcionó HTML en la solicitud, obteniendo HTML...');
     try {
       // Usar el HTML preprocesado con opciones optimizadas para análisis estructural
       const preprocessOptions = {
@@ -81,7 +103,7 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
       const preprocessResult = await preprocessHtml(request.url, preprocessOptions);
       htmlContent = preprocessResult.html;
       
-      console.log(`[prepareAnalysisData] HTML preprocesado: ${htmlContent.length} bytes`);
+      console.log(`[prepareAnalysisData] HTML obtenido y preprocesado: ${htmlContent.length} bytes`);
       console.log(`[prepareAnalysisData] Estadísticas HTML: ${JSON.stringify(preprocessResult.stats)}`);
       
       // Verificar si el HTML es demasiado grande para el modelo
@@ -199,8 +221,13 @@ export async function prepareAnalysisData(request: AnalyzeRequest): Promise<{
   </main>
 </body>
 </html>`;
+      console.log(`[prepareAnalysisData] Generado HTML de error básico (${htmlContent.length} bytes)`);
     }
+  } else {
+    console.log(`[prepareAnalysisData] Usando HTML proporcionado en la solicitud (${htmlContent.length} bytes)`);
   }
+  
+  console.log(`[prepareAnalysisData] Finalizando con resultados: screenshot=${!!screenshotData}, imagen procesada=${!!processedImage}, HTML=${!!htmlContent} (${htmlContent?.length || 0} bytes)`);
   
   return {
     screenshotData,

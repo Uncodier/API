@@ -17,13 +17,14 @@ Proporciona un análisis estructurado detallado del sitio web, identificando los
       "id": "identificador-único-del-bloque",
       "type": "header|content|footer|sidebar|cta|form|gallery|testimonial|etc",
       "section_type": "navigation|content|form|media|etc",
-      "selector": "Selector CSS que identifica este bloque",
+      "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este bloque. Incluye múltiples atributos para asegurar unicidad.",
       "classes": ["clase1", "clase2"],
       "content_type": "text|image|video|mixed",
       "description": "Descripción del bloque y su función",
       "business_objective": "Objetivo de negocio que cumple este bloque",
       "user_need": "Necesidad del usuario que satisface",
       "ux_role": "Rol en la experiencia de usuario",
+      "dynamic": true|false,
       "relevance": {
         "score": 0-100,
         "reason": "Razón de la puntuación de relevancia"
@@ -38,7 +39,19 @@ Proporciona un análisis estructurado detallado del sitio web, identificando los
         }
       },
       "content_list": ["Elemento 1", "Elemento 2"],
-      "sub_blocks": []
+      "sub_blocks": [],
+      "content_blocks": [
+        {
+          "description": "Texto o descripción del contenido del elemento",
+          "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este elemento de contenido. Incluye múltiples atributos para asegurar unicidad.",
+          "dynamic": true|false
+        },
+        {
+          "description": "URL o texto del enlace",
+          "selector": "#elemento-identificador, .clase[atributo='valor']:nth-child(n)",
+          "dynamic": false
+        }
+      ]
     }
   ],
   "structure_analysis": {

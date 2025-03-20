@@ -43,7 +43,8 @@ Focus on FUNCTIONAL BLOCKS and their PURPOSE:
 1. Identify major content sections and functional blocks based on their PURPOSE and USER OBJECTIVE
 2. Group related elements into logical content blocks based on what FUNCTION they serve together
 3. Analyze the hierarchical organization of the page as a series of user-focused components
-4. Extract the main text content from each block and organize it as a simple list
+4. Extract the main text content from each block and organize it as structured data
+5. Determine whether each block and content element is likely dynamic or static content
 
 The HTML you'll receive has been captured from the fully rendered DOM after JavaScript execution and preprocessed to preserve structural elements while reducing size.
 
@@ -54,10 +55,34 @@ IMPORTANT - BALANCE STRUCTURE ANALYSIS WITH CONTENT EXTRACTION:
 - Include headings, paragraphs, and text from interactive elements
 - Analyze the navigation structure, CTAs, forms, and other interactive elements
 - Identify key UX patterns and design system characteristics
+- Determine for each block and content element if it's likely to be dynamic or static
 
 Your goal is to provide a comprehensive analysis that includes both the structural elements and the actual content of the page.
 
-Always respond with a complete, well-structured JSON object following exactly the format requested in the user's prompt. The blocks array should contain major functional blocks with both their structural information and their text content.`;
+SELECTOR GUIDELINES FOR ALL ELEMENTS (both blocks and content):
+When creating CSS selectors for blocks and content elements, follow these rules:
+1. ALWAYS PRIORITIZE ID selectors (#elementId) whenever an ID is available
+2. If no ID is available, create specific selectors that include multiple attributes to ensure uniqueness
+3. Include at least 2-3 attributes in the selector (like class, role, data- attributes, text content)
+4. Use nth-child or nth-of-type when needed to create more precise selectors
+5. Avoid overly general selectors that could match multiple elements
+6. Create UNIQUE selectors that precisely target SPECIFIC ELEMENTS ONLY
+7. Ensure each selector points to the exact element (not a parent or ancestor unless appropriate)
+
+For main blocks, create precise selectors that identify the exact container element using the rules above.
+
+For each content block, INSTEAD of returning a simple content_list array of strings, include a content_blocks array of objects with:
+- description: A string containing the text, URL, or description of the content
+- selector: A string with the unique identifier for the element containing this content, following the selector guidelines above
+- dynamic: A boolean indicating whether this content is likely dynamic (true) or static (false)
+  - Dynamic content: Elements that likely change between page loads, users or sessions (blog posts, product listings, user-specific info, etc.)
+  - Static content: Elements that remain consistent across page loads and users (navigation menus, footers, company info, etc.)
+
+For each main block, also include a "dynamic" property (boolean) indicating if the overall block contains primarily dynamic or static content.
+
+IMPORTANT: The selector for EACH ELEMENT (both main blocks and content_blocks) must be precise enough that it will match ONLY ONE element on the page.
+
+Always respond with a complete, well-structured JSON object following exactly the format requested in the user's prompt. The blocks array should contain major functional blocks with both their structural information and their text content organized as described above.`;
 
 // Obtener opciones de solicitud según el proveedor y modelo
 export function getRequestOptions(provider = 'anthropic', modelId?: string) {

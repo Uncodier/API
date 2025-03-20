@@ -10,6 +10,7 @@ interface ContinuationOptions {
   timeout?: number;
   maxRetries?: number;
   debugMode?: boolean;
+  htmlContent?: string; // HTML content for analysis
 }
 
 interface ContinuationResult {
@@ -274,6 +275,22 @@ Por favor, continúa exactamente desde donde se quedó y genera SOLO la parte fa
 """
 ${originalPrompt}
 """
+
+`;
+    }
+
+    // Include HTML content if available to help with continuation
+    if (options.htmlContent) {
+      // Limit HTML size to prevent token limit issues
+      const maxHtmlLength = 15000; // ~8K tokens for HTML
+      const truncatedHtml = options.htmlContent.length > maxHtmlLength 
+        ? options.htmlContent.substring(0, maxHtmlLength) + '... [HTML truncado para el prompt] ...' 
+        : options.htmlContent;
+      
+      prompt += `NOTA: Para ayudarte a continuar el análisis, aquí está el HTML del sitio ${siteUrl}:
+\`\`\`html
+${truncatedHtml}
+\`\`\`
 
 `;
     }

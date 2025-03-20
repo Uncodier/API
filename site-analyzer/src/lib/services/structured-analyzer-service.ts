@@ -17,6 +17,8 @@ interface ExtendedAnalyzeRequest extends AnalyzeRequest {
     provider?: 'anthropic' | 'openai' | 'gemini';
     modelId?: string;
     language?: 'en' | 'es';
+    htmlContent?: string;
+    screenshot?: string;
   };
 }
 
@@ -36,13 +38,14 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
         id: 'header-block',
         type: 'header',
         section_type: 'navigation',
-        selector: 'header',
+        selector: 'header#main-header, header.site-header[role="banner"], body > header:first-child',
         classes: [],
         content_type: 'mixed',
         description: 'Main header with navigation',
         business_objective: 'navigation',
         user_need: 'site navigation',
         ux_role: 'navigation',
+        dynamic: false,
         relevance: {
           score: 90,
           reason: 'Primary navigation element'
@@ -57,19 +60,27 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
           }
         },
         content_list: ['Site navigation'],
-        sub_blocks: []
+        sub_blocks: [],
+        content_blocks: [
+          {
+            description: 'Site navigation',
+            selector: 'header > nav#header-nav, header nav.main-nav, header .navigation[role="navigation"]',
+            dynamic: false
+          }
+        ]
       },
       {
         id: 'main-content',
         type: 'content',
         section_type: 'content',
-        selector: 'main',
+        selector: 'main#main-content, main.site-content[role="main"], #primary.content-area',
         classes: [],
         content_type: 'text',
         description: 'Main content area',
         business_objective: 'information',
         user_need: 'access information',
         ux_role: 'information',
+        dynamic: true,
         relevance: {
           score: 85,
           reason: 'Primary content area'
@@ -84,19 +95,27 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
           }
         },
         content_list: ['Main content'],
-        sub_blocks: []
+        sub_blocks: [],
+        content_blocks: [
+          {
+            description: 'Main content',
+            selector: 'main#content, main.content-area, main[role="main"], #main-content',
+            dynamic: true
+          }
+        ]
       },
       {
         id: 'footer-block',
         type: 'footer',
         section_type: 'navigation',
-        selector: 'footer',
+        selector: 'footer#site-footer, footer.site-footer[role="contentinfo"], body > footer:last-child',
         classes: [],
         content_type: 'mixed',
         description: 'Footer with additional links',
         business_objective: 'navigation',
         user_need: 'additional resources',
         ux_role: 'navigation',
+        dynamic: false,
         relevance: {
           score: 70,
           reason: 'Secondary navigation element'
@@ -111,7 +130,14 @@ function generateBasicStructuredAnalysis(url: string): StructuredAnalysisRespons
           }
         },
         content_list: ['Footer links'],
-        sub_blocks: []
+        sub_blocks: [],
+        content_blocks: [
+          {
+            description: 'Footer links',
+            selector: 'footer .footer-links, footer nav.footer-nav, footer[role="contentinfo"] ul',
+            dynamic: false
+          }
+        ]
       }
     ],
     hierarchy: {
@@ -228,11 +254,31 @@ async function sanitizeJsonWithAgent(jsonString: string, provider: 'anthropic' |
  */
 export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): Promise<StructuredAnalysisResponse> {
   console.log(`[structuredAnalyzerAgent] Iniciando análisis estructurado para: ${request.url}`);
+  console.log(`[structuredAnalyzerAgent] Datos de la solicitud:`, JSON.stringify({
+    url: request.url,
+    htmlContentRecibido: request.htmlContent ? `Si (${request.htmlContent.length} bytes)` : 'No',
+    screenshotRecibido: request.screenshot ? 'Si' : 'No',
+    opcionesRecibidas: request.options ? 'Si' : 'No'
+  }));
   
   try {
     // Preparar los datos para el análisis
+    console.log(`[structuredAnalyzerAgent] Llamando a prepareAnalysisData...`);
     const { processedImage, htmlContent } = await prepareAnalysisData(request);
     console.log(`[structuredAnalyzerAgent] Datos preparados: imagen procesada: ${!!processedImage}, HTML obtenido: ${!!htmlContent}, longitud HTML: ${htmlContent?.length || 0}`);
+    
+    // Verificar si el HTML coincide con el de la solicitud
+    if (request.htmlContent && htmlContent && request.htmlContent === htmlContent) {
+      console.log(`[structuredAnalyzerAgent] El HTML recibido de prepareAnalysisData es idéntico al de la solicitud`);
+    } else if (request.htmlContent && htmlContent) {
+      console.log(`[structuredAnalyzerAgent] El HTML recibido de prepareAnalysisData (${htmlContent.length} bytes) es diferente al de la solicitud (${request.htmlContent.length} bytes)`);
+    } else if (request.htmlContent && !htmlContent) {
+      console.log(`[structuredAnalyzerAgent] ATENCIÓN: La solicitud tenía HTML (${request.htmlContent.length} bytes) pero prepareAnalysisData no devolvió HTML`);
+    } else if (!request.htmlContent && htmlContent) {
+      console.log(`[structuredAnalyzerAgent] La solicitud no tenía HTML, pero prepareAnalysisData obtuvo HTML (${htmlContent.length} bytes)`);
+    } else {
+      console.log(`[structuredAnalyzerAgent] Ni la solicitud ni prepareAnalysisData proporcionaron HTML`);
+    }
     
     // Determinar qué prompt usar basado en el idioma preferido (si está disponible)
     let promptTemplate;
@@ -267,13 +313,14 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
               "id": "identificador-único-del-bloque",
               "type": "header|content|footer|sidebar|cta|form|gallery|testimonial|etc",
               "section_type": "navigation|content|form|media|etc",
-              "selector": "Selector CSS que identifica este bloque",
+              "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este bloque. Incluye múltiples atributos para asegurar unicidad.",
               "classes": ["clase1", "clase2"],
               "content_type": "text|image|video|mixed",
               "description": "Descripción del bloque y su función",
               "business_objective": "Objetivo de negocio que cumple este bloque",
               "user_need": "Necesidad del usuario que satisface",
               "ux_role": "Rol en la experiencia de usuario",
+              "dynamic": true|false,
               "relevance": {
                 "score": 0-100,
                 "reason": "Razón de la puntuación de relevancia"
@@ -288,7 +335,19 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
                 }
               },
               "content_list": ["Elemento 1", "Elemento 2"],
-              "sub_blocks": []
+              "sub_blocks": [],
+              "content_blocks": [
+                {
+                  "description": "Texto o descripción del contenido del elemento",
+                  "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este elemento de contenido. Incluye múltiples atributos para asegurar unicidad.",
+                  "dynamic": true|false
+                },
+                {
+                  "description": "URL o texto del enlace",
+                  "selector": "#elemento-identificador, .clase[atributo='valor']:nth-child(n)",
+                  "dynamic": false
+                }
+              ]
             }
           ],
           "structure_analysis": {
@@ -323,15 +382,19 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
       
       // Reemplazar placeholders en el prompt
       const userMessage = promptTemplate.replace('{url}', request.url);
+      console.log(`[structuredAnalyzerAgent] Prompt base preparado para ${request.url}`);
       
       // Modificación: Agregar HTML al mensaje de usuario si está disponible
       let enhancedUserMessage = userMessage;
       if (htmlContent) {
         console.log(`[structuredAnalyzerAgent] Agregando HTML al mensaje para el análisis (${htmlContent.length} bytes)`);
+        console.log(`[structuredAnalyzerAgent] Primeros 100 caracteres del HTML: ${htmlContent.substring(0, 100).replace(/\n/g, '\\n')}...`);
         // Agregar el HTML preprocesado al mensaje
         enhancedUserMessage = `${userMessage}\n\nAquí está el HTML del sitio para tu análisis:\n\n${htmlContent}`;
+        console.log(`[structuredAnalyzerAgent] Mensaje mejorado con HTML (longitud total: ${enhancedUserMessage.length} bytes)`);
       } else {
         console.log(`[structuredAnalyzerAgent] No hay HTML disponible para incluir en el análisis`);
+        console.log(`[structuredAnalyzerAgent] Contenido de request.htmlContent: ${request.htmlContent ? request.htmlContent.substring(0, 100) + '...' : 'undefined'}`);
       }
       
       // Preparar el mensaje para la API con el mensaje mejorado que incluye HTML
@@ -481,26 +544,80 @@ export async function performStructuredAnalysis(
     provider?: 'anthropic' | 'openai' | 'gemini';
     modelId?: string;
     language?: 'en' | 'es';
+    htmlContent?: string;
+    screenshot?: string;
   } = {}
 ): Promise<StructuredAnalysisResponse> {
+  // Log incoming options
+  console.log(`[performStructuredAnalysis] Starting analysis for ${url} with options:`, JSON.stringify({
+    depth: options.depth,
+    timeout: options.timeout,
+    includeScreenshot: options.includeScreenshot,
+    provider: options.provider,
+    modelId: options.modelId,
+    htmlContentPresent: options.htmlContent ? `Yes (${options.htmlContent.length} bytes)` : 'No',
+    screenshotPresent: options.screenshot ? 'Yes' : 'No'
+  }));
+  
+  // Log all option keys to see if htmlContent is actually present as a property
+  const optionKeys = Object.keys(options);
+  console.log(`[performStructuredAnalysis] Option keys available: ${JSON.stringify(optionKeys)}`);
+  
+  // Check if htmlContent can be accessed as expected
+  if (optionKeys.includes('htmlContent')) {
+    const htmlContentValue = (options as any)['htmlContent'];
+    const htmlContentTypeOf = typeof htmlContentValue;
+    const htmlContentLength = htmlContentValue ? htmlContentValue.length : 0;
+    console.log(`[performStructuredAnalysis] htmlContent property found: type=${htmlContentTypeOf}, length=${htmlContentLength}`);
+    
+    // Log a sample of the HTML content
+    if (htmlContentValue && htmlContentLength > 0) {
+      console.log(`[performStructuredAnalysis] Sample of htmlContent: ${htmlContentValue.substring(0, 100).replace(/\n/g, '\\n')}...`);
+    }
+  } else {
+    console.log(`[performStructuredAnalysis] htmlContent property NOT found in options object!`);
+  }
+  
   // Construir el objeto de solicitud
   const analyzeRequest: ExtendedAnalyzeRequest = {
     url,
-    options
+    options,
+    // Include htmlContent if provided in options
+    htmlContent: options.htmlContent,
+    // Include screenshot if provided in options
+    screenshot: options.screenshot
   };
   
-  // Capturar screenshot solo si no está explícitamente desactivado
-  if (options.includeScreenshot !== false) {
+  // Log the constructed request
+  console.log(`[performStructuredAnalysis] Created analyzeRequest object:`, JSON.stringify({
+    url: analyzeRequest.url,
+    htmlContentPresent: analyzeRequest.htmlContent ? `Yes (${analyzeRequest.htmlContent.length} bytes)` : 'No',
+    screenshotPresent: analyzeRequest.screenshot ? 'Yes' : 'No',
+    optionsPresent: analyzeRequest.options ? 'Yes' : 'No'
+  }));
+  
+  // Capturar screenshot solo si no está explícitamente desactivado y no se proporcionó uno
+  if (options.includeScreenshot !== false && !analyzeRequest.screenshot) {
     console.log(`[performStructuredAnalysis] Capturando screenshot para ${url}...`);
     try {
       analyzeRequest.screenshot = await captureScreenshot(url, { timeout: options.timeout });
+      console.log(`[performStructuredAnalysis] Screenshot capturado exitosamente: ${analyzeRequest.screenshot ? 'Yes' : 'No'}`);
     } catch (error) {
       console.error(`[performStructuredAnalysis] Error al capturar screenshot: ${error}`);
     }
+  } else if (analyzeRequest.screenshot) {
+    console.log(`[performStructuredAnalysis] Usando screenshot proporcionado para ${url}`);
   } else {
     console.log(`[performStructuredAnalysis] Screenshot desactivado por el usuario para ${url}`);
   }
   
   // Realizar el análisis estructurado
+  console.log(`[performStructuredAnalysis] Pasando a structuredAnalyzerAgent with request:`, JSON.stringify({
+    url: analyzeRequest.url,
+    htmlContentPresent: analyzeRequest.htmlContent ? `Yes (${analyzeRequest.htmlContent.length} bytes)` : 'No',
+    screenshotPresent: analyzeRequest.screenshot ? 'Yes' : 'No',
+    optionsPresent: analyzeRequest.options ? 'Yes' : 'No'
+  }));
+  
   return structuredAnalyzerAgent(analyzeRequest);
 }

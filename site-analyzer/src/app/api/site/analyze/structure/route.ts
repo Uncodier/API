@@ -45,9 +45,13 @@ export async function POST(request: NextRequest) {
   try {
     // Get and validate the request body
     const body = await request.json();
+    console.log(`[StructureRoute] Procesando solicitud POST para análisis estructurado`);
     
     try {
-      const { url, options = { timeout: 30000, depth: 2, includeScreenshot: true } } = RequestSchema.parse(body);
+      const { url, htmlContent, screenshot, options = { timeout: 30000, depth: 2, includeScreenshot: true } } = RequestSchema.parse(body);
+      console.log(`[StructureRoute] Solicitud validada. URL: ${url}`);
+      console.log(`[StructureRoute] HTML proporcionado: ${htmlContent ? `Si (${htmlContent.length} bytes)` : 'No'}`);
+      console.log(`[StructureRoute] Screenshot proporcionado: ${screenshot ? 'Si' : 'No'}`);
       
       try {
         console.log(`Starting structured analysis for ${url}`);
@@ -56,20 +60,111 @@ export async function POST(request: NextRequest) {
         const analysisOptions = {
           timeout: options.timeout,
           depth: options.depth || 2,
-          includeScreenshot: options.includeScreenshot
+          includeScreenshot: options.includeScreenshot,
+          // Pass htmlContent in options
+          htmlContent,
+          // Pass screenshot in options
+          screenshot
         };
+        
+        console.log(`[StructureRoute] Opciones de análisis preparadas:`, JSON.stringify({
+          timeout: analysisOptions.timeout,
+          depth: analysisOptions.depth,
+          includeScreenshot: analysisOptions.includeScreenshot,
+          htmlContentPresent: analysisOptions.htmlContent ? `Si (${analysisOptions.htmlContent.length} bytes)` : 'No'
+        }));
         
         // Add optional parameters if they exist
         if ((options as any).provider) {
           (analysisOptions as any).provider = (options as any).provider as 'anthropic' | 'openai' | 'gemini';
+          console.log(`[StructureRoute] Proveedor establecido: ${(analysisOptions as any).provider}`);
         }
         
         if ((options as any).modelId) {
           (analysisOptions as any).modelId = (options as any).modelId;
+          console.log(`[StructureRoute] Modelo ID establecido: ${(analysisOptions as any).modelId}`);
         }
+        
+        // If HTML content is not provided in the request, fetch it directly here
+        if (!htmlContent) {
+          console.log(`[StructureRoute] No HTML content provided in request, fetching directly...`);
+          
+          // Import the HTML preprocessing utilities
+          const { preprocessHtml } = await import('@/lib/utils/html-preprocessor');
+          
+          try {
+            // Use the same preprocessing options as in prepareAnalysisData
+            const preprocessOptions = {
+              removeScripts: true,
+              removeStyles: true,
+              removeComments: true,
+              removeInlineStyles: false,
+              removeDataAttributes: false,
+              simplifyClassNames: false,
+              preserveSemanticElements: true,
+              preserveHeadings: true,
+              preserveForms: true,
+              preserveLinks: true,
+              preserveImages: true,
+              simplifyImageAttributes: true,
+              optimizeSvgs: true,
+              preserveNavigation: true,
+              preserveCTAs: true,
+              maxTextNodeLength: 30,
+              maxTextLength: 200000,
+              cleanHead: true,
+              cleanFooter: true,
+              headExcludePatterns: [],
+              footerExcludePatterns: []
+            };
+            
+            // Fetch and preprocess HTML
+            const preprocessResult = await preprocessHtml(url, preprocessOptions);
+            
+            // Store the HTML content in the options to be passed to performStructuredAnalysis
+            analysisOptions.htmlContent = preprocessResult.html;
+            
+            console.log(`[StructureRoute] HTML content fetched directly: ${preprocessResult.html.length} bytes`);
+          } catch (htmlError) {
+            console.error(`[StructureRoute] Error fetching HTML directly:`, htmlError);
+          }
+        }
+        
+        // If HTML is present, log a sample
+        if (analysisOptions.htmlContent) {
+          console.log(`[StructureRoute] Primeros 100 caracteres del HTML:`, analysisOptions.htmlContent.substring(0, 100).replace(/\n/g, '\\n'));
+        }
+        
+        // Deep inspect the options object to ensure htmlContent is properly structured
+        const inspectObject = (obj: any, path = 'analysisOptions') => {
+          console.log(`[StructureRoute] Inspecting object at path "${path}":`);
+          for (const key of Object.keys(obj)) {
+            const value = obj[key];
+            if (typeof value === 'object' && value !== null) {
+              console.log(`[StructureRoute] Property ${path}.${key} is an object with keys: ${Object.keys(value).join(', ')}`);
+              inspectObject(value, `${path}.${key}`); // Recursive inspection
+            } else if (typeof value === 'string') {
+              const preview = value.length > 50 ? `${value.substring(0, 50)}... (${value.length} chars)` : value;
+              console.log(`[StructureRoute] Property ${path}.${key} is a string: ${preview}`);
+            } else {
+              console.log(`[StructureRoute] Property ${path}.${key} is type ${typeof value}: ${value}`);
+            }
+          }
+        };
+        
+        console.log(`[StructureRoute] Deep inspection of analysisOptions before calling performStructuredAnalysis:`);
+        inspectObject(analysisOptions);
         
         // Call the standalone structured analyzer function
         const startTime = Date.now();
+        console.log(`[StructureRoute] Llamando a performStructuredAnalysis con los siguientes datos:`, JSON.stringify({
+          url,
+          htmlContentPresent: analysisOptions.htmlContent ? `Si (${analysisOptions.htmlContent.length} bytes)` : 'No',
+          screenshotPresent: analysisOptions.screenshot ? 'Si' : 'No',
+          timeout: analysisOptions.timeout,
+          provider: (analysisOptions as any).provider
+        }));
+        
         let result: ExtendedAnalysisResponse | ErrorResponse | string = await performStructuredAnalysis(url, analysisOptions);
         
         // Check if the result is a string (possibly incomplete JSON)
@@ -89,7 +184,9 @@ export async function POST(request: NextRequest) {
             siteUrl: url,
             includeScreenshot: options.includeScreenshot,
             timeout: continuationTimeout,
-            maxRetries: 3
+            maxRetries: 3,
+            // Use the HTML content that we've either received in the request or fetched directly
+            htmlContent: analysisOptions.htmlContent
           });
           
           console.log(`[StructuredAnalysis] Continuation process completed, checking result...`);
@@ -165,8 +262,17 @@ export async function POST(request: NextRequest) {
                 
                 // Call the API again with the same conversationId to continue
                 console.log(`[StructuredAnalysis] Continuing conversation with ID (attempt ${attemptCount}):`, conversationId);
+                
+                // Create a special continuation message that includes the HTML content if available
+                const specialMessage = analysisOptions.htmlContent 
+                  ? {
+                      role: 'user' as 'system' | 'user' | 'assistant',
+                      content: `Please continue exactly where you left off and complete the JSON response. I'm including the HTML content of the site to help you complete the analysis:\n\n${analysisOptions.htmlContent.substring(0, 15000)}${analysisOptions.htmlContent.length > 15000 ? '... [HTML truncated] ...' : ''}`
+                    }
+                  : continuationMessage;
+                
                 const response = await sendConversationRequest({
-                  messages: [continuationMessage],
+                  messages: [specialMessage],
                   modelType: (analysisOptions as any).provider || 'anthropic',
                   modelId: (analysisOptions as any).modelId || 'claude-3-opus-20240229',
                   includeScreenshot: options.includeScreenshot,
@@ -269,9 +375,11 @@ export async function POST(request: NextRequest) {
 export async function GET(_request: NextRequest) {
   return NextResponse.json({
     message: "API de análisis estructurado de sitios web",
-    usage: "Envía una solicitud POST con un objeto JSON que contenga la propiedad 'url'",
+    usage: "Envía una solicitud POST con un objeto JSON que contenga la propiedad 'url'. Para un análisis más preciso, incluye el HTML del sitio en la propiedad 'htmlContent'.",
     example: { 
       url: "https://example.com",
+      htmlContent: "<html>...</html>", // HTML content for analysis
+      screenshot: "base64encodedimage", // Optional screenshot
       options: {
         timeout: 30000,
         depth: 2,
@@ -293,9 +401,17 @@ export async function GET(_request: NextRequest) {
         {
           id: "ID del elemento",
           type: "tipo de elemento",
-          selector: "selector CSS",
+          selector: "selector.con-clase[atributo='valor']:nth-child(1), #id-elemento",
           classes: ["clase1", "clase2"],
           content_type: "tipo de contenido",
+          dynamic: true,
+          content_blocks: [
+            {
+              description: "texto o descripción del contenido",
+              selector: "selector único del elemento",
+              dynamic: false
+            }
+          ],
           relevance: {
             score: 85,
             reason: "razón de relevancia"

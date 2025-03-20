@@ -17,13 +17,14 @@ Provide a detailed structured analysis of the website, identifying the main bloc
       "id": "unique-block-identifier",
       "type": "header|content|footer|sidebar|cta|form|gallery|testimonial|etc",
       "section_type": "navigation|content|form|media|etc",
-      "selector": "CSS selector that identifies this block",
+      "selector": "Precise and unique CSS selector (preferably with ID) that identifies exactly this block. Include multiple attributes to ensure uniqueness.",
       "classes": ["class1", "class2"],
       "content_type": "text|image|video|mixed",
       "description": "Description of the block and its function",
       "business_objective": "Business objective this block fulfills",
       "user_need": "User need it satisfies",
       "ux_role": "Role in the user experience",
+      "dynamic": true|false,
       "relevance": {
         "score": 0-100,
         "reason": "Reason for the relevance score"
@@ -38,7 +39,19 @@ Provide a detailed structured analysis of the website, identifying the main bloc
         }
       },
       "content_list": ["Element 1", "Element 2"],
-      "sub_blocks": []
+      "sub_blocks": [],
+      "content_blocks": [
+        {
+          "description": "Text or description of the element content",
+          "selector": "Precise and unique CSS selector (preferably with ID) that identifies exactly this content element. Include multiple attributes to ensure uniqueness.",
+          "dynamic": true|false
+        },
+        {
+          "description": "URL or link text",
+          "selector": "#element-identifier, .class[attribute='value']:nth-child(n)",
+          "dynamic": false
+        }
+      ]
     }
   ],
   "structure_analysis": {

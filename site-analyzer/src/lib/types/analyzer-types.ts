@@ -27,6 +27,7 @@ export interface BlockInfo {
   business_objective?: string; // Objetivo de negocio que cumple este bloque
   user_need?: string;  // Necesidad del usuario que satisface este bloque
   ux_role?: string;    // Rol UX del bloque (information, conversion, navigation, etc.)
+  dynamic?: boolean;   // Indica si el bloque tiene contenido dinámico o estático
   relevance: {
     score: number;     // Puntuación de relevancia (0-100)
     reason: string;    // Razón por la que este bloque es relevante
@@ -40,7 +41,12 @@ export interface BlockInfo {
       left: number;
     };
   };
-  content_list?: string[]; // Lista de contenido textual relevante del bloque
+  content_list?: string[]; // Lista de contenido textual relevante del bloque (deprecated)
+  content_blocks?: Array<{
+    description: string; // Texto, URL o descripción del contenido
+    selector: string;    // Identificador único del elemento que contiene el contenido
+    dynamic?: boolean;   // Indica si este contenido específico es dinámico o estático
+  }>;
   sub_blocks?: SubBlockInfo[]; // Información sobre sub-bloques importantes
   subBlocks?: SubBlockInfo[]; // Alias para compatibilidad
 }
