@@ -135,18 +135,6 @@ const SiteApi: BaseApiConfig = {
           required
         />
         
-        <FormField
-          label="Método"
-          id="method"
-          type="select"
-          value={state.method}
-          onChange={(value) => handleChange('method', value)}
-          options={[
-            { value: 'GET', label: 'GET' },
-            { value: 'POST', label: 'POST' }
-          ]}
-        />
-        
         {showAnalysisTypeField && (
           <FormField
             label="Tipo de Análisis"

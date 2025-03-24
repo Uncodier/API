@@ -87,18 +87,6 @@ const BasicAnalyzeApi: BaseApiConfig = {
           required
         />
         
-        <FormField
-          label="Method"
-          id="method"
-          type="select"
-          value={state.method}
-          onChange={(value) => handleChange('method', value)}
-          options={[
-            { value: 'GET', label: 'GET' },
-            { value: 'POST', label: 'POST' }
-          ]}
-        />
-
         <SectionLabel>Opciones adicionales</SectionLabel>
         
         <FormField

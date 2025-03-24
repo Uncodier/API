@@ -14,13 +14,19 @@ export interface GeneralApiProps {
   showModelOptions?: boolean;
   defaultUrl?: string;
   showSiteUrlField?: boolean;
+  showUrlField?: boolean;
   defaultMethod?: 'GET' | 'POST';
 }
 
 // Estado específico para la API General
 export interface GeneralApiState {
   method: 'GET' | 'POST';
-  siteUrl: string;
+  message: string;
+  modelType: ModelProviderType;
+  modelId: string;
+  url: string;
+  conversationId?: string;
+  context?: string;
   includeScreenshot: boolean;
   jsonResponse: boolean;
 }
@@ -36,7 +42,12 @@ const GeneralApi: BaseApiConfig = {
   getInitialState: (props: GeneralApiProps): GeneralApiState => {
     return {
       method: props.defaultMethod || 'POST',
-      siteUrl: props.defaultUrl || '',
+      message: props.defaultMessage || '',
+      modelType: (props.defaultModelType as ModelProviderType) || 'anthropic',
+      modelId: props.defaultModel || 'claude-3-5-sonnet-20240620',
+      url: props.defaultUrl || '',
+      conversationId: props.defaultConversationId || '',
+      context: props.defaultContext || '',
       includeScreenshot: false,
       jsonResponse: false
     };
@@ -52,7 +63,7 @@ const GeneralApi: BaseApiConfig = {
       modelId: state.modelId
     };
     
-    if (state.siteUrl) body.url = state.siteUrl;
+    if (state.url) body.url = state.url;
     if (state.conversationId) body.conversationId = state.conversationId;
     
     if (state.context) {
@@ -75,15 +86,19 @@ const GeneralApi: BaseApiConfig = {
     setState: React.Dispatch<React.SetStateAction<GeneralApiState>>;
     showModelOptions: boolean;
     showSiteUrlField: boolean;
+    showUrlField?: boolean;
     showJsonOption: boolean;
     showScreenshotOption: boolean;
     additionalFields?: any[];
   }) => {
-    const { state, setState, showModelOptions, showSiteUrlField, showJsonOption, showScreenshotOption } = props;
+    const { state, setState, showModelOptions, showSiteUrlField, showUrlField, showJsonOption, showScreenshotOption } = props;
     
     const handleChange = (field: keyof GeneralApiState, value: any) => {
       setState(prev => ({ ...prev, [field]: value }));
     };
+    
+    // Show the URL field if either showSiteUrlField or showUrlField is true
+    const shouldShowUrlField = showSiteUrlField || showUrlField;
     
     return (
       <>
@@ -123,13 +138,13 @@ const GeneralApi: BaseApiConfig = {
           </>
         )}
         
-        {showSiteUrlField && (
+        {shouldShowUrlField && (
           <FormField
             label="URL del Sitio (opcional)"
-            id="siteUrl"
+            id="url"
             type="text"
-            value={state.siteUrl}
-            onChange={(value) => handleChange('siteUrl', value)}
+            value={state.url}
+            onChange={(value) => handleChange('url', value)}
             placeholder="https://ejemplo.com"
           />
         )}

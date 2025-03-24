@@ -103,13 +103,14 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
 
   // Asegurarnos de que el endpoint siempre esté correcto en el formState
   React.useEffect(() => {
-    if (apiConfig && formState && formState.endpoint !== initialEndpoint) {
+    if (apiConfig && formState && (formState.endpoint !== initialEndpoint || formState.method !== (defaultMethod || 'POST'))) {
       setFormState((prevState: Record<string, any>) => ({
         ...prevState,
-        endpoint: initialEndpoint
+        endpoint: initialEndpoint,
+        method: formState.method || defaultMethod || 'POST'
       }));
     }
-  }, [initialEndpoint, apiConfig]);
+  }, [initialEndpoint, defaultMethod, apiConfig]);
 
   // Efecto para cargar la configuración de la API seleccionada
   useEffect(() => {
@@ -146,7 +147,8 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
         // No modificamos el objeto initialState directamente para evitar bucles de renderizado
         setFormState({ 
           ...initialState, 
-          endpoint: initialEndpoint 
+          endpoint: initialEndpoint,
+          method: defaultMethod || initialState.method || 'POST'
         });
         
         // Limpiar cualquier error previo
@@ -169,7 +171,13 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
 
   // Función para manejar cambios en los campos de la API
   const handleApiFieldChange = React.useCallback((updatedFields: Record<string, any>) => {
-    setFormState((prevState: Record<string, any>) => ({ ...prevState, ...updatedFields }));
+    // Check if updatedFields is a function (for APIs that use prev => ({ ...prev, ... })
+    if (typeof updatedFields === 'function') {
+      setFormState((prevState: Record<string, any>) => updatedFields(prevState));
+    } else {
+      // Handle case where updatedFields is a partial object (for APIs that use { field: value })
+      setFormState((prevState: Record<string, any>) => ({ ...prevState, ...updatedFields }));
+    }
   }, []);
 
   // Función para enviar la solicitud a la API
@@ -202,7 +210,7 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
       
       // Realizar la solicitud a la API
       const response = await fetch(formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint, {
-        method: formState.method || 'POST',
+        method: formState.method || defaultMethod || 'POST',
         headers: headers,
         body: JSON.stringify(requestBody)
       });
@@ -223,7 +231,7 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
     } finally {
       setLoading(false);
     }
-  }, [apiConfig, formState, defaultEndpoint]);
+  }, [apiConfig, formState, defaultEndpoint, defaultMethod]);
 
   // Si no hay configuración de API, mostrar un mensaje
   if (!apiConfig) {
@@ -282,6 +290,20 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
                 readOnly={true}
               />
               
+              <FormField
+                label="Method"
+                id="method"
+                type="select"
+                value={formState.method || defaultMethod || 'POST'}
+                onChange={(value: string) => handleFormChange({ method: value })}
+                options={[
+                  { value: 'GET', label: 'GET' },
+                  { value: 'POST', label: 'POST' },
+                  { value: 'PUT', label: 'PUT' },
+                  { value: 'DELETE', label: 'DELETE' },
+                ]}
+              />
+              
               {/* Renderizar los campos específicos de la API */}
               {apiConfig.renderFields({
                 state: formState,
@@ -290,6 +312,8 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
                 showScreenshotOption,
                 showModelOptions,
                 showAnalysisTypeField,
+                showSiteUrlField,
+                showUrlField,
                 additionalFields
               })}
               
