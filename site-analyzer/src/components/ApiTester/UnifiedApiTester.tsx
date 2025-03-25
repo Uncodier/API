@@ -166,8 +166,21 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
 
   // Función para manejar cambios en el formulario
   const handleFormChange = React.useCallback((newState: any) => {
-    setFormState((prevState: Record<string, any>) => ({ ...prevState, ...newState }));
-  }, []);
+    setFormState((prevState: Record<string, any>) => {
+      const updatedState = { ...prevState, ...newState };
+      
+      // Manejo especial para la API de sesiones de visitantes
+      if (apiId === 'visitor_session' && 'method' in newState) {
+        const newMethod = newState.method;
+        // Si cambiamos a GET o PUT y no hay un session_id, generamos uno
+        if ((newMethod === 'GET' || newMethod === 'PUT') && !prevState.session_id) {
+          updatedState.session_id = crypto.randomUUID();
+        }
+      }
+      
+      return updatedState;
+    });
+  }, [apiId]);
 
   // Función para manejar cambios en los campos de la API
   const handleApiFieldChange = React.useCallback((updatedFields: Record<string, any>) => {

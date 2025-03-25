@@ -8,6 +8,7 @@ import IcpApi from './IcpApi';
 import ContentApi from './ContentApi';
 import RequirementsApi from './RequirementsApi';
 import BasicAnalyzeApi from './BasicAnalyzeApi';
+import VisitorSessionApi from './VisitorSessionApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -19,5 +20,6 @@ apiRegistry.register(IcpApi);
 apiRegistry.register(ContentApi);
 apiRegistry.register(RequirementsApi);
 apiRegistry.register(BasicAnalyzeApi);
+apiRegistry.register(VisitorSessionApi);
 
 export default apiRegistry; 
