@@ -15,6 +15,9 @@ export interface SiteApiProps {
   defaultModel?: string;
   showModelOptions?: boolean;
   showAnalysisTypeField?: boolean;
+  defaultSiteId?: string;
+  defaultUserId?: string;
+  defaultSaveToDatabase?: boolean;
 }
 
 // Estado específico para la API de Sitio
@@ -33,6 +36,9 @@ export interface SiteApiState {
   htmlContent: string;
   modelType: ModelProviderType;
   modelId: string;
+  site_id: string;
+  user_id: string;
+  saveToDatabase: boolean;
 }
 
 // Configuración de la API de Sitio
@@ -58,7 +64,10 @@ const SiteApi: BaseApiConfig = {
       jsonResponse: false,
       htmlContent: '',
       modelType: (props.defaultModelType as ModelProviderType) || 'openai',
-      modelId: props.defaultModel || 'gpt-4o'
+      modelId: props.defaultModel || 'gpt-4o',
+      site_id: props.defaultSiteId || '',
+      user_id: props.defaultUserId || '',
+      saveToDatabase: props.defaultSaveToDatabase || false
     };
   },
 
@@ -71,6 +80,10 @@ const SiteApi: BaseApiConfig = {
     const body: Record<string, any> = { url: state.siteUrl };
     const options: Record<string, any> = {};
     
+    // Add site_id and user_id if they exist
+    if (state.site_id) body.site_id = state.site_id;
+    if (state.user_id) body.user_id = state.user_id;
+    
     if (state.analysisType === 'complete') {
       if (state.timeout) options.timeout = parseInt(state.timeout);
       if (state.userAgent) options.userAgent = state.userAgent;
@@ -80,12 +93,14 @@ const SiteApi: BaseApiConfig = {
       if (state.includeScreenshot) options.includeScreenshot = state.includeScreenshot;
       if (state.modelType) options.provider = state.modelType;
       if (state.modelId) options.modelId = state.modelId;
+      if (state.saveToDatabase) options.saveToDatabase = state.saveToDatabase;
     } 
     else if (state.analysisType === 'structure') {
       if (state.depth) options.depth = parseInt(state.depth);
       if (state.includeScreenshot) options.includeScreenshot = state.includeScreenshot;
       if (state.modelType) options.provider = state.modelType;
       if (state.modelId) options.modelId = state.modelId;
+      if (state.saveToDatabase) options.saveToDatabase = state.saveToDatabase;
     }
     
     if (Object.keys(options).length > 0) {
@@ -204,13 +219,41 @@ const SiteApi: BaseApiConfig = {
           placeholder="Mozilla/5.0..."
         />
         
+        <SectionLabel>Database Storage Options</SectionLabel>
+        
+        <FormField
+          label="Site ID (UUID)"
+          id="site_id"
+          type="text"
+          value={state.site_id}
+          onChange={(value) => handleChange('site_id', value)}
+          placeholder="UUID of the site"
+        />
+        
+        <FormField
+          label="User ID (UUID)"
+          id="user_id"
+          type="text"
+          value={state.user_id}
+          onChange={(value) => handleChange('user_id', value)}
+          placeholder="UUID of the user"
+        />
+        
+        <FormField
+          label="Save to Database"
+          id="saveToDatabase"
+          type="checkbox"
+          value={state.saveToDatabase}
+          onChange={(value) => handleChange('saveToDatabase', value)}
+        />
+        
         {(showJsonOption || showScreenshotOption || showModelOptions) && (
           <>
-            <SectionLabel>Opciones adicionales</SectionLabel>
+            <SectionLabel>Advanced Options</SectionLabel>
             
             {showScreenshotOption && (
               <FormField
-                label="Incluir captura"
+                label="Include Screenshot"
                 id="includeScreenshot"
                 type="checkbox"
                 value={state.includeScreenshot}
@@ -219,7 +262,7 @@ const SiteApi: BaseApiConfig = {
             )}
             
             <FormField
-              label="Ignorar errores SSL"
+              label="Ignore SSL Errors"
               id="ignoreSSL"
               type="checkbox"
               value={state.ignoreSSL}
@@ -227,7 +270,7 @@ const SiteApi: BaseApiConfig = {
             />
             
             <FormField
-              label="Fallar en error"
+              label="Fail on Error"
               id="failOnError"
               type="checkbox"
               value={state.failOnError}
@@ -235,7 +278,7 @@ const SiteApi: BaseApiConfig = {
             />
             
             <FormField
-              label="Selectores seguros"
+              label="Safe Selectors"
               id="safeSelectors"
               type="checkbox"
               value={state.safeSelectors}
@@ -244,7 +287,7 @@ const SiteApi: BaseApiConfig = {
             
             {showJsonOption && (
               <FormField
-                label="Respuesta en formato JSON"
+                label="JSON Response Format"
                 id="jsonResponse"
                 type="checkbox"
                 value={state.jsonResponse}
@@ -254,14 +297,15 @@ const SiteApi: BaseApiConfig = {
           </>
         )}
         
+        <SectionLabel>HTML Content (Optional)</SectionLabel>
         <FormField
-          label="Contenido HTML (opcional)"
+          label="HTML Content"
           id="htmlContent"
           type="textarea"
           value={state.htmlContent}
           onChange={(value) => handleChange('htmlContent', value)}
           placeholder="<html>...</html>"
-          rows={4}
+          rows={5}
         />
       </>
     );

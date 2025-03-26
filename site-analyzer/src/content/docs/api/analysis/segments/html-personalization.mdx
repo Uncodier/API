@@ -277,3 +277,138 @@ Se recomienda:
 2. Utilizar `personalization_level: minimal` inicialmente y aumentar gradualmente
 3. Implementar A/B testing para medir el impacto real en conversiones
 4. Refinar las personalizaciones basándose en datos de comportamiento del usuario 
+
+### Almacenamiento en Redis
+
+Los datos de los segmentos se almacenan en Redis utilizando sus tipos de datos nativos. Aquí hay un ejemplo de cómo se estructuran los datos:
+
+```bash
+# Variables
+site_id="example_site"
+segment_id="seg_tech_enthusiasts"
+
+# Guardar metadatos como Hash
+HSET site:${site_id}:segments:${segment_id}:metadata \
+  created_at "2024-07-15T16:42:18Z" \
+  updated_at "2024-07-15T16:42:18Z" \
+  version "1.0"
+
+# Guardar una personalización de navegación como Hash
+# El id único de la modificación es mod_12345
+HSET site:${site_id}:segments:${segment_id}:personalizations:mod_12345 \
+  element_type "navigation" \
+  selector "nav.main-navigation" \
+  modification_type "restructure" \
+  description "Reorganización de la navegación principal para destacar secciones técnicas" \
+  rationale "Los entusiastas de la tecnología valoran el acceso rápido a información técnica" \
+  impact_score "0.85" \
+  "html:before" "<nav class=\"main-navigation\">...</nav>" \
+  "html:after" "<nav class=\"main-navigation\">...</nav>"
+
+# Guardar una personalización de contenido como Hash
+# El id único de la modificación es mod_23456
+HSET site:${site_id}:segments:${segment_id}:personalizations:mod_23456 \
+  element_type "content" \
+  selector ".product-description" \
+  modification_type "enhance" \
+  description "Ampliación de descripciones de producto con especificaciones técnicas" \
+  rationale "Los entusiastas de la tecnología toman decisiones basadas en especificaciones técnicas" \
+  impact_score "0.92" \
+  "html:before" "<div class=\"product-description\">...</div>" \
+  "html:after" "<div class=\"product-description\">...</div>"
+
+# Ejemplo más detallado de una personalización de contenido
+# El id único de la modificación es mod_34567
+HSET site:${site_id}:segments:${segment_id}:personalizations:mod_34567 \
+  element_type "content" \
+  selector ".product-features" \
+  modification_type "enhance" \
+  description "Ampliación y reorganización de características técnicas del producto" \
+  rationale "Los entusiastas de tecnología priorizan las especificaciones técnicas detalladas" \
+  impact_score "0.89" \
+  "html:before" "<div class=\"product-features\"><h3>Características</h3><ul><li>Procesador rápido</li><li>Alta resolución</li><li>Batería duradera</li></ul></div>" \
+  "html:after" "<div class=\"product-features\"><h3>Especificaciones Técnicas</h3><ul><li>Procesador: Octa-core 2.4GHz, 4nm</li><li>Pantalla: AMOLED 2400x1080px, 120Hz</li><li>Batería: 5000mAh, carga rápida 65W</li><li>RAM: 12GB LPDDR5</li><li>Almacenamiento: 256GB UFS 3.1</li><li>GPU: Adreno 740</li></ul></div>" \
+  "additional_styles" "font-size: 14px; line-height: 1.5; color: #334455; padding: 12px; background-color: #f8f9fa;" \
+  "target_devices" "desktop,tablet" \
+  "priority" "high" \
+  "conditional_display" "true" \
+  "condition_script" "return window.innerWidth > 768 && document.referrer.includes('tech')" \
+  "js_enhancement" "document.querySelector('.product-features').addEventListener('click', function() { showDetailedSpecs(123); });"
+
+# Guardar índices para búsqueda rápida de personalizaciones por tipo de elemento
+SADD site:${site_id}:segments:${segment_id}:element_types:navigation mod_12345
+SADD site:${site_id}:segments:${segment_id}:element_types:content mod_23456
+
+# Guardar lista de todas las personalizaciones del segmento
+SADD site:${site_id}:segments:${segment_id}:all_personalizations mod_12345 mod_23456
+
+# Guardar reglas como Hash
+HSET site:${site_id}:segments:${segment_id}:rules \
+  device_type "desktop,tablet" \
+  user_type "tech_enthusiast" \
+  "preferences:content_density" "high" \
+  "preferences:technical_level" "advanced"
+
+# Guardar lista de segmentos del sitio como Set
+SADD site:${site_id}:segment_list ${segment_id}
+```
+
+La estructura en Redis utiliza los siguientes patrones de clave y tipos de datos:
+
+1. **Metadatos**: Hash con clave `site:{site_id}:segments:{segment_id}:metadata`
+2. **Personalizaciones individuales**: Hash con clave `site:{site_id}:segments:{segment_id}:personalizations:{modification_id}`
+3. **Índices por tipo de elemento**: Set con clave `site:{site_id}:segments:{segment_id}:element_types:{element_type}`
+4. **Lista de todas las personalizaciones**: Set con clave `site:{site_id}:segments:{segment_id}:all_personalizations`
+5. **Reglas**: Hash con clave `site:{site_id}:segments:{segment_id}:rules`
+6. **Lista de segmentos**: Set con clave `site:{site_id}:segment_list`
+
+Para recuperar los datos:
+
+```bash
+# Variables
+site_id="example_site"
+segment_id="seg_tech_enthusiasts"
+
+# Obtener todos los metadatos de un segmento
+HGETALL site:${site_id}:segments:${segment_id}:metadata
+
+# Obtener todas las personalizaciones de un segmento
+SMEMBERS site:${site_id}:segments:${segment_id}:all_personalizations
+
+# Obtener una personalización específica por su ID
+HGETALL site:${site_id}:segments:${segment_id}:personalizations:mod_12345
+
+# Obtener todas las personalizaciones de un tipo específico de elemento
+SMEMBERS site:${site_id}:segments:${segment_id}:element_types:navigation
+# Luego obtener cada personalización individualmente
+HGETALL site:${site_id}:segments:${segment_id}:personalizations:mod_12345
+
+# Obtener reglas
+HGETALL site:${site_id}:segments:${segment_id}:rules
+
+# Obtener todos los segmentos de un sitio
+SMEMBERS site:${site_id}:segment_list
+```
+
+Consideraciones importantes:
+
+1. **Estructura de personalizaciones**: Cada personalización tiene:
+   - Un ID único como `mod_12345`
+   - Un tipo de elemento (navigation, content, cta, etc.)
+   - Un selector CSS para identificar el elemento en el DOM
+   - Un tipo de modificación (restructure, enhance, rephrase, etc.)
+   - Contenido HTML antes y después de la modificación
+
+2. **TTL (Time To Live)**: Se puede establecer para cada clave según necesidad
+```bash
+# Establecer TTL de 24 horas (86400 segundos)
+EXPIRE site:${site_id}:segments:${segment_id}:metadata 86400
+```
+
+3. **Índices secundarios**: Permiten buscar personalizaciones por tipo de elemento
+   - Útil para obtener todas las personalizaciones de navegación, CTAs, etc.
+   - Mejora la eficiencia de las consultas comunes
+
+4. **Eficiencia**:
+   - Los Hash permiten acceder a campos específicos sin cargar todo el objeto
+   - Los Set son eficientes para operaciones de pertenencia y listas únicas

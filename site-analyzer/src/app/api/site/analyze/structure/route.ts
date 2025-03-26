@@ -5,6 +5,7 @@ import { preprocessHtml, defaultOptions, aggressiveOptions, conservativeOptions 
 import { analyzeWithConversationApi, sendConversationRequest } from '@/lib/services/conversation-client';
 import { continueJsonGeneration, isIncompleteJson, attemptJsonRepair } from '@/lib/services/continuation-service';
 import { StructuredAnalysisResponse } from '@/lib/types/analyzer-types';
+import { createSiteAnalysis, updateSiteAnalysis, updateSiteAnalysisStatus } from '@/lib/database/site-analysis-db';
 
 // Extended type to handle API response with metadata
 type ExtendedAnalysisResponse = StructuredAnalysisResponse & {
@@ -30,6 +31,8 @@ const RequestSchema = z.object({
   url: z.string().url('Debe ser una URL válida'),
   htmlContent: z.string().optional(), // HTML de la página (opcional)
   screenshot: z.string().optional(), // Captura de pantalla en Base64 (opcional)
+  site_id: z.string().uuid('ID del sitio debe ser un UUID válido').optional(),
+  user_id: z.string().uuid('ID del usuario debe ser un UUID válido').optional(),
   options: z.object({
     timeout: z.number().min(5000).max(60000).default(30000),
     userAgent: z.string().optional(),
@@ -37,7 +40,8 @@ const RequestSchema = z.object({
     includeScreenshot: z.boolean().default(true),
     provider: z.string().optional(),
     modelId: z.string().optional(),
-    ignoreSSL: z.boolean().default(false)
+    ignoreSSL: z.boolean().default(false),
+    saveToDatabase: z.boolean().default(false)
   }).optional(),
 });
 
@@ -48,10 +52,58 @@ export async function POST(request: NextRequest) {
     console.log(`[StructureRoute] Procesando solicitud POST para análisis estructurado`);
     
     try {
-      const { url, htmlContent, screenshot, options = { timeout: 30000, depth: 2, includeScreenshot: true } } = RequestSchema.parse(body);
+      const { url, htmlContent, screenshot, site_id, user_id, options = { timeout: 30000, depth: 2, includeScreenshot: true, saveToDatabase: false } } = RequestSchema.parse(body);
       console.log(`[StructureRoute] Solicitud validada. URL: ${url}`);
       console.log(`[StructureRoute] HTML proporcionado: ${htmlContent ? `Si (${htmlContent.length} bytes)` : 'No'}`);
       console.log(`[StructureRoute] Screenshot proporcionado: ${screenshot ? 'Si' : 'No'}`);
+      
+      // Create initial database record if saveToDatabase is true and site_id and user_id are provided
+      let analysisId = null;
+      let dbError = null;
+      
+      if (options.saveToDatabase && site_id && user_id) {
+        try {
+          console.log(`[StructureRoute] Creating initial database record for site analysis`);
+          console.log(`[StructureRoute] site_id: ${site_id}, user_id: ${user_id}`);
+          
+          // Check if the analysis table exists
+          const { checkSiteAnalysisTableExists } = await import('@/lib/database/site-analysis-db');
+          const tableExists = await checkSiteAnalysisTableExists();
+          
+          if (!tableExists) {
+            console.error('[StructureRoute] The analysis table does not exist in the database');
+            console.error('[StructureRoute] Please check your database configuration');
+            dbError = 'The analysis table does not exist. Please contact the administrator.';
+          } else {
+            // Extract URL path from the full URL
+            const urlObj = new URL(url);
+            const urlPath = urlObj.pathname + urlObj.search;
+            
+            // Create an initial processing record in the database
+            const initialAnalysis = await createSiteAnalysis({
+              site_id,
+              url_path: urlPath,
+              structure: { status: 'processing', message: 'Analysis in progress' },
+              user_id,
+              status: 'processing',
+              request_time: 0, // Will update this once the analysis is complete
+              provider: (options as any).provider || 'anthropic',
+              model_id: (options as any).modelId || 'claude-3-opus-20240229'
+            });
+            
+            if (initialAnalysis) {
+              analysisId = initialAnalysis.id;
+              console.log(`[StructureRoute] Initial analysis record created with ID: ${analysisId}`);
+            } else {
+              console.error(`[StructureRoute] Failed to create initial analysis record`);
+              dbError = 'Failed to create initial analysis record in the database';
+            }
+          }
+        } catch (error) {
+          console.error(`[StructureRoute] Error creating initial database record:`, error);
+          dbError = error instanceof Error ? error.message : 'Unknown database error';
+        }
+      }
       
       try {
         console.log(`Starting structured analysis for ${url}`);
@@ -220,6 +272,16 @@ export async function POST(request: NextRequest) {
         if (result && typeof result === 'object' && 'error' in result && result.error === true) {
           // Handle error response
           console.error(`[StructuredAnalysis] Error in analysis:`, result.message);
+          
+          // Update the database record if we have an ID
+          if (analysisId && options.saveToDatabase) {
+            try {
+              await updateSiteAnalysisStatus(analysisId, 'failed');
+              console.log(`[StructureRoute] Updated analysis record ${analysisId} status to 'failed'`);
+            } catch (updateError) {
+              console.error(`[StructureRoute] Error updating analysis status:`, updateError);
+            }
+          }
         } else if (result && typeof result === 'object' && '_requestMetadata' in result) {
           // Handle response with metadata
           const typedResult = result as ExtendedAnalysisResponse;
@@ -323,18 +385,76 @@ export async function POST(request: NextRequest) {
         
         console.log(`Análisis estructurado: Completado en ${requestTime / 1000} segundos`);
         
-        // Return the structured analysis response
+        // Save the completed analysis to the database if requested
+        if (options.saveToDatabase && site_id && user_id) {
+          try {
+            // Extract URL path from the full URL
+            const urlObj = new URL(url);
+            const urlPath = urlObj.pathname + urlObj.search;
+            
+            // If we already have an analysis ID, update it with the final result
+            if (analysisId) {
+              await updateSiteAnalysis(analysisId, {
+                structure: result,
+                status: 'completed',
+                request_time: requestTime,
+                provider: (analysisOptions as any).provider || 'anthropic',
+                model_id: (analysisOptions as any).modelId || 'claude-3-opus-20240229'
+              });
+              console.log(`[StructureRoute] Updated analysis record ${analysisId} with final results`);
+            } else if (!dbError) {
+              // Only try to create a new record if there wasn't a previous database error
+              // Create a new analysis record
+              const analysis = await createSiteAnalysis({
+                site_id,
+                url_path: urlPath,
+                structure: result,
+                user_id,
+                status: 'completed',
+                request_time: requestTime,
+                provider: (analysisOptions as any).provider || 'anthropic',
+                model_id: (analysisOptions as any).modelId || 'claude-3-opus-20240229'
+              });
+              
+              if (analysis) {
+                analysisId = analysis.id;
+                console.log(`[StructureRoute] Created analysis record with ID: ${analysisId}`);
+              } else {
+                console.error(`[StructureRoute] Failed to create analysis record`);
+                dbError = 'Failed to create analysis record in the database';
+              }
+            }
+          } catch (error) {
+            console.error(`[StructureRoute] Error saving analysis to database:`, error);
+            dbError = error instanceof Error ? error.message : 'Unknown database error';
+          }
+        }
+        
+        // Return the structured analysis response, including any database operation details
         return NextResponse.json({
           url,
           structuredAnalysis: result,
           requestTime,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          analysis_id: analysisId, // Include the analysis ID in the response if we saved to the database
+          database_status: dbError ? 'error' : (analysisId ? 'success' : 'not_saved'),
+          database_error: dbError
         }, {
           status: 200
         });
         
       } catch (analysisError) {
         console.error('Error durante el análisis estructurado:', analysisError);
+        
+        // Update database record if we have an ID
+        if (analysisId && options.saveToDatabase) {
+          try {
+            await updateSiteAnalysisStatus(analysisId, 'failed');
+            console.log(`[StructureRoute] Updated analysis record ${analysisId} status to 'failed'`);
+          } catch (updateError) {
+            console.error(`[StructureRoute] Error updating analysis status:`, updateError);
+          }
+        }
         
         // Return error details
         return NextResponse.json({
@@ -380,6 +500,8 @@ export async function GET(_request: NextRequest) {
       url: "https://example.com",
       htmlContent: "<html>...</html>", // HTML content for analysis
       screenshot: "base64encodedimage", // Optional screenshot
+      site_id: "uuid-of-the-site", // Site ID for database storage
+      user_id: "uuid-of-the-user", // User ID for database storage
       options: {
         timeout: 30000,
         depth: 2,
@@ -387,7 +509,8 @@ export async function GET(_request: NextRequest) {
         userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         provider: "openai",
         modelId: "gpt-4o",
-        ignoreSSL: false
+        ignoreSSL: false,
+        saveToDatabase: true // Set to true to save the analysis to the database
       }
     },
     response_format: {
