@@ -1,0 +1,12 @@
+/* Nextra specific styles with Tailwind directives */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Custom styles for Nextra */
+.nx-container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Add any other Nextra-specific styles here */ 

@@ -1,0 +1,344 @@
+# Errores comunes
+
+Esta sección proporciona información sobre los errores más comunes que puedes encontrar al utilizar la API de Site Analyzer y cómo solucionarlos.
+
+## Códigos de estado HTTP
+
+La API de Site Analyzer utiliza códigos de estado HTTP estándar para indicar el resultado de una solicitud:
+
+| Código | Descripción | Solución |
+|--------|-------------|----------|
+| 200 | OK | La solicitud se completó correctamente. |
+| 201 | Created | El recurso se creó correctamente. |
+| 400 | Bad Request | Verifica los parámetros de tu solicitud. |
+| 401 | Unauthorized | Verifica tus credenciales de autenticación. |
+| 403 | Forbidden | No tienes permiso para acceder a este recurso. |
+| 404 | Not Found | El recurso solicitado no existe. |
+| 429 | Too Many Requests | Has excedido el límite de solicitudes. Espera antes de intentar nuevamente. |
+| 500 | Internal Server Error | Error del servidor. Contacta al soporte si persiste. |
+| 503 | Service Unavailable | El servicio está temporalmente no disponible. Intenta más tarde. |
+
+## Errores comunes por endpoint
+
+### Errores en `/api/analyze`
+
+#### Error: URL inválida
+
+```json
+{
+  "error": "Bad Request",
+  "message": "URL inválida",
+  "status": 400
+}
+```
+
+**Solución**: Asegúrate de proporcionar una URL válida que incluya el protocolo (http:// o https://).
+
+#### Error: Sitio no accesible
+
+```json
+{
+  "error": "Bad Request",
+  "message": "No se pudo acceder al sitio",
+  "status": 400,
+  "details": "El sitio no respondió dentro del tiempo límite"
+}
+```
+
+**Solución**: Verifica que el sitio esté en línea y sea accesible públicamente.
+
+#### Error: Límite de tamaño excedido
+
+```json
+{
+  "error": "Bad Request",
+  "message": "El sitio excede el límite de tamaño permitido",
+  "status": 400
+}
+```
+
+**Solución**: La API tiene límites en el tamaño de las páginas que puede analizar. Intenta con una página más pequeña o contacta al soporte para aumentar los límites.
+
+### Errores en `/api/ai`
+
+#### Error: Consulta vacía
+
+```json
+{
+  "error": "Bad Request",
+  "message": "La consulta no puede estar vacía",
+  "status": 400
+}
+```
+
+**Solución**: Proporciona una consulta válida en el parámetro `query`.
+
+#### Error: Modelo no disponible
+
+```json
+{
+  "error": "Bad Request",
+  "message": "El modelo solicitado no está disponible",
+  "status": 400,
+  "details": "Modelos disponibles: gpt-3.5-turbo, gpt-4"
+}
+```
+
+**Solución**: Utiliza uno de los modelos disponibles listados en el mensaje de error.
+
+#### Error: Contexto demasiado grande
+
+```json
+{
+  "error": "Bad Request",
+  "message": "El contexto proporcionado es demasiado grande",
+  "status": 400
+}
+```
+
+**Solución**: Reduce el tamaño del contexto proporcionado o divídelo en múltiples solicitudes.
+
+### Errores en `/api/site`
+
+#### Error: ID de sitio no encontrado
+
+```json
+{
+  "error": "Not Found",
+  "message": "Sitio no encontrado",
+  "status": 404
+}
+```
+
+**Solución**: Verifica que el ID del sitio sea correcto y que el sitio exista en la base de datos.
+
+#### Error: Parámetros de ordenación inválidos
+
+```json
+{
+  "error": "Bad Request",
+  "message": "Parámetro de ordenación inválido",
+  "status": 400,
+  "details": "Valores permitidos para 'sort': date, url, score"
+}
+```
+
+**Solución**: Utiliza uno de los valores permitidos para el parámetro `sort`.
+
+### Errores en `/api/conversation`
+
+#### Error: ID de conversación no encontrado
+
+```json
+{
+  "error": "Not Found",
+  "message": "Conversación no encontrada",
+  "status": 404
+}
+```
+
+**Solución**: Verifica que el ID de la conversación sea correcto y que la conversación exista en la base de datos.
+
+#### Error: Mensaje vacío
+
+```json
+{
+  "error": "Bad Request",
+  "message": "El mensaje no puede estar vacío",
+  "status": 400
+}
+```
+
+**Solución**: Proporciona un mensaje válido en el parámetro `message`.
+
+## Errores de límite de uso
+
+### Error: Límite de solicitudes por minuto excedido
+
+```json
+{
+  "error": "Too Many Requests",
+  "message": "Has excedido el límite de solicitudes por minuto",
+  "status": 429,
+  "retryAfter": 30
+}
+```
+
+**Solución**: Espera el tiempo indicado en `retryAfter` (en segundos) antes de intentar nuevamente. Considera implementar un sistema de reintentos con retroceso exponencial.
+
+### Error: Límite de solicitudes diario excedido
+
+```json
+{
+  "error": "Too Many Requests",
+  "message": "Has excedido el límite de solicitudes diario",
+  "status": 429,
+  "retryAfter": 86400
+}
+```
+
+**Solución**: Has alcanzado tu límite diario. Espera hasta el día siguiente o contacta al soporte para aumentar tu límite.
+
+## Errores de conexión
+
+### Error: Timeout de conexión
+
+Este error ocurre en el cliente cuando la solicitud tarda demasiado tiempo en completarse.
+
+**Solución**: 
+1. Verifica tu conexión a internet
+2. Aumenta el timeout en tu cliente
+3. Intenta con una solicitud más pequeña
+4. Si el problema persiste, contacta al soporte
+
+### Error: CORS (Cross-Origin Resource Sharing)
+
+Este error ocurre en aplicaciones frontend cuando intentas acceder a la API desde un dominio no permitido.
+
+**Solución**:
+1. Asegúrate de que tu dominio esté en la lista de dominios permitidos
+2. Utiliza un proxy en tu servidor para realizar las solicitudes
+3. Contacta al soporte para añadir tu dominio a la lista de permitidos
+
+## Mejores prácticas para manejar errores
+
+### Implementar reintentos con retroceso exponencial
+
+```javascript
+async function requestWithRetry(fn, maxRetries = 3, initialDelay = 1000) {
+  let retries = 0;
+  
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error.status === 429 && error.retryAfter) {
+        // Usar el tiempo de espera sugerido por la API
+        await sleep(error.retryAfter * 1000);
+        continue;
+      }
+      
+      if (retries >= maxRetries || ![408, 429, 500, 502, 503, 504].includes(error.status)) {
+        throw error;
+      }
+      
+      // Retroceso exponencial
+      const delay = initialDelay * Math.pow(2, retries);
+      await sleep(delay);
+      retries++;
+    }
+  }
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Ejemplo de uso
+try {
+  const result = await requestWithRetry(() => client.analyze('https://ejemplo.com'));
+  console.log('Análisis completado:', result);
+} catch (error) {
+  console.error('Error después de reintentos:', error);
+}
+```
+
+### Validar datos antes de enviarlos
+
+```javascript
+function validateAnalyzeRequest(url) {
+  if (!url) {
+    throw new Error('La URL es obligatoria');
+  }
+  
+  try {
+    new URL(url); // Esto lanzará un error si la URL no es válida
+  } catch (error) {
+    throw new Error('La URL no es válida');
+  }
+  
+  return true;
+}
+
+// Ejemplo de uso
+try {
+  validateAnalyzeRequest(url);
+  const result = await client.analyze(url);
+  console.log('Análisis completado:', result);
+} catch (error) {
+  console.error('Error de validación:', error.message);
+}
+```
+
+### Implementar un sistema de logging
+
+```javascript
+class ApiLogger {
+  constructor(options = {}) {
+    this.logLevel = options.logLevel || 'info'; // 'debug', 'info', 'warn', 'error'
+    this.logLevels = {
+      debug: 0,
+      info: 1,
+      warn: 2,
+      error: 3
+    };
+  }
+  
+  debug(message, data) {
+    this._log('debug', message, data);
+  }
+  
+  info(message, data) {
+    this._log('info', message, data);
+  }
+  
+  warn(message, data) {
+    this._log('warn', message, data);
+  }
+  
+  error(message, data) {
+    this._log('error', message, data);
+  }
+  
+  _log(level, message, data) {
+    if (this.logLevels[level] < this.logLevels[this.logLevel]) {
+      return;
+    }
+    
+    const timestamp = new Date().toISOString();
+    const logEntry = {
+      timestamp,
+      level,
+      message,
+      data
+    };
+    
+    if (level === 'error' || level === 'warn') {
+      console.error(JSON.stringify(logEntry));
+    } else {
+      console.log(JSON.stringify(logEntry));
+    }
+  }
+}
+
+// Integración con el cliente de API
+class SiteAnalyzerClientWithLogging extends SiteAnalyzerClient {
+  constructor(options = {}) {
+    super(options);
+    this.logger = new ApiLogger(options.logger);
+  }
+  
+  async _request(endpoint, options = {}) {
+    this.logger.debug(`Iniciando solicitud a ${endpoint}`, { options });
+    
+    try {
+      const result = await super._request(endpoint, options);
+      this.logger.info(`Solicitud a ${endpoint} completada con éxito`);
+      return result;
+    } catch (error) {
+      this.logger.error(`Error en solicitud a ${endpoint}`, { error });
+      throw error;
+    }
+  }
+}
+``` 

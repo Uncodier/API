@@ -1,0 +1,78 @@
+# Bienvenido a Uncodie
+
+## La plataforma de ventas en linea impulsada por IA
+
+Site Analyzer es una potente herramienta que utiliza modelos avanzados de inteligencia artificial para analizar sitios web y proporcionar información valiosa sobre su estructura, contenido, diseño y experiencia de usuario.
+
+![Site Analyzer Banner](/images/banner.svg)
+
+## Características principales
+
+- **Análisis completo de sitios web** - Obtenga información detallada sobre cualquier sitio web
+- **Impulsado por IA avanzada** - Utiliza modelos como Claude 3.5, GPT-4o y Gemini 1.5
+- **API flexible y potente** - Integre fácilmente en sus aplicaciones y flujos de trabajo
+- **Análisis estructurado** - Obtenga datos estructurados sobre la composición del sitio
+- **Conversaciones contextuales** - Mantenga conversaciones sobre sitios específicos
+
+## Comience rápidamente
+
+```bash
+# Instalar dependencias
+npm install
+
+# Iniciar el servidor de desarrollo
+npm run dev
+
+# Construir para producción
+npm run build
+```
+
+## Documentación completa
+
+Explore nuestra [documentación completa de la API](/docs/api) para obtener información detallada sobre todos los endpoints disponibles, parámetros, ejemplos de solicitudes y respuestas.
+
+## Ejemplos de uso
+
+### Análisis básico de un sitio web
+
+```javascript
+// Ejemplo de análisis básico con JavaScript
+async function analyzeSite(url) {
+  const response = await fetch('/api/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  
+  const data = await response.json();
+  console.log(data.result.summary);
+  console.log(data.result.insights);
+}
+```
+
+### Conversación sobre un sitio web
+
+```javascript
+// Ejemplo de conversación con la IA sobre un sitio web
+async function startConversation(message, siteUrl) {
+  const response = await fetch('/api/conversation', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      messages: [{ role: 'user', content: message }],
+      siteUrl
+    }),
+  });
+  
+  const data = await response.json();
+  console.log(data.choices[0].message.content);
+}
+```
+
+## Soporte y contribuciones
+
+¿Tiene preguntas o sugerencias? [Abra un issue](https://github.com/your-repo/site-analyzer/issues) en nuestro repositorio de GitHub o póngase en contacto con nuestro equipo de soporte.
+
+---
+
+[Comenzar ahora](/docs/api) | [Ver en GitHub](https://github.com/your-repo/site-analyzer)

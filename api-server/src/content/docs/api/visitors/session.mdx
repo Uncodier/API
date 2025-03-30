@@ -1,0 +1,442 @@
+# Endpoint de Sesiones
+
+El endpoint `/api/visitors/session` permite gestionar las sesiones de los visitantes. Una sesión representa un periodo de actividad continua de un usuario en un sitio web.
+
+## Especificación de la API
+
+- **URL**: `/api/visitors/session`
+- **Métodos**: `POST`, `GET`, `PUT`
+- **Formato de datos**: JSON
+- **Autenticación**: API Key en encabezado `X-SA-API-KEY`
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="visitor_session"
+  title="Probar la API de Sesiones"
+  description="Utiliza este tester para probar la API de sesiones de visitantes."
+  defaultMethod="POST"
+  defaultEndpoint="/api/visitors/session"
+  showSiteUrlField={false}
+  showUrlField={false}
+  showModelOptions={false}
+  showAnalysisTypeField={false}
+  showJsonOption={false}
+  showScreenshotOption={false}
+/>
+
+## Crear una nueva sesión (POST)
+
+### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `site_id` | string | Sí | Identificador único del sitio |
+| `visitor_id` | string | No | ID único del visitante (si está disponible) |
+| `url` | string | No | URL inicial de la sesión |
+| `referrer` | string | No | URL de referencia |
+| `utm_source` | string | No | Fuente UTM |
+| `utm_medium` | string | No | Medio UTM |
+| `utm_campaign` | string | No | Campaña UTM |
+| `utm_term` | string | No | Término UTM |
+| `utm_content` | string | No | Contenido UTM |
+| `device` | object | No | Información del dispositivo |
+| `browser` | object | No | Información del navegador |
+| `location` | object | No | Información geográfica (país, región, ciudad) |
+| `previous_session_id` | string | No | ID de la sesión anterior del mismo visitante |
+| `performance` | object | No | Métricas de rendimiento de la página |
+| `consent` | object | No | Información de consentimiento GDPR |
+
+### Estructura Completa de Sesión
+
+```json
+{
+  // Campos obligatorios
+  "site_id": "site_123abc",
+  
+  // Campos opcionales
+  "visitor_id": "vis_abcd1234",
+  "url": "https://ejemplo.com/landing-page",
+  "referrer": "https://google.com",
+  "utm_source": "google",
+  "utm_medium": "cpc",
+  "utm_campaign": "spring_sale",
+  "utm_term": "analytics",
+  "utm_content": "banner_1",
+  
+  // Campos de tiempo
+  "started_at": 1646123456789,       // Timestamp cuando inició la sesión
+  "last_activity_at": 1646123789456, // Último timestamp de actividad
+  "duration": 332667,                // Duración total en ms
+  
+  // Campos de comportamiento
+  "page_views": 3,                   // Número de páginas vistas
+  "active_time": 245000,             // Tiempo activo en ms
+  "idle_time": 87667,                // Tiempo inactivo en ms
+  
+  // Campos de interacción
+  "exit_url": "https://ejemplo.com/checkout",  // URL donde terminó la sesión
+  "exit_type": "exit",               // "bounce", "exit", o "timeout"
+  
+  // Campos de identificación
+  "lead_id": "lead_xyz123",          // ID si el visitante se convierte en lead
+  "previous_session_id": "sess_abc123", // Para encadenar sesiones
+  
+  // Campos de dispositivo mejorados
+  "device": {
+    "type": "desktop",
+    "screen_size": "1920x1080",
+    "os": {
+      "name": "Windows",
+      "version": "11"
+    },
+    "pixel_ratio": 1.5,
+    "orientation": "landscape",
+    "memory": 8192,                 // RAM disponible en MB
+    "cpu_cores": 8,                 // Núcleos CPU
+    "touch_support": false          // Si es dispositivo táctil
+  },
+  
+  "browser": {
+    "name": "Chrome",
+    "version": "98.0.4758.102",
+    "language": "es-ES"
+  },
+  
+  "location": {
+    "country": "ES",
+    "region": "Madrid",
+    "city": "Madrid"
+  },
+  
+  // Campos de rendimiento
+  "performance": {
+    "page_load_time": 1250,          // ms
+    "first_paint": 850,              // ms
+    "first_contentful_paint": 920,   // ms
+    "dom_interactive": 780           // ms
+  },
+
+  // Campos de consentimiento
+  "consent": {
+    "necessary": true,
+    "analytics": true,
+    "marketing": false,
+    "preferences": true
+  }
+}
+```
+
+### Ejemplo de payload básico
+
+```json
+{
+  "site_id": "site_123abc",
+  "visitor_id": "vis_abcd1234",
+  "url": "https://ejemplo.com/landing-page",
+  "referrer": "https://google.com",
+  "utm_source": "google",
+  "utm_medium": "cpc",
+  "utm_campaign": "spring_sale",
+  "device": {
+    "type": "desktop",
+    "screen_size": "1920x1080"
+  },
+  "browser": {
+    "name": "Chrome",
+    "version": "98.0.4758.102",
+    "language": "es-ES"
+  },
+  "location": {
+    "country": "ES",
+    "region": "Madrid",
+    "city": "Madrid"
+  }
+}
+```
+
+### Respuesta
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_id": "sess_xyz789",
+    "visitor_id": "vis_abcd1234",
+    "created_at": 1646123456789,
+    "expires_at": 1646152256789,
+    "ttl": 1800,
+    "session_url": "/api/visitors/session?session_id=sess_xyz789&site_id=site_123abc"
+  },
+  "meta": {
+    "api_version": "1.2",
+    "server_time": 1646123456790,
+    "processing_time": 45
+  }
+}
+```
+
+## Obtener datos de una sesión (GET)
+
+### Parámetros de URL
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `session_id` | string | Sí | ID de la sesión a consultar |
+| `site_id` | string | Sí | Identificador único del sitio |
+
+### Ejemplo de URL
+
+```
+/api/visitors/session?session_id=sess_xyz789&site_id=site_123abc
+```
+
+### Respuesta
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_id": "sess_xyz789",
+    "visitor_id": "vis_abcd1234",
+    "site_id": "site_123abc",
+    "url": "https://ejemplo.com/landing-page",
+    "referrer": "https://google.com",
+    "utm_source": "google",
+    "utm_medium": "cpc",
+    "utm_campaign": "spring_sale",
+    "started_at": 1646123456789,
+    "last_activity_at": 1646123789456,
+    "duration": 332667,
+    "page_views": 3,
+    "active_time": 245000,
+    "idle_time": 87667,
+    "events": [
+      {
+        "event_id": "evt_12345a",
+        "event_type": "pageview",
+        "url": "https://ejemplo.com/landing-page",
+        "timestamp": 1646123456789
+      },
+      {
+        "event_id": "evt_12345b",
+        "event_type": "pageview",
+        "url": "https://ejemplo.com/productos",
+        "timestamp": 1646123556789
+      }
+    ]
+  },
+  "meta": {
+    "api_version": "1.2",
+    "server_time": 1646123790000,
+    "processing_time": 28
+  }
+}
+```
+
+## Actualizar una sesión (PUT)
+
+El endpoint permite actualizar los datos de una sesión existente, como por ejemplo extender su duración.
+
+### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `session_id` | string | Sí | ID de la sesión a actualizar |
+| `site_id` | string | Sí | Identificador único del sitio |
+| `last_activity_at` | number | No | Nueva marca de tiempo de última actividad |
+| `current_url` | string | No | URL actual del visitante |
+| `page_views` | number | No | Número actualizado de páginas vistas |
+| `active_time` | number | No | Tiempo activo actualizado en ms |
+| `custom_data` | object | No | Datos personalizados a añadir a la sesión |
+
+### Ejemplo de payload
+
+```json
+{
+  "session_id": "sess_xyz789",
+  "site_id": "site_123abc",
+  "last_activity_at": 1646123999999,
+  "current_url": "https://ejemplo.com/checkout",
+  "page_views": 4,
+  "active_time": 320000,
+  "custom_data": {
+    "user_preference": "dark_mode",
+    "active_filters": ["category_1", "price_range_2"]
+  }
+}
+```
+
+### Respuesta
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_id": "sess_xyz789",
+    "updated_at": 1646124000000,
+    "expires_at": 1646152800000,
+    "ttl": 1800
+  },
+  "meta": {
+    "api_version": "1.2",
+    "server_time": 1646124000001,
+    "processing_time": 35
+  }
+}
+```
+
+## Endpoints Adicionales
+
+### Cerrar una sesión explícitamente
+
+```
+POST /api/visitors/session/{session_id}/end
+```
+
+#### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `exit_url` | string | No | URL donde terminó la sesión |
+| `exit_type` | string | No | Tipo de salida: "exit", "bounce", "timeout" |
+| `duration` | number | No | Duración total de la sesión en ms |
+| `page_views` | number | No | Número final de páginas vistas |
+
+#### Ejemplo de payload
+
+```json
+{
+  "exit_url": "https://ejemplo.com/checkout/success",
+  "exit_type": "exit",
+  "duration": 458000,
+  "page_views": 5
+}
+```
+
+### Asociar un lead a una sesión
+
+```
+POST /api/visitors/session/{session_id}/identify
+```
+
+#### Parámetros del Request
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `lead_id` | string | Sí | ID del lead a asociar |
+| `lead_data` | object | No | Datos adicionales del lead |
+
+#### Ejemplo de payload
+
+```json
+{
+  "lead_id": "lead_123abc",
+  "lead_data": {
+    "email": "usuario@ejemplo.com",
+    "name": "Juan Pérez",
+    "company": "Acme Corp"
+  }
+}
+```
+
+### Obtener sesiones de un visitante
+
+```
+GET /api/visitors/{visitor_id}/sessions
+```
+
+#### Parámetros de URL
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `from` | number | No | Timestamp de inicio del período |
+| `to` | number | No | Timestamp de fin del período |
+| `limit` | number | No | Número máximo de sesiones a devolver |
+| `offset` | number | No | Número de sesiones a saltar |
+
+### Obtener sesiones de un lead
+
+```
+GET /api/leads/{lead_id}/sessions
+```
+
+#### Parámetros de URL
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `from` | number | No | Timestamp de inicio del período |
+| `to` | number | No | Timestamp de fin del período |
+| `limit` | number | No | Número máximo de sesiones a devolver |
+| `offset` | number | No | Número de sesiones a saltar |
+
+## Headers Adicionales
+
+Para mejorar la trazabilidad y facilitar el debugging, se recomienda utilizar los siguientes headers:
+
+```
+X-SA-API-KEY: su_api_key
+X-Request-ID: req_123abc789xyz
+X-Forwarded-For: 203.0.113.195
+User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64)...
+Accept-Language: es-ES,es;q=0.9,en;q=0.8
+```
+
+### Rate Limiting
+
+La API implementa rate limiting para proteger los recursos del servidor. Los siguientes headers se incluyen en cada respuesta:
+
+```
+X-RateLimit-Limit: 60        // Requests permitidos por minuto
+X-RateLimit-Remaining: 58    // Requests restantes en la ventana actual
+X-RateLimit-Reset: 1646123520 // Timestamp cuando se resetea el límite
+```
+
+## Respuestas de Error
+
+En caso de error, la API devolverá una respuesta con el siguiente formato:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "session_not_found",
+    "message": "La sesión especificada no existe o ha expirado",
+    "details": {
+      "session_id": "sess_xyz789",
+      "site_id": "site_123abc"
+    },
+    "request_id": "req_abc123xyz456"
+  }
+}
+```
+
+## Duración de sesiones
+
+Por defecto, una sesión expira después de 30 minutos de inactividad. Cada vez que se recibe un evento o se actualiza la sesión, se renueva este tiempo de expiración.
+
+## Límites de sesión
+
+- **Máximo de eventos por sesión**: 1,000
+- **Duración máxima de sesión**: 24 horas
+- **Tamaño máximo de custom_data**: 50KB
+- **Rate limit por IP**: 60 requests por minuto
+- **Rate limit por API Key**: 1,000 requests por minuto
+
+## Buenas prácticas
+
+1. **Mantener sesiones activas**: Envía ping de actividad cada 5 minutos mientras el usuario esté activo en la página.
+
+2. **Reiniciar sesiones correctamente**: Si un usuario regresa después de que su sesión ha expirado, crea una nueva sesión en lugar de intentar reactivar la anterior.
+
+3. **Preservar el visitor_id**: Aunque las sesiones caduquen, el ID de visitante debe mantenerse para poder rastrear el comportamiento del usuario a lo largo del tiempo.
+
+4. **Almacenamiento local**: Guarda el ID de sesión en localStorage para recuperarlo en caso de recarga de página o navegación entre pestañas.
+
+5. **Monitoreo de performance**: Captura y envía datos de rendimiento para entender la experiencia del usuario.
+
+6. **Manejo de GDPR**: Respeta las preferencias de consentimiento del usuario y solo envía los datos permitidos.
+
+7. **Identificación de leads**: Vincula sesiones a leads cuando los usuarios se identifican para un seguimiento más efectivo.
+
+8. **Encadenar sesiones**: Usa el campo `previous_session_id` para relacionar sesiones consecutivas de un mismo visitante. 

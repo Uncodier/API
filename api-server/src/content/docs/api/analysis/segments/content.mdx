@@ -1,0 +1,336 @@
+---
+title: API de Contenido para Segmentos
+description: Documentación para el API de recomendaciones de contenido personalizado basado en segmentos de audiencia
+---
+
+# API de Contenido para Segmentos
+
+El endpoint `/api/site/content` permite obtener un conjunto de recomendaciones de contenido personalizado (posts, videos, anuncios, etc.) basado en segmentos de audiencia específicos. Esta API es útil para personalizar la experiencia de usuario y maximizar el engagement con diferentes tipos de audiencias.
+
+> 📊 **Contenido personalizado para cada segmento** 
+> 
+> Esta API utiliza algoritmos avanzados de IA para recomendar el contenido más relevante
+> para cada segmento de audiencia, maximizando tasas de conversión, engagement y satisfacción
+> del usuario. Ideal para estrategias de marketing de contenidos y personalización web.
+
+## Características principales
+
+- Recomendaciones de contenido personalizadas basadas en segmentos de audiencia
+- Soporte para múltiples tipos de contenido (artículos, videos, podcasts, anuncios)
+- Filtrado por temática, formato, duración y otros atributos
+- Puntuaciones de relevancia y predicción de engagement
+- Personalización basada en diferentes métricas (interés, etapa del funnel, intención)
+- Soporte para diferentes modelos de IA para la generación de recomendaciones
+- Integración con sistemas de gestión de contenidos (CMS)
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiType="content" 
+  title="Recomendador de Contenidos por Segmento"
+  description="Prueba el API de contenido para segmentos con tus propios parámetros."
+  defaultEndpoint="/api/site/content"
+  defaultMethod="POST"
+  defaultUrl="https://ejemplo.com"
+  defaultSegmentId="seg_content_creators"
+  defaultLimit={10}
+  defaultTimeout="30000"
+  showModelOptions={true}
+  defaultModelType="anthropic"
+  defaultModel="claude-3-5-sonnet-20240620"
+  showSiteUrlField={true}
+  additionalFields={[
+    {
+      name: "url",
+      label: "URL del sitio",
+      type: "text",
+      defaultValue: "https://ejemplo.com",
+      placeholder: "https://tusitio.com",
+      required: true
+    },
+    {
+      name: "segment_id",
+      label: "ID del Segmento",
+      type: "text",
+      defaultValue: "seg_content_creators",
+      placeholder: "ID del segmento en la base de datos",
+      required: true
+    },
+    {
+      name: "content_types",
+      label: "Tipos de contenido",
+      type: "select",
+      multiple: true,
+      options: [
+        { value: "posts", label: "Artículos/Posts" },
+        { value: "videos", label: "Videos" },
+        { value: "podcasts", label: "Podcasts" },
+        { value: "ads", label: "Anuncios" },
+        { value: "social", label: "Contenido Social" },
+        { value: "downloads", label: "Descargables" }
+      ],
+      defaultValue: ["posts", "videos"]
+    },
+    {
+      name: "limit",
+      label: "Número máximo de resultados",
+      type: "number",
+      defaultValue: 10,
+      min: 1,
+      max: 50
+    },
+    {
+      name: "user_id",
+      label: "ID de Usuario (opcional)",
+      type: "text",
+      placeholder: "user_123456"
+    },
+    {
+      name: "site_id",
+      label: "ID del Sitio (opcional)",
+      type: "text",
+      placeholder: "site_789012"
+    },
+    {
+      name: "funnel_stage",
+      label: "Etapa del funnel",
+      type: "select",
+      options: [
+        { value: "all", label: "Todas las etapas" },
+        { value: "awareness", label: "Conocimiento (Awareness)" },
+        { value: "consideration", label: "Consideración" },
+        { value: "decision", label: "Decisión" },
+        { value: "retention", label: "Retención" }
+      ],
+      defaultValue: "all"
+    },
+    {
+      name: "sort_by",
+      label: "Criterio de ordenación",
+      type: "select",
+      options: [
+        { value: "relevance", label: "Relevancia" },
+        { value: "date", label: "Fecha" },
+        { value: "popularity", label: "Popularidad" }
+      ],
+      defaultValue: "relevance"
+    },
+    {
+      name: "includeScreenshot",
+      label: "Incluir captura de pantalla",
+      type: "checkbox",
+      defaultValue: false
+    }
+  ]}
+/>
+
+## Parámetros de solicitud
+
+| Parámetro | Tipo | Descripción | Valores posibles | Requerido |
+|-----------|------|-------------|------------------|-----------|
+| `url` | string | URL del sitio | URL válida | Sí |
+| `segment_id` | string | ID del segmento para el que se recomendarán contenidos | Cualquier ID válido | Sí |
+| `content_types` | array | Tipos de contenido a recomendar | `posts`, `videos`, `podcasts`, `ads`, `social`, `downloads` | No (default: todos) |
+| `limit` | number | Número máximo de recomendaciones | 1-50 | No (default: 10) |
+| `user_id` | string | ID del usuario | Cualquier ID válido | No |
+| `site_id` | string | ID del sitio | Cualquier ID válido | No |
+| `funnel_stage` | string | Filtrar por etapa del funnel | `all`, `awareness`, `consideration`, `decision`, `retention` | No (default: `all`) |
+| `topics` | array | Filtrar por temas específicos | Array de strings | No |
+| `aiProvider` | string | Proveedor del modelo de IA | `openai`, `anthropic`, `gemini` | No |
+| `aiModel` | string | ID del modelo de IA | Depende del proveedor | No |
+| `timeout` | number | Tiempo máximo de espera en ms | 5000-120000 | No (default: 30000) |
+| `include_metadata` | boolean | Si se deben incluir metadatos detallados | `true`, `false` | No (default: `true`) |
+| `sort_by` | string | Criterio de ordenación | `relevance`, `date`, `popularity` | No (default: `relevance`) |
+
+## Ejemplos de uso
+
+### Solicitud básica de recomendaciones
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "limit": 10
+}
+```
+
+### Recomendaciones filtradas por tipo de contenido
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "content_types": ["posts", "videos"],
+  "limit": 15,
+  "funnel_stage": "consideration"
+}
+```
+
+### Recomendaciones con configuración personalizada
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "content_types": ["posts", "downloads"],
+  "limit": 5,
+  "topics": ["marketing digital", "redes sociales"],
+  "aiProvider": "anthropic",
+  "aiModel": "claude-3-5-sonnet-20240620",
+  "sort_by": "relevance"
+}
+```
+
+## Respuesta
+
+La respuesta incluye los siguientes campos:
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `url` | string | URL del sitio |
+| `segment_id` | string | ID del segmento analizado |
+| `recommendations` | array | Lista de contenidos recomendados |
+| `total_results` | number | Número total de resultados encontrados |
+| `returned_results` | number | Número de resultados devueltos (limitado por `limit`) |
+| `metadata` | object | Metadatos de la solicitud y análisis |
+
+### Ejemplo de respuesta completa
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "recommendations": [
+    {
+      "id": "post_12345",
+      "type": "post",
+      "title": "10 Herramientas Esenciales para Creadores de Contenido en 2024",
+      "description": "Descubre las mejores herramientas que todo creador de contenido debería conocer para optimizar su flujo de trabajo y mejorar la calidad de sus producciones.",
+      "url": "https://ejemplo.com/blog/herramientas-creadores-contenido-2024",
+      "duration": {
+        "unit": "minutes",
+        "value": 8
+      },
+      "topics": [
+        "herramientas digitales",
+        "productividad",
+        "creación de contenido"
+      ],
+      "funnelStage": "consideration",
+      "relevanceScore": 0.95,
+      "engagementPrediction": {
+        "score": 0.89,
+        "metrics": {
+          "timeOnPage": "High",
+          "clickProbability": "Very high",
+          "conversionPotential": "Medium-high"
+        }
+      },
+      "format": "longform",
+      "readingLevel": "intermediate",
+      "popularity": {
+        "views": 12560,
+        "shares": 342,
+        "comments": 48
+      }
+    },
+    {
+      "id": "video_56789",
+      "type": "video",
+      "title": "Tutorial: Edición Profesional de Video en Menos de 30 Minutos",
+      "description": "Aprende técnicas rápidas de edición profesional que te permitirán crear videos de alta calidad sin pasar horas frente al ordenador.",
+      "url": "https://ejemplo.com/videos/tutorial-edicion-profesional-rapida",
+      "duration": {
+        "unit": "minutes",
+        "value": 18
+      },
+      "topics": [
+        "edición de video",
+        "tutoriales",
+        "productividad"
+      ],
+      "funnelStage": "consideration",
+      "relevanceScore": 0.94,
+      "engagementPrediction": {
+        "score": 0.92,
+        "metrics": {
+          "watchTime": "High",
+          "completionRate": "Medium-high",
+          "interactionRate": "High"
+        }
+      },
+      "format": "tutorial",
+      "difficultyLevel": "intermediate",
+      "popularity": {
+        "views": 8790,
+        "likes": 756,
+        "shares": 189
+      }
+    },
+    {
+      "id": "download_23456",
+      "type": "download",
+      "title": "Kit de Plantillas para Redes Sociales - Edición Creadores",
+      "description": "Descarga este conjunto de 15 plantillas editables para Instagram, TikTok y YouTube que te ayudarán a mantener una presencia visual consistente.",
+      "url": "https://ejemplo.com/recursos/kit-plantillas-redes-sociales",
+      "fileType": "ZIP (PSD, AI, Canva)",
+      "fileSize": "48.5 MB",
+      "topics": [
+        "diseño",
+        "recursos gráficos",
+        "redes sociales"
+      ],
+      "funnelStage": "decision",
+      "relevanceScore": 0.91,
+      "engagementPrediction": {
+        "score": 0.87,
+        "metrics": {
+          "downloadProbability": "Very high",
+          "leadConversion": "High",
+          "customerJourney": "Accelerator"
+        }
+      },
+      "subscriptionRequired": true,
+      "popularity": {
+        "downloads": 3456,
+        "averageRating": 4.8
+      }
+    }
+  ],
+  "total_results": 87,
+  "returned_results": 3,
+  "metadata": {
+    "request": {
+      "timestamp": "2024-07-15T16:42:18Z",
+      "parameters": {
+        "segment_id": "seg_content_creators",
+        "content_types": ["posts", "videos", "downloads"],
+        "limit": 3
+      }
+    },
+    "analysis": {
+      "modelUsed": "claude-3-5-sonnet-20240620",
+      "aiProvider": "anthropic",
+      "processingTime": "1.32 seconds",
+      "segmentDataSource": "seg_content_creators (last updated: 2024-07-10)",
+      "contentInventorySize": 412,
+      "filteringMetrics": [
+        "Relevancia temática",
+        "Historial de engagement del segmento",
+        "Recencia del contenido",
+        "Alineación con intereses declarados"
+      ]
+    }
+  }
+}
+```
+
+## Códigos de estado
+
+| Código | Descripción |
+|--------|-------------|
+| 200 | Solicitud exitosa |
+| 400 | Parámetros inválidos |
+| 404 | Segmento no encontrado o sin contenido disponible |
+| 429 | Límite de solicitudes excedido |
+| 500 | Error interno del servidor | 

@@ -1,0 +1,238 @@
+# Endpoint de Lista de Experimentos
+
+El endpoint `/api/experiments/list` permite obtener todos los experimentos activos para un sitio, junto con sus configuraciones, variantes y reglas de segmentación. Este endpoint es utilizado por el script de tracking para determinar qué experimentos debe aplicar a un visitante específico.
+
+## Especificación de la API
+
+- **URL**: `/api/experiments/list`
+- **Método**: `GET`
+- **Formato de respuesta**: JSON
+- **Autenticación**: API Key en encabezado `X-SA-API-KEY`
+
+## Parámetros de la Solicitud
+
+| Parámetro | Tipo | Ubicación | Requerido | Descripción |
+|-----------|------|-----------|-----------|-------------|
+| `site_id` | string | Query | Sí | Identificador único del sitio |
+| `visitor_id` | string | Query | No | ID del visitante para personalizar la respuesta |
+| `url` | string | Query | No | URL actual para filtrar experimentos relevantes |
+| `context` | object | Body | No | Información contextual adicional (solo POST) |
+
+## Ejemplo de URL
+
+```
+/api/experiments/list?site_id=site_123abc&visitor_id=vis_abcd1234&url=https://ejemplo.com/productos
+```
+
+## Respuesta
+
+La respuesta incluye un array de experimentos activos con todas sus configuraciones:
+
+```json
+{
+  "experiments": [
+    {
+      "experiment_id": "exp_12345",
+      "name": "Prueba de botón CTA",
+      "status": "active",
+      "type": "a/b_test",
+      "traffic_allocation": 0.5,
+      "segments": ["seg_123456", "seg_123457"],
+      "url_targeting": {
+        "include": ["*/productos/*"],
+        "exclude": ["*/productos/agotados/*"]
+      },
+      "variations": [
+        {
+          "variation_id": "var_a",
+          "name": "Control (original)",
+          "weight": 0.5,
+          "is_control": true,
+          "changes": []
+        },
+        {
+          "variation_id": "var_b",
+          "name": "Botón rojo",
+          "weight": 0.5,
+          "is_control": false,
+          "changes": [
+            {
+              "selector": "#comprar-btn",
+              "action": "modify_attribute",
+              "attribute": "style",
+              "value": "background-color: red; font-size: 18px; padding: 12px 24px;"
+            }
+          ]
+        }
+      ],
+      "goals": [
+        {
+          "goal_id": "goal_1",
+          "name": "Compra completada",
+          "event_type": "custom",
+          "event_name": "purchase",
+          "is_primary": true
+        },
+        {
+          "goal_id": "goal_2",
+          "name": "Clic en botón",
+          "event_type": "click",
+          "selector": "#comprar-btn",
+          "is_primary": false
+        }
+      ],
+      "schedule": {
+        "start_date": "2023-06-01T00:00:00Z",
+        "end_date": "2023-07-01T00:00:00Z"
+      }
+    },
+    {
+      "experiment_id": "exp_67890",
+      "name": "Personalización de página de inicio",
+      "status": "active",
+      "type": "personalization",
+      "traffic_allocation": 1.0,
+      "segments": ["seg_234567"],
+      "url_targeting": {
+        "include": ["*/", "*/inicio"],
+        "exclude": []
+      },
+      "variations": [
+        {
+          "variation_id": "var_a",
+          "name": "Versión para nuevos visitantes",
+          "segment_conditions": [
+            {
+              "segment_id": "seg_visitors_new",
+              "operator": "in"
+            }
+          ],
+          "changes": [
+            {
+              "selector": ".hero-banner",
+              "action": "replace_html",
+              "value": "<div class=\"hero-banner\"><h1>¡Bienvenido por primera vez!</h1><p>Descubre nuestros productos más populares.</p></div>"
+            }
+          ]
+        },
+        {
+          "variation_id": "var_b",
+          "name": "Versión para visitantes recurrentes",
+          "segment_conditions": [
+            {
+              "segment_id": "seg_visitors_returning",
+              "operator": "in"
+            }
+          ],
+          "changes": [
+            {
+              "selector": ".hero-banner",
+              "action": "replace_html",
+              "value": "<div class=\"hero-banner\"><h1>¡Bienvenido de nuevo!</h1><p>Continúa explorando nuestros productos.</p></div>"
+            }
+          ]
+        }
+      ],
+      "goals": [
+        {
+          "goal_id": "goal_3",
+          "name": "Tiempo en la página",
+          "event_type": "custom_metric",
+          "metric": "time_on_page",
+          "is_primary": true
+        }
+      ],
+      "schedule": {
+        "start_date": "2023-05-15T00:00:00Z",
+        "end_date": null
+      }
+    }
+  ],
+  "count": 2,
+  "site_id": "site_123abc"
+}
+```
+
+## Tipos de Experimentos
+
+| Tipo | Descripción |
+|------|-------------|
+| `a/b_test` | Test A/B clásico |
+| `multivariate` | Test multivariante |
+| `rollout` | Despliegue gradual |
+| `personalization` | Personalización basada en segmentos |
+
+## Tipos de Acciones de Cambio
+
+| Acción | Descripción | Parámetros |
+|--------|-------------|------------|
+| `modify_attribute` | Modifica un atributo de un elemento | `selector`, `attribute`, `value` |
+| `replace_html` | Reemplaza el contenido HTML | `selector`, `value` |
+| `append_html` | Añade HTML al final del elemento | `selector`, `value` |
+| `prepend_html` | Añade HTML al principio del elemento | `selector`, `value` |
+| `remove_element` | Elimina un elemento | `selector` |
+| `add_class` | Añade una clase CSS | `selector`, `value` (nombre de clase) |
+| `remove_class` | Elimina una clase CSS | `selector`, `value` (nombre de clase) |
+| `custom_script` | Ejecuta JavaScript personalizado | `code` |
+| `redirect` | Redirecciona a otra URL | `url`, `condition` (opcional) |
+| `reorder` | Reordena elementos | `selector`, `order` (array de índices) |
+
+## Tipos de Metas (Goals)
+
+| Tipo | Descripción | Parámetros adicionales |
+|------|-------------|------------------------|
+| `pageview` | Vista de página | `url_pattern` |
+| `click` | Clic en elemento | `selector` |
+| `form_submit` | Envío de formulario | `form_selector` |
+| `custom` | Evento personalizado | `event_name`, `conditions` (opcional) |
+| `custom_metric` | Métrica personalizada | `metric`, `threshold` (opcional) |
+
+## Política de caché
+
+Para optimizar el rendimiento, los experimentos se pueden almacenar en caché en el navegador del usuario:
+
+- La respuesta incluye encabezados HTTP de caché adecuados
+- Por defecto, los experimentos se almacenan en caché durante 1 hora
+- Los cambios en la configuración de los experimentos pueden tardar hasta 1 hora en reflejarse para todos los usuarios
+
+## Consideraciones de rendimiento
+
+- Utiliza el parámetro `url` para recibir solo experimentos relevantes para la página actual
+- Si incluyes `visitor_id`, el servidor filtrará los experimentos según los segmentos del visitante
+- Limite el número de experimentos activos simultáneamente para evitar sobrecarga en la carga inicial
+
+## Códigos de estado HTTP
+
+- `200 OK`: Respuesta exitosa
+- `400 Bad Request`: Parámetros inválidos
+- `401 Unauthorized`: API key inválida o faltante
+- `403 Forbidden`: El sitio no tiene permisos para usar experimentos
+- `404 Not Found`: Sitio no encontrado
+- `429 Too Many Requests`: Se ha excedido el límite de peticiones
+- `500 Internal Server Error`: Error en el servidor
+
+## Ejemplos de uso
+
+### Solicitud básica
+
+```javascript
+// Desde el script de tracking
+fetch('/api/experiments/list?site_id=site_123abc')
+  .then(response => response.json())
+  .then(data => {
+    // Aplicar experimentos
+    applyExperiments(data.experiments);
+  });
+```
+
+### Solicitud optimizada con contexto completo
+
+```javascript
+// Desde el script de tracking
+fetch('/api/experiments/list?site_id=site_123abc&visitor_id=vis_abcd1234&url=' + encodeURIComponent(window.location.href))
+  .then(response => response.json())
+  .then(data => {
+    // Aplicar experimentos
+    applyExperiments(data.experiments);
+  });
+``` 
