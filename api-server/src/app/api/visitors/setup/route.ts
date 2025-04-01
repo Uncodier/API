@@ -8,7 +8,45 @@ export async function GET(request: NextRequest) {
   console.log("[SETUP] Starting setup of visitors tables");
   
   try {
-    // 1. First create the visitors table
+    // 1. First create the sites table
+    console.log("[SETUP] Creating sites table...");
+    
+    const createSitesTableSQL = `
+      CREATE TABLE IF NOT EXISTS sites (
+        id UUID PRIMARY KEY,
+        name TEXT NOT NULL,
+        domain TEXT,
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+      );
+      
+      -- Create indexes for common queries
+      CREATE INDEX IF NOT EXISTS idx_sites_domain ON sites(domain);
+    `;
+    
+    console.log("[SETUP] Executing sites table creation SQL...");
+    
+    // Execute the SQL for sites
+    const { error: sitesError } = await supabaseAdmin.rpc('pgSQL', { sql_string: createSitesTableSQL });
+    
+    if (sitesError) {
+      console.error("[SETUP] Error creating sites table:", sitesError);
+      
+      // Try fallback method
+      console.log("[SETUP] Trying fallback method for sites...");
+      const { error: fallbackError } = await supabaseAdmin.rpc('execute_sql', { sql: createSitesTableSQL });
+      
+      if (fallbackError) {
+        console.error("[SETUP] Fallback error for sites:", fallbackError);
+        return NextResponse.json({
+          success: false,
+          message: "Failed to create sites table",
+          error: sitesError || fallbackError
+        }, { status: 500 });
+      }
+    }
+
+    // 2. Create the visitors table
     console.log("[SETUP] Creating visitors table...");
     
     const createVisitorsTableSQL = `
@@ -65,7 +103,7 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // 2. Create the visitor_sessions table
+    // 3. Create the visitor_sessions table
     console.log("[SETUP] Creating visitor_sessions table...");
     
     const createSessionsTableSQL = `
@@ -136,7 +174,7 @@ export async function GET(request: NextRequest) {
       }
     }
     
-    // 3. Create the visitor_events table
+    // 4. Create the visitor_events table
     console.log("[SETUP] Creating visitor_events table...");
     
     const createEventsTableSQL = `
@@ -159,7 +197,15 @@ export async function GET(request: NextRequest) {
         CONSTRAINT fk_visitor
           FOREIGN KEY(visitor_id)
           REFERENCES visitors(visitor_id)
-          ON DELETE CASCADE
+          ON DELETE CASCADE,
+        CONSTRAINT valid_event_type CHECK (
+          event_type IN (
+            'pageview', 'click', 'custom', 'purchase', 'action',
+            'mousemove', 'scroll', 'keypress', 'resize', 'focus',
+            'blur', 'form_submit', 'form_change', 'form_error',
+            'error', 'performance', 'session_recording'
+          )
+        )
       );
       
       -- Create indexes for common queries

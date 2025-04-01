@@ -1,5 +1,6 @@
 import React from 'react';
 import styles from '../ApiTester.module.css';
+import { generateUUID } from './utils';
 
 // Función para formatear JSON con resaltado de sintaxis mejorado
 export const formatJsonWithSyntax = (json: any) => {

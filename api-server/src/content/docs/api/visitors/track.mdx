@@ -2,6 +2,123 @@
 
 El endpoint `/api/visitors/track` es el punto central para registrar eventos de visitantes en tu sitio web. Este endpoint es utilizado por el script de tracking para enviar datos sobre las acciones de los usuarios, pageviews, clics, y eventos personalizados.
 
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="visitor_track"
+  title="API de Tracking de Visitantes"
+  description="Prueba el endpoint de tracking de visitantes"
+  defaultEndpoint="/api/visitors/track"
+  defaultMethod="POST"
+  defaultSiteId="site_123abc"
+  defaultVisitorId="vis_abcd1234"
+  defaultSessionId="sess_xyz789"
+  defaultUrl="https://ejemplo.com/productos"
+  defaultEventType="pageview"
+  additionalFields={[
+    {
+      name: "site_id",
+      label: "ID del Sitio",
+      type: "text",
+      defaultValue: "site_123abc",
+      placeholder: "site_123abc",
+      required: true
+    },
+    {
+      name: "event_type",
+      label: "Tipo de Evento",
+      type: "select",
+      options: [
+        { value: "pageview", label: "Pageview" },
+        { value: "click", label: "Click" },
+        { value: "custom", label: "Custom" },
+        { value: "purchase", label: "Purchase" },
+        { value: "action", label: "Action" },
+        { value: "mousemove", label: "Mouse Move" },
+        { value: "scroll", label: "Scroll" },
+        { value: "keypress", label: "Keypress" },
+        { value: "resize", label: "Resize" },
+        { value: "focus", label: "Focus" },
+        { value: "form_submit", label: "Form Submit" },
+        { value: "form_change", label: "Form Change" },
+        { value: "form_error", label: "Form Error" },
+        { value: "error", label: "Error" },
+        { value: "performance", label: "Performance" },
+        { value: "session_recording", label: "Session Recording" }
+      ],
+      defaultValue: "pageview",
+      required: true
+    },
+    {
+      name: "event_name",
+      label: "Nombre del Evento",
+      type: "text",
+      placeholder: "Nombre del evento personalizado",
+      required: false,
+      showIf: "event_type === 'custom'"
+    },
+    {
+      name: "url",
+      label: "URL",
+      type: "text",
+      defaultValue: "https://ejemplo.com/productos",
+      placeholder: "https://ejemplo.com/page",
+      required: true
+    },
+    {
+      name: "referrer",
+      label: "Referrer",
+      type: "text",
+      placeholder: "https://google.com",
+      required: false
+    },
+    {
+      name: "visitor_id",
+      label: "ID del Visitante",
+      type: "text",
+      defaultValue: "vis_abcd1234",
+      placeholder: "vis_abcd1234",
+      required: false
+    },
+    {
+      name: "session_id",
+      label: "ID de Sesión",
+      type: "text",
+      defaultValue: "sess_xyz789",
+      placeholder: "sess_xyz789",
+      required: false
+    },
+    {
+      name: "timestamp",
+      label: "Timestamp",
+      type: "number",
+      placeholder: "1646123456789",
+      required: false
+    },
+    {
+      name: "properties",
+      label: "Propiedades",
+      type: "textarea",
+      placeholder: '{\n  "key": "value"\n}',
+      required: false
+    },
+    {
+      name: "user_agent",
+      label: "User Agent",
+      type: "text",
+      placeholder: "Mozilla/5.0...",
+      required: false
+    },
+    {
+      name: "ip",
+      label: "IP",
+      type: "text",
+      placeholder: "192.168.1.1",
+      required: false
+    }
+  ]}
+/>
+
 ## Especificación de la API
 
 - **URL**: `/api/visitors/track`
@@ -14,7 +131,7 @@ El endpoint `/api/visitors/track` es el punto central para registrar eventos de 
 | Parámetro | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
 | `site_id` | string | Sí | Identificador único del sitio |
-| `event_type` | string | Sí | Tipo de evento (`pageview`, `click`, `custom`) |
+| `event_type` | string | Sí | Tipo de evento (`pageview`, `click`, `custom`, `purchase`, `action`, `mousemove`, `scroll`, `keypress`, `resize`, `focus`, `blur`, `form_submit`, `form_change`, `form_error`, `error`, `performance`, `session_recording`) |
 | `event_name` | string | No | Nombre del evento personalizado (requerido si `event_type` es `custom`) |
 | `url` | string | Sí | URL donde ocurrió el evento |
 | `referrer` | string | No | URL de referencia |
@@ -61,6 +178,304 @@ El endpoint `/api/visitors/track` es el punto central para registrar eventos de 
     "price": 49.99,
     "currency": "EUR",
     "quantity": 1
+  }
+}
+```
+
+## Ejemplo de payload para evento de compra
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "purchase",
+  "url": "https://ejemplo.com/checkout/confirmation",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "order_id": "ord_12345",
+    "total_amount": 99.99,
+    "currency": "EUR",
+    "payment_method": "credit_card",
+    "items": [
+      {
+        "product_id": "prod_123",
+        "product_name": "Zapato Casual Negro",
+        "price": 49.99,
+        "quantity": 2
+      }
+    ],
+    "shipping_address": {
+      "country": "ES",
+      "city": "Madrid"
+    }
+  }
+}
+```
+
+## Ejemplo de payload para evento de acción
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "action",
+  "event_name": "form_submission",
+  "url": "https://ejemplo.com/contact",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "form_id": "contact_form",
+    "form_name": "Contact Form",
+    "fields_completed": ["name", "email", "message"],
+    "completion_time": 120,
+    "success": true
+  }
+}
+```
+
+## Ejemplo de payload para evento de movimiento del mouse
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "mousemove",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "x": 500,
+    "y": 300,
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "element": {
+      "tag": "button",
+      "class": "submit-button",
+      "id": "checkout-btn",
+      "text": "Checkout"
+    }
+  }
+}
+```
+
+## Ejemplo de payload para evento de scroll
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "scroll",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "scroll_x": 0,
+    "scroll_y": 500,
+    "max_scroll": 2000,
+    "viewport_height": 1080,
+    "document_height": 3080,
+    "percentage_scrolled": 25
+  }
+}
+```
+
+## Ejemplo de payload para evento de teclado
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "keypress",
+  "url": "https://ejemplo.com/contact",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "key": "Enter",
+    "key_code": 13,
+    "element": {
+      "tag": "input",
+      "type": "text",
+      "name": "email"
+    },
+    "is_sensitive": false
+  }
+}
+```
+
+## Ejemplo de payload para evento de redimensionamiento
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "resize",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "width": 1920,
+    "height": 1080,
+    "previous_width": 1366,
+    "previous_height": 768,
+    "orientation": "landscape"
+  }
+}
+```
+
+## Ejemplo de payload para evento de foco/blur
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "focus",
+  "url": "https://ejemplo.com/contact",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "element": {
+      "tag": "input",
+      "type": "text",
+      "name": "email",
+      "placeholder": "Enter your email"
+    },
+    "focus_duration": 120000
+  }
+}
+```
+
+## Ejemplo de payload para evento de formulario
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "form_submit",
+  "url": "https://ejemplo.com/contact",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "form_id": "contact-form",
+    "form_name": "Contact Form",
+    "fields": [
+      {
+        "name": "name",
+        "type": "text",
+        "filled": true
+      },
+      {
+        "name": "email",
+        "type": "email",
+        "filled": true
+      },
+      {
+        "name": "message",
+        "type": "textarea",
+        "filled": true
+      }
+    ],
+    "completion_time": 120000,
+    "success": true
+  }
+}
+```
+
+## Ejemplo de payload para evento de rendimiento
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "performance",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "navigation": {
+      "load_time": 1250,
+      "dom_content_loaded": 850,
+      "first_paint": 920,
+      "first_contentful_paint": 980
+    },
+    "resources": {
+      "total": 25,
+      "images": 10,
+      "scripts": 8,
+      "stylesheets": 4,
+      "fonts": 3
+    },
+    "memory": {
+      "used": 150000000,
+      "total": 8589934592
+    }
+  }
+}
+```
+
+## Ejemplo de payload para evento de error
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "error",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "error_type": "javascript",
+    "message": "Cannot read property 'price' of undefined",
+    "stack": "at calculateTotal (script.js:45:12)",
+    "filename": "script.js",
+    "line_number": 45,
+    "column_number": 12,
+    "user_agent": "Mozilla/5.0...",
+    "browser": "Chrome",
+    "browser_version": "98.0.4758.102"
+  }
+}
+```
+
+## Ejemplo de payload para grabación de sesión
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "session_recording",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "recording_id": "rec_12345",
+    "start_time": 1646123456789,
+    "end_time": 1646123789456,
+    "duration": 332667,
+    "events": [
+      {
+        "type": "mousemove",
+        "timestamp": 1646123456789,
+        "x": 500,
+        "y": 300
+      },
+      {
+        "type": "click",
+        "timestamp": 1646123456799,
+        "x": 505,
+        "y": 310,
+        "element": "button.submit"
+      }
+    ],
+    "metadata": {
+      "screen_size": "1920x1080",
+      "browser": "Chrome",
+      "browser_version": "98.0.4758.102",
+      "os": "Windows",
+      "device_type": "desktop"
+    }
   }
 }
 ```
@@ -122,4 +537,63 @@ Todos los eventos son procesados de forma asíncrona en segundo plano. El endpoi
 - **Máximo de eventos por petición**: 50
 - **Tamaño máximo de payload**: 100KB
 - **Peticiones por minuto**: 100 por IP
-- **Propiedades personalizadas**: 50 por evento 
+- **Propiedades personalizadas**: 50 por evento
+
+## Buenas prácticas para grabación de sesiones
+
+1. **Optimización de datos**
+   - Throttle los eventos de mouse (ej: cada 100ms)
+   - Muestreo de sesiones (ej: grabar solo 10% de las sesiones)
+   - Compresión de datos antes de enviar
+   - Agrupación de eventos en lotes
+
+2. **Privacidad y seguridad**
+   - No grabar campos sensibles (passwords, tarjetas de crédito)
+   - Ofrecer opción de pausar/stop la grabación
+   - Cumplir con GDPR y otras regulaciones
+   - Obtener consentimiento explícito del usuario
+
+3. **Rendimiento**
+   - Usar Web Workers para procesamiento en segundo plano
+   - Implementar buffer local para eventos
+   - Enviar datos en intervalos regulares
+   - Limitar el tamaño de la grabación
+
+4. **Manejo de errores**
+   - Implementar retry con backoff exponencial
+   - Guardar eventos localmente si falla la conexión
+   - Limpiar datos antiguos automáticamente
+   - Monitorear el uso de memoria
+
+5. **Calidad de datos**
+   - Validar eventos antes de enviar
+   - Filtrar eventos duplicados
+   - Normalizar coordenadas del mouse
+   - Capturar el estado del DOM relevante
+
+6. **Almacenamiento**
+   - Definir políticas de retención
+   - Implementar compresión eficiente
+   - Usar CDN para distribución
+   - Mantener backups de grabaciones importantes
+
+7. **Análisis**
+   - Procesar eventos en tiempo real
+   - Generar insights automáticos
+   - Identificar patrones de comportamiento
+   - Detectar problemas de UX
+
+8. **Integración**
+   - Sincronizar con otros eventos
+   - Vincular con datos de usuario
+   - Exportar en formatos estándar
+   - Integrar con herramientas de análisis
+
+## Límites y cuotas para grabación de sesiones
+
+- **Duración máxima por sesión**: 30 minutos
+- **Tamaño máximo de grabación**: 10MB
+- **Eventos por segundo**: 10 eventos/s
+- **Sesiones grabadas**: 10% del total
+- **Retención de datos**: 30 días
+- **Rate limit**: 100 grabaciones/hora

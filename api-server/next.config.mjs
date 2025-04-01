@@ -9,7 +9,12 @@ const withNextra = nextra({
 // You can include other Next.js configuration options here, in addition to Nextra settings:
 export default withNextra({
   reactStrictMode: true,
-  swcMinify: true,
+  experimental: {
+    appDir: true,
+    serverActions: {
+      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001']
+    }
+  },
   // Configuración para imágenes optimizadas
   images: {
     // Desactivar la optimización de imágenes en desarrollo para evitar advertencias de Sharp
@@ -26,5 +31,14 @@ export default withNextra({
     }
     
     return config;
+  },
+  // Configuración de rutas de API
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: '/api/:path*',
+      },
+    ]
   }
 })

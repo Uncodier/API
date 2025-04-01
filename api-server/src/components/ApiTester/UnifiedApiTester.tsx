@@ -257,11 +257,16 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
         const data = await response.json();
         
         if (!response.ok) {
-          throw new Error(data.message || 'Error en la solicitud');
+          // En lugar de lanzar un error, actualizamos el estado con el error
+          setError(data.error?.message || data.message || 'Error en la solicitud');
+          setApiResponse(data);
+          setActiveTab('result');
+          return;
         }
         
         // Actualizar el estado con la respuesta
         setApiResponse(data);
+        setError(null);
         setActiveTab('result');
       }
     } catch (error: any) {
