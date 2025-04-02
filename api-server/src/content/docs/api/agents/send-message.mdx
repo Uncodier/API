@@ -1,0 +1,74 @@
+# Send Message to Agent
+
+Send a message to an AI agent and receive a response.
+
+## Endpoint
+
+```http
+POST /api/agents/message
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | Yes | The message to send to the agent |
+| `agentId` | string | Yes | The ID of the agent to send the message to |
+| `conversationId` | string | No | Optional conversation ID to maintain context |
+
+### Example Request
+
+```json
+{
+  "message": "What are the key features of this website?",
+  "agentId": "agent_123",
+  "conversationId": "conv_456"
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "message": "The website has several key features including...",
+    "conversationId": "conv_456",
+    "timestamp": "2024-03-13T12:00:00Z"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_AGENT",
+    "message": "The specified agent does not exist"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_AGENT` | The specified agent ID is invalid or does not exist |
+| `INVALID_MESSAGE` | The message content is invalid or empty |
+| `AGENT_ERROR` | The agent encountered an error processing the message |
+| `RATE_LIMIT` | Too many requests in a short time period |
+
+## Rate Limits
+
+- 100 requests per minute per user
+- 1000 requests per hour per user
+
+## Notes
+
+- The `conversationId` is optional but recommended for maintaining context in multi-message conversations
+- Messages are processed asynchronously and responses may take a few seconds
+- The agent's response will be in the same language as the input message 

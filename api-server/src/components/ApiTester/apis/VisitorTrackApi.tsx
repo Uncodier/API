@@ -99,6 +99,7 @@ export interface VisitorTrackApiState {
   recording_browser_version: string;
   recording_os: string;
   recording_device_type: string;
+  activity_bulk_events: string;
 }
 
 // Configuración de la API de Tracking de Visitantes
@@ -118,82 +119,220 @@ const VisitorTrackApi: BaseApiConfig = {
       method: props.defaultMethod || 'POST',
       site_id: defaultSiteId,
       event_type: props.defaultEventType || 'pageview',
-      event_name: props.defaultEventName || '',
-      url: props.defaultUrl || '',
-      referrer: '',
+      event_name: props.defaultEventName || 'homepage_view',
+      url: props.defaultUrl || 'https://example.com/products',
+      referrer: 'https://google.com',
       visitor_id: props.defaultVisitorId || generateUUID(),
       session_id: props.defaultSessionId || generateUUID(),
       timestamp: Date.now().toString(),
-      properties: '{}',
-      user_agent: '',
-      ip: '',
+      properties: JSON.stringify({
+        page_title: "Product Catalog",
+        screen_size: "1920x1080",
+        locale: "en-US",
+        user_type: "new",
+        device_type: "desktop"
+      }),
+      user_agent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      ip: '192.168.1.1',
       // Propiedades específicas por tipo de evento
-      click_x: '',
-      click_y: '',
-      click_element_tag: '',
-      click_element_class: '',
-      click_element_id: '',
-      click_element_text: '',
-      mousemove_x: '',
-      mousemove_y: '',
-      mousemove_viewport_width: '',
-      mousemove_viewport_height: '',
-      scroll_x: '',
-      scroll_y: '',
-      scroll_max_scroll: '',
-      scroll_viewport_height: '',
-      scroll_document_height: '',
-      scroll_percentage: '',
-      keypress_key: '',
-      keypress_key_code: '',
-      keypress_element_tag: '',
-      keypress_element_type: '',
-      keypress_element_name: '',
+      click_x: '500',
+      click_y: '300',
+      click_element_tag: 'button',
+      click_element_class: 'add-to-cart',
+      click_element_id: 'product-123',
+      click_element_text: 'Add to Cart',
+      mousemove_x: '750',
+      mousemove_y: '450',
+      mousemove_viewport_width: '1920',
+      mousemove_viewport_height: '1080',
+      scroll_x: '0',
+      scroll_y: '500',
+      scroll_max_scroll: '2000',
+      scroll_viewport_height: '1080',
+      scroll_document_height: '3080',
+      scroll_percentage: '25',
+      keypress_key: 'Enter',
+      keypress_key_code: '13',
+      keypress_element_tag: 'input',
+      keypress_element_type: 'text',
+      keypress_element_name: 'search',
       keypress_is_sensitive: false,
-      resize_width: '',
-      resize_height: '',
-      resize_previous_width: '',
-      resize_previous_height: '',
-      resize_orientation: '',
-      focus_element_tag: '',
-      focus_element_type: '',
-      focus_element_name: '',
-      focus_element_placeholder: '',
-      focus_duration: '',
-      form_id: '',
-      form_name: '',
-      form_fields: '',
-      form_completion_time: '',
+      resize_width: '1920',
+      resize_height: '1080',
+      resize_previous_width: '1366',
+      resize_previous_height: '768',
+      resize_orientation: 'landscape',
+      focus_element_tag: 'input',
+      focus_element_type: 'email',
+      focus_element_name: 'email',
+      focus_element_placeholder: 'Enter your email',
+      focus_duration: '120000',
+      form_id: 'contact-form',
+      form_name: 'Contact Form',
+      form_fields: JSON.stringify([
+        { name: "name", type: "text", filled: true },
+        { name: "email", type: "email", filled: true },
+        { name: "message", type: "textarea", filled: true }
+      ]),
+      form_completion_time: '120000',
       form_success: true,
-      performance_load_time: '',
-      performance_dom_content_loaded: '',
-      performance_first_paint: '',
-      performance_first_contentful_paint: '',
-      performance_resources_total: '',
-      performance_resources_images: '',
-      performance_resources_scripts: '',
-      performance_resources_stylesheets: '',
-      performance_resources_fonts: '',
-      performance_memory_used: '',
-      performance_memory_total: '',
-      error_type: '',
-      error_message: '',
-      error_stack: '',
-      error_filename: '',
-      error_line_number: '',
-      error_column_number: '',
-      error_browser: '',
-      error_browser_version: '',
-      recording_id: '',
-      recording_start_time: '',
-      recording_end_time: '',
-      recording_duration: '',
-      recording_events: '',
-      recording_screen_size: '',
-      recording_browser: '',
-      recording_browser_version: '',
-      recording_os: '',
-      recording_device_type: ''
+      performance_load_time: '1250',
+      performance_dom_content_loaded: '850',
+      performance_first_paint: '920',
+      performance_first_contentful_paint: '980',
+      performance_resources_total: '25',
+      performance_resources_images: '10',
+      performance_resources_scripts: '8',
+      performance_resources_stylesheets: '4',
+      performance_resources_fonts: '3',
+      performance_memory_used: '150000000',
+      performance_memory_total: '8589934592',
+      error_type: 'javascript',
+      error_message: 'Cannot read property price of undefined',
+      error_stack: 'at calculateTotal (script.js:45:12)',
+      error_filename: 'script.js',
+      error_line_number: '45',
+      error_column_number: '12',
+      error_browser: 'Chrome',
+      error_browser_version: '122.0.0.0',
+      recording_id: `rec_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+      recording_start_time: (Date.now() - 300000).toString(), // 5 minutes ago
+      recording_end_time: Date.now().toString(),
+      recording_duration: '300000',
+      recording_events: JSON.stringify([
+        { 
+          type: "mousemove", 
+          x: 100, 
+          y: 200, 
+          timestamp: Date.now() - 300000,
+          viewport: {
+            width: 1920,
+            height: 1080
+          }
+        },
+        { 
+          type: "click", 
+          x: 150, 
+          y: 250, 
+          timestamp: Date.now() - 299000, 
+          element: { 
+            tag: "button", 
+            id: "add-to-cart",
+            class: "btn-primary",
+            text: "Add to Cart"
+          }
+        },
+        { 
+          type: "scroll", 
+          x: 0, 
+          y: 300, 
+          timestamp: Date.now() - 298000, 
+          percentage_scrolled: 25,
+          document_height: 3080,
+          viewport_height: 1080
+        },
+        { 
+          type: "keypress", 
+          key: "Enter", 
+          timestamp: Date.now() - 297000, 
+          key_code: 13,
+          element: {
+            tag: "input",
+            type: "text",
+            name: "search"
+          }
+        },
+        {
+          type: "resize",
+          timestamp: Date.now() - 296000,
+          width: 1920,
+          height: 1080,
+          previous_width: 1366,
+          previous_height: 768,
+          orientation: "landscape"
+        },
+        {
+          type: "focus",
+          timestamp: Date.now() - 295000,
+          element: {
+            tag: "input",
+            type: "email",
+            name: "email",
+            placeholder: "Enter your email"
+          }
+        },
+        {
+          type: "form_change",
+          timestamp: Date.now() - 294000,
+          form_id: "contact-form",
+          form_name: "Contact Form",
+          field_name: "name",
+          field_value: "John Doe",
+          field_type: "text"
+        },
+        {
+          type: "form_submit",
+          timestamp: Date.now() - 293000,
+          form_id: "contact-form",
+          form_name: "Contact Form",
+          fields: [
+            { name: "name", type: "text", filled: true },
+            { name: "email", type: "email", filled: true },
+            { name: "message", type: "textarea", filled: true }
+          ],
+          completion_time: 120000,
+          success: true
+        }
+      ]),
+      recording_screen_size: '1920x1080',
+      recording_browser: 'Chrome',
+      recording_browser_version: '122.0.0.0',
+      recording_os: 'MacOS',
+      recording_device_type: 'desktop',
+      activity_bulk_events: JSON.stringify([
+        { 
+          type: "mousemove", 
+          x: 100, 
+          y: 200, 
+          timestamp: Date.now() - 300000,
+          viewport: {
+            width: 1920,
+            height: 1080
+          }
+        },
+        { 
+          type: "click", 
+          x: 150, 
+          y: 250, 
+          timestamp: Date.now() - 299000, 
+          element: { 
+            tag: "button", 
+            id: "add-to-cart",
+            class: "btn-primary",
+            text: "Add to Cart"
+          }
+        },
+        { 
+          type: "scroll", 
+          x: 0, 
+          y: 300, 
+          timestamp: Date.now() - 298000, 
+          percentage_scrolled: 25,
+          document_height: 3080,
+          viewport_height: 1080
+        },
+        { 
+          type: "keypress", 
+          key: "Enter", 
+          timestamp: Date.now() - 297000, 
+          key_code: 13,
+          element: {
+            tag: "input",
+            type: "text",
+            name: "search"
+          }
+        }
+      ])
     };
   },
 
@@ -361,7 +500,9 @@ const VisitorTrackApi: BaseApiConfig = {
         };
         if (state.recording_events) {
           try {
-            properties.events = JSON.parse(state.recording_events);
+            const events = JSON.parse(state.recording_events);
+            properties.events = events;
+            properties.activity = events;
           } catch (e) {
             console.error('Error parsing recording_events JSON:', e);
           }
@@ -949,13 +1090,21 @@ const VisitorTrackApi: BaseApiConfig = {
                 placeholder="332667"
               />
               <FormField
-                label="Eventos (JSON)"
+                label="Eventos (JSON Array)"
                 id="recording_events"
                 type="textarea"
                 value={state.recording_events}
                 onChange={(value) => handleChange('recording_events', value)}
-                placeholder='[{"type": "mousemove", "timestamp": 1646123456789, "x": 500, "y": 300}]'
+                placeholder={`[
+  { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+  { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+  { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+  { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+]`}
               />
+              <div style={{ fontSize: '0.85em', color: '#666', marginTop: '5px' }}>
+                Cada evento debe incluir un campo 'type' que indique el subtipo de evento (mousemove, click, scroll, keypress, etc.)
+              </div>
               <FormField
                 label="Tamaño de Pantalla"
                 id="recording_screen_size"
@@ -1007,6 +1156,16 @@ const VisitorTrackApi: BaseApiConfig = {
     return (
       <>
         <FormField
+          label="Endpoint"
+          id="endpoint"
+          type="text"
+          value={state.endpoint}
+          onChange={(value) => handleChange('endpoint', value)}
+          placeholder="/api/visitors/track"
+          required
+        />
+        
+        <FormField
           label="ID del Sitio"
           id="site_id"
           type="text"
@@ -1023,22 +1182,22 @@ const VisitorTrackApi: BaseApiConfig = {
           value={state.event_type}
           onChange={(value) => handleChange('event_type', value)}
           options={[
-            { value: 'pageview', label: 'Pageview' },
-            { value: 'click', label: 'Click' },
-            { value: 'custom', label: 'Custom' },
-            { value: 'purchase', label: 'Purchase' },
-            { value: 'action', label: 'Action' },
-            { value: 'mousemove', label: 'Mouse Move' },
-            { value: 'scroll', label: 'Scroll' },
-            { value: 'keypress', label: 'Keypress' },
-            { value: 'resize', label: 'Resize' },
-            { value: 'focus', label: 'Focus' },
-            { value: 'form_submit', label: 'Form Submit' },
-            { value: 'form_change', label: 'Form Change' },
-            { value: 'form_error', label: 'Form Error' },
-            { value: 'performance', label: 'Performance' },
-            { value: 'error', label: 'Error' },
-            { value: 'session_recording', label: 'Session Recording' }
+            { value: "pageview", label: "Pageview" },
+            { value: "click", label: "Click" },
+            { value: "custom", label: "Custom" },
+            { value: "purchase", label: "Purchase" },
+            { value: "action", label: "Action" },
+            { value: "mousemove", label: "Mouse Move" },
+            { value: "scroll", label: "Scroll" },
+            { value: "keypress", label: "Keypress" },
+            { value: "resize", label: "Resize" },
+            { value: "focus", label: "Focus" },
+            { value: "form_submit", label: "Form Submit" },
+            { value: "form_change", label: "Form Change" },
+            { value: "form_error", label: "Form Error" },
+            { value: "error", label: "Error" },
+            { value: "performance", label: "Performance" },
+            { value: "session_recording", label: "Session Recording" }
           ]}
           required
         />

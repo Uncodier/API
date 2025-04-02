@@ -1,0 +1,84 @@
+# List Available Triggers
+
+Retrieve a list of all available triggers that can be used to activate agents.
+
+## Endpoint
+
+```http
+GET /api/agents/triggers
+```
+
+## Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `type` | string | No | Filter triggers by type (e.g., "webhook", "schedule", "event") |
+| `status` | string | No | Filter triggers by status ("active", "beta", "deprecated") |
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "triggers": [
+      {
+        "id": "trigger_123",
+        "name": "Webhook Trigger",
+        "description": "Triggers an agent when a webhook is received",
+        "type": "webhook",
+        "status": "active",
+        "version": "1.0.0",
+        "configuration": {
+          "endpoint": "/api/webhooks/{trigger_id}",
+          "methods": ["POST"],
+          "headers": {
+            "Content-Type": "application/json"
+          }
+        },
+        "example": {
+          "payload": {
+            "event": "website_updated",
+            "data": {
+              "url": "https://example.com",
+              "timestamp": "2024-03-13T12:00:00Z"
+            }
+          }
+        }
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "per_page": 10
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_FILTER",
+    "message": "Invalid filter parameters provided"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_FILTER` | The provided filter parameters are invalid |
+| `SERVER_ERROR` | An error occurred while retrieving the triggers |
+
+## Notes
+
+- Triggers are paginated with 10 items per page by default
+- Use the `type` parameter to filter triggers by their activation method
+- Use the `status` parameter to filter triggers by their current status
+- Each trigger includes its configuration details and example payload
+- Webhook triggers provide a unique endpoint URL for receiving events 

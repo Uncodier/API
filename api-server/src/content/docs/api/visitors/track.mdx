@@ -44,7 +44,8 @@ import { UnifiedApiTester } from '@/components/ApiTester';
         { value: "form_error", label: "Form Error" },
         { value: "error", label: "Error" },
         { value: "performance", label: "Performance" },
-        { value: "session_recording", label: "Session Recording" }
+        { value: "session_recording", label: "Session Recording" },
+        { value: "activity_bulk", label: "Activity Bulk" }
       ],
       defaultValue: "pageview",
       required: true
@@ -101,6 +102,19 @@ import { UnifiedApiTester } from '@/components/ApiTester';
       type: "textarea",
       placeholder: '{\n  "key": "value"\n}',
       required: false
+    },
+    {
+      name: "activity_bulk_events",
+      label: "Eventos en Lote (Solo para Activity Bulk)",
+      type: "textarea",
+      placeholder: `[
+  { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+  { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+  { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+  { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+]`,
+      required: false,
+      showIf: "event_type === 'activity_bulk'"
     },
     {
       name: "user_agent",
@@ -439,7 +453,13 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 }
 ```
 
-## Ejemplo de payload para grabación de sesión
+## Session Recording Event Type
+
+El tipo de evento `session_recording` permite capturar la actividad del usuario en detalle, incluyendo varios tipos de interacción como movimientos del ratón, clics, desplazamientos y pulsaciones de teclas. Esta capacidad de grabación completa de sesión facilita el análisis detallado del comportamiento del usuario en tu sitio web.
+
+### Estructura de la Grabación de Sesión
+
+Una grabación de sesión incluye metadatos básicos como ID de grabación, tiempo de inicio y fin, duración, etc., así como un array de eventos de actividad detallados. Cada evento en el array debe incluir un campo `type` que indique el subtipo de evento.
 
 ```json
 {
@@ -455,19 +475,16 @@ import { UnifiedApiTester } from '@/components/ApiTester';
     "end_time": 1646123789456,
     "duration": 332667,
     "events": [
-      {
-        "type": "mousemove",
-        "timestamp": 1646123456789,
-        "x": 500,
-        "y": 300
-      },
-      {
-        "type": "click",
-        "timestamp": 1646123456799,
-        "x": 505,
-        "y": 310,
-        "element": "button.submit"
-      }
+      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+    ],
+    "activity": [
+      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
     ],
     "metadata": {
       "screen_size": "1920x1080",
@@ -479,6 +496,49 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   }
 }
 ```
+
+### Subtipos de Eventos Soportados
+
+Los siguientes subtipos de eventos pueden incluirse en los arrays `events` y `activity`:
+
+| Subtipo | Propiedades Requeridas | Propiedades Opcionales | Descripción |
+|---------|------------------------|------------------------|-------------|
+| `mousemove` | `x`, `y`, `timestamp` | `viewport`, `element` | Movimiento del ratón |
+| `click` | `x`, `y`, `timestamp` | `element` | Clic del ratón |
+| `scroll` | `timestamp` | `x`, `y`, `percentage_scrolled`, `document_height`, `viewport_height` | Desplazamiento de página |
+| `keypress` | `timestamp`, `key` | `key_code`, `element`, `is_sensitive` | Pulsación de tecla |
+| `resize` | `timestamp`, `width`, `height` | `previous_width`, `previous_height`, `orientation` | Cambio de tamaño de ventana |
+| `focus` | `timestamp`, `element` | `focus_duration` | Enfoque en elemento |
+| `blur` | `timestamp`, `element` | `blur_duration` | Pérdida de enfoque |
+| `form_change` | `timestamp`, `form_id` | `form_name`, `field_name`, `field_value`, `field_type` | Cambio en campo de formulario |
+
+### Optimización para Envío de Eventos
+
+El sistema de tracking utiliza un mecanismo de buffer para recopilar y enviar eventos de forma eficiente:
+
+1. **Recopilación en Buffer**: Los eventos del usuario se recopilan en un buffer hasta que alcanza un tamaño predefinido (por ejemplo, 50 eventos) o ha transcurrido un intervalo de tiempo (por ejemplo, 1 segundo).
+2. **Envío en Lote**: Una vez que el buffer está lleno o se alcanza el intervalo, los eventos se envían a la API en una sola solicitud como un evento `session_recording`.
+
+### Beneficios
+
+- **Análisis Detallado**: Permite reconstruir y analizar la sesión completa del usuario para entender su comportamiento.
+- **Depuración de UX**: Identifica puntos de fricción y problemas de usabilidad en la interfaz.
+- **Reducción de Llamadas API**: Al enviar eventos en lotes, se reduce significativamente el número de llamadas a la API.
+- **Flexibilidad**: Al incluir el tipo de cada evento, se pueden capturar diferentes tipos de interacciones del usuario en un solo lote.
+
+### Buenas Prácticas para Grabación de Sesiones
+
+1. **Optimización de datos**
+   - Throttle los eventos de mouse (ej: cada 100ms)
+   - Muestreo de sesiones (ej: grabar solo 10% de las sesiones)
+   - Compresión de datos antes de enviar
+   - Agrupación de eventos en lotes
+
+2. **Privacidad y seguridad**
+   - No grabar campos sensibles (passwords, tarjetas de crédito)
+   - Ofrecer opción de pausar/stop la grabación
+   - Cumplir con GDPR y otras regulaciones
+   - Obtener consentimiento explícito del usuario
 
 ## Respuesta
 
@@ -539,56 +599,6 @@ Todos los eventos son procesados de forma asíncrona en segundo plano. El endpoi
 - **Peticiones por minuto**: 100 por IP
 - **Propiedades personalizadas**: 50 por evento
 
-## Buenas prácticas para grabación de sesiones
-
-1. **Optimización de datos**
-   - Throttle los eventos de mouse (ej: cada 100ms)
-   - Muestreo de sesiones (ej: grabar solo 10% de las sesiones)
-   - Compresión de datos antes de enviar
-   - Agrupación de eventos en lotes
-
-2. **Privacidad y seguridad**
-   - No grabar campos sensibles (passwords, tarjetas de crédito)
-   - Ofrecer opción de pausar/stop la grabación
-   - Cumplir con GDPR y otras regulaciones
-   - Obtener consentimiento explícito del usuario
-
-3. **Rendimiento**
-   - Usar Web Workers para procesamiento en segundo plano
-   - Implementar buffer local para eventos
-   - Enviar datos en intervalos regulares
-   - Limitar el tamaño de la grabación
-
-4. **Manejo de errores**
-   - Implementar retry con backoff exponencial
-   - Guardar eventos localmente si falla la conexión
-   - Limpiar datos antiguos automáticamente
-   - Monitorear el uso de memoria
-
-5. **Calidad de datos**
-   - Validar eventos antes de enviar
-   - Filtrar eventos duplicados
-   - Normalizar coordenadas del mouse
-   - Capturar el estado del DOM relevante
-
-6. **Almacenamiento**
-   - Definir políticas de retención
-   - Implementar compresión eficiente
-   - Usar CDN para distribución
-   - Mantener backups de grabaciones importantes
-
-7. **Análisis**
-   - Procesar eventos en tiempo real
-   - Generar insights automáticos
-   - Identificar patrones de comportamiento
-   - Detectar problemas de UX
-
-8. **Integración**
-   - Sincronizar con otros eventos
-   - Vincular con datos de usuario
-   - Exportar en formatos estándar
-   - Integrar con herramientas de análisis
-
 ## Límites y cuotas para grabación de sesiones
 
 - **Duración máxima por sesión**: 30 minutos
@@ -597,3 +607,69 @@ Todos los eventos son procesados de forma asíncrona en segundo plano. El endpoi
 - **Sesiones grabadas**: 10% del total
 - **Retención de datos**: 30 días
 - **Rate limit**: 100 grabaciones/hora
+
+## Activity Bulk Event Type
+
+El tipo de evento `activity_bulk` es una solución eficiente para enviar múltiples eventos de actividad del usuario en una sola solicitud, especialmente útil para eventos de movimiento del ratón, scroll, keypress, etc.
+
+En lugar de enviar cada evento individualmente, el sistema de tracking recopila los eventos en un buffer y los envía en lotes, reduciendo significativamente el número de llamadas a la API y mejorando el rendimiento.
+
+### Cómo Funciona
+
+1. **Recopilación en Buffer**: Los eventos del usuario se recopilan en un buffer hasta que alcanza un tamaño predefinido (por ejemplo, 50 eventos) o ha transcurrido un intervalo de tiempo (por ejemplo, 1 segundo).
+2. **Envío en Lote**: Una vez que el buffer está lleno o se alcanza el intervalo, los eventos se envían a la API en una sola solicitud como un evento `activity_bulk`.
+
+### Estructura de Eventos en Activity
+
+Cada evento en el array `activity` debe incluir un campo `type` que indique el subtipo de evento. Esto permite recopilar diferentes tipos de interacción del usuario en un solo lote:
+
+```json
+{
+  "site_id": "site_123abc",
+  "event_type": "activity_bulk",
+  "url": "https://ejemplo.com/productos",
+  "visitor_id": "vis_abcd1234",
+  "session_id": "sess_xyz789",
+  "timestamp": 1646123456789,
+  "properties": {
+    "events": [
+      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+    ],
+    "activity": [
+      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
+      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
+      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
+      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+    ]
+  }
+}
+```
+
+### Subtipos de Eventos Soportados
+
+Los siguientes subtipos de eventos pueden incluirse en el array `activity`:
+
+| Subtipo | Propiedades Requeridas | Propiedades Opcionales | Descripción |
+|---------|------------------------|------------------------|-------------|
+| `mousemove` | `x`, `y`, `timestamp` | `viewport`, `element` | Movimiento del ratón |
+| `click` | `x`, `y`, `timestamp` | `element` | Clic del ratón |
+| `scroll` | `timestamp` | `x`, `y`, `percentage_scrolled`, `document_height`, `viewport_height` | Desplazamiento de página |
+| `keypress` | `timestamp`, `key` | `key_code`, `element`, `is_sensitive` | Pulsación de tecla |
+| `resize` | `timestamp`, `width`, `height` | `previous_width`, `previous_height`, `orientation` | Cambio de tamaño de ventana |
+| `focus` | `timestamp`, `element` | `focus_duration` | Enfoque en elemento |
+| `blur` | `timestamp`, `element` | `blur_duration` | Pérdida de enfoque |
+| `form_change` | `timestamp`, `form_id` | `form_name`, `field_name`, `field_value`, `field_type` | Cambio en campo de formulario |
+
+### Beneficios
+
+- **Reducción de Llamadas API**: Al enviar eventos en lotes, se reduce significativamente el número de llamadas a la API, lo que ayuda a gestionar la carga del servidor y mejora los tiempos de respuesta.
+- **Mejora de Rendimiento**: El almacenamiento en buffer de eventos permite una transmisión y procesamiento de datos más eficiente.
+- **Historial Completo**: La propiedad `activity` permite mantener un historial completo de los eventos del usuario, lo que puede ser útil para el análisis y la depuración.
+- **Flexibilidad**: Al incluir el tipo de cada evento, se pueden capturar diferentes tipos de interacciones del usuario en un solo lote.
+
+### Implementación
+
+La clase `MouseEventTracker` en la biblioteca de tracking maneja el almacenamiento en buffer y el envío de eventos. Se inicializa con los IDs de sesión y visitante necesarios, y gestiona automáticamente el proceso de recopilación y envío de eventos.
