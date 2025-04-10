@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField } from '../components/FormComponents';
 
 // Estilos CSS en línea para los checkboxes
 const styles: Record<string, React.CSSProperties> = {
@@ -193,7 +193,7 @@ const ContentApi: BaseApiConfig = {
             id={field.name}
             type={field.type}
             value={(state as any)[field.name] !== undefined ? (state as any)[field.name] : field.defaultValue}
-            onChange={(value) => handleChange(field.name, value)}
+            onChange={(value: any) => handleChange(field.name, value)}
             options={field.options}
             min={field.min}
             max={field.max}
@@ -215,7 +215,7 @@ const ContentApi: BaseApiConfig = {
             id="url"
             type="text"
             value={state.url}
-            onChange={(value) => handleChange('url', value)}
+            onChange={(value: any) => handleChange('url', value)}
             placeholder="https://ejemplo.com"
             required
           />
@@ -225,7 +225,7 @@ const ContentApi: BaseApiConfig = {
             id="segment_id"
             type="text"
             value={state.segment_id}
-            onChange={(value) => handleChange('segment_id', value)}
+            onChange={(value: any) => handleChange('segment_id', value)}
             placeholder="ID del segmento en la base de datos"
             required
           />
@@ -273,7 +273,7 @@ const ContentApi: BaseApiConfig = {
             id="limit"
             type="number"
             value={state.limit}
-            onChange={(value) => handleChange('limit', value)}
+            onChange={(value: any) => handleChange('limit', value)}
             min={1}
             max={50}
           />
@@ -283,7 +283,7 @@ const ContentApi: BaseApiConfig = {
             id="funnel_stage"
             type="select"
             value={state.funnel_stage}
-            onChange={(value) => handleChange('funnel_stage', value)}
+            onChange={(value: any) => handleChange('funnel_stage', value)}
             options={[
               { value: "all", label: "Todas las etapas" },
               { value: "awareness", label: "Conocimiento (Awareness)" },
@@ -298,7 +298,7 @@ const ContentApi: BaseApiConfig = {
             id="topics"
             type="text"
             value={state.topics?.join(', ') || ''}
-            onChange={(value) => handleChange('topics', value.split(',').map((topic: string) => topic.trim()).filter((topic: string) => topic !== ''))}
+            onChange={(value: any) => handleChange('topics', value.split(',').map((topic: string) => topic.trim()).filter((topic: string) => topic !== ''))}
             placeholder="marketing digital, redes sociales, ..."
           />
           
@@ -307,7 +307,7 @@ const ContentApi: BaseApiConfig = {
             id="sort_by"
             type="select"
             value={state.sort_by}
-            onChange={(value) => handleChange('sort_by', value)}
+            onChange={(value: any) => handleChange('sort_by', value)}
             options={[
               { value: "relevance", label: "Relevancia" },
               { value: "date", label: "Fecha" },
@@ -320,7 +320,7 @@ const ContentApi: BaseApiConfig = {
             id="user_id"
             type="text"
             value={state.user_id}
-            onChange={(value) => handleChange('user_id', value)}
+            onChange={(value: any) => handleChange('user_id', value)}
             placeholder="user_123456"
           />
           
@@ -329,7 +329,7 @@ const ContentApi: BaseApiConfig = {
             id="site_id"
             type="text"
             value={state.site_id}
-            onChange={(value) => handleChange('site_id', value)}
+            onChange={(value: any) => handleChange('site_id', value)}
             placeholder="site_789012"
           />
         </>
@@ -349,7 +349,7 @@ const ContentApi: BaseApiConfig = {
               id="modelType"
               type="select"
               value={state.modelType}
-              onChange={(value) => handleChange('modelType', value)}
+              onChange={(value: any) => handleChange('modelType', value)}
               options={[
                 { value: "anthropic", label: "Anthropic" },
                 { value: "openai", label: "OpenAI" },
@@ -362,7 +362,7 @@ const ContentApi: BaseApiConfig = {
               id="modelId"
               type="select"
               value={state.modelId}
-              onChange={(value) => handleChange('modelId', value)}
+              onChange={(value: any) => handleChange('modelId', value)}
               options={MODEL_OPTIONS[state.modelType] || []}
             />
           </>
@@ -375,7 +375,7 @@ const ContentApi: BaseApiConfig = {
             id="timeout"
             type="number"
             value={state.timeout}
-            onChange={(value) => handleChange('timeout', value)}
+            onChange={(value: any) => handleChange('timeout', value)}
             min={5000}
             max={120000}
           />
@@ -388,7 +388,7 @@ const ContentApi: BaseApiConfig = {
             id="includeScreenshot"
             type="checkbox"
             value={state.includeScreenshot}
-            onChange={(value) => handleChange('includeScreenshot', value)}
+            onChange={(value: any) => handleChange('includeScreenshot', value)}
           />
         ) : null}
         
@@ -399,7 +399,7 @@ const ContentApi: BaseApiConfig = {
             id="include_metadata"
             type="checkbox"
             value={state.include_metadata}
-            onChange={(value) => handleChange('include_metadata', value)}
+            onChange={(value: any) => handleChange('include_metadata', value)}
           />
         ) : null}
       </>
