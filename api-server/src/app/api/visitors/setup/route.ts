@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
     const createVisitorsTableSQL = `
       CREATE TABLE IF NOT EXISTS visitors (
         id UUID PRIMARY KEY,
-        visitor_id UUID NOT NULL UNIQUE,
+        fingerprint TEXT,
         first_seen_at BIGINT NOT NULL,
         last_seen_at BIGINT NOT NULL,
         total_sessions INTEGER DEFAULT 1,
@@ -76,9 +76,9 @@ export async function GET(request: NextRequest) {
       );
       
       -- Create indexes for common queries
-      CREATE INDEX IF NOT EXISTS idx_visitors_visitor_id ON visitors(visitor_id);
       CREATE INDEX IF NOT EXISTS idx_visitors_lead_id ON visitors(lead_id);
       CREATE INDEX IF NOT EXISTS idx_visitors_is_identified ON visitors(is_identified);
+      CREATE INDEX IF NOT EXISTS idx_visitors_fingerprint ON visitors(fingerprint);
     `;
     
     console.log("[SETUP] Executing visitors table creation SQL...");
@@ -109,7 +109,6 @@ export async function GET(request: NextRequest) {
     const createSessionsTableSQL = `
       CREATE TABLE IF NOT EXISTS visitor_sessions (
         id UUID PRIMARY KEY,
-        session_id UUID NOT NULL UNIQUE,
         visitor_id UUID NOT NULL,
         site_id UUID NOT NULL,
         landing_url TEXT,
@@ -141,12 +140,11 @@ export async function GET(request: NextRequest) {
         updated_at TIMESTAMP WITH TIME ZONE,
         CONSTRAINT fk_visitor
           FOREIGN KEY(visitor_id)
-          REFERENCES visitors(visitor_id)
+          REFERENCES visitors(id)
           ON DELETE CASCADE
       );
       
       -- Create indexes for common queries
-      CREATE INDEX IF NOT EXISTS idx_visitor_sessions_session_id ON visitor_sessions(session_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_visitor_id ON visitor_sessions(visitor_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_site_id ON visitor_sessions(site_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_is_active ON visitor_sessions(is_active);
@@ -192,11 +190,11 @@ export async function GET(request: NextRequest) {
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
         CONSTRAINT fk_session
           FOREIGN KEY(session_id)
-          REFERENCES visitor_sessions(session_id)
+          REFERENCES visitor_sessions(id)
           ON DELETE CASCADE,
         CONSTRAINT fk_visitor
           FOREIGN KEY(visitor_id)
-          REFERENCES visitors(visitor_id)
+          REFERENCES visitors(id)
           ON DELETE CASCADE,
         CONSTRAINT valid_event_type CHECK (
           event_type IN (

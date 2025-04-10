@@ -1,0 +1,149 @@
+# Create Message Command
+
+Creates a command object to handle customer support interactions and manages the conversation flow.
+
+## Endpoint
+
+```http
+POST /api/agents/customerSupport/message
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conversationId` | string | No | Optional ID of existing conversation |
+| `userId` | string | Yes | ID of the user or customer |
+| `message` | string | Yes | The message content from the customer |
+| `agentId` | string | No | ID of the customer support agent to handle the request |
+
+### Example Request
+
+```json
+{
+  "conversationId": "conv_123456",
+  "userId": "user_789",
+  "message": "I need help with my recent order",
+  "agentId": "agent_support_123"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="customer-support" />
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control supervised tasks with failure handling, tools, contexts, etc.
+
+```json
+{
+  "targets": [
+    {
+      "message": {
+        "content": "I understand you're having an issue with your recent order. Let me help you with that. Could you please provide your order number so I can look up the details?"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "escalate": false,
+      "description": "escalate when needed",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "params": {
+        "conversation": "required",
+        "lead_id": "required"
+      }
+    },
+    {
+      "contact_human": false,
+      "description": "contact human supervisor when complex issues require human intervention",
+      "status": "not_initialized",
+      "type": "asynchronous",
+      "params": {
+        "conversation": "required",
+        "lead_id": "required"
+      }
+    }
+  ],
+  "context": "Previous conversation messages and FAQ content",
+  "supervisors": [
+    {
+      "agent_role": "sales",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "manager",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "create message",
+  "description": "Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "commandId": "cmd_123456",
+    "status": "processing",
+    "message": "Command created successfully"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `AGENT_NOT_FOUND` | The specified agent does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The command executes asynchronously
+- The system automatically creates `message` and/or `conversation` objects if they don't exist
+- The generated command controls the agent's behavior with:
+  - `targets`: An array of objects defining expected outputs to be generated
+  - `tools`: Specifies what actions the agent can take (like escalation or contacting human supervisors)
+    - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
+  - `context`: Provides conversation history and relevant documentation
+  - `supervisors`: Defines which agent roles can intervene
+  - `task`: Specifies the high-level objective for the agent
+  - `description`: Contains the detailed prompt instructions for the agent
+
+## Try It
+
+You can test this API directly using our API Tester interface. The Customer Support API tester allows you to send messages to the customer support agent and see the responses.
+
+Required fields:
+- **User ID**: The ID of the user or customer
+- **Message**: The content of the message from the customer
+
+Optional fields:
+- **Conversation ID**: If continuing an existing conversation, provide the ID
+- **Agent ID**: The ID of the customer support agent
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.

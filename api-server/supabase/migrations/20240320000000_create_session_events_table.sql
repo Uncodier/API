@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS session_events (
     url text NOT NULL,
     referrer text,
     visitor_id text,
-    session_id text,
+    session_id uuid,
     timestamp bigint NOT NULL,
     properties jsonb DEFAULT '{}'::jsonb,
     user_agent text,

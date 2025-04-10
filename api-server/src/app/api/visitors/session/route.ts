@@ -23,10 +23,8 @@ import { v4 as uuidv4 } from 'uuid'
 function validateAndPrepareSessionData(sessionData: any, sessionId: string, visitorId: string, startTime: number) {
   try {
     // Verificar campos obligatorios para la tabla visitor_sessions
-    const requiredFields = ['session_id', 'site_id', 'visitor_id'];
+    const requiredFields = ['site_id'];
     const missingFields = requiredFields.filter(field => {
-      if (field === 'session_id') return !sessionId;
-      if (field === 'visitor_id') return !visitorId;
       return !sessionData[field];
     });
 
@@ -49,9 +47,8 @@ function validateAndPrepareSessionData(sessionData: any, sessionId: string, visi
 
     // Preparar datos para la inserción, manejando correctamente tipos de datos
     const preparedData = {
-      id: uuidv4(), // ID de la fila
-      session_id: sessionId,
-      visitor_id: visitorId,
+      id: sessionId, // Ahora id es el identificador principal de la sesión
+      visitor_id: visitorId, // Mantener visitor_id para compatibilidad con DB
       site_id: sessionData.site_id,
       landing_url: sessionData.url || null,
       current_url: sessionData.url || null,
@@ -99,7 +96,8 @@ const CreateSessionSchema = z.object({
   site_id: z.string().uuid("site_id debe ser un UUID válido"),
   
   // Campos opcionales
-  visitor_id: z.string().optional(),
+  id: z.string().optional(),
+  fingerprint: z.string().optional(),
   url: z.string().url("URL debe ser válida").optional(),
   referrer: z.string().optional(),
   utm_source: z.string().optional(),
@@ -224,8 +222,87 @@ export async function POST(request: NextRequest) {
     
     // Generar IDs y marcas de tiempo
     const sessionId = uuidv4();
-    const visitorId = sessionData.visitor_id || uuidv4();
+    let visitorId = sessionData.id || uuidv4();
     const startTime = Date.now();
+    
+    // Si se proporciona un fingerprint, buscar primero una sesión activa con este fingerprint
+    if (sessionData.fingerprint) {
+      console.log(`[POST /api/visitors/session] Buscando sesión activa con fingerprint: ${sessionData.fingerprint}`);
+      
+      // Primero buscar un visitante existente con el fingerprint
+      const { data: existingVisitorByFingerprint, error: fingerprintSearchError } = await supabaseAdmin
+        .from('visitors')
+        .select('id')
+        .eq('fingerprint', sessionData.fingerprint)
+        .single();
+      
+      if (existingVisitorByFingerprint && !fingerprintSearchError) {
+        console.log(`[POST /api/visitors/session] Visitante encontrado con fingerprint: ${sessionData.fingerprint}, id: ${existingVisitorByFingerprint.id}`);
+        visitorId = existingVisitorByFingerprint.id;
+        
+        // Verificar si hay una sesión activa para este visitante
+        const { data: activeSession, error: activeSessionError } = await supabaseAdmin
+          .from('visitor_sessions')
+          .select('*')
+          .eq('visitor_id', visitorId)
+          .eq('site_id', sessionData.site_id)
+          .eq('is_active', true)
+          .order('last_activity_at', { ascending: false })
+          .limit(1)
+          .single();
+        
+        // Si encontramos una sesión activa, la devolvemos en lugar de crear una nueva
+        if (activeSession && !activeSessionError) {
+          console.log(`[POST /api/visitors/session] Sesión activa encontrada, retornando sesión existente: ${activeSession.id}`);
+          
+          const ttl = 1800; // 30 minutos en segundos
+          const expiresAt = Date.now() + (ttl * 1000);
+          
+          // Actualizar la marca de última actividad
+          const { error: updateError } = await supabaseAdmin
+            .from('visitor_sessions')
+            .update({
+              last_activity_at: Date.now(),
+              is_active: true,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', activeSession.id);
+          
+          if (updateError) {
+            console.log(`[POST /api/visitors/session] Error al actualizar la última actividad: ${updateError.message}`);
+          }
+          
+          // Devolver la sesión existente
+          const apiResponse = {
+            success: true,
+            data: {
+              session_id: activeSession.id,
+              visitor_id: visitorId,
+              fingerprint: sessionData.fingerprint,
+              id: visitorId,
+              lead_id: activeSession.lead_id || null,
+              created_at: activeSession.started_at,
+              last_activity_at: Date.now(),
+              expires_at: expiresAt,
+              ttl: ttl,
+              session_url: `/api/visitors/session?session_id=${activeSession.id}&site_id=${sessionData.site_id}`,
+              is_new_session: false
+            },
+            meta: {
+              api_version: '1.0',
+              server_time: Date.now(),
+              processing_time: Date.now() - startTime
+            }
+          };
+          
+          console.log(`[POST /api/visitors/session] Respuesta enviada (sesión existente):`, apiResponse);
+          return NextResponse.json(apiResponse, { status: 200 });
+        }
+      } else {
+        console.log(`[POST /api/visitors/session] No se encontró visitante con fingerprint: ${sessionData.fingerprint}`);
+      }
+    }
+    
     console.log(`[POST /api/visitors/session] Generados sessionId: ${sessionId}, visitorId: ${visitorId}`);
     
     // Validar y preparar datos para la base de datos
@@ -242,8 +319,8 @@ export async function POST(request: NextRequest) {
       console.log(`[POST /api/visitors/session] Verificando si el visitante existe en la base de datos...`);
       const { data: existingVisitor, error: visitorCheckError } = await supabaseAdmin
         .from('visitors')
-        .select('visitor_id')
-        .eq('visitor_id', visitorId)
+        .select('id')
+        .eq('id', visitorId)
         .single();
       
       // Si el visitante no existe, crearlo primero
@@ -252,8 +329,8 @@ export async function POST(request: NextRequest) {
         
         // Crear nuevo registro de visitante
         const newVisitor = {
-          id: uuidv4(),
-          visitor_id: visitorId,
+          id: visitorId,
+          fingerprint: sessionData.fingerprint || null,
           first_seen_at: startTime,
           last_seen_at: startTime,
           total_sessions: 1,
@@ -294,7 +371,7 @@ export async function POST(request: NextRequest) {
             last_seen_at: startTime,
             total_sessions: supabaseAdmin.rpc('increment', { value: 1 })
           })
-          .eq('visitor_id', visitorId);
+          .eq('id', visitorId);
         
         if (visitorUpdateError) {
           console.error(`[POST /api/visitors/session] Error al actualizar visitante:`, visitorUpdateError);
@@ -343,10 +420,14 @@ export async function POST(request: NextRequest) {
         data: {
           session_id: sessionId,
           visitor_id: visitorId,
+          fingerprint: sessionData.fingerprint || null,
+          id: visitorId,
+          lead_id: null,
           created_at: startTime,
           expires_at: expiresAt,
           ttl: ttl,
-          session_url: `/api/visitors/session?session_id=${sessionId}&site_id=${sessionData.site_id}`
+          session_url: `/api/visitors/session?session_id=${sessionId}&site_id=${sessionData.site_id}`,
+          is_new_session: true
         },
         meta: {
           api_version: '1.0',
@@ -406,8 +487,8 @@ export async function GET(request: NextRequest) {
     // Consultar la sesión en la base de datos
     const { data: session, error } = await supabaseAdmin
       .from('visitor_sessions')
-      .select('*')
-      .eq('session_id', sessionId)
+      .select('*, visitors(fingerprint)')
+      .eq('id', sessionId)
       .eq('site_id', siteId)
       .single();
     
@@ -439,8 +520,11 @@ export async function GET(request: NextRequest) {
     const response = {
       success: true,
       data: {
-        session_id: session.session_id,
+        session_id: session.id,
         visitor_id: session.visitor_id,
+        fingerprint: session.visitors?.fingerprint || null,
+        id: session.visitor_id,
+        lead_id: session.lead_id,
         site_id: session.site_id,
         url: session.landing_url,
         current_url: session.current_url,
@@ -506,8 +590,8 @@ export async function PUT(request: NextRequest) {
     console.log(`[PUT /api/visitors/session] Verificando existencia de sesión`);
     const { data: existingSession, error: findError } = await supabaseAdmin
       .from('visitor_sessions')
-      .select('*')
-      .eq('session_id', updateData.session_id)
+      .select('*, visitors(fingerprint)')
+      .eq('id', updateData.session_id)
       .eq('site_id', updateData.site_id)
       .single();
     
@@ -546,7 +630,7 @@ export async function PUT(request: NextRequest) {
     const { data, error } = await supabaseAdmin
       .from('visitor_sessions')
       .update(updates)
-      .eq('session_id', updateData.session_id)
+      .eq('id', updateData.session_id)
       .eq('site_id', updateData.site_id)
       .select()
       .single();
@@ -566,6 +650,10 @@ export async function PUT(request: NextRequest) {
       success: true,
       data: {
         session_id: updateData.session_id,
+        visitor_id: existingSession.visitor_id,
+        fingerprint: existingSession.visitors?.fingerprint || null,
+        id: existingSession.visitor_id,
+        lead_id: existingSession.lead_id,
         updated_at: Date.now(),
         expires_at: expiresAt,
         ttl: ttl

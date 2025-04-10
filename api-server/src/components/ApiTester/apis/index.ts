@@ -12,6 +12,8 @@ import VisitorSessionApi from './VisitorSessionApi';
 import HtmlPersonalizationApi from './HtmlPersonalizationApi';
 import VisitorTrackApi from './VisitorTrackApi';
 import VisitorIdentifyApi from './VisitorIdentifyApi';
+import AgentsIntegrationsApi from './AgentsIntegrationsApi';
+import CustomerSupportApi from './CustomerSupportApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -27,5 +29,7 @@ apiRegistry.register(VisitorSessionApi);
 apiRegistry.register(HtmlPersonalizationApi);
 apiRegistry.register(VisitorTrackApi);
 apiRegistry.register(VisitorIdentifyApi);
+apiRegistry.register(AgentsIntegrationsApi);
+apiRegistry.register(CustomerSupportApi);
 
 export default apiRegistry; 

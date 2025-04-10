@@ -78,7 +78,7 @@ export async function POST(
     const { data: session, error: findError } = await supabaseAdmin
       .from('visitor_sessions')
       .select('*')
-      .eq('session_id', sessionId)
+      .eq('id', sessionId)
       .eq('site_id', siteId)
       .single();
     
@@ -111,7 +111,7 @@ export async function POST(
     const { data, error } = await supabaseAdmin
       .from('visitor_sessions')
       .update(updates)
-      .eq('session_id', sessionId)
+      .eq('id', sessionId)
       .eq('site_id', siteId)
       .select()
       .single();

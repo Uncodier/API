@@ -40,5 +40,9 @@ export default withNextra({
         destination: '/api/:path*',
       },
     ]
+  },
+  // Ensure environment variables are available
+  env: {
+    COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g'
   }
 })

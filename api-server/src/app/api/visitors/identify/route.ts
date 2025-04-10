@@ -15,7 +15,7 @@ import { v4 as uuidv4 } from 'uuid'
 // Validation schema for the request body
 const identifySchema = z.object({
   site_id: z.string(),
-  visitor_id: z.string(),
+  id: z.string(),
   lead_id: z.string().optional(),
   traits: z.object({
     email: z.string().email().optional(),
@@ -105,7 +105,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if visitor exists
-    console.log("[POST /api/visitors/identify] Checking visitor existence:", validatedData.visitor_id);
+    console.log("[POST /api/visitors/identify] Checking visitor existence:", validatedData.id);
     
     // Primero, veamos la estructura de la tabla
     const { data: tableInfo, error: tableError } = await supabaseAdmin
@@ -118,8 +118,8 @@ export async function POST(request: NextRequest) {
     // Verificar si el visitante existe en la tabla
     const { data: visitorExists, error: existsError } = await supabaseAdmin
       .from('visitors')
-      .select('id, visitor_id')
-      .or(`id.eq.${validatedData.visitor_id},visitor_id.eq.${validatedData.visitor_id}`)
+      .select('id')
+      .eq('id', validatedData.id)
       .limit(1);
     
     console.log("[POST /api/visitors/identify] Visitor exists check:", { visitorExists, existsError });
@@ -128,11 +128,11 @@ export async function POST(request: NextRequest) {
     const { data: visitor, error: visitorError } = await supabaseAdmin
       .from('visitors')
       .select('*')
-      .eq('id', validatedData.visitor_id)
+      .eq('id', validatedData.id)
       .single();
 
     console.log("[POST /api/visitors/identify] Visitor query details:", {
-      visitor_id: validatedData.visitor_id,
+      visitor_id: validatedData.id,
       query_result: visitor,
       error: visitorError,
       error_code: visitorError?.code,
@@ -147,9 +147,9 @@ export async function POST(request: NextRequest) {
             success: false,
             error: {
               code: 'visitor_not_found',
-              message: `Visitor with ID ${validatedData.visitor_id} not found. Please track the visitor first using the /api/visitors/track endpoint.`,
+              message: `Visitor with ID ${validatedData.id} not found. Please track the visitor first using the /api/visitors/track endpoint.`,
               details: {
-                visitor_id: validatedData.visitor_id,
+                visitor_id: validatedData.id,
                 required_action: 'track_visitor'
               }
             }
@@ -171,15 +171,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (!visitor) {
-      console.log("[POST /api/visitors/identify] Visitor not found:", validatedData.visitor_id);
+      console.log("[POST /api/visitors/identify] Visitor not found:", validatedData.id);
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'visitor_not_found',
-            message: `Visitor with ID ${validatedData.visitor_id} not found. Please track the visitor first using the /api/visitors/track endpoint.`,
+            message: `Visitor with ID ${validatedData.id} not found. Please track the visitor first using the /api/visitors/track endpoint.`,
             details: {
-              visitor_id: validatedData.visitor_id,
+              visitor_id: validatedData.id,
               required_action: 'track_visitor'
             }
           }
@@ -358,7 +358,7 @@ export async function POST(request: NextRequest) {
         is_identified: true,
         updated_at: new Date().toISOString()
       })
-      .eq('id', validatedData.visitor_id)
+      .eq('id', validatedData.id)
       .select()
       .single();
 
@@ -379,9 +379,9 @@ export async function POST(request: NextRequest) {
     // Find any other visitors that might need to be merged
     const { data: relatedVisitors, error: relatedError } = await supabaseAdmin
       .from('visitors')
-      .select('visitor_id')
+      .select('id')
       .eq('lead_id', lead?.id)
-      .neq('visitor_id', validatedData.visitor_id);
+      .neq('id', validatedData.id);
 
     if (relatedError) {
       console.error('Error finding related visitors:', relatedError);
@@ -400,10 +400,10 @@ export async function POST(request: NextRequest) {
     // Devolvemos una respuesta exitosa con información sobre el visitante y el lead asociado
     return NextResponse.json({
       success: true,
-      visitor_id: updatedVisitor.visitor_id,
+      id: updatedVisitor.id,
       lead_id: lead?.id,
       merged: relatedVisitors.length > 0,
-      merged_ids: relatedVisitors.map(v => v.visitor_id)
+      merged_ids: relatedVisitors.map(v => v.id)
     });
 
   } catch (error) {

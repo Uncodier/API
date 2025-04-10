@@ -38,7 +38,6 @@ export async function GET(request: NextRequest) {
     const createTableSQL = `
       CREATE TABLE IF NOT EXISTS visitor_sessions (
         id UUID PRIMARY KEY,
-        session_id UUID NOT NULL,
         visitor_id UUID NOT NULL,
         site_id UUID NOT NULL,
         landing_url TEXT,
@@ -67,11 +66,14 @@ export async function GET(request: NextRequest) {
         exit_type TEXT,
         custom_data JSONB,
         created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        updated_at TIMESTAMP WITH TIME ZONE
+        updated_at TIMESTAMP WITH TIME ZONE,
+        CONSTRAINT fk_visitor
+          FOREIGN KEY(visitor_id)
+          REFERENCES visitors(id)
+          ON DELETE CASCADE
       );
       
       -- Create indexes for common queries
-      CREATE INDEX IF NOT EXISTS idx_visitor_sessions_session_id ON visitor_sessions(session_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_visitor_id ON visitor_sessions(visitor_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_site_id ON visitor_sessions(site_id);
       CREATE INDEX IF NOT EXISTS idx_visitor_sessions_is_active ON visitor_sessions(is_active);

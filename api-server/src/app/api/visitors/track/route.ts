@@ -30,8 +30,8 @@ const baseEventSchema = z.object({
   site_id: z.string(),
   url: z.string().url(),
   referrer: z.string().url().optional(),
-  visitor_id: z.string().optional(),
-  session_id: z.string().optional(),
+  id: z.string().optional(),
+  session_id: z.string().uuid().optional(),
   timestamp: z.number().optional(),
   user_agent: z.string().optional(),
   ip: z.string().optional(),
@@ -256,7 +256,7 @@ function validateAndPrepareEventData(eventData: any, eventId: string) {
       event_name: eventData.event_name || null,
       url: eventData.url,
       referrer: eventData.referrer || null,
-      visitor_id: eventData.visitor_id || null,
+      visitor_id: eventData.id || null,
       session_id: eventData.session_id || null,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
@@ -316,6 +316,42 @@ export async function POST(request: NextRequest) {
     
     // Generate event ID
     const eventId = uuidv4();
+
+    // Check if session exists
+    if (eventData.session_id) {
+      const { data: session, error: sessionError } = await supabaseAdmin
+        .from('visitor_sessions')
+        .select('id')
+        .eq('id', eventData.session_id)
+        .single();
+
+      if (sessionError || !session) {
+        console.log(`[POST /api/visitors/track] Sesión no encontrada, creando nueva sesión...`);
+        
+        // Create new session
+        const newSession = {
+          id: eventData.session_id,
+          visitor_id: eventData.id,
+          site_id: eventData.site_id,
+          landing_url: eventData.url,
+          current_url: eventData.url,
+          referrer: eventData.referrer,
+          started_at: eventData.timestamp || Date.now(),
+          last_activity_at: eventData.timestamp || Date.now(),
+          page_views: 1,
+          is_active: true
+        };
+
+        const { error: createSessionError } = await supabaseAdmin
+          .from('visitor_sessions')
+          .insert([newSession]);
+
+        if (createSessionError) {
+          console.error(`[POST /api/visitors/track] Error al crear sesión:`, createSessionError);
+          return errorResponse('Error al crear sesión', 500, createSessionError);
+        }
+      }
+    }
     
     // Prepare data for database
     const dbData = {
@@ -325,7 +361,7 @@ export async function POST(request: NextRequest) {
       event_name: 'event_name' in eventData ? eventData.event_name : null,
       url: eventData.url,
       referrer: eventData.referrer,
-      visitor_id: eventData.visitor_id,
+      visitor_id: eventData.id, // Using id field but maintaining visitor_id in DB for compatibility
       session_id: eventData.session_id,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
@@ -339,6 +375,13 @@ export async function POST(request: NextRequest) {
       }
     };
     
+    // Get visitor's lead_id if available
+    const { data: visitorData, error: visitorError } = eventData.id ? await supabaseAdmin
+      .from('visitors')
+      .select('lead_id')
+      .eq('id', eventData.id)
+      .single() : { data: null, error: null };
+
     // Insert event into database
     const { data, error } = await supabaseAdmin
       .from('session_events')
@@ -356,6 +399,9 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       event_id: data.id,
+      id: eventData.id,
+      lead_id: visitorData?.lead_id || null,
+      session_id: eventData.session_id,
       timestamp: data.timestamp
     });
     

@@ -7,7 +7,7 @@ export function middleware(request: NextRequest) {
     console.log('==== MIDDLEWARE EXECUTION START ====');
     console.log(`[MIDDLEWARE] Request: ${request.method} ${request.nextUrl.pathname}`);
     console.log(`[MIDDLEWARE] Origin: ${request.headers.get('origin') || 'unknown'}`);
-    console.log(`[MIDDLEWARE] Source IP: ${request.ip || request.headers.get('x-forwarded-for') || 'unknown'}`);
+    console.log(`[MIDDLEWARE] Source IP: ${request.headers.get('x-forwarded-for') || 'unknown'}`);
     console.log(`[MIDDLEWARE] User-Agent: ${request.headers.get('user-agent') || 'unknown'}`);
     
     // Get the origin from the request
@@ -197,6 +197,9 @@ export const config = {
     '/api/visitors/sessions',
     '/api/visitors/sessions/:path*',
     '/api/visitors/cors-test',
-    '/api/visitors/identify'
+    '/api/visitors/identify',
+    '/api/agents/:path*',
+    '/api/agents/integrations/:path*',
+    '/api/agents/integrations/list'
   ],
 }; 

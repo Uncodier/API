@@ -1,0 +1,508 @@
+# Agentbase Framework
+
+Agentbase is a design framework and architecture that enables the execution of asynchronous tasks, multi-agent operations, and simplified tool execution within applications.
+
+## Overview
+
+Agentbase provides a structured approach to managing complex, asynchronous operations across multiple agents while maintaining context and optimizing execution flows. It focuses on command-based operations that capture task state, allowing for contextual execution between different agents.
+
+## Core Concepts
+
+### Command-Based Architecture
+
+Agentbase revolves around the creation of commands that:
+
+- Summarize and capture the state of a task
+- Enable contextual execution between different agents
+- Allow for acceleration and prioritization of tasks on demand
+
+Commands serve as self-contained units of work that encapsulate all necessary context, allowing them to be executed by any agent in the system without loss of information.
+
+### Multi-Agent Execution
+
+The framework facilitates communication and task distribution across multiple agents:
+
+- Agents can operate independently while contributing to shared objectives
+- Work can be distributed based on agent specialization
+- Command prioritization ensures critical tasks receive appropriate resources
+
+### Asynchronous Processing
+
+Agentbase is designed for asynchronous operation from the ground up:
+
+- Non-blocking execution of commands
+- Efficient parallel processing of multiple tasks
+- Event-driven architecture for responsive systems
+
+### Tool Execution
+
+The framework simplifies tool execution through:
+
+- Standardized interfaces for integrating diverse tools
+- Context preservation when switching between tools
+- Tool discovery and capability advertisement
+
+### Agent Memory
+
+Agentbase implements agent memory as a separate concept from commands. While commands are task-specific and short-lived, memory represents persistent knowledge that spans across multiple command executions. This memory must be passed to each agent during task execution to provide continuity and context.
+
+The memory structure is designed to be:
+
+- **Persistent**: Retains information across multiple command executions
+- **Agent-specific**: Each agent maintains its own memory space
+- **Contextual**: Organizes information by contexts such as conversations, entities, or knowledge domains
+- **Optimized for retrieval**: Structured to support efficient querying and retrieval during command execution
+
+Unlike commands, which change significantly between executions, memory maintains a more stable structure while growing and evolving over time.
+
+#### Memory Structure
+
+A typical agent memory record includes:
+
+```json
+{
+  "id": "mem_789012",                    // Unique identifier for memory record
+  "agent_id": "agent_123",               // ID of the owning agent
+  "user_id": "user_456",                 // Associated user ID
+  "type": "conversation_memory",         // Type of memory (conversation, knowledge, entity, etc.)
+  "key": "conversation:cust_789",        // Namespaced key for lookup
+  "data": {                              // Structured memory content
+    "conversation_history": [
+      {
+        "role": "user",
+        "content": "I need help with my recent order",
+        "timestamp": "2023-06-15T14:22:30Z"
+      },
+      {
+        "role": "agent",
+        "content": "I'd be happy to help. Could you provide your order number?",
+        "timestamp": "2023-06-15T14:22:45Z"
+      },
+      {
+        "role": "user",
+        "content": "It's ORD-12345",
+        "timestamp": "2023-06-15T14:23:10Z"
+      }
+    ],
+    "entities": {
+      "order_id": "ORD-12345",
+      "customer_name": "John Smith",
+      "issue_type": "delivery_delay"
+    },
+    "last_interaction": "2023-06-15T14:23:10Z"
+  },
+  "raw_data": "Customer John Smith contacted support about order ORD-12345 which was delayed in shipping. The customer seemed frustrated but remained polite. This is a repeat customer with 5 previous orders. They mentioned they need the product for an upcoming event on June 20th.", // Unstructured textual content
+  "vector_embedding": null,              // Optional vector embedding for semantic search
+  "metadata": {                          // Additional metadata about the memory
+    "importance": "high",
+    "source": "customer_chat",
+    "retention_policy": "30_days"
+  },
+  "created_at": "2023-06-15T14:22:30Z",  // Creation timestamp
+  "updated_at": "2023-06-15T14:23:15Z",  // Last update timestamp
+  "access_count": 5,                     // Number of times this memory has been accessed
+  "last_accessed": "2023-06-15T14:30:00Z" // When the memory was last accessed
+}
+```
+
+The `raw_data` field provides a space for unstructured textual information that may not fit neatly into the structured `data` object. This is useful for:
+
+- **Agent Reflections**: Free-form thoughts or insights from the agent about the interaction
+- **Summarized Context**: Human-readable summaries of complex interactions or documents
+- **Knowledge Extraction**: Text that hasn't yet been parsed into structured entities
+- **External Content**: Raw content from external sources before processing
+
+#### Memory Management Best Practices
+
+1. **Memory Segmentation**: Organize memory into different types (conversation, knowledge, entities) for easier management
+2. **Regular Pruning**: Implement memory retention policies to prevent unbounded growth
+3. **Efficient Retrieval**: Use vector embeddings for semantic search when dealing with large memory stores
+4. **Memory Prioritization**: Track importance and recency to prioritize most relevant information
+5. **Contextual Grouping**: Use namespaced keys to group related memories
+6. **Incremental Updates**: Update only changed portions of memory to reduce database load
+7. **Cross-Agent Memory Sharing**: Define protocols for sharing relevant memories between agents
+8. **Balance Structured and Unstructured Data**: Use `data` for queryable structured information and `raw_data` for context and nuance
+
+## Implementation
+
+### Command Structure
+
+The complete structure of an Agentbase command includes the following fields:
+
+```json
+{
+  "id": "cmd_123456",                       // Unique identifier for the command
+  "task": "customer_support_response",      // The command task/instruction
+  "status": "pending",                      // Status: pending, running, completed, failed, cancelled
+  "description": "Respond to customer inquiry about order status",  // Detailed description
+  "results": [                              // Array of command execution results
+    {
+      "type": "message",
+      "content": "Your order #12345 has been shipped and will arrive on Tuesday."
+    }
+  ],
+  "targets": [                              // Expected outputs to be generated
+    {
+      "message": {
+        "content": "Initial response to customer inquiry"
+      }
+    }
+  ],
+  "tools": [                                // Tools available for the command
+    {
+      "name": "order_lookup",
+      "description": "Look up order details in the database",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "order_id": "string"
+      }
+    }
+  ],
+  "context": "Previous conversation history and order details", // Context for execution
+  "supervisor": [                           // Supervisor agents that can intervene
+    {
+      "agent_role": "customer_support_manager",
+      "status": "not_initialized"
+    }
+  ],
+  "created_at": "2023-06-15T14:30:00Z",     // Creation timestamp
+  "updated_at": "2023-06-15T14:32:15Z",     // Last update timestamp
+  "completion_date": "2023-06-15T14:32:15Z", // When command completed
+  "duration": 135000,                       // Execution duration in milliseconds
+  "model": "gpt-4",                         // AI model used for execution
+  "agent_id": "agent_123",                  // ID of the agent that executed the command
+  "user_id": "user_456"                     // ID of the user who created the command
+}
+```
+
+The command structure is built to capture all relevant information for asynchronous execution:
+
+- **Core information**: `id`, `task`, `status`, and `description` define the command's identity and purpose
+- **Execution details**: `results`, `created_at`, `updated_at`, `completion_date`, and `duration` track execution progress and outcomes
+- **Execution context**: `targets`, `tools`, `context`, and `supervisor` provide the necessary context for execution
+- **Relationships**: `agent_id` and `user_id` establish ownership and execution responsibility
+
+### Execution Flow
+
+1. **Command Creation**: Commands are created by agents or the system based on user requests or system events
+2. **Prioritization**: Commands are prioritized based on urgency, dependencies, and resource availability
+3. **Agent Assignment**: Commands are assigned to appropriate agents based on capability and availability
+4. **Execution**: Agents execute commands using available tools and resources
+5. **State Update**: Command state is updated to reflect progress and results
+6. **Result Distribution**: Results are distributed to requesting agents or stored for future reference
+
+### Execution Order of Command Components
+
+In the standard execution path, command components are processed in a specific sequence:
+
+1. **Tools**: Tools are analyzed and executed first, as they often provide necessary data or functionality for completing the task
+2. **Targets**: Next, targets are processed, applying the results from tool executions to generate the expected outputs
+3. **Supervisors**: Finally, supervisors are consulted to review, approve, or modify the generated results before final delivery
+
+This order ensures that all necessary information and functionality is available before producing outputs and submitting them for review.
+
+However, the execution order can vary depending on the specific requirements of the task:
+
+- **Pre-evaluation Tasks**: For tasks requiring evaluation or approval before response generation, supervisors may be consulted earlier in the process
+- **Parallel Processing**: Some tasks may process tools, targets, and supervisor interactions in parallel when dependencies allow
+- **Iterative Execution**: Complex tasks may involve multiple cycles through the components, with partial results being reviewed and refined iteratively
+- **Event-Driven Paths**: External events or time-based triggers may alter the execution sequence during processing
+
+The flexibility in execution order allows the framework to adapt to various task requirements while maintaining the overall integrity of the command-based architecture.
+
+### Agent Types
+
+Agentbase supports various types of agents:
+
+- **Coordinator Agents**: Manage workflow and distribute tasks
+- **Specialist Agents**: Focus on specific domains or capabilities
+- **Resource Agents**: Provide access to external resources or systems
+- **Observer Agents**: Monitor system state and progress
+
+## Benefits
+
+- **Scalability**: Easily scale from simple applications to complex distributed systems
+- **Resilience**: Fault tolerance through command persistence and agent redundancy
+- **Flexibility**: Adapt to changing requirements and environments
+- **Observability**: Comprehensive visibility into system operations
+- **Performance**: Optimize resource utilization through intelligent task distribution
+
+## Best Practices
+
+### Command Design
+
+- Keep commands focused on specific tasks
+- Include all necessary context in the command
+- Design for idempotence to allow safe retries
+- Use appropriate priority levels
+
+### Agent Implementation
+
+- Implement clear capability declarations
+- Manage resource utilization effectively
+- Handle failures gracefully
+- Maintain execution logs for debugging
+
+### System Architecture
+
+- Implement command persistence for reliability
+- Design for appropriate concurrency levels
+- Include monitoring and observability tools
+- Plan for cross-agent communication patterns
+
+## Use Cases
+
+Agentbase is particularly well-suited for:
+
+- **Data Processing Pipelines**: Processing large volumes of data through multiple stages
+- **Workflow Automation**: Automating complex business processes
+- **AI Systems**: Coordinating multiple AI models for complex tasks
+- **Distributed Applications**: Applications spanning multiple services or environments
+
+## Getting Started
+
+To begin implementing Agentbase in your application:
+
+1. Define your command structure
+2. Implement your agent interfaces
+3. Develop your command execution engine
+4. Set up your prioritization and scheduling mechanisms
+5. Integrate your tools and external systems
+
+## Examples
+
+### Customer Support Command
+
+The following example shows a command for customer support interactions:
+
+```json
+{
+  "targets": [
+    {
+      "message": {
+        "content": "I understand you're having an issue with your recent order. Let me help you with that. Could you please provide your order number so I can look up the details?"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "escalate": false,
+      "description": "escalate when needed",
+      "status": "not_initialized",
+      "type": "synchronous"
+    },
+    {
+      "contact_human": false,
+      "description": "contact human supervisor when complex issues require human intervention",
+      "status": "not_initialized",
+      "type": "asynchronous"
+    }
+  ],
+  "context": "Previous conversation messages and FAQ content",
+  "supervisors": [
+    {
+      "agent_role": "sales",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "manager",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "create message",
+  "description": "Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase."
+}
+```
+
+This command is created in response to a customer message such as "I need help with my recent order" and:
+- Defines target outputs with pre-formulated responses
+- Specifies available tools with status tracking
+- Provides context from previous interactions
+- Identifies supervisor agents that can intervene if necessary
+- Describes the task and detailed instructions for execution
+
+### Command Execution Process
+
+The complete process of creating and executing a command in Agentbase involves several steps:
+
+```javascript
+// 1. Create a command with the full structure
+const command = {
+  id: generateCommandId(),
+  task: "data_analysis",
+  status: "pending",
+  description: "Analyze sales data for Q2 2023 to identify trends",
+  targets: [
+    {
+      report: {
+        format: "json",
+        sections: ["summary", "trends", "recommendations"]
+      }
+    }
+  ],
+  tools: [
+    {
+      name: "data_fetch",
+      description: "Fetch data from the sales database",
+      status: "not_initialized",
+      type: "synchronous",
+      parameters: {
+        source: "sales_database",
+        timeframe: "2023-Q2"
+      }
+    },
+    {
+      name: "trend_analysis",
+      description: "Analyze time series data for trends",
+      status: "not_initialized",
+      type: "synchronous"
+    }
+  ],
+  context: "Previous quarterly reports and company goals",
+  supervisor: [
+    {
+      agent_role: "sales_manager",
+      status: "not_initialized"
+    }
+  ],
+  user_id: "user_789"
+};
+
+// 2. Submit command to the command service
+const commandService = new CommandService();
+const commandId = await commandService.submitCommand(command);
+
+// 3. Track command progress
+commandService.on('statusChange', (update) => {
+  console.log(`Command ${update.id} status: ${update.status}`);
+  if (update.status === 'completed') {
+    displayResults(update.results);
+  }
+});
+
+// 4. Agent execution (happens in the background)
+class AnalyticsAgent {
+  async processCommand(command) {
+    try {
+      // Update status to running
+      await commandService.updateStatus(command.id, 'running');
+      
+      // Execute tools in sequence
+      for (const tool of command.tools) {
+        tool.status = 'running';
+        await commandService.updateToolStatus(command.id, tool.name, 'running');
+        
+        const toolResult = await this.executeTool(tool);
+        
+        tool.status = 'completed';
+        await commandService.updateToolStatus(command.id, tool.name, 'completed', toolResult);
+      }
+      
+      // Process targets
+      const results = [];
+      for (const target of command.targets) {
+        const targetResult = await this.processTarget(target, command.tools);
+        results.push(targetResult);
+      }
+      
+      // Consult supervisors if needed
+      if (command.supervisor && command.supervisor.length > 0) {
+        await this.consultSupervisors(command.supervisor, results);
+      }
+      
+      // Update command with results
+      await commandService.updateCommand(command.id, {
+        status: 'completed',
+        results: results,
+        completion_date: new Date().toISOString(),
+        duration: calculateDuration(command.created_at)
+      });
+      
+    } catch (error) {
+      // Handle failure
+      await commandService.updateCommand(command.id, {
+        status: 'failed',
+        error: error.message
+      });
+    }
+  }
+  
+  // Implementation methods...
+}
+
+// 5. Results handling
+function displayResults(results) {
+  const report = results.find(r => r.type === 'report');
+  if (report) {
+    renderReport(report.content);
+    saveReportToHistory(report.content);
+  }
+}
+```
+
+This execution demonstrates several best practices:
+
+1. **Structured Command Definition**: The command includes all necessary fields including targets, tools, context, and supervisors
+2. **Status Tracking**: The system tracks and updates status throughout the execution process
+3. **Tool Execution Sequence**: Tools are executed in the defined order with proper status updates
+4. **Error Handling**: Failures are captured and reported back through the command structure
+5. **Event-Based Updates**: Progress updates are communicated through events for real-time monitoring
+6. **Result Processing**: Results are properly formatted according to the target specifications
+
+### Agent Implementation
+
+Agent implementation in Agentbase follows a consistent pattern:
+
+```javascript
+class DataProcessingAgent extends BaseAgent {
+  constructor() {
+    super();
+    this.capabilities = ["data_fetch", "data_transform", "data_analysis"];
+  }
+  
+  async executeCommand(command) {
+    // Validate command is appropriate for this agent
+    this.validateCommandCapabilities(command);
+    
+    // Process based on task type
+    switch(command.task) {
+      case "data_fetch":
+        return await this.executeDataFetch(command);
+      case "data_transform":
+        return await this.executeDataTransform(command);
+      case "data_analysis":
+        return await this.executeDataAnalysis(command);
+      default:
+        throw new Error(`Unsupported task type: ${command.task}`);
+    }
+  }
+  
+  async executeDataFetch(command) {
+    try {
+      // Execute tools first
+      const toolResults = await this.executeTools(command.tools);
+      
+      // Process targets using tool results
+      const targetResults = await this.processTargets(command.targets, toolResults);
+      
+      // Return complete results
+      return {
+        status: 'completed',
+        results: targetResults
+      };
+    } catch (error) {
+      return {
+        status: 'failed',
+        error: error.message
+      };
+    }
+  }
+  
+  // Additional implementation methods...
+}
+```
+
+## Conclusion
+
+Agentbase provides a powerful framework for building complex, distributed, and agent-based applications. By focusing on command-based architecture, contextual execution, and flexible prioritization, it enables the development of robust systems capable of handling demanding workflows across multiple agents and tools.

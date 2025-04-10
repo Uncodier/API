@@ -1,0 +1,78 @@
+---
+title: 'List Integrations - API Tester'
+description: 'Test the List Integrations API endpoint'
+route: '/agents/integrations/list'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# List Integrations API Tester
+
+The API endpoint is available at: `/api/agents/integrations/list`
+
+> **Important Note:** Always include the `/api` prefix when making API calls. The full URL should be `/api/agents/integrations/list`.
+
+Below is a live API tester for the List Integrations endpoint. This tool allows you to interact with the API directly from this documentation.
+
+<UnifiedApiTester 
+  apiId="agents-integrations"
+  title="List Integrations API Tester"
+  description="Retrieve a list of all available integrations that can be connected to agents."
+  defaultMethod="GET"
+  defaultEndpoint="/api/agents/integrations/list"
+/>
+
+## Response Structure
+
+The API returns a structured response containing a list of integrations with the following fields:
+
+```json
+{
+  "items": [
+    {
+      "appName": "appName",
+      "_count": {
+        "key": "value"
+      },
+      "connections": [
+        {
+          "key": "value"
+        }
+      ],
+      "id": "id",
+      "member": {
+        "id": "id",
+        "orgId": "orgId",
+        "email": "email",
+        "name": "name",
+        "role": "admin",
+        "createdAt": "createdAt",
+        "updatedAt": "updatedAt"
+      },
+      "name": "name",
+      "authScheme": "authScheme",
+      "createdAt": "createdAt",
+      "updatedAt": "updatedAt",
+      "enabled": true,
+      "appId": "appId",
+      "deleted": true,
+      "defaultConnectorId": "defaultConnectorId"
+    }
+  ],
+  "totalPages": 1,
+  "page": 1
+}
+```
+
+## Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `category` | string | Filter integrations by category (e.g., "analytics", "crm", "communication") |
+| `status` | string | Filter integrations by status ("active", "beta", "deprecated") |
+
+## Usage Notes
+
+- The API returns paginated results
+- Use category filter to narrow down integrations by their function
+- Use status filter to find integrations in a specific lifecycle stage 
