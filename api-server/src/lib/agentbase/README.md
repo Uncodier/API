@@ -19,6 +19,8 @@ Agentbase is designed to enable asynchronous calls to multiple language models t
 ### Agent Types
 
 - **PortkeyAgent**: Basic agent implementation that uses Portkey for LLM communication
+- **ToolEvaluatorAgent**: Specialized agent for evaluating which tools should be activated
+- **TargetProcessorAgent**: Specialized agent for processing targets with robust structure validation
 - Custom agent implementations can be created by extending BaseAgent or PortkeyAgent
 
 ## Basic Usage
@@ -176,6 +178,8 @@ See the `examples` directory for more detailed usage examples:
 - **Supervision**: Optional supervision and approval workflows
 - **Error Handling**: Retry mechanisms and circuit breakers for robustness
 - **Event System**: Event-based architecture for command lifecycle hooks
+- **Structure Validation**: Robust validation to ensure the integrity of the target -> result flow
+- **Failure Handling**: Proper reporting of failures with descriptive error messages
 
 ## Future Enhancements
 

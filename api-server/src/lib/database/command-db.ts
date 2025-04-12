@@ -25,6 +25,8 @@ export interface DbCommand {
   model?: string | null;
   agent_id?: string | null;
   user_id: string;
+  input_tokens?: number | null;  // Tokens de entrada acumulados
+  output_tokens?: number | null; // Tokens de salida acumulados
 }
 
 /**
@@ -43,6 +45,8 @@ export interface CreateCommandParams {
   model?: string;
   agent_id?: string;
   user_id: string;
+  input_tokens?: number;  // Tokens de entrada acumulados
+  output_tokens?: number; // Tokens de salida acumulados
 }
 
 /**
@@ -83,6 +87,11 @@ export async function updateCommand(
   updates: Partial<Omit<DbCommand, 'id' | 'created_at' | 'updated_at'>>
 ): Promise<DbCommand> {
   try {
+    // Depuración específica para tokens
+    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
+      console.log(`[command-db] 🔍 Tokens recibidos: input_tokens=${updates.input_tokens}, output_tokens=${updates.output_tokens}`);
+    }
+    
     console.log(`[command-db] Actualizando comando ${commandId} con:`, JSON.stringify(updates, null, 2).substring(0, 500) + '...');
     
     // Asegurarse de que siempre actualizamos updated_at
@@ -90,6 +99,11 @@ export async function updateCommand(
       ...updates,
       updated_at: new Date().toISOString()
     };
+    
+    // Depuración posterior a preparación
+    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
+      console.log(`[command-db] 🔍 Tokens después de preparación: input_tokens=${updatesWithTimestamp.input_tokens}, output_tokens=${updatesWithTimestamp.output_tokens}`);
+    }
     
     // Primero verificamos si el comando existe
     const { data: existingCommand, error: checkError } = await supabaseAdmin
@@ -108,6 +122,17 @@ export async function updateCommand(
     
     console.log(`[command-db] Comando encontrado, estado actual: ${existingCommand.status}`);
     
+    // Imprimir estructura de tabla para diagnóstico
+    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
+      const { data: tableInfo, error: tableError } = await supabaseAdmin.rpc('get_column_info', { 
+        table_name: 'commands' 
+      });
+      
+      if (!tableError) {
+        console.log(`[command-db] 🔍 Columnas en tabla commands:`, tableInfo);
+      }
+    }
+    
     // Ahora actualizamos el comando
     const { data, error } = await supabaseAdmin
       .from('commands')
@@ -123,6 +148,36 @@ export async function updateCommand(
     
     console.log(`[command-db] Comando ${commandId} actualizado con éxito`);
     console.log(`[command-db] Comando actualizado:`, JSON.stringify(data, null, 2).substring(0, 500) + '...');
+    
+    // Verificar si los tokens se actualizaron
+    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
+      console.log(`[command-db] 🔍 Tokens después de actualización: input_tokens=${data.input_tokens}, output_tokens=${data.output_tokens}`);
+      
+      // Si no se actualizaron los tokens, intentar una actualización específica solo para tokens
+      if ((updates.input_tokens !== undefined && data.input_tokens !== updates.input_tokens) || 
+          (updates.output_tokens !== undefined && data.output_tokens !== updates.output_tokens)) {
+        console.log(`[command-db] ⚠️ Los tokens no se actualizaron correctamente, intentando actualización específica`);
+        
+        const tokenUpdates = {
+          input_tokens: updates.input_tokens,
+          output_tokens: updates.output_tokens
+        };
+        
+        const { data: tokenData, error: tokenError } = await supabaseAdmin
+          .from('commands')
+          .update(tokenUpdates)
+          .eq('id', commandId)
+          .select()
+          .single();
+          
+        if (tokenError) {
+          console.error(`[command-db] Error en actualización específica de tokens:`, tokenError);
+        } else {
+          console.log(`[command-db] ✅ Actualización específica de tokens completada: input_tokens=${tokenData.input_tokens}, output_tokens=${tokenData.output_tokens}`);
+          return tokenData;
+        }
+      }
+    }
     
     return data;
   } catch (error: any) {

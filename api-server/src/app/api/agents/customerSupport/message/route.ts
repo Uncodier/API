@@ -362,24 +362,46 @@ export async function POST(request: Request) {
       ],
       // Define the tools as specified in the documentation
       tools: [
-        CommandFactory.createTool({
+        {
           name: 'escalate',
           description: 'escalate when needed',
+          status: 'not_initialized',
           type: 'synchronous',
           parameters: {
-            conversation: 'required',
-            lead_id: 'required'
+            type: 'object',
+            properties: {
+              conversation: {
+                type: 'string',
+                description: 'The conversation ID that needs to be escalated'
+              },
+              lead_id: {
+                type: 'string',
+                description: 'The ID of the lead or customer related to this escalation'
+              }
+            },
+            required: ['conversation', 'lead_id']
           }
-        }),
-        CommandFactory.createTool({
+        },
+        {
           name: 'contact_human',
           description: 'contact human supervisor when complex issues require human intervention',
+          status: 'not_initialized',
           type: 'asynchronous',
           parameters: {
-            conversation: 'required',
-            lead_id: 'required'
+            type: 'object',
+            properties: {
+              conversation: {
+                type: 'string',
+                description: 'The conversation ID that requires human attention'
+              },
+              lead_id: {
+                type: 'string',
+                description: 'The ID of the lead or customer that needs assistance'
+              }
+            },
+            required: ['conversation', 'lead_id']
           }
-        })
+        }
       ],
       // Context includes the current message and conversation history
       context: contextMessage,
@@ -504,15 +526,12 @@ export async function POST(request: Request) {
     // Guardar los mensajes en la base de datos
     const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId);
     
-    // Preparar la respuesta con todos los IDs importantes
     return NextResponse.json(
       { 
         success: true, 
         data: { 
-          // Usar el UUID de la base de datos como ID principal del comando
           command_id: effectiveDbUuid,
-          internal_command_id: internalCommandId, // El ID con prefijo cmd_ como referencia interna
-          conversation_id: savedMessages?.conversationId, // ID de la conversación
+          conversation_id: savedMessages?.conversationId,
           messages: {
             user: {
               content: message,
@@ -530,7 +549,7 @@ export async function POST(request: Request) {
   } catch (error) {
     console.error('Error al procesar la solicitud:', error);
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred' } },
+      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } },
       { status: 500 }
     );
   }

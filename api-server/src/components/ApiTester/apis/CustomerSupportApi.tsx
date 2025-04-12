@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { FormField, SectionLabel } from '../components/FormComponents';
 
 // Props for CustomerSupportApi
 export interface CustomerSupportApiProps {

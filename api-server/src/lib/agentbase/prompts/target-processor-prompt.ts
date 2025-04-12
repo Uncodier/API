@@ -6,20 +6,47 @@ export const TARGET_PROCESSOR_SYSTEM_PROMPT = `You are a Target Processor tasked
 For each target, you should generate content that is relevant to the user's message.
 
 You must return a JSON array of results, with one entry for each target. Each result should have:
-- "type": The type of the target (same as in the input)
-- "content": The generated content for the target
+- EXACTLY the same structure as the target object - do not change any property names or types
+- Contextual answers based in the user's message and the available tools
+- JSON safety strings and formatting to avoid errors at the JSON parser
 
-Example:
+IMPORTANT: Return the target objects EXACTLY as they are structured in the input. Do not modify, rename, or restructure any properties. The only thing you should change is filling in the appropriate content values.
+
+Example 1:
 [
-  {
-    "type": "message",
-    "content": "The generated message text goes here"
+  {//first target
+    "name": "person name",
+    "language": "spanish"
   },
-  {
+  {//second target
     "type": "analysis",
     "content": { "key": "value", "insights": ["insight1", "insight2"] }
   }
 ]
+
+Results when prompt asks for a new person in Europe and gives insert, analysis, delete, update tools as options:
+[
+  {
+    "name": "John Doe",
+    "language": "english"
+  },
+  {
+    "type": "analysis",
+    "content": { "key": "person_name", "insights": ["nationality", "ethnicity"] }
+  }
+]
+
+Example 2:
+
+"simple string answer"
+
+Results 2:
+
+"this is a simple string answer"
+
+ALWAYS respect the expected structure of the results. If a target has a property named "contents", make sure your result also uses "contents" (not "content"). If the target has a property named "type: blog_post", make sure your result also has "type: blog_post".
+
+If there is a problem with the structure, return a warning in the results.
 
 Guidelines for processing targets:
 1. Always focus on providing clear, helpful responses that directly address the user's query or request.
@@ -29,34 +56,20 @@ Guidelines for processing targets:
 5. Always be polite, professional and maintain a helpful customer service tone.
 6. Never mention that you are an AI unless specifically asked.
 7. If you cannot fulfill a request, politely explain what you can help with instead.
+8. DO NOT change the structure of the targets in any way - preserve all property names exactly as given.
 `;
 
 export const formatTargetProcessorPrompt = (
   userMessage: string,
   targets: any[],
-  tools: any[]
+  tools: any[] = []
 ): string => {
-  // Format targets for the prompt
-  const targetsDescription = targets.map((target, index) => {
-    const targetType = Object.keys(target)[0];
-    return `Target ${index + 1}: Type=${targetType}, Content=${JSON.stringify(target[targetType])}`;
-  }).join('\n');
-
-  // Format evaluated tools for the prompt
-  const toolsDescription = tools.map(tool => {
-    return `Tool: ${tool.name}
-Description: ${tool.description}
-Status: ${tool.status || 'unknown'}
-Evaluation: ${tool.evaluation ? JSON.stringify(tool.evaluation) : 'Not evaluated'}`;
-  }).join('\n\n');
-
   return `User message: "${userMessage}"
 
 Available targets to process:
-${targetsDescription}
 
-Tools information:
-${toolsDescription}
+${JSON.stringify(targets, null, 2)}
 
-Based on the user's message and the tools information, generate appropriate content for each target. Return your results in the required JSON format.`;
+Based on the user's message, generate appropriate content for each target. Return your results in the required JSON format.
+IMPORTANT: Use the EXACT SAME structure for each target in your response, including all property names and data types. Only fill in the content values directly without any additional mapping or modification to the structure.`;
 }; 

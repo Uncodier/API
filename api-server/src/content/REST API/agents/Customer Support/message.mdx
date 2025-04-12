@@ -49,23 +49,43 @@ The system generates a command object with the following structure to control su
   ],
   "tools": [
     {
-      "escalate": false,
+      "name": "escalate",
       "description": "escalate when needed",
       "status": "not_initialized",
       "type": "synchronous",
-      "params": {
-        "conversation": "required",
-        "lead_id": "required"
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "The conversation ID that needs to be escalated"
+          },
+          "lead_id": {
+            "type": "string",
+            "description": "The ID of the lead or customer related to this escalation"
+          }
+        },
+        "required": ["conversation", "lead_id"]
       }
     },
     {
-      "contact_human": false,
+      "name": "contact_human",
       "description": "contact human supervisor when complex issues require human intervention",
       "status": "not_initialized",
       "type": "asynchronous",
-      "params": {
-        "conversation": "required",
-        "lead_id": "required"
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "conversation": {
+            "type": "string",
+            "description": "The conversation ID that requires human attention"
+          },
+          "lead_id": {
+            "type": "string",
+            "description": "The ID of the lead or customer that needs assistance"
+          }
+        },
+        "required": ["conversation", "lead_id"]
       }
     }
   ],
@@ -129,6 +149,8 @@ The system generates a command object with the following structure to control su
   - `targets`: An array of objects defining expected outputs to be generated
   - `tools`: Specifies what actions the agent can take (like escalation or contacting human supervisors)
     - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
+    - Tools follow the OpenAI format with parameters defined as objects containing properties and required fields
+    - The agent will update tool status to "not_required" when the tool is evaluated but not needed for the current conversation
   - `context`: Provides conversation history and relevant documentation
   - `supervisors`: Defines which agent roles can intervene
   - `task`: Specifies the high-level objective for the agent

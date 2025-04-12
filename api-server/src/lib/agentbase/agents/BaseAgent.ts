@@ -41,6 +41,11 @@ export abstract class BaseAgent {
    * Helper method to execute tools in sequence
    */
   async executeTools(tools: any[]): Promise<ToolExecutionResult[]> {
+    // Return empty array if tools is undefined or empty
+    if (!tools || tools.length === 0) {
+      return [];
+    }
+    
     const results: ToolExecutionResult[] = [];
     
     for (const tool of tools) {
@@ -83,6 +88,9 @@ export abstract class BaseAgent {
    * Process target outputs based on tool results
    */
   async processTargets(targets: any[], toolResults: ToolExecutionResult[]): Promise<any[]> {
+    // Ensure toolResults is never undefined
+    const safeToolResults = toolResults || [];
+    
     // Default implementation returns empty array
     // Should be overridden by specific agents to process targets
     return targets.map(target => {

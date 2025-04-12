@@ -27,6 +27,8 @@ export interface CreateCommandParams {
   execution_order?: string[];
   supervision_params?: SupervisionParams;
   requires_capabilities?: string[];
+  input_tokens?: number;
+  output_tokens?: number;
 }
 
 export interface DbCommand {
@@ -55,6 +57,8 @@ export interface DbCommand {
   duration?: number;
   results?: any[];
   requires_capabilities?: string[];
+  input_tokens?: number;
+  output_tokens?: number;
   metadata?: {
     dbUuid?: string;
     createTime?: string;
@@ -69,6 +73,8 @@ export interface CommandExecutionResult {
   error?: string;
   results?: any[];
   supervisionRequestId?: string;
+  updatedCommand?: DbCommand;
+  warning?: string;
 }
 
 // Tool Execution Result

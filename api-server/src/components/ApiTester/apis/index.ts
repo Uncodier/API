@@ -14,6 +14,7 @@ import VisitorTrackApi from './VisitorTrackApi';
 import VisitorIdentifyApi from './VisitorIdentifyApi';
 import AgentsIntegrationsApi from './AgentsIntegrationsApi';
 import CustomerSupportApi from './CustomerSupportApi';
+import CopywriterApi from './CopywriterApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -31,5 +32,6 @@ apiRegistry.register(VisitorTrackApi);
 apiRegistry.register(VisitorIdentifyApi);
 apiRegistry.register(AgentsIntegrationsApi);
 apiRegistry.register(CustomerSupportApi);
+apiRegistry.register(CopywriterApi);
 
 export default apiRegistry; 

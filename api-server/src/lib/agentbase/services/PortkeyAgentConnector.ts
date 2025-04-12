@@ -76,7 +76,34 @@ export class PortkeyAgentConnector {
             ...modelOptions
           });
           
-          return this.processResponse(response, responseFormat);
+          // Procesar y añadir información de uso de tokens si no está presente
+          const processed = this.processResponse(response, responseFormat);
+          
+          // Asegurarnos de que la información de tokens esté disponible
+          if (!processed.usage && response.usage) {
+            processed.usage = response.usage;
+          } else if (!processed.usage) {
+            // Si no hay información de uso, tratar de extraerla de diferentes lugares
+            if (response.choices && response.choices[0] && response.choices[0].message && response.choices[0].message.usage) {
+              processed.usage = response.choices[0].message.usage;
+            } else {
+              // Crear una estimación basada en la longitud de los mensajes y la respuesta
+              const totalInputChars = messages.reduce((sum, msg) => sum + (typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length), 0);
+              const outputChars = typeof processed === 'string' ? processed.length : JSON.stringify(processed).length;
+              
+              // Estimación rudimentaria: aproximadamente 4 caracteres por token
+              processed.usage = {
+                input_tokens: Math.ceil(totalInputChars / 4),
+                output_tokens: Math.ceil(outputChars / 4),
+                total_tokens: Math.ceil((totalInputChars + outputChars) / 4),
+                estimated: true
+              };
+            }
+          }
+          
+          console.log(`[PortkeyAgentConnector] Token usage - Input: ${processed.usage?.input_tokens || 'N/A'}, Output: ${processed.usage?.output_tokens || 'N/A'}`);
+          
+          return processed;
         } catch (error: any) {
           console.error(`[PortkeyAgentConnector] Portkey API call error:`, error);
           throw error;
@@ -105,7 +132,27 @@ export class PortkeyAgentConnector {
       .filter(msg => msg.role === 'user')
       .pop()?.content || '';
       
-    // Create a simple mock response
+    // Estimar tokens basados en la longitud de los mensajes
+    const totalInputChars = messages.reduce((sum, msg) => sum + (typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length), 0);
+    
+    // Crear una respuesta de ejemplo
+    const responseMock = responseFormat === 'json' 
+      ? JSON.stringify({
+          response: "This is a mock response",
+          query: lastUserMessage,
+          timestamp: new Date().toISOString(),
+          mock: true
+        })
+      : `This is a mock text response to: "${lastUserMessage}"\nGenerated at ${new Date().toISOString()}\n(Note: This is a development mock)`;
+      
+    // Estimación de tokens de salida
+    const outputChars = responseMock.length;
+    
+    // Estimación rudimentaria: aproximadamente 4 caracteres por token
+    const inputTokens = Math.ceil(totalInputChars / 4);
+    const outputTokens = Math.ceil(outputChars / 4);
+      
+    // Create a simple mock response with usage information
     if (responseFormat === 'json') {
       return {
         id: `msg_mock_${Date.now()}`,
@@ -113,15 +160,15 @@ export class PortkeyAgentConnector {
           {
             message: {
               role: 'assistant',
-              content: JSON.stringify({
-                response: "This is a mock response",
-                query: lastUserMessage,
-                timestamp: new Date().toISOString(),
-                mock: true
-              })
+              content: responseMock
             }
           }
-        ]
+        ],
+        usage: {
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+          total_tokens: inputTokens + outputTokens
+        }
       };
     }
     
@@ -131,10 +178,15 @@ export class PortkeyAgentConnector {
         {
           message: {
             role: 'assistant',
-            content: `This is a mock text response to: "${lastUserMessage}"\nGenerated at ${new Date().toISOString()}\n(Note: This is a development mock)`
+            content: responseMock
           }
         }
-      ]
+      ],
+      usage: {
+        prompt_tokens: inputTokens,
+        completion_tokens: outputTokens,
+        total_tokens: inputTokens + outputTokens
+      }
     };
   }
   
@@ -174,13 +226,22 @@ export class PortkeyAgentConnector {
    * Process the response based on format
    */
   private processResponse(response: any, responseFormat?: 'json' | 'text'): any {
+    // Extraer información de tokens para preservarla
+    const usage = response?.usage || {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0
+    };
+    
     // Get content from response
     const content = response?.choices?.[0]?.message?.content || '';
+    
+    let processedResult: any;
     
     if (responseFormat === 'json') {
       try {
         // Try to parse as JSON
-        return JSON.parse(content);
+        processedResult = JSON.parse(content);
       } catch (error) {
         // If parsing fails, try to extract JSON from text
         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/) || 
@@ -188,17 +249,37 @@ export class PortkeyAgentConnector {
         
         if (jsonMatch) {
           try {
-            return JSON.parse(jsonMatch[1] || jsonMatch[0]);
+            processedResult = JSON.parse(jsonMatch[1] || jsonMatch[0]);
           } catch {
             // Return the raw content if JSON extraction fails
-            return content;
+            processedResult = content;
           }
+        } else {
+          processedResult = content;
         }
-        
-        return content;
       }
+    } else {
+      processedResult = content;
     }
     
-    return content;
+    // Si el resultado es un objeto, añadir la información de tokens
+    if (typeof processedResult === 'object' && processedResult !== null) {
+      processedResult.usage = {
+        input_tokens: usage.prompt_tokens,
+        output_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens
+      };
+      return processedResult;
+    }
+    
+    // Si el resultado es una cadena, devolverlo como objeto con la información de tokens
+    return {
+      content: processedResult,
+      usage: {
+        input_tokens: usage.prompt_tokens,
+        output_tokens: usage.completion_tokens,
+        total_tokens: usage.total_tokens
+      }
+    };
   }
-} 
+}

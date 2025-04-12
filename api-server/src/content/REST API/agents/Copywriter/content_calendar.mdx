@@ -1,0 +1,194 @@
+# Create Content Calendar Command
+
+Creates a command object to generate and manage content calendar entries for marketing campaigns and content planning.
+
+## Endpoint
+
+```http
+POST /api/agents/copywriter/content-calendar
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website for the content |
+| `segmentId` | string | No | ID of the audience segment |
+| `campaignId` | string | No | ID of the marketing campaign |
+| `userId` | string | No | ID of the user creating the content calendar |
+| `agent_id` | string | No | ID of the agent to handle the content creation |
+| `timeframe` | string | No | Desired timeframe for content planning (e.g., "week", "month", "quarter") |
+| `contentType` | string | No | Type of content to be planned (e.g., "blog", "social", "email") |
+| `targetAudience` | string | No | Description of the target audience |
+| `goals` | array | No | Array of content marketing goals |
+| `keywords` | array | No | Array of focus keywords for the content |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456",
+  "segmentId": "seg_789",
+  "campaignId": "camp_123",
+  "userId": "user_789",
+  "agent_id": "agent_copywriter_123",
+  "timeframe": "month",
+  "contentType": "social",
+  "targetAudience": "small business owners",
+  "goals": ["increase engagement", "drive website traffic"],
+  "keywords": ["productivity", "small business", "marketing tips"]
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="copywriter" />
+
+You can test this API directly using our API Tester interface. The Copywriter API tester allows you to generate content calendars with different parameters and see the results.
+
+Required fields:
+- **Site ID**: The ID of the website for the content
+
+Optional fields:
+- **Segment ID**: The ID of the audience segment
+- **Campaign ID**: The ID of the marketing campaign
+- **User ID**: The ID of the user creating the calendar
+- **Agent ID**: The ID of the agent to handle the content creation
+- **Timeframe**: Desired timeframe for content planning
+- **Content Type**: Type of content to be planned
+- **Target Audience**: Description of the target audience
+- **Goals**: Array of content marketing goals
+- **Keywords**: Array of focus keywords for the content
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control the content calendar creation process:
+
+```json
+{
+  "targets": [
+    {
+      "contents": [
+        {
+          "title": "title of the content",
+          "description": "summary of the content",
+          "text": "markdown detailed copy",
+          "type": "blog_post",
+          "estimated_reading_time": 10
+        },
+        {
+          "title": "10 Productivity Tips for Small Business Owners",
+          "description": "In-depth article covering productivity techniques specifically designed for small business owners.",
+          "text": "# 10 Productivity Tips for Small Business Owners\n\nRunning a small business requires juggling multiple responsibilities. Here are ten proven productivity techniques that can help you save time and grow your business:\n\n## 1. Time Blocking\n\nAllocate specific blocks of time to different tasks and stick to your schedule.\n\n## 2. Automate Repetitive Tasks\n\nUse automation tools to handle recurring tasks like social media posting and email responses.\n\n*Continue with more markdown-formatted content...*",
+          "type": "blog_post",
+          "estimated_reading_time": 8
+        },
+        {
+          "title": "How to Streamline Your Marketing Process",
+          "description": "Carousel post showcasing 5 ways to streamline marketing processes.",
+          "text": "# How to Streamline Your Marketing Process\n\nEffective marketing doesn't have to be complicated. Use these five strategies to simplify your approach while maximizing results:\n\n## Strategy 1: Focus on Your Core Channels\n\nInstead of trying to be everywhere, invest in the 2-3 platforms where your audience is most active.\n\n## Strategy 2: Create Content Templates\n\nDevelop reusable templates for common content types to save time and maintain brand consistency.\n\n*Continue with more markdown-formatted content...*",
+          "type": "social_carousel",
+          "estimated_reading_time": 5
+        }
+      ]
+    }
+  ],
+  "context": "Brand guidelines, previous content performance, and marketing strategy",
+  "supervisors": [
+    {
+      "agent_role": "growth_marketer",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "growth_manager",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "create content calendar",
+  "description": "Generate a comprehensive content calendar with strategic content ideas aligned with marketing goals, focused on the target audience, and optimized for the specified keywords and timeframe."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_123456",
+    "siteId": "site_456",
+    "segmentId": "seg_789",
+    "campaignId": "camp_123",
+    "contents": [
+      {
+        "id": "content_abc123",
+        "title": "10 Productivity Tips for Small Business Owners",
+        "description": "In-depth article covering productivity techniques specifically designed for small business owners.",
+        "content": "# 10 Productivity Tips for Small Business Owners\n\nRunning a small business requires...",
+        "type": "blog_post",
+        "status": "draft",
+        "site_id": "site_456",
+        "segment_id": "seg_789",
+        "campaign_id": "camp_123",
+        "user_id": "user_789",
+        "metadata": {
+          "topics": ["productivity", "small business", "time management"],
+          "keywords": ["productivity", "small business", "marketing tips"],
+          "schedule": {
+            "publishDate": "2024-08-15",
+            "channels": ["website", "newsletter"]
+          },
+          "originalItem": {
+            "estimated_reading_time": 8
+          }
+        }
+      }
+    ],
+    "saved_to_database": true
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `SEGMENT_NOT_FOUND` | The specified segment does not exist |
+| `CAMPAIGN_NOT_FOUND` | The specified campaign does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `INVALID_CONTENT_TYPE` | The specified content type is not supported |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The command executes asynchronously
+- The system automatically integrates with your content management system if connected
+- The generated command controls the content planning process with:
+  - `targets`: An array of objects defining expected content entries with title, description, markdown-formatted text, content type, and estimated reading time
+  - `context`: Provides brand guidelines and marketing strategy information
+  - `supervisors`: Defines which agent roles can provide additional input
+  - `task`: Specifies the high-level objective for the agent
+  - `description`: Contains the detailed prompt instructions for the agent
+- All generated content items are automatically saved to the database
+- Content types can include: blog_post, social_post, email_newsletter, social_carousel, video_script, podcast_script, infographic, etc.
+- The estimated_reading_time field represents the approximate time in minutes it takes to consume the content

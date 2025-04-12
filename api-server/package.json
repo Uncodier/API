@@ -8,7 +8,18 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "jest"
+    "test": "jest",
+    "test:target-processor": "jest --verbose src/lib/agentbase/agents/tests/TargetProcessorAgent.test.ts",
+    "test:array-fix": "node ./scripts/test-array-fix.js",
+    "test:contents-structure": "jest --verbose -t \"should maintain array structure for single-object targets\"",
+    "validate-format": "node ./scripts/validate-format.js",
+    "test:target-array-fix": "npm run validate-format && echo '✅ Format validation passed. Full test suite requires Jest.'",
+    "validate-real-case": "node ./scripts/validate-real-case.js",
+    "diagnose-validation": "node ./scripts/diagnose-db-validation.js",
+    "test:respect-structure": "node ./scripts/test-db-adapter-fix.js",
+    "test:content-calendar": "tsx src/app/api/agents/copywriter/content-calendar/tests/run-test.ts",
+    "test:content-extraction": "tsx src/app/api/agents/copywriter/content-calendar/tests/quick-test.ts",
+    "test:calendar-jest": "jest --verbose src/app/api/agents/copywriter/content-calendar/__tests__"
   },
   "dependencies": {
     "@mdx-js/loader": "^3.1.0",

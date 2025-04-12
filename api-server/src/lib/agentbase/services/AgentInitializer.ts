@@ -140,16 +140,44 @@ class AgentInitializer {
             results: toolEvalResult.results
           };
           
+          // Si el resultado de la evaluación contiene un comando actualizado, usarlo
+          // para actualizar también las herramientas
+          if (toolEvalResult.updatedCommand) {
+            console.log(`🔄 El evaluador de herramientas devolvió un comando actualizado con ${toolEvalResult.updatedCommand.tools?.length || 0} herramientas`);
+            
+            // Usar las herramientas actualizadas
+            if (toolEvalResult.updatedCommand.tools && toolEvalResult.updatedCommand.tools.length > 0) {
+              updatedCommand.tools = toolEvalResult.updatedCommand.tools;
+            }
+            
+            // Actualizar los contadores de tokens si están disponibles
+            if (toolEvalResult.updatedCommand?.input_tokens !== undefined) {
+              updatedCommand.input_tokens = Number(command.input_tokens || 0) + Number(toolEvalResult.updatedCommand.input_tokens);
+              console.log(`🔢 Tokens de entrada acumulados: ${updatedCommand.input_tokens}`);
+            }
+            
+            if (toolEvalResult.updatedCommand?.output_tokens !== undefined) {
+              updatedCommand.output_tokens = Number(command.output_tokens || 0) + Number(toolEvalResult.updatedCommand.output_tokens);
+              console.log(`🔢 Tokens de salida acumulados: ${updatedCommand.output_tokens}`);
+            }
+          }
+          
           // Actualizar en la base de datos usando UUID si es válido
           if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-            console.log(`🔄 Actualizando resultados de herramientas en BD con UUID: ${dbUuid}`);
+            console.log(`🔄 Actualizando resultados y herramientas en BD con UUID: ${dbUuid}`);
             await DatabaseAdapter.updateCommand(dbUuid, {
-              results: toolEvalResult.results
+              results: toolEvalResult.results,
+              tools: updatedCommand.tools,
+              input_tokens: updatedCommand.input_tokens,
+              output_tokens: updatedCommand.output_tokens
             });
           } else {
-            console.log(`🔄 Actualizando resultados de herramientas con ID: ${command.id}`);
+            console.log(`🔄 Actualizando resultados y herramientas con ID: ${command.id}`);
             await this.commandService.updateCommand(command.id, {
-              results: toolEvalResult.results
+              results: toolEvalResult.results,
+              tools: updatedCommand.tools,
+              input_tokens: updatedCommand.input_tokens,
+              output_tokens: updatedCommand.output_tokens
             });
           }
           
@@ -179,18 +207,40 @@ class AgentInitializer {
           // Actualizar el comando con los resultados del procesamiento
           const finalResults = targetProcessResult.results;
           
+          // Acumular tokens si están disponibles en el resultado
+          let updatedInputTokens = Number(command.input_tokens || 0);
+          let updatedOutputTokens = Number(command.output_tokens || 0);
+          
+          if (targetProcessResult.updatedCommand) {
+            if (targetProcessResult.updatedCommand.input_tokens !== undefined) {
+              // Usar los tokens ya acumulados en lugar de sumarlos nuevamente
+              updatedInputTokens = Number(targetProcessResult.updatedCommand.input_tokens);
+              console.log(`🔢 Tokens de entrada del procesador de targets: ${updatedInputTokens}`);
+            }
+            
+            if (targetProcessResult.updatedCommand.output_tokens !== undefined) {
+              // Usar los tokens ya acumulados en lugar de sumarlos nuevamente
+              updatedOutputTokens = Number(targetProcessResult.updatedCommand.output_tokens);
+              console.log(`🔢 Tokens de salida del procesador de targets: ${updatedOutputTokens}`);
+            }
+          }
+          
           // Actualizar en la base de datos
           if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
             console.log(`🔄 Actualizando resultados de targets en BD con UUID: ${dbUuid}`);
             await DatabaseAdapter.updateCommand(dbUuid, {
               status: 'completed',
-              results: finalResults
+              results: finalResults,
+              input_tokens: updatedInputTokens,
+              output_tokens: updatedOutputTokens
             });
           } else {
             console.log(`🔄 Actualizando resultados de targets con ID: ${command.id}`);
             await this.commandService.updateCommand(command.id, {
               status: 'completed',
-              results: finalResults
+              results: finalResults,
+              input_tokens: updatedInputTokens,
+              output_tokens: updatedOutputTokens
             });
           }
           
@@ -213,18 +263,38 @@ class AgentInitializer {
           // Ejecutar el comando
           const result = await agent.executeCommand(command);
           
+          // Acumular tokens si están disponibles en el resultado
+          let updatedInputTokens = Number(command.input_tokens || 0);
+          let updatedOutputTokens = Number(command.output_tokens || 0);
+          
+          if (result.updatedCommand) {
+            if (result.updatedCommand.input_tokens !== undefined) {
+              updatedInputTokens += Number(result.updatedCommand.input_tokens);
+              console.log(`🔢 Tokens de entrada acumulados en ejecución directa: ${updatedInputTokens}`);
+            }
+            
+            if (result.updatedCommand.output_tokens !== undefined) {
+              updatedOutputTokens += Number(result.updatedCommand.output_tokens);
+              console.log(`🔢 Tokens de salida acumulados en ejecución directa: ${updatedOutputTokens}`);
+            }
+          }
+          
           // Actualizar el comando con los resultados
           if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
             console.log(`🔄 Actualizando resultados del agente en BD con UUID: ${dbUuid}`);
             await DatabaseAdapter.updateCommand(dbUuid, {
               status: result.status,
-              results: result.results
+              results: result.results,
+              input_tokens: updatedInputTokens,
+              output_tokens: updatedOutputTokens
             });
           } else {
             console.log(`🔄 Actualizando resultados del agente con ID: ${command.id}`);
             await this.commandService.updateCommand(command.id, {
               status: result.status,
-              results: result.results
+              results: result.results,
+              input_tokens: updatedInputTokens,
+              output_tokens: updatedOutputTokens
             });
           }
           
@@ -280,4 +350,4 @@ class AgentInitializer {
   }
 }
 
-export default AgentInitializer; 
+export default AgentInitializer;

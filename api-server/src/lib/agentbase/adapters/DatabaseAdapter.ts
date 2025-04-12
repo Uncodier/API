@@ -54,29 +54,16 @@ function extractConversationId(context: string): string | null {
   return match ? match[1] : null;
 }
 
-// Función para garantizar que los targets tengan siempre content, aunque sea null
+
+// Función simplificada que sólo valida que targets exista, sin transformar su estructura
 function ensureTargetContentExists(targets: any[]): any[] {
+  // Si targets no existe o no es un array, devolver array vacío
   if (!targets || !Array.isArray(targets)) return [];
   
-  return targets.map(target => {
-    // Para cada target, verificar que cada objeto tenga una propiedad 'content'
-    const targetType = Object.keys(target)[0];
-    
-    if (!targetType) return target;
-    
-    // Si el target tiene un tipo, pero no tiene content, añadirlo
-    if (target[targetType] && target[targetType].content === undefined) {
-      return {
-        [targetType]: {
-          ...target[targetType],
-          content: null // Asegurar que content sea null
-        }
-      };
-    }
-    
-    return target;
-  });
+  // Simplemente devolver el array de targets sin modificar su estructura
+  return targets;
 }
+
 
 export class DatabaseAdapter {
   /**
@@ -421,7 +408,9 @@ export class DatabaseAdapter {
       } else {
         // Verificar cada resultado para asegurar que tenga una estructura válida
         const validResults = updates.results.filter(result => {
-          const isValid = result && typeof result === 'object' && (result.type || result.content);
+          // ACTUALIZACIÓN: Aceptar cualquier objeto como válido, respetando completamente
+          // la estructura original de los targets
+          const isValid = result && typeof result === 'object';
           if (!isValid) {
             console.warn(`[DatabaseAdapter] Resultado inválido ignorado:`, result);
           }
@@ -447,6 +436,17 @@ export class DatabaseAdapter {
     if (updates.metadata) {
       console.log(`[DatabaseAdapter] Actualizando metadata`);
       dbUpdates.metadata = updates.metadata;
+    }
+    
+    // Añadir tokens si están definidos
+    if (updates.input_tokens !== undefined) {
+      console.log(`[DatabaseAdapter] Actualizando input_tokens: ${updates.input_tokens}`);
+      dbUpdates.input_tokens = updates.input_tokens;
+    }
+    
+    if (updates.output_tokens !== undefined) {
+      console.log(`[DatabaseAdapter] Actualizando output_tokens: ${updates.output_tokens}`);
+      dbUpdates.output_tokens = updates.output_tokens;
     }
     
     // Manejar el agent_id específicamente

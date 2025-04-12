@@ -8,6 +8,9 @@ import UnifiedApiTester, { UnifiedApiTesterProps } from './UnifiedApiTester';
 import ApiResults from './components/ApiResults';
 import ApiImplementation from './components/ApiImplementation';
 
+// Re-exportamos los componentes de utilidades
+import { FormField, SectionLabel } from './utils';
+
 // Exportación por defecto
 export default UnifiedApiTester;
 
@@ -15,7 +18,9 @@ export default UnifiedApiTester;
 export { 
   UnifiedApiTester,
   ApiResults,
-  ApiImplementation
+  ApiImplementation,
+  FormField,
+  SectionLabel
 };
 
 // Exportaciones de tipos

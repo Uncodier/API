@@ -53,18 +53,35 @@ export class PortkeyAgent extends BaseAgent {
       let toolResults: ToolExecutionResult[] = [];
       if (command.tools && command.tools.length > 0) {
         toolResults = await this.executeTools(command.tools);
-      }
-      
-      // Add tool results to context if available
-      if (toolResults.length > 0) {
-        messages.push({
-          role: 'user' as const,
-          content: `Tool results: ${JSON.stringify(toolResults)}`
-        });
+        
+        // Add tool results to context if available
+        if (toolResults.length > 0) {
+          messages.push({
+            role: 'user' as const,
+            content: `Tool results: ${JSON.stringify(toolResults)}`
+          });
+        }
       }
       
       // Call the agent through Portkey
-      const response = await this.connector.callAgent(messages, modelOptions);
+      const portkeyResponse = await this.connector.callAgent(messages, modelOptions);
+      
+      // Extraer información de tokens
+      const portkeyUsage = this.extractTokenUsage(portkeyResponse);
+      
+      // Acumular con los valores existentes en el comando
+      const currentInputTokens = Number(command.input_tokens || 0);
+      const currentOutputTokens = Number(command.output_tokens || 0);
+      
+      const updatedInputTokens = currentInputTokens + (portkeyUsage.inputTokens || 0);
+      const updatedOutputTokens = currentOutputTokens + (portkeyUsage.outputTokens || 0);
+      
+      console.log(`[PortkeyAgent:${this.id}] Tokens acumulados - Input: ${updatedInputTokens} (${currentInputTokens} + ${portkeyUsage.inputTokens}), Output: ${updatedOutputTokens} (${currentOutputTokens} + ${portkeyUsage.outputTokens})`);
+      
+      // Extraer la respuesta del texto o objeto
+      const response = typeof portkeyResponse === 'object' && portkeyResponse.content 
+        ? portkeyResponse.content 
+        : portkeyResponse;
       
       // Process the response
       const results = this.processAgentResponse(response, command);
@@ -88,9 +105,17 @@ export class PortkeyAgent extends BaseAgent {
         }
       });
       
+      // Crear una copia del comando con los tokens actualizados
+      const updatedCommand = {
+        ...command,
+        input_tokens: updatedInputTokens,
+        output_tokens: updatedOutputTokens
+      };
+      
       return {
         status: 'completed',
-        results
+        results,
+        updatedCommand
       };
     } catch (error: any) {
       console.error(`[PortkeyAgent:${this.id}] Error executing command:`, error);
@@ -100,6 +125,38 @@ export class PortkeyAgent extends BaseAgent {
         error: error.message
       };
     }
+  }
+  
+  /**
+   * Extrae la información de uso de tokens de la respuesta de Portkey
+   */
+  private extractTokenUsage(response: any): { inputTokens: number, outputTokens: number } {
+    const usage = { inputTokens: 0, outputTokens: 0 };
+    
+    try {
+      if (typeof response === 'object') {
+        // Extraer del formato estándar de Portkey
+        if (response.usage) {
+          usage.inputTokens = response.usage.input_tokens || response.usage.prompt_tokens || 0;
+          usage.outputTokens = response.usage.output_tokens || response.usage.completion_tokens || 0;
+        }
+        // Formato alternativo
+        else if (response.inputTokenCount !== undefined && response.outputTokenCount !== undefined) {
+          usage.inputTokens = response.inputTokenCount;
+          usage.outputTokens = response.outputTokenCount;
+        }
+        // Búsqueda profunda de metadatos
+        else if (response.metadata && response.metadata.usage) {
+          usage.inputTokens = response.metadata.usage.input_tokens || response.metadata.usage.prompt_tokens || 0;
+          usage.outputTokens = response.metadata.usage.output_tokens || response.metadata.usage.completion_tokens || 0;
+        }
+      }
+    } catch (error) {
+      console.warn(`[PortkeyAgent] Error extrayendo información de uso de tokens:`, error);
+    }
+    
+    console.log(`[PortkeyAgent] Tokens detectados - Input: ${usage.inputTokens}, Output: ${usage.outputTokens}`);
+    return usage;
   }
   
   /**
@@ -214,6 +271,9 @@ export class PortkeyAgent extends BaseAgent {
    * Process target outputs based on tool results and LLM response
    */
   async processTargets(targets: any[], toolResults: ToolExecutionResult[]): Promise<any[]> {
+    // Ensure toolResults is never undefined
+    const safeToolResults = toolResults || [];
+    
     console.log(`[PortkeyAgent:${this.id}] Procesando ${targets.length} targets`);
     
     const results: any[] = [];
@@ -226,7 +286,7 @@ export class PortkeyAgent extends BaseAgent {
         // Procesar según el tipo de target
         switch (targetType) {
           case 'message':
-            const messageResult = this.processMessageTarget(target.message, toolResults);
+            const messageResult = this.processMessageTarget(target.message, safeToolResults);
             results.push({
               type: 'message',
               content: messageResult
@@ -234,7 +294,7 @@ export class PortkeyAgent extends BaseAgent {
             break;
             
           case 'report':
-            const reportResult = this.processReportTarget(target.report, toolResults);
+            const reportResult = this.processReportTarget(target.report, safeToolResults);
             results.push({
               type: 'report',
               content: reportResult
@@ -242,7 +302,7 @@ export class PortkeyAgent extends BaseAgent {
             break;
             
           case 'analysis':
-            const analysisResult = this.processAnalysisTarget(target.analysis, toolResults);
+            const analysisResult = this.processAnalysisTarget(target.analysis, safeToolResults);
             results.push({
               type: 'analysis',
               content: analysisResult
