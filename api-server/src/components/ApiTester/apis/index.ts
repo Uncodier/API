@@ -15,6 +15,7 @@ import VisitorIdentifyApi from './VisitorIdentifyApi';
 import AgentsIntegrationsApi from './AgentsIntegrationsApi';
 import CustomerSupportApi from './CustomerSupportApi';
 import CopywriterApi from './CopywriterApi';
+import ChatApi from './ChatApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -33,5 +34,6 @@ apiRegistry.register(VisitorIdentifyApi);
 apiRegistry.register(AgentsIntegrationsApi);
 apiRegistry.register(CustomerSupportApi);
 apiRegistry.register(CopywriterApi);
+apiRegistry.register(ChatApi);
 
 export default apiRegistry; 

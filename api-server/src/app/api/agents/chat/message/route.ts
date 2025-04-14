@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory, AgentInitializer } from '@/lib/agentbase';
-import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { v4 as uuidv4 } from 'uuid';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -14,6 +14,9 @@ function isValidUUID(uuid: string): boolean {
 const agentInitializer = AgentInitializer.getInstance();
 agentInitializer.initialize();
 const commandService = agentInitializer.getCommandService();
+
+// ID fijo para usuarios anónimos/invitados que debe existir en la base de datos
+const ANONYMOUS_USER_ID = "00000000-0000-0000-0000-000000000000"; // El ID real del usuario anónimo en tu sistema
 
 // Función para obtener el UUID de la base de datos para un comando
 async function getCommandDbUuid(internalId: string): Promise<string | null> {
@@ -30,9 +33,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
     }
     
     // Buscar en el mapa de traducción interno del CommandService
-    // (esta es una solución de respaldo)
     try {
-      // Esto es un hack para acceder al mapa de traducción interno
       // @ts-ignore - Accediendo a propiedades internas
       const idMap = (commandService as any).idTranslationMap;
       if (idMap && idMap.get && idMap.get(internalId)) {
@@ -137,14 +138,20 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string) {
   try {
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
       // Crear una nueva conversación si no existe
+      const conversationData: any = { user_id: userId };
+      
+      // Añadir lead_id y visitor_id si están presentes
+      if (leadId) conversationData.lead_id = leadId;
+      if (visitorId) conversationData.visitor_id = visitorId;
+      
       const { data: conversation, error: convError } = await supabaseAdmin
         .from('conversations')
-        .insert([{ user_id: userId }])
+        .insert([conversationData])
         .select()
         .single();
       
@@ -158,14 +165,20 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     }
     
     // Guardar el mensaje del usuario
-    const { data: userMessageData, error: userMsgError } = await supabaseAdmin
+    const userMessageData: any = {
+      conversation_id: conversationId,
+      user_id: userId,
+      content: userMessage,
+      role: 'user'
+    };
+    
+    // Añadir lead_id y visitor_id si están presentes
+    if (leadId) userMessageData.lead_id = leadId;
+    if (visitorId) userMessageData.visitor_id = visitorId;
+    
+    const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
       .from('messages')
-      .insert([{
-        conversation_id: conversationId,
-        user_id: userId,
-        content: userMessage,
-        role: 'user'
-      }])
+      .insert([userMessageData])
       .select()
       .single();
     
@@ -174,16 +187,18 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       return null;
     }
     
-    console.log(`💾 Mensaje del usuario guardado con ID: ${userMessageData.id}`);
+    console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
     
     // Guardar el mensaje del asistente
-    const { data: assistantMessageData, error: assistantMsgError } = await supabaseAdmin
+    const assistantMessageData: any = {
+      conversation_id: conversationId,
+      content: assistantMessage,
+      role: 'assistant'
+    };
+    
+    const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
       .from('messages')
-      .insert([{
-        conversation_id: conversationId,
-        content: assistantMessage,
-        role: 'assistant'
-      }])
+      .insert([assistantMessageData])
       .select()
       .single();
     
@@ -192,12 +207,12 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       return null;
     }
     
-    console.log(`💾 Mensaje del asistente guardado con ID: ${assistantMessageData.id}`);
+    console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
     
     return {
       conversationId,
-      userMessageId: userMessageData.id,
-      assistantMessageId: assistantMessageData.id
+      userMessageId: savedUserMessage.id,
+      assistantMessageId: savedAssistantMessage.id
     };
   } catch (error) {
     console.error('Error al guardar mensajes en la base de datos:', error);
@@ -285,28 +300,74 @@ function formatConversationHistoryForContext(messages: Array<{role: string, cont
   return formattedHistory;
 }
 
+// Función para obtener la información del agente desde la base de datos
+async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id?: string; tools?: any[]; activities?: any[] } | null> {
+  try {
+    if (!isValidUUID(agentId)) {
+      console.error(`ID de agente no válido: ${agentId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Obteniendo información del agente: ${agentId}`);
+    
+    // Consultar el agente en la base de datos
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('user_id, site_id, configuration')
+      .eq('id', agentId)
+      .single();
+    
+    if (error) {
+      console.error('Error al obtener información del agente:', error);
+      return null;
+    }
+    
+    if (!data) {
+      console.log(`⚠️ No se encontró el agente con ID: ${agentId}`);
+      return null;
+    }
+    
+    // Parse configuration if it's a string
+    let config = data.configuration;
+    if (typeof config === 'string') {
+      try {
+        config = JSON.parse(config);
+      } catch (e) {
+        console.error('Error parsing agent configuration:', e);
+        config = {};
+      }
+    }
+    
+    // Ensure config is an object
+    config = config || {};
+    
+    // Extract tools and activities from configuration if available
+    const tools = Array.isArray(config.tools) ? config.tools : [];
+    const activities = Array.isArray(config.activities) ? config.activities : [];
+    
+    console.log(`✅ Información del agente recuperada: user_id=${data.user_id}, site_id=${data.site_id || 'N/A'}`);
+    console.log(`📦 Tools: ${tools.length}, Activities: ${activities.length}`);
+    
+    return {
+      user_id: data.user_id,
+      site_id: data.site_id,
+      tools,
+      activities
+    };
+  } catch (error) {
+    console.error('Error al obtener información del agente:', error);
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     
-    // Extract required parameters from the request
-    const { conversationId, userId, message, agentId, site_id } = body;
+    // Extract parameters from the request
+    const { conversationId, message, agentId, lead_id, visitor_id, site_id: requestSiteId } = body;
     
-    if (!userId) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required' } },
-        { status: 400 }
-      );
-    }
-    
-    // Asegurarse de que userId sea un UUID válido
-    if (!isValidUUID(userId)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-    
+    // Validate required parameters
     if (!message) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } },
@@ -314,24 +375,29 @@ export async function POST(request: Request) {
       );
     }
     
-    // Get default agent ID if not provided
-    const effectiveAgentId = agentId || 'default_customer_support_agent';
-    
-    console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${userId}`);
-    
-    // Get site_id from agent if not provided
-    let effectiveSiteId = site_id;
-    if (!effectiveSiteId) {
-      try {
-        // For now, we'll log that site_id is missing
-        // In the future, we can implement a way to get it from the agent if needed
-        console.log(`⚠️ No site_id provided for agent ${effectiveAgentId}`);
-      } catch (error) {
-        console.error(`Error with site_id handling:`, error);
-      }
-    } else {
-      console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
+    if (!agentId) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'agentId is required' } },
+        { status: 400 }
+      );
     }
+    
+    // Obtener información del agente (userId y site_id)
+    const agentInfo = await getAgentInfo(agentId);
+    
+    if (!agentInfo) {
+      return NextResponse.json(
+        { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'The specified agent was not found' } },
+        { status: 404 }
+      );
+    }
+    
+    // Usar el userId del propietario del agente
+    const userId = agentInfo.user_id;
+    // Use site_id from request if provided, otherwise use the one from the agent
+    const site_id = requestSiteId || agentInfo.site_id;
+    
+    console.log(`Creando comando para agente: ${agentId}, propietario: ${userId}, site: ${site_id || 'N/A'}`);
     
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
@@ -342,7 +408,6 @@ export async function POST(request: Request) {
       
       if (historyMessages && historyMessages.length > 0) {
         // Filter out any messages that might be duplicates of the current message
-        // This prevents the current message from appearing twice in the context
         const filteredMessages = historyMessages.filter(msg => 
           msg.role !== 'user' || msg.content.trim() !== message.trim()
         );
@@ -360,14 +425,44 @@ export async function POST(request: Request) {
       }
     }
     
-    // Create the command using CommandFactory with the conversation history in the context
+    // Añadir información del lead, visitor y site al contexto si están presentes
+    if (lead_id) {
+      contextMessage = `${contextMessage}\nLead ID: ${lead_id}`;
+    }
+    
+    if (visitor_id) {
+      contextMessage = `${contextMessage}\nVisitor ID: ${visitor_id}`;
+    }
+    
+    if (site_id) {
+      contextMessage = `${contextMessage}\nSite ID: ${site_id}`;
+    }
+    
+    // Define default tools in case agent doesn't have any - empty array as per specification
+    const defaultTools: any[] = [];
+    
+    // Use agent tools if available, otherwise use default tools
+    const tools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0 
+      ? agentInfo.tools 
+      : defaultTools;
+      
+    // Check if agent has activities
+    const hasActivities = agentInfo.activities && Array.isArray(agentInfo.activities) && agentInfo.activities.length > 0;
+    const activities = agentInfo.activities || [];
+    
+    console.log(`🔧 Using ${tools.length} tools ${tools.length > 0 ? 'from agent configuration' : '(empty array)'}`);
+    if (hasActivities) {
+      console.log(`🔧 Including ${activities.length} activities from agent configuration`);
+    }
+      
+    // Create the command using CommandFactory
     const command = CommandFactory.createCommand({
       task: 'create message',
       userId,
-      agentId: effectiveAgentId,
+      agentId,
       // Add site_id as a basic property if it exists
-      ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
-      description: 'Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase.',
+      ...(site_id ? { site_id } : {}),
+      description: 'Respond helpfully to the user\'s inquiry, provide relevant insights, and assist with the requested task using available tools and knowledge.',
       // Set the target as a message with content
       targets: [
         {
@@ -376,55 +471,16 @@ export async function POST(request: Request) {
           }
         }
       ],
-      // Define the tools as specified in the documentation
-      tools: [
-        {
-          name: 'escalate',
-          description: 'escalate when needed',
-          status: 'not_initialized',
-          type: 'synchronous',
-          parameters: {
-            type: 'object',
-            properties: {
-              conversation: {
-                type: 'string',
-                description: 'The conversation ID that needs to be escalated'
-              },
-              lead_id: {
-                type: 'string',
-                description: 'The ID of the lead or customer related to this escalation'
-              }
-            },
-            required: ['conversation', 'lead_id']
-          }
-        },
-        {
-          name: 'contact_human',
-          description: 'contact human supervisor when complex issues require human intervention',
-          status: 'not_initialized',
-          type: 'asynchronous',
-          parameters: {
-            type: 'object',
-            properties: {
-              conversation: {
-                type: 'string',
-                description: 'The conversation ID that requires human attention'
-              },
-              lead_id: {
-                type: 'string',
-                description: 'The ID of the lead or customer that needs assistance'
-              }
-            },
-            required: ['conversation', 'lead_id']
-          }
-        }
-      ],
+      // Use agent tools or default tools
+      tools,
+      // Add any activities as additional tools if they exist
+      ...(hasActivities ? { activities } : {}),
       // Context includes the current message and conversation history
       context: contextMessage,
-      // Add supervisors as specified in the documentation
+      // Add supervisors
       supervisor: [
         {
-          agent_role: 'sales',
+          agent_role: 'specialist',
           status: 'not_initialized'
         },
         {
@@ -449,67 +505,6 @@ export async function POST(request: Request) {
     
     // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
     const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
-    
-    // Verificar que tenemos un UUID de base de datos válido
-    if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
-      console.error(`❌ No se pudo obtener un UUID válido de la base de datos para el comando ${internalCommandId}`);
-      
-      // En este caso, seguimos adelante con el ID interno en lugar de fallar
-      console.log(`⚠️ Continuando con el ID interno como respaldo: ${internalCommandId}`);
-      
-      if (!completed || !executedCommand) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: { 
-              code: 'COMMAND_EXECUTION_FAILED', 
-              message: 'The command did not complete successfully in the expected time' 
-            } 
-          },
-          { status: 500 }
-        );
-      }
-      
-      // Extraer la respuesta del asistente
-      let assistantMessage = "No response generated";
-      
-      // Obtener resultados si existen
-      if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        // Buscar mensajes en los resultados
-        const messageResults = executedCommand.results.filter((r: any) => r.type === 'message');
-        
-        if (messageResults.length > 0 && messageResults[0].content) {
-          assistantMessage = messageResults[0].content;
-        }
-      }
-      
-      console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
-      
-      // Guardar los mensajes en la base de datos
-      const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId);
-      
-      // Responder usando el ID interno como respaldo
-      return NextResponse.json(
-        { 
-          success: true, 
-          data: { 
-            command_id: internalCommandId, // Usamos el ID interno como respaldo
-            conversation_id: savedMessages?.conversationId,
-            messages: {
-              user: {
-                content: message,
-                message_id: savedMessages?.userMessageId
-              },
-              assistant: {
-                content: assistantMessage,
-                message_id: savedMessages?.assistantMessageId
-              }
-            }
-          } 
-        },
-        { status: 200 }
-      );
-    }
     
     if (!completed || !executedCommand) {
       return NextResponse.json(
@@ -539,23 +534,39 @@ export async function POST(request: Request) {
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
-    // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId);
+    // Guardar los mensajes en la base de datos - Aseguramos que esto se complete antes de responder
+    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, lead_id, visitor_id);
     
+    // Verificar que se guardaron correctamente los mensajes
+    if (!savedMessages) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'MESSAGE_SAVE_FAILED', 
+            message: 'The messages could not be saved correctly' 
+          } 
+        },
+        { status: 500 }
+      );
+    }
+    
+    // Si todo es correcto, devolvemos la respuesta exitosa después de completar todo el proceso
     return NextResponse.json(
       { 
         success: true, 
         data: { 
-          command_id: effectiveDbUuid,
-          conversation_id: savedMessages?.conversationId,
+          commandId: effectiveDbUuid || internalCommandId,
+          status: 'completed',
+          conversation_id: savedMessages.conversationId,
           messages: {
             user: {
               content: message,
-              message_id: savedMessages?.userMessageId
+              message_id: savedMessages.userMessageId
             },
             assistant: {
               content: assistantMessage,
-              message_id: savedMessages?.assistantMessageId
+              message_id: savedMessages.assistantMessageId
             }
           }
         } 
@@ -569,4 +580,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
+} 

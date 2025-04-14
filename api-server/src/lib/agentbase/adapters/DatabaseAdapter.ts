@@ -93,6 +93,11 @@ export class DatabaseAdapter {
       dbCommand.description = command.description;
     }
     
+    // Include site_id if provided
+    if (command.site_id !== undefined && command.site_id !== null) {
+      dbCommand.site_id = command.site_id;
+    }
+    
     // Procesar los targets para asegurar que siempre tengan content, aunque sea null
     if (command.targets && Array.isArray(command.targets)) {
       const processedTargets = ensureTargetContentExists(command.targets);
@@ -189,6 +194,7 @@ export class DatabaseAdapter {
       agent_id: originalAgentId || undefined,
       results: dbCommand.results || [],
       duration: dbCommand.duration || undefined,
+      site_id: dbCommand.site_id || undefined,
       
       // Propiedades específicas de Agentbase
       model_type: undefined,

@@ -29,6 +29,7 @@ export interface CreateCommandParams {
   requires_capabilities?: string[];
   input_tokens?: number;
   output_tokens?: number;
+  site_id?: string;
 }
 
 export interface DbCommand {
@@ -59,6 +60,7 @@ export interface DbCommand {
   requires_capabilities?: string[];
   input_tokens?: number;
   output_tokens?: number;
+  site_id?: string;
   metadata?: {
     dbUuid?: string;
     createTime?: string;

@@ -369,12 +369,13 @@ export async function POST(request: Request) {
       task: 'create content calendar',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
+      // Add site_id as a basic property if it exists
+      ...(siteId ? { site_id: siteId } : {}),
       description: 'Generate a comprehensive content calendar with strategic content ideas aligned with marketing goals, focused on the target audience, and optimized for the specified keywords and timeframe.',
       // Set the target for content generation
       targets: [{
         content: [{
-          text: "rich markdown detailed copy",
-          type: "blog_post",
+          text: "Rich markdown detailed copy, add line breaks for readability and formatting",
           title: "title of the content",
           description: "summary of the content",
           estimated_reading_time: "Number of estimated reading time in seconds, ex 60"

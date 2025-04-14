@@ -1,0 +1,237 @@
+# Content Editor Command
+
+Creates a command object to edit, improve, and style existing content using various controls and quick actions.
+
+## Endpoint
+
+```http
+POST /api/agents/copywriter/content-editor
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `contentId` | string | Yes | ID of the content to edit |
+| `siteId` | string | Yes | ID of the website for the content |
+| `segmentId` | string | No | ID of the audience segment |
+| `campaignId` | string | No | ID of the marketing campaign |
+| `userId` | string | No | ID of the user editing the content |
+| `agent_id` | string | No | ID of the agent to handle the content editing |
+| `quickAction` | string | No | Type of quick action to perform (e.g., "improve", "expand", "style", "summarize") |
+| `styleControls` | object | No | Object containing style control parameters |
+
+### Style Controls
+
+| Parameter | Type | Values | Description |
+|-----------|------|--------|-------------|
+| `tone` | string | "neutral", "friendly" | Neutral (🙂) to Friendly (😊) |
+| `complexity` | string | "simple", "moderate", "advanced" | Simple (📝) to Advanced (📚) |
+| `creativity` | string | "factual", "balanced", "creative" | Factual (📋) to Creative (🎨) |
+| `persuasiveness` | string | "informative", "balanced", "persuasive" | Informative (ℹ️) to Persuasive (🔥) |
+| `targetAudience` | string | "mixed", "specific" | Mixed (👥) to Specific (👤) |
+| `engagement` | string | "professional", "balanced", "engaging" | Professional (👔) to Engaging (🤩) |
+| `size` | string | "short", "medium", "long" | Short (📄) to Long (📜) |
+
+### Prompts
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `whatImGoodAt` | string | No | User's strengths, expertise areas, and what they're known for |
+| `topicsImInterestedIn` | string | No | Topics, industries, or areas the user is passionate about |
+| `topicsToAvoid` | string | No | Topics, industries, or areas the user wants to avoid |
+| `aiPrompt` | string | No | Custom AI prompt for content editing |
+
+### Example Request
+
+```json
+{
+  "contentId": "content_abc123",
+  "siteId": "site_456",
+  "segmentId": "seg_789",
+  "campaignId": "camp_123",
+  "userId": "user_789",
+  "agent_id": "agent_copywriter_123",
+  "quickAction": "improve",
+  "styleControls": {
+    "tone": "neutral",
+    "complexity": "moderate",
+    "creativity": "balanced",
+    "persuasiveness": "balanced",
+    "targetAudience": "mixed",
+    "engagement": "balanced",
+    "size": "medium"
+  },
+  "whatImGoodAt": "Digital marketing, SEO, content strategy",
+  "topicsImInterestedIn": "Tech, marketing, business growth",
+  "topicsToAvoid": "Politics, controversial topics",
+  "aiPrompt": "Make this content more engaging for small business owners"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="copywriter" />
+
+You can test this API directly using our API Tester interface. The Copywriter API tester allows you to edit content with different parameters and see the results.
+
+Required fields:
+- **Content ID**: The ID of the content to edit
+- **Site ID**: The ID of the website for the content
+
+Optional fields:
+- **Quick Action**: Type of quick action to perform
+- **Style Controls**: Object containing style control parameters
+- **Prompts**: Custom prompts for content editing
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Command Structure
+
+The system generates a command object with the following structure to control the content editing process:
+
+```json
+{
+  "command": "edit_content",
+  "content_id": "content_abc123",
+  "site_id": "site_456",
+  "segment_id": "seg_789",
+  "campaign_id": "camp_123",
+  "user_id": "user_789",
+  "agent_id": "agent_copywriter_123",
+  "targets": [
+    {
+      "content": {
+        "id": "content_abc123",
+        "title": "Original Title",
+        "description": "Original description",
+        "text": "Original content text",
+        "type": "blog_post"
+      }
+    }
+  ],
+  "context": {
+    "quick_action": "improve",
+    "style_controls": {
+      "tone": "neutral",
+      "complexity": "moderate", 
+      "creativity": "balanced",
+      "persuasiveness": "balanced",
+      "target_audience": "mixed",
+      "engagement": "balanced",
+      "size": "medium"
+    },
+    "prompts": {
+      "what_im_good_at": "Digital marketing, SEO, content strategy",
+      "topics_im_interested_in": "Tech, marketing, business growth",
+      "topics_to_avoid": "Politics, controversial topics", 
+      "ai_prompt": "Make this content more engaging for small business owners"
+    },
+    "user_preferences": "User's writing style and previous edits"
+  },
+  "supervisors": [
+    {
+      "agent_role": "content_editor",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "content_reviewer",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "edit content",
+  "description": "Edit the content according to the specified quick action and style controls, while considering the user's expertise and preferences."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_123456",
+    "contentId": "content_abc123",
+    "siteId": "site_456",
+    "segmentId": "seg_789",
+    "campaignId": "camp_123",
+    "original_content": {
+      "title": "Original Title",
+      "description": "Original description",
+      "text": "Original content text",
+      "type": "blog_post"
+    },
+    "edited_content": {
+      "title": "Improved Title",
+      "description": "Improved description",
+      "text": "Improved content text with better engagement and readability...",
+      "type": "blog_post"
+    },
+    "applied_actions": {
+      "quick_action": "improve",
+      "style_controls": {
+        "tone": "neutral",
+        "complexity": "moderate",
+        "creativity": "balanced",
+        "persuasiveness": "balanced",
+        "target_audience": "mixed",
+        "engagement": "balanced",
+        "size": "medium"
+      }
+    },
+    "saved_to_database": true
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `CONTENT_NOT_FOUND` | The specified content does not exist |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `SEGMENT_NOT_FOUND` | The specified segment does not exist |
+| `CAMPAIGN_NOT_FOUND` | The specified campaign does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The command executes asynchronously
+- Quick Actions available:
+  - **Improve**: Enhances the overall quality and effectiveness of the content
+  - **Expand**: Adds more detail and information to the content
+  - **Style**: Adjusts the style and tone of the content
+  - **Summarize**: Creates a concise summary of the content
+- Style Controls available:
+  - **Tone**: Neutral (🙂) to Friendly (😊)
+  - **Complexity**: Simple (📝) to Advanced (📚)
+  - **Creativity**: Factual (📋) to Creative (🎨)
+  - **Persuasiveness**: Informative (ℹ️) to Persuasive (🔥)
+  - **Target Audience**: Mixed (👥) to Specific (👤)
+  - **Engagement**: Professional (👔) to Engaging (🤩)
+  - **Size**: Short (📄) to Long (📜)
+- Prompts help the AI understand user preferences:
+  - **What I'm Good At**: User's strengths and expertise areas
+  - **Topics I'm Interested In**: User's areas of interest
+  - **Topics to Avoid**: Topics the user wants to avoid
+  - **AI Prompt**: Custom instructions for the AI
+- All edited content is automatically saved to the database
+- This API does not accept parameters such as `max_tokens`, `aiProvider`, `aiModel`, or `timeout` as these are handled internally by the system 

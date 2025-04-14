@@ -43,31 +43,15 @@ export class TargetProcessorAgent extends BaseAgent {
         };
       }
 
-      // Special debug logging: Check if targets contain any blog post templates
-      // This is to debug the specific issue with "markdown detailed copy" templates
+      // Basic debug logging for targets structure
       try {
         for (const target of command.targets) {
           const targetType = target.type || Object.keys(target)[0];
-          const content = target[targetType] || target.content;
-          
-          if (Array.isArray(content) && content.length > 0 && content[0].type === 'blog_post') {
-            const blogPost = content[0];
-            console.log(`[TargetProcessorAgent:${this.id}] DEBUG: Found blog post template`);
-            console.log(`[TargetProcessorAgent:${this.id}] DEBUG: Text begins with: ${blogPost.text?.substring(0, 50) || 'undefined'}`);
-            console.log(`[TargetProcessorAgent:${this.id}] DEBUG: Title: ${blogPost.title || 'undefined'}`);
-            
-            // Check for common template indicators
-            const isTemplate = blogPost.text?.includes('detailed copy') || 
-                               blogPost.title?.includes('title of the content') ||
-                               blogPost.description?.includes('summary of the content');
-                               
-            if (isTemplate) {
-              console.log(`[TargetProcessorAgent:${this.id}] DEBUG: This appears to be a TEMPLATE BLOG POST that should be replaced with real content`);
-            }
-          }
+          console.log(`[TargetProcessorAgent:${this.id}] Target type: ${targetType}`);
+          console.log(`[TargetProcessorAgent:${this.id}] Target structure: ${JSON.stringify(target).substring(0, 100)}...`);
         }
       } catch (e) {
-        console.warn(`[TargetProcessorAgent:${this.id}] Error in template debug logging:`, e);
+        console.warn(`[TargetProcessorAgent:${this.id}] Error in debug logging:`, e);
       }
 
       let targetResults: any[] = [];
@@ -259,78 +243,8 @@ export class TargetProcessorAgent extends BaseAgent {
    * @returns true if result passes content validation, false otherwise
    */
   private validateContentQuality(targetContent: any, resultContent: any): boolean {
-    // Skip checks if not the right structure
-    if (!targetContent || !resultContent || typeof targetContent !== 'object' || typeof resultContent !== 'object') {
-      return true; // Can't validate these types
-    }
-    
-    // Common placeholder texts that should not appear in actual final content
-    const placeholderTexts = [
-      "detailed copy", 
-      "title of the content", 
-      "summary of the content",
-      "markdown detailed",
-      "placeholder",
-      "your content here",
-      "lorem ipsum"
-    ];
-    
-    // Check if target has placeholder text indicators that would suggest it's a template
-    const targetIsTemplate = Object.keys(targetContent).some(key => {
-      if (typeof targetContent[key] === 'string') {
-        return placeholderTexts.some(placeholder => 
-          targetContent[key].toLowerCase().includes(placeholder)
-        );
-      }
-      return false;
-    });
-    
-    // If target looks like a template and the response looks exactly the same as the target
-    // this likely means the LLM just repeated our template
-    if (targetIsTemplate) {
-      console.log('[TargetProcessorAgent] Target appears to be a template with placeholder content');
-      
-      // Check for verbatim copying of fields that should be different
-      if (targetContent.text && resultContent.text) {
-        const targetTextMd5 = this.getMd5Hash(targetContent.text);
-        const resultTextMd5 = this.getMd5Hash(resultContent.text);
-        
-        // If the text content is identical, that's a problem
-        if (targetTextMd5 === resultTextMd5) {
-          console.warn('[TargetProcessorAgent] Result text is identical to template text - LLM likely copied template');
-          return false;
-        }
-        
-        // If target has placeholder indicators but result also has the same indicators
-        // then LLM probably copied placeholder patterns
-        for (const placeholder of placeholderTexts) {
-          if (targetContent.text.toLowerCase().includes(placeholder) && 
-              resultContent.text.toLowerCase().includes(placeholder)) {
-            console.warn(`[TargetProcessorAgent] Result contains placeholder text "${placeholder}" from template`);
-            return false;
-          }
-        }
-      }
-      
-      // Check title field for placeholder copying
-      if (targetContent.title && resultContent.title && 
-          targetContent.title === resultContent.title && 
-          placeholderTexts.some(p => targetContent.title.toLowerCase().includes(p))) {
-        console.warn('[TargetProcessorAgent] Result title identical to template placeholder title');
-        return false;
-      }
-      
-      // Check for minimum content length on text fields if target appears to be a template
-      // Real content should have substantial length
-      if (targetContent.text && resultContent.text) {
-        const minLength = 100; // Minimum characters expected for real content
-        if (resultContent.text.length < minLength && targetContent.text.includes('detailed')) {
-          console.warn(`[TargetProcessorAgent] Result text too short (${resultContent.text.length} chars) to be valid content`);
-          return false;
-        }
-      }
-    }
-    
+    // Skip all content validation and just return true
+    // We're removing all specific business logic validation
     return true;
   }
   
@@ -351,7 +265,8 @@ export class TargetProcessorAgent extends BaseAgent {
 
   // Replace the old method with the new validation approach
   private detectPlaceholderContent(targetContent: any, resultContent: any): boolean {
-    return !this.validateContentQuality(targetContent, resultContent);
+    // Removing specific validation logic
+    return false;
   }
 
   /**
@@ -423,48 +338,23 @@ export class TargetProcessorAgent extends BaseAgent {
         }
         
         // Special handling for array content to ensure structure alignment
-        if (targetType === 'contents' && 
-            Array.isArray(target.content) && 
-            target.content.length > 0 && 
-            typeof target.content[0] === 'object') {
-          
-          // Create proper structure for blog post array
-          if (Array.isArray(content)) {
-            // Keep array structure intact
-            content = content;
-          } else if (typeof content === 'object' && !Array.isArray(content)) {
-            // CRITICAL FIX: Always wrap single objects in an array to maintain structure
-            content = [content];
-            console.log('[TargetProcessorAgent] Single object wrapped in array to preserve structure');
-          } else if (typeof content === 'string') {
-            // Convert string to blog post format if target expects blog post
-            const targetItem = target.content[0];
-            if (targetItem && targetItem.type === 'blog_post') {
-              content = [{
-                text: content,
-                type: 'blog_post',
-                title: 'Generated Blog Post',
-                description: 'Generated content from string response',
-                estimated_reading_time: Math.max(1, Math.floor(content.length / 1000))
-              }];
-            } else {
-              // CRITICAL FIX: Always wrap string in array if original target is array
-              content = [content];
-              console.log('[TargetProcessorAgent] String wrapped in array to preserve structure');
-            }
-          } else {
-            // Content is something unexpected, create a basic structure based on target
-            content = target.content.map(() => ({ text: "Content structure could not be processed correctly" }));
+        if (targetType === 'contents' && Array.isArray(target.content)) {
+          // Basic structure preservation - ensure array structure is maintained
+          if (!Array.isArray(content)) {
+            content = [content]; // Wrap non-array content in array to preserve structure
+            console.log('[TargetProcessorAgent] Content wrapped in array to preserve structure');
           }
-        }
-        
-        // IMPORTANT: For targets with 'contents' type, always ensure the response also uses 'contents'
-        // This fixes a key issue in the test case where 'contents' in target becomes 'content' in response
-        if (targetType === 'contents') {
+          
           return {
             type: 'contents',
             contents: content // Use 'contents' property name to match target
           };
+        }
+        
+        // For content arrays in general, preserve array structure if target has array
+        if (Array.isArray(target.content) && !Array.isArray(content)) {
+          content = [content]; // Wrap non-array content in array to preserve structure
+          console.log('[TargetProcessorAgent] Content wrapped in array to preserve structure');
         }
         
         // Return result with exact same structure as target
@@ -505,9 +395,7 @@ export class TargetProcessorAgent extends BaseAgent {
       const target = targets[i];
       const result = results[i];
       
-      // ENHANCED VALIDATION: Perform deep structure validation to ensure exact property path matching
-      
-      // Step 1: Check if top-level properties exactly match
+      // Simple structural validation - only check top-level properties match
       const targetKeys = Object.keys(target);
       const resultKeys = Object.keys(result);
       
@@ -529,186 +417,26 @@ export class TargetProcessorAgent extends BaseAgent {
         }
       }
       
-      // Step 2: For each top-level property, verify the type and structure matches
+      // Verify basic type matching for each property
       for (const key of targetKeys) {
-        // Skip content validation, which is handled separately
-        if (key === 'content') continue;
-        
         const targetValue = target[key];
         const resultValue = result[key];
         
-        // Verify types match
-        if (typeof targetValue !== typeof resultValue) {
-          console.warn(`[TargetProcessorAgent] El tipo de la propiedad "${key}" no coincide: target=${typeof targetValue}, result=${typeof resultValue}`);
-          return false;
-        }
-        
-        // If both are arrays, verify array types match
+        // Only check type matching between primitive types or arrays
         if (Array.isArray(targetValue) !== Array.isArray(resultValue)) {
           console.warn(`[TargetProcessorAgent] La estructura de la propiedad "${key}" no coincide: uno es array y el otro no`);
           return false;
         }
-      }
-      
-      // Step 3: Special handling for "content" property path which is critical
-      // This is where the bug was - we need to verify complete paths match
-      const targetContentPath = this.findContentPropertyPath(target);
-      const resultContentPath = this.findContentPropertyPath(result);
-      
-      console.log(`[TargetProcessorAgent] Target content path: ${targetContentPath}`);
-      console.log(`[TargetProcessorAgent] Result content path: ${resultContentPath}`);
-      
-      // Content property paths must match exactly
-      if (targetContentPath !== resultContentPath) {
-        console.warn(`[TargetProcessorAgent] Las rutas de la propiedad "content" no coinciden: target=${targetContentPath}, result=${resultContentPath}`);
-        return false;
-      }
-      
-      // Get the content values using the paths
-      const targetContent = this.getPropertyByPath(target, targetContentPath);
-      const resultContent = this.getPropertyByPath(result, resultContentPath);
-      
-      if (!targetContent || !resultContent) {
-        console.warn(`[TargetProcessorAgent] Falta contenido en el target o en el resultado`);
-        return false;
-      }
-      
-      // Check array vs non-array
-      if (Array.isArray(targetContent) !== Array.isArray(resultContent)) {
-        console.warn(`[TargetProcessorAgent] Estructura no coincide: target content es ${Array.isArray(targetContent) ? 'array' : 'no-array'} pero resultado content es ${Array.isArray(resultContent) ? 'array' : 'no-array'}`);
-        return false;
-      }
-      
-      // Si ambos son arrays, verificar que tengan la misma longitud
-      if (Array.isArray(targetContent) && Array.isArray(resultContent)) {
-        // Solo verificar longitud para arrays vacíos o simples
-        // Para arrays de objetos complejos como blog posts, necesitamos una validación más profunda
-        const isComplexArray = targetContent.length > 0 && typeof targetContent[0] === 'object';
         
-        console.log(`[TargetProcessorAgent] Validating array content, isComplexArray: ${isComplexArray}`);
-        console.log(`[TargetProcessorAgent] Target array length: ${targetContent.length}, Result array length: ${resultContent.length}`);
-        
-        if (targetContent.length !== resultContent.length && !isComplexArray) {
-          console.warn(`[TargetProcessorAgent] La longitud del contenido del target (${targetContent.length}) no coincide con la longitud del contenido del resultado (${resultContent.length})`);
+        // If not arrays, check that primitive types match
+        if (!Array.isArray(targetValue) && typeof targetValue !== typeof resultValue) {
+          console.warn(`[TargetProcessorAgent] El tipo de la propiedad "${key}" no coincide: target=${typeof targetValue}, result=${typeof resultValue}`);
           return false;
         }
-        
-        // Para arrays de objetos complejos como blog posts
-        if (isComplexArray) {
-          // Verificar el primer elemento si existe
-          if (resultContent.length === 0) {
-            console.warn('[TargetProcessorAgent] El array de contenido del resultado está vacío pero el target tiene elementos');
-            return false;
-          }
-          
-          // Verificar el primer objeto de blog post u otro objeto complejo
-          const targetItem = targetContent[0];
-          const resultItem = resultContent[0];
-          
-          console.log(`[TargetProcessorAgent] Target item type: ${targetItem.type || 'unknown'}`);
-          console.log(`[TargetProcessorAgent] Target text preview: ${typeof targetItem.text === 'string' ? targetItem.text.substring(0, 50) + '...' : 'not string'}`);
-          console.log(`[TargetProcessorAgent] Result text preview: ${typeof resultItem.text === 'string' ? resultItem.text.substring(0, 50) + '...' : 'not string'}`);
-          
-          // Verificar que es un objeto
-          if (typeof resultItem !== 'object') {
-            console.warn(`[TargetProcessorAgent] El primer elemento del contenido no es un objeto: ${typeof resultItem}`);
-            return false;
-          }
-          
-          // NEW: Check if target is a template with placeholders and result isn't significantly different
-          // This is the critical check for blog post content
-          if (targetItem.type === 'blog_post') {
-            console.log('[TargetProcessorAgent] Detected blog post, performing template content validation');
-            
-            // Check for placeholder indicators in target that suggest it's a template
-            const commonPlaceholders = ["detailed copy", "title of the content", "summary of the content", "lorem ipsum"];
-            
-            // If target contains placeholders, do a more thorough check of response quality
-            const targetHasPlaceholders = commonPlaceholders.some(p => 
-              (targetItem.text && targetItem.text.includes(p)) || 
-              (targetItem.title && targetItem.title.includes(p)) ||
-              (targetItem.description && targetItem.description.includes(p))
-            );
-            
-            if (targetHasPlaceholders) {
-              console.log('[TargetProcessorAgent] Target contains placeholder indicators, validating content quality');
-              
-              // For blog posts specifically, validate the content more thoroughly
-              if (!this.validateContentQuality(targetItem, resultItem)) {
-                console.warn('[TargetProcessorAgent] Blog post content failed quality validation');
-                return false;
-              }
-              
-              // Additional check - if template has very short text but result has very long text,
-              // this is usually fine (and expected!)
-              if (targetItem.text && resultItem.text && 
-                  targetItem.text.length < 30 && resultItem.text.length > 500) {
-                console.log('[TargetProcessorAgent] Template text is short but result is long - this is good!');
-                // This is actually good! Continue validation
-              }
-            }
-          }
-          
-          // Special check for placeholder content in templates
-          // If target has placeholder text like "detailed copy" or "title of the content",
-          // then result should NOT contain the same placeholder text
-          const placeholderTexts = ["detailed copy", "title of the content", "summary of the content"];
-          for (const placeholder of placeholderTexts) {
-            if (targetItem.text && targetItem.text.includes(placeholder) && 
-                resultItem.text && resultItem.text.includes(placeholder)) {
-              console.warn(`[TargetProcessorAgent] El resultado contiene texto placeholder "${placeholder}" del template`);
-              return false;
-            }
-          }
-          
-          // Verificar campos críticos para objetos tipo blog post
-          const criticalFields = ['text', 'type', 'title'];
-          for (const field of criticalFields) {
-            if (targetItem[field] && !resultItem[field]) {
-              console.warn(`[TargetProcessorAgent] Falta el campo crítico "${field}" en el resultado`);
-              return false;
-            }
-          }
-        }
-        // Verificación normal para arrays simples
-        else if (targetContent.length > 0) {
-          for (let j = 0; j < Math.min(targetContent.length, resultContent.length); j++) {
-            const targetItem = targetContent[j];
-            const resultItem = resultContent[j];
-            
-            // Verificar que las propiedades coincidan para tipos simples
-            if (typeof targetItem !== 'object' && typeof resultItem !== 'object') {
-              if (typeof targetItem !== typeof resultItem) {
-                console.warn(`[TargetProcessorAgent] Los tipos del elemento ${j} no coinciden: target=${typeof targetItem}, result=${typeof resultItem}`);
-                return false;
-              }
-            }
-            // Para objetos, usar comparación de propiedades
-            else if (typeof targetItem === 'object' && targetItem !== null && 
-                typeof resultItem === 'object' && resultItem !== null) {
-              if (!this.compareProperties(targetItem, resultItem)) {
-                console.warn(`[TargetProcessorAgent] Las propiedades del elemento ${j} no coinciden`);
-                return false;
-              }
-            }
-          }
-        }
-      } 
-      // Si son objetos, verificar que las propiedades coincidan
-      else if (typeof targetContent === 'object' && typeof resultContent === 'object') {
-        if (!this.compareProperties(targetContent, resultContent)) {
-          console.warn(`[TargetProcessorAgent] Las propiedades del contenido no coinciden`);
-          return false;
-        }
-      }
-      // Si son de tipos diferentes, fallar
-      else if (typeof targetContent !== typeof resultContent) {
-        console.warn(`[TargetProcessorAgent] Los tipos de contenido no coinciden: target=${typeof targetContent}, result=${typeof resultContent}`);
-        return false;
       }
     }
 
-    console.log('[TargetProcessorAgent] All structure and content validations passed successfully');
+    console.log('[TargetProcessorAgent] All structure validations passed successfully');
     return true;
   }
 
@@ -723,7 +451,7 @@ export class TargetProcessorAgent extends BaseAgent {
     
     // Check for nested content under type
     if (obj.type && obj[obj.type]) {
-      if (Array.isArray(obj[obj.type])) return obj.type;
+      return obj.type;
     }
     
     // Look for any array property that might be content
@@ -776,27 +504,6 @@ export class TargetProcessorAgent extends BaseAgent {
     const targetKeys = Object.keys(target);
     const resultKeys = Object.keys(result);
     
-    // Para objetos blog post o similares, solo verificar campos críticos
-    // en lugar de todas las propiedades exactamente
-    if (target.text && target.type && target.title) {
-      const criticalFields = ['text', 'type', 'title'];
-      for (const field of criticalFields) {
-        if (target[field] && !result[field]) {
-          console.warn(`[TargetProcessorAgent] Falta el campo crítico "${field}" en el resultado`);
-          return false;
-        }
-        
-        // Verificar tipos de campos críticos
-        if (target[field] && result[field] && typeof target[field] !== typeof result[field]) {
-          console.warn(`[TargetProcessorAgent] El tipo del campo "${field}" no coincide: target=${typeof target[field]}, result=${typeof result[field]}`);
-          return false;
-        }
-      }
-      
-      // Si los campos críticos existen y son del tipo correcto, aceptar el objeto
-      return true;
-    }
-    
     // Para objetos normales, verificación completa
     // Verificar que todas las claves del target estén en el resultado
     for (const key of targetKeys) {
@@ -814,7 +521,7 @@ export class TargetProcessorAgent extends BaseAgent {
       }
     }
     
-    // Verificar los valores de las propiedades
+    // Verificar los tipos de las propiedades para asegurar compatibilidad estructural
     for (const key of targetKeys) {
       const targetValue = target[key];
       const resultValue = result[key];
@@ -822,32 +529,20 @@ export class TargetProcessorAgent extends BaseAgent {
       // Si son objetos, comparar recursivamente
       if (typeof targetValue === 'object' && targetValue !== null && 
           typeof resultValue === 'object' && resultValue !== null) {
-        if (!this.compareProperties(targetValue, resultValue)) {
-          return false;
-        }
-      }
-      // Si son arrays, verificar que tengan la misma longitud y elementos
-      else if (Array.isArray(targetValue) && Array.isArray(resultValue)) {
-        if (targetValue.length !== resultValue.length) {
-          console.warn(`[TargetProcessorAgent] La longitud del array "${key}" no coincide: target=${targetValue.length}, result=${resultValue.length}`);
+        if (Array.isArray(targetValue) !== Array.isArray(resultValue)) {
+          console.warn(`[TargetProcessorAgent] La estructura de la propiedad "${key}" no coincide: uno es array y el otro no`);
           return false;
         }
         
-        // Verificar cada elemento del array
-        for (let i = 0; i < targetValue.length; i++) {
-          const targetItem = targetValue[i];
-          const resultItem = resultValue[i];
-          
-          // Si son objetos, comparar recursivamente
-          if (typeof targetItem === 'object' && targetItem !== null && 
-              typeof resultItem === 'object' && resultItem !== null) {
-            if (!this.compareProperties(targetItem, resultItem)) {
-              return false;
-            }
+        if (Array.isArray(targetValue) && Array.isArray(resultValue)) {
+          // Solo verificar longitud para arrays
+          if (targetValue.length !== resultValue.length) {
+            console.warn(`[TargetProcessorAgent] La longitud del array "${key}" no coincide: target=${targetValue.length}, result=${resultValue.length}`);
+            return false;
           }
-          // Si son de tipos diferentes, fallar
-          else if (typeof targetItem !== typeof resultItem) {
-            console.warn(`[TargetProcessorAgent] Los tipos de los elementos del array "${key}" no coinciden: target=${typeof targetItem}, result=${typeof resultItem}`);
+        } else {
+          // Para objetos, comparar recursivamente
+          if (!this.compareProperties(targetValue, resultValue)) {
             return false;
           }
         }

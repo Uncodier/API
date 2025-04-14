@@ -1,11 +1,11 @@
-# Create Message Command
+# Create Chat Message Command
 
-Creates a command object to handle customer support interactions and manages the conversation flow.
+Creates a command object to handle interactions with any agent type and manages the conversation flow.
 
 ## Endpoint
 
 ```http
-POST /api/agents/customerSupport/message
+POST /api/agents/chat/message
 ```
 
 ## Request Body
@@ -13,20 +13,22 @@ POST /api/agents/customerSupport/message
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `conversationId` | string | No | Optional ID of existing conversation |
-| `userId` | string | Yes | ID of the user or customer |
-| `message` | string | Yes | The message content from the customer |
-| `agentId` | string | No | ID of the customer support agent to handle the request |
-| `site_id` | string | No | ID of the site associated with this interaction |
+| `message` | string | Yes | The message content from the user |
+| `agentId` | string | Yes | ID of the agent to handle the request |
+| `lead_id` | string | No | Optional ID of the lead associated with this conversation |
+| `visitor_id` | string | No | Optional ID of the visitor or website guest |
+| `site_id` | string | No | Optional ID of the site associated with this conversation |
 
 ### Example Request
 
 ```json
 {
   "conversationId": "conv_123456",
-  "userId": "user_789",
-  "message": "I need help with my recent order",
-  "agentId": "agent_support_123",
-  "site_id": "site_456"
+  "message": "Can you analyze this marketing data for me?",
+  "agentId": "agent_marketing_123",
+  "lead_id": "lead_456",
+  "visitor_id": "visitor_789",
+  "site_id": "site_abc123"
 }
 ```
 
@@ -34,7 +36,7 @@ POST /api/agents/customerSupport/message
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
-<UnifiedApiTester apiId="customer-support" />
+<UnifiedApiTester apiId="chat" />
 
 ## Generated Command Structure
 
@@ -45,29 +47,29 @@ The system generates a command object with the following structure to control su
   "targets": [
     {
       "message": {
-        "content": "I understand you're having an issue with your recent order. Let me help you with that. Could you please provide your order number so I can look up the details?"
+        "content": "I'll help you analyze that marketing data. Could you please provide more details about what specific insights you're looking for from this data?"
       }
     }
   ],
   "tools": [
     {
-      "name": "escalate",
-      "description": "escalate when needed",
+      "name": "data_analysis",
+      "description": "analyze data and generate insights",
       "status": "not_initialized",
       "type": "synchronous",
       "parameters": {
         "type": "object",
         "properties": {
-          "conversation": {
+          "data_source": {
             "type": "string",
-            "description": "The conversation ID that needs to be escalated"
+            "description": "The source or location of the data to be analyzed"
           },
-          "lead_id": {
+          "analysis_type": {
             "type": "string",
-            "description": "The ID of the lead or customer related to this escalation"
+            "description": "The type of analysis to perform (e.g., 'trend', 'comparison', 'prediction')"
           }
         },
-        "required": ["conversation", "lead_id"]
+        "required": ["data_source"]
       }
     },
     {
@@ -82,19 +84,23 @@ The system generates a command object with the following structure to control su
             "type": "string",
             "description": "The conversation ID that requires human attention"
           },
+          "user_id": {
+            "type": "string",
+            "description": "The ID of the user that needs assistance"
+          },
           "lead_id": {
             "type": "string",
-            "description": "The ID of the lead or customer that needs assistance"
+            "description": "The ID of the lead related to this escalation"
           }
         },
-        "required": ["conversation", "lead_id"]
+        "required": ["conversation", "user_id"]
       }
     }
   ],
-  "context": "Previous conversation messages and FAQ content",
+  "context": "Previous conversation messages and relevant knowledge base content",
   "supervisors": [
     {
-      "agent_role": "sales",
+      "agent_role": "specialist",
       "status": "not_initialized"
     },
     {
@@ -103,8 +109,7 @@ The system generates a command object with the following structure to control su
     }
   ],
   "task": "create message",
-  "description": "Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase.",
-  "site_id": "site_456"
+  "description": "Respond helpfully to the user's inquiry, provide relevant insights, and assist with the requested task using available tools and knowledge."
 }
 ```
 
@@ -148,29 +153,33 @@ The system generates a command object with the following structure to control su
 
 - The command executes asynchronously
 - The system automatically creates `message` and/or `conversation` objects if they don't exist
-- If `site_id` is not provided, the system will attempt to use the site ID associated with the agent
+- The user ID is automatically obtained from the agent information (the owner of the agent)
+- Site ID is determined from the provided `site_id` parameter or from the agent configuration if available
 - The generated command controls the agent's behavior with:
   - `targets`: An array of objects defining expected outputs to be generated
-  - `tools`: Specifies what actions the agent can take (like escalation or contacting human supervisors)
+  - `tools`: Specifies what actions the agent can take (specific to the agent type and capabilities)
     - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
     - Tools follow the OpenAI format with parameters defined as objects containing properties and required fields
     - The agent will update tool status to "not_required" when the tool is evaluated but not needed for the current conversation
-  - `context`: Provides conversation history and relevant documentation
+  - `context`: Provides conversation history and relevant knowledge base content
   - `supervisors`: Defines which agent roles can intervene
   - `task`: Specifies the high-level objective for the agent
   - `description`: Contains the detailed prompt instructions for the agent
 
 ## Try It
 
-You can test this API directly using our API Tester interface. The Customer Support API tester allows you to send messages to the customer support agent and see the responses.
+You can test this API directly using our API Tester interface. The Chat API tester allows you to send messages to any agent type and see the responses.
 
 Required fields:
-- **User ID**: The ID of the user or customer
-- **Message**: The content of the message from the customer
+- **Message**: The content of the message from the user
+- **Agent ID**: The ID of the agent
 
 Optional fields:
 - **Conversation ID**: If continuing an existing conversation, provide the ID
-- **Agent ID**: The ID of the customer support agent
-- **Site ID**: The ID of the site associated with this interaction
+- **Lead ID**: If the conversation is associated with a lead, provide the ID
+- **Visitor ID**: If the conversation is with a website visitor, provide the ID
+- **Site ID**: If the conversation is associated with a specific site, provide the ID
 
-The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+<UnifiedApiTester apiId="chat" />
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly. 

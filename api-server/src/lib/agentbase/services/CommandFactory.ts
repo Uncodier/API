@@ -27,6 +27,7 @@ export class CommandFactory {
     executionOrder?: string[];
     supervisionParams?: SupervisionParams;
     requiresCapabilities?: string[];
+    site_id?: string;
   }): CreateCommandParams {
     return {
       task: params.task,
@@ -48,7 +49,8 @@ export class CommandFactory {
       priority: params.priority || 5,
       execution_order: params.executionOrder,
       supervision_params: params.supervisionParams,
-      requires_capabilities: params.requiresCapabilities
+      requires_capabilities: params.requiresCapabilities,
+      site_id: params.site_id
     };
   }
   

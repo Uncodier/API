@@ -10,6 +10,7 @@ export interface CustomerSupportApiProps {
   defaultAgentId?: string;
   defaultConversationId?: string;
   defaultMessage?: string;
+  defaultSiteId?: string;
 }
 
 // State for CustomerSupportApi
@@ -18,26 +19,36 @@ export interface CustomerSupportApiState {
   agentId: string;
   conversationId: string;
   message: string;
+  site_id: string;
   jsonResponse: boolean;
-  showLogs: boolean;
+  showResponse: boolean;
+  loading: boolean;
+  error: string | null;
+  response: any;
+  responseStatus: number;
 }
 
 // Configuration for CustomerSupportApi
 const CustomerSupportApi: BaseApiConfig = {
   id: 'customer-support',
   name: 'Customer Support API',
-  description: 'API to handle customer support interactions. Enable "Show logs" and check browser console (F12) to see request details.',
+  description: 'API to handle customer support interactions.',
   defaultEndpoint: '/api/agents/customerSupport/message',
 
   // Get initial state
   getInitialState: (props: CustomerSupportApiProps): CustomerSupportApiState => {
     return {
+      showResponse: false,
+      jsonResponse: true,
+      loading: false,
+      error: null,
+      response: null,
+      responseStatus: 0,
       userId: props.defaultUserId || '',
-      agentId: props.defaultAgentId || '',
+      agentId: props.defaultAgentId || 'default_customer_support_agent',
       conversationId: props.defaultConversationId || '',
       message: props.defaultMessage || '',
-      jsonResponse: false,
-      showLogs: true
+      site_id: props.defaultSiteId || ''
     };
   },
 
@@ -56,9 +67,8 @@ const CustomerSupportApi: BaseApiConfig = {
       body.agentId = state.agentId;
     }
 
-    // Log the request body
-    if (state.showLogs) {
-      console.log('Customer Support API Request:', body);
+    if (state.site_id) {
+      body.site_id = state.site_id;
     }
 
     return body;
@@ -77,6 +87,45 @@ const CustomerSupportApi: BaseApiConfig = {
       setState(prev => ({ ...prev, [field]: value }));
     };
     
+    const handleSubmit = async (event: React.FormEvent) => {
+      event.preventDefault();
+      setState(prev => ({ ...prev, loading: true, error: null, showResponse: false }));
+
+      try {
+        const response = await fetch('/api/agents/customerSupport/message', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId: state.userId,
+            agentId: state.agentId,
+            conversationId: state.conversationId || undefined,
+            message: state.message,
+            site_id: state.site_id || undefined
+          }),
+        });
+
+        const data = await response.json();
+        
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          response: data,
+          showResponse: true,
+          responseStatus: response.status
+        }));
+      } catch (error) {
+        console.error('Error al enviar mensaje:', error);
+        setState(prev => ({
+          ...prev,
+          loading: false,
+          error: 'Error al enviar el mensaje',
+          showResponse: false
+        }));
+      }
+    };
+
     return (
       <>
         <SectionLabel>Required Fields</SectionLabel>
@@ -122,11 +171,12 @@ const CustomerSupportApi: BaseApiConfig = {
         />
         
         <FormField
-          label="Show request logs in console (F12)"
-          id="showLogs"
-          type="checkbox"
-          value={state.showLogs}
-          onChange={(value: boolean) => handleChange('showLogs', value)}
+          label="Site ID"
+          id="site_id"
+          type="text"
+          value={state.site_id}
+          placeholder="site_123456"
+          onChange={(value: string) => handleChange('site_id', value)}
         />
       </>
     );

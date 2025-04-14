@@ -27,6 +27,7 @@ export interface DbCommand {
   user_id: string;
   input_tokens?: number | null;  // Tokens de entrada acumulados
   output_tokens?: number | null; // Tokens de salida acumulados
+  site_id?: string | null;       // Site identifier
 }
 
 /**
@@ -47,6 +48,7 @@ export interface CreateCommandParams {
   user_id: string;
   input_tokens?: number;  // Tokens de entrada acumulados
   output_tokens?: number; // Tokens de salida acumulados
+  site_id?: string;       // Site identifier
 }
 
 /**
