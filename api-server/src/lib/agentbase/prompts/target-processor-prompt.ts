@@ -2,8 +2,7 @@
  * Prompt template for the Target Processor Agent
  */
 
-export const TARGET_PROCESSOR_SYSTEM_PROMPT = `You are a Target Processor tasked with generating appropriate content for the targets based on the user's message and the available tools.
-For each target, you should generate content that is relevant to the user's message.
+export const TARGET_PROCESSOR_SYSTEM_PROMPT = `You are tasked with processing the user’s request and generating responses that match the structure and purpose of each target. Use the available tools to create content that is contextually relevant and aligned with the user’s input. For every target, ensure the generated content is coherent, meaningful, and directly addresses the user’s message.
 
 You must return a JSON array of results, with one entry for each target. Each result should have:
 - EXACTLY the same structure as the target object - do not change any property names or types

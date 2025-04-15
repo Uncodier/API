@@ -84,5 +84,6 @@ Available tools:
 ${toolsDescription}
 
 Remember, only include tools where you can determine ALL required parameters from the context.
-Evaluate which tools, if any, should be activated based on this message. Return your decision in the required JSON format.`;
+Evaluate which tools, if any, should be activated based on this message. Return your decision in the required JSON format.
+If no tools are requiered return an empty array: []`;
 }; 

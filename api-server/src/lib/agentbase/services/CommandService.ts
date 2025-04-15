@@ -122,76 +122,109 @@ export class CommandService {
   }
   
   /**
-   * Update the status of a command
+   * Update command status
+   * 
+   * @param commandId Command ID
+   * @param status New status
+   * @param errorMessage Optional error message when status is failed
+   * @returns Promise<DbCommand | null> Updated command or null if not found
    */
-  async updateStatus(commandId: string, status: CommandStatus): Promise<DbCommand> {
+  async updateStatus(commandId: string, status: CommandStatus, errorMessage?: string): Promise<DbCommand | null> {
     try {
-      // Traducir el ID si es necesario
-      const dbId = idTranslationMap.get(commandId) || commandId;
-      
-      // Try to update command status in database using the adapter
-      await DatabaseAdapter.updateCommandStatus(dbId, status);
-      
-      // Update in-memory command as well
-      const command = commandsStore.get(commandId);
-      if (command) {
-        command.status = status;
-        command.updated_at = new Date().toISOString();
-        
-        // If the command is completed or failed, calculate duration
-        if (status === 'completed' || status === 'failed') {
-          const startTime = new Date(command.created_at).getTime();
-          const endTime = new Date().getTime();
-          command.duration = endTime - startTime;
-        }
-        
-        // Store updated command
-        commandsStore.set(commandId, command);
-        
-        // Emit status change event with dbId information
-        this.eventEmitter.emit('statusChange', { 
-          id: commandId, 
-          dbId, // También incluir el UUID para facilitar actualizaciones
-          status 
-        });
-        
-        return { ...command };
-      }
-      
-      throw new Error(`Command not found in memory store: ${commandId}`);
-    } catch (error: any) {
-      console.error(`Error updating command ${commandId} status in database:`, error);
-      
-      // Fallback to just updating in-memory command
-      const command = commandsStore.get(commandId);
+      // Get current command
+      const command = await this.getCommandById(commandId);
       
       if (!command) {
-        throw new Error(`Command not found: ${commandId}`);
+        console.error(`Command not found: ${commandId}`);
+        return null;
       }
       
-      // Update command status
-      command.status = status;
-      command.updated_at = new Date().toISOString();
+      // Create updated command
+      const updatedCommand = { 
+        ...command, 
+        status,
+        updated_at: new Date().toISOString()
+      };
       
-      // If the command is completed or failed, calculate duration
-      if (status === 'completed' || status === 'failed') {
-        const startTime = new Date(command.created_at).getTime();
-        const endTime = new Date().getTime();
-        command.duration = endTime - startTime;
+      // Add error message if provided and status is failed
+      if (status === 'failed' && errorMessage) {
+        updatedCommand.error = errorMessage;
       }
       
-      // Store updated command
-      commandsStore.set(commandId, command);
+      // Store in command registry
+      commandsStore.set(commandId, updatedCommand);
       
-      // Emit status change event with any available database ID
-      const dbId = idTranslationMap.get(commandId) || (command.metadata && command.metadata.dbUuid) || commandId;
+      // Emit status change event
       this.eventEmitter.emit('statusChange', { 
         id: commandId, 
-        dbId, 
+        dbId: command.metadata?.dbUuid,
         status 
       });
       
-      return { ...command };
+      // Try to update in database if UUID is available
+      if (command.metadata?.dbUuid && DatabaseAdapter.isValidUUID(command.metadata.dbUuid)) {
+        try {
+          await DatabaseAdapter.updateCommand(command.metadata.dbUuid, {
+            status,
+            ...(status === 'failed' && errorMessage ? { error: errorMessage } : {})
+          });
+          console.log(`Database command updated: ${command.metadata.dbUuid}, status: ${status}`);
+        } catch (error) {
+          console.error(`Error updating command in database: ${error}`);
+        }
+      }
+      
+      return updatedCommand;
+    } catch (error) {
+      console.error(`Error updating command status: ${error}`);
+      return null;
+    }
+  }
+  
+  /**
+   * Update command results
+   * 
+   * @param commandId Command ID
+   * @param results New results to add
+   * @returns Promise<DbCommand | null> Updated command or null if not found
+   */
+  async updateResults(commandId: string, results: any[]): Promise<DbCommand | null> {
+    try {
+      // Get current command
+      const command = await this.getCommandById(commandId);
+      
+      if (!command) {
+        console.error(`Command not found: ${commandId}`);
+        return null;
+      }
+      
+      // Create updated command with existing results plus new ones
+      const currentResults = command.results || [];
+      const updatedCommand = { 
+        ...command, 
+        results: [...currentResults, ...results],
+        updated_at: new Date().toISOString()
+      };
+      
+      // Store in command registry
+      commandsStore.set(commandId, updatedCommand);
+      
+      // Try to update in database if UUID is available
+      if (command.metadata?.dbUuid && DatabaseAdapter.isValidUUID(command.metadata.dbUuid)) {
+        try {
+          await DatabaseAdapter.updateCommand(command.metadata.dbUuid, {
+            results: updatedCommand.results
+          });
+          console.log(`Database command results updated: ${command.metadata.dbUuid}, results: ${results.length}`);
+        } catch (error) {
+          console.error(`Error updating command results in database: ${error}`);
+        }
+      }
+      
+      return updatedCommand;
+    } catch (error) {
+      console.error(`Error updating command results: ${error}`);
+      return null;
     }
   }
   
@@ -559,6 +592,10 @@ export class CommandService {
       
       // Update command status to completed
       const updatedCommand = await this.updateStatus(commandId, 'completed');
+      
+      if (!updatedCommand) {
+        throw new Error(`Failed to update command status: ${commandId}`);
+      }
       
       console.log(`🔄 Estado final del comando: ${updatedCommand.status}`);
       

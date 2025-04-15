@@ -11,6 +11,7 @@ export interface ChatApiProps {
   defaultMessage?: string;
   defaultLeadId?: string;
   defaultVisitorId?: string;
+  defaultSiteId?: string;
 }
 
 // State for ChatApi
@@ -20,6 +21,7 @@ export interface ChatApiState {
   message: string;
   lead_id: string;
   visitor_id: string;
+  site_id: string;
   jsonResponse: boolean;
   showResponse: boolean;
   loading: boolean;
@@ -43,6 +45,7 @@ const ChatApi: BaseApiConfig = {
       message: props.defaultMessage || '',
       lead_id: props.defaultLeadId || '',
       visitor_id: props.defaultVisitorId || '',
+      site_id: props.defaultSiteId || '',
       jsonResponse: false,
       showResponse: false,
       loading: false,
@@ -69,6 +72,10 @@ const ChatApi: BaseApiConfig = {
     
     if (state.visitor_id) {
       body.visitor_id = state.visitor_id;
+    }
+    
+    if (state.site_id) {
+      body.site_id = state.site_id;
     }
 
     return body;
@@ -138,6 +145,15 @@ const ChatApi: BaseApiConfig = {
           value={state.visitor_id}
           placeholder="visitor_789"
           onChange={(value: string) => handleChange('visitor_id', value)}
+        />
+        
+        <FormField
+          label="Site ID"
+          id="site_id"
+          type="text"
+          value={state.site_id}
+          placeholder="site_abc123"
+          onChange={(value: string) => handleChange('site_id', value)}
         />
       </>
     );

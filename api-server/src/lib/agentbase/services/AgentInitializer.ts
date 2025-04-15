@@ -1,44 +1,44 @@
 /**
- * AgentInitializer - Inicializa agentes y configura event listeners para Agentbase
+ * ProcessorInitializer - Inicializa los procesadores y configura event listeners para Agentbase
  */
 import { CommandService } from './CommandService';
-import { PortkeyAgentConnector } from './PortkeyAgentConnector';
+import { PortkeyConnector } from './PortkeyConnector';
 import { PortkeyAgent } from '../agents/PortkeyAgent';
-import { ToolEvaluatorAgent } from '../agents/ToolEvaluatorAgent';
-import { TargetProcessorAgent } from '../agents/TargetProcessorAgent';
+import { ToolEvaluator } from '../agents/ToolEvaluator';
+import { TargetProcessor } from '../agents/TargetProcessor';
 import { PortkeyConfig, PortkeyModelOptions, DbCommand } from '../models/types';
-import { BaseAgent } from '../agents/BaseAgent';
+import { Base } from '../agents/Base';
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
 
-// Singleton para la inicialización de los agentes
-class AgentInitializer {
-  private static instance: AgentInitializer;
+// Singleton para la inicialización de los procesadores
+export class ProcessorInitializer {
+  private static instance: ProcessorInitializer;
   private initialized: boolean = false;
   private commandService: CommandService;
-  private agents: Record<string, BaseAgent> = {};
+  private processors: Record<string, Base> = {};
   
   // Constructor privado para el patrón singleton
   private constructor() {
     this.commandService = new CommandService();
-    console.log('🔧 AgentInitializer: Inicializando servicio de comandos');
+    console.log('🔧 ProcessorInitializer: Inicializando servicio de comandos');
   }
   
   // Obtener la instancia única
-  public static getInstance(): AgentInitializer {
-    if (!AgentInitializer.instance) {
-      AgentInitializer.instance = new AgentInitializer();
+  public static getInstance(): ProcessorInitializer {
+    if (!ProcessorInitializer.instance) {
+      ProcessorInitializer.instance = new ProcessorInitializer();
     }
-    return AgentInitializer.instance;
+    return ProcessorInitializer.instance;
   }
   
-  // Inicializar los agentes y configurar los event listeners
+  // Inicializar los procesadores y configurar los event listeners
   public initialize() {
     if (this.initialized) {
-      console.log('🔍 AgentInitializer: Ya inicializado, omitiendo');
+      console.log('🔍 ProcessorInitializer: Ya inicializado, omitiendo');
       return;
     }
     
-    console.log('🚀 AgentInitializer: Inicializando agentes y listeners');
+    console.log('🚀 ProcessorInitializer: Inicializando procesadores y listeners');
     
     // Configurar Portkey
     const portkeyConfig: PortkeyConfig = {
@@ -52,26 +52,26 @@ class AgentInitializer {
     };
     
     // Crear conector para LLMs
-    const connector = new PortkeyAgentConnector(portkeyConfig, {
+    const connector = new PortkeyConnector(portkeyConfig, {
       modelType: 'openai',
       modelId: 'gpt-4o',
       maxTokens: 4096,
       temperature: 0.7
     });
     
-    // Crear agentes
+    // Crear procesadores
     // 1. Agente principal para soporte al cliente
-    this.agents['default_customer_support_agent'] = new PortkeyAgent(
+    this.processors['default_customer_support_agent'] = new PortkeyAgent(
       'default_customer_support_agent',
       'Customer Support Agent',
       connector,
       ['customer_support', 'order_tracking', 'issue_resolution']
     );
     
-    // 2. Agente para evaluar herramientas
-    this.agents['tool_evaluator'] = new ToolEvaluatorAgent(
+    // 2. Procesador para evaluar herramientas
+    this.processors['tool_evaluator'] = new ToolEvaluator(
       'tool_evaluator',
-      'Tool Evaluator Agent',
+      'Tool Evaluator',
       connector,
       ['tool_evaluation'],
       {
@@ -82,10 +82,10 @@ class AgentInitializer {
       }
     );
     
-    // 3. Agente para procesar targets
-    this.agents['target_processor'] = new TargetProcessorAgent(
+    // 3. Procesador para generar respuestas
+    this.processors['target_processor'] = new TargetProcessor(
       'target_processor',
-      'Target Processor Agent',
+      'Target Processor',
       connector,
       ['target_processing'],
       {
@@ -100,7 +100,7 @@ class AgentInitializer {
     this.setupEventListeners();
     
     this.initialized = true;
-    console.log('✅ AgentInitializer: Inicialización completada');
+    console.log('✅ ProcessorInitializer: Inicialización completada');
   }
   
   // Configurar los event listeners para procesar comandos
@@ -117,231 +117,240 @@ class AgentInitializer {
         // Actualizar estado a 'running'
         await this.commandService.updateStatus(command.id, 'running');
         
-        // PASO 1: Evaluar herramientas primero si hay tools definidas
-        if (command.tools && command.tools.length > 0) {
-          console.log(`🔍 Evaluando herramientas para el comando: ${command.id}`);
+        // Almacenar información del agente principal en agent_background si hay un agent_id
+        if (command.agent_id && this.processors[command.agent_id]) {
+          const processor = this.processors[command.agent_id];
+          const agentBackground = `You are ${processor.getName()} (ID: ${processor.getId()}), an AI assistant with the following capabilities: ${processor.getCapabilities().join(', ')}.`;
           
-          // Crear una copia del comando para la evaluación de herramientas
-          const toolEvalCommand = {
+          // Actualizar el comando con la información del agente
+          command = {
             ...command,
-            agent_id: 'tool_evaluator' // Asignar al evaluador de herramientas
+            agent_background: agentBackground
           };
           
-          // Ejecutar la evaluación de herramientas
-          const toolEvalResult = await this.agents['tool_evaluator'].executeCommand(toolEvalCommand);
-          
-          if (toolEvalResult.status === 'failed') {
-            throw new Error(`Tool evaluation failed: ${toolEvalResult.error}`);
-          }
-          
-          // Actualizar el comando con los resultados de la evaluación
-          const updatedCommand = {
-            ...command,
-            results: toolEvalResult.results
-          };
-          
-          // Si el resultado de la evaluación contiene un comando actualizado, usarlo
-          // para actualizar también las herramientas
-          if (toolEvalResult.updatedCommand) {
-            console.log(`🔄 El evaluador de herramientas devolvió un comando actualizado con ${toolEvalResult.updatedCommand.tools?.length || 0} herramientas`);
-            
-            // Usar las herramientas actualizadas
-            if (toolEvalResult.updatedCommand.tools && toolEvalResult.updatedCommand.tools.length > 0) {
-              updatedCommand.tools = toolEvalResult.updatedCommand.tools;
-            }
-            
-            // Actualizar los contadores de tokens si están disponibles
-            if (toolEvalResult.updatedCommand?.input_tokens !== undefined) {
-              updatedCommand.input_tokens = Number(command.input_tokens || 0) + Number(toolEvalResult.updatedCommand.input_tokens);
-              console.log(`🔢 Tokens de entrada acumulados: ${updatedCommand.input_tokens}`);
-            }
-            
-            if (toolEvalResult.updatedCommand?.output_tokens !== undefined) {
-              updatedCommand.output_tokens = Number(command.output_tokens || 0) + Number(toolEvalResult.updatedCommand.output_tokens);
-              console.log(`🔢 Tokens de salida acumulados: ${updatedCommand.output_tokens}`);
-            }
-          }
-          
-          // Actualizar en la base de datos usando UUID si es válido
+          // Guardar esta información en la base de datos
           if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-            console.log(`🔄 Actualizando resultados y herramientas en BD con UUID: ${dbUuid}`);
             await DatabaseAdapter.updateCommand(dbUuid, {
-              results: toolEvalResult.results,
-              tools: updatedCommand.tools,
-              input_tokens: updatedCommand.input_tokens,
-              output_tokens: updatedCommand.output_tokens
+              agent_background: agentBackground
             });
           } else {
-            console.log(`🔄 Actualizando resultados y herramientas con ID: ${command.id}`);
             await this.commandService.updateCommand(command.id, {
-              results: toolEvalResult.results,
-              tools: updatedCommand.tools,
-              input_tokens: updatedCommand.input_tokens,
-              output_tokens: updatedCommand.output_tokens
+              agent_background: agentBackground
             });
           }
-          
-          console.log(`✅ Evaluación de herramientas completada para: ${command.id}`);
-          
-          // Actualizar el comando para el siguiente paso
-          command = updatedCommand;
         }
         
-        // PASO 2: Procesar targets
+        // =========================================================
+        // Paso 1: Evaluar las herramientas disponibles
+        // =========================================================
+        if (command.tools && command.tools.length > 0) {
+          console.log(`🛠️ Evaluando ${command.tools.length} herramientas para el comando: ${command.id}`);
+          
+          try {
+            // Obtener el procesador de herramientas
+            const toolEvaluator = this.processors['tool_evaluator'] as ToolEvaluator;
+            
+            if (!toolEvaluator) {
+              throw new Error('Tool evaluator not initialized');
+            }
+            
+            // Ejecutar la evaluación
+            console.log(`🔄 Iniciando evaluación de herramientas para: ${command.id}`);
+            const toolResult = await toolEvaluator.executeCommand(command);
+            
+            if (toolResult.status === 'completed' && toolResult.results) {
+              console.log(`✅ Evaluación de herramientas completada para: ${command.id}`);
+              
+              // Actualizar el comando con los resultados
+              if (toolResult.results.length > 0) {
+                // Actualizar los resultados en la base de datos
+                await this.commandService.updateResults(command.id, toolResult.results);
+                
+                // Actualizar las herramientas
+                const evaluationResult = toolResult.results.find(r => r.type === 'tool_evaluation');
+                if (evaluationResult && evaluationResult.content && evaluationResult.content.updated_tools) {
+                  // Actualizar las herramientas en el comando
+                  command.tools = evaluationResult.content.updated_tools;
+                  
+                  // Guardar las herramientas actualizadas en la base de datos
+                  if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+                    await DatabaseAdapter.updateCommand(dbUuid, {
+                      tools: command.tools
+                    });
+                  }
+                }
+                
+                // Actualizar tokens acumulados
+                if (toolResult.inputTokens || toolResult.outputTokens) {
+                  const inputTokens = Number(command.input_tokens || 0) + Number(toolResult.inputTokens || 0);
+                  const outputTokens = Number(command.output_tokens || 0) + Number(toolResult.outputTokens || 0);
+                  
+                  command.input_tokens = inputTokens;
+                  command.output_tokens = outputTokens;
+                  
+                  // Actualizar tokens en la base de datos
+                  if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+                    await DatabaseAdapter.updateCommand(dbUuid, {
+                      input_tokens: inputTokens,
+                      output_tokens: outputTokens
+                    });
+                  }
+                  
+                  console.log(`🔢 Tokens acumulados después de evaluación: input=${inputTokens}, output=${outputTokens}`);
+                }
+              }
+            } else if (toolResult.status === 'failed') {
+              console.error(`❌ Error en evaluación de herramientas: ${toolResult.error}`);
+              
+              // Actualizar el estado del comando a failed
+              await this.commandService.updateStatus(command.id, 'failed', toolResult.error);
+              return;
+            }
+          } catch (error: any) {
+            console.error(`❌ Error al evaluar herramientas: ${error.message}`);
+            
+            // Actualizar el estado del comando a failed
+            await this.commandService.updateStatus(command.id, 'failed', `Tool evaluation error: ${error.message}`);
+            return;
+          }
+        }
+        
+        // =========================================================
+        // Paso 2: Procesar los targets
+        // =========================================================
         if (command.targets && command.targets.length > 0) {
           console.log(`🎯 Procesando targets para el comando: ${command.id}`);
           
-          // Crear una copia del comando para el procesamiento de targets
-          const targetProcessCommand = {
-            ...command,
-            agent_id: 'target_processor' // Asignar al procesador de targets
-          };
-          
-          // Ejecutar el procesamiento de targets
-          const targetProcessResult = await this.agents['target_processor'].executeCommand(targetProcessCommand);
-          
-          if (targetProcessResult.status === 'failed') {
-            throw new Error(`Target processing failed: ${targetProcessResult.error}`);
-          }
-          
-          // Actualizar el comando con los resultados del procesamiento
-          const finalResults = targetProcessResult.results;
-          
-          // Acumular tokens si están disponibles en el resultado
-          let updatedInputTokens = Number(command.input_tokens || 0);
-          let updatedOutputTokens = Number(command.output_tokens || 0);
-          
-          if (targetProcessResult.updatedCommand) {
-            if (targetProcessResult.updatedCommand.input_tokens !== undefined) {
-              // Usar los tokens ya acumulados en lugar de sumarlos nuevamente
-              updatedInputTokens = Number(targetProcessResult.updatedCommand.input_tokens);
-              console.log(`🔢 Tokens de entrada del procesador de targets: ${updatedInputTokens}`);
+          try {
+            // Obtener el procesador de targets
+            const targetProcessor = this.processors['target_processor'] as TargetProcessor;
+            
+            if (!targetProcessor) {
+              throw new Error('Target processor not initialized');
             }
             
-            if (targetProcessResult.updatedCommand.output_tokens !== undefined) {
-              // Usar los tokens ya acumulados en lugar de sumarlos nuevamente
-              updatedOutputTokens = Number(targetProcessResult.updatedCommand.output_tokens);
-              console.log(`🔢 Tokens de salida del procesador de targets: ${updatedOutputTokens}`);
-            }
-          }
-          
-          // Actualizar en la base de datos
-          if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-            console.log(`🔄 Actualizando resultados de targets en BD con UUID: ${dbUuid}`);
-            await DatabaseAdapter.updateCommand(dbUuid, {
-              status: 'completed',
-              results: finalResults,
-              input_tokens: updatedInputTokens,
-              output_tokens: updatedOutputTokens
-            });
-          } else {
-            console.log(`🔄 Actualizando resultados de targets con ID: ${command.id}`);
-            await this.commandService.updateCommand(command.id, {
-              status: 'completed',
-              results: finalResults,
-              input_tokens: updatedInputTokens,
-              output_tokens: updatedOutputTokens
-            });
-          }
-          
-          console.log(`✅ Procesamiento de targets completado para: ${command.id}`);
-        }
-        // Si no hay targets, ejecutar el flujo normal con el agente especificado
-        else {
-          // Seleccionar el agente correcto para ejecutar el comando
-          const agentId = command.agent_id || 'default_customer_support_agent';
-          const agent = this.agents[agentId];
-          
-          if (!agent) {
-            console.error(`❌ Error: No se encontró el agente '${agentId}'`);
-            await this.commandService.updateStatus(command.id, 'failed');
-            return;
-          }
-          
-          console.log(`🤖 Ejecutando comando con el agente: ${agentId}`);
-          
-          // Ejecutar el comando
-          const result = await agent.executeCommand(command);
-          
-          // Acumular tokens si están disponibles en el resultado
-          let updatedInputTokens = Number(command.input_tokens || 0);
-          let updatedOutputTokens = Number(command.output_tokens || 0);
-          
-          if (result.updatedCommand) {
-            if (result.updatedCommand.input_tokens !== undefined) {
-              updatedInputTokens += Number(result.updatedCommand.input_tokens);
-              console.log(`🔢 Tokens de entrada acumulados en ejecución directa: ${updatedInputTokens}`);
-            }
+            // Ejecutar el procesamiento
+            const targetResult = await targetProcessor.executeCommand(command);
             
-            if (result.updatedCommand.output_tokens !== undefined) {
-              updatedOutputTokens += Number(result.updatedCommand.output_tokens);
-              console.log(`🔢 Tokens de salida acumulados en ejecución directa: ${updatedOutputTokens}`);
+            if (targetResult.status === 'completed' && targetResult.results) {
+              console.log(`✅ Procesamiento de targets completado para: ${command.id}`);
+              
+              // Actualizar tokens en base de datos (input_tokens y output_tokens)
+              // Siempre actualizar con valores acumulados
+              const currentInputTokens = Number(command.input_tokens || 0);
+              const currentOutputTokens = Number(command.output_tokens || 0);
+              const inputTokens = currentInputTokens + Number(targetResult.inputTokens || 0);
+              const outputTokens = currentOutputTokens + Number(targetResult.outputTokens || 0);
+              
+              console.log(`🔢 Tokens de entrada del procesador de targets: ${inputTokens}`);
+              console.log(`🔢 Tokens de salida del procesador de targets: ${outputTokens}`);
+              
+              // Actualizar resultados en la base de datos
+              if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+                console.log(`🔄 Actualizando resultados de targets en BD con UUID: ${dbUuid}`);
+                
+                // Actualizar la base de datos con los resultados
+                await DatabaseAdapter.updateCommand(dbUuid, {
+                  status: 'completed',
+                  results: targetResult.results,
+                  input_tokens: inputTokens,
+                  output_tokens: outputTokens
+                });
+              } else {
+                // Usar el API interno si no tenemos un UUID válido
+                await this.commandService.updateResults(command.id, targetResult.results);
+                await this.commandService.updateStatus(command.id, 'completed');
+                
+                // Actualizar los tokens
+                await this.commandService.updateCommand(command.id, {
+                  input_tokens: inputTokens,
+                  output_tokens: outputTokens
+                });
+              }
+            } else if (targetResult.status === 'failed') {
+              console.error(`❌ Error en procesamiento de targets: ${targetResult.error}`);
+              
+              // Actualizar el estado del comando a failed
+              if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+                await DatabaseAdapter.updateCommand(dbUuid, {
+                  status: 'failed',
+                  error: targetResult.error
+                });
+              } else {
+                await this.commandService.updateStatus(command.id, 'failed', targetResult.error);
+              }
+              return;
             }
-          }
-          
-          // Actualizar el comando con los resultados
-          if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-            console.log(`🔄 Actualizando resultados del agente en BD con UUID: ${dbUuid}`);
-            await DatabaseAdapter.updateCommand(dbUuid, {
-              status: result.status,
-              results: result.results,
-              input_tokens: updatedInputTokens,
-              output_tokens: updatedOutputTokens
-            });
-          } else {
-            console.log(`🔄 Actualizando resultados del agente con ID: ${command.id}`);
-            await this.commandService.updateCommand(command.id, {
-              status: result.status,
-              results: result.results,
-              input_tokens: updatedInputTokens,
-              output_tokens: updatedOutputTokens
-            });
-          }
-          
-          // Si hay un error, almacenarlo en el contexto
-          if (result.error) {
+          } catch (error: any) {
+            console.error(`❌ Error al procesar targets: ${error.message}`);
+            
+            // Actualizar el estado del comando a failed
             if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
               await DatabaseAdapter.updateCommand(dbUuid, {
-                context: `Error: ${result.error}\n${command.context || ''}`
+                status: 'failed',
+                error: `Target processing error: ${error.message}`
               });
             } else {
-              await this.commandService.updateCommand(command.id, {
-                context: `Error: ${result.error}\n${command.context || ''}`
-              });
+              await this.commandService.updateStatus(command.id, 'failed', `Target processing error: ${error.message}`);
             }
+            return;
           }
+        } else {
+          // Si no hay targets, completar el comando
+          console.log(`⚠️ No hay targets para procesar en el comando: ${command.id}`);
           
-          console.log(`✅ Comando ${command.id} completado con estado: ${result.status}`);
+          // Actualizar estado a 'completed'
+          if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+            await DatabaseAdapter.updateCommand(dbUuid, {
+              status: 'completed'
+            });
+          } else {
+            await this.commandService.updateStatus(command.id, 'completed');
+          }
         }
       } catch (error: any) {
-        console.error(`❌ Error procesando comando ${command.id}:`, error);
+        console.error(`❌ Error al procesar comando ${command.id}:`, error);
         
-        // Extraer el UUID si no lo tenemos ya
-        const errorDbUuid = command.metadata?.dbUuid || command.id;
-        
-        // Actualizar el comando con el error en el contexto
-        if (errorDbUuid && DatabaseAdapter.isValidUUID(errorDbUuid)) {
-          console.log(`🔄 Registrando error en BD con UUID: ${errorDbUuid}`);
-          await DatabaseAdapter.updateCommand(errorDbUuid, {
-            status: 'failed',
-            context: `Error de ejecución: ${error.message || 'Error desconocido'}\n${command.context || ''}`
-          });
-        } else {
-          console.log(`🔄 Registrando error con ID: ${command.id}`);
-          await this.commandService.updateCommand(command.id, {
-            status: 'failed',
-            context: `Error de ejecución: ${error.message || 'Error desconocido'}\n${command.context || ''}`
-          });
+        // Actualizar estado a 'failed'
+        try {
+          await this.commandService.updateStatus(command.id, 'failed', error.message);
+        } catch (e) {
+          console.error(`⚠️ Error adicional al actualizar estado a failed: ${e}`);
         }
       }
     });
+  }
+  
+  // Ejecutar un comando de forma síncrona
+  public async executeCommand(command: DbCommand): Promise<DbCommand> {
+    // Crear el comando usando el servicio
+    const commandId = await this.commandService.submitCommand(command);
+    console.log(`🚀 Comando creado: ${commandId}`);
     
-    // Listener para cambios de estado
-    this.commandService.on('statusChange', (update: { id: string, dbId?: string, status: string }) => {
-      console.log(`🔄 Comando ${update.id} cambió a estado: ${update.status}${update.dbId ? `, UUID: ${update.dbId}` : ''}`);
+    // Esperar a que se complete - esto depende de la implementación del CommandService
+    return new Promise((resolve, reject) => {
+      // Configurar un timeout para evitar esperas infinitas
+      const timeoutId = setTimeout(() => {
+        reject(new Error('Command execution timed out'));
+      }, 60000); // 60 segundos de timeout
+      
+      // Configurar un listener para el evento de completado
+      const checkInterval = setInterval(async () => {
+        try {
+          const executedCommand = await this.commandService.getCommandById(commandId);
+          
+          if (executedCommand && (executedCommand.status === 'completed' || executedCommand.status === 'failed')) {
+            clearTimeout(timeoutId);
+            clearInterval(checkInterval);
+            resolve(executedCommand);
+          }
+        } catch (error) {
+          clearTimeout(timeoutId);
+          clearInterval(checkInterval);
+          reject(error);
+        }
+      }, 500); // Verificar cada 500ms
     });
-    
-    console.log('🔊 Event listeners configurados');
   }
   
   // Obtener el servicio de comandos
@@ -350,4 +359,5 @@ class AgentInitializer {
   }
 }
 
-export default AgentInitializer;
+// Exportar la instancia única
+export default ProcessorInitializer;

@@ -22,6 +22,7 @@ export interface CreateCommandParams {
   response_format?: 'json' | 'text';
   system_prompt?: string;
   agent_id?: string;
+  agent_background?: string;
   user_id: string;
   priority?: number;
   execution_order?: string[];
@@ -49,6 +50,7 @@ export interface DbCommand {
   response_format?: 'json' | 'text';
   system_prompt?: string;
   agent_id?: string;
+  agent_background?: string;
   user_id: string;
   priority?: number;
   execution_order?: string[];
@@ -67,6 +69,7 @@ export interface DbCommand {
     lastUpdated?: string;
     [key: string]: any;
   };
+  error?: string;
 }
 
 // Command Execution Result
@@ -77,6 +80,8 @@ export interface CommandExecutionResult {
   supervisionRequestId?: string;
   updatedCommand?: DbCommand;
   warning?: string;
+  inputTokens?: number;
+  outputTokens?: number;
 }
 
 // Tool Execution Result
@@ -133,8 +138,16 @@ export interface PortkeyModelOptions {
   systemPrompt?: string;
 }
 
+export interface AzureOpenAIOptions {
+  endpoint: string;
+  deploymentName?: string;
+  apiVersion?: string;
+}
+
 export interface PortkeyConfig {
   apiKey: string;
   virtualKeys: Record<string, string>;
   baseURL?: string;
+  useAzure?: boolean;
+  azureOptions?: AzureOpenAIOptions;
 } 

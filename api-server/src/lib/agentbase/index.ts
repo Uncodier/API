@@ -1,23 +1,32 @@
 /**
- * Agentbase Library - Main Export
+ * Agentbase - Framework para construir agentes
  */
 
-// Export types
-export * from './models/types';
-
-// Export agents
-export { BaseAgent } from './agents/BaseAgent';
-export { PortkeyAgent } from './agents/PortkeyAgent';
-
-// Export services
+// Command API
 export { CommandFactory } from './services/CommandFactory';
-export { CommandService } from './services/CommandService';
-export { MemoryStore } from './services/MemoryStore';
-export { PortkeyAgentConnector } from './services/PortkeyAgentConnector';
-export { default as AgentInitializer } from './services/AgentInitializer';
 
-// Export adapters
+// Services
+export { default as ProcessorInitializer } from './services/ProcessorInitializer';
+export { CommandService } from './services/CommandService';
+export { PortkeyConnector } from './services/PortkeyConnector';
+
+// Agents / Processors
+export { Base } from './agents/Base';
+export { AgentConnector } from './agents/AgentConnector';
+export { ToolEvaluator } from './agents/ToolEvaluator';
+export { TargetProcessor } from './agents/TargetProcessor';
+
+// Adapters
 export { DatabaseAdapter } from './adapters/DatabaseAdapter';
+
+// Types
+export type { 
+  DbCommand, 
+  CommandExecutionResult, 
+  ToolExecutionResult,
+  PortkeyConfig,
+  PortkeyModelOptions
+} from './models/types';
 
 // Export utilities
 export function generateId(prefix: string = 'id'): string {
