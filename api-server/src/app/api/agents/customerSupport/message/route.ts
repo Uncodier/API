@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CommandFactory, AgentInitializer } from '@/lib/agentbase';
+import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -11,9 +11,9 @@ function isValidUUID(uuid: string): boolean {
 }
 
 // Inicializar el agente y obtener el servicio de comandos
-const agentInitializer = AgentInitializer.getInstance();
-agentInitializer.initialize();
-const commandService = agentInitializer.getCommandService();
+const processorInitializer = ProcessorInitializer.getInstance();
+processorInitializer.initialize();
+const commandService = processorInitializer.getCommandService();
 
 // Función para obtener el UUID de la base de datos para un comando
 async function getCommandDbUuid(internalId: string): Promise<string | null> {
@@ -137,14 +137,19 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string) {
   try {
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
       // Crear una nueva conversación si no existe
+      const conversationData: any = { user_id: userId };
+      
+      // Añadir el título si está presente
+      if (conversationTitle) conversationData.title = conversationTitle;
+      
       const { data: conversation, error: convError } = await supabaseAdmin
         .from('conversations')
-        .insert([{ user_id: userId }])
+        .insert([conversationData])
         .select()
         .single();
       
@@ -155,6 +160,20 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       
       conversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
+    } else if (conversationTitle) {
+      // Actualizar el título de la conversación existente si se proporciona uno nuevo
+      const { error: updateError } = await supabaseAdmin
+        .from('conversations')
+        .update({ title: conversationTitle })
+        .eq('id', conversationId);
+      
+      if (updateError) {
+        console.error('Error al actualizar título de conversación:', updateError);
+        // No fallamos toda la operación si solo falla la actualización del título
+        console.log('Continuando con el guardado de mensajes...');
+      } else {
+        console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
+      }
     }
     
     // Guardar el mensaje del usuario
@@ -197,7 +216,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     return {
       conversationId,
       userMessageId: userMessageData.id,
-      assistantMessageId: assistantMessageData.id
+      assistantMessageId: assistantMessageData.id,
+      conversationTitle
     };
   } catch (error) {
     console.error('Error al guardar mensajes en la base de datos:', error);
@@ -374,6 +394,11 @@ export async function POST(request: Request) {
           message: {
             content: "message example" // Will be filled by the agent
           }
+        },
+        {
+          conversation: {
+            title: "conversation title" // Will be filled by the agent
+          }
         }
       ],
       // Define the tools as specified in the documentation
@@ -472,21 +497,47 @@ export async function POST(request: Request) {
       
       // Extraer la respuesta del asistente
       let assistantMessage = "No response generated";
+      let conversationTitle = null;
       
       // Obtener resultados si existen
       if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        // Buscar mensajes en los resultados
-        const messageResults = executedCommand.results.filter((r: any) => r.type === 'message');
+        // Extraer el título de la conversación de los resultados
+        const conversationResults = executedCommand.results.find((r: any) => 
+          r.conversation && r.conversation.title
+        );
         
-        if (messageResults.length > 0 && messageResults[0].content) {
-          assistantMessage = messageResults[0].content;
+        if (conversationResults) {
+          conversationTitle = conversationResults.conversation.title;
+          console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
+        } else {
+          // Búsqueda alternativa del título en otras estructuras posibles
+          const altTitleResults = executedCommand.results.find((r: any) => 
+            (r.content && r.content.conversation && r.content.conversation.title) ||
+            (r.type === 'conversation' && r.content && r.content.title)
+          );
+          
+          if (altTitleResults) {
+            if (altTitleResults.content && altTitleResults.content.conversation) {
+              conversationTitle = altTitleResults.content.conversation.title;
+            } else if (altTitleResults.content && altTitleResults.content.title) {
+              conversationTitle = altTitleResults.content.title;
+            }
+            console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
+          }
+        }
+        
+        // Buscar mensajes en los resultados - la estructura real es { message: { content: string } }
+        const messageResults = executedCommand.results.filter((r: any) => r.message && r.message.content);
+        
+        if (messageResults.length > 0 && messageResults[0].message.content) {
+          assistantMessage = messageResults[0].message.content;
         }
       }
       
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
       
       // Guardar los mensajes en la base de datos
-      const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId);
+      const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, conversationTitle);
       
       // Responder usando el ID interno como respaldo
       return NextResponse.json(
@@ -495,6 +546,7 @@ export async function POST(request: Request) {
           data: { 
             command_id: internalCommandId, // Usamos el ID interno como respaldo
             conversation_id: savedMessages?.conversationId,
+            conversation_title: savedMessages?.conversationTitle,
             messages: {
               user: {
                 content: message,
@@ -526,21 +578,47 @@ export async function POST(request: Request) {
     
     // Extraer la respuesta del asistente
     let assistantMessage = "No response generated";
+    let conversationTitle = null;
     
     // Obtener resultados si existen
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
-      // Buscar mensajes en los resultados
-      const messageResults = executedCommand.results.filter((r: any) => r.type === 'message');
+      // Extraer el título de la conversación de los resultados
+      const conversationResults = executedCommand.results.find((r: any) => 
+        r.conversation && r.conversation.title
+      );
       
-      if (messageResults.length > 0 && messageResults[0].content) {
-        assistantMessage = messageResults[0].content;
+      if (conversationResults) {
+        conversationTitle = conversationResults.conversation.title;
+        console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
+      } else {
+        // Búsqueda alternativa del título en otras estructuras posibles
+        const altTitleResults = executedCommand.results.find((r: any) => 
+          (r.content && r.content.conversation && r.content.conversation.title) ||
+          (r.type === 'conversation' && r.content && r.content.title)
+        );
+        
+        if (altTitleResults) {
+          if (altTitleResults.content && altTitleResults.content.conversation) {
+            conversationTitle = altTitleResults.content.conversation.title;
+          } else if (altTitleResults.content && altTitleResults.content.title) {
+            conversationTitle = altTitleResults.content.title;
+          }
+          console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
+        }
+      }
+      
+      // Buscar mensajes en los resultados - la estructura real es { message: { content: string } }
+      const messageResults = executedCommand.results.filter((r: any) => r.message && r.message.content);
+      
+      if (messageResults.length > 0 && messageResults[0].message.content) {
+        assistantMessage = messageResults[0].message.content;
       }
     }
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
     // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId);
+    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, conversationTitle);
     
     return NextResponse.json(
       { 
@@ -548,6 +626,7 @@ export async function POST(request: Request) {
         data: { 
           command_id: effectiveDbUuid,
           conversation_id: savedMessages?.conversationId,
+          conversation_title: savedMessages?.conversationTitle,
           messages: {
             user: {
               content: message,
