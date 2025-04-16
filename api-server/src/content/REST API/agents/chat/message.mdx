@@ -2,6 +2,8 @@
 
 Creates a command object to handle interactions with any agent type and manages the conversation flow.
 
+import { UnifiedApiTester } from '@/components/ApiTester';
+
 ## Endpoint
 
 ```http
@@ -17,7 +19,8 @@ POST /api/agents/chat/message
 | `agentId` | string | Yes | ID of the agent to handle the request |
 | `lead_id` | string | No | Optional ID of the lead associated with this conversation |
 | `visitor_id` | string | No | Optional ID of the visitor or website guest |
-| `site_id` | string | No | Optional ID of the site associated with this conversation |
+| `site_id` | string | Yes | ID of the site associated with this conversation |
+| `team_member_id` | string | No | Optional ID of the team member who will be the owner of the message. If not provided, the agent owner will be used |
 
 ### Example Request
 
@@ -28,13 +31,25 @@ POST /api/agents/chat/message
   "agentId": "agent_marketing_123",
   "lead_id": "lead_456",
   "visitor_id": "visitor_789",
-  "site_id": "site_abc123"
+  "site_id": "site_abc123",
+  "team_member_id": "user_xyz789"
 }
 ```
 
 ## Try It
 
-import { UnifiedApiTester } from '@/components/ApiTester';
+You can test this API directly using our API Tester interface. The Chat API tester allows you to send messages to any agent type and see the responses.
+
+Required fields:
+- **Message**: The content of the message from the user
+- **Agent ID**: The ID of the agent
+- **Site ID**: The ID of the site associated with this conversation
+
+Optional fields:
+- **Conversation ID**: If continuing an existing conversation, provide the ID
+- **Lead ID**: If the conversation is associated with a lead, provide the ID
+- **Visitor ID**: If the conversation is with a website visitor, provide the ID
+- **Team Member ID**: ID of the team member who will be the owner of the message
 
 <UnifiedApiTester apiId="chat" />
 
@@ -153,8 +168,8 @@ The system generates a command object with the following structure to control su
 
 - The command executes asynchronously
 - The system automatically creates `message` and/or `conversation` objects if they don't exist
-- The user ID is automatically obtained from the agent information (the owner of the agent)
-- Site ID is determined from the provided `site_id` parameter or from the agent configuration if available
+- The user ID for the message is obtained from the `team_member_id` parameter if provided, otherwise from the agent information (the owner of the agent)
+- Site ID is a required parameter and must be provided in the request
 - The generated command controls the agent's behavior with:
   - `targets`: An array of objects defining expected outputs to be generated
   - `tools`: Specifies what actions the agent can take (specific to the agent type and capabilities)
@@ -165,21 +180,5 @@ The system generates a command object with the following structure to control su
   - `supervisors`: Defines which agent roles can intervene
   - `task`: Specifies the high-level objective for the agent
   - `description`: Contains the detailed prompt instructions for the agent
-
-## Try It
-
-You can test this API directly using our API Tester interface. The Chat API tester allows you to send messages to any agent type and see the responses.
-
-Required fields:
-- **Message**: The content of the message from the user
-- **Agent ID**: The ID of the agent
-
-Optional fields:
-- **Conversation ID**: If continuing an existing conversation, provide the ID
-- **Lead ID**: If the conversation is associated with a lead, provide the ID
-- **Visitor ID**: If the conversation is with a website visitor, provide the ID
-- **Site ID**: If the conversation is associated with a specific site, provide the ID
-
-<UnifiedApiTester apiId="chat" />
 
 The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly. 

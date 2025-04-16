@@ -12,20 +12,42 @@ POST /api/agents/customerSupport/message
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `conversationId` | string | No | Optional ID of existing conversation |
-| `userId` | string | Yes | ID of the user or customer |
 | `message` | string | Yes | The message content from the customer |
-| `agentId` | string | No | ID of the customer support agent to handle the request |
+| `visitor_id` | string | No* | ID of the visitor (for non-authenticated users) |
+| `lead_id` | string | No* | ID of the lead associated with this interaction |
+| `userId` | string | No | ID of the authenticated user (optional, can be derived from site_id) |
+| `conversationId` | string | No | Optional ID of existing conversation |
+| `agentId` | string | No | ID of the customer support agent (optional, will be found using site_id if not provided) |
 | `site_id` | string | No | ID of the site associated with this interaction |
+
+*Identification requirements: At least one of `visitor_id` or `lead_id` is required for identification purposes. `userId` is optional as it can be derived from the site_id.
 
 ### Example Request
 
+With visitor ID:
 ```json
 {
-  "conversationId": "conv_123456",
+  "visitor_id": "visitor_789",
+  "message": "I need help with my recent order",
+  "site_id": "site_456"
+}
+```
+
+With lead ID:
+```json
+{
+  "lead_id": "lead_123",
+  "message": "I need help with my recent order",
+  "site_id": "site_456"
+}
+```
+
+With optional userId:
+```json
+{
   "userId": "user_789",
   "message": "I need help with my recent order",
-  "agentId": "agent_support_123",
+  "conversationId": "conv_123456",
   "site_id": "site_456"
 }
 ```
@@ -46,6 +68,11 @@ The system generates a command object with the following structure to control su
     {
       "message": {
         "content": "I understand you're having an issue with your recent order. Let me help you with that. Could you please provide your order number so I can look up the details?"
+      }
+    },
+    {
+      "conversation": {
+        "title": "Order Issue Assistance"
       }
     }
   ],
@@ -116,9 +143,19 @@ The system generates a command object with the following structure to control su
 {
   "success": true,
   "data": {
-    "commandId": "cmd_123456",
-    "status": "processing",
-    "message": "Command created successfully"
+    "command_id": "92e8d889-d7bd-459d-82e2-f4706eb8984b",
+    "conversation_id": "8a2c1e3f-9d4b-5c7a-8e5f-1d2a3b4c5d6e",
+    "conversation_title": "Order Issue Assistance",
+    "messages": {
+      "user": {
+        "content": "I need help with my recent order",
+        "message_id": "14fd2a5c-56c2-4b4f-b65a-d16d9d1df544"
+      },
+      "assistant": {
+        "content": "I understand you're having an issue with your recent order. Let me help you with that. Could you please provide your order number so I can look up the details?",
+        "message_id": "92a4269e-e608-46f7-911a-2761761586b3"
+      }
+    }
   }
 }
 ```
@@ -130,7 +167,7 @@ The system generates a command object with the following structure to control su
   "success": false,
   "error": {
     "code": "INVALID_REQUEST",
-    "message": "Invalid request parameters"
+    "message": "At least one identification parameter (visitor_id, lead_id, or userId) is required"
   }
 }
 ```
@@ -139,38 +176,37 @@ The system generates a command object with the following structure to control su
 
 | Code | Description |
 |------|-------------|
-| `INVALID_REQUEST` | The request parameters are invalid |
+| `INVALID_REQUEST` | The request parameters are invalid (missing required fields) |
 | `AGENT_NOT_FOUND` | The specified agent does not exist |
-| `USER_NOT_FOUND` | The specified user does not exist |
-| `SYSTEM_ERROR` | Internal system error occurred |
+| `COMMAND_EXECUTION_FAILED` | The command did not complete successfully |
+| `INTERNAL_SERVER_ERROR` | Internal system error occurred |
 
 ## Notes
 
-- The command executes asynchronously
-- The system automatically creates `message` and/or `conversation` objects if they don't exist
-- If `site_id` is not provided, the system will attempt to use the site ID associated with the agent
-- The generated command controls the agent's behavior with:
-  - `targets`: An array of objects defining expected outputs to be generated
-  - `tools`: Specifies what actions the agent can take (like escalation or contacting human supervisors)
-    - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
-    - Tools follow the OpenAI format with parameters defined as objects containing properties and required fields
-    - The agent will update tool status to "not_required" when the tool is evaluated but not needed for the current conversation
-  - `context`: Provides conversation history and relevant documentation
-  - `supervisors`: Defines which agent roles can intervene
-  - `task`: Specifies the high-level objective for the agent
-  - `description`: Contains the detailed prompt instructions for the agent
+- The API supports multiple identification methods:
+  - Visitor identification via `visitor_id` (for non-authenticated visitors)
+  - Lead identification via `lead_id` (for leads in the system)
+  - User identification via `userId` (optional, can be derived from site_id)
+- At least one identification parameter must be provided (`visitor_id`, `lead_id`, or `userId`)
+- If `agentId` is not provided and `site_id` is available, the system will automatically find an active customer support agent for that site
+- If no agent is found or no `site_id` is provided, a default agent will be used
+- Conversations are saved with the generated title and site_id in the database
+- The command executes asynchronously but the API waits for completion before responding
+- The system automatically creates conversation and message records in the database
 
 ## Try It
 
 You can test this API directly using our API Tester interface. The Customer Support API tester allows you to send messages to the customer support agent and see the responses.
 
 Required fields:
-- **User ID**: The ID of the user or customer
 - **Message**: The content of the message from the customer
+
+Identification (at least one required):
+- **Visitor ID**: The ID of the non-authenticated visitor
+- **Lead ID**: The ID of the lead associated with this interaction
+- **User ID**: (Optional) The ID of the authenticated user
 
 Optional fields:
 - **Conversation ID**: If continuing an existing conversation, provide the ID
-- **Agent ID**: The ID of the customer support agent
+- **Agent ID**: The ID of the customer support agent (will be found using site_id if not provided)
 - **Site ID**: The ID of the site associated with this interaction
-
-The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.

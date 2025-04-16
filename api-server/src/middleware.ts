@@ -28,11 +28,17 @@ export function middleware(request: NextRequest) {
        pathname.includes('/sessions') || 
        pathname.includes('/cors-test'));
     
+    // Check if the path is an agents route
+    const isAgentsRoute = pathname.startsWith('/api/agents/') &&
+      (pathname.includes('/customerSupport') ||
+       pathname.includes('/chat'));
+    
     console.log(`[MIDDLEWARE] Is visitors route: ${isVisitorsRoute}`);
+    console.log(`[MIDDLEWARE] Is agents route: ${isAgentsRoute}`);
     
     // For OPTIONS requests, handle CORS immediately regardless of URL format
-    if (request.method === 'OPTIONS' && isVisitorsRoute) {
-      console.log(`[MIDDLEWARE] Handling OPTIONS request for visitors path: ${pathname}`);
+    if (request.method === 'OPTIONS' && (isVisitorsRoute || isAgentsRoute)) {
+      console.log(`[MIDDLEWARE] Handling OPTIONS request for path: ${pathname}`);
       const response = new NextResponse(null, { status: 204 });
       
       // If it's a credentialed request and has an origin, we must reflect that origin instead of using *
@@ -54,10 +60,10 @@ export function middleware(request: NextRequest) {
     }
     
     // If we detect a URL that needs correction (double slashes or sessions instead of session)
-    if (isVisitorsRoute) {
+    if (isVisitorsRoute || isAgentsRoute) {
       // Check if we need to redirect (double slash or plural sessions)
       const hasDoubleSlash = request.nextUrl.pathname.includes('//');
-      const hasSessionsPlural = pathname.includes('/api/visitors/sessions');
+      const hasSessionsPlural = isVisitorsRoute && pathname.includes('/api/visitors/sessions');
       
       if (hasDoubleSlash || hasSessionsPlural) {
         console.log(`[MIDDLEWARE] URL needs correction: doubleSlash=${hasDoubleSlash}, plural=${hasSessionsPlural}`);
@@ -110,37 +116,14 @@ export function middleware(request: NextRequest) {
       return response;
     }
 
-    // For non-OPTIONS requests to visitors routes
-    if (isVisitorsRoute) {
-      console.log(`[MIDDLEWARE] Proceeding with regular ${request.method} request for visitors route`);
-      const response = NextResponse.next();
-      
-      // Add CORS headers for visitors routes
-      if (origin) {
-        console.log(`[MIDDLEWARE] Using specific origin for CORS: ${origin}`);
-        response.headers.set('Access-Control-Allow-Origin', origin);
-        response.headers.set('Access-Control-Allow-Credentials', 'true');
-      } else {
-        console.log('[MIDDLEWARE] No origin provided, using wildcard');
-        response.headers.set('Access-Control-Allow-Origin', '*');
-      }
-      
-      response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With');
-      
-      console.log('[MIDDLEWARE] Added CORS headers for visitors route');
-      console.log('==== MIDDLEWARE EXECUTION COMPLETE ====');
-      return response;
-    }
-
     // For non-OPTIONS requests
     console.log(`[MIDDLEWARE] Proceeding with regular ${request.method} request`);
     const response = NextResponse.next();
 
     // Add the CORS headers to the response
-    if (isVisitorsRoute) {
-      // Open CORS for visitors/session route - reflect the specific origin if provided
-      console.log('[MIDDLEWARE] Adding CORS headers for visitors route');
+    if (isVisitorsRoute || isAgentsRoute) {
+      // Open CORS for visitors/agents routes - reflect the specific origin if provided
+      console.log(`[MIDDLEWARE] Adding CORS headers for ${isVisitorsRoute ? 'visitors' : 'agents'} route`);
       
       if (origin) {
         console.log(`[MIDDLEWARE] Using specific origin for CORS: ${origin}`);
@@ -199,6 +182,9 @@ export const config = {
     '/api/visitors/cors-test',
     '/api/visitors/identify',
     '/api/agents/:path*',
+    '/api/agents/customerSupport/:path*',
+    '/api/agents/customerSupport/conversations/:path*',
+    '/api/agents/chat/:path*',
     '/api/agents/integrations/:path*',
     '/api/agents/integrations/list'
   ],

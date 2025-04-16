@@ -10,6 +10,85 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+// Función para encontrar un agente de soporte al cliente activo para un sitio
+async function findActiveCustomerSupportAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  try {
+    if (!siteId || !isValidUUID(siteId)) {
+      console.error(`❌ Invalid site_id for agent search: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Buscando agente de soporte al cliente activo para el sitio: ${siteId}`);
+    
+    // Solo buscamos por site_id, role y status
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id')
+      .eq('site_id', siteId)
+      .eq('role', 'Customer Support')
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.error('Error al buscar agente de soporte al cliente:', error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró ningún agente de soporte al cliente activo para el sitio: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`✅ Agente de soporte al cliente encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    return {
+      agentId: data[0].id,
+      userId: data[0].user_id
+    };
+  } catch (error) {
+    console.error('Error al buscar agente de soporte al cliente:', error);
+    return null;
+  }
+}
+
+// Función para obtener información completa del agente
+async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id?: string } | null> {
+  try {
+    if (!isValidUUID(agentId)) {
+      console.error(`ID de agente no válido: ${agentId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Obteniendo información del agente: ${agentId}`);
+    
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id, site_id')
+      .eq('id', agentId)
+      .single();
+    
+    if (error) {
+      console.error('Error al obtener información del agente:', error);
+      return null;
+    }
+    
+    if (!data) {
+      console.log(`⚠️ No se encontró el agente con ID: ${agentId}`);
+      return null;
+    }
+    
+    console.log(`✅ Información del agente recuperada: user_id=${data.user_id}, site_id=${data.site_id || 'N/A'}`);
+    
+    return {
+      user_id: data.user_id,
+      site_id: data.site_id
+    };
+  } catch (error) {
+    console.error('Error al obtener información del agente:', error);
+    return null;
+  }
+}
+
 // Inicializar el agente y obtener el servicio de comandos
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -137,15 +216,56 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string) {
   try {
+    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}`);
+    
+    let effectiveConversationId: string | undefined = conversationId;
+    
     // Verificar si tenemos un ID de conversación
-    if (!conversationId) {
-      // Crear una nueva conversación si no existe
-      const conversationData: any = { user_id: userId };
+    if (conversationId) {
+      // Verificamos primero que la conversación realmente existe en la base de datos
+      console.log(`🔍 Verificando existencia de conversación: ${conversationId}`);
+      const { data: existingConversation, error: checkError } = await supabaseAdmin
+        .from('conversations')
+        .select('id, user_id, lead_id, visitor_id, agent_id, site_id')
+        .eq('id', conversationId)
+        .single();
+      
+      if (checkError || !existingConversation) {
+        console.log(`⚠️ Conversación no encontrada en la base de datos, creando nueva: ${conversationId}`);
+        // Si la conversación no existe aunque tengamos un ID, crearemos una nueva
+        effectiveConversationId = undefined;
+      } else {
+        console.log(`✅ Conversación existente confirmada: ${conversationId}`);
+        console.log(`📊 Datos de conversación existente:`, JSON.stringify(existingConversation));
+      }
+    }
+    
+    // Crear una nueva conversación si no existe
+    if (!effectiveConversationId) {
+      // Crear una nueva conversación
+      const conversationData: any = {
+        // Añadir user_id obligatoriamente
+        user_id: userId
+      };
+      
+      // Añadir visitor_id, agent_id y site_id si están presentes
+      if (visitorId) conversationData.visitor_id = visitorId;
+      if (agentId) conversationData.agent_id = agentId;
+      if (siteId) conversationData.site_id = siteId;
+      
+      // Solo añadir lead_id si está presente y es un dato requerido
+      // (por ejemplo, si estamos en una conversación relacionada con un lead específico)
+      if (leadId && !agentId) {
+        conversationData.lead_id = leadId;
+        console.log(`⚠️ Agregando lead_id a la conversación porque no hay agentId`);
+      }
       
       // Añadir el título si está presente
       if (conversationTitle) conversationData.title = conversationTitle;
+      
+      console.log(`🗣️ Creando nueva conversación con datos:`, JSON.stringify(conversationData));
       
       const { data: conversation, error: convError } = await supabaseAdmin
         .from('conversations')
@@ -158,33 +278,59 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         return null;
       }
       
-      conversationId = conversation.id;
-      console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
-    } else if (conversationTitle) {
-      // Actualizar el título de la conversación existente si se proporciona uno nuevo
+      effectiveConversationId = conversation.id;
+      console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
+    } else if (conversationTitle || siteId) {
+      // Actualizar la conversación existente si se proporciona un nuevo título o site_id
+      const updateData: any = {};
+      if (conversationTitle) updateData.title = conversationTitle;
+      if (siteId) updateData.site_id = siteId;
+      
+      console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
+      
       const { error: updateError } = await supabaseAdmin
         .from('conversations')
-        .update({ title: conversationTitle })
-        .eq('id', conversationId);
+        .update(updateData)
+        .eq('id', effectiveConversationId);
       
       if (updateError) {
-        console.error('Error al actualizar título de conversación:', updateError);
-        // No fallamos toda la operación si solo falla la actualización del título
+        console.error('Error al actualizar conversación:', updateError);
+        // No fallamos toda la operación si solo falla la actualización
         console.log('Continuando con el guardado de mensajes...');
       } else {
-        console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
+        if (conversationTitle) {
+          console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
+        }
+        if (siteId) {
+          console.log(`🔗 Site ID de conversación actualizado: "${siteId}"`);
+        }
       }
     }
     
     // Guardar el mensaje del usuario
-    const { data: userMessageData, error: userMsgError } = await supabaseAdmin
+    const userMessageObj: any = {
+      conversation_id: effectiveConversationId,
+      user_id: userId,
+      content: userMessage,
+      role: 'user'
+    };
+    
+    // Agregar visitor_id si está presente
+    if (visitorId) userMessageObj.visitor_id = visitorId;
+    
+    // Solo agregar lead_id si está presente y no hay un agente en la conversación
+    if (leadId && !agentId) {
+      userMessageObj.lead_id = leadId;
+    }
+    
+    // Agregar agent_id si está presente
+    if (agentId) userMessageObj.agent_id = agentId;
+    
+    console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
+    
+    const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
       .from('messages')
-      .insert([{
-        conversation_id: conversationId,
-        user_id: userId,
-        content: userMessage,
-        role: 'user'
-      }])
+      .insert([userMessageObj])
       .select()
       .single();
     
@@ -193,16 +339,32 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       return null;
     }
     
-    console.log(`💾 Mensaje del usuario guardado con ID: ${userMessageData.id}`);
+    console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
     
     // Guardar el mensaje del asistente
-    const { data: assistantMessageData, error: assistantMsgError } = await supabaseAdmin
+    const assistantMessageObj: any = {
+      conversation_id: effectiveConversationId,
+      user_id: null, // Agente no es usuario
+      content: assistantMessage,
+      role: 'assistant'
+    };
+    
+    // Agregar visitor_id si está presente
+    if (visitorId) assistantMessageObj.visitor_id = visitorId;
+    
+    // Solo agregar lead_id si está presente y no hay un agente en la conversación
+    if (leadId && !agentId) {
+      assistantMessageObj.lead_id = leadId;
+    }
+    
+    // Agregar agent_id si está presente
+    if (agentId) assistantMessageObj.agent_id = agentId;
+    
+    console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
+    
+    const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
       .from('messages')
-      .insert([{
-        conversation_id: conversationId,
-        content: assistantMessage,
-        role: 'assistant'
-      }])
+      .insert([assistantMessageObj])
       .select()
       .single();
     
@@ -211,12 +373,25 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       return null;
     }
     
-    console.log(`💾 Mensaje del asistente guardado con ID: ${assistantMessageData.id}`);
+    console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
+    
+    // Verificamos que la conversación esté asociada correctamente
+    const { data: finalConversation, error: finalCheckError } = await supabaseAdmin
+      .from('conversations')
+      .select('id, user_id, lead_id, visitor_id, agent_id, site_id, title')
+      .eq('id', effectiveConversationId)
+      .single();
+      
+    if (!finalCheckError && finalConversation) {
+      console.log(`✅ Verificación final de conversación: ${JSON.stringify(finalConversation)}`);
+    } else {
+      console.error(`❌ Error al verificar conversación final:`, finalCheckError);
+    }
     
     return {
-      conversationId,
-      userMessageId: userMessageData.id,
-      assistantMessageId: assistantMessageData.id,
+      conversationId: effectiveConversationId,
+      userMessageId: savedUserMessage.id,
+      assistantMessageId: savedAssistantMessage.id,
       conversationTitle
     };
   } catch (error) {
@@ -310,19 +485,41 @@ export async function POST(request: Request) {
     const body = await request.json();
     
     // Extract required parameters from the request
-    const { conversationId, userId, message, agentId, site_id } = body;
+    const { conversationId, userId, message, agentId, site_id, lead_id, visitor_id } = body;
     
-    if (!userId) {
+    // Verificamos si tenemos al menos un identificador de usuario o cliente
+    if (!visitor_id && !lead_id && !userId && !site_id) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'At least one identification parameter (visitor_id, lead_id, userId, or site_id) is required' } },
         { status: 400 }
       );
     }
     
-    // Asegurarse de que userId sea un UUID válido
-    if (!isValidUUID(userId)) {
+    // Validar que cualquier ID proporcionado sea un UUID válido
+    if (userId && !isValidUUID(userId)) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'userId must be a valid UUID' } },
+        { status: 400 }
+      );
+    }
+    
+    if (visitor_id && !isValidUUID(visitor_id)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'visitor_id must be a valid UUID' } },
+        { status: 400 }
+      );
+    }
+    
+    if (lead_id && !isValidUUID(lead_id)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'lead_id must be a valid UUID' } },
+        { status: 400 }
+      );
+    }
+    
+    if (site_id && !isValidUUID(site_id)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } },
         { status: 400 }
       );
     }
@@ -334,24 +531,62 @@ export async function POST(request: Request) {
       );
     }
     
-    // Get default agent ID if not provided
-    const effectiveAgentId = agentId || 'default_customer_support_agent';
-    
-    console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${userId}`);
-    
-    // Get site_id from agent if not provided
+    // Establecer el site_id efectivo
     let effectiveSiteId = site_id;
-    if (!effectiveSiteId) {
-      try {
-        // For now, we'll log that site_id is missing
-        // In the future, we can implement a way to get it from the agent if needed
-        console.log(`⚠️ No site_id provided for agent ${effectiveAgentId}`);
-      } catch (error) {
-        console.error(`Error with site_id handling:`, error);
-      }
-    } else {
+    if (effectiveSiteId) {
       console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
+    } else {
+      console.log(`⚠️ No site_id provided for request`);
     }
+    
+    // Buscar agente de soporte al cliente activo si no se proporciona un agent_id
+    let effectiveAgentId = agentId;
+    let agentUserId: string | null = null;
+    
+    if (!effectiveAgentId) {
+      if (effectiveSiteId) {
+        // Buscar un agente activo en la base de datos para el sitio
+        const foundAgent = await findActiveCustomerSupportAgent(effectiveSiteId);
+        if (foundAgent) {
+          effectiveAgentId = foundAgent.agentId;
+          agentUserId = foundAgent.userId;
+          console.log(`🤖 Usando agente de soporte al cliente encontrado: ${effectiveAgentId} (user_id: ${agentUserId})`);
+        } else {
+          // Usar un valor predeterminado como último recurso
+          effectiveAgentId = 'default_customer_support_agent';
+          console.log(`⚠️ No se encontró un agente activo, usando valor predeterminado: ${effectiveAgentId}`);
+        }
+      } else {
+        // No tenemos site_id, usamos valor predeterminado
+        effectiveAgentId = 'default_customer_support_agent';
+        console.log(`⚠️ No se puede buscar un agente sin site_id, usando valor predeterminado: ${effectiveAgentId}`);
+      }
+    } else if (isValidUUID(effectiveAgentId)) {
+      // Si ya tenemos un agentId válido, obtenemos su información completa
+      const agentInfo = await getAgentInfo(effectiveAgentId);
+      if (agentInfo) {
+        agentUserId = agentInfo.user_id;
+        // Si no tenemos site_id, usamos el del agente
+        if (!effectiveSiteId && agentInfo.site_id) {
+          effectiveSiteId = agentInfo.site_id;
+          console.log(`📍 Usando site_id del agente: ${effectiveSiteId}`);
+        }
+      }
+    }
+    
+    // Determinamos qué ID usar para el comando (preferimos userId si está disponible)
+    // Ahora también consideramos el user_id del agente como opción
+    const effectiveUserId = userId || agentUserId || visitor_id || lead_id;
+    
+    if (!effectiveUserId) {
+      console.error(`❌ No se pudo determinar un user_id válido para el comando`);
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Unable to determine a valid user_id for the command' } },
+        { status: 400 }
+      );
+    }
+    
+    console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
     
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
@@ -383,7 +618,7 @@ export async function POST(request: Request) {
     // Create the command using CommandFactory with the conversation history in the context
     const command = CommandFactory.createCommand({
       task: 'create message',
-      userId,
+      userId: effectiveUserId,
       agentId: effectiveAgentId,
       // Add site_id as a basic property if it exists
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
@@ -442,6 +677,38 @@ export async function POST(request: Request) {
             },
             required: ['conversation', 'lead_id']
           }
+        },
+        {
+          name: 'identify_lead',
+          description: 'collect visitor information when lead or visitor data is missing from context',
+          status: 'not_initialized',
+          type: 'asynchronous',
+          parameters: {
+            type: 'object',
+            properties: {
+              conversation: {
+                type: 'string',
+                description: 'The conversation ID for the current interaction'
+              },
+              name: {
+                type: 'string',
+                description: 'Name of the visitor'
+              },
+              email: {
+                type: 'string',
+                description: 'Email address of the visitor'
+              },
+              phone: {
+                type: 'string',
+                description: 'Phone number of the visitor'
+              },
+              company: {
+                type: 'string',
+                description: 'Company name of the visitor'
+              }
+            },
+            required: ['name', 'email', 'phone']
+          }
         }
       ],
       // Context includes the current message and conversation history
@@ -489,7 +756,13 @@ export async function POST(request: Request) {
             error: { 
               code: 'COMMAND_EXECUTION_FAILED', 
               message: 'The command did not complete successfully in the expected time' 
-            } 
+            },
+            debug: {
+              agent_id: effectiveAgentId,
+              user_id: effectiveUserId,
+              agent_user_id: agentUserId,
+              site_id: effectiveSiteId
+            }
           },
           { status: 500 }
         );
@@ -537,7 +810,32 @@ export async function POST(request: Request) {
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
       
       // Guardar los mensajes en la base de datos
-      const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, conversationTitle);
+      const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId);
+      
+      if (!savedMessages) {
+        console.error(`❌ Error al guardar mensajes en la base de datos`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'DATABASE_ERROR', 
+              message: 'The command completed but the messages could not be saved to the database' 
+            },
+            data: {
+              command_id: internalCommandId,
+              message: assistantMessage,
+              conversation_title: conversationTitle
+            },
+            debug: {
+              agent_id: effectiveAgentId,
+              user_id: effectiveUserId,
+              agent_user_id: agentUserId,
+              site_id: effectiveSiteId
+            }
+          },
+          { status: 500 }
+        );
+      }
       
       // Responder usando el ID interno como respaldo
       return NextResponse.json(
@@ -556,6 +854,12 @@ export async function POST(request: Request) {
                 content: assistantMessage,
                 message_id: savedMessages?.assistantMessageId
               }
+            },
+            debug: {
+              agent_id: effectiveAgentId,
+              user_id: effectiveUserId,
+              agent_user_id: agentUserId,
+              site_id: effectiveSiteId
             }
           } 
         },
@@ -570,7 +874,13 @@ export async function POST(request: Request) {
           error: { 
             code: 'COMMAND_EXECUTION_FAILED', 
             message: 'The command did not complete successfully in the expected time' 
-          } 
+          },
+          debug: {
+            agent_id: effectiveAgentId,
+            user_id: effectiveUserId,
+            agent_user_id: agentUserId,
+            site_id: effectiveSiteId
+          }
         },
         { status: 500 }
       );
@@ -618,24 +928,55 @@ export async function POST(request: Request) {
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
     // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, conversationTitle);
+    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId);
+    
+    if (!savedMessages) {
+      console.error(`❌ Error al guardar mensajes en la base de datos`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'DATABASE_ERROR', 
+            message: 'The command completed but the messages could not be saved to the database' 
+          },
+          data: {
+            command_id: effectiveDbUuid,
+            message: assistantMessage,
+            conversation_title: conversationTitle
+          },
+          debug: {
+            agent_id: effectiveAgentId,
+            user_id: effectiveUserId,
+            agent_user_id: agentUserId,
+            site_id: effectiveSiteId
+          }
+        },
+        { status: 500 }
+      );
+    }
     
     return NextResponse.json(
       { 
         success: true, 
         data: { 
           command_id: effectiveDbUuid,
-          conversation_id: savedMessages?.conversationId,
-          conversation_title: savedMessages?.conversationTitle,
+          conversation_id: savedMessages.conversationId,
+          conversation_title: savedMessages.conversationTitle,
           messages: {
             user: {
               content: message,
-              message_id: savedMessages?.userMessageId
+              message_id: savedMessages.userMessageId
             },
             assistant: {
               content: assistantMessage,
-              message_id: savedMessages?.assistantMessageId
+              message_id: savedMessages.assistantMessageId
             }
+          },
+          debug: {
+            agent_id: effectiveAgentId,
+            user_id: effectiveUserId,
+            agent_user_id: agentUserId,
+            site_id: effectiveSiteId
           }
         } 
       },

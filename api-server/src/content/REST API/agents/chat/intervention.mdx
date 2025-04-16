@@ -1,0 +1,130 @@
+# Chat Team Member Intervention
+
+Records team member intervention messages in agent conversations. This endpoint allows human team members to insert messages into conversations without executing agent commands.
+
+## Endpoint
+
+```http
+POST /api/agents/chat/intervention
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `conversationId` | string | Yes | ID of existing conversation to intervene in |
+| `message` | string | Yes | The message content from the team member |
+| `user_id` | string | Yes | UUID of the user (team member) performing the intervention |
+| `agentId` | string | Yes | ID of the agent associated with the intervention |
+| `conversation_title` | string | No | Optional title for the conversation |
+| `lead_id` | string | No | Optional ID of the lead associated with this conversation |
+| `visitor_id` | string | No | Optional ID of the visitor or website guest |
+| `site_id` | string | No | Optional ID of the site associated with this conversation |
+
+### Example Request
+
+```json
+{
+  "conversationId": "conv_123456",
+  "message": "Let me help with your marketing strategy. We could focus on digital campaigns for Q3.",
+  "user_id": "550e8400-e29b-41d4-a716-446655440000",
+  "agentId": "agent_marketing_123",
+  "conversation_title": "Marketing Strategy Assistance",
+  "lead_id": "lead_456",
+  "visitor_id": "visitor_789",
+  "site_id": "site_abc123"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="intervention" />
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "interventionId": "int_123456",
+    "status": "completed",
+    "conversation_id": "conv_789012",
+    "conversation_title": "Marketing Strategy Assistance",
+    "message": {
+      "content": "Let me help with your marketing strategy. We could focus on digital campaigns for Q3.",
+      "message_id": "msg_team_123",
+      "role": "team_member",
+      "user_id": "550e8400-e29b-41d4-a716-446655440000"
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `AGENT_NOT_FOUND` | The specified agent does not exist |
+| `MESSAGE_SAVE_FAILED` | Message could not be saved to the database |
+| `INTERNAL_SERVER_ERROR` | Internal system error occurred |
+
+## Notes
+
+- Unlike the regular chat message endpoint, this endpoint does not execute any agent commands
+- It's specifically designed for human team member intervention in conversations
+- Messages are stored with role="team_member" to distinguish them from regular user/assistant messages
+- Messages are associated with the provided user_id rather than the agent owner
+- Messages and conversations are flagged with `is_intervention: true` in the database
+- This endpoint is useful for:
+  - Human agent takeover scenarios
+  - Customer support escalation
+  - Sales team intervention in automated conversations
+  - Team collaboration on customer inquiries
+
+## Differences from Chat Message Endpoint
+
+The intervention endpoint differs from the regular chat message endpoint in several key ways:
+
+1. **No Command Execution**: The intervention endpoint doesn't create or execute agent commands
+2. **Team Member Role**: Messages are stored with a "team_member" role instead of "user" or "assistant"
+3. **Required Conversation ID**: Interventions must be added to an existing conversation
+4. **User ID Required**: You must provide the user_id of the team member performing the intervention
+5. **Intervention Flagging**: All records are marked with an intervention flag in the database
+6. **Synchronous Operation**: The endpoint completes immediately after storing the message
+
+## Try It
+
+You can test this API directly using our API Tester interface. The Intervention API tester allows you to record team member interventions without agent processing.
+
+Required fields:
+- **User ID**: The UUID of the team member performing the intervention
+- **Agent ID**: The ID of the agent associated with the intervention
+- **Team Member Message**: The content of the intervention message
+- **Conversation ID**: The ID of the conversation to intervene in
+
+Optional fields:
+- **Conversation Title**: A title for the conversation
+- **Lead ID**: If the conversation is associated with a lead, provide the ID
+- **Visitor ID**: If the conversation is with a website visitor, provide the ID
+- **Site ID**: If the conversation is associated with a specific site, provide the ID
+
+<UnifiedApiTester apiId="intervention" />
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly. 

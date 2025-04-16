@@ -11,6 +11,8 @@ export interface CustomerSupportApiProps {
   defaultConversationId?: string;
   defaultMessage?: string;
   defaultSiteId?: string;
+  defaultVisitorId?: string;
+  defaultLeadId?: string;
 }
 
 // State for CustomerSupportApi
@@ -20,6 +22,8 @@ export interface CustomerSupportApiState {
   conversationId: string;
   message: string;
   site_id: string;
+  visitor_id: string;
+  lead_id: string;
   jsonResponse: boolean;
   showResponse: boolean;
   loading: boolean;
@@ -48,16 +52,22 @@ const CustomerSupportApi: BaseApiConfig = {
       agentId: props.defaultAgentId || 'default_customer_support_agent',
       conversationId: props.defaultConversationId || '',
       message: props.defaultMessage || '',
-      site_id: props.defaultSiteId || ''
+      site_id: props.defaultSiteId || '',
+      visitor_id: props.defaultVisitorId || '',
+      lead_id: props.defaultLeadId || ''
     };
   },
 
   // Build request body
   buildRequestBody: (state: CustomerSupportApiState): Record<string, any> => {
     const body: Record<string, any> = {
-      userId: state.userId,
       message: state.message
     };
+
+    // Solo añadir userId si tiene valor
+    if (state.userId) {
+      body.userId = state.userId;
+    }
 
     if (state.conversationId) {
       body.conversationId = state.conversationId;
@@ -69,6 +79,14 @@ const CustomerSupportApi: BaseApiConfig = {
 
     if (state.site_id) {
       body.site_id = state.site_id;
+    }
+
+    if (state.visitor_id) {
+      body.visitor_id = state.visitor_id;
+    }
+
+    if (state.lead_id) {
+      body.lead_id = state.lead_id;
     }
 
     return body;
@@ -92,18 +110,37 @@ const CustomerSupportApi: BaseApiConfig = {
       setState(prev => ({ ...prev, loading: true, error: null, showResponse: false }));
 
       try {
+        // Construir body del request
+        const requestBody: Record<string, any> = {
+          message: state.message
+        };
+
+        // Solo añadir campos que tienen valor
+        if (state.userId) requestBody.userId = state.userId;
+        if (state.visitor_id) requestBody.visitor_id = state.visitor_id;
+        if (state.lead_id) requestBody.lead_id = state.lead_id;
+        if (state.conversationId) requestBody.conversationId = state.conversationId;
+        if (state.agentId) requestBody.agentId = state.agentId;
+        if (state.site_id) requestBody.site_id = state.site_id;
+
+        // Validar que haya al menos un parámetro de identificación
+        // Nota: userId no es estrictamente necesario (puede derivarse del site_id)
+        if (!requestBody.userId && !requestBody.visitor_id && !requestBody.lead_id) {
+          setState(prev => ({
+            ...prev,
+            loading: false,
+            error: 'Se requiere al menos un parámetro de identificación (visitor_id, lead_id o userId)',
+            showResponse: false
+          }));
+          return;
+        }
+
         const response = await fetch('/api/agents/customerSupport/message', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({
-            userId: state.userId,
-            agentId: state.agentId,
-            conversationId: state.conversationId || undefined,
-            message: state.message,
-            site_id: state.site_id || undefined
-          }),
+          body: JSON.stringify(requestBody),
         });
 
         const data = await response.json();
@@ -131,16 +168,6 @@ const CustomerSupportApi: BaseApiConfig = {
         <SectionLabel>Required Fields</SectionLabel>
         
         <FormField
-          label="User ID"
-          id="userId"
-          type="text"
-          value={state.userId}
-          placeholder="user_123"
-          onChange={(value: string) => handleChange('userId', value)}
-          required
-        />
-        
-        <FormField
           label="Message"
           id="message"
           type="textarea"
@@ -148,6 +175,35 @@ const CustomerSupportApi: BaseApiConfig = {
           placeholder="I need help with my recent order"
           onChange={(value: string) => handleChange('message', value)}
           required
+        />
+
+        <SectionLabel>Identification (at least one required)</SectionLabel>
+
+        <FormField
+          label="Visitor ID"
+          id="visitor_id"
+          type="text"
+          value={state.visitor_id}
+          placeholder="visitor_123456"
+          onChange={(value: string) => handleChange('visitor_id', value)}
+        />
+        
+        <FormField
+          label="Lead ID"
+          id="lead_id"
+          type="text"
+          value={state.lead_id}
+          placeholder="lead_123456"
+          onChange={(value: string) => handleChange('lead_id', value)}
+        />
+
+        <FormField
+          label="User ID (optional)"
+          id="userId"
+          type="text"
+          value={state.userId}
+          placeholder="user_123"
+          onChange={(value: string) => handleChange('userId', value)}
         />
         
         <SectionLabel>Optional Fields</SectionLabel>

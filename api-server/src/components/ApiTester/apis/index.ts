@@ -14,8 +14,12 @@ import VisitorTrackApi from './VisitorTrackApi';
 import VisitorIdentifyApi from './VisitorIdentifyApi';
 import AgentsIntegrationsApi from './AgentsIntegrationsApi';
 import CustomerSupportApi from './CustomerSupportApi';
+import CustomerSupportConversationsApi from './CustomerSupportConversationsApi';
+import CustomerSupportConversationMessagesApi from './CustomerSupportConversationMessagesApi';
 import CopywriterApi from './CopywriterApi';
 import ChatApi from './ChatApi';
+import GrowthApi from './GrowthApi';
+import InterventionApi from './InterventionApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -33,7 +37,11 @@ apiRegistry.register(VisitorTrackApi);
 apiRegistry.register(VisitorIdentifyApi);
 apiRegistry.register(AgentsIntegrationsApi);
 apiRegistry.register(CustomerSupportApi);
+apiRegistry.register(CustomerSupportConversationsApi);
+apiRegistry.register(CustomerSupportConversationMessagesApi);
 apiRegistry.register(CopywriterApi);
 apiRegistry.register(ChatApi);
+apiRegistry.register(GrowthApi);
+apiRegistry.register(InterventionApi);
 
 export default apiRegistry; 

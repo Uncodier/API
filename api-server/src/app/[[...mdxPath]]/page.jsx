@@ -4,20 +4,20 @@ import { useMDXComponents as getMDXComponents } from '../../../mdx-components'
 export const generateStaticParams = generateStaticParamsFor('mdxPath')
 
 export async function generateMetadata(props) {
-  const params = props.params
-  const { metadata } = await importPage(params.mdxPath)
+  const paramsObj = await props.params
+  const { metadata } = await importPage(paramsObj.mdxPath)
   return metadata
 }
 
 const Wrapper = getMDXComponents().wrapper
 
 export default async function Page(props) {
-  const params = props.params
-  const result = await importPage(params.mdxPath)
+  const paramsObj = await props.params
+  const result = await importPage(paramsObj.mdxPath)
   const { default: MDXContent, toc, metadata } = result
   return (
     <Wrapper toc={toc} metadata={metadata}>
-      <MDXContent {...props} params={params} />
+      <MDXContent {...props} params={paramsObj} />
     </Wrapper>
   )
 } 
