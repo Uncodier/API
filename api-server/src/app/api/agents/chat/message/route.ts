@@ -138,19 +138,28 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, teamMemberId?: string) {
   try {
+    // Debug logs para verificar los parámetros recibidos
+    console.log(`📥 saveMessages recibió: userId=${userId}, teamMemberId=${teamMemberId || 'undefined'}`);
+    
+    // Determine user role based on parameters
+    const userRole = teamMemberId ? 'team_member' : 'user';
+    console.log(`💾 Guardando mensajes - Role: ${userRole}, User: ${teamMemberId || userId}`);
+    
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
       // Crear una nueva conversación si no existe
       const conversationData: any = { user_id: userId };
       
-      // Añadir lead_id y visitor_id si están presentes
+      // Añadir lead_id, visitor_id y agent_id si están presentes
       if (leadId) conversationData.lead_id = leadId;
       if (visitorId) conversationData.visitor_id = visitorId;
+      if (agentId) conversationData.agent_id = agentId;
       // Añadir el título si está presente
       if (conversationTitle) conversationData.title = conversationTitle;
       
+      console.log(`🗣️ Creando nueva conversación con datos: ${JSON.stringify(conversationData).substring(0, 100)}...`);
       const { data: conversation, error: convError } = await supabaseAdmin
         .from('conversations')
         .insert([conversationData])
@@ -166,6 +175,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
     } else if (conversationTitle) {
       // Actualizar el título de la conversación existente si se proporciona uno nuevo
+      console.log(`✏️ Actualizando título de conversación ${conversationId} a: "${conversationTitle}"`);
       const { error: updateError } = await supabaseAdmin
         .from('conversations')
         .update({ title: conversationTitle })
@@ -181,16 +191,20 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     }
     
     // Guardar el mensaje del usuario
+    console.log(`💬 Preparando guardado del mensaje del usuario en conversación: ${conversationId}`);
     const userMessageData: any = {
       conversation_id: conversationId,
-      user_id: userId,
+      user_id: teamMemberId || userId,
       content: userMessage,
-      role: 'user'
+      role: userRole
     };
     
-    // Añadir lead_id y visitor_id si están presentes
+    console.log(`📋 Datos del mensaje del usuario: user_id=${userMessageData.user_id}, role=${userMessageData.role}`);
+    
+    // Añadir lead_id, visitor_id y agent_id si están presentes
     if (leadId) userMessageData.lead_id = leadId;
     if (visitorId) userMessageData.visitor_id = visitorId;
+    if (agentId) userMessageData.agent_id = agentId;
     
     const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
       .from('messages')
@@ -206,11 +220,17 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
     
     // Guardar el mensaje del asistente
+    console.log(`💬 Preparando guardado del mensaje del asistente en conversación: ${conversationId}`);
     const assistantMessageData: any = {
       conversation_id: conversationId,
       content: assistantMessage,
       role: 'assistant'
     };
+    
+    // Añadir lead_id, visitor_id y agent_id si están presentes
+    if (leadId) assistantMessageData.lead_id = leadId;
+    if (visitorId) assistantMessageData.visitor_id = visitorId;
+    if (agentId) assistantMessageData.agent_id = agentId;
     
     const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
       .from('messages')
@@ -225,11 +245,15 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
     
+    // Verificar que los mensajes se guardaron correctamente
+    console.log(`✅ Ambos mensajes guardados exitosamente para la conversación: ${conversationId}`);
+    
     return {
       conversationId,
       userMessageId: savedUserMessage.id,
       assistantMessageId: savedAssistantMessage.id,
-      conversationTitle
+      conversationTitle,
+      userRole
     };
   } catch (error) {
     console.error('Error al guardar mensajes en la base de datos:', error);
@@ -272,11 +296,11 @@ async function getConversationHistory(conversationId: string): Promise<Array<{ro
       let role = 'user';
       
       if (msg.role) {
-        // Si el campo role existe, usarlo directamente
-        role = msg.role;
+        // Si el campo role existe, usarlo directamente (pero 'team_member' se trata como 'user' para el formato de contexto)
+        role = msg.role === 'team_member' ? 'user' : msg.role;
       } else if (msg.sender_type) {
         // Si existe sender_type, hacer la conversión
-        role = msg.sender_type === 'visitor' || msg.sender_type === 'user' ? 'user' : 'assistant';
+        role = msg.sender_type === 'visitor' || msg.sender_type === 'user' || msg.sender_type === 'team_member' ? 'user' : 'assistant';
       } else if (!msg.user_id) {
         // Si no hay user_id, asumimos que es asistente
         role = 'assistant';
@@ -382,7 +406,10 @@ export async function POST(request: Request) {
     const body = await request.json();
     
     // Extract parameters from the request
-    const { conversationId, message, agentId, lead_id, visitor_id, site_id: requestSiteId } = body;
+    const { conversationId, message, agentId, lead_id, visitor_id, site_id, team_member_id } = body;
+    
+    // Log de parámetros recibidos
+    console.log(`📨 Parámetros recibidos: agentId=${agentId}, team_member_id=${team_member_id || 'no proporcionado'}`);
     
     // Validate required parameters
     if (!message) {
@@ -398,6 +425,13 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    if (!site_id) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required' } },
+        { status: 400 }
+      );
+    }
     
     // Obtener información del agente (userId y site_id)
     const agentInfo = await getAgentInfo(agentId);
@@ -409,12 +443,11 @@ export async function POST(request: Request) {
       );
     }
     
-    // Usar el userId del propietario del agente
-    const userId = agentInfo.user_id;
-    // Use site_id from request if provided, otherwise use the one from the agent
-    const site_id = requestSiteId || agentInfo.site_id;
+    // If team_member_id is provided, use it as message owner, otherwise use agent owner's ID
+    const userId = team_member_id || agentInfo.user_id;
     
-    console.log(`Creando comando para agente: ${agentId}, propietario: ${userId}, site: ${site_id || 'N/A'}`);
+    console.log(`👤 Determinación de usuario: team_member_id=${team_member_id || 'no proporcionado'}, userId asignado=${userId}`);
+    console.log(`Creando comando para agente: ${agentId}, propietario: ${userId}, site: ${site_id}`);
     
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
@@ -617,46 +650,95 @@ export async function POST(request: Request) {
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
-    // Guardar los mensajes en la base de datos - Aseguramos que esto se complete antes de responder
-    const savedMessages = await saveMessages(userId, message, assistantMessage, conversationId, lead_id, visitor_id, conversationTitle);
+    // Paso 1: Guardar los mensajes en la base de datos
+    console.log(`🔄 Iniciando guardado de mensajes en la base de datos...`);
+    console.log(`🧩 Parámetros de guardado: userId=${userId}, team_member_id=${team_member_id}`);
     
-    // Verificar que se guardaron correctamente los mensajes
-    if (!savedMessages) {
+    try {
+      // Importante: Pasamos team_member_id como parámetro teamMemberId para que se asigne correctamente el rol
+      const savedMessagesPromise = saveMessages(
+        userId, 
+        message, 
+        assistantMessage, 
+        conversationId, 
+        lead_id, 
+        visitor_id, 
+        conversationTitle, 
+        agentId, 
+        team_member_id  // Aseguramos que se pasa correctamente el team_member_id
+      );
+      
+      // Esperar a que se complete el guardado con un timeout de seguridad
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout saving messages')), 10000)
+      );
+      
+      // Utilizar Promise.race para manejar posibles tiempos de espera excesivos
+      const savedMessages = await Promise.race([savedMessagesPromise, timeoutPromise]) as any;
+      
+      // Verificar que se guardaron correctamente los mensajes
+      if (!savedMessages) {
+        console.error(`❌ Error al guardar los mensajes en la base de datos`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'MESSAGE_SAVE_FAILED', 
+              message: 'The messages could not be saved correctly' 
+            } 
+          },
+          { status: 500 }
+        );
+      }
+      
+      console.log(`✅ Mensajes guardados exitosamente en la base de datos. Role asignado: ${savedMessages.userRole}`);
+      console.log(`🏁 Preparando respuesta final después de completar todas las operaciones`);
+      
+      // Realizar una última verificación de los IDs de mensajes guardados
+      if (!savedMessages.userMessageId || !savedMessages.assistantMessageId) {
+        console.error(`⚠️ Advertencia: Algunos IDs de mensajes no están disponibles:`, 
+          `user=${savedMessages.userMessageId}, assistant=${savedMessages.assistantMessageId}`);
+      }
+      
+      // Si todo es correcto, devolvemos la respuesta exitosa después de completar todo el proceso
+      console.log(`🚀 Enviando respuesta HTTP 200 con datos completos`);
+      return NextResponse.json(
+        { 
+          success: true, 
+          data: { 
+            commandId: effectiveDbUuid || internalCommandId,
+            status: 'completed',
+            conversation_id: savedMessages.conversationId,
+            conversation_title: savedMessages.conversationTitle,
+            messages: {
+              user: {
+                content: message,
+                message_id: savedMessages.userMessageId,
+                role: savedMessages.userRole
+              },
+              assistant: {
+                content: assistantMessage,
+                message_id: savedMessages.assistantMessageId,
+                role: 'assistant'
+              }
+            }
+          } 
+        },
+        { status: 200 }
+      );
+    } catch (saveError) {
+      console.error(`❌ Error durante el proceso de guardado:`, saveError);
       return NextResponse.json(
         { 
           success: false, 
           error: { 
-            code: 'MESSAGE_SAVE_FAILED', 
-            message: 'The messages could not be saved correctly' 
+            code: 'DATABASE_OPERATION_FAILED', 
+            message: 'Failed to complete all database operations' 
           } 
         },
         { status: 500 }
       );
     }
-    
-    // Si todo es correcto, devolvemos la respuesta exitosa después de completar todo el proceso
-    return NextResponse.json(
-      { 
-        success: true, 
-        data: { 
-          commandId: effectiveDbUuid || internalCommandId,
-          status: 'completed',
-          conversation_id: savedMessages.conversationId,
-          conversation_title: savedMessages.conversationTitle,
-          messages: {
-            user: {
-              content: message,
-              message_id: savedMessages.userMessageId
-            },
-            assistant: {
-              content: assistantMessage,
-              message_id: savedMessages.assistantMessageId
-            }
-          }
-        } 
-      },
-      { status: 200 }
-    );
   } catch (error) {
     console.error('Error al procesar la solicitud:', error);
     return NextResponse.json(
