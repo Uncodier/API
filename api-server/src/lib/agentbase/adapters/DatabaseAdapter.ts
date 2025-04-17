@@ -754,6 +754,40 @@ export class DatabaseAdapter {
     try {
       console.log(`[DatabaseAdapter] Obteniendo contenido del archivo: ${filePath}`);
 
+      // Verificar primero si es una URL completa para descarga directa
+      if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+        console.log(`🔍 File path es una URL, intentando descarga directa: ${filePath}`);
+        try {
+          const response = await fetch(filePath);
+          if (response.ok) {
+            const content = await response.text();
+            console.log(`[DatabaseAdapter] Contenido obtenido exitosamente de URL directa (${content.length} bytes)`);
+            
+            // Si es un archivo CSV, hacer una validación rápida
+            if (filePath.toLowerCase().endsWith('.csv')) {
+              console.log(`[DatabaseAdapter] Validando formato CSV...`);
+              if (content.includes(',') && (content.includes('\n') || content.includes('\r'))) {
+                console.log(`[DatabaseAdapter] El contenido parece ser un CSV válido`);
+                
+                // Mostrar las primeras filas para debug
+                const rows = content.split(/\r?\n/).filter(row => row.trim());
+                if (rows.length > 0) {
+                  console.log(`[DatabaseAdapter] CSV tiene ${rows.length} filas. Primera fila: ${rows[0]}`);
+                  if (rows.length > 1) {
+                    console.log(`[DatabaseAdapter] Segunda fila: ${rows[1]}`);
+                  }
+                }
+              }
+            }
+            
+            return content;
+          }
+        } catch (urlError: any) {
+          console.error(`[DatabaseAdapter] Error al obtener contenido de URL directa: ${urlError.message}`);
+          // Continuar con otros métodos si falla
+        }
+      }
+
       // Verificar si es un UUID - podría ser un ID de asset en lugar de una ruta
       if (this.isValidUUID(filePath)) {
         console.log(`[DatabaseAdapter] Detectado ID de asset, buscando información del archivo: ${filePath}`);
@@ -792,8 +826,6 @@ export class DatabaseAdapter {
                         console.log(`[DatabaseAdapter] Segunda fila: ${rows[1]}`);
                       }
                     }
-                  } else {
-                    console.warn(`[DatabaseAdapter] El contenido no parece tener formato CSV válido`);
                   }
                 }
                 
@@ -811,101 +843,57 @@ export class DatabaseAdapter {
         }
       }
       
-      // Determinar el bucket basado en el prefijo de la ruta o usar el predeterminado
-      let bucket = 'agent-files';
+      // Usar directamente el bucket 'assets' para archivos de agentes
+      const DEFAULT_BUCKET = 'assets';
       let originalPath = filePath;
       
-      // Eliminar prefijos de bucket si existen en la ruta
-      if (filePath.includes('/')) {
-        const pathParts = filePath.split('/');
-        if (pathParts.length > 1 && !pathParts[0].includes('.')) {
-          bucket = pathParts[0];
-          filePath = filePath.substring(bucket.length + 1); // +1 para el slash
-        }
-      }
+      console.log(`[DatabaseAdapter] Intentando descargar desde bucket predeterminado: ${DEFAULT_BUCKET}, ruta: ${filePath}`);
       
-      console.log(`[DatabaseAdapter] Intentando descargar desde bucket: ${bucket}, ruta: ${filePath}`);
-      
-      // Intentar descargar desde el bucket determinado
+      // Intentar descargar desde el bucket assets
       let { data, error } = await supabaseAdmin
         .storage
-        .from(bucket)
+        .from(DEFAULT_BUCKET)
         .download(filePath);
       
-      // Si falla, intentar con el bucket predeterminado
-      if (error && bucket !== 'agent-files') {
-        console.log(`[DatabaseAdapter] Error al descargar, intentando con bucket predeterminado 'agent-files'`);
-        bucket = 'agent-files';
+      // Si falla, intentar con el bucket 'assets' pero con prefijo 'assets/'
+      if (error && !filePath.startsWith('assets/')) {
+        console.log(`[DatabaseAdapter] Intentando con prefijo 'assets/' en el bucket ${DEFAULT_BUCKET}`);
+        const pathWithPrefix = `assets/${filePath}`;
         ({ data, error } = await supabaseAdmin
           .storage
-          .from(bucket)
-          .download(filePath));
-      }
-      
-      // Si todavía falla, intentar con otros buckets comunes
-      const commonBuckets = ['files', 'assets', 'documents', 'uploads', 'public'];
-      let i = 0;
-      
-      while (error && i < commonBuckets.length) {
-        console.log(`[DatabaseAdapter] Intentando con bucket alternativo: ${commonBuckets[i]}`);
-        ({ data, error } = await supabaseAdmin
-          .storage
-          .from(commonBuckets[i])
-          .download(filePath));
-        
-        if (!error) {
-          console.log(`[DatabaseAdapter] Archivo encontrado en bucket: ${commonBuckets[i]}`);
-          break;
-        }
-        
-        i++;
-      }
-      
-      // Si todavía falla, intentar con la ruta original sin modificar
-      if (error && originalPath !== filePath) {
-        console.log(`[DatabaseAdapter] Intentando con la ruta original completa: ${originalPath}`);
-        
-        // Probar cada bucket con la ruta completa
-        for (const tryBucket of [...commonBuckets, 'agent-files']) {
-          ({ data, error } = await supabaseAdmin
-            .storage
-            .from(tryBucket)
-            .download(originalPath));
+          .from(DEFAULT_BUCKET)
+          .download(pathWithPrefix));
           
-          if (!error) {
-            console.log(`[DatabaseAdapter] Archivo encontrado en bucket ${tryBucket} con ruta completa`);
-            break;
-          }
+        if (!error) {
+          console.log(`[DatabaseAdapter] Archivo encontrado con prefijo 'assets/' en bucket ${DEFAULT_BUCKET}`);
         }
       }
       
-      // Como último recurso, intentar obtener URL pública y recuperar el contenido
+      // Como último recurso, intentar obtener URL pública del bucket assets
       if (error) {
-        for (const tryBucket of [...commonBuckets, 'agent-files']) {
-          try {
-            console.log(`[DatabaseAdapter] Intentando obtener URL pública de ${tryBucket}/${filePath}`);
-            const { data: urlData } = await supabaseAdmin
-              .storage
-              .from(tryBucket)
-              .getPublicUrl(filePath);
-              
-            if (urlData && urlData.publicUrl) {
-              console.log(`[DatabaseAdapter] Obteniendo contenido de URL pública: ${urlData.publicUrl}`);
-              const response = await fetch(urlData.publicUrl);
-              if (response.ok) {
-                const content = await response.text();
-                console.log(`[DatabaseAdapter] Contenido obtenido de URL pública (${content.length} bytes)`);
-                return content;
-              }
+        try {
+          console.log(`[DatabaseAdapter] Intentando obtener URL pública de ${DEFAULT_BUCKET}/${filePath}`);
+          const { data: urlData } = await supabaseAdmin
+            .storage
+            .from(DEFAULT_BUCKET)
+            .getPublicUrl(filePath);
+            
+          if (urlData && urlData.publicUrl) {
+            console.log(`[DatabaseAdapter] Obteniendo contenido de URL pública: ${urlData.publicUrl}`);
+            const response = await fetch(urlData.publicUrl);
+            if (response.ok) {
+              const content = await response.text();
+              console.log(`[DatabaseAdapter] Contenido obtenido de URL pública (${content.length} bytes)`);
+              return content;
             }
-          } catch (urlError) {
-            // Continuar con el siguiente bucket
           }
+        } catch (urlError) {
+          console.error('[DatabaseAdapter] Error al obtener URL pública:', urlError);
         }
       }
       
       if (error) {
-        console.error('[DatabaseAdapter] Error al obtener contenido del archivo después de múltiples intentos:', error);
+        console.error('[DatabaseAdapter] Error al obtener contenido del archivo:', error);
         return null;
       }
       
@@ -937,14 +925,13 @@ export class DatabaseAdapter {
           }
         }
         
-        console.log(`[DatabaseAdapter] Contenido del archivo obtenido (primeros 100 caracteres): ${fileContent.substring(0, 100)}...`);
         return fileContent;
-      } catch (textError: any) {
+      } catch (textError) {
         console.error('[DatabaseAdapter] Error al convertir blob a texto:', textError);
         return null;
       }
-    } catch (error: any) {
-      console.error('[DatabaseAdapter] Error al leer contenido del archivo:', error);
+    } catch (error) {
+      console.error('[DatabaseAdapter] Error al obtener contenido del archivo:', error);
       return null;
     }
   }
