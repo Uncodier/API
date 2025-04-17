@@ -136,6 +136,10 @@ export interface PortkeyModelOptions {
   topP?: number;
   responseFormat?: 'json' | 'text';
   systemPrompt?: string;
+  stream?: boolean;
+  streamOptions?: {
+    includeUsage?: boolean;
+  };
 }
 
 export interface AzureOpenAIOptions {

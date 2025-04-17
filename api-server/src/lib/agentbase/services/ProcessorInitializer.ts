@@ -798,6 +798,24 @@ Instructions:
     const commandId = await this.commandService.submitCommand(command);
     console.log(`🚀 Comando creado: ${commandId}`);
     
+    // Si se ha configurado stream en los metadatos, ajustar el comportamiento
+    const useStream = command.metadata?.stream !== false;
+    
+    if (useStream) {
+      console.log(`🌊 Modo streaming activado para el comando: ${commandId}`);
+      
+      // En modo stream, simplemente devolvemos rápidamente el comando
+      // El procesamiento real ocurrirá a través del stream
+      await this.commandService.updateStatus(commandId, 'running');
+      
+      // Devolver el comando sin esperar a que se complete totalmente
+      const pendingCommand = await this.commandService.getCommandById(commandId);
+      if (pendingCommand) {
+        return pendingCommand;
+      }
+    }
+    
+    // Si no es streaming o no se encontró el comando, seguir con el comportamiento normal
     // Esperar a que se complete - esto depende de la implementación del CommandService
     return new Promise((resolve, reject) => {
       // Configurar un timeout para evitar esperas infinitas

@@ -14,7 +14,11 @@ export class PortkeyConnector {
       modelType: 'openai',
       maxTokens: 4096,
       temperature: 0.7,
-      responseFormat: 'text'
+      responseFormat: 'text',
+      stream: true,
+      streamOptions: {
+        includeUsage: true
+      }
     };
   }
   
@@ -31,7 +35,7 @@ export class PortkeyConnector {
     try {
       // Merge default options with provided options
       const mergedOptions = { ...this.defaultOptions, ...options };
-      const { modelType, modelId, maxTokens, temperature, topP, responseFormat } = mergedOptions;
+      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions } = mergedOptions;
       
       // Get virtual key for the selected provider
       const provider = modelType || this.defaultOptions.modelType || 'openai';
@@ -84,6 +88,20 @@ export class PortkeyConnector {
         modelOptions.top_p = topP;
       }
       
+      // Set streaming options if enabled
+      if (stream === true) {
+        modelOptions.stream = true;
+        
+        // Add stream options if provided
+        if (streamOptions) {
+          modelOptions.stream_options = {
+            include_usage: streamOptions.includeUsage || false
+          };
+        }
+
+        console.log(`[PortkeyConnector] Streaming enabled for this request`);
+      }
+      
       // Guardar el modelo y provider que realmente se está usando
       const usedModel = modelOptions.model || 'default';
       console.log(`[PortkeyConnector] Calling ${provider} with model ${usedModel}`);
@@ -112,49 +130,63 @@ export class PortkeyConnector {
       let usage;
       
       try {
-        if (modelType === 'gemini') {
-          // Gemini requires special format
-          response = await portkey.gemini.generateContent({
-            contents: messages.map(msg => ({
-              role: msg.role === 'system' ? 'user' : msg.role,
-              parts: [{ text: msg.content }]
-            })),
-            ...modelOptions
-          });
-          
-          // Extract content and usage from Gemini response
-          content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-          usage = {
-            prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-            completion_tokens: response.usageMetadata?.candidatesTokenCount || 0
-          };
-        } else {
-          // Use unified chat completions API for OpenAI and Anthropic
-          response = await portkey.chat.completions.create({
+        // Si streaming está habilitado, manejar de forma diferente
+        if (stream === true) {
+          console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
+          const streamResponse = await portkey.chat.completions.create({
             messages,
             ...modelOptions
           });
-          
-          // Extract content and usage based on model type
-          if (modelType === 'anthropic') {
-            content = response.content?.[0]?.text || '';
+
+          // En caso de streaming, devolvemos directamente el stream para procesarlo en el nivel superior
+          console.log(`[PortkeyConnector] Stream iniciado correctamente, devolviendo para procesamiento`);
+          return streamResponse;
+        } else {
+          // Modo sin streaming (comportamiento actual)
+          if (modelType === 'gemini') {
+            // Gemini requires special format
+            response = await portkey.gemini.generateContent({
+              contents: messages.map(msg => ({
+                role: msg.role === 'system' ? 'user' : msg.role,
+                parts: [{ text: msg.content }]
+              })),
+              ...modelOptions
+            });
+            
+            // Extract content and usage from Gemini response
+            content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+            usage = {
+              prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
+              completion_tokens: response.usageMetadata?.candidatesTokenCount || 0
+            };
           } else {
-            // Default to OpenAI format
-            content = response.choices?.[0]?.message?.content || '';
+            // Use unified chat completions API for OpenAI and Anthropic
+            response = await portkey.chat.completions.create({
+              messages,
+              ...modelOptions
+            });
+            
+            // Extract content and usage based on model type
+            if (modelType === 'anthropic') {
+              content = response.content?.[0]?.text || '';
+            } else {
+              // Default to OpenAI format
+              content = response.choices?.[0]?.message?.content || '';
+            }
+            
+            usage = response.usage;
           }
           
-          usage = response.usage;
+          // Return standardized response format with model information
+          return {
+            content,
+            usage,
+            modelInfo: {
+              model: usedModel,
+              provider: provider
+            }
+          };
         }
-        
-        // Return standardized response format with model information
-        return {
-          content,
-          usage,
-          modelInfo: {
-            model: usedModel,
-            provider: provider
-          }
-        };
       } catch (apiCallError: any) {
         console.error('[PortkeyConnector] Error calling provider API:', apiCallError);
         throw new Error(`Error calling ${provider} API: ${apiCallError.message}`);

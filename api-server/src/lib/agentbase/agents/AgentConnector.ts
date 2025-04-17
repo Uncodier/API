@@ -67,8 +67,17 @@ export class AgentConnector extends Base {
         modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4o',
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
-        responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'
+        responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
+        stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
       };
+      
+      // Si se requiere streaming, establecer las opciones
+      if (modelOptions.stream) {
+        modelOptions.streamOptions = {
+          includeUsage: true
+        };
+        console.log(`[AgentConnector:${this.id}] Streaming habilitado para este comando`);
+      }
       
       // Si el comando tiene herramientas, ejecutarlas primero
       let toolResults = [];
@@ -87,6 +96,17 @@ export class AgentConnector extends Base {
       // Llamar al agente a través de Portkey
       const portkeyResponse = await this.connector.callAgent(messages, modelOptions);
       
+      // Verificar si es una respuesta de streaming
+      if (modelOptions.stream) {
+        console.log(`[AgentConnector:${this.id}] Respuesta de streaming recibida, devolviendo stream para procesamiento`);
+        // En caso de streaming, devolver una respuesta especial que indica que se está usando streaming
+        return {
+          status: 'completed',
+          results: [{ type: 'stream', stream: portkeyResponse }]
+        };
+      }
+      
+      // Para respuestas normales (no streaming), procesarlas como siempre
       // Extraer información de tokens
       const portkeyUsage = this.extractTokenUsage(portkeyResponse);
       
@@ -106,6 +126,60 @@ export class AgentConnector extends Base {
         status: 'failed',
         error: error.message
       };
+    }
+  }
+  
+  /**
+   * Procesa un stream de Portkey y devuelve los chunks de texto a medida que llegan
+   * Esta función se usa en el frontend para manejar la respuesta de streaming
+   */
+  async processStream(stream: any, callback: (chunk: string, done: boolean) => void): Promise<void> {
+    try {
+      let fullContent = '';
+      let usageInfo = { inputTokens: 0, outputTokens: 0 };
+      
+      console.log(`[AgentConnector:${this.id}] Procesando stream...`);
+      
+      // Usar el stream para recibir chunks
+      for await (const chunk of stream) {
+        // Si es el chunk final con información de uso
+        if (chunk.usage) {
+          usageInfo = {
+            inputTokens: chunk.usage.prompt_tokens || chunk.usage.input_tokens || 0,
+            outputTokens: chunk.usage.completion_tokens || chunk.usage.output_tokens || 0
+          };
+          console.log(`[AgentConnector:${this.id}] Recibida información de uso: ${JSON.stringify(usageInfo)}`);
+          continue;
+        }
+        
+        // Extraer el contenido según el tipo de proveedor
+        let content = '';
+        if (chunk.choices?.[0]?.delta?.content) {
+          // OpenAI format
+          content = chunk.choices[0].delta.content;
+        } else if (chunk.content?.[0]?.text) {
+          // Anthropic format
+          content = chunk.content[0].text;
+        } else if (chunk.candidates?.[0]?.content?.parts?.[0]?.text) {
+          // Gemini format
+          content = chunk.candidates[0].content.parts[0].text;
+        }
+        
+        if (content) {
+          fullContent += content;
+          console.log(`[AgentConnector:${this.id}] Chunk recibido: ${content.substring(0, 50)}...`);
+          // Llamar al callback con el nuevo chunk
+          callback(content, false);
+        }
+      }
+      
+      // Finalizar el stream
+      console.log(`[AgentConnector:${this.id}] Stream completado. Tokens: input=${usageInfo.inputTokens}, output=${usageInfo.outputTokens}`);
+      callback('', true);
+      
+    } catch (error: any) {
+      console.error(`[AgentConnector:${this.id}] Error procesando stream:`, error);
+      callback(`Error: ${error.message}`, true);
     }
   }
   
