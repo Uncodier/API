@@ -83,25 +83,6 @@ export class DatabaseAdapter {
     // Verificar si hay agent_background en la actualización
     if (updates.agent_background) {
       console.log(`✅ [DatabaseAdapter] Updates contiene agent_background (${updates.agent_background.length} caracteres)`);
-      
-      // MODIFICACIÓN: Si también hay resultados, eliminar agent_background para evitar conflictos
-      if (updates.results && updates.results.length > 0) {
-        console.log(`⚠️ [DatabaseAdapter] Detectada actualización simultánea de agent_background y results. Eliminando agent_background de la actualización.`);
-        // Crear una copia sin agent_background pero conservando toda la estructura y otros campos
-        const { agent_background, ...updatesWithoutBackground } = updates;
-        // Asegurarnos de que resultados se mantengan (a veces las destructuraciones pueden causar problemas)
-        if (!updatesWithoutBackground.results) {
-          updatesWithoutBackground.results = updates.results;
-        }
-        updates = updatesWithoutBackground;
-        
-        // Verificamos que los resultados sigan ahí
-        if (updatesWithoutBackground.results) {
-          console.log(`✅ [DatabaseAdapter] Verificación: Updates sin agent_background contiene ${updatesWithoutBackground.results.length} resultados`);
-        } else {
-          console.error(`❌ [DatabaseAdapter] ERROR: Los resultados se perdieron al eliminar agent_background`);
-        }
-      }
     }
     
     return CommandUpdateService.updateCommand(commandId, updates);

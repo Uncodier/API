@@ -1,190 +1,130 @@
-# Agentbase Library
+# Agentbase Framework
 
-A powerful framework for creating and managing multi-agent systems, allowing language models to collaborate asynchronously on complex tasks.
+Un framework avanzado para crear y gestionar sistemas multi-agente, permitiendo que modelos de lenguaje colaboren de forma asíncrona en tareas complejas.
 
-## Overview
+## Visión General
 
-Agentbase is designed to enable asynchronous calls to multiple language models that can collaboratively work on shared objects while maintaining distinct memories and instructions. The command structure serves as the foundation, allowing multiple agents to iteratively process data, each with its own specialized context and capabilities, yet operating within a unified workflow.
+Agentbase está diseñado para habilitar llamadas asíncronas a múltiples modelos de lenguaje que pueden trabajar colaborativamente en objetos compartidos mientras mantienen memorias e instrucciones distintas. La estructura de comandos sirve como base, permitiendo que múltiples agentes procesen datos iterativamente, cada uno con su propio contexto y capacidades especializadas, operando dentro de un flujo de trabajo unificado.
 
-## Key Components
+## Arquitectura
 
-### Core Components
+Agentbase utiliza una arquitectura modular basada en servicios claramente separados, que facilitan el procesamiento de comandos a través de agentes. La reciente evolución del framework incluye:
 
-- **BaseAgent**: Abstract class that all agents extend
-- **CommandFactory**: Utility for creating standardized command objects
-- **CommandService**: Service for managing command lifecycle
-- **MemoryStore**: Store for agent memory management
-- **PortkeyAgentConnector**: Connector for LLM providers via the Portkey API
+- **Migración de Processor a Agent**: El sistema ha migrado del concepto de "Processor" a "Agent", manteniendo la compatibilidad con código anterior a través de wrappers.
+- **Servicios Independientes**: Cada aspecto del procesamiento de comandos tiene su propio servicio especializado.
+- **Sistema de Caché**: Implementación de un sistema robusto de caché para mejorar el rendimiento.
+- **Manejo de Backgrounds**: Sistema especializado para generar y administrar los "backgrounds" de los agentes (contexto y memoria).
 
-### Agent Types
+## Componentes Principales
 
-- **PortkeyAgent**: Basic agent implementation that uses Portkey for LLM communication
-- **ToolEvaluatorAgent**: Specialized agent for evaluating which tools should be activated
-- **TargetProcessorAgent**: Specialized agent for processing targets with robust structure validation
-- Custom agent implementations can be created by extending BaseAgent or PortkeyAgent
+### Componentes Core
 
-## Basic Usage
+- **Base**: Clase abstracta que todos los agentes extienden (evolución de BaseAgent)
+- **AgentInitializer**: Servicio centralizado para inicializar agentes y configurar el procesamiento de comandos
+- **CommandService**: Servicio para gestionar el ciclo de vida de los comandos
+- **CommandCache**: Sistema de caché para optimizar el acceso a comandos y datos de agentes
+- **AgentBackgroundService**: Servicio especializado para generar y gestionar backgrounds de agentes
 
-### 1. Create a simple agent
+### Servicios de Procesamiento de Comandos
+
+- **CommandProcessor**: Procesador principal que ejecuta el flujo completo de comandos
+- **CommandSubmitService**: Servicio para enviar comandos al sistema
+- **CommandStatusService**: Servicio para gestionar los cambios de estado de los comandos
+- **CommandUpdateService**: Servicio para actualizar datos de comandos
+- **CommandQueryService**: Servicio para consultar información de comandos
+- **CommandResultService**: Servicio para procesar y formatear resultados de comandos
+
+### Adaptadores y Conectores
+
+- **DatabaseAdapter**: Adaptador para interactuar con la base de datos
+- **PortkeyConnector**: Conector para comunicación con LLMs a través de la API de Portkey
+
+## Uso Básico
+
+### 1. Inicialización del Framework
 
 ```typescript
-import { 
-  CommandFactory, 
-  CommandService, 
-  PortkeyAgent, 
-  PortkeyAgentConnector 
-} from '@/lib/agentbase';
+import { AgentInitializer } from '@/lib/agentbase/services/agent/AgentInitializer';
 
-// Configure LLM access
-const portkeyConfig = {
-  apiKey: process.env.PORTKEY_API_KEY,
-  virtualKeys: {
-    'anthropic': process.env.ANTHROPIC_API_KEY,
-    'openai': process.env.OPENAI_API_KEY,
-    'gemini': process.env.GEMINI_API_KEY
-  }
-};
+// Inicializar el framework
+const agentInitializer = AgentInitializer.getInstance();
+agentInitializer.initialize();
 
-// Create connector and agent
-const connector = new PortkeyAgentConnector(portkeyConfig);
-const agent = new PortkeyAgent(
-  'agent_001',
-  'Text Processor',
-  connector,
-  ['text_processing', 'summarization']
-);
+// Obtener el servicio de comandos
+const commandService = agentInitializer.getCommandService();
+```
 
-// Create command service
-const commandService = new CommandService();
+### 2. Creación y Ejecución de Comandos
 
-// Create a command
+```typescript
+import { CommandFactory } from '@/lib/agentbase/services/command/CommandFactory';
+
+// Crear un comando
 const command = CommandFactory.createCommand({
-  task: 'Summarize the following text...',
+  task: 'Analizar el siguiente texto...',
   userId: 'user_123',
-  agentId: agent.id
+  agentId: 'research_agent' // ID del agente predefinido o UUID de agente en BD
 });
 
-// Submit and execute command
+// Ejecutar el comando de forma síncrona
+const result = await agentInitializer.executeCommand(command);
+console.log(result);
+
+// O procesar de forma asíncrona
 const commandId = await commandService.submitCommand(command);
-const dbCommand = await commandService.getCommandById(commandId);
-
-if (dbCommand) {
-  await commandService.updateStatus(commandId, 'running');
-  const result = await agent.executeCommand(dbCommand);
-  console.log(result);
-}
+console.log(`Comando enviado con ID: ${commandId}`);
 ```
 
-### 2. Creating a custom agent
-
-Extend BaseAgent or PortkeyAgent to create specialized agents:
+### 3. Monitoreo de Comandos
 
 ```typescript
-class ResearchAgent extends PortkeyAgent {
-  constructor(id, name, connector) {
-    super(id, name, connector, ['research', 'data_fetch']);
-  }
-  
-  // Override executeTool for custom tool implementation
-  async executeTool(tool) {
-    switch (tool.name) {
-      case 'search':
-        return this.performSearch(tool.parameters);
-      default:
-        return super.executeTool(tool);
-    }
-  }
-  
-  private async performSearch(params) {
-    // Custom search implementation
-    return { results: [...] };
-  }
-}
+// Escuchar cambios de estado en comandos
+commandService.on('statusChange', (commandId, status) => {
+  console.log(`El comando ${commandId} cambió a estado: ${status}`);
+});
+
+// Consultar estado de un comando
+const command = await commandService.getCommandById(commandId);
+console.log(`Estado actual: ${command.status}`);
 ```
 
-### 3. Multi-agent workflow
+## Flujo de Procesamiento de Comandos
+
+El flujo estándar de procesamiento de comandos en Agentbase incluye:
+
+1. **Creación del Comando**: A través de CommandFactory y CommandSubmitService
+2. **Generación de Background**: AgentBackgroundService genera el contexto para el agente
+3. **Evaluación de Herramientas**: Se determinan qué herramientas son apropiadas para el comando
+4. **Ejecución de Herramientas**: Las herramientas seleccionadas son ejecutadas por el agente
+5. **Procesamiento de Targets**: Se procesa cada target definido en el comando
+6. **Generación de Resultados**: Se formatean y almacenan los resultados
+7. **Finalización**: Se actualiza el estado del comando a completado o fallido
+
+## Compatibilidad con Código Antiguo
+
+El framework mantiene compatibilidad con código que aún hace referencia a "Processor" mediante clases de wrapper:
 
 ```typescript
-// Create specialized agents
-const researchAgent = new ResearchAgent('agent_research', 'Research Agent', connector);
-const analysisAgent = new AnalysisAgent('agent_analysis', 'Analysis Agent', connector);
-const supervisorAgent = new SupervisorAgent('agent_supervisor', 'Supervisor Agent', connector);
+import { ProcessorInitializer } from '@/lib/agentbase/services/processor/ProcessorInitializer';
 
-// Research command
-const researchCommand = CommandFactory.createCommand({
-  task: 'Research topic X',
-  userId: 'user_123',
-  agentId: researchAgent.id,
-  tools: [...]
-});
-
-const researchCommandId = await commandService.submitCommand(researchCommand);
-const researchResult = await executeAgent(researchCommandId, researchAgent);
-
-// Analysis command with research results
-const analysisCommand = CommandFactory.createCommand({
-  task: 'Analyze research findings',
-  userId: 'user_123',
-  agentId: analysisAgent.id,
-  context: JSON.stringify(researchResult.results),
-  tools: [...]
-});
-
-const analysisCommandId = await commandService.submitCommand(analysisCommand);
-const analysisResult = await executeAgent(analysisCommandId, analysisAgent);
-
-// Supervision if needed
-if (analysisResult.status === 'pending_supervision') {
-  const supervisionCommand = CommandFactory.createCommand({
-    task: 'Review analysis results',
-    userId: 'user_123',
-    agentId: supervisorAgent.id,
-    context: JSON.stringify(analysisResult),
-    tools: [...]
-  });
-  
-  const supervisionCommandId = await commandService.submitCommand(supervisionCommand);
-  const supervisionResult = await executeAgent(supervisionCommandId, supervisorAgent);
-}
-
-// Helper function to execute agent
-async function executeAgent(commandId, agent) {
-  const dbCommand = await commandService.getCommandById(commandId);
-  if (!dbCommand) throw new Error('Command not found');
-  
-  await commandService.updateStatus(commandId, 'running');
-  const result = await agent.executeCommand(dbCommand);
-  
-  await commandService.updateCommand(commandId, {
-    status: result.status,
-    results: result.results
-  });
-  
-  return result;
-}
+// Este código utiliza la interfaz antigua pero internamente usa AgentInitializer
+const processorInitializer = ProcessorInitializer.getInstance();
+processorInitializer.initialize();
 ```
 
-## Examples
+## Funcionalidades Avanzadas
 
-See the `examples` directory for more detailed usage examples:
-- `simple-agent-example.ts`: Basic usage with a single agent
-- `multi-agent-workflow.ts`: Complex workflow with multiple specialized agents
+- **Sistema de Caché**: Optimización de rendimiento mediante almacenamiento en caché
+- **Manejo de Errores**: Mecanismos de retry y circuit breakers para robustecer el sistema
+- **Sistema de Eventos**: Arquitectura basada en eventos para hooks del ciclo de vida de comandos
+- **Validación de Estructura**: Validación robusta para asegurar la integridad del flujo target → result
+- **Gestión de Fallos**: Reporte adecuado de fallos con mensajes de error descriptivos
+- **Aislamiento de Contextos**: Cada agente mantiene su propio contexto aislado
 
-## Features
+## Mejoras Futuras
 
-- **Command-based Architecture**: Standardized command structure for consistent agent interactions
-- **Tool Execution**: Agents can execute various tools to accomplish tasks
-- **Memory Management**: Persistent memory store for agents
-- **Supervision**: Optional supervision and approval workflows
-- **Error Handling**: Retry mechanisms and circuit breakers for robustness
-- **Event System**: Event-based architecture for command lifecycle hooks
-- **Structure Validation**: Robust validation to ensure the integrity of the target -> result flow
-- **Failure Handling**: Proper reporting of failures with descriptive error messages
-
-## Future Enhancements
-
-- Database integration for persistent storage
-- Streaming responses for real-time updates
-- More specialized agent types
-- Advanced tool implementations
-- Web-based supervision interface 
+- Integración con streaming para respuestas en tiempo real
+- Más tipos de agentes especializados
+- Implementación avanzada de herramientas
+- Interfaz web para supervisión y administración
+- Optimización adicional del sistema de caché 

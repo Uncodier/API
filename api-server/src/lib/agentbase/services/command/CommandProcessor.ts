@@ -181,7 +181,7 @@ export class CommandProcessor {
       
       try {
         // Generar agent_background usando el servicio dedicado
-        const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id);
+        const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id, command.id);
         console.log(`✅ [CommandProcessor] Background generado para agente ${command.agent_id} (${agentBackground.length} caracteres)`);
         
         // Actualizar el comando con el background generado

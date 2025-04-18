@@ -34,9 +34,13 @@ export class CommandCache {
     // Registrar el timestamp para limpieza
     cacheTimestamps.set(commandId, Date.now());
     
-    // Si el comando tiene metadata con dbUuid, establecer el mapeo
+    // Si el comando tiene metadata con dbUuid, establecer el mapeo bidireccional
     if (command.metadata?.dbUuid) {
-      this.setIdMapping(commandId, command.metadata.dbUuid);
+      this.syncIds(commandId, command.metadata.dbUuid);
+      
+      // También guardar el comando con el UUID de la BD
+      commandCache.set(command.metadata.dbUuid, command);
+      cacheTimestamps.set(command.metadata.dbUuid, Date.now());
     }
     
     // Reducimos los logs para evitar spam, solo mostramos información esencial
@@ -61,6 +65,13 @@ export class CommandCache {
       const mappedId = this.getMappedId(commandId);
       if (mappedId && mappedId !== commandId) {
         command = commandCache.get(mappedId);
+        
+        // Si encontramos el comando por ID mapeado, guardarlo también con el ID original
+        // para futuros accesos directos
+        if (command) {
+          commandCache.set(commandId, command);
+          cacheTimestamps.set(commandId, Date.now());
+        }
       }
     }
     
@@ -109,9 +120,16 @@ export class CommandCache {
       console.log(`🧠 [CommandCache] Actualización de resultados: ${updates.results.length} resultados en total`);
     }
     
-    // Guardar el comando actualizado (sin generar logs duplicados)
+    // Guardar el comando actualizado en ambos IDs si existe mapeo
     commandCache.set(commandId, updatedCommand);
     cacheTimestamps.set(commandId, Date.now());
+    
+    // Si hay un ID mapeado, actualizarlo también
+    const mappedId = this.getMappedId(commandId);
+    if (mappedId && mappedId !== commandId) {
+      commandCache.set(mappedId, updatedCommand);
+      cacheTimestamps.set(mappedId, Date.now());
+    }
     
     // Emitir evento de actualización si hay eventEmitter
     if (eventEmitter) {
@@ -122,12 +140,37 @@ export class CommandCache {
   }
 
   /**
+   * Sincroniza los IDs entre el temporal y el UUID de la BD
+   * Establece un mapeo bidireccional entre ambos
+   */
+  static syncIds(tempId: string, dbId: string): void {
+    // Mapeo bidireccional
+    idMapping.set(tempId, dbId);
+    idMapping.set(dbId, dbId); // El UUID siempre mapea a sí mismo
+    
+    console.log(`🧠 [CommandCache] Sincronización de IDs: ${tempId} ⟷ ${dbId}`);
+    
+    // Si el comando existe en la caché con el ID temporal, duplicarlo con el ID de BD
+    const cachedCommand = commandCache.get(tempId);
+    if (cachedCommand) {
+      commandCache.set(dbId, cachedCommand);
+      cacheTimestamps.set(dbId, Date.now());
+    }
+    
+    // Si existe con el ID de BD pero no con el temporal, duplicarlo
+    const dbCachedCommand = commandCache.get(dbId);
+    if (dbCachedCommand && !commandCache.has(tempId)) {
+      commandCache.set(tempId, dbCachedCommand);
+      cacheTimestamps.set(tempId, Date.now());
+    }
+  }
+
+  /**
    * Establece un mapeo entre un ID temporal y un UUID
+   * @deprecated Use syncIds instead for bidirectional mapping
    */
   static setIdMapping(temporaryId: string, uuid: string): void {
-    idMapping.set(temporaryId, uuid);
-    idMapping.set(uuid, uuid); // También mapear UUID a sí mismo para consultas directas
-    console.log(`🧠 [CommandCache] Mapeo establecido: ${temporaryId} -> ${uuid}`);
+    this.syncIds(temporaryId, uuid);
   }
 
   /**
@@ -144,8 +187,18 @@ export class CommandCache {
     const exists = commandCache.has(commandId);
     
     if (exists) {
+      // Eliminar el comando por el ID proporcionado
       commandCache.delete(commandId);
       cacheTimestamps.delete(commandId);
+      
+      // Obtener y eliminar también el comando mapeado si existe
+      const mappedId = this.getMappedId(commandId);
+      if (mappedId && mappedId !== commandId) {
+        commandCache.delete(mappedId);
+        cacheTimestamps.delete(mappedId);
+        console.log(`🧠 [CommandCache] Comando eliminado también por ID mapeado: ${mappedId}`);
+      }
+      
       console.log(`🧠 [CommandCache] Comando eliminado de caché: ${commandId}`);
       
       // Emitir evento si hay eventEmitter
@@ -178,9 +231,16 @@ export class CommandCache {
         updated_at: new Date().toISOString()
       };
       
-      // Guardar directamente sin llamar a cacheCommand para evitar logs redundantes
+      // Actualizar en ambos IDs (original y mapeado)
       commandCache.set(commandId, updatedCommand);
       cacheTimestamps.set(commandId, Date.now());
+      
+      // Si hay un ID mapeado, actualizarlo también
+      const mappedId = this.getMappedId(commandId);
+      if (mappedId && mappedId !== commandId) {
+        commandCache.set(mappedId, updatedCommand);
+        cacheTimestamps.set(mappedId, Date.now());
+      }
       
       // Log sencillo 
       console.log(`🧠 [CommandCache] agent_background actualizado (${agentBackground.length} caracteres) para: ${commandId}`);
@@ -198,9 +258,16 @@ export class CommandCache {
         updated_at: new Date().toISOString()
       } as DbCommand;
       
-      // Guardar en caché
+      // Guardar en caché con el ID proporcionado
       commandCache.set(commandId, basicCommand);
       cacheTimestamps.set(commandId, Date.now());
+      
+      // Si hay un ID mapeado, guardarlo también
+      const mappedId = this.getMappedId(commandId);
+      if (mappedId && mappedId !== commandId) {
+        commandCache.set(mappedId, basicCommand);
+        cacheTimestamps.set(mappedId, Date.now());
+      }
       
       return true;
     }
@@ -239,6 +306,20 @@ export class CommandCache {
    */
   static getCacheSize(): number {
     return commandCache.size;
+  }
+
+  /**
+   * Obtiene todos los comandos actualmente en caché (para diagnóstico)
+   */
+  static getAllCachedCommands(): Map<string, DbCommand> {
+    return new Map(commandCache);
+  }
+
+  /**
+   * Obtiene todos los mapeos de IDs (para diagnóstico)
+   */
+  static getAllIdMappings(): Map<string, string> {
+    return new Map(idMapping);
   }
 
   /**

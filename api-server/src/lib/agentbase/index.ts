@@ -4,15 +4,11 @@
 import { CommandFactory } from './services/command/CommandFactory';
 import AgentInitializer from './services/agent/AgentInitializer';
 import ProcessorInitializer, { ProcessorInitializer as ProcessorInitializerClass, processorInitializerInstance } from './services/processor/ProcessorInitializer';
-import AgentBackgroundBuilder from './services/agent/AgentBackgroundBuilder';
-import AgentBackgroundGenerator from './services/agent/AgentBackgroundGenerator';
 import ProcessorConfigurationService from './services/processor/ProcessorConfigurationService';
 import CommandProcessor from './services/command/CommandProcessor';
 
 // Exportar los componentes principales
 export {
-  AgentBackgroundBuilder,
-  AgentBackgroundGenerator,
   ProcessorConfigurationService,
   CommandProcessor
 };

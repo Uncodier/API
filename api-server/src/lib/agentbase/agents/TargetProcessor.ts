@@ -251,24 +251,22 @@ export class TargetProcessor extends Base {
       }
       
       // Guardar en caché para futuras consultas
-      if (command.agent_background) {
-        CommandCache.setAgentBackground(command.id, command.agent_background);
-        
-        // Guardar también los resultados en la caché
-        CommandCache.cacheCommand(command.id, {
-          ...command,
-          results: resultsCopy
-        });
-        console.log(`[TargetProcessor] Resultados actualizados en caché: ${resultsCopy.length} resultados totales`);
-        
-        // Verificar que se guardaron en caché
-        const cachedCmd = CommandCache.getCachedCommand(command.id);
-        if (cachedCmd && cachedCmd.results) {
-          console.log(`[TargetProcessor] ✅ Verificación: Caché tiene ${cachedCmd.results.length} resultados`);
-        } else {
-          console.error(`[TargetProcessor] ⚠️ ALERTA: NO SE GUARDARON RESULTADOS EN CACHÉ`);
-        }
+      // Guardar los resultados en la caché siempre, independientemente de agent_background
+      CommandCache.cacheCommand(command.id, {
+        ...command,
+        results: resultsCopy
+      });
+      
+      console.log(`[TargetProcessor] Resultados actualizados en caché: ${resultsCopy.length} resultados totales`);
+      
+      // Verificar que se guardaron en caché
+      const cachedCmd = CommandCache.getCachedCommand(command.id);
+      if (cachedCmd && cachedCmd.results) {
+        console.log(`[TargetProcessor] ✅ Verificación: Caché tiene ${cachedCmd.results.length} resultados`);
+      } else {
+        console.error(`[TargetProcessor] ⚠️ ALERTA: NO SE GUARDARON RESULTADOS EN CACHÉ`);
       }
+      
       
       // Verificación final de estructura de resultados en la respuesta
       console.log(`[TargetProcessor] VERIFICACIÓN FINAL - RESULTADOS EN RESPUESTA: ${resultsCopy.length} elementos`);

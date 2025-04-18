@@ -130,7 +130,7 @@ export class ToolEvaluator extends Base {
           modelId: 'gpt-4o',
           maxTokens: 4000,
           temperature: 0.2,
-          responseFormat: 'json' as 'json' | 'text'
+         // responseFormat: 'json' as 'json' | 'text'
         };
         
         // Llamar a la API a través del conector
@@ -186,16 +186,10 @@ export class ToolEvaluator extends Base {
           throw new Error('Falló el análisis de la respuesta para la evaluación de herramientas');
         }
         
-        // Asegurar que el agent_background se preserve en el comando actualizado
         const updatedCommand = {
           ...command,
           functions: functions // Only update the functions array
         };
-        
-        // Si tenemos agent_background, guardarlo en caché para futuras consultas
-        if (command.agent_background) {
-          CommandCache.setAgentBackground(command.id, command.agent_background);
-        }
         
         // Return results with original tools - no modifications to tools
         return {
