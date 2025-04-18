@@ -1,13 +1,37 @@
 /**
- * Agentbase - Framework para construir agentes
+ * Agentbase - API central para la biblioteca de agentes
  */
+import { CommandFactory } from './services/command/CommandFactory';
+import AgentInitializer from './services/agent/AgentInitializer';
+import ProcessorInitializer, { ProcessorInitializer as ProcessorInitializerClass, processorInitializerInstance } from './services/processor/ProcessorInitializer';
+import AgentBackgroundBuilder from './services/agent/AgentBackgroundBuilder';
+import AgentBackgroundGenerator from './services/agent/AgentBackgroundGenerator';
+import ProcessorConfigurationService from './services/processor/ProcessorConfigurationService';
+import CommandProcessor from './services/command/CommandProcessor';
 
-// Command API
-export { CommandFactory } from './services/CommandFactory';
+// Exportar los componentes principales
+export {
+  AgentBackgroundBuilder,
+  AgentBackgroundGenerator,
+  ProcessorConfigurationService,
+  CommandProcessor
+};
+
+// Re-exportar los principales componentes para mantener compatibilidad
+export { CommandFactory };
+export { AgentInitializer };
+
+// Exportar ProcessorInitializer para retrocompatibilidad
+// Exportamos tanto la clase como la instancia
+export { ProcessorInitializerClass as ProcessorInitializer };
+export { processorInitializerInstance };
+
+// Exportar la instancia singleton como exportación por defecto 
+// para mantener la compatibilidad con código existente
+export default ProcessorInitializer;
 
 // Services
-export { default as ProcessorInitializer } from './services/ProcessorInitializer';
-export { CommandService } from './services/CommandService';
+export { CommandService } from './services/command/CommandService';
 export { PortkeyConnector } from './services/PortkeyConnector';
 
 // Agents / Processors
@@ -78,4 +102,18 @@ export async function executeWithRetry<T>(
   }
   
   throw lastError || new Error(`Failed after ${maxRetries} attempts`);
-} 
+}
+
+// Expose main Agentbase functionality
+export * from './agents/AgentConnector';
+export * from './agents/ToolEvaluator';
+export * from './agents/TargetProcessor';
+export * from './services/command/CommandService';
+export * from './services/command/CommandStore';
+export * from './services/command/CommandCache';
+export * from './services/PortkeyConnector';
+export * from './services/EventHandlerService';
+export * from './services/agent/AgentInitializer';
+export * from './models/types';
+export * from './prompts/tool-evaluator-prompt';
+export * from './prompts/target-processor-prompt'; 

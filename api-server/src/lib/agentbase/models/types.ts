@@ -59,6 +59,7 @@ export interface DbCommand {
   updated_at: string;
   duration?: number;
   results?: any[];
+  functions?: any[];
   requires_capabilities?: string[];
   input_tokens?: number;
   output_tokens?: number;

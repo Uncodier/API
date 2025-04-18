@@ -1,7 +1,7 @@
 /**
  * Command Factory for creating standardized command objects
  */
-import { CreateCommandParams, SupervisionParams } from '../models/types';
+import { CreateCommandParams, SupervisionParams } from '../../models/types';
 
 export class CommandFactory {
   /**

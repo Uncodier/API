@@ -1,6 +1,9 @@
 // Test script for TargetProcessorAgent validation logic
 // Run with: node test_target_processor.js
 
+// Import our validation function
+import { validateResults } from '../targetEvaluator/validateResults.js';
+
 // Define the target structure with placeholder content
 const targets = [
   {
@@ -58,6 +61,22 @@ const testResponse3 = [
   }
 ];
 
+// Add a valid test case to verify our validator allows correct responses
+const validResponse = [
+  {
+    "type": "contents",
+    "content": [
+      {
+        "text": "# Educational Technology in Modern Learning\n\nTechnology has revolutionized how we approach education in the 21st century.",
+        "type": "blog_post",
+        "title": "The Impact of EdTech on Learning", 
+        "description": "How technology is changing education globally",
+        "estimated_reading_time": 8
+      }
+    ]
+  }
+];
+
 console.log("=== Target Structure ===");
 console.log(JSON.stringify(targets[0], null, 2));
 
@@ -67,8 +86,17 @@ function testValidation(response, testCase) {
   console.log("\n=== Response Structure ===");
   console.log(JSON.stringify(response[0], null, 2));
 
-  // Validation function similar to what's in TargetProcessorAgent
-  function validateResultsStructure(results, targets) {
+  // Run the new validation function
+  console.log("\n=== New Validation Results ===");
+  const validationResult = validateResults(response, targets);
+  
+  console.log(`Valid: ${validationResult.isValid}`);
+  if (!validationResult.isValid) {
+    console.log(`Error: ${validationResult.error}`);
+  }
+
+  // Previous validation function for comparison
+  function oldValidateResultsStructure(results, targets) {
     console.log("\n=== Original Validation Results ===");
 
     if (!Array.isArray(results) || !Array.isArray(targets)) {
@@ -148,112 +176,19 @@ function testValidation(response, testCase) {
     return true;
   }
 
-  // Run the validations
-  validateResultsStructure(response, targets);
-
-  // Add the enhanced validation that fixes the issue
-  console.log("\n=== Enhanced Validation Results ===");
-
-  function enhancedValidation(results, targets) {
-    if (!Array.isArray(results) || !Array.isArray(targets)) {
-      console.log('❌ Results or targets are not arrays');
-      return false;
-    }
-
-    if (results.length !== targets.length) {
-      console.log(`❌ Length mismatch: results=${results.length}, targets=${targets.length}`);
-      return false;
-    }
-
-    // Validate each target against its corresponding result
-    for (let i = 0; i < targets.length; i++) {
-      const target = targets[i];
-      const result = results[i];
-      
-      // Get target type
-      const targetType = target.type || Object.keys(target)[0];
-      
-      // Verify result type matches target type
-      if (result.type !== targetType) {
-        console.log(`❌ Type mismatch: result="${result.type}", target="${targetType}"`);
-        return false;
-      }
-      
-      // Get content
-      const targetContent = target[targetType] || target.content;
-      const resultContent = result.content;
-      
-      if (!targetContent || !resultContent) {
-        console.log('❌ Missing content in target or result');
-        return false;
-      }
-      
-      // ENHANCED: First check if structure types match (array vs. non-array)
-      if (Array.isArray(targetContent) !== Array.isArray(resultContent)) {
-        console.log('❌ ENHANCED: Content structure mismatch - one is array, other is not');
-        return false;
-      }
-      
-      // For arrays, do deeper validation on structure
-      if (Array.isArray(targetContent) && Array.isArray(resultContent)) {
-        // Check if we're dealing with blog post arrays 
-        const isComplexArray = targetContent.length > 0 && typeof targetContent[0] === 'object';
-        
-        if (isComplexArray) {
-          console.log('ℹ️ ENHANCED: Validating complex array content...');
-          
-          if (resultContent.length === 0) {
-            console.log('❌ ENHANCED: Result content array is empty but target has items');
-            return false;
-          }
-          
-          const targetItem = targetContent[0];
-          const resultItem = resultContent[0];
-          
-          // Verify result item is object if target item is object
-          if (typeof targetItem === 'object' && typeof resultItem !== 'object') {
-            console.log(`❌ ENHANCED: Result item is ${typeof resultItem}, expected object`);
-            return false;
-          }
-          
-          // Check required fields for blog posts exist in result
-          const requiredFields = ['text', 'type', 'title', 'description', 'estimated_reading_time'];
-          const missingFields = [];
-          
-          for (const field of requiredFields) {
-            if (targetItem[field] !== undefined && resultItem[field] === undefined) {
-              missingFields.push(field);
-            }
-          }
-          
-          if (missingFields.length > 0) {
-            console.log(`❌ ENHANCED: Missing required fields in result: ${missingFields.join(', ')}`);
-            return false;
-          }
-          
-          // Detect placeholder content
-          if (targetItem.text && resultItem.text) {
-            const placeholders = ["markdown detailed copy", "title of the content", "summary of the content"];
-            for (const placeholder of placeholders) {
-              if (targetItem.text.includes(placeholder) && resultItem.text.includes(placeholder)) {
-                console.log(`❌ ENHANCED: Result contains placeholder text "${placeholder}" from template`);
-                return false;
-              }
-            }
-          }
-        }
-      }
-    }
-
-    console.log('✅ ENHANCED: Validation passed successfully');
-    return true;
-  }
-
-  const isValid = enhancedValidation(response, targets);
-  console.log(`\nFinal Result: ${isValid ? 'Valid ✅' : 'Invalid ❌'}`);
+  // Run the old validation for comparison
+  oldValidateResultsStructure(response, targets);
 }
 
-// Test all our cases
+// Run tests with all the test cases
 testValidation(testResponse, 1);
 testValidation(testResponse2, 2);
-testValidation(testResponse3, 3); 
+testValidation(testResponse3, 3);
+testValidation(validResponse, 4);
+
+console.log("\n\n============== SUMMARY ==============");
+console.log("Our new validation function should:");
+console.log("1. Reject responses where content structure doesn't match (string vs array)");
+console.log("2. Reject responses with wrong type or missing required fields");
+console.log("3. Reject responses that just repeat the template/placeholders");
+console.log("4. Accept valid responses that have the correct structure and meaningful content"); 

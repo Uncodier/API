@@ -111,16 +111,26 @@ export class PortkeyConnector {
       if (systemMessages.length > 0) {
         console.log(`[PortkeyConnector] Sending ${systemMessages.length} system messages:`);
         systemMessages.forEach((msg, index) => {
-          console.log(`[PortkeyConnector] System message #${index + 1}: ${msg.content.substring(0, 200)}...`);
+          const contentLength = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
+          console.log(`[PortkeyConnector] System message #${index + 1}: ${typeof msg.content === 'string' ? msg.content.substring(0, 100) : JSON.stringify(msg.content).substring(0, 100)}... (${contentLength} caracteres)`);
+          
+          // Verificar contenido del mensaje
+          if (typeof msg.content === 'string' && contentLength < 10) {
+            console.error(`[PortkeyConnector] ⚠️ ADVERTENCIA: System message #${index + 1} es muy corto (${contentLength} caracteres)`);
+          }
         });
       } else {
-        console.log(`[PortkeyConnector] WARNING: No system messages being sent! This may affect agent identity.`);
+        // No se permite operar sin mensaje del sistema
+        const errorMsg = `[PortkeyConnector] ERROR FATAL: No hay mensajes de sistema. Se requiere agent_background para operar.`;
+        console.error(errorMsg);
+        throw new Error(errorMsg);
       }
       
       // Log all messages in detail for debugging
       console.log(`[PortkeyConnector] Sending total of ${messages.length} messages to LLM:`);
       messages.forEach((msg, index) => {
-        console.log(`[PortkeyConnector] Message #${index + 1} (${msg.role}): ${typeof msg.content === 'string' ? msg.content.substring(0, 100) + '...' : JSON.stringify(msg.content).substring(0, 100) + '...'}`);
+        const contentLength = typeof msg.content === 'string' ? msg.content.length : JSON.stringify(msg.content).length;
+        console.log(`[PortkeyConnector] Message #${index + 1} (${msg.role}): ${typeof msg.content === 'string' ? msg.content.substring(0, 50) + '...' : JSON.stringify(msg.content).substring(0, 50) + '...'} (${contentLength} caracteres)`);
       });
       
       // Execute the appropriate API call using portkey.chat.completions.create
@@ -155,10 +165,15 @@ export class PortkeyConnector {
             
             // Extract content and usage from Gemini response
             content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            usage = {
-              prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-              completion_tokens: response.usageMetadata?.candidatesTokenCount || 0
-            };
+            if (response.usageMetadata) {
+              console.log(`[PortkeyConnector] Datos de uso (Gemini): promptTokenCount=${response.usageMetadata?.promptTokenCount}, candidatesTokenCount=${response.usageMetadata?.candidatesTokenCount}`);
+              usage = {
+                prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
+                completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
+                total_tokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0)
+              };
+              console.log(`[PortkeyConnector] Total tokens (Gemini): ${usage.total_tokens}`);
+            }
           } else {
             // Use unified chat completions API for OpenAI and Anthropic
             response = await portkey.chat.completions.create({
@@ -174,7 +189,24 @@ export class PortkeyConnector {
               content = response.choices?.[0]?.message?.content || '';
             }
             
-            usage = response.usage;
+            if (response.usage) {
+              console.log(`[PortkeyConnector] Datos de uso estándar: ${JSON.stringify(response.usage)}`);
+              usage = {
+                ...response.usage,
+                // Asegurar que total_tokens esté calculado
+                total_tokens: response.usage.total_tokens || 
+                             (response.usage.prompt_tokens || 0) + (response.usage.completion_tokens || 0)
+              };
+              console.log(`[PortkeyConnector] Total tokens (Estándar): ${usage.total_tokens}`);
+            } else {
+              console.log(`[PortkeyConnector] No se encontraron datos de uso en la respuesta. Estructura: ${JSON.stringify(Object.keys(response))}`);
+              // Si no hay información de uso, crear un objeto vacío con valores 0
+              usage = {
+                prompt_tokens: 0,
+                completion_tokens: 0,
+                total_tokens: 0
+              };
+            }
           }
           
           // Return standardized response format with model information

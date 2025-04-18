@@ -43,29 +43,20 @@ export class AgentConnector extends Base {
   }
   
   /**
-   * Ejecuta un comando utilizando Portkey para obtener respuestas del LLM
+   * Execute command by processing user message with an agent
    */
   async executeCommand(command: DbCommand): Promise<CommandExecutionResult> {
     try {
-      // Validar que el comando pueda ser ejecutado por este agente
-      if (!this.validateCommandCapabilities(command)) {
-        return {
-          status: 'failed',
-          error: `El agente ${this.name} no tiene las capacidades necesarias para ejecutar este comando`
-        };
-      }
-      
-      // Almacenar información del agente en la propiedad agent_background del comando
-      const agentBackground = `You are ${this.name} (ID: ${this.id}), an AI assistant with the following capabilities: ${this.capabilities.join(', ')}.`;
-      
-      // Preparar mensajes para el agente
+      // Prepare messages from the command
       const messages = this.prepareMessagesFromCommand(command);
       
-      // Determinar opciones del modelo
+      console.log(`📝 [AgentConnector:${this.id}] Executing command ${command.id}: ${command.task.substring(0, 50)}...`);
+      
+      // Configure model options for portkey
       const modelOptions: PortkeyModelOptions = {
         modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-        modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4o',
-        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
+        modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4',
+        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 2000,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
@@ -79,9 +70,23 @@ export class AgentConnector extends Base {
         console.log(`[AgentConnector:${this.id}] Streaming habilitado para este comando`);
       }
       
-      // Si el comando tiene herramientas, ejecutarlas primero
+      // Si el comando tiene funciones, ejecutarlas primero (nuevo formato)
       let toolResults = [];
-      if (command.tools && command.tools.length > 0) {
+      if (command.functions && command.functions.length > 0) {
+        console.log(`[AgentConnector:${this.id}] Ejecutando ${command.functions.length} funciones en nuevo formato`);
+        toolResults = await this.executeFunctions(command.functions);
+        
+        // Añadir resultados de herramientas al contexto si están disponibles
+        if (toolResults.length > 0) {
+          messages.push({
+            role: 'user',
+            content: `Tool results: ${JSON.stringify(toolResults)}`
+          });
+        }
+      }
+      // Sino, si el comando tiene herramientas, ejecutarlas en formato antiguo (compatibilidad)
+      else if (command.tools && command.tools.length > 0) {
+        console.log(`[AgentConnector:${this.id}] Ejecutando ${command.tools.length} herramientas en formato antiguo`);
         toolResults = await this.executeTools(command.tools);
         
         // Añadir resultados de herramientas al contexto si están disponibles
@@ -195,17 +200,23 @@ export class AgentConnector extends Base {
       content: string | any;
     }> = [];
     
-    // Añadir información del agente como primer mensaje si hay agent_id disponible
-    if (command.agent_id) {
-      // Usar agent_background si está disponible, sino generarlo con nombre específico
-      let agentInfo = "";
+    // Añadir agent_background como primer mensaje del sistema si está disponible
+    if (command.agent_background) {
+      let agentInfo = command.agent_background;
+      console.log(`🧠 [AgentConnector:${this.id}] Usando agent_background explícito del comando como primer mensaje del sistema`);
+      console.log(`🧠 [AgentConnector:${this.id}] Longitud del system message: ${command.agent_background.length} caracteres`);
       
-      if (command.agent_background) {
-        agentInfo = command.agent_background;
-        console.log(`🧠 [AgentConnector:${this.id}] Usando agent_background explícito del comando`);
-      } else {
-        // Fallback que incluye instrucciones específicas sobre el nombre
-        agentInfo = `You are ${this.name} (ID: ${this.id}). You have the following capabilities: ${this.capabilities.join(', ')}.
+      messages.push({
+        role: 'system',
+        content: command.agent_background
+      });
+      
+      console.log(`📝 [AgentConnector:${this.id}] Mensaje de sistema establecido con agent_background`);
+    } 
+    // Si no hay agent_background, usar fallbacks
+    else if (command.agent_id) {
+      // Fallback que incluye instrucciones específicas sobre el nombre
+      const agentInfo = `You are ${this.name} (ID: ${this.id}). You have the following capabilities: ${this.capabilities.join(', ')}.
 
 Instructions:
 1. Respond helpfully to user requests.
@@ -213,33 +224,35 @@ Instructions:
 3. Be concise and clear in your responses.
 4. Your name is "${this.name}" - whenever asked about your name, identity or what you are, respond with this name.`;
 
-        console.log(`⚠️ [AgentConnector:${this.id}] agent_background NO disponible, usando fallback con nombre específico`);
-      }
-      
-      // Log detallado del contenido completo
-      console.log(`🧠 [AgentConnector:${this.id}] Contenido del system message:
-${agentInfo}`);
+      console.log(`⚠️ [AgentConnector:${this.id}] agent_background NO disponible, usando fallback con nombre específico`);
+      console.log(`🧠 [AgentConnector:${this.id}] Longitud del system message: ${agentInfo.length} caracteres`);
       
       messages.push({
         role: 'system',
         content: agentInfo
       });
       
-      console.log(`📝 [AgentConnector:${this.id}] Mensaje de sistema establecido con agent_background`);
-    }
-    
-    // Añadir mensaje del sistema si se especifica
-    if (command.system_prompt) {
+      console.log(`📝 [AgentConnector:${this.id}] Mensaje de sistema establecido con fallback de agente`);
+      
+      // Añadir mensaje del sistema si se especifica (solo si no hay agent_background)
+      if (command.system_prompt) {
+        messages.push({
+          role: 'system',
+          content: command.system_prompt
+        });
+      }
+    } 
+    // Si no hay agent_id ni agent_background
+    else {
+      // Mensaje del sistema predeterminado basado en las capacidades del agente
+      const defaultSystemPrompt = `You are ${this.name}, an AI assistant with the following capabilities: ${this.capabilities.join(', ')}.`;
+      
       messages.push({
         role: 'system',
-        content: command.system_prompt
+        content: command.system_prompt || defaultSystemPrompt
       });
-    } else if (!command.agent_id) {
-      // Mensaje del sistema predeterminado basado en las capacidades del agente (solo si no agregamos información del agente)
-      messages.push({
-        role: 'system',
-        content: `You are ${this.name}, an AI assistant with the following capabilities: ${this.capabilities.join(', ')}.`
-      });
+      
+      console.log(`📝 [AgentConnector:${this.id}] Mensaje de sistema establecido con prompt predeterminado`);
     }
     
     // Añadir contexto como mensaje de usuario si se proporciona

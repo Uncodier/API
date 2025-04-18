@@ -639,75 +639,87 @@ export async function POST(request: Request) {
       // Define the tools as specified in the documentation
       tools: [
         {
-          name: 'escalate',
-          description: 'escalate when needed',
-          status: 'not_initialized',
-          type: 'synchronous',
-          parameters: {
-            type: 'object',
-            properties: {
-              conversation: {
-                type: 'string',
-                description: 'The conversation ID that needs to be escalated'
+          type: "function",
+          async: true,
+          function: {
+            name: 'escalate',
+            description: 'escalate when needed',
+            parameters: {
+              type: 'object',
+              properties: {
+                conversation: {
+                  type: 'string',
+                  description: 'The conversation ID that needs to be escalated'
+                },
+                lead_id: {
+                  type: 'string',
+                  description: 'The ID of the lead or customer related to this escalation'
+                }
               },
-              lead_id: {
-                type: 'string',
-                description: 'The ID of the lead or customer related to this escalation'
-              }
+              required: ['conversation', 'lead_id'],
+              additionalProperties: false
             },
-            required: ['conversation', 'lead_id']
+            strict: true
           }
         },
         {
-          name: 'contact_human',
-          description: 'contact human supervisor when complex issues require human intervention',
-          status: 'not_initialized',
-          type: 'asynchronous',
-          parameters: {
-            type: 'object',
-            properties: {
-              conversation: {
-                type: 'string',
-                description: 'The conversation ID that requires human attention'
+          type: "function",
+          async: true,
+          function: {
+            name: 'contact_human',
+            description: 'contact human supervisor when complex issues require human intervention',
+            parameters: {
+              type: 'object',
+              properties: {
+                conversation: {
+                  type: 'string',
+                  description: 'The conversation ID that requires human attention'
+                },
+                lead_id: {
+                  type: 'string',
+                  description: 'The ID of the lead or customer that needs assistance'
+                }
               },
-              lead_id: {
-                type: 'string',
-                description: 'The ID of the lead or customer that needs assistance'
-              }
+              required: ['conversation', 'lead_id'],
+              additionalProperties: false
             },
-            required: ['conversation', 'lead_id']
+            strict: true
           }
         },
         {
-          name: 'identify_lead',
-          description: 'collect visitor information when lead or visitor data is missing from context',
-          status: 'not_initialized',
-          type: 'asynchronous',
-          parameters: {
-            type: 'object',
-            properties: {
-              conversation: {
-                type: 'string',
-                description: 'The conversation ID for the current interaction'
+          type: "function",
+          async: true,
+          function: {
+            name: 'identify_lead',
+            description: 'collect visitor information when lead or visitor data is missing from context',
+            parameters: {
+              type: 'object',
+              properties: {
+                conversation: {
+                  type: 'string',
+                  description: 'The conversation ID for the current interaction'
+                },
+                name: {
+                  type: 'string',
+                  description: 'Name of the visitor'
+                },
+                email: {
+                  type: 'string',
+                  description: 'Email address of the visitor'
+                },
+                phone: {
+                  type: 'string',
+                  description: 'Phone number of the visitor'
+                },
+                company: {
+                  type: 'string',
+                  description: 'Company name of the visitor'
+                }
               },
-              name: {
-                type: 'string',
-                description: 'Name of the visitor'
-              },
-              email: {
-                type: 'string',
-                description: 'Email address of the visitor'
-              },
-              phone: {
-                type: 'string',
-                description: 'Phone number of the visitor'
-              },
-              company: {
-                type: 'string',
-                description: 'Company name of the visitor'
-              }
+              required: ['name', 'email', 'phone'],
+              additionalProperties: false
             },
-            required: ['name', 'email', 'phone']
+            strict: true
           }
         }
       ],

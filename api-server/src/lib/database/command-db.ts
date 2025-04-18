@@ -16,6 +16,7 @@ export interface DbCommand {
   results: any[] | null;
   targets: any[] | null;
   tools: any[] | null;
+  functions: any[] | null;
   context: string | null;
   supervisor: any[] | null;
   created_at?: string;
@@ -41,6 +42,7 @@ export interface CreateCommandParams {
   results?: any[];
   targets?: any[];
   tools?: any[];
+  functions?: any[];
   context?: string;
   supervisor?: any[];
   model?: string;
@@ -89,101 +91,86 @@ export async function updateCommand(
   updates: Partial<Omit<DbCommand, 'id' | 'created_at' | 'updated_at'>>
 ): Promise<DbCommand> {
   try {
-    // Depuración específica para tokens
-    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
-      console.log(`[command-db] 🔍 Tokens recibidos: input_tokens=${updates.input_tokens}, output_tokens=${updates.output_tokens}`);
-    }
+    // Agregar timestamps
+    const now = new Date().toISOString();
     
-    console.log(`[command-db] Actualizando comando ${commandId} con:`, JSON.stringify(updates, null, 2).substring(0, 500) + '...');
-    
-    // Asegurarse de que siempre actualizamos updated_at
-    const updatesWithTimestamp = {
+    // Preparar las actualizaciones
+    const updateData: any = {
       ...updates,
-      updated_at: new Date().toISOString()
+      updated_at: now
     };
     
-    // Depuración posterior a preparación
-    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
-      console.log(`[command-db] 🔍 Tokens después de preparación: input_tokens=${updatesWithTimestamp.input_tokens}, output_tokens=${updatesWithTimestamp.output_tokens}`);
+    // Log detallado para tokens
+    if (updateData.input_tokens !== undefined || updateData.output_tokens !== undefined) {
+      console.log('[command-db] 🔍 Tokens recibidos: input_tokens=' + 
+        (updateData.input_tokens !== undefined ? updateData.input_tokens : 'no definido') + 
+        ', output_tokens=' + 
+        (updateData.output_tokens !== undefined ? updateData.output_tokens : 'no definido'));
     }
     
-    // Primero verificamos si el comando existe
-    const { data: existingCommand, error: checkError } = await supabaseAdmin
-      .from('commands')
-      .select('*')
-      .eq('id', commandId)
-      .single();
-    
-    if (checkError) {
-      console.error(`[command-db] Error verificando existencia del comando ${commandId}:`, checkError);
-      if (checkError.code === 'PGRST116') {
-        console.error(`[command-db] El comando ${commandId} no existe en la base de datos.`);
-      }
-      throw new Error(`Error verificando comando: ${checkError.message}`);
-    }
-    
-    console.log(`[command-db] Comando encontrado, estado actual: ${existingCommand.status}`);
-    
-    // Imprimir estructura de tabla para diagnóstico
-    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
-      const { data: tableInfo, error: tableError } = await supabaseAdmin.rpc('get_column_info', { 
-        table_name: 'commands' 
-      });
+    // IMPORTANTE: Validación especial para resultados
+    if (updateData.results !== undefined) {
+      console.log(`[command-db] 🔍 Resultados recibidos: ${Array.isArray(updateData.results) ? updateData.results.length : 'no es array'} elementos`);
       
-      if (!tableError) {
-        console.log(`[command-db] 🔍 Columnas en tabla commands:`, tableInfo);
+      // Asegurar que results siempre sea un array
+      if (!Array.isArray(updateData.results)) {
+        if (updateData.results === null || updateData.results === undefined) {
+          updateData.results = [];
+          console.log('[command-db] ⚠️ results es null/undefined, convertido a array vacío');
+        } else {
+          updateData.results = [updateData.results];
+          console.log('[command-db] ⚠️ results no es array, convertido a array con 1 elemento');
+        }
+      }
+      
+      // Verificar si existen elementos en el array
+      if (updateData.results.length > 0) {
+        // Verificar formato del primer elemento para diagnóstico
+        const firstResult = updateData.results[0];
+        console.log(`[command-db] 🔍 Primer resultado: ${typeof firstResult === 'object' ? 
+          JSON.stringify(firstResult).substring(0, 200) + '...' : 
+          String(firstResult).substring(0, 200) + '...'}`);
       }
     }
     
-    // Ahora actualizamos el comando
+    // Actualizar en base de datos
     const { data, error } = await supabaseAdmin
       .from('commands')
-      .update(updatesWithTimestamp)
+      .update(updateData)
       .eq('id', commandId)
-      .select()
-      .single();
+      .select();
     
     if (error) {
-      console.error(`[command-db] Error al actualizar comando ${commandId}:`, error);
+      console.error('[command-db] Error actualizando comando:', error);
       throw new Error(`Error updating command: ${error.message}`);
     }
     
-    console.log(`[command-db] Comando ${commandId} actualizado con éxito`);
-    console.log(`[command-db] Comando actualizado:`, JSON.stringify(data, null, 2).substring(0, 500) + '...');
-    
-    // Verificar si los tokens se actualizaron
-    if (updates.input_tokens !== undefined || updates.output_tokens !== undefined) {
-      console.log(`[command-db] 🔍 Tokens después de actualización: input_tokens=${data.input_tokens}, output_tokens=${data.output_tokens}`);
-      
-      // Si no se actualizaron los tokens, intentar una actualización específica solo para tokens
-      if ((updates.input_tokens !== undefined && data.input_tokens !== updates.input_tokens) || 
-          (updates.output_tokens !== undefined && data.output_tokens !== updates.output_tokens)) {
-        console.log(`[command-db] ⚠️ Los tokens no se actualizaron correctamente, intentando actualización específica`);
-        
-        const tokenUpdates = {
-          input_tokens: updates.input_tokens,
-          output_tokens: updates.output_tokens
-        };
-        
-        const { data: tokenData, error: tokenError } = await supabaseAdmin
-          .from('commands')
-          .update(tokenUpdates)
-          .eq('id', commandId)
-          .select()
-          .single();
-          
-        if (tokenError) {
-          console.error(`[command-db] Error en actualización específica de tokens:`, tokenError);
-        } else {
-          console.log(`[command-db] ✅ Actualización específica de tokens completada: input_tokens=${tokenData.input_tokens}, output_tokens=${tokenData.output_tokens}`);
-          return tokenData;
-        }
-      }
+    if (!data || data.length === 0) {
+      throw new Error(`Command with ID ${commandId} not found or not updated`);
     }
     
-    return data;
+    // Log detallado para tokens después de la actualización
+    if (updateData.input_tokens !== undefined || updateData.output_tokens !== undefined) {
+      console.log('[command-db] 🔍 Tokens después de actualización: input_tokens=' + 
+        (data[0].input_tokens !== undefined ? data[0].input_tokens : 'no definido') + 
+        ', output_tokens=' + 
+        (data[0].output_tokens !== undefined ? data[0].output_tokens : 'no definido'));
+    }
+    
+    // Log para results después de la actualización
+    if (updateData.results !== undefined) {
+      console.log(`[command-db] 🔍 Resultados después de actualización: ${Array.isArray(data[0].results) ? 
+        data[0].results.length : 'no es array'} elementos`);
+    }
+    
+    console.log(`[command-db] Comando ${commandId} actualizado con éxito`);
+    
+    // Mostrar todo el comando actualizado para diagnóstico (limitado a 400 caracteres)
+    console.log(`[command-db] Comando actualizado:`, JSON.stringify(data[0], null, 2).substring(0, 400) + '...');
+    
+    return data[0];
   } catch (error: any) {
-    console.error(`[command-db] Error crítico en updateCommand para ${commandId}:`, error);
+    console.error('[command-db] Error en updateCommand:', error);
     throw new Error(`Error updating command: ${error.message}`);
   }
 }
@@ -253,9 +240,10 @@ export async function updateCommandStatus(
  */
 export async function getCommandById(commandId: string): Promise<DbCommand | null> {
   try {
+    // Asegurarnos de seleccionar explícitamente agent_background
     const { data, error } = await supabaseAdmin
       .from('commands')
-      .select('*')
+      .select('*, agent_background')
       .eq('id', commandId)
       .single();
     
@@ -265,6 +253,17 @@ export async function getCommandById(commandId: string): Promise<DbCommand | nul
       }
       console.error('Error getting command by ID:', error);
       throw new Error(`Error getting command: ${error.message}`);
+    }
+    
+    // Log if agent_background is present
+    if (data && data.agent_background) {
+      console.log(`📋 Command ${commandId} has agent_background of length: ${data.agent_background.length}`);
+      // Verificar que el agent_background no esté vacío o corrupto
+      if (data.agent_background.length < 10) {
+        console.warn(`⚠️ ADVERTENCIA: agent_background es muy corto (${data.agent_background.length} caracteres)`);
+      }
+    } else {
+      console.log(`📋 Command ${commandId} does not have agent_background`);
     }
     
     return data;

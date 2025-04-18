@@ -489,7 +489,63 @@ export async function POST(request: Request) {
     }
     
     // Define default tools in case agent doesn't have any - empty array as per specification
-    const defaultTools: any[] = [];
+    const defaultTools: any[] = [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_lead_details",
+          "description": "Get details about a lead by providing name, email, company, and phone",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the lead."
+              },
+              "mail": {
+                "type": "string",
+                "description": "The email address of the lead."
+              },
+              "company": {
+                "type": "string",
+                "description": "The company name associated with the lead."
+              },
+              "phone": {
+                "type": "string",
+                "description": "The phone number of the lead."
+              }
+            },
+            "additionalProperties": false
+          },
+          "strict": true
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "get_task_details",
+          "description": "Get details about a task by providing the task ID and a query for the name",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "The ID of the task."
+              },
+              "query": {
+                "type": "string",
+                "description": "The query to search for the task name."
+              }
+            },
+            "required": [
+              "query"
+            ],
+            "additionalProperties": false
+          },
+          "strict": true
+        }
+      }
+    ];
     
     // Use agent tools if available, otherwise use default tools
     const tools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0 
@@ -582,6 +638,18 @@ export async function POST(request: Request) {
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
       console.log(`Resultados encontrados: ${JSON.stringify(executedCommand.results).substring(0, 200)}...`);
       
+      if (executedCommand.results.length === 0) {
+        console.warn("⚠️ El comando completó correctamente pero no se encontraron resultados");
+      } else {
+        // Mostrar info detallada de los resultados para diagnóstico
+        executedCommand.results.forEach((result: any, idx: number) => {
+          const type = result.type || 'sin_tipo';
+          const hasMessage = result.message !== undefined;
+          const hasContent = result.content !== undefined;
+          console.log(`📋 Resultado ${idx}: type=${type}, hasMessage=${hasMessage}, hasContent=${hasContent}`);
+        });
+      }
+      
       // Extraer el título de la conversación de los resultados
       const conversationResults = executedCommand.results.find((r: any) => 
         r.conversation && r.conversation.title
@@ -607,48 +675,91 @@ export async function POST(request: Request) {
         }
       }
       
-      // Caso 1: Array de objetos con message.content (formato nuevo) 
-      // Ejemplo: [{"message":{"content":"Mi nombre es Asistente"}}]
-      if (executedCommand.results.length > 0 && 
-          executedCommand.results[0].message && 
-          executedCommand.results[0].message.content) {
-        assistantMessage = executedCommand.results[0].message.content;
-        console.log("✅ Extrayendo mensaje del formato directo [{ message: { content } }]");
-      }
-      // Caso 2: Buscar resultados con tipo 'message' (formato antiguo)
+      // EXTRACCIÓN DEL MENSAJE PRINCIPAL
+      
+      // Prioridad 1: Buscar objetos con property message directamente
+      const messageObject = executedCommand.results.find((r: any) => r.message && r.message.content);
+      if (messageObject) {
+        assistantMessage = messageObject.message.content;
+        console.log(`✅ Mensaje extraído de objeto con property message directa: ${assistantMessage.substring(0, 50)}...`);
+      } 
+      
+      // Prioridad 2: Buscar resultados con type 'message' o 'text'
       else {
-        const messageResults = executedCommand.results.filter((r: any) => r.type === 'message');
+        const typeResults = executedCommand.results.filter((r: any) => 
+          r.type === 'message' || r.type === 'text'
+        );
         
-        if (messageResults.length > 0 && messageResults[0].content) {
-          if (typeof messageResults[0].content === 'string') {
-            assistantMessage = messageResults[0].content;
-          } else if (messageResults[0].content.message && messageResults[0].content.message.content) {
-            assistantMessage = messageResults[0].content.message.content;
-          } else if (messageResults[0].content.content) {
-            assistantMessage = messageResults[0].content.content;
+        if (typeResults.length > 0) {
+          const firstTypeResult = typeResults[0];
+          
+          if (typeof firstTypeResult.content === 'string') {
+            assistantMessage = firstTypeResult.content;
+          } 
+          else if (firstTypeResult.content && firstTypeResult.content.message && firstTypeResult.content.message.content) {
+            assistantMessage = firstTypeResult.content.message.content;
+          } 
+          else if (firstTypeResult.content && typeof firstTypeResult.content.content === 'string') {
+            assistantMessage = firstTypeResult.content.content;
           }
-          console.log("✅ Extrayendo mensaje del formato type:message");
+          
+          console.log(`✅ Mensaje extraído de resultado con type=${firstTypeResult.type}: ${assistantMessage.substring(0, 50)}...`);
         }
         
-        // Caso 3: Buscar resultados con content.message
-        if (assistantMessage === "No response generated") {
-          const contentResults = executedCommand.results.filter((r: any) => 
-            r.content && (r.content.message || r.content.content)
+        // Prioridad 3: Cualquier objeto con propiedad content
+        else if (assistantMessage === "No response generated") {
+          const contentObject = executedCommand.results.find((r: any) => 
+            r.content !== undefined && (
+              typeof r.content === 'string' || 
+              (typeof r.content === 'object' && (r.content.content || r.content.message))
+            )
           );
           
-          if (contentResults.length > 0) {
-            if (contentResults[0].content.message && contentResults[0].content.message.content) {
-              assistantMessage = contentResults[0].content.message.content;
-            } else if (contentResults[0].content.content) {
-              assistantMessage = contentResults[0].content.content;
+          if (contentObject) {
+            if (typeof contentObject.content === 'string') {
+              assistantMessage = contentObject.content;
+            } 
+            else if (contentObject.content.message && contentObject.content.message.content) {
+              assistantMessage = contentObject.content.message.content;
+            } 
+            else if (contentObject.content.content) {
+              assistantMessage = typeof contentObject.content.content === 'string' 
+                ? contentObject.content.content 
+                : JSON.stringify(contentObject.content.content);
             }
-            console.log("✅ Extrayendo mensaje del formato content.message");
+            
+            console.log(`✅ Mensaje extraído de objeto con property content: ${assistantMessage.substring(0, 50)}...`);
+          }
+          
+          // Prioridad 4: Usar el primer resultado disponible
+          else if (executedCommand.results.length > 0) {
+            const firstResult = executedCommand.results[0];
+            
+            if (typeof firstResult === 'string') {
+              assistantMessage = firstResult;
+            } 
+            else if (typeof firstResult === 'object') {
+              // Intentar extraer cualquier contenido que parezca texto
+              const extractedContent = 
+                firstResult.content || 
+                firstResult.message?.content || 
+                firstResult.text || 
+                JSON.stringify(firstResult);
+                
+              assistantMessage = typeof extractedContent === 'string' 
+                ? extractedContent 
+                : JSON.stringify(extractedContent);
+            }
+            
+            console.log(`✅ Mensaje extraído como último recurso del primer resultado: ${assistantMessage.substring(0, 50)}...`);
           }
         }
       }
+    } else {
+      console.warn("⚠️ No se encontraron resultados en el comando ejecutado");
     }
     
-    console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
+    console.log(`💬 Mensaje final del asistente: ${assistantMessage.substring(0, 50)}...`);
     
     // Paso 1: Guardar los mensajes en la base de datos
     console.log(`🔄 Iniciando guardado de mensajes en la base de datos...`);
