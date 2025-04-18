@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { CommandFactory, AgentInitializer } from '@/lib/agentbase';
+import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
@@ -72,9 +72,9 @@ async function saveContentItemsToDatabase(
 }
 
 // Initialize agent and get command service
-const agentInitializer = AgentInitializer.getInstance();
-agentInitializer.initialize();
-const commandService = agentInitializer.getCommandService();
+const processorInitializer = ProcessorInitializer.getInstance();
+processorInitializer.initialize();
+const commandService = processorInitializer.getCommandService();
 
 // Function to get the DB UUID for a command
 async function getCommandDbUuid(internalId: string): Promise<string | null> {

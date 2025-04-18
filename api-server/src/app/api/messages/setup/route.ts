@@ -59,6 +59,7 @@ export async function GET(request: NextRequest) {
           agent_id UUID,
           user_id UUID,
           lead_id UUID,
+          command_id UUID,
           content TEXT NOT NULL,
           sender_type TEXT NOT NULL,
           read_at TIMESTAMPTZ,
@@ -90,6 +91,7 @@ export async function GET(request: NextRequest) {
       CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
       CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
       CREATE INDEX IF NOT EXISTS idx_messages_lead_id ON messages(lead_id);
+      CREATE INDEX IF NOT EXISTS idx_messages_command_id ON messages(command_id);
       CREATE INDEX IF NOT EXISTS idx_messages_sender_type ON messages(sender_type);
       CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
       

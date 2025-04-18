@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS messages (
     agent_id UUID,
     user_id UUID,
     lead_id UUID,
+    command_id UUID,
     content TEXT NOT NULL,
     sender_type TEXT NOT NULL,
     read_at TIMESTAMPTZ,
@@ -85,6 +86,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_visitor_id ON messages(visitor_id);
 CREATE INDEX IF NOT EXISTS idx_messages_agent_id ON messages(agent_id);
 CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_lead_id ON messages(lead_id);
+CREATE INDEX IF NOT EXISTS idx_messages_command_id ON messages(command_id);
 CREATE INDEX IF NOT EXISTS idx_messages_sender_type ON messages(sender_type);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
@@ -96,6 +98,7 @@ COMMENT ON COLUMN messages.visitor_id IS 'Reference to the visitor';
 COMMENT ON COLUMN messages.agent_id IS 'Reference to the AI agent';
 COMMENT ON COLUMN messages.user_id IS 'Reference to the human user/operator';
 COMMENT ON COLUMN messages.lead_id IS 'Reference to the lead if visitor is identified';
+COMMENT ON COLUMN messages.command_id IS 'Reference to the command that generated this message';
 COMMENT ON COLUMN messages.content IS 'Message content';
 COMMENT ON COLUMN messages.sender_type IS 'Type of sender (visitor, agent, user, system)';
 COMMENT ON COLUMN messages.read_at IS 'Timestamp when message was read';

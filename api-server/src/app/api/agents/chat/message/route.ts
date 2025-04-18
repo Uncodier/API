@@ -138,10 +138,10 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, teamMemberId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, teamMemberId?: string, commandId?: string) {
   try {
     // Debug logs para verificar los parámetros recibidos
-    console.log(`📥 saveMessages recibió: userId=${userId}, teamMemberId=${teamMemberId || 'undefined'}`);
+    console.log(`📥 saveMessages recibió: userId=${userId}, teamMemberId=${teamMemberId || 'undefined'}, commandId=${commandId || 'undefined'}`);
     
     // Determine user role based on parameters
     const userRole = teamMemberId ? 'team_member' : 'user';
@@ -205,6 +205,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     if (leadId) userMessageData.lead_id = leadId;
     if (visitorId) userMessageData.visitor_id = visitorId;
     if (agentId) userMessageData.agent_id = agentId;
+    if (commandId) userMessageData.command_id = commandId;
     
     const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
       .from('messages')
@@ -231,6 +232,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     if (leadId) assistantMessageData.lead_id = leadId;
     if (visitorId) assistantMessageData.visitor_id = visitorId;
     if (agentId) assistantMessageData.agent_id = agentId;
+    if (commandId) assistantMessageData.command_id = commandId;
     
     const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
       .from('messages')
@@ -776,7 +778,8 @@ export async function POST(request: Request) {
         visitor_id, 
         conversationTitle, 
         agentId, 
-        team_member_id  // Aseguramos que se pasa correctamente el team_member_id
+        team_member_id,  // Aseguramos que se pasa correctamente el team_member_id
+        effectiveDbUuid || internalCommandId  // Añadimos el command_id
       );
       
       // Esperar a que se complete el guardado con un timeout de seguridad

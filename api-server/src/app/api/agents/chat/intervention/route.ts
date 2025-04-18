@@ -9,7 +9,7 @@ function isValidUUID(uuid: string): boolean {
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, interventionMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string) {
+async function saveMessages(userId: string, interventionMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, commandId?: string) {
   try {
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
@@ -68,6 +68,7 @@ async function saveMessages(userId: string, interventionMessage: string, convers
     if (leadId) interventionMessageData.lead_id = leadId;
     if (visitorId) interventionMessageData.visitor_id = visitorId;
     if (agentId) interventionMessageData.agent_id = agentId;
+    if (commandId) interventionMessageData.command_id = commandId;
     
     const { data: savedInterventionMessage, error: interventionMsgError } = await supabaseAdmin
       .from('messages')
@@ -193,7 +194,8 @@ export async function POST(request: Request) {
       lead_id,
       visitor_id,
       conversationTitle,
-      agentId
+      agentId,
+      uuidv4()
     );
     
     // Verificar que se guardaron correctamente los mensajes

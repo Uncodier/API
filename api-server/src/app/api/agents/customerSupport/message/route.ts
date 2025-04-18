@@ -216,9 +216,9 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string) {
   try {
-    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}`);
+    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}`);
     
     let effectiveConversationId: string | undefined = conversationId;
     
@@ -326,6 +326,9 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar agent_id si está presente
     if (agentId) userMessageObj.agent_id = agentId;
     
+    // Agregar command_id si está presente
+    if (commandId) userMessageObj.command_id = commandId;
+    
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
     
     const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
@@ -359,6 +362,9 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     // Agregar agent_id si está presente
     if (agentId) assistantMessageObj.agent_id = agentId;
+    
+    // Agregar command_id si está presente
+    if (commandId) assistantMessageObj.command_id = commandId;
     
     console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
     
@@ -822,7 +828,7 @@ export async function POST(request: Request) {
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
       
       // Guardar los mensajes en la base de datos
-      const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId);
+      const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, internalCommandId);
       
       if (!savedMessages) {
         console.error(`❌ Error al guardar mensajes en la base de datos`);
@@ -940,7 +946,7 @@ export async function POST(request: Request) {
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
     // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId);
+    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, internalCommandId);
     
     if (!savedMessages) {
       console.error(`❌ Error al guardar mensajes en la base de datos`);
