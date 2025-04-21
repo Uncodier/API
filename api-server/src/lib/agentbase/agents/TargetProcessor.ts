@@ -6,7 +6,7 @@ import { Base } from './Base';
 import { PortkeyConnector } from '../services/PortkeyConnector';
 import { DbCommand, CommandExecutionResult, PortkeyModelOptions } from '../models/types';
 import { TARGET_PROCESSOR_SYSTEM_PROMPT, formatTargetProcessorPrompt } from '../prompts/target-processor-prompt';
-import { prepareMessagesForTarget } from '../formatters/target-message-formatter';
+import { prepareMessagesForTarget } from './targetEvaluator/formatters/target-message-formatter';
 import { extractTokenUsage } from './toolEvaluator/tokenUtils';
 import { CommandCache } from '../services/command/CommandCache';
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
@@ -40,7 +40,8 @@ export class TargetProcessor extends Base {
       modelType: 'openai',
       modelId: 'gpt-4o',
       maxTokens: 4000,
-      temperature: 0.7
+      temperature: 0.7,
+      responseFormat: 'text'
     };
     this.systemPrompt = systemPrompt;
     this.agentSystemPrompt = agentSystemPrompt;

@@ -16,6 +16,9 @@ import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandCache } from './CommandCache';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
 
+// Importar utilidades de Composio
+import { ComposioConfiguration, enrichWithComposioTools, isComposioEnabled } from '../../utils/composioIntegration';
+
 export class CommandProcessor {
   private commandService: CommandService;
   private processors: Record<string, any>;
@@ -251,6 +254,12 @@ export class CommandProcessor {
     }
     
     try {
+      // Enriquecer con herramientas de Composio si la integración está habilitada
+      if (isComposioEnabled()) {
+        console.log(`🔌 [CommandProcessor] Enriqueciendo comando con herramientas de Composio`);
+        command = await enrichWithComposioTools(command);
+      }
+      
       // Evaluar herramientas
       const toolResult = await toolEvaluator.executeCommand(command);
       

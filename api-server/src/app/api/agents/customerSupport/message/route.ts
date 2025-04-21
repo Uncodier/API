@@ -648,7 +648,7 @@ export async function POST(request: Request) {
           type: "function",
           async: true,
           function: {
-            name: 'escalate',
+            name: 'ESCALATE',
             description: 'escalate when needed',
             parameters: {
               type: 'object',
@@ -672,7 +672,7 @@ export async function POST(request: Request) {
           type: "function",
           async: true,
           function: {
-            name: 'contact_human',
+            name: 'CONTACT_HUMAN',
             description: 'contact human supervisor when complex issues require human intervention',
             parameters: {
               type: 'object',
@@ -696,7 +696,7 @@ export async function POST(request: Request) {
           type: "function",
           async: true,
           function: {
-            name: 'identify_lead',
+            name: 'IDENTIFY_LEAD',
             description: 'collect visitor information when lead or visitor data is missing from context',
             parameters: {
               type: 'object',

@@ -7,6 +7,9 @@ import { DbCommand } from '../models/types';
 import { AgentBackgroundService } from './agent/AgentBackgroundService';
 import { ToolEvaluator } from '../agents/ToolEvaluator';
 import { TargetProcessor } from '../agents/TargetProcessor';
+import { ComposioConfiguration } from '../utils/composioIntegration';
+import { enrichWithComposioTools } from '../utils/composioIntegration';
+import { CommandCache } from './command/CommandCache';
 
 export class EventHandlerService {
   private static instance: EventHandlerService;
@@ -261,6 +264,15 @@ export class EventHandlerService {
     console.log(`🛠️ Evaluando ${command.tools!.length} herramientas para el comando: ${command.id}`);
     
     try {
+      // Importar utilidades de Composio
+      const composioUtils = await import('../utils/composioIntegration');
+      
+      // Enriquecer con herramientas de Composio si la integración está habilitada
+      if (composioUtils.isComposioEnabled()) {
+        console.log(`🔌 [EventHandlerService] Enriqueciendo comando con herramientas de Composio`);
+        command = await composioUtils.enrichWithComposioTools(command);
+      }
+      
       // Obtener el procesador de herramientas
       const toolEvaluator = this.processors['tool_evaluator'] as ToolEvaluator;
       
@@ -276,100 +288,37 @@ export class EventHandlerService {
         console.log(`✅ Evaluación de herramientas completada para: ${command.id}`);
         
         // Actualizar el comando con los resultados
-        if (toolResult.results.length > 0) {
-          // Actualizar los resultados en la base de datos
-          await this.commandService.updateResults(command.id, toolResult.results);
-          
-          // Preparar objeto para actualización en lote
-          let updateBatch: any = {};
-          
-          // Actualizar tokens acumulados
-          if (toolResult.inputTokens || toolResult.outputTokens) {
-            const inputTokens = Number(command.input_tokens || 0) + Number(toolResult.inputTokens || 0);
-            const outputTokens = Number(command.output_tokens || 0) + Number(toolResult.outputTokens || 0);
-            
-            // Actualizar tokens en el comando preservando agent_background
-            command = {
-              ...command,
-              input_tokens: inputTokens,
-              output_tokens: outputTokens
-            };
-            
-            // Añadir tokens al lote de actualización
-            updateBatch.input_tokens = inputTokens;
-            updateBatch.output_tokens = outputTokens;
-            
-            // Preservar agent_background si existe
-            if (command.agent_background) {
-              console.log(`🔄 Preservando agent_background en batch update`);
-              updateBatch.agent_background = command.agent_background;
-            }
-            
-            console.log(`🔢 Tokens acumulados después de evaluación: input=${inputTokens}, output=${outputTokens}`);
-            console.log(`🔢 Desglose de tokens: Current=${command.input_tokens || 0}/${command.output_tokens || 0}, Tool=${toolResult.inputTokens || 0}/${toolResult.outputTokens || 0}`);
-            
-            // Actualizar tokens inmediatamente como una actualización específica
-            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-              try {
-                console.log(`🔢 Enviando actualización específica de tokens a BD: ${dbUuid}`);
-                await DatabaseAdapter.updateCommand(dbUuid, {
-                  input_tokens: inputTokens,
-                  output_tokens: outputTokens
-                });
-                
-                // Verificar que los tokens se actualizaron correctamente
-                const updatedCommand = await DatabaseAdapter.getCommandById(dbUuid);
-                console.log(`🔍 Verificando tokens actualizados: input=${updatedCommand?.input_tokens}, output=${updatedCommand?.output_tokens}`);
-              } catch (error) {
-                console.error('Error actualizando tokens:', error);
-              }
-            }
-          }
-          
-          // Procesar updatedCommand si está presente en el resultado
-          if (toolResult.updatedCommand) {
-            // Actualizar las funciones si están presentes
-            if (toolResult.updatedCommand.functions !== undefined) {
-              command.functions = toolResult.updatedCommand.functions;
-              updateBatch.functions = command.functions;
-              console.log(`📦 Actualizando functions en el comando: ${command.id} con ${command.functions.length} funciones`);
-            }
-          }
-          
-          // Realizar actualización en lote si hay cambios
-          if (Object.keys(updateBatch).length > 0 && dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-            console.log(`📝 Actualizando en lote después de evaluación: ${Object.keys(updateBatch).join(', ')}`);
-            try {
-              await DatabaseAdapter.updateCommand(dbUuid, updateBatch);
-              console.log(`✅ Batch update completado para el comando: ${command.id}`);
-            } catch (error) {
-              console.error(`❌ Error en batch update: ${error}`);
-            }
-          }
-        }
-      } else if (toolResult.status === 'failed') {
-        console.error(`❌ Error en evaluación de herramientas: ${toolResult.error}`);
+        command.functions = toolResult.updatedCommand?.functions || [];
         
-        // Actualizar el estado del comando a failed
-        await this.commandService.updateStatus(command.id, 'failed', toolResult.error);
-        throw new Error(`Tool evaluation error: ${toolResult.error}`);
+        // Actualizar tokens en el comando
+        command.input_tokens = (command.input_tokens || 0) + (toolResult.inputTokens || 0);
+        command.output_tokens = (command.output_tokens || 0) + (toolResult.outputTokens || 0);
+        
+        // Preparar actualización para la base de datos
+        const updateData = {
+          functions: command.functions,
+          input_tokens: command.input_tokens,
+          output_tokens: command.output_tokens
+        };
+        
+        // Actualizar en la base de datos o en el servicio de comandos
+        if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+          await DatabaseAdapter.updateCommand(dbUuid, updateData);
+        } else {
+          await this.commandService.updateCommand(command.id, updateData);
+        }
+        
+        // Guardar en caché - evitar error de parámetros
+        CommandCache.cacheCommand(command.id, command);
+        
+        console.log(`📊 Tokens actualizados para ${command.id} - Input: ${command.input_tokens}, Output: ${command.output_tokens}`);
+      } else {
+        console.error(`❌ Error en evaluación de herramientas: ${toolResult.error}`);
+        throw new Error(`Error en evaluación de herramientas: ${toolResult.error}`);
       }
     } catch (error: any) {
-      console.error(`❌ Error al evaluar herramientas: ${error.message}`);
-      
-      // Actualizar el estado del comando a failed en una única operación
-      const failureUpdate: Partial<Omit<DbCommand, "id" | "created_at" | "updated_at">> = {
-        status: 'failed' as any,
-        error: `Tool evaluation error: ${error.message}`
-      };
-      
-      if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-        await DatabaseAdapter.updateCommand(dbUuid, failureUpdate);
-      } else {
-        await this.commandService.updateCommand(command.id, failureUpdate);
-      }
-      
-      throw error; // Re-lanzar el error para manejarlo en el nivel superior
+      console.error(`❌ Error al procesar herramientas: ${error.message}`);
+      throw error;
     }
   }
   

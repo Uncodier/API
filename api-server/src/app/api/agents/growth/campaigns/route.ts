@@ -253,7 +253,7 @@ export async function POST(request: Request) {
               budget: "budget assigned for the campaign according to the total budget of the period, example: 2000",
               type: "inbound' | 'outbound' | 'branding' | 'product' | 'events' | 'success' | 'account' | 'community' | 'guerrilla' | 'affiliate' | 'experiential' | 'programmatic' | 'performance' | 'publicRelations",
               priority: "high | medium | low",
-              requirements:  [
+              requirements: [
                 {
                   title: "minimal tasks for the campaign to be copmleted",
                   description: "task description",
@@ -264,7 +264,6 @@ export async function POST(request: Request) {
               ]
             }
           ]
-          }
         }
       ],
       // Usar el string como contexto
@@ -326,12 +325,18 @@ export async function POST(request: Request) {
     // Obtener las campañas creadas
     const campaigns = effectiveDbUuid ? await getCreatedCampaigns(effectiveDbUuid) : [];
     
+    // Asegurarse de que cada campaña tenga el command_id
+    const campaignsWithCommandId = campaigns.map(campaign => ({
+      ...campaign,
+      command_id: effectiveDbUuid
+    }));
+    
     return NextResponse.json({
       success: true,
       data: {
         command_id: effectiveDbUuid || internalCommandId,
         site_id: body.siteId,
-        campaigns: campaigns
+        campaigns: campaignsWithCommandId
       }
     });
     

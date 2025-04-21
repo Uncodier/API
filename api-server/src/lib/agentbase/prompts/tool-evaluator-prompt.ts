@@ -6,6 +6,11 @@ export const TOOL_EVALUATOR_SYSTEM_PROMPT = `You are tasked with determining whi
 You will analyze the user's message and determine if any of the available tools should be used.
 You must return a JSON array containing function call objects for tools that should be used, or an empty array if no tools should be used.
 
+The full conversation context and available tools are included in this system message for reference.
+You will receive only one user message containing the user's current request that you need to analyze.
+
+Focus on the user message to determine which of the available tools should be activated, if any.
+
 CRITICAL: Your response MUST be a properly formatted JSON array. Nothing else. No explanations, no text, just the JSON array.
 If no tools should be used, return only [] (an empty array). If tools should be used, return an array of tool function call objects.
 
@@ -112,7 +117,6 @@ This are your must important instructions:
 `;
 
 export const formatToolEvaluatorPrompt = (
-  userMessage: string,
   tools: any[]
 ): string => {
   console.log(`[formatToolEvaluatorPrompt] Formatting ${tools.length} tools for prompt`);
@@ -125,17 +129,13 @@ export const formatToolEvaluatorPrompt = (
     return JSON.stringify(tool, null, 2);
   }).join('\n\n');
 
-  const finalPrompt = `USER MESSAGE:
-"${userMessage}"
-
---------
-
-AVAILABLE TOOLS:
-The tools below are provided in their original JSON format. Analyze which tools should be activated based on the user message above.
+  const finalPrompt = `AVAILABLE TOOLS:
+The tools below are provided in their original JSON format. Analyze which tools should be activated based on the user message you will receive.
 Remember to return a properly formatted JSON array as specified in the system instructions.
 
 ${toolsDescription}
-`;
+
+REMEMBER: Your response MUST be a valid array with JSON objects that matches the exact structure of the tools array provided above. Do not use json markdown decoration in your response.`;
 
   console.log(`[formatToolEvaluatorPrompt] Final prompt length: ${finalPrompt.length} characters`);
   return finalPrompt;

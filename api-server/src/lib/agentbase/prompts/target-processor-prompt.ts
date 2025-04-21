@@ -56,6 +56,8 @@ Guidelines for processing targets:
 6. Never mention that you are an AI unless specifically asked.
 7. If you cannot fulfill a request, politely explain what you can help with instead.
 8. DO NOT change the structure of the targets in any way - preserve all property names exactly as given.
+9. Make sure your answers are human-like and not robotic.
+10. Do not repeat answers or the question of the user, thats not allowed.
 
 These are your most important instructions:
 1. Do not change the format structure of your response.
@@ -82,5 +84,5 @@ ${targetStr}
 
 Based on the user's message, generate appropriate content for each target. Return your results in the required JSON format.
 IMPORTANT: Use the EXACT SAME structure for each target in your response, including all property names and data types. Only fill in the content values directly without any additional mapping or modification to the structure.
-REMEMBER: Your response MUST be a valid JSON array that matches the exact structure of the targets array provided above.`;
+REMEMBER: Your response MUST be a valid array with JSON objects that matches the exact structure of the targets array provided above. Do not use json markdown decoration in your response.`;
 }; 

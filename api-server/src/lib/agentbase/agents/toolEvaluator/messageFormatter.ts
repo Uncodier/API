@@ -27,21 +27,6 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
   console.log(`[ToolEvaluator] Agent background: ${command.agent_background.length} caracteres`);
   console.log(`[ToolEvaluator] Primera parte del agent_background: ${command.agent_background.substring(0, 100)}...`);
   
-  // El prompt de evaluación de herramientas se AÑADE al agent_background, no lo reemplaza
-  // Si se proporciona un systemPrompt personalizado, usarlo en lugar del default
-  const toolEvaluatorPrompt = systemPrompt || TOOL_EVALUATOR_SYSTEM_PROMPT;
-  console.log(`[ToolEvaluator] Sistema prompt: ${toolEvaluatorPrompt.length} caracteres (${systemPrompt ? 'Personalizado' : 'Default'})`);
-  console.log(`[ToolEvaluator] Primera parte del system prompt: ${toolEvaluatorPrompt.substring(0, 100)}...`);
-  
-  const systemContent = `${command.agent_background}\n\n${toolEvaluatorPrompt}`;
-  
-  // Añadir el mensaje del sistema combinado
-  console.log(`[ToolEvaluator] Mensaje sistema combinado: ${systemContent.length} caracteres`);
-  messages.push({
-    role: 'system',
-    content: systemContent
-  });
-
   // Extraer el contexto del usuario (mensaje del usuario)
   const userContext = typeof command.context === 'string'
     ? command.context
@@ -51,6 +36,21 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
   
   console.log(`[ToolEvaluator] Mensaje usuario: ${userContext.length} caracteres`);
   console.log(`[ToolEvaluator] Primera parte del mensaje usuario: ${userContext.substring(0, 100)}...`);
+  
+  // Extraer el mensaje actual del usuario del contexto
+  let currentMessage = '';
+  if (typeof userContext === 'string') {
+    // Intentar extraer "Current message: [mensaje]" del contexto
+    // Usar [\s\S]* en lugar de /s para compatibilidad con versiones anteriores de JavaScript
+    const currentMessageMatch = userContext.match(/Current message:\s*([\s\S]*?)(?:\n\s*\n|$)/);
+    if (currentMessageMatch && currentMessageMatch[1]) {
+      currentMessage = currentMessageMatch[1].trim();
+      console.log(`[ToolEvaluator] Mensaje actual extraído: ${currentMessage.length} caracteres`);
+      console.log(`[ToolEvaluator] Primera parte del mensaje actual: ${currentMessage.substring(0, 100)}...`);
+    } else {
+      console.log(`[ToolEvaluator] No se pudo extraer el mensaje actual del usuario del contexto`);
+    }
+  }
   
   // Procesar las herramientas
   const tools = command.tools || [];
@@ -68,18 +68,42 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
     });
   }
   
-  // Formatear el prompt final del usuario con mensaje + herramientas
-  const formattedPrompt = formatToolEvaluatorPrompt(userContext, tools);
-  console.log(`[ToolEvaluator] Prompt final usuario: ${formattedPrompt.length} caracteres`);
-  console.log(`[ToolEvaluator] Primera parte del prompt final: ${formattedPrompt.substring(0, 100)}...`);
+  // Formatear la información de herramientas
+  const toolsPrompt = formatToolEvaluatorPrompt(tools);
+  console.log(`[ToolEvaluator] Prompt de herramientas: ${toolsPrompt.length} caracteres`);
+  console.log(`[ToolEvaluator] Primera parte del prompt de herramientas: ${toolsPrompt.substring(0, 100)}...`);
   
-  // Añadir el mensaje del usuario formateado
+  // El prompt de evaluación de herramientas se AÑADE al agent_background, no lo reemplaza
+  // Si se proporciona un systemPrompt personalizado, usarlo en lugar del default
+  const toolEvaluatorPrompt = systemPrompt || TOOL_EVALUATOR_SYSTEM_PROMPT;
+  console.log(`[ToolEvaluator] Sistema prompt: ${toolEvaluatorPrompt.length} caracteres (${systemPrompt ? 'Personalizado' : 'Default'})`);
+  console.log(`[ToolEvaluator] Primera parte del system prompt: ${toolEvaluatorPrompt.substring(0, 100)}...`);
+  
+  // 1. Combinar agent_background + system prompt + contexto completo + herramientas en el mensaje del sistema
+  const systemContent = `${command.agent_background}\n\n${toolEvaluatorPrompt}\n\nCONVERSATION CONTEXT:\n${userContext}\n\n${toolsPrompt}`;
+  
+  console.log(`[ToolEvaluator] Mensaje sistema combinado: ${systemContent.length} caracteres`);
   messages.push({
-    role: 'user',
-    content: formattedPrompt
+    role: 'system',
+    content: systemContent
   });
+  
+  // 2. Añadir el mensaje actual del usuario como único mensaje de usuario
+  if (currentMessage) {
+    messages.push({
+      role: 'user',
+      content: currentMessage
+    });
+  } else {
+    // Si no se pudo extraer el mensaje actual, usar el contexto completo como mensaje del usuario
+    console.log(`[ToolEvaluator] Usando contexto completo como mensaje del usuario al no poder extraer el mensaje actual`);
+    messages.push({
+      role: 'user',
+      content: userContext
+    });
+  }
 
-  console.log(`[ToolEvaluator] Total mensajes preparados: ${messages.length} (system + user)`);
+  console.log(`[ToolEvaluator] Total mensajes preparados: ${messages.length} (system[background+prompt+context+tools] + current)`);
   return messages;
 }
 

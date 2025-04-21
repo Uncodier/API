@@ -495,7 +495,7 @@ export async function POST(request: Request) {
       {
         "type": "function",
         "function": {
-          "name": "get_lead_details",
+          "name": "GET_LEAD_DETAILS",
           "description": "Get details about a lead by providing name, email, company, and phone",
           "parameters": {
             "type": "object",
@@ -525,7 +525,7 @@ export async function POST(request: Request) {
       {
         "type": "function",
         "function": {
-          "name": "get_task_details",
+          "name": "GET_TASK_DETAILS",
           "description": "Get details about a task by providing the task ID and a query for the name",
           "parameters": {
             "type": "object",

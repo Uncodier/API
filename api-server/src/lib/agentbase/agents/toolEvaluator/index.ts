@@ -129,7 +129,7 @@ export class ToolEvaluator extends Base {
           modelType: 'openai' as 'anthropic' | 'openai' | 'gemini',
           modelId: 'gpt-4o',
           maxTokens: 4000,
-          temperature: 0.2,
+          temperature: 0.7,
          // responseFormat: 'json' as 'json' | 'text'
         };
         

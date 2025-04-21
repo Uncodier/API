@@ -11,6 +11,7 @@ export { PortkeyConnector } from './PortkeyConnector';
 export { SupervisionService } from './SupervisionService';
 export { EventHandlerService } from './EventHandlerService';
 export { FileProcessingService } from './FileProcessingService';
+export { ComposioTools } from './composioTools';
 
 // Mantenemos la exportación por defecto del inicializador para compatibilidad
 export { default } from './agent'; 

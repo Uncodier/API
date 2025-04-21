@@ -1,7 +1,7 @@
 /**
  * Formateador de mensajes para el TargetProcessor
  */
-import { DbCommand } from '../models/types';
+import { DbCommand } from '../../../models/types';
 
 /**
  * Prepara los mensajes para el target processing
