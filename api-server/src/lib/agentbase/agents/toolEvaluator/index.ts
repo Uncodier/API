@@ -126,11 +126,11 @@ export class ToolEvaluator extends Base {
         
         // Configurar opciones del modelo
         const modelOptions = {
-          modelType: 'openai' as 'anthropic' | 'openai' | 'gemini',
-          modelId: 'gpt-4o',
-          maxTokens: 4000,
-          temperature: 0.7,
-         // responseFormat: 'json' as 'json' | 'text'
+          modelType: command.model_type || this.defaultOptions.modelType || 'openai',
+          modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4.1-nano',
+          maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 32768,
+          temperature: command.temperature || this.defaultOptions.temperature || 0.7,
+          responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'
         };
         
         // Llamar a la API a través del conector

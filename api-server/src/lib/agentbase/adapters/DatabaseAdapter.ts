@@ -149,4 +149,20 @@ export class DatabaseAdapter {
     console.log(`🔍 [DatabaseAdapter] Leyendo contenido del archivo ${filePath}`);
     return AgentService.getAgentFileContent(filePath);
   }
+  
+  /**
+   * Obtener información completa de un sitio desde la base de datos
+   */
+  static async getSiteById(siteId: string): Promise<any | null> {
+    console.log(`🔍 [DatabaseAdapter] Obteniendo información del sitio ${siteId}`);
+    return AgentService.getSiteById(siteId);
+  }
+  
+  /**
+   * Obtener configuración completa de un sitio desde la base de datos
+   */
+  static async getSiteSettingsById(siteId: string): Promise<any | null> {
+    console.log(`🔍 [DatabaseAdapter] Obteniendo configuración del sitio ${siteId}`);
+    return AgentService.getSiteSettingsById(siteId);
+  }
 } 

@@ -51,16 +51,30 @@ export class AgentConnector extends Base {
       const messages = this.prepareMessagesFromCommand(command);
       
       console.log(`📝 [AgentConnector:${this.id}] Executing command ${command.id}: ${command.task.substring(0, 50)}...`);
+      console.log(`📝 [AgentConnector:${this.id}] Detalles del modelo:
+        command.model: ${command.model || 'undefined'}
+        command.model_id: ${command.model_id || 'undefined'}
+        command.model_type: ${command.model_type || 'undefined'}
+      `);
       
       // Configure model options for portkey
       const modelOptions: PortkeyModelOptions = {
         modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-        modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4',
-        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 2000,
+        modelId: command.model_id || command.model || this.defaultOptions.modelId || 'gpt-4.1-nano',
+        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
       };
+      
+      console.log(`📝 [AgentConnector:${this.id}] Opciones finales para Portkey:
+        modelType: ${modelOptions.modelType}
+        modelId: ${modelOptions.modelId}
+        maxTokens: ${modelOptions.maxTokens}
+        temperature: ${modelOptions.temperature}
+        responseFormat: ${modelOptions.responseFormat}
+        stream: ${modelOptions.stream ? 'true' : 'false'}
+      `);
       
       // Si se requiere streaming, establecer las opciones
       if (modelOptions.stream) {

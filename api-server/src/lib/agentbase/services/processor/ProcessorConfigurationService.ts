@@ -26,9 +26,9 @@ export class ProcessorConfigurationService {
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 1000,
-        temperature: 0
+        modelId: 'gpt-4.1-nano',
+        maxTokens: 32000,
+        temperature: 0.6
       }
     );
     
@@ -40,9 +40,9 @@ export class ProcessorConfigurationService {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 2000,
-        temperature: 0.2
+        modelId: 'gpt-4.1',
+        maxTokens: 32000,
+        temperature: 0.7
       }
     );
     
@@ -67,8 +67,8 @@ export class ProcessorConfigurationService {
     // Opciones por defecto para el modelo
     const defaultModelOptions: PortkeyModelOptions = {
       modelType: 'openai',
-      modelId: 'gpt-4o',
-      maxTokens: 4096,
+      modelId: 'gpt-4.1-nano',
+      maxTokens: 32000,
       temperature: 0.7
     };
     

@@ -164,6 +164,83 @@ async function getCreatedCampaigns(commandDbUuid: string): Promise<any[]> {
   }
 }
 
+// Obtener campañas por site_id
+async function getCampaignsBySiteId(siteId: string): Promise<any[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('campaigns')
+      .select(`
+        id, 
+        title, 
+        description,
+        status,
+        type,
+        priority,
+        budget,
+        command_id,
+        site_id,
+        requirement_ids,
+        created_at,
+        updated_at
+      `)
+      .eq('site_id', siteId)
+      .order('created_at', { ascending: false });
+    
+    if (error) {
+      console.error('Error al obtener campañas por site_id:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error al consultar campañas por site_id:', error);
+    return [];
+  }
+}
+
+// GET endpoint para obtener campañas
+export async function GET(request: Request) {
+  console.log('🔍 API Growth Marketing - Campaigns - GET');
+  
+  try {
+    // Obtener parámetros de consulta
+    const url = new URL(request.url);
+    const siteId = url.searchParams.get('siteId');
+    
+    if (!siteId) {
+      return NextResponse.json({
+        success: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Missing required parameter: siteId'
+        }
+      }, { status: 400 });
+    }
+    
+    // Obtener campañas por site_id
+    const campaigns = await getCampaignsBySiteId(siteId);
+    
+    return NextResponse.json({
+      success: true,
+      data: {
+        site_id: siteId,
+        campaigns: campaigns
+      }
+    });
+    
+  } catch (error: any) {
+    console.error('Error en API GET de Campañas:', error);
+    
+    return NextResponse.json({
+      success: false,
+      error: {
+        code: 'SYSTEM_ERROR',
+        message: error.message || 'Internal server error'
+      }
+    }, { status: 500 });
+  }
+}
+
 export async function POST(request: Request) {
   console.log('🚀 API Growth Marketing - Campaigns - POST');
   
@@ -181,34 +258,47 @@ export async function POST(request: Request) {
       }, { status: 400 });
     }
     
-    if (!body.totalBudget) {
+    if (!body.campaignData) {
       return NextResponse.json({
         success: false,
         error: {
           code: 'INVALID_REQUEST',
-          message: 'Missing required parameter: totalBudget'
+          message: 'Missing required parameter: campaignData'
         }
       }, { status: 400 });
     }
     
-    if (!body.goals || !Array.isArray(body.goals) || body.goals.length === 0) {
+    const campaignData = body.campaignData;
+    
+    // Validar los campos requeridos dentro de campaignData
+    if (!campaignData.totalBudget) {
       return NextResponse.json({
         success: false,
         error: {
           code: 'INVALID_REQUEST',
-          message: 'Missing or invalid required parameter: goals (should be a non-empty array)'
+          message: 'Missing required parameter: campaignData.totalBudget'
+        }
+      }, { status: 400 });
+    }
+    
+    if (!campaignData.goals || !Array.isArray(campaignData.goals) || campaignData.goals.length === 0) {
+      return NextResponse.json({
+        success: false,
+        error: {
+          code: 'INVALID_REQUEST',
+          message: 'Missing or invalid parameter: campaignData.goals (should be a non-empty array)'
         }
       }, { status: 400 });
     }
     
     // Formatear los objetivos de la campaña como texto para la descripción
-    const goalsText = body.goals.join(', ');
+    const goalsText = campaignData.goals.join(', ');
     
     // Validar y procesar los requisitos
     let processedRequirements = [];
-    if (body.requirements && Array.isArray(body.requirements)) {
+    if (campaignData.requirements && Array.isArray(campaignData.requirements)) {
       // Asegurarnos de que cada requisito tenga un formato adecuado
-      processedRequirements = body.requirements.map((req: { id?: string, [key: string]: any }, index: number) => {
+      processedRequirements = campaignData.requirements.map((req: { id?: string, [key: string]: any }, index: number) => {
         // Si no tiene un ID, generarle uno temporal para referencia
         if (!req.id) {
           req.id = `req_${Date.now()}_${index}`;
@@ -219,18 +309,18 @@ export async function POST(request: Request) {
     
     // Crear un contexto en formato string con toda la información necesaria
     const contextInfo = {
-      total_budget: body.totalBudget,
-      currency: body.currency || 'USD',
-      priority: body.priority || 'high',
-      timeframe: body.timeframe || {
+      total_budget: campaignData.totalBudget,
+      currency: campaignData.currency || 'USD',
+      priority: campaignData.priority || 'high',
+      timeframe: campaignData.timeframe || {
         startDate: new Date().toISOString().split('T')[0],
         endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
       },
-      goals: body.goals,
-      industries: body.industries || [],
-      competitors: body.competitors || [],
-      previousResults: body.previousResults || {},
-      segments: body.segmentIds ? body.segmentIds.map((id: string) => ({ title: id })) : []
+      goals: campaignData.goals,
+      industries: campaignData.industries || [],
+      competitors: campaignData.competitors || [],
+      previousResults: campaignData.previousResults || {},
+      segments: campaignData.segmentIds ? campaignData.segmentIds.map((id: string) => ({ title: id })) : []
     };
     
     // Convertir el objeto de contexto a string en formato JSON
@@ -243,7 +333,7 @@ export async function POST(request: Request) {
       agentId: body.agent_id,
       // Agregar site_id directamente como propiedad principal
       site_id: body.siteId,
-      description: `Generate marketing campaigns with budget ${body.totalBudget} for goals: ${goalsText}`,
+      description: `Generate marketing campaigns with budget ${campaignData.totalBudget} for goals: ${goalsText}`,
       targets: [
         {
           campaigns: [

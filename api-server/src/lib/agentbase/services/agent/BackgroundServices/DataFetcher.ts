@@ -6,7 +6,7 @@ import { Base } from '../../../agents/Base';
 import { AgentCacheService } from '../AgentCacheService';
 import { DatabaseAdapter } from '../../../adapters/DatabaseAdapter';
 import { CapabilitiesExtractor } from './CapabilitiesExtractor';
-import { CommandCache } from '../../command/CommandCache';
+import { CommandCache } from '../../../services/command';
 
 export class DataFetcher {
   private static agentCache = AgentCacheService.getInstance();
@@ -25,6 +25,10 @@ export class DataFetcher {
     agentPrompt: string;
     capabilities: string[];
     files?: any[];
+    siteInfo?: {
+      site: any | null;
+      settings: any | null;
+    };
   }> {
     console.log(`🔍 [DataFetcher] Buscando datos para agente: ${agentId}`);
     
@@ -36,7 +40,8 @@ export class DataFetcher {
       systemPrompt: '',
       agentPrompt: '',
       capabilities: [],
-      files: []
+      files: [],
+      siteInfo: undefined
     };
     
     // Si no es un UUID válido, retornar valores por defecto
@@ -77,6 +82,20 @@ export class DataFetcher {
           console.error(`❌ [DataFetcher] Error al obtener archivos:`, filesError);
         }
         
+        // Obtener información del sitio y su configuración si está disponible
+        if (agentData.site_id && DatabaseAdapter.isValidUUID(agentData.site_id)) {
+          try {
+            console.log(`🔍 [DataFetcher] El agente tiene site_id (${agentData.site_id}), obteniendo información del sitio`);
+            const siteInfo = await this.getSiteInfo(agentData.site_id);
+            if (siteInfo) {
+              agentData.site = siteInfo.site;
+              agentData.siteSettings = siteInfo.settings;
+            }
+          } catch (siteError) {
+            console.error(`❌ [DataFetcher] Error al obtener información del sitio:`, siteError);
+          }
+        }
+        
         // Guardar en caché para futuras consultas
         this.agentCache.setAgentData(agentId, agentData);
         console.log(`✅ [DataFetcher] Información del agente guardada en caché: ${agentId}`);
@@ -92,11 +111,119 @@ export class DataFetcher {
   }
   
   /**
+   * Obtiene información completa de un sitio y sus configuraciones
+   * @param siteId ID del sitio
+   * @returns Objeto con la información del sitio y sus configuraciones
+   */
+  public static async getSiteInfo(siteId: string): Promise<{
+    site: any | null;
+    settings: any | null;
+  }> {
+    console.log(`🔍 [DataFetcher] Obteniendo información completa del sitio: ${siteId}`);
+    
+    const result = {
+      site: null as any | null,
+      settings: null as any | null
+    };
+    
+    // Si no es un UUID válido, retornar resultado vacío
+    if (!siteId || !DatabaseAdapter.isValidUUID(siteId)) {
+      console.log(`🧠 [DataFetcher] siteId no es válido: ${siteId}`);
+      return result;
+    }
+    
+    // Obtener información del sitio
+    try {
+      const siteData = await DatabaseAdapter.getSiteById(siteId);
+      if (siteData) {
+        console.log(`✅ [DataFetcher] Encontrada información del sitio: ${siteId}`);
+        result.site = siteData;
+        
+        // Verificar si tiene campos JSON que necesitan ser convertidos
+        const jsonFields = ['resource_urls', 'competitors', 'tracking'];
+        jsonFields.forEach(field => {
+          if (result.site && result.site[field] && typeof result.site[field] === 'string') {
+            try {
+              result.site[field] = JSON.parse(result.site[field]);
+            } catch (e) {
+              console.error(`[DataFetcher] Error parsing site ${field}:`, e);
+            }
+          }
+        });
+      }
+    } catch (siteError) {
+      console.error(`❌ [DataFetcher] Error al obtener información del sitio:`, siteError);
+    }
+    
+    // Obtener configuración del sitio (de la tabla 'settings')
+    try {
+      const siteSettings = await DatabaseAdapter.getSiteSettingsById(siteId);
+      if (siteSettings) {
+        console.log(`✅ [DataFetcher] Encontrada configuración del sitio: ${siteId}`);
+        result.settings = siteSettings;
+        
+        // Verificar si tiene campos JSON que necesitan ser convertidos
+        const jsonFields = [
+          'products', 'services', 'swot', 'locations', 'marketing_budget', 
+          'marketing_channels', 'social_media', 'goals',
+          'tracking', 'team_members', 'team_roles', 
+          'org_structure'
+        ];
+        
+        jsonFields.forEach(field => {
+          if (result.settings && result.settings[field] && typeof result.settings[field] === 'string') {
+            try {
+              result.settings[field] = JSON.parse(result.settings[field]);
+            } catch (e) {
+              console.error(`[DataFetcher] Error parsing site_settings ${field}:`, e);
+            }
+          }
+        });
+      } else {
+        console.log(`⚠️ [DataFetcher] No se encontró configuración para el sitio: ${siteId}`);
+      }
+    } catch (settingsError) {
+      console.error(`❌ [DataFetcher] Error al obtener configuración del sitio:`, settingsError);
+    }
+    
+    return result;
+  }
+  
+  /**
    * Extrae los datos relevantes de un objeto de agente
    */
   private static extractDataFromAgentObject(agentData: any, processor: Base): any {
     const config = agentData.configuration || {};
-    const result = {
+    
+    // Preparar la información del sitio si está disponible
+    let siteInfoObj = undefined;
+    
+    if (agentData.site || agentData.siteSettings) {
+      siteInfoObj = {
+        site: agentData.site || null,
+        settings: agentData.siteSettings || null
+      };
+      
+      console.log(`🧠 [DataFetcher] Información de sitio incluida para el agente ${agentData.id || 'desconocido'}`);
+      console.log(`🧠 [DataFetcher] Site disponible: ${siteInfoObj.site ? 'SÍ' : 'NO'}`);
+      console.log(`🧠 [DataFetcher] Settings disponible: ${siteInfoObj.settings ? 'SÍ' : 'NO'}`);
+    } else {
+      console.log(`🧠 [DataFetcher] No se encontró información de sitio para el agente ${agentData.id || 'desconocido'}`);
+    }
+    
+    const result: {
+      name: string;
+      description: string;
+      backstory: string;
+      systemPrompt: string;
+      agentPrompt: string;
+      capabilities: string[];
+      files: any[];
+      siteInfo?: {
+        site: any | null;
+        settings: any | null;
+      };
+    } = {
       name: agentData.name || processor.getName(),
       description: '',
       backstory: '',
@@ -105,6 +232,11 @@ export class DataFetcher {
       capabilities: [] as string[],
       files: agentData.files || []
     };
+    
+    // Asignar siteInfo solo si existe información
+    if (siteInfoObj) {
+      result.siteInfo = siteInfoObj;
+    }
     
     // Extraer backstory
     if (config.backstory) {
@@ -258,4 +390,76 @@ export class DataFetcher {
     
     return [];
   }
-} 
+  
+  /**
+   * Obtiene información combinada para un agente incluyendo información del sitio y configuración
+   * @param agentId ID del agente
+   * @param siteId ID del sitio (opcional, si no se proporciona, se intentará obtener del agente)
+   * @param processor Procesador base
+   * @returns Datos completos del agente con información del sitio
+   */
+  public static async getEnhancedAgentData(
+    agentId: string, 
+    siteId?: string, 
+    processor?: Base
+  ): Promise<{
+    agentData: any;
+    siteInfo: {
+      site: any | null;
+      settings: any | null;
+    };
+    formattedData: {
+      name: string;
+      description: string;
+      backstory: string;
+      systemPrompt: string;
+      agentPrompt: string;
+      capabilities: string[];
+      files?: any[];
+    };
+  }> {
+    // Si no se proporcionó un procesador, crear uno mínimo
+    const defaultProcessor = processor || {
+      getName: () => 'Agent',
+      getId: () => 'default',
+      getCapabilities: () => []
+    } as unknown as Base;
+    
+    // Obtener datos del agente
+    const agentData = await this.getAgentData(agentId, defaultProcessor);
+    
+    // Determinar qué ID de sitio usar
+    let effectiveSiteId = siteId;
+    
+    // Si no se proporcionó un ID de sitio explícito, intentar obtenerlo del agente
+    if (!effectiveSiteId) {
+      // Intentar obtener desde la respuesta de getAgentData
+      const siteIdFromAgent = (agentData as any).site_id;
+      
+      if (siteIdFromAgent && DatabaseAdapter.isValidUUID(siteIdFromAgent)) {
+        console.log(`🧠 [DataFetcher] Usando site_id del agente: ${siteIdFromAgent}`);
+        effectiveSiteId = siteIdFromAgent;
+      }
+    }
+    
+    // Obtener información del sitio si tenemos un ID válido
+    let siteInfo = { site: null, settings: null };
+    if (effectiveSiteId) {
+      siteInfo = await this.getSiteInfo(effectiveSiteId);
+    }
+    
+    // Crear copia del agentData para añadir la información del sitio
+    const enhancedAgentData = {
+      ...agentData
+    };
+    
+    // Formatear los datos para devolverlos en el formato estándar
+    const formattedData = this.extractDataFromAgentObject(enhancedAgentData, defaultProcessor);
+    
+    return {
+      agentData: enhancedAgentData,
+      siteInfo,
+      formattedData
+    };
+  }
+}

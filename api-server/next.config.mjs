@@ -10,7 +10,6 @@ const withNextra = nextra({
 export default withNextra({
   reactStrictMode: true,
   experimental: {
-    appDir: true,
     serverActions: {
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001']
     }

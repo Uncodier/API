@@ -7,9 +7,9 @@ import { ComposioService } from '@/lib/services/composio-service';
  */
 export async function GET(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: { id: string } }
 ) {
-  const { id } = params;
+  const { id } = context.params;
   
   console.log(`[API] Starting Composio integration request for ID: ${id}`);
   

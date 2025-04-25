@@ -312,4 +312,116 @@ export class AgentService {
       return null;
     }
   }
+  
+  /**
+   * Obtener información completa de un sitio desde la base de datos
+   * 
+   * Este método consulta la tabla 'sites' para obtener toda la información
+   * del sitio, incluyendo nombre, descripción, recursos y configuración.
+   */
+  static async getSiteById(siteId: string): Promise<any | null> {
+    try {
+      if (!isValidUUID(siteId)) {
+        console.log(`[AgentService] ID de sitio no válido: ${siteId}`);
+        return null;
+      }
+      
+      console.log(`[AgentService] Obteniendo información del sitio: ${siteId}`);
+      
+      // Consultar el sitio en la base de datos con toda su información
+      const { data, error } = await supabaseAdmin
+        .from('sites')
+        .select('*')
+        .eq('id', siteId)
+        .single();
+      
+      if (error) {
+        console.error('[AgentService] Error al obtener información del sitio:', error);
+        return null;
+      }
+      
+      if (!data) {
+        console.log(`[AgentService] No se encontró el sitio con ID: ${siteId}`);
+        return null;
+      }
+      
+      // Convertir campos JSON si vienen como string
+      const jsonFields = ['resource_urls', 'competitors', 'tracking'];
+      jsonFields.forEach(field => {
+        if (data[field] && typeof data[field] === 'string') {
+          try {
+            data[field] = JSON.parse(data[field]);
+          } catch (e) {
+            console.error(`[AgentService] Error parsing site ${field}:`, e);
+          }
+        }
+      });
+      
+      console.log(`[AgentService] Información del sitio recuperada correctamente: ${siteId}`);
+      
+      return data;
+    } catch (error) {
+      console.error('[AgentService] Error al obtener información del sitio:', error);
+      return null;
+    }
+  }
+  
+  /**
+   * Obtener configuración completa de un sitio desde la base de datos
+   * 
+   * Este método consulta la tabla 'settings' para obtener toda la configuración
+   * de un sitio, incluyendo información sobre la empresa, productos, servicios, etc.
+   */
+  static async getSiteSettingsById(siteId: string): Promise<any | null> {
+    try {
+      if (!isValidUUID(siteId)) {
+        console.log(`[AgentService] ID de sitio no válido para obtener configuración: ${siteId}`);
+        return null;
+      }
+      
+      console.log(`[AgentService] Obteniendo configuración del sitio: ${siteId}`);
+      
+      // Consultar la configuración del sitio en la base de datos
+      const { data, error } = await supabaseAdmin
+        .from('settings')
+        .select('*')
+        .eq('site_id', siteId)
+        .single();
+      
+      if (error) {
+        console.error('[AgentService] Error al obtener configuración del sitio:', error);
+        return null;
+      }
+      
+      if (!data) {
+        console.log(`[AgentService] No se encontró configuración para el sitio con ID: ${siteId}`);
+        return null;
+      }
+      
+      // Convertir campos JSON si vienen como string
+      const jsonFields = [
+        'products', 'services', 'swot', 'locations', 'marketing_budget', 
+        'marketing_channels', 'social_media', 'goals',
+        'tracking', 'team_members', 'team_roles', 
+        'org_structure'
+      ];
+      
+      jsonFields.forEach(field => {
+        if (data[field] && typeof data[field] === 'string') {
+          try {
+            data[field] = JSON.parse(data[field]);
+          } catch (e) {
+            console.error(`[AgentService] Error parsing site_settings ${field}:`, e);
+          }
+        }
+      });
+      
+      console.log(`[AgentService] Configuración del sitio recuperada correctamente: ${siteId}`);
+      
+      return data;
+    } catch (error) {
+      console.error('[AgentService] Error al obtener configuración del sitio:', error);
+      return null;
+    }
+  }
 } 

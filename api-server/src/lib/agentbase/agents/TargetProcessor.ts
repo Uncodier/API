@@ -38,8 +38,8 @@ export class TargetProcessor extends Base {
     this.connector = connector;
     this.defaultOptions = defaultOptions || {
       modelType: 'openai',
-      modelId: 'gpt-4o',
-      maxTokens: 4000,
+      modelId: 'gpt-4.1',
+      maxTokens: 32768,
       temperature: 0.7,
       responseFormat: 'text'
     };

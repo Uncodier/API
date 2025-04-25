@@ -75,6 +75,20 @@ export class CommandConverter {
     
     if (command.model !== undefined && command.model !== null) {
       dbCommand.model = command.model;
+    } else if (command.model_id !== undefined && command.model_id !== null) {
+      // Si no hay model pero sí hay model_id, usamos el model_id como model para guardar en la BD
+      dbCommand.model = command.model_id;
+    }
+    
+    // Añadir model_type si está definido - solo en caché, no en BD
+    if (command.model_type !== undefined && command.model_type !== null) {
+      // No lo guardamos en la BD ya que no existe la columna
+      // Solo se usará internamente en el objeto en memoria
+    }
+    
+    // Añadir model_id si está definido
+    if (command.model_id !== undefined && command.model_id !== null) {
+      (dbCommand as any).model_id = command.model_id;
     }
     
     // Solo incluir agent_id si es un UUID válido
@@ -143,11 +157,24 @@ export class CommandConverter {
       updated_at: dbCommand.updated_at || new Date().toISOString(),
       agent_id: originalAgentId || dbCommand.agent_id || undefined,
       model: dbCommand.model || undefined,
+      model_type: (dbCommand as any).model_type || undefined,
+      model_id: (dbCommand as any).model_id || dbCommand.model || undefined,
       agent_background: (dbCommand as any).agent_background || undefined,
       input_tokens: dbCommand.input_tokens !== null ? dbCommand.input_tokens : undefined,
       output_tokens: dbCommand.output_tokens !== null ? dbCommand.output_tokens : undefined,
       site_id: dbCommand.site_id || undefined
     };
+    
+    // Log de información de modelo para depuración
+    console.log(`🔍 [CommandConverter] Información de modelo en la conversión:
+      dbCommand.model: ${dbCommand.model || 'undefined'}
+      (dbCommand as any).model_id: ${(dbCommand as any).model_id || 'undefined'}
+      (dbCommand as any).model_type: ${(dbCommand as any).model_type || 'undefined'}
+      Resultado final:
+      model: ${agentbaseCommand.model || 'undefined'}
+      model_id: ${agentbaseCommand.model_id || 'undefined'}
+      model_type: ${agentbaseCommand.model_type || 'undefined'}
+    `);
     
     // Si hay propiedades adicionales en dbCommand que no están en el tipo AgentbaseDbCommand, 
     // las manejamos por separado (por ejemplo, completion_date y duration)

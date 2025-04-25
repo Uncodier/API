@@ -2,6 +2,8 @@
 
 Creates a command object to generate optimized marketing campaigns based on monthly budget, business goals, and target audience.
 
+import { UnifiedApiTester } from '@/components/ApiTester';
+
 ## Endpoint
 
 ```http
@@ -14,18 +16,14 @@ POST /api/agents/growth/campaigns
 |-----------|------|----------|-------------|
 | `siteId` | string | Yes | ID of the website to create campaigns for |
 | `agent_id` | string | No | ID of the agent to handle campaign creation |
-| `segmentIds` | array | No | Array of target audience segment IDs |
 | `userId` | string | No | ID of the user creating the campaigns |
-| `totalBudget` | number | Yes | Total budget for all campaigns (in specified currency) |
-| `currency` | string | No | Currency code (default: "USD") |
-| `priority` | string | No | Campaign priority level (e.g., "high", "medium", "low") |
-| `goals` | array | Yes | Array of marketing goals (e.g., ["brand_awareness", "lead_generation"]) |
-| `timeframe` | object | No | Planning timeframe with start and end dates |
-| `channels` | array | No | Preferred marketing channels (e.g., ["social", "email", "ads"]) |
-| `industries` | array | No | Industries the business operates in |
-| `competitors` | array | No | List of main competitors |
-| `previousResults` | object | No | Previous campaign performance metrics |
-| `requirements` | array | No | List of specific requirements for campaigns |
+| `campaignData` | object | Yes | Object containing all campaign-specific data |
+
+### campaignData Object
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `segmentIds` | array | No | Array of target audience segment IDs |
 
 ### Example Request
 
@@ -33,68 +31,26 @@ POST /api/agents/growth/campaigns
 {
   "siteId": "site_456",
   "agent_id": "agent_growth_123",
-  "segmentIds": ["seg_123", "seg_456"],
   "userId": "user_789",
-  "totalBudget": 5000,
-  "currency": "USD",
-  "priority": "high",
-  "goals": ["lead_generation", "website_traffic", "brand_awareness"],
-  "timeframe": {
-    "startDate": "2023-08-01",
-    "endDate": "2023-08-31"
-  },
-  "channels": ["social", "search_ads", "email"],
-  "industries": ["software", "b2b"],
-  "competitors": ["competitor1.com", "competitor2.com"],
-  "previousResults": {
-    "avg_cpc": 1.85,
-    "conversion_rate": 2.3,
-    "email_open_rate": 22.5
-  },
-  "requirements": [
-    {
-      "title": "Product Launch Focus",
-      "description": "One campaign must focus on new product launch",
-      "instructions": "Highlight key features and benefits of our new software solution",
-      "budget": 1500
-    },
-    {
-      "title": "Lead Generation Priority",
-      "description": "At least one campaign must focus on lead generation",
-      "instructions": "Target decision-makers in the B2B software sector",
-      "budget": 2000
-    }
-  ]
+  "campaignData": {
+    "segmentIds": ["seg_123", "seg_456"]
+  }
 }
 ```
 
 ## Try It
 
-import { UnifiedApiTester } from '@/components/ApiTester';
-
-<UnifiedApiTester apiId="growth" />
-
-You can test this API directly using our API Tester interface. The Growth API tester allows you to generate optimized marketing campaigns based on your budget and business parameters.
+You can test this API directly using our API Tester interface. The API tester allows you to generate optimized marketing campaigns based on your business parameters.
 
 Required fields:
 - **Site ID**: The ID of the website to create campaigns for
-- **Total Budget**: Total budget for all campaigns
-- **Goals**: Array of marketing goals
 
 Optional fields:
 - **Agent ID**: ID of the agent to handle campaign creation
-- **Segment IDs**: Array of target audience segment IDs
 - **User ID**: ID of the user creating the campaigns
-- **Currency**: Currency code
-- **Priority**: Campaign priority level
-- **Timeframe**: Planning timeframe with start and end dates
-- **Channels**: Preferred marketing channels
-- **Industries**: Industries the business operates in
-- **Competitors**: List of main competitors
-- **Previous Results**: Previous campaign performance metrics
-- **Requirements**: List of specific requirements for campaigns
+- **Segment IDs**: Array of target audience segment IDs
 
-The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+<UnifiedApiTester apiId="growth" />
 
 ## Generated Command Structure
 
@@ -106,30 +62,19 @@ The system generates a command object with the following structure to control th
   "userId": "user_789",
   "agentId": "agent_growth_123",
   "site_id": "site_456",
-  "description": "Generate marketing campaigns with budget 5000 for goals: lead_generation, website_traffic, brand_awareness",
+  "description": "Generate marketing campaigns for the specified site",
   "targets": [
     {
       "campaigns": [
         {
           "title": "B2B Lead Generation Campaign",
           "description": "High-performance search campaign focusing on decision-makers in the B2B software sector",
-          "budget": "budget assigned for the campaign according to the total budget of the period, example: 2000",
-          "type": "inbound' | 'outbound' | 'branding' | 'product' | 'events' | 'success' | 'account' | 'community' | 'guerrilla' | 'affiliate' | 'experiential' | 'programmatic' | 'performance' | 'publicRelations",
-          "priority": "high | medium | low",
-          "requirements":  [
-            {
-              "title": "minimal tasks for the campaign to be completed",
-              "description": "task description",
-              "priority": "high | medium | low",
-              "instructions": "Rich markdown instructions, for the task",
-              "budget": "budget assigned for the task according to the total budget of the campaign, example: 1000"
-            }
-          ]
+          "type": "inbound' | 'outbound' | 'branding' | 'product' | 'events' | 'success' | 'account' | 'community' | 'guerrilla' | 'affiliate' | 'experiential' | 'programmatic' | 'performance' | 'publicRelations"
         }
       ]
     }
   ],
-  "context": "Campaign Creation Context:\n{\n  \"total_budget\": 5000,\n  \"currency\": \"USD\",\n  \"priority\": \"high\",\n  \"timeframe\": {\n    \"startDate\": \"2023-08-01\",\n    \"endDate\": \"2023-08-31\"\n  },\n  \"goals\": [\"lead_generation\", \"website_traffic\", \"brand_awareness\"],\n  \"industries\": [\"software\", \"b2b\"],\n  \"competitors\": [\"competitor1.com\", \"competitor2.com\"],\n  \"previousResults\": {\n    \"avg_cpc\": 1.85,\n    \"conversion_rate\": 2.3,\n    \"email_open_rate\": 22.5\n  },\n  \"segments\": [\n    {\n      \"title\": \"B2B Decision Makers\"\n    },\n    {\n      \"title\": \"Enterprise Software Users\"\n    }\n  ]\n}",
+  "context": "Campaign Creation Context:\n{\n  \"segments\": [\n    {\n      \"title\": \"B2B Decision Makers\"\n    },\n    {\n      \"title\": \"Enterprise Software Users\"\n    }\n  ]\n}",
   "supervisor": [
     {
       "agent_role": "growth_marketer",
@@ -155,20 +100,16 @@ The system generates a command object with the following structure to control th
     "site_id": "site_456",
     "campaigns": [
       {
-        "id": "camp_123abc",
-        "requirement_ids": ["req_456abc"]
+        "id": "camp_123abc"
       },
       {
-        "id": "camp_456def",
-        "requirement_ids": ["req_789def"]
+        "id": "camp_456def"
       },
       {
-        "id": "camp_789ghi",
-        "requirement_ids": []
+        "id": "camp_789ghi"
       },
       {
-        "id": "camp_012jkl",
-        "requirement_ids": []
+        "id": "camp_012jkl"
       }
     ],
     "saved_to_database": true
@@ -196,8 +137,6 @@ The system generates a command object with the following structure to control th
 | `SITE_NOT_FOUND` | The specified site does not exist |
 | `SEGMENT_NOT_FOUND` | The specified segment does not exist |
 | `USER_NOT_FOUND` | The specified user does not exist |
-| `INSUFFICIENT_BUDGET` | The budget is too low for effective campaign creation |
-| `INVALID_GOALS` | The specified goals are invalid or conflicting |
 | `SYSTEM_ERROR` | Internal system error occurred |
 
 ## Campaign Database Structure
@@ -207,7 +146,6 @@ The system generates a command object with the following structure to control th
 | `id` | uuid | Yes | Unique identifier for the campaign |
 | `title` | text | Yes | Title of the campaign |
 | `description` | text | No | Description of the campaign |
-| `priority` | text | No | Priority level of the campaign |
 | `status` | text | No | Current status of the campaign |
 | `type` | text | No | Type of campaign |
 | `site_id` | uuid | Yes | ID of the website (foreign key to sites.id) |
@@ -217,8 +155,6 @@ The system generates a command object with the following structure to control th
 | `due_date` | date | No | Due date for the campaign |
 | `assignees` | int4 | No | Number of assignees |
 | `issues` | int4 | No | Number of issues |
-| `revenue` | jsonb | No | Revenue information (JSON) |
-| `budget` | jsonb | No | Budget information (JSON) |
 
 ## Campaign Types
 
@@ -237,12 +173,10 @@ The system generates a command object with the following structure to control th
 
 - The command executes asynchronously
 - The generated command controls the campaign planning process with:
-  - `campaigns`: An array of objects defining campaigns with title, description, budget, type, and associated requirements
-  - `context`: Provides business information, goals, segments, and preferences to guide campaign creation
+  - `campaigns`: An array of objects defining campaigns with title, description, and type
+  - `context`: Provides business information and segments to guide campaign creation
   - `supervisors`: Defines which agent roles can provide additional input
   - `task`: Specifies the high-level objective for the agent
   - `description`: Contains the detailed prompt instructions for the agent
 - The system automatically selects the most appropriate segments for each campaign
-- Budget allocation is optimized across different campaigns based on requirements and goals
-- All created campaigns are saved to the database with the structure shown above
-- Campaign requirements allow for specific focus areas and allocation of budget to particular initiatives 
+- All created campaigns are saved to the database with the structure shown above 

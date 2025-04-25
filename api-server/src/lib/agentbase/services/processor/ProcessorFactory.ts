@@ -98,9 +98,9 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 1000,
-        temperature: 0
+        modelId: 'gpt-4.1-nano',
+        maxTokens: 32000,
+        temperature: .6
       },
       "Evaluador de herramientas que analiza y selecciona las mejores herramientas para una tarea."
     );
@@ -117,9 +117,9 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 2000,
-        temperature: 0.2
+        modelId: 'gpt-4.1',
+        maxTokens: 32000,
+        temperature: 0.7
       },
       "Procesador de targets que genera respuestas específicas para diferentes tipos de contenido.",
       `You are a target processor. Your role is to generate specific content based on defined targets.

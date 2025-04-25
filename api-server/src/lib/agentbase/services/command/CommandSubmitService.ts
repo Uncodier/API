@@ -72,6 +72,23 @@ export class CommandSubmitService {
         }
       };
       
+      // Preservar model_type y model_id para uso en memoria aunque no existan en BD
+      if (command.model_type && !memoryCommand.model_type) {
+        memoryCommand.model_type = command.model_type;
+        console.log(`🔥 [CommandSubmitService] Preservando model_type en memoria: ${command.model_type}`);
+      }
+      
+      if (command.model_id && !memoryCommand.model_id) {
+        memoryCommand.model_id = command.model_id;
+        console.log(`🔥 [CommandSubmitService] Preservando model_id en memoria: ${command.model_id}`);
+      }
+      
+      // Si existe model pero no model_id, usar model como model_id para compatibilidad
+      if (memoryCommand.model && !memoryCommand.model_id) {
+        memoryCommand.model_id = memoryCommand.model;
+        console.log(`🔥 [CommandSubmitService] Usando model como model_id en memoria: ${memoryCommand.model}`);
+      }
+      
       // Verificar si el agent_background se mantiene
       if (command.agent_background) {
         console.log(`🔍 [CommandSubmitService] Verificando si agent_background permanece en memoryCommand: ${memoryCommand.agent_background ? 'SÍ' : 'NO'}`);
@@ -83,7 +100,7 @@ export class CommandSubmitService {
         }
       }
       
-      // Guardar en memoria
+      // Guardar comando en memoria
       CommandStore.setCommand(legacyId, memoryCommand);
       console.log(`📦 [CommandSubmitService] Comando almacenado en memoria con ID: ${legacyId}`);
       

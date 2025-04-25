@@ -58,7 +58,7 @@ export class PortkeyConnector {
       
       // Set model ID based on provider
       if (modelType === 'openai') {
-        modelOptions.model = modelId || 'gpt-4o';
+        modelOptions.model = modelId || 'gpt-4.1-nano';
       } else if (modelType === 'anthropic') {
         modelOptions.model = modelId || 'claude-3-5-sonnet-20240620';
       } else if (modelType === 'gemini') {

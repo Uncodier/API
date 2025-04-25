@@ -69,20 +69,164 @@ These are your most important instructions:
 7. Avoid tokenized answers for things you think you should know like: my company name is [company name] or our webiste is [website], simply inform that you are new at the job, and you will get that information asap for them, that your are sorry for the inconvenience, that your have already informed your superiros.
 `;
 
+/**
+ * Extrae información estructurada de un mensaje de contexto
+ * @param userMessage El mensaje de contexto completo
+ * @returns Un objeto con la información estructurada
+ */
+function extractContextualInfo(userMessage: string): { 
+  originalMessage: string; 
+  leadInfo?: any; 
+  teamMemberInfo?: any;
+  visitorInfo?: string;
+  siteInfo?: any;
+  conversationInfo?: { id: string; history?: string };
+} {
+  const result: { 
+    originalMessage: string;
+    leadInfo?: any; 
+    teamMemberInfo?: any;
+    visitorInfo?: string;
+    siteInfo?: any;
+    conversationInfo?: { id: string; history?: string };
+  } = {
+    originalMessage: userMessage
+  };
+  
+  // Extraer el mensaje original (suele estar al principio)
+  const originalMessageMatch = userMessage.match(/Current message: (.*?)(?:\n|$)/);
+  if (originalMessageMatch) {
+    result.originalMessage = originalMessageMatch[1].trim();
+  }
+  
+  // Extraer información del lead
+  const leadIdMatch = userMessage.match(/Lead ID: ([a-f0-9-]+)/i);
+  const leadDetailsMatch = userMessage.match(/Lead Details: ({.*?})/);
+  
+  if (leadIdMatch || leadDetailsMatch) {
+    result.leadInfo = { id: leadIdMatch ? leadIdMatch[1] : undefined };
+    
+    // Intentar parsear los detalles del lead si existen
+    if (leadDetailsMatch) {
+      try {
+        const leadDetails = JSON.parse(leadDetailsMatch[1]);
+        result.leadInfo = { ...result.leadInfo, ...leadDetails };
+      } catch (e) {
+        console.error('[TargetProcessor] Error parsing lead details:', e);
+      }
+    }
+  }
+  
+  // Extraer información del miembro del equipo
+  const teamMemberIdMatch = userMessage.match(/Team Member ID: ([a-f0-9-]+)/i);
+  const teamMemberDetailsMatch = userMessage.match(/Team Member Details: ({.*?})/);
+  
+  if (teamMemberIdMatch || teamMemberDetailsMatch) {
+    result.teamMemberInfo = { id: teamMemberIdMatch ? teamMemberIdMatch[1] : undefined };
+    
+    // Intentar parsear los detalles del team member si existen
+    if (teamMemberDetailsMatch) {
+      try {
+        const teamMemberDetails = JSON.parse(teamMemberDetailsMatch[1]);
+        result.teamMemberInfo = { ...result.teamMemberInfo, ...teamMemberDetails };
+      } catch (e) {
+        console.error('[TargetProcessor] Error parsing team member details:', e);
+      }
+    }
+  }
+  
+  // Extraer información del visitante
+  const visitorIdMatch = userMessage.match(/Visitor ID: ([a-f0-9-]+)/i);
+  if (visitorIdMatch) {
+    result.visitorInfo = visitorIdMatch[1];
+  }
+  
+  // Extraer información del sitio
+  const siteIdMatch = userMessage.match(/Site ID: ([a-f0-9-]+)/i);
+  const siteDetailsMatch = userMessage.match(/Site Details: ({.*?})/);
+  
+  if (siteIdMatch || siteDetailsMatch) {
+    result.siteInfo = { id: siteIdMatch ? siteIdMatch[1] : undefined };
+    
+    // Intentar parsear los detalles del sitio si existen
+    if (siteDetailsMatch) {
+      try {
+        const siteDetails = JSON.parse(siteDetailsMatch[1]);
+        result.siteInfo = { ...result.siteInfo, ...siteDetails };
+      } catch (e) {
+        console.error('[TargetProcessor] Error parsing site details:', e);
+      }
+    }
+  }
+  
+  // Extraer información de la conversación
+  const conversationIdMatch = userMessage.match(/Conversation ID: ([a-f0-9-]+)/i);
+  if (conversationIdMatch) {
+    result.conversationInfo = { id: conversationIdMatch[1] };
+    
+    // Buscar historial de conversación si existe
+    const conversationHistoryMatch = userMessage.match(/Conversation History:\n([\s\S]*?)(?:\n\nConversation ID:|$)/);
+    if (conversationHistoryMatch) {
+      result.conversationInfo.history = conversationHistoryMatch[1].trim();
+    }
+  }
+  
+  return result;
+}
+
 export const formatTargetProcessorPrompt = (
   userMessage: string,
   targets: any[],
   tools: any[] = []
 ): string => {
   const targetStr = JSON.stringify(targets, null, 2);
+  const toolsStr = tools.length > 0 ? JSON.stringify(tools, null, 2) : "No tools available";
   
-  return `User message: "${userMessage}"
+  // Extraer información contextual estructurada
+  const contextInfo = extractContextualInfo(userMessage);
+  
+  // Construir sección de información contextual
+  let contextualInfoSection = '';
+  
+  if (contextInfo.leadInfo) {
+    contextualInfoSection += `\nLEAD INFORMATION:`;
+    contextualInfoSection += `\n${JSON.stringify(contextInfo.leadInfo, null, 2)}`;
+  }
+  
+  if (contextInfo.teamMemberInfo) {
+    contextualInfoSection += `\n\nTEAM MEMBER INFORMATION:`;
+    contextualInfoSection += `\n${JSON.stringify(contextInfo.teamMemberInfo, null, 2)}`;
+  }
+  
+  if (contextInfo.siteInfo) {
+    contextualInfoSection += `\n\nSITE INFORMATION:`;
+    contextualInfoSection += `\n${JSON.stringify(contextInfo.siteInfo, null, 2)}`;
+  }
+  
+  if (contextInfo.visitorInfo) {
+    contextualInfoSection += `\n\nVISITOR ID: ${contextInfo.visitorInfo}`;
+  }
+  
+  if (contextInfo.conversationInfo) {
+    contextualInfoSection += `\n\nCONVERSATION INFORMATION:`;
+    contextualInfoSection += `\nID: ${contextInfo.conversationInfo.id}`;
+    
+    if (contextInfo.conversationInfo.history) {
+      contextualInfoSection += `\nHISTORY:\n${contextInfo.conversationInfo.history}`;
+    }
+  }
+  
+  return `User message: "${contextInfo.originalMessage}"
+
+${contextualInfoSection}
 
 Available targets to process:
-
 ${targetStr}
 
-Based on the user's message, generate appropriate content for each target. Return your results in the required JSON format.
+Available tools:
+${toolsStr}
+
+Based on the user's message and the contextual information provided, generate appropriate content for each target. Return your results in the required JSON format.
 IMPORTANT: Use the EXACT SAME structure for each target in your response, including all property names and data types. Only fill in the content values directly without any additional mapping or modification to the structure.
 REMEMBER: Your response MUST be a valid array with JSON objects that matches the exact structure of the targets array provided above. Do not use json markdown decoration in your response.`;
 }; 

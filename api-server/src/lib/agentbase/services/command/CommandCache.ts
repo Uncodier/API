@@ -49,8 +49,13 @@ export class CommandCache {
       `${command.agent_background.length} chars` : 
       'sin';
     
+    // Log de información de modelo para depuración
+    const modelInfo = command.model_id 
+      ? `model_id: ${command.model_id}` 
+      : (command.model ? `model: ${command.model}` : 'sin modelo');
+    
     // Log simple con menos detalles
-    console.log(`🧠 [CommandCache] Comando cacheado: ${commandId} (${backgroundInfo} agent_background)`);
+    console.log(`🧠 [CommandCache] Comando cacheado: ${commandId} (${backgroundInfo} agent_background, ${modelInfo})`);
   }
 
   /**
@@ -108,6 +113,16 @@ export class CommandCache {
     if (command.agent_background && !updates.agent_background) {
       updatedCommand.agent_background = command.agent_background;
       // Eliminamos log redundante
+    }
+    
+    // Asegurar que el model_id se preserve y se actualice si se actualiza model
+    if (updates.model && !updates.model_id) {
+      // Si se actualiza el modelo pero no el model_id, usamos el model como model_id también
+      updatedCommand.model_id = updates.model;
+      console.log(`🧠 [CommandCache] Actualización automática de model_id a partir de model: ${updates.model}`);
+    } else if (command.model_id && !updates.model_id) {
+      // Si no se actualiza el model_id, preservamos el existente
+      updatedCommand.model_id = command.model_id;
     }
     
     // MODIFICACIÓN: Manejar específicamente los resultados para evitar duplicación

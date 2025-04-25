@@ -14,12 +14,27 @@ export class BackgroundBuilder {
     capabilities: string[],
     backstory?: string,
     systemPrompt?: string,
-    agentPrompt?: string
+    agentPrompt?: string,
+    siteInfo?: {
+      site: any | null;
+      settings: any | null;
+    }
   ): string {
     console.log(`🧩 [BackgroundBuilder] Construyendo prompt para ${name} (${id})`);
     console.log(`🧩 [BackgroundBuilder] AgentPrompt disponible: ${agentPrompt ? 'SÍ' : 'NO'} - Longitud: ${agentPrompt ? agentPrompt.length : 0}`);
     console.log(`🧩 [BackgroundBuilder] SystemPrompt disponible: ${systemPrompt ? 'SÍ' : 'NO'} - Longitud: ${systemPrompt ? systemPrompt.length : 0}`);
     console.log(`🧩 [BackgroundBuilder] Backstory disponible: ${backstory ? 'SÍ' : 'NO'} - Longitud: ${backstory ? backstory.length : 0}`);
+    console.log(`🧩 [BackgroundBuilder] SiteInfo disponible: ${siteInfo ? 'SÍ' : 'NO'}`);
+    if (siteInfo) {
+      console.log(`🧩 [BackgroundBuilder] SiteInfo.site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
+      console.log(`🧩 [BackgroundBuilder] SiteInfo.settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
+      if (siteInfo.site) {
+        console.log(`🧩 [BackgroundBuilder] SiteInfo.site tiene los campos: ${Object.keys(siteInfo.site).join(', ')}`);
+      }
+      if (siteInfo.settings) {
+        console.log(`🧩 [BackgroundBuilder] SiteInfo.settings tiene los campos: ${Object.keys(siteInfo.settings).join(', ')}`);
+      }
+    }
     console.log(`🧩 [BackgroundBuilder] Capabilities recibidas (${capabilities.length}): ${capabilities.join(', ')}`);
     
     // Construir el prompt de forma estructurada por bloques
@@ -30,7 +45,9 @@ export class BackgroundBuilder {
       this.createCapabilitiesSection(capabilities),
       this.createInstructionsSection(name),
       this.createSystemSection(systemPrompt),
-      this.createCustomInstructionsSection(agentPrompt)
+      this.createCustomInstructionsSection(agentPrompt),
+      // No incluimos siteInfo si es null o los dos campos son null
+      (!siteInfo || (!siteInfo.site && !siteInfo.settings)) ? '' : this.createSiteInfoSection(siteInfo)
     ];
     
     // Unir todas las secciones, filtrando las vacías
@@ -41,7 +58,7 @@ export class BackgroundBuilder {
     console.log(`📏 [BackgroundBuilder] Longitud total del prompt generado: ${finalPrompt.length} caracteres`);
     
     // Verificaciones de control
-    this.verifyPromptSections(finalPrompt, systemPrompt, agentPrompt, backstory);
+    this.verifyPromptSections(finalPrompt, systemPrompt, agentPrompt, backstory, siteInfo);
     
     return finalPrompt;
   }
@@ -61,6 +78,180 @@ export class BackgroundBuilder {
     
     console.log(`🔍 [BackgroundBuilder] Añadiendo backstory del agente: ${backstory.substring(0, 50)}...`);
     return `# Backstory\n${backstory}`;
+  }
+  
+  /**
+   * Crea la sección de información del sitio si está disponible
+   */
+  private static createSiteInfoSection(siteInfo?: { site: any | null; settings: any | null }): string {
+    if (!siteInfo || (!siteInfo.site && !siteInfo.settings)) return '';
+    
+    console.log(`🔍 [BackgroundBuilder] Iniciando creación de sección de sitio`);
+    let siteSection = '# Site Information\n';
+    
+    // Añadir información básica del sitio
+    if (siteInfo.site) {
+      console.log(`🔍 [BackgroundBuilder] Añadiendo información del sitio: ${siteInfo.site.name || 'Sitio Desconocido'}`);
+      
+      siteSection += `## Site Details\n`;
+      siteSection += `Name: ${siteInfo.site.name || 'Not specified'}\n`;
+      siteSection += `URL: ${siteInfo.site.url || 'Not specified'}\n`;
+      siteSection += `Description: ${siteInfo.site.description || 'Not specified'}\n`;
+      
+      // Agregar recursos del sitio si existen con una explicación
+      if (siteInfo.site.resource_urls && Object.keys(siteInfo.site.resource_urls).length > 0) {
+        siteSection += `\n## Important External URL Resources\n`;
+        siteSection += `These are key external resources relevant to the site that can provide additional context and information:\n`;
+        siteSection += `${JSON.stringify(siteInfo.site.resource_urls)}\n`;
+      }
+    }
+    
+    // Añadir configuración del sitio si está disponible
+    if (siteInfo.settings) {
+      console.log(`🔍 [BackgroundBuilder] Añadiendo configuración del sitio (type: ${typeof siteInfo.settings})`);
+      console.log(`🔍 [BackgroundBuilder] Settings keys: ${Object.keys(siteInfo.settings).join(', ')}`);
+      
+      siteSection += `\n## Site Configuration\n`;
+      
+      // Información general
+      siteSection += `About: ${siteInfo.settings.about || 'Not specified'}\n`;
+      siteSection += `Company Size: ${siteInfo.settings.company_size || 'Not specified'}\n`;
+      siteSection += `Industry: ${siteInfo.settings.industry || 'Not specified'}\n`;
+      
+      // Interpretar el focus_mode si está disponible (ahora en settings)
+      if (siteInfo.settings.focus_mode !== undefined && siteInfo.settings.focus_mode !== null) {
+        let focusInterpretation = '';
+        const focusValue = parseInt(siteInfo.settings.focus_mode);
+        
+        if (focusValue === 0) {
+          focusInterpretation = 'Completely focused on sales and revenue';
+        } else if (focusValue < 25) {
+          focusInterpretation = 'High priority on sales and revenue';
+        } else if (focusValue < 45) {
+          focusInterpretation = 'Moderately focused on sales with some growth considerations';
+        } else if (focusValue >= 45 && focusValue <= 55) {
+          focusInterpretation = 'Balanced focus between revenue and growth';
+        } else if (focusValue < 75) {
+          focusInterpretation = 'Moderately focused on growth with some revenue considerations';
+        } else if (focusValue < 100) {
+          focusInterpretation = 'High priority on growth and usage';
+        } else {
+          focusInterpretation = 'Completely focused on growth and usage';
+        }
+        
+        siteSection += `Focus Mode: ${focusValue} (${focusInterpretation})\n`;
+      }
+      
+      // Análisis SWOT
+      if (siteInfo.settings.swot) {
+        try {
+          console.log(`🔍 [BackgroundBuilder] Añadiendo SWOT (type: ${typeof siteInfo.settings.swot})`);
+          if (typeof siteInfo.settings.swot === 'string') {
+            console.log(`🔍 [BackgroundBuilder] SWOT es un string, intentando parsear: ${siteInfo.settings.swot.substring(0, 50)}...`);
+          } else {
+            console.log(`🔍 [BackgroundBuilder] SWOT keys: ${Object.keys(siteInfo.settings.swot).join(', ')}`);
+          }
+          
+          // Añadimos estructura mejorada para SWOT
+          siteSection += `\n## SWOT Analysis\n`;
+          
+          // Verficamos si es un objeto o un string que hay que parsear
+          const swotData = typeof siteInfo.settings.swot === 'string' 
+            ? JSON.parse(siteInfo.settings.swot) 
+            : siteInfo.settings.swot;
+            
+          // Estructurar cada componente del SWOT
+          siteSection += `### Strengths\n${swotData.strengths || 'Not specified'}\n\n`;
+          siteSection += `### Weaknesses\n${swotData.weaknesses || 'Not specified'}\n\n`;
+          siteSection += `### Opportunities\n${swotData.opportunities || 'Not specified'}\n\n`;
+          siteSection += `### Threats\n${swotData.threats || 'Not specified'}\n`;
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando SWOT:`, error);
+          siteSection += `\nSWOT Analysis: ${JSON.stringify(siteInfo.settings.swot)}\n`;
+        }
+      }
+      
+      // Información de marketing
+      if (siteInfo.settings.marketing_budget) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo marketing_budget`);
+        try {
+          // Mejorar estructura del presupuesto de marketing
+          const budgetData = typeof siteInfo.settings.marketing_budget === 'string'
+            ? JSON.parse(siteInfo.settings.marketing_budget)
+            : siteInfo.settings.marketing_budget;
+            
+          siteSection += `\n## Marketing Budget\n`;
+          siteSection += `Total Budget: $${budgetData.total || 0} USD\n`;
+          siteSection += `Available Budget: $${budgetData.available || 0} USD\n`;
+          
+          // Si hay más datos de presupuesto, mostrarlos
+          const otherKeys = Object.keys(budgetData).filter(k => !['total', 'available'].includes(k));
+          if (otherKeys.length > 0) {
+            siteSection += `Additional Budget Information: ${JSON.stringify(
+              otherKeys.reduce((obj, key) => ({ ...obj, [key]: budgetData[key] }), {})
+            )}\n`;
+          }
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando marketing_budget:`, error);
+          siteSection += `\nMarketing Budget: ${JSON.stringify(siteInfo.settings.marketing_budget)}\n`;
+        }
+      }
+      
+      // Productos (en una sección separada)
+      if (siteInfo.settings.products) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo products`);
+        siteSection += `\n## Products\n${JSON.stringify(siteInfo.settings.products)}\n`;
+      }
+      
+      // Servicios (en una sección separada)
+      if (siteInfo.settings.services) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo services`);
+        siteSection += `\n## Services\n${JSON.stringify(siteInfo.settings.services)}\n`;
+      }
+      
+      // Ubicaciones
+      if (siteInfo.settings.locations) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo locations`);
+        siteSection += `\n## Locations\n${JSON.stringify(siteInfo.settings.locations)}\n`;
+      }
+      
+      if (siteInfo.settings.marketing_channels) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo marketing_channels`);
+        siteSection += `\n## Marketing Channels\n${JSON.stringify(siteInfo.settings.marketing_channels)}\n`;
+      }
+      
+      if (siteInfo.settings.social_media) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
+        siteSection += `\n## Social Media\n${JSON.stringify(siteInfo.settings.social_media)}\n`;
+      }
+      
+      // Agregar objetivos/metas si están disponibles
+      if (siteInfo.settings.goals) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo goals`);
+        siteSection += `\n## Goals\n${JSON.stringify(siteInfo.settings.goals)}\n`;
+      }
+      
+      // Información del equipo
+      if (siteInfo.settings.team_members) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo team_members`);
+        siteSection += `\n## Team Members\n${JSON.stringify(siteInfo.settings.team_members)}\n`;
+      }
+      
+      if (siteInfo.settings.team_roles) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo team_roles`);
+        siteSection += `\n## Team Roles\n${JSON.stringify(siteInfo.settings.team_roles)}\n`;
+      }
+      
+      if (siteInfo.settings.org_structure) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo org_structure`);
+        siteSection += `\n## Organizational Structure\n${JSON.stringify(siteInfo.settings.org_structure)}\n`;
+      }
+    } else {
+      console.log(`⚠️ [BackgroundBuilder] No hay settings disponibles en siteInfo`);
+    }
+    
+    console.log(`🔍 [BackgroundBuilder] Sección de sitio creada (${siteSection.length} caracteres)`);
+    return siteSection;
   }
   
   /**
@@ -121,7 +312,8 @@ export class BackgroundBuilder {
     finalPrompt: string, 
     systemPrompt?: string, 
     agentPrompt?: string, 
-    backstory?: string
+    backstory?: string,
+    siteInfo?: { site: any | null; settings: any | null }
   ): void {
     if (systemPrompt && !finalPrompt.includes('# System Instructions')) {
       console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir systemPrompt pero no se encontró en el prompt final`);
@@ -133,6 +325,25 @@ export class BackgroundBuilder {
     
     if (backstory && !finalPrompt.includes('# Backstory')) {
       console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir backstory pero no se encontró en el prompt final`);
+    }
+    
+    if (siteInfo && siteInfo.site && !finalPrompt.includes('# Site Information')) {
+      console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir información del sitio pero no se encontró en el prompt final`);
+    }
+    
+    if (siteInfo && siteInfo.settings) {
+      // Verificar que se incluyeron propiedades específicas del settings
+      if (siteInfo.settings.swot && !finalPrompt.includes('SWOT Analysis')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Análisis SWOT pero no se encontró en el prompt final`);
+      }
+      
+      if (siteInfo.settings.products && !finalPrompt.includes('## Products')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Productos pero no se encontró en el prompt final`);
+      }
+      
+      if (siteInfo.settings.services && !finalPrompt.includes('## Services')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Servicios pero no se encontró en el prompt final`);
+      }
     }
   }
   
