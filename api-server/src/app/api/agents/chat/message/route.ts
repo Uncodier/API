@@ -490,6 +490,10 @@ export async function POST(request: Request) {
       contextMessage = `${contextMessage}\nSite ID: ${site_id}`;
     }
     
+    if (team_member_id) {
+      contextMessage = `${contextMessage}\nTeam Member ID: ${team_member_id}`;
+    }
+    
     // Define default tools in case agent doesn't have any - empty array as per specification
     const defaultTools: any[] = [
       {
@@ -600,7 +604,10 @@ export async function POST(request: Request) {
           agent_role: 'manager',
           status: 'not_initialized'
         }
-      ]
+      ],
+      // Set model instead of model_id
+      model: 'gpt-4.1-mini',
+      modelType: 'openai'
     });
     
     // Submit the command for processing
