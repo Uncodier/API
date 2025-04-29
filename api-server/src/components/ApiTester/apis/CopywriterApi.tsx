@@ -1,91 +1,90 @@
 'use client';
 
 import React from 'react';
-import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../components/FormComponents';
+import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
+import { FormField } from '../components/FormComponents';
 
-// Props específicas para la API de Copywriter
+// Props específicas para el API de Copywriter
 export interface CopywriterApiProps {
-  defaultSiteId?: string;
-  defaultSegmentId?: string;
-  defaultCampaignId?: string;
-  defaultUserId?: string;
-  defaultAgentId?: string;
-  defaultTimeframe?: string;
-  defaultContentType?: string;
-  defaultTargetAudience?: string;
-  defaultGoals?: string;
-  defaultKeywords?: string;
+  defaultModel?: string;
+  defaultModelType?: string;
+  showModelOptions?: boolean;
 }
 
-// Estado específico para la API de Copywriter
+// Estado específico para el API de Copywriter
 export interface CopywriterApiState {
+  contentId: string;
   siteId: string;
-  segmentId: string;
-  campaignId: string;
-  userId: string;
-  agent_id: string;
-  timeframe: string;
-  contentType: string;
-  targetAudience: string;
-  goals: string;
-  keywords: string;
+  segmentId?: string;
+  campaignId?: string;
+  userId?: string;
+  agent_id?: string;
+  quickAction?: string;
+  styleControls?: {
+    tone?: string;
+    complexity?: string;
+    creativity?: string;
+    persuasiveness?: string;
+    targetAudience?: string;
+    engagement?: string;
+    size?: string;
+  };
+  whatImGoodAt?: string;
+  topicsImInterestedIn?: string;
+  topicsToAvoid?: string;
+  aiPrompt?: string;
 }
 
 // Configuración de la API de Copywriter
 const CopywriterApi: BaseApiConfig = {
   id: 'copywriter',
-  name: 'Content Calendar API',
-  description: 'API para generar calendarios de contenido utilizando IA.',
-  defaultEndpoint: '/api/agents/copywriter/content-calendar',
+  name: 'API de Copywriter',
+  description: 'API para edición y mejora de contenido utilizando IA',
+  defaultEndpoint: '/api/agents/copywriter/content-editor',
 
   // Obtener el estado inicial
   getInitialState: (props: CopywriterApiProps): CopywriterApiState => {
     return {
-      siteId: props.defaultSiteId || '',
-      segmentId: props.defaultSegmentId || '',
-      campaignId: props.defaultCampaignId || '',
-      userId: props.defaultUserId || '',
-      agent_id: props.defaultAgentId || '',
-      timeframe: props.defaultTimeframe || '',
-      contentType: props.defaultContentType || '',
-      targetAudience: props.defaultTargetAudience || '',
-      goals: props.defaultGoals || '',
-      keywords: props.defaultKeywords || ''
+      contentId: '',
+      siteId: '',
+      segmentId: '',
+      campaignId: '',
+      userId: '',
+      agent_id: '',
+      quickAction: 'improve',
+      styleControls: {
+        tone: 'friendly',
+        complexity: 'moderate',
+        creativity: 'balanced',
+        persuasiveness: 'balanced',
+        targetAudience: 'mixed',
+        engagement: 'balanced',
+        size: 'medium'
+      },
+      whatImGoodAt: '',
+      topicsImInterestedIn: '',
+      topicsToAvoid: '',
+      aiPrompt: 'Make this content more engaging and impactful'
     };
   },
 
   // Construir el cuerpo de la solicitud
   buildRequestBody: (state: CopywriterApiState): Record<string, any> => {
     const body: Record<string, any> = {
-      siteId: state.siteId,
+      contentId: state.contentId,
+      siteId: state.siteId
     };
     
-    // Add optional parameters if they have values
     if (state.segmentId) body.segmentId = state.segmentId;
     if (state.campaignId) body.campaignId = state.campaignId;
     if (state.userId) body.userId = state.userId;
     if (state.agent_id) body.agent_id = state.agent_id;
-    if (state.timeframe) body.timeframe = state.timeframe;
-    if (state.contentType) body.contentType = state.contentType;
-    if (state.targetAudience) body.targetAudience = state.targetAudience;
-    
-    // Parse arrays
-    if (state.goals) {
-      try {
-        body.goals = state.goals.split(',').map(g => g.trim());
-      } catch (err) {
-        body.goals = [state.goals];
-      }
-    }
-    
-    if (state.keywords) {
-      try {
-        body.keywords = state.keywords.split(',').map(k => k.trim());
-      } catch (err) {
-        body.keywords = [state.keywords];
-      }
-    }
+    if (state.quickAction) body.quickAction = state.quickAction;
+    if (state.styleControls) body.styleControls = state.styleControls;
+    if (state.whatImGoodAt) body.whatImGoodAt = state.whatImGoodAt;
+    if (state.topicsImInterestedIn) body.topicsImInterestedIn = state.topicsImInterestedIn;
+    if (state.topicsToAvoid) body.topicsToAvoid = state.topicsToAvoid;
+    if (state.aiPrompt) body.aiPrompt = state.aiPrompt;
     
     return body;
   },
@@ -94,115 +93,228 @@ const CopywriterApi: BaseApiConfig = {
   renderFields: (props: {
     state: CopywriterApiState;
     setState: React.Dispatch<React.SetStateAction<CopywriterApiState>>;
-    additionalFields?: any[];
+    showModelOptions?: boolean;
   }) => {
-    const { state, setState } = props;
+    const { state, setState, showModelOptions } = props;
     
-    const handleChange = (field: keyof CopywriterApiState, value: string | boolean) => {
-      setState(prev => ({ ...prev, [field]: value }));
+    // Función para manejar cambios en los campos
+    const handleChange = (field: string, value: any) => {
+      setState((prev: any) => ({
+        ...prev,
+        [field]: value
+      }));
+    };
+
+    // Función para manejar cambios en los controles de estilo
+    const handleStyleChange = (field: string, value: any) => {
+      setState((prev: any) => ({
+        ...prev,
+        styleControls: {
+          ...prev.styleControls,
+          [field]: value
+        }
+      }));
     };
     
     return (
       <>
-        <SectionLabel>Required Fields</SectionLabel>
-        
         <FormField
-          label="Site ID"
-          id="siteId"
+          label="ID del Contenido"
+          id="contentId"
           type="text"
-          value={state.siteId}
-          placeholder="site_123"
-          onChange={(value: string) => handleChange('siteId', value)}
+          value={state.contentId}
+          onChange={(value: any) => handleChange('contentId', value)}
+          placeholder="content_abc123"
           required
         />
         
-        <SectionLabel>Optional Fields</SectionLabel>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <FormField
-            label="Segment ID"
-            id="segmentId"
-            type="text"
-            value={state.segmentId}
-            placeholder="segment_456"
-            onChange={(value: string) => handleChange('segmentId', value)}
-          />
-          
-          <FormField
-            label="Campaign ID"
-            id="campaignId"
-            type="text"
-            value={state.campaignId}
-            placeholder="campaign_789"
-            onChange={(value: string) => handleChange('campaignId', value)}
-          />
-        </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <FormField
-            label="User ID"
-            id="userId"
-            type="text"
-            value={state.userId}
-            placeholder="user_123"
-            onChange={(value: string) => handleChange('userId', value)}
-          />
-          
-          <FormField
-            label="Agent ID"
-            id="agent_id"
-            type="text"
-            value={state.agent_id}
-            placeholder="agent_copywriter_123"
-            onChange={(value: string) => handleChange('agent_id', value)}
-          />
-        </div>
-        
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <FormField
-            label="Timeframe"
-            id="timeframe"
-            type="text"
-            value={state.timeframe}
-            placeholder="week, month, quarter"
-            onChange={(value: string) => handleChange('timeframe', value)}
-          />
-          
-          <FormField
-            label="Content Type"
-            id="contentType"
-            type="text"
-            value={state.contentType}
-            placeholder="blog, social, email"
-            onChange={(value: string) => handleChange('contentType', value)}
-          />
-        </div>
+        <FormField
+          label="ID del Sitio"
+          id="siteId"
+          type="text"
+          value={state.siteId}
+          onChange={(value: any) => handleChange('siteId', value)}
+          placeholder="site_456"
+          required
+        />
         
         <FormField
-          label="Target Audience"
+          label="ID del Segmento (opcional)"
+          id="segmentId"
+          type="text"
+          value={state.segmentId}
+          onChange={(value: any) => handleChange('segmentId', value)}
+          placeholder="seg_789"
+        />
+        
+        <FormField
+          label="ID de la Campaña (opcional)"
+          id="campaignId"
+          type="text"
+          value={state.campaignId}
+          onChange={(value: any) => handleChange('campaignId', value)}
+          placeholder="camp_123"
+        />
+        
+        <FormField
+          label="ID del Usuario (opcional)"
+          id="userId"
+          type="text"
+          value={state.userId}
+          onChange={(value: any) => handleChange('userId', value)}
+          placeholder="user_789"
+        />
+        
+        <FormField
+          label="ID del Agente (opcional)"
+          id="agent_id"
+          type="text"
+          value={state.agent_id}
+          onChange={(value: any) => handleChange('agent_id', value)}
+          placeholder="agent_copywriter_123"
+        />
+        
+        <FormField
+          label="Acción Rápida"
+          id="quickAction"
+          type="select"
+          value={state.quickAction}
+          onChange={(value: any) => handleChange('quickAction', value)}
+          options={[
+            { value: "improve", label: "Mejorar" },
+            { value: "expand", label: "Expandir" },
+            { value: "style", label: "Estilizar" },
+            { value: "summarize", label: "Resumir" }
+          ]}
+        />
+        
+        <h4>Controles de Estilo</h4>
+        
+        <FormField
+          label="Tono"
+          id="tone"
+          type="select"
+          value={state.styleControls?.tone}
+          onChange={(value: any) => handleStyleChange('tone', value)}
+          options={[
+            { value: "neutral", label: "Neutral 🙂" },
+            { value: "friendly", label: "Amigable 😊" }
+          ]}
+        />
+        
+        <FormField
+          label="Complejidad"
+          id="complexity"
+          type="select"
+          value={state.styleControls?.complexity}
+          onChange={(value: any) => handleStyleChange('complexity', value)}
+          options={[
+            { value: "simple", label: "Simple 📝" },
+            { value: "moderate", label: "Moderada 📘" },
+            { value: "advanced", label: "Avanzada 📚" }
+          ]}
+        />
+        
+        <FormField
+          label="Creatividad"
+          id="creativity"
+          type="select"
+          value={state.styleControls?.creativity}
+          onChange={(value: any) => handleStyleChange('creativity', value)}
+          options={[
+            { value: "factual", label: "Fáctica 📋" },
+            { value: "balanced", label: "Balanceada 📊" },
+            { value: "creative", label: "Creativa 🎨" }
+          ]}
+        />
+        
+        <FormField
+          label="Persuasión"
+          id="persuasiveness"
+          type="select"
+          value={state.styleControls?.persuasiveness}
+          onChange={(value: any) => handleStyleChange('persuasiveness', value)}
+          options={[
+            { value: "informative", label: "Informativa ℹ️" },
+            { value: "balanced", label: "Balanceada 📊" },
+            { value: "persuasive", label: "Persuasiva 🔥" }
+          ]}
+        />
+        
+        <FormField
+          label="Audiencia Objetivo"
           id="targetAudience"
-          type="text"
-          value={state.targetAudience}
-          placeholder="small business owners"
-          onChange={(value: string) => handleChange('targetAudience', value)}
+          type="select"
+          value={state.styleControls?.targetAudience}
+          onChange={(value: any) => handleStyleChange('targetAudience', value)}
+          options={[
+            { value: "mixed", label: "Mixta 👥" },
+            { value: "specific", label: "Específica 👤" }
+          ]}
         />
         
         <FormField
-          label="Goals (comma-separated)"
-          id="goals"
-          type="text"
-          value={state.goals}
-          placeholder="increase engagement, drive traffic"
-          onChange={(value: string) => handleChange('goals', value)}
+          label="Engagement"
+          id="engagement"
+          type="select"
+          value={state.styleControls?.engagement}
+          onChange={(value: any) => handleStyleChange('engagement', value)}
+          options={[
+            { value: "professional", label: "Profesional 👔" },
+            { value: "balanced", label: "Balanceado 📊" },
+            { value: "engaging", label: "Atractivo 🤩" }
+          ]}
         />
         
         <FormField
-          label="Keywords (comma-separated)"
-          id="keywords"
-          type="text"
-          value={state.keywords}
-          placeholder="marketing, business, productivity"
-          onChange={(value: string) => handleChange('keywords', value)}
+          label="Tamaño"
+          id="size"
+          type="select"
+          value={state.styleControls?.size}
+          onChange={(value: any) => handleStyleChange('size', value)}
+          options={[
+            { value: "short", label: "Corto 📄" },
+            { value: "medium", label: "Medio 📃" },
+            { value: "long", label: "Largo 📜" }
+          ]}
+        />
+        
+        <h4>Preferencias de Usuario</h4>
+        
+        <FormField
+          label="En qué soy bueno"
+          id="whatImGoodAt"
+          type="textarea"
+          value={state.whatImGoodAt}
+          onChange={(value: any) => handleChange('whatImGoodAt', value)}
+          placeholder="Digital marketing, SEO, content strategy"
+        />
+        
+        <FormField
+          label="Temas en los que estoy interesado"
+          id="topicsImInterestedIn"
+          type="textarea"
+          value={state.topicsImInterestedIn}
+          onChange={(value: any) => handleChange('topicsImInterestedIn', value)}
+          placeholder="Tech, marketing, business growth"
+        />
+        
+        <FormField
+          label="Temas a evitar"
+          id="topicsToAvoid"
+          type="textarea"
+          value={state.topicsToAvoid}
+          onChange={(value: any) => handleChange('topicsToAvoid', value)}
+          placeholder="Politics, controversial topics"
+        />
+        
+        <FormField
+          label="Instrucciones personalizadas"
+          id="aiPrompt"
+          type="textarea"
+          value={state.aiPrompt}
+          onChange={(value: any) => handleChange('aiPrompt', value)}
+          placeholder="Make this content more engaging for small business owners"
         />
       </>
     );

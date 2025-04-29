@@ -18,6 +18,19 @@ export function middleware(request: NextRequest) {
     const pathname = request.nextUrl.pathname.replace(/\/+/g, '/');
     console.log(`[MIDDLEWARE] Normalized path: ${pathname}`);
     
+    // Check if this is a WebSocket upgrade request for the chat endpoint
+    const isWebSocketRequest = request.headers.get('connection')?.toLowerCase().includes('upgrade') && 
+                               request.headers.get('upgrade')?.toLowerCase() === 'websocket' &&
+                               pathname === '/api/agents/chat/websocket';
+    
+    // If it's a WebSocket upgrade request, bypass the middleware completely
+    if (isWebSocketRequest) {
+      console.log('[MIDDLEWARE] WebSocket upgrade request detected, bypassing middleware');
+      console.log('==== MIDDLEWARE EXECUTION COMPLETE - WEBSOCKET BYPASS ====');
+      // Just pass the request through without modification
+      return NextResponse.next();
+    }
+    
     // Check if the path is a visitors route
     const isVisitorsRoute = pathname.startsWith('/api/visitors/') && 
       (pathname.includes('/track') || 
@@ -31,7 +44,8 @@ export function middleware(request: NextRequest) {
     // Check if the path is an agents route
     const isAgentsRoute = pathname.startsWith('/api/agents/') &&
       (pathname.includes('/customerSupport') ||
-       pathname.includes('/chat'));
+       pathname.includes('/chat') ||
+       pathname.includes('/copywriter/content-editor'));
     
     console.log(`[MIDDLEWARE] Is visitors route: ${isVisitorsRoute}`);
     console.log(`[MIDDLEWARE] Is agents route: ${isAgentsRoute}`);
@@ -185,6 +199,7 @@ export const config = {
     '/api/agents/customerSupport/:path*',
     '/api/agents/customerSupport/conversations/:path*',
     '/api/agents/chat/:path*',
+    '/api/agents/copywriter/content-editor/:path*',
     '/api/agents/integrations/:path*',
     '/api/agents/integrations/list'
   ],

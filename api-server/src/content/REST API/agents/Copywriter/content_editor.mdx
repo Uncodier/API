@@ -73,7 +73,12 @@ POST /api/agents/copywriter/content-editor
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
-<UnifiedApiTester apiId="copywriter" />
+<UnifiedApiTester 
+  apiId="copywriter" 
+  title="Content Editor API Tester" 
+  description="Edit and improve content with AI using the Content Editor API"
+  defaultEndpoint="/api/agents/copywriter/content-editor"
+/>
 
 You can test this API directly using our API Tester interface. The Copywriter API tester allows you to edit content with different parameters and see the results.
 

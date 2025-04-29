@@ -326,8 +326,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar agent_id si está presente
     if (agentId) userMessageObj.agent_id = agentId;
     
-    // Agregar command_id si está presente
-    if (commandId) userMessageObj.command_id = commandId;
+    // Agregar command_id si está presente y es un UUID válido
+    if (commandId && isValidUUID(commandId)) {
+      userMessageObj.command_id = commandId;
+    }
     
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
     
@@ -363,8 +365,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar agent_id si está presente
     if (agentId) assistantMessageObj.agent_id = agentId;
     
-    // Agregar command_id si está presente
-    if (commandId) assistantMessageObj.command_id = commandId;
+    // Agregar command_id si está presente y es un UUID válido
+    if (commandId && isValidUUID(commandId)) {
+      assistantMessageObj.command_id = commandId;
+    }
     
     console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
     
@@ -435,6 +439,10 @@ async function getConversationHistory(conversationId: string): Promise<Array<{ro
     
     console.log(`✅ Se encontraron ${data.length} mensajes en la conversación`);
     
+    // Log de roles encontrados para depuración
+    const rolesFound = data.map(msg => msg.role || msg.sender_type || 'undefined').join(', ');
+    console.log(`🔍 Roles encontrados en los mensajes: ${rolesFound}`);
+    
     // Formatear los mensajes para el contexto del comando
     const formattedMessages = data.map(msg => {
       // Determinar el rol según los campos disponibles
@@ -444,12 +452,18 @@ async function getConversationHistory(conversationId: string): Promise<Array<{ro
         // Si el campo role existe, usarlo directamente
         role = msg.role;
       } else if (msg.sender_type) {
-        // Si existe sender_type, hacer la conversión
-        role = msg.sender_type === 'visitor' || msg.sender_type === 'user' ? 'user' : 'assistant';
+        // Si existe sender_type, usarlo directamente también
+        role = msg.sender_type;
+      } else if (msg.visitor_id) {
+        // Si hay visitor_id pero no role ni sender_type, asignar 'visitor'
+        role = 'visitor';
       } else if (!msg.user_id) {
         // Si no hay user_id, asumimos que es asistente
         role = 'assistant';
       }
+      
+      // Log detallado para depuración
+      console.log(`📝 Mensaje ${msg.id}: role=${role}, visitor_id=${msg.visitor_id || 'N/A'}, user_id=${msg.user_id || 'N/A'}`);
       
       return {
         role,
@@ -473,7 +487,20 @@ function formatConversationHistoryForContext(messages: Array<{role: string, cont
   let formattedHistory = '```conversation\n';
   
   messages.forEach((msg, index) => {
-    const roleDisplay = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+    // Mejorado para soportar múltiples tipos de roles
+    let roleDisplay = 'ASSISTANT';
+    
+    // Mapear diferentes roles a su visualización adecuada
+    if (msg.role === 'user' || msg.role === 'visitor') {
+      roleDisplay = 'USER';
+    } else if (msg.role === 'team_member') {
+      roleDisplay = 'TEAM';
+    } else if (msg.role === 'assistant' || msg.role === 'agent') {
+      roleDisplay = 'ASSISTANT';
+    } else if (msg.role === 'system') {
+      roleDisplay = 'SYSTEM';
+    }
+    
     formattedHistory += `[${index + 1}] ${roleDisplay}: ${msg.content.trim()}\n`;
     
     // Add a separator between messages for better readability
@@ -604,9 +631,14 @@ export async function POST(request: Request) {
       if (historyMessages && historyMessages.length > 0) {
         // Filter out any messages that might be duplicates of the current message
         // This prevents the current message from appearing twice in the context
-        const filteredMessages = historyMessages.filter(msg => 
-          msg.role !== 'user' || msg.content.trim() !== message.trim()
-        );
+        const filteredMessages = historyMessages.filter(msg => {
+          // No filtrar mensajes de asistente o team_member
+          if (msg.role === 'assistant' || msg.role === 'team_member' || msg.role === 'system') {
+            return true;
+          }
+          // Para mensajes de usuario o visitante, comparar el contenido
+          return msg.content.trim() !== message.trim();
+        });
         
         if (filteredMessages.length > 0) {
           const conversationHistory = formatConversationHistoryForContext(filteredMessages);
@@ -866,11 +898,13 @@ export async function POST(request: Request) {
             messages: {
               user: {
                 content: message,
-                message_id: savedMessages?.userMessageId
+                message_id: savedMessages?.userMessageId,
+                command_id: internalCommandId
               },
               assistant: {
                 content: assistantMessage,
-                message_id: savedMessages?.assistantMessageId
+                message_id: savedMessages?.assistantMessageId,
+                command_id: internalCommandId
               }
             },
             debug: {
@@ -946,7 +980,7 @@ export async function POST(request: Request) {
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
     // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, internalCommandId);
+    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, effectiveDbUuid);
     
     if (!savedMessages) {
       console.error(`❌ Error al guardar mensajes en la base de datos`);
@@ -983,11 +1017,13 @@ export async function POST(request: Request) {
           messages: {
             user: {
               content: message,
-              message_id: savedMessages.userMessageId
+              message_id: savedMessages.userMessageId,
+              command_id: effectiveDbUuid
             },
             assistant: {
               content: assistantMessage,
-              message_id: savedMessages.assistantMessageId
+              message_id: savedMessages.assistantMessageId,
+              command_id: effectiveDbUuid
             }
           },
           debug: {

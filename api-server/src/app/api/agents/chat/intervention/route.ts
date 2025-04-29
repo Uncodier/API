@@ -186,7 +186,7 @@ export async function POST(request: Request) {
     // Usar el título de la conversación proporcionado o crear uno por defecto
     const conversationTitle = conversation_title || "Intervention Conversation";
     
-    // Guardar los mensajes en la base de datos
+    // Guardar los mensajes en la base de datos - Eliminamos la generación del command_id aleatorio
     const savedMessages = await saveMessages(
       user_id,
       message,
@@ -194,8 +194,7 @@ export async function POST(request: Request) {
       lead_id,
       visitor_id,
       conversationTitle,
-      agentId,
-      uuidv4()
+      agentId
     );
     
     // Verificar que se guardaron correctamente los mensajes

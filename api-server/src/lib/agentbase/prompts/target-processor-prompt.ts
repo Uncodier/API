@@ -177,54 +177,18 @@ function extractContextualInfo(userMessage: string): {
 export const formatTargetProcessorPrompt = (
   userMessage: string,
   targets: any[],
-  tools: any[] = []
+  tools: any[] = [] // Mantenemos el parámetro por compatibilidad, pero lo ignoramos
 ): string => {
   const targetStr = JSON.stringify(targets, null, 2);
-  const toolsStr = tools.length > 0 ? JSON.stringify(tools, null, 2) : "No tools available";
   
-  // Extraer información contextual estructurada
-  const contextInfo = extractContextualInfo(userMessage);
-  
-  // Construir sección de información contextual
-  let contextualInfoSection = '';
-  
-  if (contextInfo.leadInfo) {
-    contextualInfoSection += `\nLEAD INFORMATION:`;
-    contextualInfoSection += `\n${JSON.stringify(contextInfo.leadInfo, null, 2)}`;
-  }
-  
-  if (contextInfo.teamMemberInfo) {
-    contextualInfoSection += `\n\nTEAM MEMBER INFORMATION:`;
-    contextualInfoSection += `\n${JSON.stringify(contextInfo.teamMemberInfo, null, 2)}`;
-  }
-  
-  if (contextInfo.siteInfo) {
-    contextualInfoSection += `\n\nSITE INFORMATION:`;
-    contextualInfoSection += `\n${JSON.stringify(contextInfo.siteInfo, null, 2)}`;
-  }
-  
-  if (contextInfo.visitorInfo) {
-    contextualInfoSection += `\n\nVISITOR ID: ${contextInfo.visitorInfo}`;
-  }
-  
-  if (contextInfo.conversationInfo) {
-    contextualInfoSection += `\n\nCONVERSATION INFORMATION:`;
-    contextualInfoSection += `\nID: ${contextInfo.conversationInfo.id}`;
-    
-    if (contextInfo.conversationInfo.history) {
-      contextualInfoSection += `\nHISTORY:\n${contextInfo.conversationInfo.history}`;
-    }
-  }
-  
-  return `User message: "${contextInfo.originalMessage}"
+  // Ya tenemos toda la información en userMessage, así que no necesitamos 
+  // extraer información adicional, simplemente lo pasamos tal cual
+  return `User message: 
 
-${contextualInfoSection}
+${userMessage}
 
 Available targets to process:
 ${targetStr}
-
-Available tools:
-${toolsStr}
 
 Based on the user's message and the contextual information provided, generate appropriate content for each target. Return your results in the required JSON format.
 IMPORTANT: Use the EXACT SAME structure for each target in your response, including all property names and data types. Only fill in the content values directly without any additional mapping or modification to the structure.

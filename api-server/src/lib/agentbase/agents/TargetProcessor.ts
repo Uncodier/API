@@ -114,8 +114,7 @@ export class TargetProcessor extends Base {
       // Generate the target-specific formatted prompt
       const formattedTargetPrompt = formatTargetProcessorPrompt(
         formattedUserMessage,
-        command.targets, 
-        command.tools || []
+        command.targets 
       );
       
       console.log(`[TargetProcessor] Generated formatted target prompt: ${formattedTargetPrompt.substring(0, 100)}...`);

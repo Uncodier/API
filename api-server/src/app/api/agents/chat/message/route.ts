@@ -143,9 +143,9 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Debug logs para verificar los parámetros recibidos
     console.log(`📥 saveMessages recibió: userId=${userId}, teamMemberId=${teamMemberId || 'undefined'}, commandId=${commandId || 'undefined'}`);
     
-    // Determine user role based on parameters
-    const userRole = teamMemberId ? 'team_member' : 'user';
-    console.log(`💾 Guardando mensajes - Role: ${userRole}, User: ${teamMemberId || userId}`);
+    // Log de qué rol se va a usar
+    const effectiveRole = visitorId ? 'visitor' : (teamMemberId ? 'team_member' : 'user');
+    console.log(`💾 Guardando mensajes - Role: ${effectiveRole}, User: ${teamMemberId || userId}`);
     
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
@@ -196,7 +196,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       conversation_id: conversationId,
       user_id: teamMemberId || userId,
       content: userMessage,
-      role: userRole
+      role: "user"
     };
     
     console.log(`📋 Datos del mensaje del usuario: user_id=${userMessageData.user_id}, role=${userMessageData.role}`);
@@ -255,7 +255,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       userMessageId: savedUserMessage.id,
       assistantMessageId: savedAssistantMessage.id,
       conversationTitle,
-      userRole
+      userRole: effectiveRole
     };
   } catch (error) {
     console.error('Error al guardar mensajes en la base de datos:', error);
@@ -292,21 +292,31 @@ async function getConversationHistory(conversationId: string): Promise<Array<{ro
     
     console.log(`✅ Se encontraron ${data.length} mensajes en la conversación`);
     
+    // Log de roles encontrados para depuración
+    const rolesFound = data.map(msg => msg.role || msg.sender_type || 'undefined').join(', ');
+    console.log(`🔍 Roles encontrados en los mensajes: ${rolesFound}`);
+    
     // Formatear los mensajes para el contexto del comando
     const formattedMessages = data.map(msg => {
       // Determinar el rol según los campos disponibles
       let role = 'user';
       
       if (msg.role) {
-        // Si el campo role existe, usarlo directamente (pero 'team_member' se trata como 'user' para el formato de contexto)
-        role = msg.role === 'team_member' ? 'user' : msg.role;
+        // Si el campo role existe, usarlo directamente
+        role = msg.role;
       } else if (msg.sender_type) {
-        // Si existe sender_type, hacer la conversión
-        role = msg.sender_type === 'visitor' || msg.sender_type === 'user' || msg.sender_type === 'team_member' ? 'user' : 'assistant';
+        // Si existe sender_type, usarlo directamente también
+        role = msg.sender_type;
+      } else if (msg.visitor_id) {
+        // Si hay visitor_id pero no role ni sender_type, asignar 'visitor'
+        role = 'visitor';
       } else if (!msg.user_id) {
         // Si no hay user_id, asumimos que es asistente
         role = 'assistant';
       }
+      
+      // Log detallado para depuración
+      console.log(`📝 Mensaje ${msg.id}: role=${role}, visitor_id=${msg.visitor_id || 'N/A'}, user_id=${msg.user_id || 'N/A'}`);
       
       return {
         role,
@@ -330,7 +340,20 @@ function formatConversationHistoryForContext(messages: Array<{role: string, cont
   let formattedHistory = '```conversation\n';
   
   messages.forEach((msg, index) => {
-    const roleDisplay = msg.role === 'user' ? 'USER' : 'ASSISTANT';
+    // Mejorado para soportar múltiples tipos de roles
+    let roleDisplay = 'ASSISTANT';
+    
+    // Mapear diferentes roles a su visualización adecuada
+    if (msg.role === 'user' || msg.role === 'visitor') {
+      roleDisplay = 'USER';
+    } else if (msg.role === 'team_member') {
+      roleDisplay = 'TEAM';
+    } else if (msg.role === 'assistant' || msg.role === 'agent') {
+      roleDisplay = 'ASSISTANT';
+    } else if (msg.role === 'system') {
+      roleDisplay = 'SYSTEM';
+    }
+    
     formattedHistory += `[${index + 1}] ${roleDisplay}: ${msg.content.trim()}\n`;
     
     // Add a separator between messages for better readability
@@ -403,6 +426,54 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id
   }
 }
 
+// Función para obtener la información del miembro del equipo
+async function getTeamMemberInfo(teamMemberId: string): Promise<any | null> {
+  try {
+    if (!isValidUUID(teamMemberId)) {
+      console.error(`ID de miembro del equipo no válido: ${teamMemberId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Obteniendo información del miembro del equipo: ${teamMemberId}`);
+    
+    // Primero obtener el email del usuario a través de la API de Auth
+    const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(teamMemberId);
+    
+    if (userError || !userData || !userData.user || !userData.user.email) {
+      console.error(`Error al obtener el email del usuario: ${userError?.message || 'Usuario no encontrado'}`);
+      return null;
+    }
+    
+    const userEmail = userData.user.email;
+    console.log(`📧 Email del usuario encontrado: ${userEmail}`);
+    
+    // Ahora buscar el perfil usando el email del usuario
+    const { data: profileData, error: profileError } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('email', userEmail)
+      .single();
+    
+    if (profileError) {
+      console.error(`Error al obtener el perfil del usuario: ${profileError.message}`);
+      return null;
+    }
+    
+    if (!profileData) {
+      console.log(`⚠️ No se encontró el perfil para el usuario con email: ${userEmail}`);
+      return null;
+    }
+    
+    console.log(`✅ Perfil recuperado para: ${profileData.name || profileData.email || userEmail}`);
+    
+    // Retornar el perfil directamente sin modificación
+    return profileData;
+  } catch (error) {
+    console.error('Error al obtener información del usuario:', error);
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -460,9 +531,15 @@ export async function POST(request: Request) {
       
       if (historyMessages && historyMessages.length > 0) {
         // Filter out any messages that might be duplicates of the current message
-        const filteredMessages = historyMessages.filter(msg => 
-          msg.role !== 'user' || msg.content.trim() !== message.trim()
-        );
+        // This prevents the current message from appearing twice in the context
+        const filteredMessages = historyMessages.filter(msg => {
+          // No filtrar mensajes de asistente o team_member
+          if (msg.role === 'assistant' || msg.role === 'team_member' || msg.role === 'system') {
+            return true;
+          }
+          // Para mensajes de usuario o visitante, comparar el contenido
+          return msg.content.trim() !== message.trim();
+        });
         
         if (filteredMessages.length > 0) {
           const conversationHistory = formatConversationHistoryForContext(filteredMessages);
@@ -490,8 +567,38 @@ export async function POST(request: Request) {
       contextMessage = `${contextMessage}\nSite ID: ${site_id}`;
     }
     
+    // Si hay un team_member_id, obtener toda la información disponible y añadirla al contexto
     if (team_member_id) {
-      contextMessage = `${contextMessage}\nTeam Member ID: ${team_member_id}`;
+      const teamMemberInfo = await getTeamMemberInfo(team_member_id);
+      
+      if (teamMemberInfo) {
+        console.log(`✅ Añadiendo información detallada del miembro del equipo al contexto`);
+        contextMessage = `${contextMessage}\n\nCurrent User data and personal information (as a team member of your company):`;
+        contextMessage = `${contextMessage}\nID: ${team_member_id}`;
+        
+        // Añadir todos los campos disponibles del miembro del equipo
+        if (teamMemberInfo.name) contextMessage = `${contextMessage}\nName: ${teamMemberInfo.name}`;
+        if (teamMemberInfo.email) contextMessage = `${contextMessage}\nEmail: ${teamMemberInfo.email}`;
+        if (teamMemberInfo.role) contextMessage = `${contextMessage}\nRole: ${teamMemberInfo.role}`;
+        if (teamMemberInfo.department) contextMessage = `${contextMessage}\nDepartment: ${teamMemberInfo.department}`;
+        if (teamMemberInfo.title) contextMessage = `${contextMessage}\nTitle: ${teamMemberInfo.title}`;
+        if (teamMemberInfo.bio) contextMessage = `${contextMessage}\nBio: ${teamMemberInfo.bio}`;
+        if (teamMemberInfo.avatar_url) contextMessage = `${contextMessage}\nAvatar URL: ${teamMemberInfo.avatar_url}`;
+        if (teamMemberInfo.phone) contextMessage = `${contextMessage}\nPhone: ${teamMemberInfo.phone}`;
+        
+        // Si hay campos personalizados, también añadirlos
+        if (teamMemberInfo.custom_fields && typeof teamMemberInfo.custom_fields === 'object') {
+          contextMessage = `${contextMessage}\n\nCustom Fields:`;
+          for (const [key, value] of Object.entries(teamMemberInfo.custom_fields)) {
+            if (value !== null && value !== undefined) {
+              contextMessage = `${contextMessage}\n${key}: ${value}`;
+            }
+          }
+        }
+      } else {
+        // Si no se pudo obtener información detallada, al menos añadir el ID
+        contextMessage = `${contextMessage}\nTeam Member ID: ${team_member_id}`;
+      }
     }
     
     // Define default tools in case agent doesn't have any - empty array as per specification

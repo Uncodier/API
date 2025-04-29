@@ -1,0 +1,151 @@
+# Chat WebSocket API
+
+Esta API proporciona una conexión WebSocket para el chat en tiempo real, gestionando mensajes y estados de sesión de visitantes.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+GET /api/agents/chat/websocket
+```
+
+## Parámetros de consulta
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `visitor_id` | string | Sí | ID del visitante o invitado del sitio |
+| `site_id` | string | Sí | ID del sitio asociado con la conversación |
+| `agent_id` | string | No | ID opcional del agente que manejará la conversación |
+
+### Ejemplo de conexión
+
+```javascript
+const socket = new WebSocket(`wss://api.ejemplo.com/api/agents/chat/websocket?visitor_id=v_123456&site_id=site_abc123&agent_id=agent_xyz789`);
+
+// Escuchar eventos del WebSocket
+socket.addEventListener('open', (event) => {
+  console.log('Conexión establecida');
+});
+
+socket.addEventListener('message', (event) => {
+  const data = JSON.parse(event.data);
+  console.log('Mensaje recibido:', data);
+  
+  // Manejar diferentes tipos de mensajes
+  switch(data.type) {
+    case 'connection_established':
+      console.log('Conexión establecida:', data.data);
+      break;
+    case 'message_history':
+      console.log('Historial de mensajes:', data.data);
+      break;
+    case 'new_message':
+      console.log('Nuevo mensaje:', data.data);
+      break;
+    case 'ping':
+      // Responder con pong para mantener la conexión activa
+      socket.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+      break;
+  }
+});
+
+socket.addEventListener('close', (event) => {
+  console.log('Conexión cerrada:', event);
+});
+
+socket.addEventListener('error', (event) => {
+  console.error('Error en la conexión:', event);
+});
+```
+
+## Tipos de mensajes
+
+### Enviados por el servidor
+
+El servidor puede enviar los siguientes tipos de mensajes:
+
+| Tipo | Descripción | Formato de datos |
+|------|-------------|------------------|
+| `connection_established` | Enviado cuando la conexión se establece correctamente | `{ visitor_id, conversation_id, site_id, timestamp }` |
+| `message_history` | Historial de mensajes de la conversación | Array de objetos de mensajes |
+| `new_message` | Notificación de un nuevo mensaje | Objeto de mensaje completo |
+| `ping` | Señal para mantener activa la conexión | `{ timestamp }` |
+
+### Enviados por el cliente
+
+El cliente puede enviar los siguientes tipos de mensajes:
+
+| Tipo | Descripción | Formato de datos |
+|------|-------------|------------------|
+| `pong` | Respuesta a un ping del servidor | `{ timestamp }` |
+| `get_messages` | Solicitud para obtener mensajes históricos | `{ limit?: number }` |
+| `close` | Solicitud para cerrar la conexión | `{}` |
+
+## Alternativa HTTP
+
+Para entornos que no soportan WebSockets, se proporciona un endpoint HTTP alternativo:
+
+```http
+POST /api/agents/chat/websocket
+```
+
+### Cuerpo de la solicitud HTTP
+
+```json
+{
+  "visitor_id": "v_123456",
+  "site_id": "site_abc123",
+  "agent_id": "agent_xyz789",
+  "conversation_id": "conv_123456" // Opcional
+}
+```
+
+### Respuesta HTTP
+
+```json
+{
+  "success": true,
+  "data": {
+    "conversation_id": "conv_123456",
+    "visitor_id": "v_123456",
+    "site_id": "site_abc123",
+    "messages": [
+      {
+        "id": "msg_1",
+        "conversation_id": "conv_123456",
+        "content": "Hola, ¿en qué puedo ayudarte?",
+        "role": "assistant",
+        "created_at": "2023-09-01T12:00:00Z"
+      },
+      {
+        "id": "msg_2",
+        "conversation_id": "conv_123456",
+        "content": "Necesito información sobre sus servicios",
+        "role": "user",
+        "created_at": "2023-09-01T12:01:00Z"
+      }
+    ]
+  }
+}
+```
+
+## Gestión de sesiones
+
+Este endpoint actualiza automáticamente el estado de la sesión del visitante:
+
+- Al establecer conexión: establece el estado como `active`
+- Al cerrar la conexión: establece el estado como `inactive`
+- Después de 5 minutos de inactividad: establece el estado como `inactive`
+
+## Prueba de la API
+
+<UnifiedApiTester apiId="websocket" />
+
+## Notas
+
+- En entorno de desarrollo, el WebSocket no está disponible y se devuelve un mensaje informativo.
+- La conexión se mantiene activa mediante un mecanismo de ping-pong cada 30 segundos.
+- Se utiliza Supabase Realtime para recibir notificaciones de nuevos mensajes en tiempo real.
+- La conexión WebSocket se cerrará automáticamente después de 5 minutos de inactividad.
+- El endpoint HTTP alternativo proporciona una forma de obtener mensajes para clientes que no soportan WebSockets. 

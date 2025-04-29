@@ -11,7 +11,11 @@ export default withNextra({
   reactStrictMode: true,
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001']
+      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', 'localhost:3456']
+    },
+    serverComponentsExternalPackages: ['ws'],
+    webSocketServer: {
+      path: '/api/agents/chat/websocket'
     }
   },
   // Configuración para imágenes optimizadas
@@ -43,5 +47,34 @@ export default withNextra({
   // Ensure environment variables are available
   env: {
     COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g'
+  },
+  async headers() {
+    return [
+      {
+        // Aplicar estos encabezados a todas las rutas
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-DNS-Prefetch-Control',
+            value: 'on',
+          },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
+          },
+        ],
+      },
+      {
+        // Configuración específica para la ruta WebSocket
+        source: '/api/agents/chat/websocket',
+        headers: [
+          { key: 'Connection', value: 'upgrade' },
+          { key: 'Upgrade', value: 'websocket' },
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' }
+        ]
+      }
+    ]
   }
 })

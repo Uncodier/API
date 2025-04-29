@@ -1,7 +1,0 @@
-{
-  "index": "Introducción",
-  "track": "Endpoint de Track",
-  "session": "Endpoint de Sesiones",
-  "segment": "Endpoint de Segmentación",
-  "identify": "Endpoint de Identificación"
-} 
