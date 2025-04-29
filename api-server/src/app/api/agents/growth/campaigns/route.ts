@@ -3,6 +3,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { v4 as uuidv4 } from 'uuid';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -31,7 +32,6 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
     
     // Buscar en el mapa de traducción interno del CommandService
     try {
-      // Esto es un hack para acceder al mapa de traducción interno
       // @ts-ignore - Accediendo a propiedades internas
       const idMap = (commandService as any).idTranslationMap;
       if (idMap && idMap.get && idMap.get(internalId)) {
@@ -98,8 +98,38 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
           console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
         }
         
-        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
-          console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
+        // Verificar si el comando falló explícitamente
+        if (executedCommand.status === 'failed') {
+          console.log(`❌ El comando ${commandId} falló con estado: failed`);
+          console.log(`❌ Error: ${executedCommand.error || 'No hay detalles del error'}`);
+          
+          // Intentar obtener el UUID de la base de datos si aún no lo tenemos
+          if (!dbUuid || !isValidUUID(dbUuid)) {
+            dbUuid = await getCommandDbUuid(commandId);
+            console.log(`🔍 UUID obtenido después de fallo: ${dbUuid || 'No encontrado'}`);
+          }
+          
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid, completed: false});
+          return;
+        }
+        
+        // Comprobar si el comando se ha completado basado en su estado
+        const isStatusCompleted = executedCommand.status === 'completed';
+        
+        // Comprobar también si hay resultados, aunque el estado no sea 'completed'
+        const hasResults = executedCommand.results && 
+                          Array.isArray(executedCommand.results) && 
+                          executedCommand.results.length > 0;
+        
+        // Si el estado es completed o hay resultados disponibles, considerar el comando como completado
+        if (isStatusCompleted || hasResults) {
+          // Si tiene resultados pero el estado no es completed, hacerlo notar
+          if (hasResults && !isStatusCompleted) {
+            console.log(`⚠️ El comando ${commandId} tiene resultados pero su estado es ${executedCommand.status}. Asumiéndolo como completado.`);
+          } else {
+            console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
+          }
           
           // Intentar obtener el UUID de la base de datos si aún no lo tenemos
           if (!dbUuid || !isValidUUID(dbUuid)) {
@@ -108,7 +138,7 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
           }
           
           clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: executedCommand.status === 'completed'});
+          resolve({command: executedCommand, dbUuid, completed: true});
           return;
         }
         
@@ -116,6 +146,15 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
         
         if (attempts >= maxAttempts) {
           console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
+          
+          // Como último recurso, verificar una vez más si el comando tiene resultados
+          // aunque no se haya actualizado su estado
+          if (hasResults) {
+            console.log(`🔍 El comando ${commandId} tiene resultados a pesar de timeout. Procesándolo como completado.`);
+            clearInterval(checkInterval);
+            resolve({command: executedCommand, dbUuid, completed: true});
+            return;
+          }
           
           // Último intento de obtener el UUID
           if (!dbUuid || !isValidUUID(dbUuid)) {
@@ -135,258 +174,374 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
   });
 }
 
-// Función para obtener campañas creadas a partir de un comando
-async function getCreatedCampaigns(commandDbUuid: string): Promise<any[]> {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('campaigns')
-      .select(`
-        id, 
-        title, 
-        description,
-        status,
-        type,
-        priority,
-        budget,
-        requirement_ids
-      `)
-      .eq('command_id', commandDbUuid);
-    
-    if (error) {
-      console.error('Error al obtener campañas:', error);
-      return [];
-    }
-    
-    return data || [];
-  } catch (error) {
-    console.error('Error al consultar campañas:', error);
-    return [];
-  }
-}
-
-// Obtener campañas por site_id
-async function getCampaignsBySiteId(siteId: string): Promise<any[]> {
-  try {
-    const { data, error } = await supabaseAdmin
-      .from('campaigns')
-      .select(`
-        id, 
-        title, 
-        description,
-        status,
-        type,
-        priority,
-        budget,
-        command_id,
-        site_id,
-        requirement_ids,
-        created_at,
-        updated_at
-      `)
-      .eq('site_id', siteId)
-      .order('created_at', { ascending: false });
-    
-    if (error) {
-      console.error('Error al obtener campañas por site_id:', error);
-      return [];
-    }
-    
-    return data || [];
-  } catch (error) {
-    console.error('Error al consultar campañas por site_id:', error);
-    return [];
-  }
-}
-
-// GET endpoint para obtener campañas
-export async function GET(request: Request) {
-  console.log('🔍 API Growth Marketing - Campaigns - GET');
+// Función para crear campañas y requisitos desde los resultados del comando
+async function createCampaignsFromResults(command: any, siteId: string, userId: string, dbUuid: string | null): Promise<any[]> {
+  console.log(`🔄 Procesando resultados para crear campañas...`);
   
   try {
-    // Obtener parámetros de consulta
-    const url = new URL(request.url);
-    const siteId = url.searchParams.get('siteId');
-    
-    if (!siteId) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Missing required parameter: siteId'
-        }
-      }, { status: 400 });
+    if (!command || !command.results || !Array.isArray(command.results) || command.results.length === 0) {
+      console.log('El comando no tiene resultados válidos');
+      return [];
     }
     
-    // Obtener campañas por site_id
-    const campaigns = await getCampaignsBySiteId(siteId);
+    // Buscar las campañas en diferentes estructuras posibles de resultados
+    let campaignsToCreate: any[] = [];
     
-    return NextResponse.json({
-      success: true,
-      data: {
-        site_id: siteId,
-        campaigns: campaigns
+    // Buscar directamente un resultado con campañas
+    const campaignsResult = command.results.find((r: any) => r && r.campaigns && Array.isArray(r.campaigns));
+    if (campaignsResult && campaignsResult.campaigns) {
+      campaignsToCreate = campaignsResult.campaigns;
+      console.log(`✅ Se encontraron ${campaignsToCreate.length} campañas en los resultados directos`);
+    } 
+    // Buscar en la estructura content.campaigns
+    else {
+      for (const result of command.results) {
+        if (result && result.content && result.content.campaigns && Array.isArray(result.content.campaigns)) {
+          campaignsToCreate = result.content.campaigns;
+          console.log(`✅ Se encontraron ${campaignsToCreate.length} campañas en result.content.campaigns`);
+          break;
+        }
       }
+    }
+    
+    // Si no encontramos campañas en resultados, intentar con los targets
+    if (campaignsToCreate.length === 0 && command.targets && Array.isArray(command.targets)) {
+      // Buscar campaña en targets
+      const campaignsTarget = command.targets.find((t: any) => t && t.campaigns && Array.isArray(t.campaigns));
+      if (campaignsTarget && campaignsTarget.campaigns) {
+        campaignsToCreate = campaignsTarget.campaigns;
+        console.log(`✅ Se encontraron ${campaignsToCreate.length} campañas en los targets`);
+      }
+    }
+    
+    if (campaignsToCreate.length === 0) {
+      console.log('No se encontraron campañas en los resultados o targets del comando');
+      return [];
+    }
+    
+    // Efectivo command_id para inserción en base de datos
+    const effectiveCommandId = dbUuid || command.id;
+    console.log(`🔑 Usando command_id para base de datos: ${effectiveCommandId}`);
+    
+    // Verificar que el command_id existe en la tabla commands
+    if (isValidUUID(effectiveCommandId)) {
+      const { data: commandExists, error: commandCheckError } = await supabaseAdmin
+        .from('commands')
+        .select('id')
+        .eq('id', effectiveCommandId)
+        .single();
+      
+      if (commandCheckError || !commandExists) {
+        console.log(`⚠️ El command_id ${effectiveCommandId} no existe en la tabla 'commands'`);
+        console.log(`🔄 Se procederá a crear las campañas sin vinculación a comando`);
+      }
+    }
+    
+    console.log(`📝 Creando ${campaignsToCreate.length} campañas a partir de los resultados del comando`);
+    
+    // Sanitizar los datos de las campañas
+    campaignsToCreate = campaignsToCreate.map(campaign => {
+      // Sanitizar presupuesto
+      if (typeof campaign.budget === 'string' || !campaign.budget) {
+        campaign.budget = {
+          currency: "USD",
+          allocated: 1000,
+          remaining: 1000
+        };
+      } else if (typeof campaign.budget === 'object') {
+        campaign.budget = {
+          currency: "USD",
+          allocated: typeof campaign.budget.allocated === 'number' ? campaign.budget.allocated : 1000,
+          remaining: typeof campaign.budget.remaining === 'number' ? campaign.budget.remaining : 1000
+        };
+      }
+      
+      // Sanitizar revenue
+      if (typeof campaign.revenue === 'string' || !campaign.revenue) {
+        campaign.revenue = {
+          actual: 0,
+          currency: "USD",
+          estimated: 3000,
+          projected: 5000
+        };
+      } else if (typeof campaign.revenue === 'object') {
+        campaign.revenue = {
+          actual: typeof campaign.revenue.actual === 'number' ? campaign.revenue.actual : 0,
+          currency: "USD",
+          estimated: typeof campaign.revenue.estimated === 'number' ? campaign.revenue.estimated : 3000,
+          projected: typeof campaign.revenue.projected === 'number' ? campaign.revenue.projected : 5000
+        };
+      }
+      
+      // Sanitizar due_date
+      if (!campaign.due_date || typeof campaign.due_date === 'string' && 
+          (campaign.due_date.includes('example') || campaign.due_date.includes('YYYY-MM-DD'))) {
+        campaign.due_date = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      }
+      
+      // Sanitizar type
+      if (!campaign.type || typeof campaign.type === 'string' && 
+          (campaign.type.includes("'") || campaign.type.includes('|'))) {
+        const validTypes = ['inbound', 'outbound', 'branding', 'product', 'events', 'success', 
+                           'account', 'community', 'guerrilla', 'affiliate', 'experiential', 
+                           'programmatic', 'performance', 'publicRelations'];
+        campaign.type = validTypes[Math.floor(Math.random() * validTypes.length)];
+      }
+      
+      return campaign;
     });
     
-  } catch (error: any) {
-    console.error('Error en API GET de Campañas:', error);
+    // Crear las campañas en la base de datos
+    const createdCampaigns: any[] = [];
     
-    return NextResponse.json({
-      success: false,
-      error: {
-        code: 'SYSTEM_ERROR',
-        message: error.message || 'Internal server error'
+    for (const campaignData of campaignsToCreate) {
+      // Preparar los datos básicos de la campaña
+      const campaignToInsert = {
+        title: campaignData.title || 'Campaña sin título',
+        description: campaignData.description || '',
+        status: campaignData.status || 'active',
+        type: campaignData.type || 'general',
+        priority: campaignData.priority || 'medium',
+        budget: campaignData.budget || { 
+          currency: "USD", 
+          allocated: 4000, 
+          remaining: 3600 
+        },
+        revenue: campaignData.revenue || { 
+          actual: 0, 
+          currency: "USD", 
+          estimated: 12000, 
+          projected: 15000 
+        },
+        due_date: campaignData.due_date || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        site_id: siteId,
+        user_id: userId,
+        // Solo incluir command_id si es un UUID válido y existe en la tabla
+        ...(isValidUUID(effectiveCommandId) ? { command_id: effectiveCommandId } : {})
+      };
+      
+      // Insertar la campaña
+      const { data: insertedCampaign, error: insertError } = await supabaseAdmin
+        .from('campaigns')
+        .insert([campaignToInsert])
+        .select('*')
+        .single();
+      
+      if (insertError) {
+        console.error('Error al crear campaña:', insertError);
+        continue;
       }
-    }, { status: 500 });
+      
+      console.log(`✅ Campaña creada con ID: ${insertedCampaign.id}`);
+      
+      // Si la campaña tiene requisitos, guardarlos
+      if (campaignData.requirements && Array.isArray(campaignData.requirements) && campaignData.requirements.length > 0) {
+        console.log(`📝 Guardando ${campaignData.requirements.length} requisitos para la campaña ${insertedCampaign.id}`);
+        
+        const requirementIds: string[] = [];
+        
+        for (const reqData of campaignData.requirements) {
+          // Crear cada requisito
+          const requirementToInsert = {
+            title: reqData.title || 'Requisito sin título',
+            description: reqData.description || '',
+            instructions: reqData.instructions || '',
+            budget: reqData.budget || '0',
+            priority: reqData.priority || 'medium',
+            site_id: siteId,
+            status: 'backlog',
+            completion_status: 'pending',
+            user_id: userId,
+            // Solo incluir command_id si es un UUID válido
+            ...(isValidUUID(effectiveCommandId) ? { command_id: effectiveCommandId } : {})
+          };
+          
+          // Insertar el requisito
+          const { data: insertedRequirement, error: reqInsertError } = await supabaseAdmin
+            .from('requirements')
+            .insert([requirementToInsert])
+            .select('id')
+            .single();
+          
+          if (reqInsertError) {
+            console.error('Error al crear requisito:', reqInsertError);
+            continue;
+          }
+          
+          // Guardar el ID para la relación
+          requirementIds.push(insertedRequirement.id);
+          
+          // Crear la relación entre campaña y requisito
+          await supabaseAdmin
+            .from('campaign_requirements')
+            .insert({
+              campaign_id: insertedCampaign.id,
+              requirement_id: insertedRequirement.id
+            });
+        }
+        
+        // Añadir los requisitos al objeto de campaña que se devuelve
+        createdCampaigns.push({
+          ...insertedCampaign,
+          requirement_ids: requirementIds
+        });
+      } else {
+        createdCampaigns.push({
+          ...insertedCampaign,
+          requirement_ids: []
+        });
+      }
+    }
+    
+    return createdCampaigns;
+  } catch (error) {
+    console.error('Error al crear campañas a partir de resultados:', error);
+    return [];
   }
 }
 
 export async function POST(request: Request) {
-  console.log('🚀 API Growth Marketing - Campaigns - POST');
-  
   try {
-    const body = await request.json();
-    
-    // Validar parámetros requeridos
-    if (!body.siteId) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Missing required parameter: siteId'
-        }
-      }, { status: 400 });
+    let body;
+    try {
+      body = await request.json();
+      console.log('📦 Cuerpo de la solicitud recibido:', JSON.stringify(body, null, 2));
+    } catch (parseError) {
+      console.error('❌ Error al analizar el cuerpo de la solicitud:', parseError);
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_JSON', message: 'Could not parse request body as JSON' } },
+        { status: 400 }
+      );
     }
     
-    if (!body.campaignData) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Missing required parameter: campaignData'
-        }
-      }, { status: 400 });
+    // Extraer parámetros directamente como están en la solicitud
+    const { siteId, userId, agent_id } = body;
+    
+    console.log('🔍 Parámetros extraídos:', { siteId, userId, agent_id });
+    
+    // Validar siteId requerido
+    if (!siteId) {
+      console.log('❌ Error: siteId requerido no proporcionado');
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'siteId is required' } },
+        { status: 400 }
+      );
     }
     
-    const campaignData = body.campaignData;
-    
-    // Validar los campos requeridos dentro de campaignData
-    if (!campaignData.totalBudget) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Missing required parameter: campaignData.totalBudget'
-        }
-      }, { status: 400 });
+    // Validar agent_id requerido
+    if (!agent_id) {
+      console.log('❌ Error: agent_id requerido no proporcionado');
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'agent_id is required' } },
+        { status: 400 }
+      );
     }
     
-    if (!campaignData.goals || !Array.isArray(campaignData.goals) || campaignData.goals.length === 0) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'INVALID_REQUEST',
-          message: 'Missing or invalid parameter: campaignData.goals (should be a non-empty array)'
+    // Si no hay userId, verificar el sitio y buscar el usuario asociado
+    let effectiveUserId = userId;
+    if (!effectiveUserId) {
+      try {
+        const { data: siteData, error: siteError } = await supabaseAdmin
+          .from('sites')
+          .select('user_id')
+          .eq('id', siteId)
+          .single();
+        
+        if (siteError || !siteData?.user_id) {
+          console.log(`❌ Error: El sitio con ID ${siteId} no existe o no tiene usuario asociado`);
+          return NextResponse.json(
+            { success: false, error: { code: 'SITE_NOT_FOUND', message: `Site not found or has no associated user` } },
+            { status: 404 }
+          );
         }
-      }, { status: 400 });
+        
+        effectiveUserId = siteData.user_id;
+        console.log(`👤 UserId obtenido del sitio: ${effectiveUserId}`);
+      } catch (error) {
+        console.error('Error al verificar el sitio:', error);
+        return NextResponse.json(
+          { success: false, error: { code: 'SITE_VERIFICATION_FAILED', message: 'Failed to verify site existence' } },
+          { status: 500 }
+        );
+      }
     }
     
-    // Formatear los objetivos de la campaña como texto para la descripción
-    const goalsText = campaignData.goals.join(', ');
+    console.log(`📨 Solicitud validada. SiteId: ${siteId}, UserId: ${effectiveUserId}, AgentId: ${agent_id}`);
     
-    // Validar y procesar los requisitos
-    let processedRequirements = [];
-    if (campaignData.requirements && Array.isArray(campaignData.requirements)) {
-      // Asegurarnos de que cada requisito tenga un formato adecuado
-      processedRequirements = campaignData.requirements.map((req: { id?: string, [key: string]: any }, index: number) => {
-        // Si no tiene un ID, generarle uno temporal para referencia
-        if (!req.id) {
-          req.id = `req_${Date.now()}_${index}`;
-        }
-        return req;
-      });
-    }
+    // Crear contexto simple para el comando
+    const promptInstructions = `
+INSTRUCTIONS:
+1. Create detailed and actionable marketing campaigns with clear objectives.
+2. Each campaign should include:
+   - A descriptive title that reflects the campaign's purpose
+   - A comprehensive description explaining the strategy and goals
+   - Appropriate type (inbound, outbound, branding, etc.)
+   - Realistic priority level based on business impact
+   - Reasonable budget and revenue projections
+   - Realistic due date for completion
+3. For each campaign, develop specific requirements that:
+   - Break down the campaign into concrete, implementable tasks
+   - Include clear instructions for execution
+   - Specify priority levels and budget allocations for each requirement
+   - Provide enough detail for team members to understand and implement
+4. The total budget for all campaigns shoud not exceed the available budget for the site.
+5. When there is no more avalaible budget, focus in 0 cost campaigns, content, or any other type of campaign that does not require an investment.
+
+Your campaigns should be strategic, measurable, and aligned with business growth objectives.`;
+
+    const context = `Generate marketing campaign ideas for Site ID: ${siteId}\n\n${promptInstructions}`;
     
-    // Crear un contexto en formato string con toda la información necesaria
-    const contextInfo = {
-      total_budget: campaignData.totalBudget,
-      currency: campaignData.currency || 'USD',
-      priority: campaignData.priority || 'high',
-      timeframe: campaignData.timeframe || {
-        startDate: new Date().toISOString().split('T')[0],
-        endDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-      },
-      goals: campaignData.goals,
-      industries: campaignData.industries || [],
-      competitors: campaignData.competitors || [],
-      previousResults: campaignData.previousResults || {},
-      segments: campaignData.segmentIds ? campaignData.segmentIds.map((id: string) => ({ title: id })) : []
-    };
+    console.log(`🧠 Creando comando con agentId: ${agent_id}`);
     
-    // Convertir el objeto de contexto a string en formato JSON
-    const contextString = `Campaign Creation Context:\n${JSON.stringify(contextInfo, null, 2)}`;
-    
-    // Crear el objeto de comando para el agente
+    // Crear el comando para generar campañas
     const command = CommandFactory.createCommand({
-      task: 'create marketing campaigns',
-      userId: body.userId,
-      agentId: body.agent_id,
-      // Agregar site_id directamente como propiedad principal
-      site_id: body.siteId,
-      description: `Generate marketing campaigns with budget ${campaignData.totalBudget} for goals: ${goalsText}`,
+      task: 'create growth campaign',
+      userId: effectiveUserId,
+      site_id: siteId,
+      description: 'Create marketing or growth campaigns',
+      agentId: agent_id,
+      // Set the target as campaigns structure
       targets: [
         {
           campaigns: [
             {
-              title: "B2B Lead Generation Campaign",
-              description: "High-performance search campaign focusing on decision-makers in the B2B software sector",
-              budget: "budget assigned for the campaign according to the total budget of the period, example: 2000",
-              type: "inbound' | 'outbound' | 'branding' | 'product' | 'events' | 'success' | 'account' | 'community' | 'guerrilla' | 'affiliate' | 'experiential' | 'programmatic' | 'performance' | 'publicRelations",
-              priority: "high | medium | low",
+              title: "Campaign title",
+              description: "Campaign description",
+              type: "Campaign type (inbound, outbound, etc.)",
+              priority: "Campaign priority (low, medium, high)",
+              due_date: "ISO date string format YYYY-MM-DD, example: 2025-05-01",
+              budget: {
+                currency: "USD",
+                allocated: 1000,
+                remaining: 1000
+              },
+              revenue: {
+                actual: 0,
+                currency: "USD",
+                estimated: 3000,
+                projected: 5000
+              },
               requirements: [
                 {
-                  title: "minimal tasks for the campaign to be copmleted",
-                  description: "task description",
-                  priority: "high | medium | low",
-                  instructions: "Rich markdown instructions, for the task",
-                  budget: "budget assigned for the task according to the total budget of the campaign, example: 1000"
+                  title: "Requirement title",
+                  description: "Requirement description",
+                  instructions: "Instructions to complete the requirement",
+                  priority: "Requirement priority (low, medium, high)",
+                  budget: "Budget for this specific requirement"
                 }
               ]
             }
           ]
-        }
+        }     
       ],
-      // Usar el string como contexto
-      context: contextString,
-      // Definir los supervisores
-      supervisor: [
-        {
-          agent_role: 'growth_marketer',
-          status: 'not_initialized'
-        },
-        {
-          agent_role: 'budget_optimizer',
-          status: 'not_initialized'
-        }
-      ]
+      context,
+      model: 'gpt-4.1',
+      modelType: 'openai'
     });
     
-    console.log('⚙️ Ejecutando comando para crear campañas de marketing...');
-    
-    // Enviar el comando para su procesamiento
+    // Enviar el comando para procesamiento
     const internalCommandId = await commandService.submitCommand(command);
-    
-    if (!internalCommandId) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'COMMAND_EXECUTION_FAILED',
-          message: 'Failed to process command'
-        }
-      }, { status: 500 });
-    }
-    
-    console.log(`📝 Comando creado con ID: ${internalCommandId}`);
+    console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
     
     // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
     let initialDbUuid = await getCommandDbUuid(internalCommandId);
@@ -400,45 +555,104 @@ export async function POST(request: Request) {
     // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
     const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
     
-    if (!completed || !executedCommand) {
-      return NextResponse.json({
-        success: false,
-        error: {
-          code: 'COMMAND_EXECUTION_TIMEOUT',
-          message: 'Command execution timed out or failed',
-          command_id: internalCommandId,
-          db_uuid: effectiveDbUuid
-        }
-      }, { status: 500 });
+    // Verificar el estado del comando ejecutado
+    if (!executedCommand) {
+      console.log(`❌ No se pudo obtener el comando ${internalCommandId} después de la ejecución`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'COMMAND_NOT_FOUND', 
+            message: 'The command could not be found after execution' 
+          } 
+        },
+        { status: 500 }
+      );
     }
     
-    // Obtener las campañas creadas
-    const campaigns = effectiveDbUuid ? await getCreatedCampaigns(effectiveDbUuid) : [];
+    // Verificar si el comando falló explícitamente
+    if (executedCommand.status === 'failed') {
+      console.log(`❌ El comando ${internalCommandId} falló con estado: ${executedCommand.status}`);
+      console.log(`❌ Error del comando: ${executedCommand.error || 'No hay detalles del error'}`);
+      
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'COMMAND_FAILED', 
+            message: 'The command failed during execution',
+            details: executedCommand.error || 'No additional error details available'
+          } 
+        },
+        { status: 500 }
+      );
+    }
     
-    // Asegurarse de que cada campaña tenga el command_id
-    const campaignsWithCommandId = campaigns.map(campaign => ({
-      ...campaign,
-      command_id: effectiveDbUuid
-    }));
+    // Verificar si el comando no se completó dentro del tiempo esperado
+    if (!completed) {
+      console.log(`⏰ El comando ${internalCommandId} no se completó en el tiempo esperado`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'COMMAND_TIMEOUT', 
+            message: 'The command did not complete within the expected time frame' 
+          } 
+        },
+        { status: 500 }
+      );
+    }
     
-    return NextResponse.json({
-      success: true,
-      data: {
-        command_id: effectiveDbUuid || internalCommandId,
-        site_id: body.siteId,
-        campaigns: campaignsWithCommandId
-      }
-    });
+    console.log(`✅ Comando completado con estado: ${executedCommand.status}, procesando resultados...`);
+    console.log(`🔍 Se encontraron ${executedCommand.results?.length || 0} resultados en el comando`);
     
-  } catch (error: any) {
-    console.error('Error en API de Campañas:', error);
+    // Verificar explícitamente si hay resultados antes de procesar
+    if (!executedCommand.results || !Array.isArray(executedCommand.results) || executedCommand.results.length === 0) {
+      console.log(`⚠️ El comando ${internalCommandId} no produjo resultados`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'NO_RESULTS', 
+            message: 'The command completed but did not produce any results' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
     
-    return NextResponse.json({
-      success: false,
-      error: {
-        code: 'SYSTEM_ERROR',
-        message: error.message || 'Internal server error'
-      }
-    }, { status: 500 });
+    // Crear las campañas a partir de los resultados
+    const createdCampaigns = await createCampaignsFromResults(executedCommand, siteId, effectiveUserId, effectiveDbUuid);
+    
+    if (createdCampaigns.length === 0) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'NO_CAMPAIGNS_CREATED', 
+            message: 'No campaigns could be created from the command results' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Devolver respuesta exitosa con las campañas creadas
+    return NextResponse.json(
+      { 
+        success: true, 
+        data: { 
+          commandId: effectiveDbUuid || internalCommandId,
+          campaigns: createdCampaigns
+        } 
+      },
+      { status: 200 }
+    );
+  } catch (error) {
+    console.error('Error al procesar la solicitud:', error);
+    return NextResponse.json(
+      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } },
+      { status: 500 }
+    );
   }
-} 
+}
