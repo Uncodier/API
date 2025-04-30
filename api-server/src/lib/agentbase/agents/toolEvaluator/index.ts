@@ -9,10 +9,14 @@ import { TOOL_EVALUATOR_SYSTEM_PROMPT } from '../../prompts/tool-evaluator-promp
 
 // Import utilities
 import { extractTokenUsage } from './tokenUtils';
-import { processToolEvaluationResponse, generateFunctions } from './responseProcessor';
+import { processToolEvaluationResponse, generateFunctions, prepareToolsForExecution } from './responseProcessor';
 import { prepareMessagesFromCommand, validateAndNormalizeTools } from './messageFormatter';
-import { FunctionCall } from './types';
+import { FunctionCall, ToolExecutionResult } from './types';
 import { CommandCache } from '../../services/command/CommandCache';
+// Importar directamente CommandService para evitar imports dinámicos
+import { CommandService } from '../../services/command';
+// Importar desde las nuevas ubicaciones refactorizadas
+import { runToolExecution } from './executor/runner';
 
 export class ToolEvaluator extends Base {
   private connector: PortkeyConnector;
@@ -149,6 +153,13 @@ export class ToolEvaluator extends Base {
           outputTokens: portkeyResponse.usage?.completion_tokens || 0
         };
         
+        // Loguear la respuesta cruda para diagnóstico
+        console.log(`[ToolEvaluator] Raw response content type: ${typeof content}`);
+        const contentSample = typeof content === 'string' 
+          ? content.substring(0, 200) 
+          : JSON.stringify(content).substring(0, 200);
+        console.log(`[ToolEvaluator] Content sample: ${contentSample}...`);
+        
         // Intentar analizar la respuesta como JSON
         try {
           // Verificar si es un string JSON o un objeto
@@ -159,12 +170,35 @@ export class ToolEvaluator extends Base {
             const codeBlockMatch = jsonContent.match(/```(?:json)?\s*([\s\S]*?)```/);
             if (codeBlockMatch && codeBlockMatch[1]) {
               jsonContent = codeBlockMatch[1].trim();
+              console.log(`[ToolEvaluator] Extracted code block from response`);
             }
           }
           
           // Intentar analizar el JSON
           try {
             functions = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
+            console.log(`[ToolEvaluator] Successfully parsed JSON response of type: ${typeof functions}`);
+            
+            // Verificar que functions sea un array
+            if (!Array.isArray(functions)) {
+              console.log(`[ToolEvaluator] Functions is not an array, converting to array`);
+              // Si no es un array, intentar convertirlo o inicializarlo como array vacío
+              if (functions && typeof functions === 'object') {
+                // Verificar si hay propiedades que sugieran un array embebido
+                const functionsObj = functions as Record<string, any>;
+                if (functionsObj.items && Array.isArray(functionsObj.items)) {
+                  functions = functionsObj.items;
+                } else if (functionsObj.functions && Array.isArray(functionsObj.functions)) {
+                  functions = functionsObj.functions;
+                } else {
+                  // Si es un objeto pero no contiene un array, convertirlo a un array con ese objeto
+                  functions = [functions];
+                }
+              } else {
+                // Si no es un objeto válido, inicializarlo como array vacío
+                functions = [];
+              }
+            }
           } catch (jsonError) {
             console.error("[ToolEvaluator] Failed to parse JSON. Attempting cleanup:", jsonError);
             
@@ -177,6 +211,12 @@ export class ToolEvaluator extends Base {
                 .replace(/\\/g, '\\\\');      // Escapar barras invertidas
               
               functions = JSON.parse(cleanedJson);
+              
+              // Asegurar que functions es un array
+              if (!Array.isArray(functions)) {
+                console.log(`[ToolEvaluator] Parsed functions is not an array, converting to array`);
+                functions = [functions];
+              }
             } else {
               throw new Error('El contenido de la respuesta no es un formato JSON válido');
             }
@@ -186,10 +226,97 @@ export class ToolEvaluator extends Base {
           throw new Error('Falló el análisis de la respuesta para la evaluación de herramientas');
         }
         
-        const updatedCommand = {
-          ...command,
-          functions: functions // Only update the functions array
-        };
+        // Loguear el resultado del parsing
+        console.log(`[ToolEvaluator] Parsed ${Array.isArray(functions) ? functions.length : 0} functions from response`);
+        
+        // Preparar las llamadas a funciones basadas en la respuesta del LLM
+        const functionCalls = prepareToolsForExecution(functions, command.tools);
+        console.log(`[ToolEvaluator] Generated ${functionCalls.length} function calls from ${Array.isArray(functions) ? functions.length : 0} functions`);
+        
+        // Verificar que functions sea un array
+        if (!Array.isArray(functions) || functions.length === 0) {
+          console.warn(`[ToolEvaluator] No valid functions found in response, creating empty array`);
+          functions = [];
+        }
+        
+        // Asegurar que todas las funciones tengan un estado válido y un ID único
+        const normalizedFunctions: any[] = functions.map((func: any, index: number) => {
+          // Generar un ID único para cada función si no tiene uno
+          const funcId = func.id || `func_${Date.now()}_${index}`;
+          
+          // Normalizar argumentos como string JSON
+          const args = typeof func.arguments === 'string' 
+            ? func.arguments 
+            : (func.params ? JSON.stringify(func.params) : '{}');
+          
+          // Estructura completamente plana, sin nodos anidados
+          return {
+            id: funcId,
+            type: "function",
+            status: func.status || 'required',
+            name: func.name || `function_${index}`,
+            arguments: args,
+            critical: func.critical || false,
+            description: func.description || ''
+            // Sin nodo function anidado - toda la información en la raíz
+          };
+        });
+        
+        // Usar las funciones normalizadas como las funciones evaluadas
+        functions = normalizedFunctions;
+        const evaluatedFunctions = functions;
+        
+        // Ejecutar las herramientas seleccionadas pasando el ID del comando
+        if (functionCalls && functionCalls.length > 0) {
+          console.log(`[ToolEvaluator] Ejecutando ${functionCalls.length} herramientas seleccionadas`);
+          await this.executeSelectedTools(functionCalls, command.tools, command.id);
+        } else {
+          console.log(`[ToolEvaluator] No se seleccionaron herramientas para ejecutar`);
+        }
+        
+        // Mantener el comando original pero obtener las funciones actualizadas
+        const updatedCommand = { ...command };
+        
+        // Simplemente usar CommandService para obtener el comando actualizado
+        try {
+          const commandService = new CommandService();
+          const latestCommand = await commandService.getCommandById(command.id);
+          
+          if (latestCommand && latestCommand.functions && latestCommand.functions.length > 0) {
+            console.log(`[ToolEvaluator] Usando funciones actualizadas de la base de datos (${latestCommand.functions.length})`);
+            // Usar las funciones actualizadas de la base de datos
+            updatedCommand.functions = latestCommand.functions;
+          } else {
+            console.log(`[ToolEvaluator] No se encontraron funciones actualizadas en la base de datos`);
+            // Si no hay funciones actualizadas, usar las funciones evaluadas originales
+            updatedCommand.functions = evaluatedFunctions;
+            
+            // FORZAR GUARDADO de las funciones evaluadas si no se encontraron actualizadas
+            if (evaluatedFunctions && evaluatedFunctions.length > 0) {
+              console.log(`[ToolEvaluator] FORZANDO GUARDADO de ${evaluatedFunctions.length} funciones evaluadas originales`);
+              try {
+                await commandService.updateCommand(command.id, {
+                  functions: evaluatedFunctions
+                });
+                console.log(`[ToolEvaluator] Guardado forzado completado exitosamente`);
+              } catch (forceSaveError) {
+                console.error(`[ToolEvaluator] Error en guardado forzado:`, forceSaveError);
+              }
+            }
+          }
+        } catch (error) {
+          console.error(`[ToolEvaluator] Error obteniendo comando actualizado:`, error);
+          // En caso de error, usar las funciones evaluadas originales
+          updatedCommand.functions = evaluatedFunctions;
+        }
+        
+        // Loguear para diagnóstico
+        if (updatedCommand.functions && updatedCommand.functions.length > 0) {
+          console.log(`[ToolEvaluator] Returning command with ${updatedCommand.functions.length} functions`);
+          console.log(`[ToolEvaluator] Function statuses: ${updatedCommand.functions.map((f: any) => f.status).join(', ')}`);
+        } else {
+          console.log(`[ToolEvaluator] Returning command without functions`);
+        }
         
         // Return results with original tools - no modifications to tools
         return {
@@ -220,7 +347,34 @@ export class ToolEvaluator extends Base {
       };
     }
   }
+
+  /**
+   * Execute selected tools from LLM response
+   * @param functionCalls - Array of function calls to execute
+   * @param tools - Array of available tools
+   * @param commandId - ID of the command that initiated these function calls
+   * @returns Results of tool execution
+   */
+  async executeSelectedTools(
+    functionCalls: FunctionCall[], 
+    tools: any[],
+    commandId: string
+  ): Promise<ToolExecutionResult[]> {
+    console.log(`[ToolEvaluator] Starting execution of ${functionCalls.length} selected tools for command: ${commandId}`);
+    
+    try {
+      // Use our new tool executor to run the tools with the command ID
+      const results = await runToolExecution(functionCalls, tools, commandId);
+      console.log(`[ToolEvaluator] Tool execution completed with ${results.length} results`);
+      return results;
+    } catch (error: any) {
+      console.error(`[ToolEvaluator] Error executing tools:`, error);
+      throw new Error(`Failed to execute selected tools: ${error.message}`);
+    }
+  }
 }
 
-// Export types for external use
+// Re-exportar desde las carpetas refactorizadas
+export * from './executor';
+export * from './updater';
 export * from './types'; 

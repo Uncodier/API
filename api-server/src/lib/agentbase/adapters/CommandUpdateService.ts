@@ -172,12 +172,6 @@ export class CommandUpdateService {
       }
     }
     
-    // Añadir metadata a las actualizaciones si existe
-    if (updates.metadata) {
-      console.log(`[CommandUpdateService] Actualizando metadata`);
-      dbUpdates.metadata = updates.metadata;
-    }
-    
     // Añadir tokens si están definidos
     if (updates.input_tokens !== undefined) {
       console.log(`[CommandUpdateService] Actualizando input_tokens: ${updates.input_tokens}`);

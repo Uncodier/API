@@ -60,30 +60,73 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
     if (response && Array.isArray(response)) {
       console.log(`[ToolEvaluator] Response is array with ${response.length} items`);
       for (const item of response) {
+        if (!item) {
+          console.log(`[ToolEvaluator] Skipping null or undefined item in response array`);
+          continue;
+        }
+        
         console.log(`[ToolEvaluator] Processing item type: ${item.type}`);
         if (item.type === 'exclusion') {
           // Handle exclusions - already in the correct format
-          console.log(`[ToolEvaluator] Added exclusion for tool: ${item.name}`);
-          toolDecisions.push(item as ToolExclusion);
+          if (item.name) {
+            console.log(`[ToolEvaluator] Added exclusion for tool: ${item.name}`);
+            toolDecisions.push(item as ToolExclusion);
+          } else {
+            console.log(`[ToolEvaluator] Skipping exclusion with missing name property`);
+          }
         } 
         else if (item.type === 'function') {
-          // Handle function calls - already in the correct format
-          console.log(`[ToolEvaluator] Added function call for: ${item.function?.name}`);
-          toolDecisions.push(item as FunctionCall);
+          // Handle function calls - use flat format
+          if (item.name) {
+            console.log(`[ToolEvaluator] Added function call for: ${item.name}`);
+            const functionCall: FunctionCall = {
+              id: item.id || `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: item.status || "initialized",
+              name: item.name,
+              arguments: item.arguments || "{}"
+            };
+            toolDecisions.push(functionCall);
+          } else if (item.function && item.function.name) {
+            // Convertir formato antiguo a nuevo formato plano
+            console.log(`[ToolEvaluator] Converting nested format to flat for: ${item.function.name}`);
+            const functionCall: FunctionCall = {
+              id: item.id || `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: item.status || "initialized",
+              name: item.function.name,
+              arguments: item.function.arguments || "{}"
+            };
+            toolDecisions.push(functionCall);
+          } else {
+            console.log(`[ToolEvaluator] Function object is malformed, adding with default values`);
+            // Create a valid function call with default values to prevent errors
+            const fixedFunctionCall: FunctionCall = {
+              id: `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: "initialized",
+              name: "unknown_function",
+              arguments: "{}"
+            };
+            
+            toolDecisions.push(fixedFunctionCall);
+          }
         } 
         else if (item.type === 'function_call') {
           // Convert old format to new format
-          console.log(`[ToolEvaluator] Converting old format function_call to new format for: ${item.name}`);
-          const functionCall: FunctionCall = {
-            id: `call_${uuidv4().split('-')[0]}`,
-            type: "function",
-            status: "initialized",
-            function: {
+          if (item.name) {
+            console.log(`[ToolEvaluator] Converting old format function_call to new format for: ${item.name}`);
+            const functionCall: FunctionCall = {
+              id: `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: "initialized",
               name: item.name,
-              arguments: item.arguments
-            }
-          };
-          toolDecisions.push(functionCall);
+              arguments: item.arguments || "{}"
+            };
+            toolDecisions.push(functionCall);
+          } else {
+            console.log(`[ToolEvaluator] Skipping function_call with missing name property`);
+          }
         } else {
           console.log(`[ToolEvaluator] Unknown item type: ${item.type}, skipping`);
         }
@@ -105,14 +148,13 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
       // If response is a single object with function property, convert to function call
       else if (response && typeof response === 'object' && response.function) {
         console.log(`[ToolEvaluator] Found single function object, converting to function call`);
+        const functionName = response.function.name || response.name || "unknown_function";
         const functionCall: FunctionCall = {
           id: `call_${uuidv4().split('-')[0]}`,
           type: "function",
           status: "initialized",
-          function: {
-            name: response.function.name || response.name,
-            arguments: response.function.arguments || response.arguments || '{}'
-          }
+          name: functionName,
+          arguments: response.function.arguments || response.arguments || '{}'
         };
         toolDecisions.push(functionCall);
       }
@@ -126,34 +168,34 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
         if (response.tool_calls && Array.isArray(response.tool_calls)) {
           console.log(`[ToolEvaluator] Processing tool_calls array with ${response.tool_calls.length} items`);
           for (const call of response.tool_calls) {
-            if (call.function) {
+            if (call && call.function && call.function.name) {
               console.log(`[ToolEvaluator] Converting tool_call for: ${call.function.name}`);
               const functionCall: FunctionCall = {
                 id: `call_${uuidv4().split('-')[0]}`,
                 type: "function",
                 status: "initialized",
-                function: {
-                  name: call.function.name,
-                  arguments: call.function.arguments || '{}'
-                }
+                name: call.function.name,
+                arguments: call.function.arguments || '{}'
               };
               toolDecisions.push(functionCall);
+            } else {
+              console.log(`[ToolEvaluator] Skipping invalid tool_call without function name`);
             }
           }
         } 
         // Process single function_call (OpenAI's older format)
-        else if (response.function_call) {
+        else if (response.function_call && response.function_call.name) {
           console.log(`[ToolEvaluator] Converting function_call for: ${response.function_call.name}`);
           const functionCall: FunctionCall = {
             id: `call_${uuidv4().split('-')[0]}`,
             type: "function",
             status: "initialized",
-            function: {
-              name: response.function_call.name,
-              arguments: response.function_call.arguments || '{}'
-            }
+            name: response.function_call.name,
+            arguments: response.function_call.arguments || '{}'
           };
           toolDecisions.push(functionCall);
+        } else {
+          console.log(`[ToolEvaluator] Invalid OpenAI-style function call format, missing required properties`);
         }
       }
       
@@ -161,26 +203,28 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
       else if (response && response.tool_decisions && Array.isArray(response.tool_decisions)) {
         console.log(`[ToolEvaluator] Found legacy tool_decisions array with ${response.tool_decisions.length} items`);
         for (const decision of response.tool_decisions) {
-          if (decision.should_use) {
-            console.log(`[ToolEvaluator] Converting legacy 'should_use' decision for tool: ${decision.tool_name}`);
-            const functionCall: FunctionCall = {
-              id: `call_${uuidv4().split('-')[0]}`,
-              type: "function",
-              status: "initialized",
-              function: {
+          if (decision && decision.tool_name) {
+            if (decision.should_use) {
+              console.log(`[ToolEvaluator] Converting legacy 'should_use' decision for tool: ${decision.tool_name}`);
+              const functionCall: FunctionCall = {
+                id: `call_${uuidv4().split('-')[0]}`,
+                type: "function",
+                status: "initialized",
                 name: decision.tool_name,
                 arguments: JSON.stringify(decision.parameters || {})
-              }
-            };
-            toolDecisions.push(functionCall);
+              };
+              toolDecisions.push(functionCall);
+            } else {
+              console.log(`[ToolEvaluator] Converting legacy exclusion for tool: ${decision.tool_name}`);
+              const exclusion: ToolExclusion = {
+                reasoning: decision.reasoning || "Tool should not be used based on user request",
+                type: "exclusion",
+                name: decision.tool_name
+              };
+              toolDecisions.push(exclusion);
+            }
           } else {
-            console.log(`[ToolEvaluator] Converting legacy exclusion for tool: ${decision.tool_name}`);
-            const exclusion: ToolExclusion = {
-              reasoning: decision.reasoning || "Tool should not be used based on user request",
-              type: "exclusion",
-              name: decision.tool_name
-            };
-            toolDecisions.push(exclusion);
+            console.log(`[ToolEvaluator] Skipping invalid legacy tool decision without tool_name`);
           }
         }
       } else {
@@ -219,10 +263,8 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
                 id: `call_${uuidv4().split('-')[0]}`,
                 type: "function",
                 status: "initialized",
-                function: {
-                  name: toolName,
-                  arguments: argsString
-                }
+                name: toolName,
+                arguments: argsString
               };
               
               toolDecisions.push(functionCall);
@@ -242,11 +284,12 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
   const coveredTools = new Set(
     toolDecisions.map(decision => {
       if (decision.type === 'function') {
-        return decision.function.name;
-      } else {
+        return decision.name;
+      } else if (decision.type === 'exclusion' && decision.name) {
         return decision.name;
       }
-    })
+      return null;
+    }).filter(name => name !== null)
   );
   
   // Add missing tools as "exclusion" decisions
@@ -279,4 +322,57 @@ export function generateFunctions(decisions: ToolDecision[]): FunctionCall[] {
     .map(decision => decision as FunctionCall);
   
   return functionCalls;
+}
+
+/**
+ * Process tool evaluation response from LLM and prepare function calls for execution
+ * 
+ * This is a combined function that processes the response and generates function calls in one step
+ * @param response - The raw LLM response
+ * @param tools - Available tools
+ * @returns Array of function calls ready for execution
+ */
+export function prepareToolsForExecution(response: any, tools: any[]): FunctionCall[] {
+  console.log(`[ToolEvaluator] Preparing tools for execution`);
+  
+  // First process the evaluation response
+  const decisions = processToolEvaluationResponse(response, tools);
+  
+  // Then extract function calls
+  const functionCalls = generateFunctions(decisions);
+  
+  // Create a set of valid tool names for efficient lookup
+  const validToolNames = new Set(tools.map(tool => typeof tool === 'string' ? tool : tool.name));
+  console.log(`[ToolEvaluator] Valid tool names: ${Array.from(validToolNames).join(', ')}`);
+  
+  // Filter function calls to only include those with valid tool names
+  const validatedFunctionCalls = functionCalls.filter(call => {
+    // Obtener el nombre de la función 
+    const functionName = call.name;
+    
+    if (!functionName || functionName === 'unknown_function') {
+      console.warn(`[ToolEvaluator] Skipping function call with missing or unknown name`);
+      return false;
+    }
+    
+    if (!validToolNames.has(functionName)) {
+      console.warn(`[ToolEvaluator] Skipping function call with invalid tool name: ${functionName}`);
+      return false;
+    }
+    
+    // Asegurarse de que todas las funciones tengan status 'required'
+    if (call.status !== 'required') {
+      console.log(`[ToolEvaluator] Setting function ${functionName} status to 'required' (was: ${call.status || 'undefined'})`);
+      call.status = 'required';
+    }
+    
+    return true;
+  });
+  
+  if (validatedFunctionCalls.length < functionCalls.length) {
+    console.warn(`[ToolEvaluator] Filtered out ${functionCalls.length - validatedFunctionCalls.length} invalid function calls`);
+  }
+  
+  console.log(`[ToolEvaluator] Prepared ${validatedFunctionCalls.length} tools for execution`);
+  return validatedFunctionCalls;
 } 

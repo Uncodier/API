@@ -680,8 +680,8 @@ export async function POST(request: Request) {
           type: "function",
           async: true,
           function: {
-            name: 'ESCALATE',
-            description: 'escalate when needed',
+            name: 'DELEGATE_CONVERSATION',
+            description: 'escalate when needed to a specific department or role',
             parameters: {
               type: 'object',
               properties: {
@@ -692,6 +692,15 @@ export async function POST(request: Request) {
                 lead_id: {
                   type: 'string',
                   description: 'The ID of the lead or customer related to this escalation'
+                },
+                target: {
+                  type: 'string',
+                  enum: ['sales', 'cmo'],
+                  description: 'The department or role to escalate the conversation to'
+                },
+                summary: {
+                  type: 'string',
+                  description: 'A brief summary of the issue or reason for escalation'
                 }
               },
               required: ['conversation', 'lead_id'],

@@ -113,13 +113,35 @@ export class CommandUpdateService {
             }
           }
           
-          // Actualizar el comando en la base de datos
-          if (Object.keys(dbUpdates).includes('status') && Object.keys(dbUpdates).length === 1) {
-            console.log(`🚨 [CommandUpdateService] Actualizando SOLO STATUS a ${dbUpdates.status} para ${dbId}`);
-            await DatabaseAdapter.updateCommand(dbId, { status: dbUpdates.status });
-          } else {
-            await DatabaseAdapter.updateCommand(dbId, dbUpdates);
+          // Verificar si necesitamos preservar el agent_background
+          if (command?.agent_background && !dbUpdates.agent_background) {
+            console.log(`[CommandUpdateService] Preservando agent_background existente`);
+            dbUpdates.agent_background = command.agent_background;
           }
+          
+          // Si solo se está actualizando el status, preservar las funciones también
+          if (dbUpdates.status && !dbUpdates.functions && command?.functions && command.functions.length > 0) {
+            console.log(`[CommandUpdateService] 🔍 Preservando ${command.functions.length} funciones al actualizar solo status a ${dbUpdates.status}`);
+            
+            // Verificar estados de funciones a preservar
+            const failedFunctions = command.functions.filter(f => f.status === 'failed').length;
+            const completedFunctions = command.functions.filter(f => f.status === 'completed').length;
+            const requiredFunctions = command.functions.filter(f => f.status === 'required').length;
+            
+            console.log(`[CommandUpdateService] 📊 Funciones preservadas: ${completedFunctions} completed, ${failedFunctions} failed, ${requiredFunctions} required`);
+            
+            // Añadir las funciones a la actualización
+            dbUpdates.functions = command.functions;
+          }
+          
+          // Nunca restringir qué se guarda - actualizar directamente lo enviado
+          console.log(`📝 [CommandUpdateService] Enviando actualizaciones a BD: ${Object.keys(dbUpdates).join(', ')}`);
+          if (dbUpdates.functions) {
+            console.log(`📊 [CommandUpdateService] Actualizando ${dbUpdates.functions.length} funciones en BD`);
+          }
+          
+          // Enviar todas las actualizaciones a la base de datos directamente
+          await DatabaseAdapter.updateCommand(dbId, dbUpdates);
           
           console.log(`✅ [CommandUpdateService] Comando actualizado exitosamente en BD: ${dbId}`);
           dbUpdated = true;
@@ -138,6 +160,15 @@ export class CommandUpdateService {
               // Guardar en la caché y CommandStore
               CommandCache.cacheCommand(commandId, resultCommand);
               CommandStore.setCommand(commandId, resultCommand);
+              
+              // Verificar si hay funciones actualizadas
+              if (resultCommand.functions && resultCommand.functions.length > 0) {
+                const failedFunctions = resultCommand.functions.filter(f => f.status === 'failed').length;
+                const completedFunctions = resultCommand.functions.filter(f => f.status === 'completed').length;
+                const requiredFunctions = resultCommand.functions.filter(f => f.status === 'required').length;
+                
+                console.log(`[CommandUpdateService] Estado de funciones en comando actualizado: ${completedFunctions} completed, ${failedFunctions} failed, ${requiredFunctions} required de ${resultCommand.functions.length} totales`);
+              }
               
               // Emitir evento de actualización
               this.eventEmitter.emit('commandUpdated', resultCommand);

@@ -61,6 +61,8 @@ export class CommandProcessor {
       // =========================================================
       console.log(`🧰 [CommandProcessor] Evaluando herramientas para el comando: ${command.id}`);
       
+      let toolProcessingFailed = false;
+      
       if (command.tools && command.tools.length > 0) {
         try {
           command = await this.processTools(command);
@@ -68,8 +70,8 @@ export class CommandProcessor {
         } catch (toolError: any) {
           console.error(`❌ [CommandProcessor] Error procesando herramientas:`, toolError);
           
-          // Actualizar estado a 'failed' pero continuar si es posible
-          await this.commandService.updateStatus(command.id, 'failed', `Error en herramientas: ${toolError.message}`);
+          // No actualizamos el estado a 'failed' inmediatamente, lo marcamos para evaluar después
+          toolProcessingFailed = true;
           command.error = `Error en herramientas: ${toolError.message}`;
         }
       } else {
@@ -105,8 +107,23 @@ export class CommandProcessor {
       // =========================================================
       console.log(`🏁 [CommandProcessor] Finalizando procesamiento del comando: ${command.id}`);
       
+      // Si hubo errores en el procesamiento de herramientas pero los targets se procesaron correctamente,
+      // decidir cuál es el estado final apropiado
+      if (toolProcessingFailed) {
+        // Si hay resultados válidos de targets, podemos considerar el comando como completado con advertencias
+        if (command.results && command.results.length > 0) {
+          console.log(`⚠️ [CommandProcessor] Hubo errores en herramientas pero se generaron resultados válidos`);
+          await this.commandService.updateStatus(command.id, 'completed', 'Completado con advertencias en herramientas');
+          command.status = 'completed';
+        } else {
+          // Si no hay resultados, marcar como fallido
+          console.log(`❌ [CommandProcessor] Fallos en herramientas y sin resultados válidos, marcando como fallido`);
+          await this.commandService.updateStatus(command.id, 'failed', command.error);
+          command.status = 'failed';
+        }
+      }
       // Marcar como completado si no hay errores
-      if (command.status !== 'failed') {
+      else if (command.status !== 'failed') {
         await this.commandService.updateStatus(command.id, 'completed');
         command.status = 'completed';
       }
@@ -272,6 +289,25 @@ export class CommandProcessor {
       // Actualizar el comando con los resultados y functions
       const updatedCommand = toolResult.updatedCommand || command;
       
+      // Verificar si las funciones se crearon correctamente
+      if (updatedCommand.functions) {
+        console.log(`✅ [CommandProcessor] Se generaron ${updatedCommand.functions.length} funciones en la evaluación`);
+        
+        // Loguear información sobre las funciones para diagnóstico
+        updatedCommand.functions.forEach((func: any, index: number) => {
+          if (func) {
+            const funcName = func.function ? func.function.name : (func.name || 'unknown');
+            console.log(`📌 [CommandProcessor] Función #${index + 1}: ${funcName}`);
+          } else {
+            console.warn(`⚠️ [CommandProcessor] Función #${index + 1} es null o undefined`);
+          }
+        });
+      } else {
+        console.warn(`⚠️ [CommandProcessor] No se generaron funciones en la evaluación de herramientas`);
+        // Inicializar el array de funciones si no existe
+        updatedCommand.functions = [];
+      }
+      
       // Preservar explícitamente el agent_background
       if (command.agent_background && (!updatedCommand.agent_background || updatedCommand.agent_background.length < command.agent_background.length)) {
         console.log(`🔄 [CommandProcessor] Restaurando agent_background en comando actualizado`);
@@ -282,16 +318,32 @@ export class CommandProcessor {
       updatedCommand.input_tokens = (command.input_tokens || 0) + (toolResult.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (toolResult.outputTokens || 0);
       
-      // Guardar tokens en la base de datos
+      // Guardar tokens y funciones en la base de datos
       try {
-        await this.commandService.updateCommand(command.id, {
+        // IMPORTANTE: Asegurar que las funciones se incluyen en la actualización
+        const updateData: any = {
           input_tokens: updatedCommand.input_tokens,
-          output_tokens: updatedCommand.output_tokens,
-          functions: updatedCommand.functions
-        });
-        console.log(`💾 [CommandProcessor] Tokens actualizados en base de datos`);
+          output_tokens: updatedCommand.output_tokens
+        };
+        
+        // Solo incluir funciones si están definidas y no vacías
+        if (updatedCommand.functions) {
+          updateData.functions = updatedCommand.functions;
+          console.log(`💾 [CommandProcessor] Guardando ${updatedCommand.functions.length} funciones en base de datos`);
+        }
+        
+        await this.commandService.updateCommand(command.id, updateData);
+        console.log(`💾 [CommandProcessor] Tokens y funciones actualizados en base de datos`);
+        
+        // Verificar tras la actualización
+        const comandoActualizado = await this.commandService.getCommandById(command.id);
+        if (comandoActualizado && comandoActualizado.functions) {
+          console.log(`✅ [CommandProcessor] Verificación: el comando tiene ${comandoActualizado.functions.length} funciones después de la actualización`);
+        } else {
+          console.warn(`⚠️ [CommandProcessor] Las funciones no fueron persistidas correctamente`);
+        }
       } catch (updateError) {
-        console.error(`❌ [CommandProcessor] Error al actualizar tokens:`, updateError);
+        console.error(`❌ [CommandProcessor] Error al actualizar tokens y funciones:`, updateError);
       }
       
       console.log(`🧰 [CommandProcessor] FIN procesamiento de herramientas para comando: ${command.id}`);

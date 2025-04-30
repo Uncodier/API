@@ -402,7 +402,19 @@ export async function POST(request: Request) {
     console.log(`🚀 Acción rápida: ${effectiveQuickAction}`);
     
     // Build context message with all relevant information
-    let contextMessage = `Edit the following content based on the specified parameters:\n\n`;
+    let contextMessage = `Edit the following content based on the specified parameters:
+
+I need you to produce exceptional quality content that fully addresses the request. Please:
+
+1. Maintain the requested tone and voice while enhancing clarity and engagement
+2. Keep the content concise but comprehensive, focusing on delivering maximum value 
+3. Ensure proper structure with clear sections, natural transitions, and logical flow
+4. Optimize for both human readability and SEO where appropriate
+5. Address all specified requirements and parameters in detail
+6. Be creative while remaining factually accurate and authoritative
+
+Original content to edit:
+`;
     
     // Add original content information
     contextMessage += `Original Content:\nTitle: ${originalContent.title || 'No title'}\nDescription: ${originalContent.description || 'No description'}\nText: ${originalContent.text || 'No text'}\nType: ${originalContent.type || 'No type'}\n\n`;

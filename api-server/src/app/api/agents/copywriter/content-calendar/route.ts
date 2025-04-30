@@ -281,18 +281,59 @@ async function buildContext(siteId: string, segmentId?: string, campaignId?: str
   // Get site information
   const siteInfo = await getSiteInfo(siteId);
   if (siteInfo) {
-    contextParts.push(`Site Information:\n${JSON.stringify(siteInfo, null, 2)}`);
+    // Extract the most relevant site data and format it in a more structured way
+    const siteData = {
+      name: siteInfo.name || 'Unnamed Site',
+      description: siteInfo.description || 'No description available',
+      domain: siteInfo.domain || 'N/A',
+      primary_industry: siteInfo.industry || siteInfo.primary_industry || 'N/A',
+      language: siteInfo.language || 'en',
+      created_at: siteInfo.created_at || 'N/A'
+    };
+    
+    contextParts.push(`SITE INFORMATION:
+- Name: ${siteData.name}
+- Description: ${siteData.description}
+- Domain: ${siteData.domain}
+- Industry: ${siteData.primary_industry}
+- Language: ${siteData.language}
+- Created: ${siteData.created_at}
+    
+${siteInfo.business_description ? `Business Description: ${siteInfo.business_description}` : ''}
+${siteInfo.audience_description ? `Target Audience: ${siteInfo.audience_description}` : ''}
+${siteInfo.challenges ? `Main Challenges: ${siteInfo.challenges}` : ''}
+${siteInfo.competitors ? `Competitors: ${siteInfo.competitors}` : ''}
+${siteInfo.unique_selling_proposition ? `Unique Selling Proposition: ${siteInfo.unique_selling_proposition}` : ''}
+${siteInfo.brand_voice ? `Brand Voice: ${siteInfo.brand_voice}` : ''}`);
   } else {
-    contextParts.push(`Site ID: ${siteId} (no additional info available)`);
+    contextParts.push(`SITE INFORMATION:\n- Site ID: ${siteId}\n- Note: No additional site information available`);
   }
   
   // Get segment information if available
   if (segmentId) {
     const segmentInfo = await getSegmentInfo(segmentId);
     if (segmentInfo) {
-      contextParts.push(`Segment Information:\n${JSON.stringify(segmentInfo, null, 2)}`);
+      // Extract and format the most relevant segment data
+      const segmentData = {
+        name: segmentInfo.name || 'Unnamed Segment',
+        description: segmentInfo.description || 'No description available',
+        audience_criteria: segmentInfo.criteria || segmentInfo.audience_criteria || 'N/A',
+        size: segmentInfo.size || segmentInfo.audience_size || 'Unknown',
+        interests: segmentInfo.interests || [],
+        pain_points: segmentInfo.pain_points || []
+      };
+      
+      contextParts.push(`AUDIENCE SEGMENT INFORMATION:
+- Name: ${segmentData.name}
+- Description: ${segmentData.description}
+- Criteria: ${segmentData.audience_criteria}
+- Segment Size: ${segmentData.size}
+${Array.isArray(segmentData.interests) && segmentData.interests.length > 0 ? `- Interests: ${segmentData.interests.join(', ')}` : ''}
+${Array.isArray(segmentData.pain_points) && segmentData.pain_points.length > 0 ? `- Pain Points: ${segmentData.pain_points.join(', ')}` : ''}
+${segmentInfo.behaviors ? `- Key Behaviors: ${segmentInfo.behaviors}` : ''}
+${segmentInfo.content_preferences ? `- Content Preferences: ${segmentInfo.content_preferences}` : ''}`);
     } else {
-      contextParts.push(`Segment ID: ${segmentId} (no additional info available)`);
+      contextParts.push(`AUDIENCE SEGMENT INFORMATION:\n- Segment ID: ${segmentId}\n- Note: No additional segment information available`);
     }
   }
   
@@ -300,9 +341,31 @@ async function buildContext(siteId: string, segmentId?: string, campaignId?: str
   if (campaignId) {
     const campaignInfo = await getCampaignInfo(campaignId);
     if (campaignInfo) {
-      contextParts.push(`Campaign Information:\n${JSON.stringify(campaignInfo, null, 2)}`);
+      // Extract and format the most relevant campaign data
+      const campaignData = {
+        name: campaignInfo.name || 'Unnamed Campaign',
+        description: campaignInfo.description || 'No description available',
+        goal: campaignInfo.goal || campaignInfo.objective || 'N/A',
+        start_date: campaignInfo.start_date || 'N/A',
+        end_date: campaignInfo.end_date || 'N/A',
+        target_audience: campaignInfo.target_audience || 'N/A',
+        channels: campaignInfo.channels || [],
+        kpis: campaignInfo.kpis || []
+      };
+      
+      contextParts.push(`CAMPAIGN INFORMATION:
+- Name: ${campaignData.name}
+- Description: ${campaignData.description}
+- Primary Goal: ${campaignData.goal}
+- Timeline: ${campaignData.start_date} to ${campaignData.end_date}
+- Target Audience: ${campaignData.target_audience}
+${Array.isArray(campaignData.channels) && campaignData.channels.length > 0 ? `- Distribution Channels: ${campaignData.channels.join(', ')}` : ''}
+${Array.isArray(campaignData.kpis) && campaignData.kpis.length > 0 ? `- Key Performance Indicators: ${campaignData.kpis.join(', ')}` : ''}
+${campaignInfo.budget ? `- Budget: ${campaignInfo.budget}` : ''}
+${campaignInfo.messaging ? `- Key Messaging: ${campaignInfo.messaging}` : ''}
+${campaignInfo.content_requirements ? `- Content Requirements: ${campaignInfo.content_requirements}` : ''}`);
     } else {
-      contextParts.push(`Campaign ID: ${campaignId} (no additional info available)`);
+      contextParts.push(`CAMPAIGN INFORMATION:\n- Campaign ID: ${campaignId}\n- Note: No additional campaign information available`);
     }
   }
   
@@ -353,16 +416,124 @@ export async function POST(request: Request) {
     
     // Additional context from request parameters
     let additionalContext = [];
-    
-    if (timeframe) additionalContext.push(`Timeframe: ${timeframe}`);
-    if (contentType) additionalContext.push(`Content Type: ${contentType}`);
-    if (targetAudience) additionalContext.push(`Target Audience: ${targetAudience}`);
-    if (goals && Array.isArray(goals)) additionalContext.push(`Goals: ${goals.join(', ')}`);
-    if (keywords && Array.isArray(keywords)) additionalContext.push(`Keywords: ${keywords.join(', ')}`);
+
+    if (timeframe) {
+      additionalContext.push(`TIMEFRAME: ${timeframe}`);
+    }
+
+    if (contentType) {
+      // Handle both string and array formats
+      const formattedContentTypes = Array.isArray(contentType) 
+        ? contentType.join(', ') 
+        : contentType;
+      additionalContext.push(`CONTENT TYPES: ${formattedContentTypes}`);
+    }
+
+    if (targetAudience) {
+      // Handle both string and array formats
+      const formattedAudience = Array.isArray(targetAudience) 
+        ? targetAudience.join(', ') 
+        : targetAudience;
+      additionalContext.push(`TARGET AUDIENCE: ${formattedAudience}`);
+    }
+
+    if (goals && Array.isArray(goals) && goals.length > 0) {
+      additionalContext.push(`BUSINESS & MARKETING GOALS:`);
+      goals.forEach((goal, index) => {
+        additionalContext.push(`  ${index + 1}. ${goal}`);
+      });
+    }
+
+    if (keywords && Array.isArray(keywords) && keywords.length > 0) {
+      additionalContext.push(`FOCUS KEYWORDS & TOPICS:`);
+      
+      // Group keywords in sets of 5 for better readability
+      const groupedKeywords = [];
+      for (let i = 0; i < keywords.length; i += 5) {
+        const group = keywords.slice(i, i + 5).join(', ');
+        groupedKeywords.push(`  • ${group}`);
+      }
+      
+      additionalContext.push(groupedKeywords.join('\n'));
+    }
     
     const fullContext = additionalContext.length > 0 
-      ? `${context}\n\nAdditional Parameters:\n${additionalContext.join('\n')}` 
-      : context;
+      ? `Generate a strategic content calendar optimized for maximum business impact.
+
+OBJECTIVES:
+- Create comprehensive, data-driven content ideas aligned with business goals
+- Develop a balanced mix of content types and formats to engage different audience segments
+- Include detailed information for each content piece (title, description, keywords, estimated reading time)
+- Ensure all content aligns with marketing strategy, SEO goals, and brand voice
+- Optimize publishing schedule for maximum audience engagement
+- Provide strategic rationale for topic selection and content types
+
+CONTENT STRUCTURE GUIDELINES:
+1. Create at least 8-12 distinct content pieces organized chronologically
+2. For each content item include:
+   - Clear, compelling title (50-60 characters)
+   - Concise but descriptive summary (100-150 characters)
+   - Content type/format (blog, case study, infographic, video, etc.)
+   - Primary topic and 3-5 related keywords
+   - Estimated reading/viewing time
+   - Optimal publishing date or timeframe
+   - Specific target audience segment
+   - Business goal this content supports
+   - Brief strategic notes on execution
+
+STRATEGIC CONSIDERATIONS:
+- Distribute content types across marketing funnel (awareness, consideration, decision)
+- Include a mix of evergreen and timely/seasonal content
+- Create topic clusters around primary keywords for improved SEO impact
+- Balance content frequency based on available resources and audience engagement patterns
+- Consider repurposing opportunities (e.g., blog post → infographic → social media series)
+- Plan content that aligns with specific conversion goals and sales cycles
+
+CALENDAR FORMAT:
+- Organize content chronologically by week/month
+- Group related content to create thematic campaigns where appropriate
+- Include content distribution channels for each piece
+- Note any dependencies between content items
+
+${context}\n\nAdditional Parameters:\n${additionalContext.join('\n')}`
+      : `Generate a strategic content calendar optimized for maximum business impact.
+
+OBJECTIVES:
+- Create comprehensive, data-driven content ideas aligned with business goals
+- Develop a balanced mix of content types and formats to engage different audience segments
+- Include detailed information for each content piece (title, description, keywords, estimated reading time)
+- Ensure all content aligns with marketing strategy, SEO goals, and brand voice
+- Optimize publishing schedule for maximum audience engagement
+- Provide strategic rationale for topic selection and content types
+
+CONTENT STRUCTURE GUIDELINES:
+1. Create at least 8-12 distinct content pieces organized chronologically
+2. For each content item include:
+   - Clear, compelling title (50-60 characters)
+   - Concise but descriptive summary (100-150 characters)
+   - Content type/format (blog, case study, infographic, video, etc.)
+   - Primary topic and 3-5 related keywords
+   - Estimated reading/viewing time
+   - Optimal publishing date or timeframe
+   - Specific target audience segment
+   - Business goal this content supports
+   - Brief strategic notes on execution
+
+STRATEGIC CONSIDERATIONS:
+- Distribute content types across marketing funnel (awareness, consideration, decision)
+- Include a mix of evergreen and timely/seasonal content
+- Create topic clusters around primary keywords for improved SEO impact
+- Balance content frequency based on available resources and audience engagement patterns
+- Consider repurposing opportunities (e.g., blog post → infographic → social media series)
+- Plan content that aligns with specific conversion goals and sales cycles
+
+CALENDAR FORMAT:
+- Organize content chronologically by week/month
+- Group related content to create thematic campaigns where appropriate
+- Include content distribution channels for each piece
+- Note any dependencies between content items
+
+${context}`;
     
     // Create the command using CommandFactory
     const command = CommandFactory.createCommand({

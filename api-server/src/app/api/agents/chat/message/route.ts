@@ -100,8 +100,13 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
           console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
         }
         
-        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
-          console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
+        // Considerar comandos en estado 'failed' como completados si tienen resultados
+        const hasResults = executedCommand.results && executedCommand.results.length > 0;
+        const commandFinished = executedCommand.status === 'completed' || 
+                               (executedCommand.status === 'failed' && hasResults);
+                               
+        if (commandFinished) {
+          console.log(`✅ Comando ${commandId} terminado con estado: ${executedCommand.status}${hasResults ? ' (con resultados)' : ''}`);
           
           // Intentar obtener el UUID de la base de datos si aún no lo tenemos
           if (!dbUuid || !isValidUUID(dbUuid)) {
@@ -110,7 +115,10 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
           }
           
           clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: executedCommand.status === 'completed'});
+          // Consideramos un comando fallido como "completado" si tiene resultados
+          const effectivelyCompleted = executedCommand.status === 'completed' || 
+                                     (executedCommand.status === 'failed' && hasResults);
+          resolve({command: executedCommand, dbUuid, completed: effectivelyCompleted});
           return;
         }
         
@@ -126,7 +134,9 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
           }
           
           clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: false});
+          // Verificar si, a pesar del timeout, hay resultados utilizables
+          const usableResults = executedCommand.results && executedCommand.results.length > 0;
+          resolve({command: executedCommand, dbUuid, completed: usableResults});
         }
       } catch (error) {
         console.error(`Error al verificar estado del comando ${commandId}:`, error);
@@ -147,6 +157,22 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     const effectiveRole = visitorId ? 'visitor' : (teamMemberId ? 'team_member' : 'user');
     console.log(`💾 Guardando mensajes - Role: ${effectiveRole}, User: ${teamMemberId || userId}`);
     
+    // Verificación adicional de parámetros para diagnóstico
+    if (!userId) {
+      console.error('💥 Error: userId es requerido pero no fue proporcionado');
+      return null;
+    }
+    
+    if (!userMessage) {
+      console.error('💥 Error: userMessage es requerido pero no fue proporcionado');
+      return null;
+    }
+    
+    if (!assistantMessage) {
+      console.error('💥 Error: assistantMessage es requerido pero no fue proporcionado');
+      return null;
+    }
+    
     // Verificar si tenemos un ID de conversación
     if (!conversationId) {
       // Crear una nueva conversación si no existe
@@ -160,105 +186,171 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (conversationTitle) conversationData.title = conversationTitle;
       
       console.log(`🗣️ Creando nueva conversación con datos: ${JSON.stringify(conversationData).substring(0, 100)}...`);
-      const { data: conversation, error: convError } = await supabaseAdmin
-        .from('conversations')
-        .insert([conversationData])
-        .select()
-        .single();
       
-      if (convError) {
-        console.error('Error al crear conversación:', convError);
+      try {
+        const { data: conversation, error: convError } = await supabaseAdmin
+          .from('conversations')
+          .insert([conversationData])
+          .select()
+          .single();
+        
+        if (convError) {
+          console.error('Error al crear conversación:', convError);
+          return null;
+        }
+        
+        if (!conversation || !conversation.id) {
+          console.error('Error: No se pudo obtener el ID de la conversación creada');
+          return null;
+        }
+        
+        conversationId = conversation.id;
+        console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
+      } catch (createConvError) {
+        console.error('Error al crear conversación (excepción):', createConvError);
         return null;
       }
-      
-      conversationId = conversation.id;
-      console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
     } else if (conversationTitle) {
       // Actualizar el título de la conversación existente si se proporciona uno nuevo
       console.log(`✏️ Actualizando título de conversación ${conversationId} a: "${conversationTitle}"`);
-      const { error: updateError } = await supabaseAdmin
-        .from('conversations')
-        .update({ title: conversationTitle })
-        .eq('id', conversationId);
-      
-      if (updateError) {
-        console.error('Error al actualizar título de conversación:', updateError);
+      try {
+        const { error: updateError } = await supabaseAdmin
+          .from('conversations')
+          .update({ title: conversationTitle })
+          .eq('id', conversationId);
+        
+        if (updateError) {
+          console.error('Error al actualizar título de conversación:', updateError);
+          // No fallamos toda la operación si solo falla la actualización del título
+          console.log('Continuando con el guardado de mensajes...');
+        } else {
+          console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
+        }
+      } catch (updateTitleError) {
+        console.error('Error al actualizar título (excepción):', updateTitleError);
         // No fallamos toda la operación si solo falla la actualización del título
         console.log('Continuando con el guardado de mensajes...');
-      } else {
-        console.log(`✏️ Título de conversación actualizado: "${conversationTitle}"`);
       }
     }
     
-    // Guardar el mensaje del usuario
-    console.log(`💬 Preparando guardado del mensaje del usuario en conversación: ${conversationId}`);
-    const userMessageData: any = {
-      conversation_id: conversationId,
-      user_id: teamMemberId || userId,
-      content: userMessage,
-      role: "user"
-    };
-    
-    console.log(`📋 Datos del mensaje del usuario: user_id=${userMessageData.user_id}, role=${userMessageData.role}`);
-    
-    // Añadir lead_id, visitor_id y agent_id si están presentes
-    if (leadId) userMessageData.lead_id = leadId;
-    if (visitorId) userMessageData.visitor_id = visitorId;
-    if (agentId) userMessageData.agent_id = agentId;
-    if (commandId) userMessageData.command_id = commandId;
-    
-    const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
-      .from('messages')
-      .insert([userMessageData])
-      .select()
-      .single();
-    
-    if (userMsgError) {
-      console.error('Error al guardar mensaje del usuario:', userMsgError);
+    if (!conversationId) {
+      console.error('💥 Error crítico: No se pudo obtener un ID de conversación válido');
       return null;
     }
     
-    console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
-    
-    // Guardar el mensaje del asistente
-    console.log(`💬 Preparando guardado del mensaje del asistente en conversación: ${conversationId}`);
-    const assistantMessageData: any = {
-      conversation_id: conversationId,
-      content: assistantMessage,
-      role: 'assistant'
-    };
-    
-    // Añadir lead_id, visitor_id y agent_id si están presentes
-    if (leadId) assistantMessageData.lead_id = leadId;
-    if (visitorId) assistantMessageData.visitor_id = visitorId;
-    if (agentId) assistantMessageData.agent_id = agentId;
-    if (commandId) assistantMessageData.command_id = commandId;
-    
-    const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
-      .from('messages')
-      .insert([assistantMessageData])
-      .select()
-      .single();
-    
-    if (assistantMsgError) {
-      console.error('Error al guardar mensaje del asistente:', assistantMsgError);
+    // Verificar formato del ID de conversación
+    if (!isValidUUID(conversationId)) {
+      console.error(`💥 Error crítico: ID de conversación no es un UUID válido: ${conversationId}`);
       return null;
     }
     
-    console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
+    // Guardar los mensajes en una transacción para asegurar consistencia
+    const messages = [];
     
-    // Verificar que los mensajes se guardaron correctamente
-    console.log(`✅ Ambos mensajes guardados exitosamente para la conversación: ${conversationId}`);
-    
-    return {
-      conversationId,
-      userMessageId: savedUserMessage.id,
-      assistantMessageId: savedAssistantMessage.id,
-      conversationTitle,
-      userRole: effectiveRole
-    };
+    try {
+      // Preparar el mensaje del usuario
+      console.log(`💬 Preparando guardado del mensaje del usuario en conversación: ${conversationId}`);
+      const userMessageData: any = {
+        conversation_id: conversationId,
+        user_id: teamMemberId || userId,
+        content: userMessage,
+        role: teamMemberId ? "team_member" : "user"
+      };
+      
+      console.log(`📋 Datos del mensaje del usuario: user_id=${userMessageData.user_id}, role=${userMessageData.role}`);
+      
+      // Añadir lead_id, visitor_id y agent_id si están presentes
+      if (leadId) userMessageData.lead_id = leadId;
+      if (visitorId) userMessageData.visitor_id = visitorId;
+      if (agentId) userMessageData.agent_id = agentId;
+      if (commandId) userMessageData.command_id = commandId;
+      
+      // Guardar el mensaje del usuario
+      const { data: savedUserMessage, error: userMsgError } = await supabaseAdmin
+        .from('messages')
+        .insert([userMessageData])
+        .select()
+        .single();
+      
+      if (userMsgError) {
+        console.error('Error al guardar mensaje del usuario:', userMsgError);
+        return null;
+      }
+      
+      if (!savedUserMessage || !savedUserMessage.id) {
+        console.error('Error: No se pudo obtener el ID del mensaje del usuario guardado');
+        return null;
+      }
+      
+      console.log(`💾 Mensaje del usuario guardado con ID: ${savedUserMessage.id}`);
+      messages.push(savedUserMessage);
+      
+      // Preparar el mensaje del asistente
+      console.log(`💬 Preparando guardado del mensaje del asistente en conversación: ${conversationId}`);
+      const assistantMessageData: any = {
+        conversation_id: conversationId,
+        content: assistantMessage,
+        role: 'assistant'
+      };
+      
+      // Añadir lead_id, visitor_id y agent_id si están presentes
+      if (leadId) assistantMessageData.lead_id = leadId;
+      if (visitorId) assistantMessageData.visitor_id = visitorId;
+      if (agentId) assistantMessageData.agent_id = agentId;
+      if (commandId) assistantMessageData.command_id = commandId;
+      
+      // Guardar el mensaje del asistente
+      const { data: savedAssistantMessage, error: assistantMsgError } = await supabaseAdmin
+        .from('messages')
+        .insert([assistantMessageData])
+        .select()
+        .single();
+      
+      if (assistantMsgError) {
+        console.error('Error al guardar mensaje del asistente:', assistantMsgError);
+        return null;
+      }
+      
+      if (!savedAssistantMessage || !savedAssistantMessage.id) {
+        console.error('Error: No se pudo obtener el ID del mensaje del asistente guardado');
+        return null;
+      }
+      
+      console.log(`💾 Mensaje del asistente guardado con ID: ${savedAssistantMessage.id}`);
+      messages.push(savedAssistantMessage);
+      
+      // Verificar que los mensajes se guardaron correctamente
+      console.log(`✅ Ambos mensajes guardados exitosamente para la conversación: ${conversationId}`);
+      
+      return {
+        conversationId,
+        userMessageId: savedUserMessage.id,
+        assistantMessageId: savedAssistantMessage.id,
+        conversationTitle,
+        userRole: effectiveRole
+      };
+    } catch (saveMessagesError) {
+      console.error('Error al guardar mensajes en la base de datos (excepción):', saveMessagesError);
+      
+      // Si se guardaron algunos mensajes parcialmente, intentar devolver la información disponible
+      if (messages.length > 0) {
+        const userMsg = messages.find(m => m.role === 'user');
+        const assistantMsg = messages.find(m => m.role === 'assistant');
+        
+        return {
+          conversationId,
+          userMessageId: userMsg?.id || null,
+          assistantMessageId: assistantMsg?.id || null,
+          conversationTitle,
+          userRole: effectiveRole,
+          partial: true
+        };
+      }
+      
+      return null;
+    }
   } catch (error) {
-    console.error('Error al guardar mensajes en la base de datos:', error);
+    console.error('Error general al guardar mensajes en la base de datos:', error);
     return null;
   }
 }
@@ -607,7 +699,7 @@ export async function POST(request: Request) {
         "type": "function",
         "function": {
           "name": "GET_LEAD_DETAILS",
-          "description": "Get details about a lead by providing name, email, company, and phone",
+          "description": "Get details about a lead by providing name, email, company, or phone",
           "parameters": {
             "type": "object",
             "properties": {
@@ -628,6 +720,52 @@ export async function POST(request: Request) {
                 "description": "The phone number of the lead."
               }
             },
+            "additionalProperties": false
+          },
+          "strict": true
+        }
+      },
+      {
+        "type": "function",
+        "function": {
+          "name": "SAVE_LEAD_DETAILS",
+          "description": "Save or update lead information in the database",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the lead."
+              },
+              "email": {
+                "type": "string",
+                "description": "The email address of the lead."
+              },
+              "company": {
+                "type": "string",
+                "description": "The company name associated with the lead."
+              },
+              "phone": {
+                "type": "string",
+                "description": "The phone number of the lead."
+              },
+              "source": {
+                "type": "string",
+                "description": "The source of the lead (e.g. website, referral, social)."
+              },
+              "status": {
+                "type": "string",
+                "description": "The status of the lead (e.g. new, contacted, qualified)."
+              },
+              "notes": {
+                "type": "string",
+                "description": "Additional notes or information about the lead."
+              }
+            },
+            "required": [
+              "name",
+              "email"
+            ],
             "additionalProperties": false
           },
           "strict": true
@@ -713,7 +851,7 @@ export async function POST(request: Request) {
         }
       ],
       // Set model instead of model_id
-      model: 'gpt-4.1-mini',
+      model: 'gpt-4.1',
       modelType: 'openai'
     });
     
@@ -733,17 +871,26 @@ export async function POST(request: Request) {
     // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
     const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
     
-    if (!completed || !executedCommand) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'COMMAND_EXECUTION_FAILED', 
-            message: 'The command did not complete successfully in the expected time' 
-          } 
-        },
-        { status: 500 }
-      );
+    // Si no completado y no hay resultados, retornar error
+    if (!completed) {
+      console.warn(`⚠️ Comando ${internalCommandId} no completó exitosamente en el tiempo esperado`);
+      
+      if (!executedCommand || !executedCommand.results || executedCommand.results.length === 0) {
+        // Solo fallar si realmente no hay resultados utilizables
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'COMMAND_EXECUTION_FAILED', 
+              message: 'El comando no completó exitosamente y no se generaron resultados válidos' 
+            } 
+          },
+          { status: 500 }
+        );
+      } else {
+        // Si hay resultados a pesar del estado, continuamos con advertencia
+        console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando`);
+      }
     }
     
     // Extraer la respuesta del asistente
@@ -881,90 +1028,149 @@ export async function POST(request: Request) {
     console.log(`🔄 Iniciando guardado de mensajes en la base de datos...`);
     console.log(`🧩 Parámetros de guardado: userId=${userId}, team_member_id=${team_member_id}`);
     
+    let savedMessages = null;
+
     try {
-      // Importante: Pasamos team_member_id como parámetro teamMemberId para que se asigne correctamente el rol
-      const savedMessagesPromise = saveMessages(
-        userId, 
-        message, 
-        assistantMessage, 
-        conversationId, 
-        lead_id, 
-        visitor_id, 
-        conversationTitle, 
-        agentId, 
-        team_member_id,  // Aseguramos que se pasa correctamente el team_member_id
-        effectiveDbUuid || internalCommandId  // Añadimos el command_id
-      );
+      // Intentar guardar los mensajes en la base de datos
+      try {
+        // Importante: Pasamos team_member_id como parámetro teamMemberId para que se asigne correctamente el rol
+        const savedMessagesPromise = saveMessages(
+          userId, 
+          message, 
+          assistantMessage, 
+          conversationId, 
+          lead_id, 
+          visitor_id, 
+          conversationTitle, 
+          agentId, 
+          team_member_id,  // Aseguramos que se pasa correctamente el team_member_id
+          effectiveDbUuid || internalCommandId  // Añadimos el command_id
+        );
+        
+        // Esperar a que se complete el guardado con un timeout de seguridad
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout saving messages')), 10000)
+        );
+        
+        // Utilizar Promise.race para manejar posibles tiempos de espera excesivos
+        savedMessages = await Promise.race([savedMessagesPromise, timeoutPromise]) as any;
+        
+        // Verificar que se guardaron correctamente los mensajes
+        if (!savedMessages) {
+          console.error(`❌ Error al guardar los mensajes en la base de datos`);
+          // No fallamos, simplemente advertimos y continuamos
+          console.warn(`⚠️ Continuando sin guardado de mensajes en base de datos`);
+        } else {
+          console.log(`✅ Mensajes guardados exitosamente en la base de datos. Role asignado: ${savedMessages.userRole}`);
+        }
+      } catch (saveError) {
+        // Capturar errores durante el guardado pero no fallar toda la respuesta
+        console.error(`❌ Error durante el proceso de guardado:`, saveError);
+        console.warn(`⚠️ Continuando sin guardado de mensajes en base de datos debido a error: ${saveError instanceof Error ? saveError.message : String(saveError)}`);
+      }
       
-      // Esperar a que se complete el guardado con un timeout de seguridad
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Timeout saving messages')), 10000)
-      );
+      // Siempre preparamos la respuesta, incluso si el guardado falló
+      console.log(`🏁 Preparando respuesta final con o sin guardado de mensajes`);
       
-      // Utilizar Promise.race para manejar posibles tiempos de espera excesivos
-      const savedMessages = await Promise.race([savedMessagesPromise, timeoutPromise]) as any;
-      
-      // Verificar que se guardaron correctamente los mensajes
-      if (!savedMessages) {
-        console.error(`❌ Error al guardar los mensajes en la base de datos`);
+      // Verificar que tenemos los datos mínimos necesarios para una respuesta
+      if (!effectiveDbUuid && !internalCommandId) {
+        console.error(`💥 Error crítico: No se pudo obtener un ID de comando válido`);
         return NextResponse.json(
           { 
             success: false, 
             error: { 
-              code: 'MESSAGE_SAVE_FAILED', 
-              message: 'The messages could not be saved correctly' 
+              code: 'COMMAND_ID_MISSING', 
+              message: 'No se pudo obtener un ID de comando válido',
+              details: { internal_id: internalCommandId, db_uuid: effectiveDbUuid }
             } 
           },
           { status: 500 }
         );
       }
-      
-      console.log(`✅ Mensajes guardados exitosamente en la base de datos. Role asignado: ${savedMessages.userRole}`);
-      console.log(`🏁 Preparando respuesta final después de completar todas las operaciones`);
-      
-      // Realizar una última verificación de los IDs de mensajes guardados
-      if (!savedMessages.userMessageId || !savedMessages.assistantMessageId) {
-        console.error(`⚠️ Advertencia: Algunos IDs de mensajes no están disponibles:`, 
-          `user=${savedMessages.userMessageId}, assistant=${savedMessages.assistantMessageId}`);
+
+      if (!assistantMessage || assistantMessage === "No response generated") {
+        console.error(`💥 Error crítico: No se generó una respuesta válida del asistente`);
+        console.log(`Estado del comando: ${executedCommand?.status || 'desconocido'}`);
+        console.log(`Resultados disponibles: ${executedCommand?.results ? JSON.stringify(executedCommand.results).substring(0, 200) : 'ninguno'}...`);
+        
+        // Intentar devolver al menos una respuesta genérica
+        assistantMessage = "Lo siento, estoy teniendo problemas para procesar tu solicitud en este momento. Por favor, inténtalo de nuevo.";
       }
+
+      try {
+        // Construir la estructura de respuesta
+        const responseData = {
+          success: true,
+          data: {
+            commandId: effectiveDbUuid || internalCommandId,
+            status: executedCommand?.status || 'completed_with_errors',
+            conversation_id: savedMessages?.conversationId || conversationId,
+            conversation_title: savedMessages?.conversationTitle || conversationTitle,
+            messages: {
+              user: {
+                content: message,
+                message_id: savedMessages?.userMessageId || null,
+                role: savedMessages?.userRole || 'user'
+              },
+              assistant: {
+                content: assistantMessage,
+                message_id: savedMessages?.assistantMessageId || null,
+                role: 'assistant'
+              }
+            },
+            // Añadir esta propiedad si hubo problemas parciales
+            ...(savedMessages?.partial ? { partial_save: true } : {})
+          }
+        };
+        
+        // Si todo es correcto, devolvemos la respuesta exitosa después de completar todo el proceso
+        console.log(`🚀 Enviando respuesta HTTP 200 con datos completos`);
+        return NextResponse.json(responseData, { status: 200 });
+      } catch (responseError) {
+        // Error crítico al construir la respuesta
+        console.error(`💥 Error crítico al construir la respuesta final:`, responseError);
+        
+        // Intentar realizar una respuesta mínima que no falle
+        return NextResponse.json(
+          {
+            success: true,
+            data: {
+              commandId: effectiveDbUuid || internalCommandId,
+              messages: {
+                user: { content: message },
+                assistant: { content: assistantMessage || "Lo siento, ocurrió un error al procesar tu solicitud." }
+              },
+              error_info: "Error interno al construir la respuesta completa"
+            }
+          },
+          { status: 200 }
+        );
+      }
+    } catch (error) {
+      console.error(`❌ Error general en el procesamiento de la respuesta:`, error);
       
-      // Si todo es correcto, devolvemos la respuesta exitosa después de completar todo el proceso
-      console.log(`🚀 Enviando respuesta HTTP 200 con datos completos`);
+      // Intentar devolver al menos la respuesta del asistente incluso si falló otro procesamiento
       return NextResponse.json(
         { 
           success: true, 
           data: { 
             commandId: effectiveDbUuid || internalCommandId,
-            status: 'completed',
-            conversation_id: savedMessages.conversationId,
-            conversation_title: savedMessages.conversationTitle,
+            status: executedCommand?.status || 'completed_with_errors',
             messages: {
               user: {
                 content: message,
-                message_id: savedMessages.userMessageId,
-                role: savedMessages.userRole
               },
               assistant: {
                 content: assistantMessage,
-                message_id: savedMessages.assistantMessageId,
                 role: 'assistant'
               }
+            },
+            error_details: {
+              message: `Se generó la respuesta pero ocurrió un error: ${error instanceof Error ? error.message : String(error)}`
             }
           } 
         },
-        { status: 200 }
-      );
-    } catch (saveError) {
-      console.error(`❌ Error durante el proceso de guardado:`, saveError);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'DATABASE_OPERATION_FAILED', 
-            message: 'Failed to complete all database operations' 
-          } 
-        },
-        { status: 500 }
+        { status: 200 }  // Devolvemos 200 ya que el mensaje se generó correctamente
       );
     }
   } catch (error) {
