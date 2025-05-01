@@ -1,0 +1,116 @@
+---
+title: 'get-available-appointment-slots'
+description: 'Obtiene los slots de tiempo disponibles para programar citas'
+---
+
+# get-available-appointment-slots
+
+Este tool permite consultar los horarios disponibles para programar citas, considerando la disponibilidad de los participantes y recursos necesarios.
+
+## Descripción
+
+Consulta y devuelve los slots de tiempo disponibles para programar una cita, basándose en criterios como fecha, duración, participantes y recursos requeridos. Facilita la coordinación de horarios entre múltiples personas o equipos.
+
+## Parámetros
+
+| Nombre         | Tipo     | Requerido | Descripción                                            |
+|----------------|----------|-----------|--------------------------------------------------------|
+| date           | string   | Sí        | Fecha para la consulta (formato YYYY-MM-DD)            |
+| duration       | number   | Sí        | Duración necesaria en minutos                          |
+| timezone       | string   | Sí        | Zona horaria (formato IANA, ej: 'America/Mexico_City') |
+| team_id        | string   | Sí        | ID del equipo o departamento                           |
+| participants   | array    | No        | Lista de IDs de participantes requeridos               |
+| resources      | array    | No        | Recursos necesarios (salas, equipos, etc.)             |
+| start_time     | string   | No        | Hora mínima para buscar (formato HH:MM, 24h)           |
+| end_time       | string   | No        | Hora máxima para buscar (formato HH:MM, 24h)           |
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "date": "2025-05-15",
+  "timezone": "America/Mexico_City",
+  "available_slots": [
+    {
+      "start": "09:00",
+      "end": "09:30",
+      "available_participants": ["user_123", "user_456", "user_789"],
+      "available_resources": ["room_a", "projector_1"]
+    },
+    {
+      "start": "10:30",
+      "end": "11:00",
+      "available_participants": ["user_123", "user_456", "user_789"],
+      "available_resources": ["room_b", "projector_2"]
+    },
+    {
+      "start": "15:00",
+      "end": "15:30",
+      "available_participants": ["user_123", "user_456", "user_789"],
+      "available_resources": ["room_a", "projector_1"]
+    }
+  ],
+  "unavailable_participants": [],
+  "unavailable_resources": []
+}
+```
+
+| Campo                   | Tipo     | Descripción                                           |
+|-------------------------|----------|-------------------------------------------------------|
+| success                 | boolean  | Indica si la consulta fue exitosa                     |
+| date                    | string   | Fecha consultada                                      |
+| timezone                | string   | Zona horaria aplicada                                 |
+| available_slots         | array    | Lista de slots disponibles                            |
+| start                   | string   | Hora de inicio del slot (formato HH:MM)               |
+| end                     | string   | Hora de fin del slot (formato HH:MM)                  |
+| available_participants  | array    | Participantes disponibles durante ese slot            |
+| available_resources     | array    | Recursos disponibles durante ese slot                 |
+| unavailable_participants| array    | Participantes no disponibles en ningún slot           |
+| unavailable_resources   | array    | Recursos no disponibles en ningún slot                |
+
+## Códigos de respuesta
+
+| Código | Estado       | Descripción                                         |
+|--------|--------------|-----------------------------------------------------|
+| 200    | OK           | La consulta se realizó correctamente                |
+| 400    | Bad Request  | Parámetros inválidos o faltantes                    |
+| 404    | Not Found    | No se encontró el equipo o participantes            |
+| 422    | Unprocessable| Fecha en formato incorrecto o en el pasado          |
+| 429    | Too Many     | Límite de solicitudes excedido                      |
+| 500    | Server Error | Error del servidor al procesar la solicitud         |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "get-available-appointment-slots",
+    input: {
+      date: "2025-05-15",
+      duration: 30,
+      timezone: "America/Mexico_City",
+      team_id: "team_sales",
+      participants: ["user_123", "user_456", "user_789"],
+      resources: ["room_a", "projector_1"],
+      start_time: "09:00",
+      end_time: "17:00"
+    }
+  }
+]);
+
+if (result.success && result.available_slots.length > 0) {
+  console.log(`Encontrados ${result.available_slots.length} slots disponibles`);
+  console.log(`Primer slot disponible: ${result.available_slots[0].start} - ${result.available_slots[0].end}`);
+} else {
+  console.log("No se encontraron slots disponibles para la fecha solicitada");
+}
+```
+
+## Notas
+
+- Los horarios devueltos respetan el horario laboral configurado para el equipo
+- Si no se especifican participantes, se considera la disponibilidad general del equipo
+- Se pueden solicitar slots para fechas hasta 60 días en el futuro
+- El sistema respeta automáticamente días festivos y periodos de descanso configurados
+- La duración mínima de un slot es de 15 minutos

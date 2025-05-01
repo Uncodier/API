@@ -1,0 +1,298 @@
+# Lead Generation Command
+
+Creates a command object to generate qualified sales leads for your business based on target audience criteria, product offerings, and business goals.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/lead-generation
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website to generate leads for |
+| `userId` | string | No | ID of the user requesting lead generation |
+| `agent_id` | string | No | ID of the agent to handle lead generation |
+| `leadGenData` | object | Yes | Object containing all lead generation parameters |
+| `maxLeads` | number | No | Maximum number of leads to generate (default: 10) |
+| `priority` | string | No | Priority of lead generation job ("high", "medium", "low") |
+
+### leadGenData Object
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `targetAudience` | object | Yes | Information about the target audience |
+| `searchCriteria` | object | No | Specific criteria to use in lead search |
+| `productOffering` | object | No | Product or service information relevant to leads |
+| `businessInfo` | object | No | Information about your business for lead matching |
+
+### targetAudience Object
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `industries` | array | No | Target industries (e.g., ["software", "healthcare"]) |
+| `companySize` | array | No | Target company sizes (e.g., ["10-50", "51-200"]) |
+| `roles` | array | No | Target job roles (e.g., ["CTO", "VP of Engineering"]) |
+| `locations` | array | No | Target geographic locations |
+| `interests` | array | No | Specific interests or needs of target audience |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456abc",
+  "userId": "user_123xyz",
+  "agent_id": "agent_sales_789def",
+  "leadGenData": {
+    "targetAudience": {
+      "industries": ["saas", "tech", "manufacturing"],
+      "companySize": ["51-200", "201-500"],
+      "roles": ["CTO", "Head of Engineering", "VP of Operations"],
+      "locations": ["United States", "Canada", "United Kingdom"],
+      "interests": ["automation", "efficiency", "cost-reduction"]
+    },
+    "searchCriteria": {
+      "keywords": ["digital transformation", "workflow automation"],
+      "excludedTerms": ["recruiting", "staffing"],
+      "minRevenueUSD": 1000000,
+      "maxRevenueUSD": 50000000,
+      "hasWebsite": true
+    },
+    "productOffering": {
+      "name": "Workflow Automation Platform",
+      "primaryValue": "Reduce manual processes by 60%",
+      "idealCustomerProfile": "Mid-sized manufacturing companies struggling with outdated processes"
+    },
+    "businessInfo": {
+      "name": "Acme Automation Inc.",
+      "industry": "enterprise software",
+      "uniqueSellingPoints": [
+        "Industry-specific automation templates",
+        "30-day implementation guarantee",
+        "24/7 customer support"
+      ]
+    }
+  },
+  "maxLeads": 25,
+  "priority": "high"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="sales" />
+
+You can test this API directly using our API Tester interface. The Sales API tester allows you to generate leads with different parameters and see the results.
+
+Required fields:
+- **Site ID**: The ID of the website to generate leads for
+- **Target Audience**: Information about your ideal target audience
+
+Optional fields:
+- **User ID**: The ID of the user requesting lead generation
+- **Agent ID**: The ID of the agent to handle lead generation
+- **Search Criteria**: Specific criteria to use in lead search
+- **Product Offering**: Information about your product/service
+- **Business Info**: Details about your business for better lead matching
+- **Max Leads**: Maximum number of leads to generate
+- **Priority**: Priority of the lead generation job
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control the lead generation process:
+
+```json
+{
+  "task": "generate qualified sales leads",
+  "userId": "user_123xyz",
+  "agentId": "agent_sales_789def",
+  "site_id": "site_456abc",
+  "description": "Generate 25 qualified leads for Acme Automation Inc.'s Workflow Automation Platform, targeting CTOs and VPs in mid-sized manufacturing companies in North America and the UK interested in digital transformation.",
+  "targets": [
+    {
+      "leads": {
+        "count": 25,
+        "profile": {
+          "industries": ["saas", "tech", "manufacturing"],
+          "company_sizes": ["51-200", "201-500"],
+          "roles": ["CTO", "Head of Engineering", "VP of Operations"],
+          "locations": ["United States", "Canada", "United Kingdom"],
+          "interests": ["automation", "efficiency", "cost-reduction"]
+        },
+        "search_parameters": {
+          "keywords": ["digital transformation", "workflow automation"],
+          "excluded_terms": ["recruiting", "staffing"],
+          "revenue_range": {
+            "min": 1000000,
+            "max": 50000000
+          },
+          "has_website": true
+        }
+      }
+    }
+  ],
+  "context": "Company Context:\n{\n  \"name\": \"Acme Automation Inc.\",\n  \"industry\": \"enterprise software\",\n  \"offering\": \"Workflow Automation Platform\",\n  \"value_proposition\": \"Reduce manual processes by 60%\",\n  \"ideal_customer\": \"Mid-sized manufacturing companies struggling with outdated processes\",\n  \"selling_points\": [\n    \"Industry-specific automation templates\",\n    \"30-day implementation guarantee\",\n    \"24/7 customer support\"\n  ]\n}",
+  "supervisor": [
+    {
+      "agent_role": "lead_quality_analyst",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "market_researcher",
+      "status": "not_initialized"
+    }
+  ]
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_abc123def456",
+    "site_id": "site_456abc",
+    "status": "processing",
+    "estimated_completion_time": "2024-05-02T15:30:00Z",
+    "leads_requested": 25,
+    "job_priority": "high",
+    "process_info": {
+      "stage": "initial_search",
+      "progress_percentage": 5
+    }
+  }
+}
+```
+
+### Complete Response (via webhook or status check)
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_abc123def456",
+    "site_id": "site_456abc",
+    "status": "completed",
+    "completion_time": "2024-05-02T14:45:22Z",
+    "leads_generated": [
+      {
+        "id": "lead_123xyz",
+        "name": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "company": "TechCorp Manufacturing",
+        "position": "CTO",
+        "phone": "+1-555-123-4567",
+        "website": "https://techcorp-mfg.com",
+        "industry": "manufacturing",
+        "company_size": "201-500",
+        "location": "Chicago, IL, United States",
+        "estimated_revenue": "$15M-$25M",
+        "linkedin": "linkedin.com/in/janesmith",
+        "match_score": 0.89,
+        "match_reasons": [
+          "Industry match: manufacturing",
+          "Role match: CTO",
+          "Company size match: 201-500 employees",
+          "Interest match: automation software"
+        ],
+        "verified": true,
+        "created_at": "2024-05-02T14:30:12Z"
+      },
+      // Additional leads...
+    ],
+    "summary": {
+      "total_leads": 25,
+      "average_match_score": 0.78,
+      "verified_percentage": 92,
+      "industries_breakdown": {
+        "manufacturing": 15,
+        "tech": 8,
+        "saas": 2
+      },
+      "roles_breakdown": {
+        "CTO": 10,
+        "VP of Operations": 8,
+        "Head of Engineering": 7
+      }
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters",
+    "details": {
+      "field": "leadGenData.targetAudience",
+      "issue": "targetAudience object is required"
+    }
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `QUOTA_EXCEEDED` | Your lead generation quota has been exceeded |
+| `INSUFFICIENT_DATA` | Not enough information to generate quality leads |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Lead Generation Process
+
+The lead generation process involves several steps:
+
+1. **Analysis**: The system analyzes your target audience criteria and business information
+2. **Research**: AI agents research potential leads using various data sources
+3. **Verification**: Each potential lead is verified for accuracy and relevance
+4. **Scoring**: Leads are scored based on how well they match your criteria
+5. **Enrichment**: Lead profiles are enriched with additional data when available
+6. **Delivery**: Verified leads are delivered to your account
+
+## Lead Database Structure
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | uuid | Unique identifier for the lead |
+| `site_id` | uuid | ID of the site associated with the lead |
+| `name` | text | Full name of the lead contact |
+| `email` | text | Email address |
+| `phone` | text | Phone number |
+| `company` | text | Company name |
+| `position` | text | Job title/position |
+| `industry` | text | Industry sector |
+| `website` | text | Company website |
+| `location` | text | Geographic location |
+| `company_size` | text | Number of employees range |
+| `revenue` | text | Estimated annual revenue |
+| `linkedin` | text | LinkedIn profile URL |
+| `notes` | text | Additional notes |
+| `status` | text | Current status (e.g., "new", "contacted") |
+| `score` | float | Match score (0.0-1.0) |
+| `verified` | boolean | Whether the lead has been verified |
+| `created_at` | timestamp | Creation date/time |
+| `updated_at` | timestamp | Last update date/time |
+
+## Notes
+
+- The command executes asynchronously with results available via webhook or status check
+- Generated leads are automatically saved to your leads database
+- You can integrate the lead generation with your existing CRM systems
+- The system respects privacy regulations and only provides publicly available information
+- Lead quality is ensured through verification and scoring processes
+- Advanced matching algorithms ensure leads align with your ideal customer profile

@@ -1,0 +1,145 @@
+---
+title: 'Create Sale'
+description: 'This tool creates a sale record and optionally a sales order in the database'
+---
+
+## Create Sale
+
+This tool creates a new sale in the database and optionally generates a sales order.
+
+### Input Schema
+
+```json
+{
+  "customer_id": "string", // Required - ID of the customer
+  "product_ids": ["string"], // Required - Array of product IDs to include in the sale
+  "payment_method": "string", // Required - Payment method (cash, credit_card, bank_transfer, etc.)
+  "total_amount": "number", // Required - Total amount of the sale
+  "create_order": "boolean", // Optional - Whether to create a sales order (default: false)
+  "status": "string", // Optional - Status of the sale (pending, completed, cancelled)
+  "notes": "string", // Optional - Additional notes about the sale
+  "discount": "number", // Optional - Discount amount applied to the sale
+  "tax": "number", // Optional - Tax amount applied to the sale
+  "shipping_address": { // Optional - Shipping address if different from customer's address
+    "street": "string",
+    "city": "string",
+    "state": "string",
+    "zip": "string",
+    "country": "string"
+  },
+  "order_details": { // Optional - Required only if create_order is true
+    "delivery_date": "string", // Expected delivery date (ISO format)
+    "shipping_method": "string", // Shipping method
+    "priority": "string" // Priority level (low, medium, high)
+  }
+}
+```
+
+### Output Schema
+
+```json
+{
+  "success": "boolean",
+  "sale": {
+    "id": "string",
+    "customer_id": "string",
+    "products": [
+      {
+        "product_id": "string",
+        "name": "string",
+        "quantity": "number",
+        "price": "number",
+        "subtotal": "number"
+      }
+    ],
+    "payment_method": "string",
+    "total_amount": "number",
+    "status": "string",
+    "created_at": "string",
+    "updated_at": "string",
+    "notes": "string",
+    "discount": "number",
+    "tax": "number",
+    "shipping_address": {
+      "street": "string",
+      "city": "string",
+      "state": "string",
+      "zip": "string",
+      "country": "string"
+    }
+  },
+  "order": { // Only included if create_order is true
+    "id": "string",
+    "sale_id": "string",
+    "status": "string",
+    "delivery_date": "string",
+    "shipping_method": "string",
+    "priority": "string",
+    "created_at": "string",
+    "updated_at": "string"
+  },
+  "error": "string" // Only included if there was an error
+}
+```
+
+### Description
+
+The Create Sale tool allows you to register a new sale in the system and optionally create a corresponding sales order. The tool handles:
+
+1. Creating a new record in the "sale" collection with customer and product information
+2. Calculating and validating financial details (total amount, discounts, taxes)
+3. Optionally creating a related order in the "sales_order" collection
+4. Updating inventory levels for the sold products
+5. Returning the created sale and order records with their assigned IDs
+
+### Example Usage
+
+```javascript
+// Example 1: Create a simple sale without an order
+{
+  "customer_id": "cust_12345",
+  "product_ids": ["prod_555", "prod_556"],
+  "payment_method": "credit_card",
+  "total_amount": 125.50,
+  "status": "completed"
+}
+
+// Example 2: Create a sale with an order
+{
+  "customer_id": "cust_12345",
+  "product_ids": ["prod_555", "prod_556"],
+  "payment_method": "bank_transfer",
+  "total_amount": 125.50,
+  "create_order": true,
+  "status": "pending",
+  "notes": "Customer requested priority shipping",
+  "discount": 10.00,
+  "tax": 5.25,
+  "shipping_address": {
+    "street": "123 Main St",
+    "city": "Springfield",
+    "state": "IL",
+    "zip": "62701",
+    "country": "USA"
+  },
+  "order_details": {
+    "delivery_date": "2023-12-15T00:00:00Z",
+    "shipping_method": "express",
+    "priority": "high"
+  }
+}
+```
+
+### Error Handling
+
+The tool will return an error in the following scenarios:
+
+- Missing required fields (customer_id, product_ids, payment_method, total_amount)
+- Invalid customer ID (customer not found in the database)
+- Invalid product IDs (one or more products not found)
+- Insufficient inventory for one or more products
+- Invalid payment method
+- Invalid amount values (negative or zero)
+- Missing order_details when create_order is true
+
+If an error occurs, the response will include an `error` field with a descriptive message, and the `success` field will be `false`.

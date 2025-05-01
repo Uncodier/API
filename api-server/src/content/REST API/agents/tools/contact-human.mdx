@@ -1,0 +1,102 @@
+---
+title: 'contact-human'
+description: 'Solicita intervención humana en una conversación'
+---
+
+# contact-human
+
+Este tool permite solicitar la intervención de un agente humano en una conversación, proporcionando un resumen de la situación e información del lead.
+
+## Descripción
+
+Notifica a un agente humano para que intervenga en una conversación activa, incluyendo un resumen contextual del problema y la información relevante del lead para facilitar la asistencia personalizada.
+
+## Parámetros
+
+| Nombre            | Tipo     | Requerido | Descripción                                                |
+|-------------------|----------|-----------|-----------------------------------------------------------|
+| conversation_id   | string   | Sí        | ID único de la conversación que requiere intervención      |
+| summary           | string   | Sí        | Resumen del problema o razón para solicitar intervención   |
+| lead_information  | object   | Sí        | Información del lead o cliente relacionado con la conversación |
+
+### Estructura de lead_information
+
+```json
+{
+  "name": "Juan Pérez",
+  "email": "juan.perez@ejemplo.com",
+  "phone": "+34600123456",
+  "company": "Empresa ABC",
+  "priority": "high",
+  "additional_context": {
+    "product_interest": "Enterprise Plan",
+    "previous_interactions": 3
+  }
+}
+```
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "conversation_id": "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+  "ticket_id": "TKT-47821",
+  "estimated_response_time": 300
+}
+```
+
+| Campo                  | Tipo    | Descripción                                               |
+|------------------------|---------|-----------------------------------------------------------|
+| success                | boolean | Indica si la solicitud fue exitosa                        |
+| conversation_id        | string  | ID de la conversación que requiere intervención           |
+| ticket_id              | string  | ID del ticket creado para la intervención humana          |
+| estimated_response_time| number  | Tiempo estimado de respuesta en segundos                  |
+
+## Códigos de respuesta
+
+| Código | Estado          | Descripción                                                  |
+|--------|-----------------|--------------------------------------------------------------|
+| 200    | OK              | La solicitud de intervención humana fue procesada exitosamente |
+| 201    | Created         | Se creó un nuevo ticket para la intervención humana          |
+| 202    | Accepted        | La solicitud fue aceptada y está siendo procesada            |
+| 400    | Bad Request     | Parámetros inválidos o faltantes                             |
+| 404    | Not Found       | Conversación no encontrada                                   |
+| 429    | Too Many Requests| Demasiadas solicitudes de intervención en poco tiempo       |
+| 500    | Server Error    | Error del servidor al procesar la solicitud                  |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "contact-human",
+    input: {
+      conversation_id: "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      summary: "Cliente con problemas técnicos en la integración de la API. Ha intentado las soluciones básicas sin éxito y necesita ayuda especializada.",
+      lead_information: {
+        name: "María González",
+        email: "maria.gonzalez@empresa.com",
+        phone: "+34611223344",
+        company: "Tech Solutions SL",
+        priority: "high",
+        additional_context: {
+          product_interest: "API Integration",
+          previous_interactions: 2,
+          customer_since: "2023-10-15"
+        }
+      }
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Solicitud enviada. Ticket ID: ${result.ticket_id}. Tiempo estimado de respuesta: ${result.estimated_response_time} segundos`);
+}
+```
+
+## Notas
+
+- La prioridad en la información del lead puede ser: "low", "medium", "high" o "urgent".
+- El sistema asignará la solicitud al agente humano disponible más adecuado según la información proporcionada.
+- El tiempo estimado de respuesta es aproximado y puede variar según la carga del sistema y la disponibilidad de agentes humanos.

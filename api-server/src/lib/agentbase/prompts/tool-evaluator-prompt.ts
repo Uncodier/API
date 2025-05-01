@@ -18,8 +18,12 @@ IMPORTANT: The tools are provided to you in their original JSON format. Do not a
 Use the tools exactly as they are provided with their original structure and parameters.
 
 IMPORTANT: For tools you decide to use, you MUST include ALL required parameters in the arguments field. 
-If you cannot determine a required parameter from the context, DO NOT include the tool, as it will fail.
+If you cannot determine a required parameter from the context, DO NOT include the tool as it will fail.
 The system will automatically mark the tool as "function_call_failed" if any required parameter is missing.
+
+NEW FEATURE - POSSIBLE MATCH: If you identify a tool that matches the user's intent but are missing some required parameters,
+you can mark it as a "possible_match" and include the "required_arguments" array listing the missing parameters. 
+This allows the system to ask the user for the missing information instead of failing the tool call.
 
 HOW TO INTERPRET TOOL PARAMETERS:
 
@@ -58,15 +62,19 @@ Result:
 - Only generate name and email parameters
 - Any attempt to pass age, phone, etc. will fail
 
-If you cannot determine appropriate values for all required parameters or are unsure about parameter constraints, return an empty array rather than making a potentially invalid tool call.
+If you cannot determine appropriate values for all required parameters but can identify a clear tool match:
+1. Use the "possible_match" status
+2. Include the "required_arguments" array with the names of missing parameters
+3. This allows the system to ask the user for the missing information
 
 Guidelines for evaluating tools:
 1. Each tool has a specific purpose - only activate tools that are directly relevant to the user's request.
 2. For each tool you decide to use, provide ALL the parameter values needed based on the user message in the arguments field as a JSON string.
-3. If you cannot determine ALL required parameters, do not include the tool as it will fail.
-4. For each function call, generate a unique ID in the format "call_" followed by some random characters.
-5. Always set the "status" field to "initialized".
-6. If there's ambiguity, err on the side of not using a tool rather than using it inappropriately.
+3. If you cannot determine ALL required parameters but the tool is a clear match, use the "possible_match" status with "required_arguments".
+4. If the tool match is uncertain, do not include it as it will lead to confusion.
+5. For each function call, generate a unique ID in the format "call_" followed by some random characters.
+6. For normal tool calls with all parameters available, set the "status" field to "required".
+7. If there's ambiguity, err on the side of not using a tool rather than using it inappropriately.
 
 IMPORTANT: The response must be an array of objects in the following format:
 If tools should be used:
@@ -77,6 +85,18 @@ If tools should be used:
     "status": "required",
     "name": "get_weather",
     "arguments": "{\"location\":\"Paris, France\"}"
+  }
+]
+
+If a tool matches but is missing required parameters:
+[
+  {
+    "id": "call_12345xyz",
+    "type": "function", 
+    "status": "possible_match",
+    "name": "get_weather",
+    "arguments": "{\"date\":\"2023-05-15\"}",
+    "required_arguments": ["location"]
   }
 ]
 
@@ -99,7 +119,7 @@ WHEN TO RETURN AN EMPTY ARRAY:
 You MUST return an empty array [] in the following cases:
 1. When no tool is directly relevant to fulfilling the user's request
 2. When the user is asking a general question or making a statement that doesn't require tool actions
-3. When you cannot determine ALL required parameters for a potentially relevant tool
+3. When you cannot determine ANY required parameters for a potentially relevant tool and there's no clear match
 4. When there is ambiguity about which tool to use and insufficient context to resolve it
 5. When the user's request is better handled through direct conversation rather than tool execution
 6. When the user specifically asks for information about available tools without requesting their use
@@ -107,6 +127,15 @@ You MUST return an empty array [] in the following cases:
 An empty array indicates the system should proceed with a regular response without any function calls.
 This is the safer default option when uncertain - it's better to return [] than to make an incorrect tool call.
 
+WHEN TO USE POSSIBLE_MATCH:
+
+Use "possible_match" status in the following cases:
+1. When a tool clearly matches the user's intent but specific required parameters are missing
+2. When the user has explicitly requested a tool but hasn't provided all necessary information
+3. When the tool can fulfill the user's request but needs additional specific information
+4. When at least some parameters can be determined from context but others are missing
+
+The "required_arguments" array must contain ONLY the names of the missing parameters that are needed to execute the tool.
 
 You MUST always return a valid JSON array, even if it's empty.
 

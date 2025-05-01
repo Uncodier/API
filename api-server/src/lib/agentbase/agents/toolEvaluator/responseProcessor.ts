@@ -84,192 +84,148 @@ export function processToolEvaluationResponse(response: any, tools: any[]): Tool
               type: "function",
               status: item.status || "initialized",
               name: item.name,
-              arguments: item.arguments || "{}"
-            };
-            toolDecisions.push(functionCall);
-          } else if (item.function && item.function.name) {
-            // Convertir formato antiguo a nuevo formato plano
-            console.log(`[ToolEvaluator] Converting nested format to flat for: ${item.function.name}`);
-            const functionCall: FunctionCall = {
-              id: item.id || `call_${uuidv4().split('-')[0]}`,
-              type: "function",
-              status: item.status || "initialized",
-              name: item.function.name,
-              arguments: item.function.arguments || "{}"
-            };
-            toolDecisions.push(functionCall);
-          } else {
-            console.log(`[ToolEvaluator] Function object is malformed, adding with default values`);
-            // Create a valid function call with default values to prevent errors
-            const fixedFunctionCall: FunctionCall = {
-              id: `call_${uuidv4().split('-')[0]}`,
-              type: "function",
-              status: "initialized",
-              name: "unknown_function",
-              arguments: "{}"
+              arguments: item.arguments || "{}",
             };
             
-            toolDecisions.push(fixedFunctionCall);
+            // Add required_arguments if present and status is possible_match
+            if (item.status === "possible_match" && Array.isArray(item.required_arguments)) {
+              console.log(`[ToolEvaluator] Function ${item.name} has possible_match status with ${item.required_arguments.length} required arguments`);
+              functionCall.required_arguments = item.required_arguments;
+            }
+            
+            toolDecisions.push(functionCall);
+          } else {
+            console.log(`[ToolEvaluator] Skipping function call with missing name property`);
           }
-        } 
-        else if (item.type === 'function_call') {
-          // Convert old format to new format
-          if (item.name) {
-            console.log(`[ToolEvaluator] Converting old format function_call to new format for: ${item.name}`);
+        } else {
+          console.log(`[ToolEvaluator] Unknown decision type: ${item.type}`);
+        }
+      }
+    } 
+    // Handle nested function objects
+    else if (response && typeof response === 'object' && response.function) {
+      console.log(`[ToolEvaluator] Found single function object, converting to function call`);
+      const functionName = response.function.name || response.name || "unknown_function";
+      const functionCall: FunctionCall = {
+        id: `call_${uuidv4().split('-')[0]}`,
+        type: "function",
+        status: "initialized",
+        name: functionName,
+        arguments: response.function.arguments || response.arguments || '{}'
+      };
+      toolDecisions.push(functionCall);
+    }
+    
+    // Handle OpenAI-style function calls
+    else if (response && typeof response === 'object' && 
+            (response.function_call || response.tool_calls)) {
+      console.log(`[ToolEvaluator] Found OpenAI-style function call format`);
+      
+      // Process tool_calls (OpenAI's new format)
+      if (response.tool_calls && Array.isArray(response.tool_calls)) {
+        console.log(`[ToolEvaluator] Processing tool_calls array with ${response.tool_calls.length} items`);
+        for (const call of response.tool_calls) {
+          if (call && call.function && call.function.name) {
+            console.log(`[ToolEvaluator] Converting tool_call for: ${call.function.name}`);
             const functionCall: FunctionCall = {
               id: `call_${uuidv4().split('-')[0]}`,
               type: "function",
               status: "initialized",
-              name: item.name,
-              arguments: item.arguments || "{}"
+              name: call.function.name,
+              arguments: call.function.arguments || '{}'
             };
             toolDecisions.push(functionCall);
           } else {
-            console.log(`[ToolEvaluator] Skipping function_call with missing name property`);
+            console.log(`[ToolEvaluator] Skipping invalid tool_call without function name`);
           }
-        } else {
-          console.log(`[ToolEvaluator] Unknown item type: ${item.type}, skipping`);
         }
-      }
-    } else {
-      console.warn('[ToolEvaluator] Unexpected response format:', response);
-      
-      // If response is a single object with type, wrap it in an array and process
-      if (response && typeof response === 'object' && response.type) {
-        console.log(`[ToolEvaluator] Response is a single object with type: ${response.type}, converting to array`);
-        // Create a new array containing the single object and process it recursively
-        const wrappedResponse = [response];
-        
-        console.log(`[ToolEvaluator] Wrapped single object response in array, processing again`);
-        // Process the wrapped response recursively
-        return processToolEvaluationResponse(wrappedResponse, tools);
-      }
-      
-      // If response is a single object with function property, convert to function call
-      else if (response && typeof response === 'object' && response.function) {
-        console.log(`[ToolEvaluator] Found single function object, converting to function call`);
-        const functionName = response.function.name || response.name || "unknown_function";
+      } 
+      // Process single function_call (OpenAI's older format)
+      else if (response.function_call && response.function_call.name) {
+        console.log(`[ToolEvaluator] Converting function_call for: ${response.function_call.name}`);
         const functionCall: FunctionCall = {
           id: `call_${uuidv4().split('-')[0]}`,
           type: "function",
           status: "initialized",
-          name: functionName,
-          arguments: response.function.arguments || response.arguments || '{}'
+          name: response.function_call.name,
+          arguments: response.function_call.arguments || '{}'
         };
         toolDecisions.push(functionCall);
-      }
-      
-      // Handle OpenAI-style function calls
-      else if (response && typeof response === 'object' && 
-              (response.function_call || response.tool_calls)) {
-        console.log(`[ToolEvaluator] Found OpenAI-style function call format`);
-        
-        // Process tool_calls (OpenAI's new format)
-        if (response.tool_calls && Array.isArray(response.tool_calls)) {
-          console.log(`[ToolEvaluator] Processing tool_calls array with ${response.tool_calls.length} items`);
-          for (const call of response.tool_calls) {
-            if (call && call.function && call.function.name) {
-              console.log(`[ToolEvaluator] Converting tool_call for: ${call.function.name}`);
-              const functionCall: FunctionCall = {
-                id: `call_${uuidv4().split('-')[0]}`,
-                type: "function",
-                status: "initialized",
-                name: call.function.name,
-                arguments: call.function.arguments || '{}'
-              };
-              toolDecisions.push(functionCall);
-            } else {
-              console.log(`[ToolEvaluator] Skipping invalid tool_call without function name`);
-            }
-          }
-        } 
-        // Process single function_call (OpenAI's older format)
-        else if (response.function_call && response.function_call.name) {
-          console.log(`[ToolEvaluator] Converting function_call for: ${response.function_call.name}`);
-          const functionCall: FunctionCall = {
-            id: `call_${uuidv4().split('-')[0]}`,
-            type: "function",
-            status: "initialized",
-            name: response.function_call.name,
-            arguments: response.function_call.arguments || '{}'
-          };
-          toolDecisions.push(functionCall);
-        } else {
-          console.log(`[ToolEvaluator] Invalid OpenAI-style function call format, missing required properties`);
-        }
-      }
-      
-      // If response is in old format with tool_decisions, convert to new format
-      else if (response && response.tool_decisions && Array.isArray(response.tool_decisions)) {
-        console.log(`[ToolEvaluator] Found legacy tool_decisions array with ${response.tool_decisions.length} items`);
-        for (const decision of response.tool_decisions) {
-          if (decision && decision.tool_name) {
-            if (decision.should_use) {
-              console.log(`[ToolEvaluator] Converting legacy 'should_use' decision for tool: ${decision.tool_name}`);
-              const functionCall: FunctionCall = {
-                id: `call_${uuidv4().split('-')[0]}`,
-                type: "function",
-                status: "initialized",
-                name: decision.tool_name,
-                arguments: JSON.stringify(decision.parameters || {})
-              };
-              toolDecisions.push(functionCall);
-            } else {
-              console.log(`[ToolEvaluator] Converting legacy exclusion for tool: ${decision.tool_name}`);
-              const exclusion: ToolExclusion = {
-                reasoning: decision.reasoning || "Tool should not be used based on user request",
-                type: "exclusion",
-                name: decision.tool_name
-              };
-              toolDecisions.push(exclusion);
-            }
-          } else {
-            console.log(`[ToolEvaluator] Skipping invalid legacy tool decision without tool_name`);
-          }
-        }
       } else {
-        console.log(`[ToolEvaluator] Unexpected response format, no recognizable structure found`);
-        
-        // Last resort fallback - try to salvage any usable information from the response
-        console.log(`[ToolEvaluator] Attempting fallback parsing of unexpected response format`);
-        
-        // If we can identify any tool names in the response, create default function calls
-        if (typeof response === 'object' && response !== null) {
-          // Look for any property that might contain a tool name
-          for (const tool of tools) {
-            const toolName = tool.name;
+        console.log(`[ToolEvaluator] Invalid OpenAI-style function call format, missing required properties`);
+      }
+    }
+    
+    // If response is in old format with tool_decisions, convert to new format
+    else if (response && response.tool_decisions && Array.isArray(response.tool_decisions)) {
+      console.log(`[ToolEvaluator] Found legacy tool_decisions array with ${response.tool_decisions.length} items`);
+      for (const decision of response.tool_decisions) {
+        if (decision && decision.tool_name) {
+          if (decision.should_use) {
+            console.log(`[ToolEvaluator] Converting legacy 'should_use' decision for tool: ${decision.tool_name}`);
+            const functionCall: FunctionCall = {
+              id: `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: "initialized",
+              name: decision.tool_name,
+              arguments: JSON.stringify(decision.parameters || {})
+            };
+            toolDecisions.push(functionCall);
+          } else {
+            console.log(`[ToolEvaluator] Converting legacy exclusion for tool: ${decision.tool_name}`);
+            const exclusion: ToolExclusion = {
+              reasoning: decision.reasoning || "Tool should not be used based on user request",
+              type: "exclusion",
+              name: decision.tool_name
+            };
+            toolDecisions.push(exclusion);
+          }
+        } else {
+          console.log(`[ToolEvaluator] Skipping invalid legacy tool decision without tool_name`);
+        }
+      }
+    } else {
+      console.log(`[ToolEvaluator] Unexpected response format, no recognizable structure found`);
+      
+      // Last resort fallback - try to salvage any usable information from the response
+      console.log(`[ToolEvaluator] Attempting fallback parsing of unexpected response format`);
+      
+      // If we can identify any tool names in the response, create default function calls
+      if (typeof response === 'object' && response !== null) {
+        // Look for any property that might contain a tool name
+        for (const tool of tools) {
+          const toolName = tool.name;
+          
+          // Check if the tool name appears as a key or value in the response
+          const hasToolReference = 
+            Object.keys(response).includes(toolName) || 
+            JSON.stringify(response).includes(`"${toolName}"`) ||
+            // Look for any property named 'name' with the tool name as value
+            (response.name === toolName);
             
-            // Check if the tool name appears as a key or value in the response
-            const hasToolReference = 
-              Object.keys(response).includes(toolName) || 
-              JSON.stringify(response).includes(`"${toolName}"`) ||
-              // Look for any property named 'name' with the tool name as value
-              (response.name === toolName);
-              
-            if (hasToolReference) {
-              console.log(`[ToolEvaluator] Found reference to tool '${toolName}' in response, creating function call`);
-              
-              // Extract arguments if they exist in the response
-              let argsString = '{}';
-              if (response[toolName] && typeof response[toolName] === 'object') {
-                argsString = JSON.stringify(response[toolName]);
-              } else if (response.arguments) {
-                argsString = typeof response.arguments === 'string' 
-                  ? response.arguments 
-                  : JSON.stringify(response.arguments);
-              }
-              
-              const functionCall: FunctionCall = {
-                id: `call_${uuidv4().split('-')[0]}`,
-                type: "function",
-                status: "initialized",
-                name: toolName,
-                arguments: argsString
-              };
-              
-              toolDecisions.push(functionCall);
-              break; // Only create one function call from this fallback
+          if (hasToolReference) {
+            console.log(`[ToolEvaluator] Found reference to tool '${toolName}' in response, creating function call`);
+            
+            // Extract arguments if they exist in the response
+            let argsString = '{}';
+            if (response[toolName] && typeof response[toolName] === 'object') {
+              argsString = JSON.stringify(response[toolName]);
+            } else if (response.arguments) {
+              argsString = typeof response.arguments === 'string' 
+                ? response.arguments 
+                : JSON.stringify(response.arguments);
             }
+            
+            const functionCall: FunctionCall = {
+              id: `call_${uuidv4().split('-')[0]}`,
+              type: "function",
+              status: "initialized",
+              name: toolName,
+              arguments: argsString
+            };
+            
+            toolDecisions.push(functionCall);
+            break; // Only create one function call from this fallback
           }
         }
       }
@@ -345,7 +301,7 @@ export function prepareToolsForExecution(response: any, tools: any[]): FunctionC
   const validToolNames = new Set(tools.map(tool => typeof tool === 'string' ? tool : tool.name));
   console.log(`[ToolEvaluator] Valid tool names: ${Array.from(validToolNames).join(', ')}`);
   
-  // Filter function calls to only include those with valid tool names
+  // Filter function calls to only include those with valid tool names and status 'required'
   const validatedFunctionCalls = functionCalls.filter(call => {
     // Obtener el nombre de la función 
     const functionName = call.name;
@@ -360,7 +316,13 @@ export function prepareToolsForExecution(response: any, tools: any[]): FunctionC
       return false;
     }
     
-    // Asegurarse de que todas las funciones tengan status 'required'
+    // Skip function calls with status 'possible_match' - they need more info from the user
+    if (call.status === 'possible_match') {
+      console.log(`[ToolEvaluator] Skipping 'possible_match' function: ${functionName} - missing required arguments: ${call.required_arguments?.join(', ')}`);
+      return false;
+    }
+    
+    // Ensure all remaining functions have status 'required'
     if (call.status !== 'required') {
       console.log(`[ToolEvaluator] Setting function ${functionName} status to 'required' (was: ${call.status || 'undefined'})`);
       call.status = 'required';

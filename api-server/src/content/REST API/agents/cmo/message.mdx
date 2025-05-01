@@ -1,0 +1,255 @@
+# Create Message Command
+
+Creates a command object to handle marketing strategy interactions and manages the conversation flow with CMOs and marketing teams.
+
+## Endpoint
+
+```http
+POST /api/agents/cmo/message
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `message` | string | Yes | The message content from the CMO or marketing team member |
+| `visitor_id` | string | No* | ID of the visitor (for non-authenticated users) |
+| `lead_id` | string | No* | ID of the lead associated with this interaction |
+| `userId` | string | No | ID of the authenticated user (optional, can be derived from site_id) |
+| `conversationId` | string | No | Optional ID of existing conversation |
+| `agentId` | string | No | ID of the CMO agent (optional, will be found using site_id if not provided) |
+| `site_id` | string | No | ID of the site associated with this interaction |
+
+*Identification requirements: At least one of `visitor_id` or `lead_id` is required for identification purposes. `userId` is optional as it can be derived from the site_id.
+
+### Example Request
+
+With visitor ID:
+```json
+{
+  "visitor_id": "visitor_789",
+  "message": "I need help developing a content strategy for our new product line",
+  "site_id": "site_456"
+}
+```
+
+With lead ID:
+```json
+{
+  "lead_id": "lead_123",
+  "message": "Can you analyze our recent campaign performance?",
+  "site_id": "site_456"
+}
+```
+
+With optional userId:
+```json
+{
+  "userId": "user_789",
+  "message": "I need recommendations for improving our conversion rates",
+  "conversationId": "conv_123456",
+  "site_id": "site_456"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester apiId="cmo" />
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control supervised tasks with failure handling, tools, contexts, etc.
+
+```json
+{
+  "targets": [
+    {
+      "message": {
+        "content": "Thank you for reaching out about developing a content strategy for your new product line. I'd be happy to help. Could you share more details about your product line, target audience, and any specific marketing goals you have in mind?"
+      }
+    },
+    {
+      "conversation": {
+        "title": "Content Strategy Development"
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "analyze_campaign",
+      "description": "analyze marketing campaign performance with metrics and insights",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "campaign_id": {
+            "type": "string",
+            "description": "The ID of the campaign to analyze"
+          },
+          "date_range": {
+            "type": "string",
+            "description": "The date range for analysis (e.g., 'last_30_days', 'last_quarter')"
+          },
+          "metrics": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The specific metrics to analyze (e.g., 'conversion_rate', 'engagement')"
+          }
+        },
+        "required": ["campaign_id"]
+      }
+    },
+    {
+      "name": "generate_content_plan",
+      "description": "create a content marketing plan or strategy",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "business_vertical": {
+            "type": "string",
+            "description": "The industry or business vertical"
+          },
+          "target_audience": {
+            "type": "string",
+            "description": "Description of the target audience"
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The goals for this content plan"
+          },
+          "timeframe": {
+            "type": "string",
+            "description": "The timeframe for the content plan (e.g., 'quarterly', 'annual')"
+          }
+        },
+        "required": ["business_vertical", "target_audience", "goals"]
+      }
+    },
+    {
+      "name": "schedule_meeting",
+      "description": "schedule a strategy session with a marketing specialist",
+      "status": "not_initialized",
+      "type": "asynchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "contact_id": {
+            "type": "string",
+            "description": "The ID of the contact requesting the meeting"
+          },
+          "date_time": {
+            "type": "string",
+            "description": "The proposed date and time for the meeting (ISO format)"
+          },
+          "meeting_topic": {
+            "type": "string",
+            "description": "The topic for the strategy session",
+            "enum": ["content_strategy", "campaign_analysis", "market_research", "brand_positioning"]
+          }
+        },
+        "required": ["contact_id", "date_time", "meeting_topic"]
+      }
+    }
+  ],
+  "context": "Previous conversation messages and marketing analysis data",
+  "supervisors": [
+    {
+      "agent_role": "marketing_director",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "data_analyst",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "create message",
+  "description": "Engage with the marketing team, understand their strategic needs, provide relevant marketing insights, address campaign performance questions, and guide them toward developing effective marketing strategies.",
+  "site_id": "site_456"
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "92e8d889-d7bd-459d-82e2-f4706eb8984b",
+    "conversation_id": "8a2c1e3f-9d4b-5c7a-8e5f-1d2a3b4c5d6e",
+    "conversation_title": "Content Strategy Development",
+    "messages": {
+      "user": {
+        "content": "I need help developing a content strategy for our new product line",
+        "message_id": "14fd2a5c-56c2-4b4f-b65a-d16d9d1df544"
+      },
+      "assistant": {
+        "content": "Thank you for reaching out about developing a content strategy for your new product line. I'd be happy to help. Could you share more details about your product line, target audience, and any specific marketing goals you have in mind?",
+        "message_id": "92a4269e-e608-46f7-911a-2761761586b3"
+      }
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "At least one identification parameter (visitor_id, lead_id, or userId) is required"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid (missing required fields) |
+| `AGENT_NOT_FOUND` | The specified agent does not exist |
+| `COMMAND_EXECUTION_FAILED` | The command did not complete successfully |
+| `INTERNAL_SERVER_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The API supports multiple identification methods:
+  - Visitor identification via `visitor_id` (for non-authenticated visitors)
+  - Lead identification via `lead_id` (for leads in the system)
+  - User identification via `userId` (optional, can be derived from site_id)
+- At least one identification parameter must be provided (`visitor_id`, `lead_id`, or `userId`)
+- If `agentId` is not provided and `site_id` is available, the system will automatically find an active CMO agent for that site
+- If no agent is found or no `site_id` is provided, a default agent will be used
+- Conversations are saved with the generated title and site_id in the database
+- The command executes asynchronously but the API waits for completion before responding
+- The system automatically creates conversation and message records in the database
+
+## Try It
+
+You can test this API directly using our API Tester interface. The CMO API tester allows you to send messages to the CMO agent and see the responses.
+
+Required fields:
+- **Message**: The content of the message from the marketing team member
+
+Identification (at least one required):
+- **Visitor ID**: The ID of the non-authenticated visitor
+- **Lead ID**: The ID of the lead associated with this interaction
+- **User ID**: (Optional) The ID of the authenticated user
+
+Optional fields:
+- **Conversation ID**: If continuing an existing conversation, provide the ID
+- **Agent ID**: The ID of the CMO agent (will be found using site_id if not provided)
+- **Site ID**: The ID of the site associated with this interaction

@@ -8,12 +8,23 @@
 /**
  * Create a tools map from an array of tools
  * @param tools - Array of tools
+ * @param requiredToolNames - Optional array of tool names that will be used (para optimización)
  * @returns Map of tool names to their implementation functions
  */
-export function createToolsMap(tools: any[]): Record<string, any> {
+export function createToolsMap(tools: any[], requiredToolNames?: string[]): Record<string, any> {
   const toolsMap: Record<string, any> = {};
   
-  console.log(`[ToolExecutor] Creando mapa de herramientas a partir de ${tools.length} herramientas`);
+  if (!tools || !Array.isArray(tools) || tools.length === 0) {
+    console.log(`[ToolExecutor] No hay herramientas disponibles para mapear`);
+    return toolsMap;
+  }
+  
+  // Si tenemos una lista de herramientas requeridas, mostrarla
+  if (requiredToolNames && requiredToolNames.length > 0) {
+    console.log(`[ToolExecutor] Creando mapa solo para las ${requiredToolNames.length} herramientas requeridas: ${requiredToolNames.join(', ')}`);
+  } else {
+    console.log(`[ToolExecutor] Creando mapa completo de ${tools.length} herramientas`);
+  }
   
   for (const tool of tools) {
     // Intentar obtener el nombre de la herramienta de varias formas posibles
@@ -21,6 +32,12 @@ export function createToolsMap(tools: any[]): Record<string, any> {
     
     if (!toolName) {
       console.warn(`[ToolExecutor] Herramienta sin nombre válido, omitiendo:`, tool);
+      continue;
+    }
+    
+    // Si tenemos una lista de herramientas requeridas y esta no está en ella, saltarla
+    if (requiredToolNames && requiredToolNames.length > 0 && !requiredToolNames.includes(toolName)) {
+      // Omitir esta herramienta ya que no está en la lista de requeridas
       continue;
     }
     
@@ -48,7 +65,11 @@ export function createToolsMap(tools: any[]): Record<string, any> {
   
   // Registrar las herramientas encontradas
   const toolNames = Object.keys(toolsMap);
-  console.log(`[ToolExecutor] Mapa de herramientas creado con ${toolNames.length} entradas: ${toolNames.join(', ')}`);
+  if (toolNames.length > 0) {
+    console.log(`[ToolExecutor] Mapa de herramientas creado con ${toolNames.length} entradas: ${toolNames.join(', ')}`);
+  } else {
+    console.warn(`[ToolExecutor] ⚠️ No se encontraron implementaciones válidas para las herramientas requeridas`);
+  }
   
   return toolsMap;
 }

@@ -24,6 +24,7 @@ export interface ToolExclusion {
  * @property {string|object} arguments - Argumentos serializados como JSON
  * @property {boolean} [critical] - Indica si la función es crítica
  * @property {string} [description] - Descripción de la función
+ * @property {string[]} [required_arguments] - Lista de argumentos requeridos pero faltantes (solo cuando status es "possible_match")
  */
 export interface FunctionCall {
   id: string;
@@ -33,6 +34,7 @@ export interface FunctionCall {
   arguments: string | object;
   critical?: boolean;
   description?: string;
+  required_arguments?: string[];
   result?: any;
   error?: any;
 }
@@ -50,8 +52,11 @@ export const ToolDecisionTypes = {
 
 export const FunctionCallStatus = {
   INITIALIZED: "initialized",
+  REQUIRED: "required",
   COMPLETED: "completed",
-  ERROR: "error"
+  ERROR: "error",
+  FAILED: "failed",
+  POSSIBLE_MATCH: "possible_match"
 };
 
 /**

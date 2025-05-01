@@ -1,0 +1,144 @@
+---
+title: 'Identify Lead'
+description: 'This tool identifies a website visitor as a potential lead and stores their information in the database'
+---
+
+## Identify Lead
+
+This tool analyzes visitor behavior and information to identify potential leads and stores their data in the system.
+
+### Input Schema
+
+```json
+{
+  "visitor_id": "string", // Required - ID of the visitor to identify as a lead
+  "lead_score": "number", // Optional - Score indicating lead potential (1-100)
+  "source": "string", // Optional - Where the lead originated from (website, referral, ad campaign, etc.)
+  "contact_info": { // Optional - Contact information if available
+    "name": "string",
+    "email": "string",
+    "phone": "string"
+  },
+  "company_info": { // Optional - Company information if available
+    "name": "string",
+    "size": "string", // small, medium, large, enterprise
+    "industry": "string"
+  },
+  "interest_level": "string", // Optional - Level of interest (low, medium, high)
+  "product_interest": ["string"], // Optional - Array of product IDs the visitor showed interest in
+  "pages_visited": ["string"], // Optional - Array of page URLs the visitor viewed
+  "time_spent": "number", // Optional - Total time spent on site (in seconds)
+  "visit_count": "number", // Optional - Number of times the visitor has been to the site
+  "notes": "string" // Optional - Additional information about the lead
+}
+```
+
+### Output Schema
+
+```json
+{
+  "success": "boolean",
+  "lead": {
+    "id": "string",
+    "visitor_id": "string",
+    "lead_score": "number",
+    "source": "string",
+    "contact_info": {
+      "name": "string",
+      "email": "string",
+      "phone": "string"
+    },
+    "company_info": {
+      "name": "string",
+      "size": "string",
+      "industry": "string"
+    },
+    "interest_level": "string",
+    "product_interest": ["string"],
+    "pages_visited": ["string"],
+    "time_spent": "number",
+    "visit_count": "number",
+    "notes": "string",
+    "status": "string", // new, contacted, qualified, converted, lost
+    "created_at": "string",
+    "updated_at": "string"
+  },
+  "next_actions": [ // Suggested follow-up actions based on lead analysis
+    {
+      "action_type": "string", // email, call, demo, content
+      "priority": "string", // low, medium, high
+      "description": "string"
+    }
+  ],
+  "error": "string" // Only included if there was an error
+}
+```
+
+### Description
+
+The Identify Lead tool converts anonymous website visitors into potential leads by:
+
+1. Creating a new record in the "leads" collection with visitor information
+2. Analyzing visitor behavior patterns to determine lead quality and potential
+3. Automatically assigning a lead score based on engagement metrics
+4. Suggesting appropriate follow-up actions based on the lead's profile
+5. Linking the lead record to any existing visitor session data
+
+This tool helps sales teams prioritize outreach to visitors who demonstrate the highest likelihood of conversion based on their interactions with the website.
+
+### Example Usage
+
+```javascript
+// Example 1: Basic lead identification with minimal information
+{
+  "visitor_id": "vis_78910",
+  "source": "organic_search",
+  "pages_visited": [
+    "/products",
+    "/pricing",
+    "/contact"
+  ],
+  "time_spent": 320,
+  "visit_count": 2
+}
+
+// Example 2: Detailed lead identification with complete information
+{
+  "visitor_id": "vis_78910",
+  "lead_score": 85,
+  "source": "linkedin_campaign",
+  "contact_info": {
+    "name": "Jane Smith",
+    "email": "jane.smith@example.com",
+    "phone": "+1-555-123-4567"
+  },
+  "company_info": {
+    "name": "Acme Corporation",
+    "size": "medium",
+    "industry": "manufacturing"
+  },
+  "interest_level": "high",
+  "product_interest": ["prod_123", "prod_456"],
+  "pages_visited": [
+    "/products/enterprise",
+    "/case-studies/manufacturing",
+    "/pricing/business",
+    "/book-demo"
+  ],
+  "time_spent": 720,
+  "visit_count": 5,
+  "notes": "Requested product information via chat widget"
+}
+```
+
+### Error Handling
+
+The tool will return an error in the following scenarios:
+
+- Missing required field (visitor_id)
+- Invalid visitor ID (visitor not found in the database)
+- Invalid lead score (must be between 1-100 if provided)
+- Invalid format for contact information
+- Duplicate lead (visitor already identified as a lead)
+
+If an error occurs, the response will include an `error` field with a descriptive message, and the `success` field will be `false`. 

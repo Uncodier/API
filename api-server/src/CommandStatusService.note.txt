@@ -1,0 +1,53 @@
+## Recomendación para el CommandStatusService y CommandUpdateService
+
+El problema principal observado en los logs es que cuando el sistema actualiza el estado de un comando de "pending" a "completed", está haciendo:
+
+```
+🚨 [CommandUpdateService] Actualizando SOLO STATUS a completed para bfaab4f0-65e5-4f22-8f58-a5ca7e034da3
+```
+
+Esto significa que está actualizando solamente el campo `status` sin incluir las funciones que fueron actualizadas previamente por el ToolExecutor.
+
+### Solución recomendada
+
+Modificar el `CommandUpdateService` para que, cuando actualice el estado de un comando, compruebe si hay funciones en el comando y las incluya en la actualización:
+
+```typescript
+// En CommandUpdateService.ts, en el método que actualiza el estado (posiblemente updateStatus)
+
+async updateStatus(commandId: string, status: string, reason?: string): Promise<void> {
+  // Código existente...
+  
+  // Obtener el comando completo actual
+  const currentCommand = await this.getCommandById(commandId);
+  
+  // Preparar objeto de actualización
+  const updateData: any = {
+    status: status,
+  };
+  
+  if (reason) {
+    updateData.statusReason = reason;
+  }
+  
+  // Preservar las funciones si existen
+  if (currentCommand?.functions && currentCommand.functions.length > 0) {
+    console.log(`[CommandUpdateService] Preservando ${currentCommand.functions.length} funciones en actualización de estado`);
+    updateData.functions = currentCommand.functions;
+  }
+  
+  // Actualizar el comando con el objeto completo
+  await this.updateCommand(commandId, updateData);
+  
+  // Código existente...
+}
+```
+
+Este cambio garantizará que cuando el estado del comando cambie a "completed", las actualizaciones a las funciones (incluyendo su estado individual "completed" o "failed") se conserven correctamente.
+
+### Actualizaciones necesarias:
+
+1. Localizar el método que actualiza solo el estado (`updateStatus` o similar) en el CommandUpdateService
+2. Modificarlo para obtener el comando completo antes de la actualización
+3. Incluir las funciones existentes en el objeto de actualización
+4. Usar `updateCommand` con el objeto completo en lugar de solo actualizar el campo `status` 

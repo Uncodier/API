@@ -1,0 +1,71 @@
+---
+title: 'delegate-conversation'
+description: 'Delega una conversación a un agente específico basado en un rol'
+---
+
+# delegate-conversation
+
+Este tool permite asignar un agente específico como delegado de una conversación basado en un rol predefinido.
+
+## Descripción
+
+Toma un ID de conversación y un rol de agente, busca el agente correspondiente al rol en el contexto de la conversación, y asigna dicho agente como delegado en la conversación mediante la actualización del campo `delegate_id`.
+
+## Parámetros
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| conversation_id | string   | Sí        | ID único de la conversación a delegar                      |
+| agent_role      | string   | Sí        | Rol del agente al que se delegará la conversación          |
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "conversation_id": "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+  "delegate_id": "478d3106-7391-4d9a-a5c1-8466202b45a9"
+}
+```
+
+| Campo          | Tipo    | Descripción                                               |
+|----------------|---------|-----------------------------------------------------------|
+| success        | boolean | Indica si la delegación fue exitosa                       |
+| conversation_id| string  | ID de la conversación delegada                            |
+| delegate_id    | string  | ID del agente asignado como delegado de la conversación   |
+
+## Códigos de respuesta
+
+| Código | Estado          | Descripción                                                  |
+|--------|-----------------|--------------------------------------------------------------|
+| 200    | OK              | La delegación se completó exitosamente                       |
+| 201    | Created         | Se creó una nueva asignación de delegado                     |
+| 204    | No Content      | La operación se completó sin cambios (delegado ya asignado)  |
+| 400    | Bad Request     | Parámetros inválidos o faltantes                             |
+| 404    | Not Found       | Conversación no encontrada                                   |
+| 404    | Not Found       | No se encontró un agente con el rol especificado             |
+| 500    | Server Error    | Error del servidor al procesar la solicitud                  |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "delegate-conversation",
+    input: {
+      conversation_id: "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      agent_role: "support_specialist"
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Conversación delegada exitosamente al agente ${result.delegate_id}`);
+}
+```
+
+## Notas
+
+- El agente debe tener permisos para acceder a la conversación.
+- Si la conversación ya tiene un delegado asignado, este será reemplazado.
+- El rol debe existir en el contexto de la conversación para que la operación tenga éxito.

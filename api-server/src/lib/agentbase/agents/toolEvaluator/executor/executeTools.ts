@@ -20,15 +20,15 @@ export async function executeTools(
   
   const results: ToolExecutionResult[] = [];
   
-  // Validar disponibilidad de herramientas antes de comenzar
-  const availableTools = Object.keys(toolsMap);
-  console.log(`[ToolExecutor] Available tools in map: ${availableTools.join(', ')}`);
+  // Registrar solo las herramientas que serán utilizadas
+  const requiredTools = functionCalls.map(call => call.name || 'unknown_function').filter(name => name !== 'unknown_function');
+  console.log(`[ToolExecutor] Required tools for execution: ${requiredTools.join(', ') || 'none'}`);
   
   for (const call of functionCalls) {
     try {
       // Obtener el nombre y argumentos de la función (ahora en la raíz)
-      const functionName = call.name || call.function?.name || 'unknown_function';
-      const functionArgs = call.arguments || (call.function?.arguments || '{}');
+      const functionName = call.name || 'unknown_function';
+      const functionArgs = call.arguments || '{}';
       
       console.log(`[ToolExecutor] Processing function call: ${functionName}`);
       
@@ -53,11 +53,11 @@ export async function executeTools(
       const toolFunction = toolsMap[functionName];
       
       if (!toolFunction) {
-        console.error(`[ToolExecutor] Tool function not found: ${functionName}. Available tools: ${availableTools.join(', ')}`);
+        console.error(`[ToolExecutor] Tool function not found: ${functionName}`);
         const errorInfo = {
           reason: 'TOOL_NOT_FOUND',
           message: `Tool function not found: ${functionName}. No implementation available for this tool.`,
-          available_tools: availableTools.length > 0 ? availableTools : ['none']
+          requested_tool: functionName
         };
         
         results.push({
@@ -131,8 +131,8 @@ export async function executeTools(
       const callId = call.id || `call_${Math.random().toString(36).substring(2, 8)}`;
       
       // Usar información de la raíz si está disponible, con fallbacks
-      const functionName = call.name || (call.function?.name || 'unknown_function');
-      const functionArgs = call.arguments || (call.function?.arguments || '{}');
+      const functionName = call.name || 'unknown_function';
+      const functionArgs = call.arguments || '{}';
       
       results.push({
         id: callId,
