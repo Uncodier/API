@@ -8,6 +8,12 @@ Creates a command object to generate qualified sales leads for your business bas
 POST /api/agents/sales/lead-generation
 ```
 
+You can also use the standardized agent command format:
+
+```http
+POST /api/agents/sales/command/lead-generation
+```
+
 ## Request Body
 
 | Parameter | Type | Required | Description |
@@ -84,22 +90,26 @@ POST /api/agents/sales/lead-generation
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
-<UnifiedApiTester apiId="sales" />
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Lead Generation API Tester" 
+  description="Use this tester to generate qualified sales leads with different parameters and see the results." 
+  defaultEndpoint="/api/agents/sales/lead-generation"
+/>
 
 You can test this API directly using our API Tester interface. The Sales API tester allows you to generate leads with different parameters and see the results.
 
 Required fields:
 - **Site ID**: The ID of the website to generate leads for
-- **Target Audience**: Information about your ideal target audience
+- **Website URL**: URL of the site to analyze for lead generation
 
 Optional fields:
-- **User ID**: The ID of the user requesting lead generation
 - **Agent ID**: The ID of the agent to handle lead generation
-- **Search Criteria**: Specific criteria to use in lead search
-- **Product Offering**: Information about your product/service
-- **Business Info**: Details about your business for better lead matching
-- **Max Leads**: Maximum number of leads to generate
-- **Priority**: Priority of the lead generation job
+- **Lead Capture Mechanism**: How leads will be captured (form, chatbot, etc.)
+- **Max Generation Count**: Maximum number of items to generate
+- **Priority**: Priority level for this job (high, medium, low)
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
 
 ## Generated Command Structure
 
@@ -253,17 +263,6 @@ The system generates a command object with the following structure to control th
 | `INSUFFICIENT_DATA` | Not enough information to generate quality leads |
 | `SYSTEM_ERROR` | Internal system error occurred |
 
-## Lead Generation Process
-
-The lead generation process involves several steps:
-
-1. **Analysis**: The system analyzes your target audience criteria and business information
-2. **Research**: AI agents research potential leads using various data sources
-3. **Verification**: Each potential lead is verified for accuracy and relevance
-4. **Scoring**: Leads are scored based on how well they match your criteria
-5. **Enrichment**: Lead profiles are enriched with additional data when available
-6. **Delivery**: Verified leads are delivered to your account
-
 ## Lead Database Structure
 
 | Field | Type | Description |
@@ -287,6 +286,187 @@ The lead generation process involves several steps:
 | `verified` | boolean | Whether the lead has been verified |
 | `created_at` | timestamp | Creation date/time |
 | `updated_at` | timestamp | Last update date/time |
+
+## Status Check Endpoint
+
+If you prefer to check the status of your lead generation command manually, you can use the status check endpoint:
+
+```http
+GET /api/agents/sales/lead-generation/status/:command_id
+```
+
+### Status Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_abc123def456",
+    "site_id": "site_456abc",
+    "status": "processing",
+    "progress": {
+      "percentage": 65,
+      "stage": "verification",
+      "leads_found": 18,
+      "leads_verified": 12,
+      "estimated_time_remaining": "00:05:30"
+    },
+    "created_at": "2024-05-02T14:30:12Z",
+    "updated_at": "2024-05-02T14:40:18Z"
+  }
+}
+```
+
+## Lead Retrieval
+
+Once lead generation is complete, you can retrieve the leads using the following endpoint:
+
+```http
+GET /api/agents/sales/lead-generation/leads/:command_id
+```
+
+### Lead Retrieval Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_abc123def456",
+    "leads": [
+      {
+        "id": "lead_123xyz",
+        "name": "Jane Smith",
+        "email": "jane.smith@example.com",
+        "company": "TechCorp Manufacturing",
+        "position": "CTO",
+        "phone": "+1-555-123-4567",
+        "website": "https://techcorp-mfg.com",
+        "industry": "manufacturing",
+        "company_size": "201-500",
+        "location": "Chicago, IL, United States",
+        "estimated_revenue": "$15M-$25M",
+        "linkedin": "linkedin.com/in/janesmith",
+        "match_score": 0.89,
+        "match_reasons": [
+          "Industry match: manufacturing",
+          "Role match: CTO",
+          "Company size match: 201-500 employees",
+          "Interest match: automation software"
+        ],
+        "verified": true,
+        "created_at": "2024-05-02T14:30:12Z"
+      },
+      // Additional leads...
+    ],
+    "pagination": {
+      "total": 25,
+      "page": 1,
+      "per_page": 50,
+      "total_pages": 1
+    }
+  }
+}
+```
+
+## Webhook Integration
+
+When lead generation is complete, results can be sent to a webhook URL that you configure. This allows your systems to receive lead data as soon as it's available.
+
+### Webhook Configuration
+
+To configure your webhook endpoint, include the `webhook` parameter in your initial request:
+
+```json
+{
+  "siteId": "site_456abc",
+  "leadGenData": { ... },
+  "webhook": {
+    "url": "https://your-domain.com/webhooks/leads",
+    "secret": "your_webhook_secret",
+    "metadata": {
+      "campaign_id": "spring_2024",
+      "source": "uncodie_api"
+    }
+  }
+}
+```
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `url` | string | Yes | The URL where webhook notifications should be sent |
+| `secret` | string | No | A secret key used to sign the webhook payload for verification |
+| `metadata` | object | No | Additional information to include with the webhook |
+
+### Webhook Request Format
+
+When lead generation is complete, the system will make a POST request to your webhook URL with the following structure:
+
+```json
+{
+  "event": "lead_generation.completed",
+  "timestamp": "2024-05-02T14:45:22Z",
+  "site_id": "site_456abc",
+  "command_id": "cmd_abc123def456",
+  "data": {
+    "status": "completed",
+    "completion_time": "2024-05-02T14:45:22Z",
+    "leads_count": 25,
+    "summary": {
+      "average_match_score": 0.78,
+      "verified_percentage": 92,
+      "industries_breakdown": {
+        "manufacturing": 15,
+        "tech": 8,
+        "saas": 2
+      }
+    }
+  },
+  "metadata": {
+    "campaign_id": "spring_2024",
+    "source": "uncodie_api"
+  },
+  "signature": "sha256=..."
+}
+```
+
+### Webhook Response Expected
+
+Your webhook endpoint should return a 2xx status code to acknowledge receipt of the webhook. If a non-2xx response is received, the system will retry delivery up to 5 times with exponential backoff.
+
+### Webhook Security
+
+To verify that webhook requests come from our system, we include a signature in the `Uncodie-Signature` header. The signature is generated using HMAC with SHA-256 and your webhook secret:
+
+```javascript
+// Example verification in Node.js
+const crypto = require('crypto');
+
+function verifyWebhookSignature(request, secret) {
+  const signature = request.headers['uncodie-signature'];
+  const payload = JSON.stringify(request.body);
+  
+  const expectedSignature = 'sha256=' + 
+    crypto.createHmac('sha256', secret)
+    .update(payload)
+    .digest('hex');
+  
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(expectedSignature)
+  );
+}
+```
+
+## Lead Generation Process
+
+The lead generation process involves several steps:
+
+1. **Analysis**: The system analyzes your target audience criteria and business information
+2. **Research**: AI agents research potential leads using various data sources
+3. **Verification**: Each potential lead is verified for accuracy and relevance
+4. **Scoring**: Leads are scored based on how well they match your criteria
+5. **Enrichment**: Lead profiles are enriched with additional data when available
+6. **Delivery**: Verified leads are delivered to your account
 
 ## Notes
 
