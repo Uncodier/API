@@ -5,14 +5,22 @@
  * un mapa de herramientas a partir de definiciones de herramientas.
  */
 
+// Tipo para un manejador de herramienta
+export type ToolHandler = (args: any) => Promise<any> | any;
+
+// Interfaz para el mapa de herramientas
+export interface ToolsMap {
+  [toolName: string]: ToolHandler;
+}
+
 /**
  * Create a tools map from an array of tools
  * @param tools - Array of tools
  * @param requiredToolNames - Optional array of tool names that will be used (para optimización)
  * @returns Map of tool names to their implementation functions
  */
-export function createToolsMap(tools: any[], requiredToolNames?: string[]): Record<string, any> {
-  const toolsMap: Record<string, any> = {};
+export function createToolsMap(tools: any[], requiredToolNames?: string[]): ToolsMap {
+  const toolsMap: ToolsMap = {};
   
   if (!tools || !Array.isArray(tools) || tools.length === 0) {
     console.log(`[ToolExecutor] No hay herramientas disponibles para mapear`);
@@ -44,22 +52,10 @@ export function createToolsMap(tools: any[], requiredToolNames?: string[]): Reco
     console.log(`[ToolExecutor] Procesando herramienta: ${toolName}`);
     
     // Buscar la implementación en varias ubicaciones posibles
-    if (tool.function && typeof tool.function === 'function') {
-      toolsMap[toolName] = tool.function;
-      console.log(`[ToolExecutor] Registrando implementación directa para ${toolName}`);
-    } 
-    else if (tool.handler && typeof tool.handler === 'function') {
-      toolsMap[toolName] = tool.handler;
-      console.log(`[ToolExecutor] Registrando handler para ${toolName}`);
-    }
-    else if (tool.function && tool.function.implementation && typeof tool.function.implementation === 'function') {
-      toolsMap[toolName] = tool.function.implementation;
-      console.log(`[ToolExecutor] Registrando implementation anidada para ${toolName}`);
-    }
-    else {
-      // Si no hay una implementación real, no registrar la herramienta
-      console.warn(`[ToolExecutor] No se encontró implementación para ${toolName}, OMITIENDO esta herramienta`);
-      // No agregamos la herramienta al mapa, lo que provocará un error cuando se intente ejecutar
+    const implementation = extractToolImplementation(tool, toolName);
+    
+    if (implementation) {
+      toolsMap[toolName] = implementation;
     }
   }
   
@@ -72,6 +68,32 @@ export function createToolsMap(tools: any[], requiredToolNames?: string[]): Reco
   }
   
   return toolsMap;
+}
+
+/**
+ * Extracts the implementation function from a tool
+ * @param tool - The tool object
+ * @param toolName - The name of the tool (for logging)
+ * @returns The implementation function or null if not found
+ */
+function extractToolImplementation(tool: any, toolName: string): ToolHandler | null {
+  if (tool.function && typeof tool.function === 'function') {
+    console.log(`[ToolExecutor] Registrando implementación directa para ${toolName}`);
+    return tool.function;
+  } 
+  else if (tool.handler && typeof tool.handler === 'function') {
+    console.log(`[ToolExecutor] Registrando handler para ${toolName}`);
+    return tool.handler;
+  }
+  else if (tool.function && tool.function.implementation && typeof tool.function.implementation === 'function') {
+    console.log(`[ToolExecutor] Registrando implementation anidada para ${toolName}`);
+    return tool.function.implementation;
+  }
+  else {
+    // Si no hay una implementación real, registrar el mensaje
+    console.warn(`[ToolExecutor] No se encontró implementación para ${toolName} en las herramientas principales`);
+    return null;
+  }
 }
 
 /**

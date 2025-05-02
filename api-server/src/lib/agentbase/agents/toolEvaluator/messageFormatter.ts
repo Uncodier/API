@@ -79,10 +79,12 @@ export function prepareMessagesFromCommand(command: DbCommand, systemPrompt?: st
   console.log(`[ToolEvaluator] Sistema prompt: ${toolEvaluatorPrompt.length} caracteres (${systemPrompt ? 'Personalizado' : 'Default'})`);
   console.log(`[ToolEvaluator] Primera parte del system prompt: ${toolEvaluatorPrompt.substring(0, 100)}...`);
   
-  // 1. Combinar agent_background + system prompt + contexto completo + herramientas en el mensaje del sistema
+  // 1. Combinar agent_background + system prompt + contexto completo procesado + herramientas en el mensaje del sistema
+  // Ya no incluimos el contexto original duplicado como ORIGINAL_COMMAND_CONTEXT
   const systemContent = `${command.agent_background}\n\n${toolEvaluatorPrompt}\n\nCONVERSATION CONTEXT:\n${userContext}\n\n${toolsPrompt}`;
   
   console.log(`[ToolEvaluator] Mensaje sistema combinado: ${systemContent.length} caracteres`);
+  
   messages.push({
     role: 'system',
     content: systemContent

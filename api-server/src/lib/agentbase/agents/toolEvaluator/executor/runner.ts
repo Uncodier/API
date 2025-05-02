@@ -6,7 +6,7 @@
  */
 import { FunctionCall, ToolExecutionResult } from '../types';
 import { executeTools } from './executeTools';
-import { createToolsMap } from './toolsMap';
+import { createToolsMap, ToolsMap } from './toolsMap';
 import { updateFunctionStatuses } from '../updater/functionStatusUpdater';
 import { updateCommandStatus } from '../updater/commandStatusUpdater';
 import { updateCommandContext } from '../updater/contextUpdater';
