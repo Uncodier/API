@@ -61,7 +61,12 @@ POST /api/agents/sales/lead-follow-up
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
-<UnifiedApiTester apiId="sales" />
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Lead Follow-up API Tester" 
+  description="Use this tester to generate lead follow-up sequences with different parameters and see the results." 
+  defaultEndpoint="/api/agents/sales/lead-follow-up"
+/>
 
 You can test this API directly using our API Tester interface. The Sales API tester allows you to generate lead follow-up sequences with different parameters and see the results.
 
