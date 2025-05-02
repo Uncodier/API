@@ -695,7 +695,7 @@ export async function POST(request: Request) {
                 },
                 target: {
                   type: 'string',
-                  enum: ['sales', 'cmo'],
+                  enum: ['Sales/CRM Specialist', 'Growth Lead/Manager'],
                   description: 'The department or role to escalate the conversation to'
                 },
                 summary: {
@@ -718,16 +718,37 @@ export async function POST(request: Request) {
             parameters: {
               type: 'object',
               properties: {
-                conversation: {
+                name: {
+                  type: 'string',
+                  description: 'The found name of the visitor that is requesting the human intervention'
+                },
+                email: {
+                  type: 'string',
+                  description: 'The found email of the visitor that is requesting the human intervention'
+                },
+                conversation_id: {
                   type: 'string',
                   description: 'The conversation ID that requires human attention'
+                },
+                summary: {
+                  type: 'string',
+                  description: 'A brief summary of the issue or reason for escalation'
+                },
+                message: {
+                  type: 'string',
+                  description: 'The message to be sent to the human supervisor'
+                },
+                priority: {
+                  type: 'string',
+                  enum: ['normal', 'high', 'urgent'],
+                  description: 'The priority level of the request'
                 },
                 lead_id: {
                   type: 'string',
                   description: 'The ID of the lead or customer that needs assistance'
                 }
               },
-              required: ['conversation', 'lead_id'],
+              required: ['conversation_id', 'summary', 'message', 'priority', 'name', 'email'],
               additionalProperties: false
             },
             strict: true

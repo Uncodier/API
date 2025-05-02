@@ -31,6 +31,7 @@ const baseEventSchema = z.object({
   url: z.string().url(),
   referrer: z.string().url().optional(),
   id: z.string().optional(),
+  visitor_id: z.string().optional(),
   session_id: z.string().uuid().optional(),
   timestamp: z.number().optional(),
   user_agent: z.string().optional(),
@@ -256,7 +257,7 @@ function validateAndPrepareEventData(eventData: any, eventId: string) {
       event_name: eventData.event_name || null,
       url: eventData.url,
       referrer: eventData.referrer || null,
-      visitor_id: eventData.id || null,
+      visitor_id: eventData.visitor_id || eventData.id || null,
       session_id: eventData.session_id || null,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
@@ -316,6 +317,9 @@ export async function POST(request: NextRequest) {
     
     // Generate event ID
     const eventId = uuidv4();
+    
+    // Determinar el visitor_id (dar prioridad al visitor_id explícito, luego al id)
+    const visitorId = eventData.visitor_id || eventData.id;
 
     // Check if session exists
     if (eventData.session_id) {
@@ -331,7 +335,7 @@ export async function POST(request: NextRequest) {
         // Create new session
         const newSession = {
           id: eventData.session_id,
-          visitor_id: eventData.id,
+          visitor_id: visitorId,
           site_id: eventData.site_id,
           landing_url: eventData.url,
           current_url: eventData.url,
@@ -361,7 +365,7 @@ export async function POST(request: NextRequest) {
       event_name: 'event_name' in eventData ? eventData.event_name : null,
       url: eventData.url,
       referrer: eventData.referrer,
-      visitor_id: eventData.id, // Using id field but maintaining visitor_id in DB for compatibility
+      visitor_id: visitorId,
       session_id: eventData.session_id,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
@@ -376,10 +380,10 @@ export async function POST(request: NextRequest) {
     };
     
     // Get visitor's lead_id if available
-    const { data: visitorData, error: visitorError } = eventData.id ? await supabaseAdmin
+    const { data: visitorData, error: visitorError } = visitorId ? await supabaseAdmin
       .from('visitors')
       .select('lead_id')
-      .eq('id', eventData.id)
+      .eq('id', visitorId)
       .single() : { data: null, error: null };
 
     // Insert event into database
@@ -399,7 +403,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       event_id: data.id,
-      id: eventData.id,
+      visitor_id: visitorId,
       lead_id: visitorData?.lead_id || null,
       session_id: eventData.session_id,
       timestamp: data.timestamp
