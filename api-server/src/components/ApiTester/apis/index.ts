@@ -20,6 +20,7 @@ import CopywriterApi from './CopywriterApi';
 import ChatApi from './ChatApi';
 import GrowthApi from './GrowthApi';
 import InterventionApi from './InterventionApi';
+import SalesApi from './SalesApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -43,5 +44,6 @@ apiRegistry.register(CopywriterApi);
 apiRegistry.register(ChatApi);
 apiRegistry.register(GrowthApi);
 apiRegistry.register(InterventionApi);
+apiRegistry.register(SalesApi);
 
 export default apiRegistry; 
