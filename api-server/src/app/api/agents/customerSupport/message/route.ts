@@ -3,6 +3,8 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -255,11 +257,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (agentId) conversationData.agent_id = agentId;
       if (siteId) conversationData.site_id = siteId;
       
-      // Solo añadir lead_id si está presente y es un dato requerido
-      // (por ejemplo, si estamos en una conversación relacionada con un lead específico)
-      if (leadId && !agentId) {
+      // Añadir lead_id si está presente (independientemente de si hay agentId o no)
+      if (leadId) {
         conversationData.lead_id = leadId;
-        console.log(`⚠️ Agregando lead_id a la conversación porque no hay agentId`);
+        console.log(`✅ Agregando lead_id ${leadId} a la nueva conversación`);
       }
       
       // Añadir el título si está presente
@@ -280,11 +281,12 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
-    } else if (conversationTitle || siteId) {
-      // Actualizar la conversación existente si se proporciona un nuevo título o site_id
+    } else if (conversationTitle || siteId || leadId) {
+      // Actualizar la conversación existente si se proporciona un nuevo título, site_id o lead_id
       const updateData: any = {};
       if (conversationTitle) updateData.title = conversationTitle;
       if (siteId) updateData.site_id = siteId;
+      if (leadId) updateData.lead_id = leadId;
       
       console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
       
@@ -304,6 +306,9 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         if (siteId) {
           console.log(`🔗 Site ID de conversación actualizado: "${siteId}"`);
         }
+        if (leadId) {
+          console.log(`👤 Lead ID de conversación actualizado: "${leadId}"`);
+        }
       }
     }
     
@@ -318,9 +323,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar visitor_id si está presente
     if (visitorId) userMessageObj.visitor_id = visitorId;
     
-    // Solo agregar lead_id si está presente y no hay un agente en la conversación
-    if (leadId && !agentId) {
+    // Agregar lead_id si está presente (independientemente del agentId)
+    if (leadId) {
       userMessageObj.lead_id = leadId;
+      console.log(`👤 Agregando lead_id ${leadId} al mensaje del usuario`);
     }
     
     // Agregar agent_id si está presente
@@ -357,9 +363,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar visitor_id si está presente
     if (visitorId) assistantMessageObj.visitor_id = visitorId;
     
-    // Solo agregar lead_id si está presente y no hay un agente en la conversación
-    if (leadId && !agentId) {
+    // Agregar lead_id si está presente (independientemente del agentId)
+    if (leadId) {
       assistantMessageObj.lead_id = leadId;
+      console.log(`👤 Agregando lead_id ${leadId} al mensaje del asistente`);
     }
     
     // Agregar agent_id si está presente
@@ -513,12 +520,190 @@ function formatConversationHistoryForContext(messages: Array<{role: string, cont
   return formattedHistory;
 }
 
+// Función para buscar un lead por email, teléfono o nombre
+async function findLeadByInfo(email?: string, phone?: string, name?: string, siteId?: string): Promise<string | null> {
+  try {
+    if (!email && !phone && !name) {
+      console.log(`⚠️ No se proporcionó información para buscar lead`);
+      return null;
+    }
+    
+    let query = supabaseAdmin.from('leads').select('id');
+    
+    // Siempre filtrar por site_id si está disponible
+    if (siteId) {
+      query = query.eq('site_id', siteId);
+      console.log(`🔍 Filtrando búsqueda de lead por site_id="${siteId}"`);
+    }
+    
+    // Construir la consulta según los datos disponibles
+    if (email && phone) {
+      // Si tenemos ambos, email y phone, usar correctamente el operador OR de Supabase
+      query = query.or(`email.eq.${email},phone.eq.${phone}`);
+      console.log(`🔍 Buscando lead con email="${email}" O phone="${phone}"`);
+    } else {
+      // Si solo tenemos uno de los dos, usar el operador eq correspondiente
+      if (email) {
+        query = query.eq('email', email);
+        console.log(`🔍 Buscando lead con email="${email}"`);
+      }
+      
+      if (phone) {
+        query = query.eq('phone', phone);
+        console.log(`🔍 Buscando lead con phone="${phone}"`);
+      }
+    }
+    
+    // Solo usar name como último recurso si no hay email ni phone
+    if (name && !email && !phone) {
+      query = query.eq('name', name);
+      console.log(`🔍 Buscando lead solo con name="${name}"`);
+    }
+    
+    // Ejecutar la consulta
+    const { data, error } = await query.limit(1);
+    
+    if (error) {
+      console.error('Error al buscar lead por información:', error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró lead con la información proporcionada ${siteId ? `para el sitio ${siteId}` : ''}`);
+      return null;
+    }
+    
+    console.log(`✅ Lead encontrado con ID: ${data[0].id} ${siteId ? `para el sitio ${siteId}` : ''}`);
+    return data[0].id;
+  } catch (error) {
+    console.error('Error al buscar lead por información:', error);
+    return null;
+  }
+}
+
+// Función para crear un nuevo lead
+async function createLead(name: string, email?: string, phone?: string, siteId?: string, visitorId?: string): Promise<string | null> {
+  try {
+    // Validar que tengamos al menos la información básica necesaria
+    if (!name) {
+      console.error('❌ No se puede crear un lead sin nombre');
+      return null;
+    }
+    
+    console.log(`➕ Creando nuevo lead con name=${name}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${siteId || 'N/A'}, visitor_id=${visitorId || 'N/A'}`);
+    
+    // Crear objeto con datos mínimos
+    const leadData: any = {
+      name: name,
+      status: 'contacted',
+      origin: 'chat'
+    };
+    
+    // Agregar campos opcionales si están presentes
+    if (email) leadData.email = email;
+    if (phone) leadData.phone = phone;
+    
+    // Primero obtenemos los datos completos del sitio para usar site.id y site.user_id
+    if (siteId && isValidUUID(siteId)) {
+      try {
+        const { data: site, error: siteError } = await supabaseAdmin
+          .from('sites')
+          .select('id, user_id')
+          .eq('id', siteId)
+          .single();
+        
+        if (siteError) {
+          console.error(`❌ Error al obtener sitio: ${siteError.message}`);
+        } else if (site) {
+          // Usar directamente site.id y site.user_id
+          leadData.site_id = site.id;
+          leadData.user_id = site.user_id;
+          console.log(`👤 Usando site.id=${site.id} y site.user_id=${site.user_id} directamente`);
+        } else {
+          // Fallback a siteId si no se pudo obtener el sitio
+          leadData.site_id = siteId;
+          console.warn(`⚠️ No se encontró el sitio ${siteId}, usando el ID proporcionado`);
+        }
+      } catch (e) {
+        console.error('❌ Excepción al obtener datos del sitio:', e);
+        // Fallback a siteId
+        leadData.site_id = siteId;
+      }
+    }
+    
+    console.log(`📦 Datos para crear lead:`, JSON.stringify(leadData));
+    
+    // Intentar insertar el lead directamente
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .insert([leadData])
+      .select()
+      .single();
+    
+    if (error) {
+      console.error(`❌ Error al crear nuevo lead (código ${error.code}):`, error.message);
+      console.error(`❌ Detalles del error:`, JSON.stringify(error));
+      console.error(`❌ Datos que se intentaron insertar:`, JSON.stringify(leadData));
+      
+      // Si el error es de constraint unique, puede ser que el lead ya exista
+      if (error.code === '23505') { // Código PostgreSQL para "unique violation"
+        console.log('🔄 Error de duplicado, intentando encontrar el lead existente...');
+        // Intentar buscar el lead existente por los mismos campos
+        const existingLeadId = await findLeadByInfo(email, phone, name, siteId);
+        if (existingLeadId) {
+          console.log(`✅ Se encontró lead existente con ID: ${existingLeadId}`);
+          return existingLeadId;
+        }
+      }
+      
+      return null;
+    }
+    
+    if (!data || !data.id) {
+      console.error('❌ No se recibió ID para el lead creado');
+      return null;
+    }
+    
+    console.log(`✅ Nuevo lead creado con ID: ${data.id} ${siteId ? `para el sitio ${siteId}` : ''}`);
+    return data.id;
+  } catch (error) {
+    console.error('❌ Excepción al crear nuevo lead:', error);
+    return null;
+  }
+}
+
+// Función auxiliar para manejar CORS
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Date, X-Api-Version',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     
+    // Debug para ver los parámetros de la solicitud
+    console.log("🔍 POST /api/agents/customerSupport/message - Cuerpo de la solicitud:", JSON.stringify(body));
+    console.log("🔍 Headers:", JSON.stringify(Object.fromEntries(request.headers)));
+    console.log("🔍 Origen:", request.headers.get('origin'));
+    
     // Extract required parameters from the request
-    const { conversationId, userId, message, agentId, site_id, lead_id, visitor_id } = body;
+    const { 
+      conversationId, 
+      userId, 
+      message, 
+      agentId, 
+      site_id, 
+      lead_id, 
+      visitor_id,
+      name,
+      email,
+      phone
+    } = body;
     
     // Verificamos si tenemos al menos un identificador de usuario o cliente
     if (!visitor_id && !lead_id && !userId && !site_id) {
@@ -570,6 +755,74 @@ export async function POST(request: Request) {
       console.log(`📍 Using provided site_id: ${effectiveSiteId}`);
     } else {
       console.log(`⚠️ No site_id provided for request`);
+    }
+    
+    // Manejar lead_id - buscar o crear lead si se proporciona información
+    let effectiveLeadId = lead_id;
+    if (!effectiveLeadId && (name || email || phone)) {
+      console.log(`🔍 Buscando o creando lead con: name=${name || 'N/A'}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${effectiveSiteId || 'N/A'}`);
+      
+      // Primero intentar buscar un lead existente si tenemos email o phone
+      let foundLeadId = null;
+      if (email || phone) {
+        console.log(`🔎 Intentando buscar lead existente por email o teléfono ${effectiveSiteId ? `para el sitio ${effectiveSiteId}` : ''}`);
+        foundLeadId = await findLeadByInfo(email, phone, name, effectiveSiteId);
+      }
+      
+      if (foundLeadId) {
+        console.log(`✅ Lead existente encontrado con ID: ${foundLeadId}`);
+        effectiveLeadId = foundLeadId;
+      } else {
+        // Si no se encuentra lead, tenemos que crear uno nuevo específico para este sitio
+        if (name) {
+          console.log(`🆕 No se encontró lead existente. Creando nuevo lead con nombre: ${name} para el sitio: ${effectiveSiteId || 'sin sitio'}`);
+          
+          // Verificar email y phone para diagnóstico
+          if (!email) console.log(`⚠️ Creando lead sin email`);
+          if (!phone) console.log(`⚠️ Creando lead sin teléfono`);
+          if (!effectiveSiteId) console.log(`⚠️ Creando lead sin sitio asociado`);
+          
+          const newLeadId = await createLead(name, email, phone, effectiveSiteId, visitor_id);
+          
+          if (newLeadId) {
+            console.log(`✅ Nuevo lead creado exitosamente con ID: ${newLeadId}`);
+            effectiveLeadId = newLeadId;
+          } else {
+            console.error(`❌ Error al crear nuevo lead para: ${name} en sitio: ${effectiveSiteId || 'sin sitio'}`);
+            
+            // Intentar diagnóstico del problema
+            console.error(`❌ Diagnóstico: ¿Existe la tabla 'leads'? Comprobando estructura...`);
+            try {
+              const { data: tableInfo, error: tableError } = await supabaseAdmin
+                .rpc('get_table_ddl', { table_name: 'leads' });
+              
+              if (tableError) {
+                console.error(`❌ Error al consultar estructura de tabla:`, tableError);
+              } else {
+                console.log(`ℹ️ Estructura de tabla 'leads' encontrada:`, tableInfo);
+              }
+            } catch (e) {
+              console.error(`❌ Excepción al consultar estructura de tabla:`, e);
+            }
+          }
+        } else {
+          console.log(`⚠️ No hay suficiente información para crear un lead (se requiere al menos el nombre)`);
+        }
+      }
+    }
+    
+    // Verificar si tenemos un lead_id efectivo después de la búsqueda/creación
+    if (effectiveLeadId) {
+      console.log(`👤 Usando lead_id: ${effectiveLeadId} para esta conversación`);
+    } else {
+      console.log(`⚠️ No hay lead_id disponible para esta conversación. Causas posibles:`);
+      if (!name && !email && !phone) {
+        console.log(`   - No se proporcionó información de contacto (nombre, email o teléfono)`);
+      } else if (!name) {
+        console.log(`   - Se proporcionó email/teléfono pero falta nombre`);
+      } else {
+        console.log(`   - Error al crear/buscar el lead en la base de datos (ver errores anteriores)`);
+      }
     }
     
     // Buscar agente de soporte al cliente activo si no se proporciona un agent_id
@@ -624,6 +877,15 @@ export async function POST(request: Request) {
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
     
+    // Añadir información del lead al contexto si está disponible
+    if (effectiveLeadId || name || email || phone) {
+      contextMessage += "\n\nLead Information:";
+      if (effectiveLeadId) contextMessage += `\nLead ID: ${effectiveLeadId}`;
+      if (name) contextMessage += `\nName: ${name}`;
+      if (email) contextMessage += `\nEmail: ${email}`;
+      if (phone) contextMessage += `\nPhone: ${phone}`;
+    }
+    
     if (conversationId && isValidUUID(conversationId)) {
       console.log(`🔄 Recuperando historial para la conversación: ${conversationId}`);
       const historyMessages = await getConversationHistory(conversationId);
@@ -660,6 +922,8 @@ export async function POST(request: Request) {
       agentId: effectiveAgentId,
       // Add site_id as a basic property if it exists
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
+      // Add lead_id as a basic property if it exists
+      ...(effectiveLeadId ? { lead_id: effectiveLeadId } : {}),
       description: 'Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase.',
       // Set the target as a message with content
       targets: [
@@ -830,6 +1094,7 @@ export async function POST(request: Request) {
       console.log(`⚠️ Continuando con el ID interno como respaldo: ${internalCommandId}`);
       
       if (!completed || !executedCommand) {
+        console.error(`❌ Error en ejecución del comando, completed=${completed}, executedCommand=${!!executedCommand}`);
         return NextResponse.json(
           { 
             success: false, 
@@ -844,7 +1109,10 @@ export async function POST(request: Request) {
               site_id: effectiveSiteId
             }
           },
-          { status: 500 }
+          { 
+            status: 500,
+            headers: corsHeaders()
+          }
         );
       }
       
@@ -889,8 +1157,19 @@ export async function POST(request: Request) {
       
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
       
-      // Guardar los mensajes en la base de datos
-      const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, internalCommandId);
+      // Usando lead_id efectivo al guardar los mensajes
+      const savedMessages = await saveMessages(
+        effectiveUserId, 
+        message, 
+        assistantMessage, 
+        conversationId, 
+        conversationTitle, 
+        effectiveLeadId, 
+        visitor_id, 
+        effectiveAgentId, 
+        effectiveSiteId, 
+        effectiveDbUuid || undefined
+      );
       
       if (!savedMessages) {
         console.error(`❌ Error al guardar mensajes en la base de datos`);
@@ -902,9 +1181,10 @@ export async function POST(request: Request) {
               message: 'The command completed but the messages could not be saved to the database' 
             },
             data: {
-              command_id: internalCommandId,
+              command_id: effectiveDbUuid,
               message: assistantMessage,
-              conversation_title: conversationTitle
+              conversation_title: conversationTitle,
+              lead_id: effectiveLeadId || null
             },
             debug: {
               agent_id: effectiveAgentId,
@@ -913,28 +1193,31 @@ export async function POST(request: Request) {
               site_id: effectiveSiteId
             }
           },
-          { status: 500 }
+          { 
+            status: 500,
+            headers: corsHeaders()
+          }
         );
       }
       
-      // Responder usando el ID interno como respaldo
       return NextResponse.json(
         { 
           success: true, 
           data: { 
-            command_id: internalCommandId, // Usamos el ID interno como respaldo
-            conversation_id: savedMessages?.conversationId,
-            conversation_title: savedMessages?.conversationTitle,
+            command_id: effectiveDbUuid,
+            conversation_id: savedMessages.conversationId,
+            conversation_title: savedMessages.conversationTitle,
+            lead_id: effectiveLeadId || null,
             messages: {
               user: {
                 content: message,
-                message_id: savedMessages?.userMessageId,
-                command_id: internalCommandId
+                message_id: savedMessages.userMessageId,
+                command_id: effectiveDbUuid
               },
               assistant: {
                 content: assistantMessage,
-                message_id: savedMessages?.assistantMessageId,
-                command_id: internalCommandId
+                message_id: savedMessages.assistantMessageId,
+                command_id: effectiveDbUuid
               }
             },
             debug: {
@@ -945,11 +1228,15 @@ export async function POST(request: Request) {
             }
           } 
         },
-        { status: 200 }
+        { 
+          status: 200,
+          headers: corsHeaders()
+        }
       );
     }
     
     if (!completed || !executedCommand) {
+      console.error(`❌ Error en ejecución del comando, completed=${completed}, executedCommand=${!!executedCommand}`);
       return NextResponse.json(
         { 
           success: false, 
@@ -964,7 +1251,10 @@ export async function POST(request: Request) {
             site_id: effectiveSiteId
           }
         },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: corsHeaders()
+        }
       );
     }
     
@@ -1009,8 +1299,19 @@ export async function POST(request: Request) {
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
-    // Guardar los mensajes en la base de datos
-    const savedMessages = await saveMessages(effectiveUserId, message, assistantMessage, conversationId, conversationTitle, lead_id, visitor_id, effectiveAgentId, effectiveSiteId, effectiveDbUuid);
+    // Usando lead_id efectivo al guardar los mensajes
+    const savedMessages = await saveMessages(
+      effectiveUserId, 
+      message, 
+      assistantMessage, 
+      conversationId, 
+      conversationTitle, 
+      effectiveLeadId,
+      visitor_id, 
+      effectiveAgentId, 
+      effectiveSiteId, 
+      effectiveDbUuid || undefined
+    );
     
     if (!savedMessages) {
       console.error(`❌ Error al guardar mensajes en la base de datos`);
@@ -1024,7 +1325,8 @@ export async function POST(request: Request) {
           data: {
             command_id: effectiveDbUuid,
             message: assistantMessage,
-            conversation_title: conversationTitle
+            conversation_title: conversationTitle,
+            lead_id: effectiveLeadId || null
           },
           debug: {
             agent_id: effectiveAgentId,
@@ -1033,7 +1335,10 @@ export async function POST(request: Request) {
             site_id: effectiveSiteId
           }
         },
-        { status: 500 }
+        { 
+          status: 500,
+          headers: corsHeaders()
+        }
       );
     }
     
@@ -1044,6 +1349,7 @@ export async function POST(request: Request) {
           command_id: effectiveDbUuid,
           conversation_id: savedMessages.conversationId,
           conversation_title: savedMessages.conversationTitle,
+          lead_id: effectiveLeadId || null,
           messages: {
             user: {
               content: message,
@@ -1064,12 +1370,15 @@ export async function POST(request: Request) {
           }
         } 
       },
-      { status: 200 }
+      { 
+        status: 200,
+        headers: corsHeaders()
+      }
     );
   } catch (error) {
-    console.error('Error al procesar la solicitud:', error);
+    console.error(`❌ Error en el manejo de la solicitud:`, error);
     return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } },
+      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An unexpected error occurred' } },
       { status: 500 }
     );
   }
