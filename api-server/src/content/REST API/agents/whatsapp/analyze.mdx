@@ -1,0 +1,242 @@
+# Analyze WhatsApp Messages Command
+
+Creates a command object to analyze WhatsApp messages and generate insights using AI agents.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+POST /api/agents/whatsapp/analyze
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `messageIds` | array | Yes | Array of WhatsApp message IDs to analyze |
+| `agentId` | string | Yes | ID of the agent to handle the analysis |
+| `site_id` | string | Yes | ID of the site associated with these messages |
+| `team_member_id` | string | No | Optional ID of the team member who requested the analysis |
+| `analysis_type` | string | No | Optional type of analysis to perform (e.g., 'sentiment', 'intent', 'priority', 'summary') |
+| `lead_id` | string | No | Optional ID of the lead associated with these messages |
+| `conversation_id` | string | No | Optional ID of the WhatsApp conversation |
+| `phone_number` | string | No | Optional phone number of the contact |
+
+### Example Request
+
+```json
+{
+  "messageIds": ["whatsapp_123", "whatsapp_456", "whatsapp_789"],
+  "agentId": "agent_whatsapp_analyzer_123",
+  "site_id": "site_abc123",
+  "team_member_id": "user_xyz789",
+  "analysis_type": "comprehensive",
+  "lead_id": "lead_456",
+  "conversation_id": "conv_789012",
+  "phone_number": "+1234567890"
+}
+```
+
+## Try It
+
+You can test this API directly using our API Tester interface. The WhatsApp Analysis API tester allows you to analyze WhatsApp messages using any agent type and see the results.
+
+Required fields:
+- **Message IDs**: Array of WhatsApp message IDs to analyze
+- **Agent ID**: The ID of the agent
+- **Site ID**: The ID of the site associated with these messages
+
+Optional fields:
+- **Analysis Type**: Type of analysis to perform
+- **Lead ID**: If the messages are associated with a lead, provide the ID
+- **Team Member ID**: ID of the team member requesting the analysis
+- **Conversation ID**: ID of the WhatsApp conversation
+- **Phone Number**: Phone number of the contact
+
+<UnifiedApiTester apiId="whatsapp-analysis" />
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control supervised WhatsApp message analysis tasks with failure handling, tools, contexts, etc.
+
+```json
+{
+  "targets": [
+    {
+      "analysis": {
+        "summary": "WhatsApp conversation summary goes here",
+        "insights": [
+          "Key insight 1 from WhatsApp analysis",
+          "Key insight 2 from WhatsApp analysis",
+          "Key insight 3 from WhatsApp analysis"
+        ],
+        "sentiment": "positive",
+        "priority": "high",
+        "action_items": [
+          "Suggested action item 1",
+          "Suggested action item 2"
+        ],
+        "response_suggestions": [
+          "Suggested response 1",
+          "Suggested response 2"
+        ]
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "whatsapp_message_extraction",
+      "description": "extract content and metadata from WhatsApp messages",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "message_ids": {
+            "type": "array",
+            "description": "The IDs of the WhatsApp messages to extract data from",
+            "items": {
+              "type": "string"
+            }
+          },
+          "extract_media": {
+            "type": "boolean",
+            "description": "Whether to extract media contents (images, audio, video, etc.)"
+          }
+        },
+        "required": ["message_ids"]
+      }
+    },
+    {
+      "name": "sentiment_analysis",
+      "description": "analyze sentiment of message content",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The text content to analyze for sentiment"
+          },
+          "detailed": {
+            "type": "boolean",
+            "description": "Whether to return detailed sentiment breakdown"
+          }
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "knowledge_base_search",
+      "description": "search knowledge base for relevant information",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "The search query for knowledge base"
+          },
+          "site_id": {
+            "type": "string",
+            "description": "The site ID for the knowledge base"
+          }
+        },
+        "required": ["query", "site_id"]
+      }
+    },
+    {
+      "name": "contact_information_lookup",
+      "description": "lookup contact information from phone number",
+      "status": "not_initialized",
+      "type": "synchronous",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "phone_number": {
+            "type": "string",
+            "description": "The phone number to look up"
+          },
+          "site_id": {
+            "type": "string",
+            "description": "The site ID for the contact database"
+          }
+        },
+        "required": ["phone_number", "site_id"]
+      }
+    }
+  ],
+  "context": "Contents of WhatsApp messages and relevant customer history",
+  "supervisors": [
+    {
+      "agent_role": "customer_service_specialist",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "sales_manager",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "analyze whatsapp messages",
+  "description": "Analyze the provided WhatsApp messages to extract key insights, determine sentiment, identify action items, and suggest appropriate responses based on message content and context."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "commandId": "cmd_123456",
+    "status": "processing",
+    "message": "Command created successfully"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `AGENT_NOT_FOUND` | The specified agent does not exist |
+| `MESSAGE_NOT_FOUND` | One or more specified messages do not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The command executes asynchronously
+- Messages must be accessible to the user making the request
+- The system will analyze the entire conversation for context
+- Analysis results can be retrieved using a separate endpoint once processing is complete
+- Site ID is a required parameter and must be provided in the request
+- The generated command controls the agent's behavior with:
+  - `targets`: Defines the expected output structure for the analysis
+  - `tools`: Specifies what actions the agent can take for WhatsApp message analysis
+    - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
+    - Tools follow the OpenAI format with parameters defined as objects containing properties and required fields
+  - `context`: Provides message content and relevant customer history
+  - `supervisors`: Defines which agent roles can intervene if needed
+  - `task`: Specifies the high-level objective for the agent
+  - `description`: Contains the detailed instructions for the WhatsApp message analysis task
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly. 

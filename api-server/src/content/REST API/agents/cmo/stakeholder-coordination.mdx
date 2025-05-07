@@ -1,0 +1,354 @@
+---
+title: Stakeholder Coordination
+description: Orquesta una llamada con stakeholders, genera resúmenes y crea tareas a partir de la discusión
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# API de Coordinación de Stakeholders de CMO
+
+Esta API facilita la orquestación de llamadas con stakeholders para el agente CMO, proporcionando guía estructurada y generando resúmenes detallados y tareas accionables tras la reunión.
+
+## Endpoint
+
+`POST /api/agents/cmo/stakeholder-coordination`
+
+## Request Body
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| meeting_title | string | No | Título de la reunión. Si no se proporciona, será generado dinámicamente. |
+| meeting_objective | string | No | Objetivo principal de la reunión. Si no se proporciona, será generado dinámicamente. |
+| participants | array of strings | Sí | Correos electrónicos o nombres de los participantes de la reunión. |
+| meeting_agenda | string | No | Puntos de agenda para la llamada. |
+| phone_numbers | array of strings | No | Números de teléfono para iniciar una llamada real utilizando Vapi. |
+| visitor_id | string | No* | Identificador del visitante si está disponible. |
+| lead_id | string | No* | Identificador del lead si está disponible. |
+| userId | string | No* | Identificador del usuario si está disponible. |
+| conversationId | string | No | Identificador de la conversación si este comando es parte de una conversación existente. |
+| agentId | string | No | Identificador específico del agente a utilizar. |
+| site_id | string | Sí | Identificador del sitio para contextualizar la reunión. |
+| include_context_summary | boolean | No | Si se debe incluir un resumen de contexto detallado (tareas existentes, requisitos, campañas, etc.). Por defecto es true. |
+
+\* Debe proporcionarse al menos uno de estos identificadores: visitor_id, lead_id o userId.
+
+## Response
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| success | boolean | Indica si la solicitud fue exitosa. |
+| data.command_id | string | Identificador único del comando creado. |
+| data.conversation_id | string | Identificador de la conversación asociada. |
+| data.status | string | Estado de la solicitud (e.g., "completed", "in_progress"). |
+| data.meeting_details | object | Detalles de la reunión, incluyendo título y objetivo. |
+| data.system_prompts | array | Instrucciones del sistema utilizadas para guiar al agente antes y después de la llamada. |
+| data.context_summary | object | Resumen de contexto si fue solicitado, incluyendo tareas, requisitos, campañas, etc. |
+| data.call | object | Información sobre la llamada telefónica si se proporcionaron números de teléfono. |
+
+## Ejemplo de Uso
+
+<UnifiedApiTester apiId="cmo-stakeholder-coordination" />
+
+## Características
+
+- Validación completa de parámetros y manejo de errores
+- Generación dinámica de títulos y objetivos de reunión si no se proporcionan
+- Generación de resumen de contexto detallado para informar la discusión
+- Soporte para iniciación de llamadas telefónicas reales con Vapi
+- Instrucciones estructuradas para el agente antes y después de la llamada
+- Creación de resúmenes completos post-llamada con puntos clave, decisiones y tareas
+
+## Casos de Uso
+
+- Organizar reuniones estratégicas con stakeholders de marketing
+- Facilitar discusiones sobre presupuesto y asignación de recursos
+- Revisar el rendimiento de campañas y planificar próximos pasos
+- Generar resúmenes detallados con tareas accionables tras las reuniones
+- Iniciar llamadas telefónicas reales con stakeholders de marketing
+
+## English Documentation
+
+### Stakeholder Coordination
+
+Creates a command object to handle marketing strategy interactions, orchestrate calls with stakeholders, generate meeting summaries, and create tasks and requirements based on call discussions.
+
+### Endpoint
+
+```http
+POST /api/agents/cmo/stakeholder-coordination
+```
+
+### Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `meeting_title` | string | No | The title of the stakeholder meeting or call (if not provided, will be generated dynamically) |
+| `meeting_objective` | string | No | The primary goal or objective of the stakeholder meeting (if not provided, will be generated dynamically) |
+| `participants` | array | No | Array of participant email addresses |
+| `meeting_agenda` | string | No | Outline of the meeting agenda and topics |
+| `phone_numbers` | array | No | Array of phone numbers for Vapi telephony integration. If provided, the system will attempt to initiate a phone call with the specified numbers |
+| `visitor_id` | string | No* | ID of the visitor (for non-authenticated users) |
+| `lead_id` | string | No* | ID of the lead associated with this interaction |
+| `userId` | string | No | ID of the authenticated user (optional, can be derived from site_id) |
+| `conversationId` | string | No | Optional ID of existing conversation |
+| `agentId` | string | No | ID of the CMO agent (optional, will be found using site_id if not provided) |
+| `site_id` | string | Yes | ID of the site associated with this interaction |
+| `include_context_summary` | boolean | No | Whether to include comprehensive summaries of existing tasks, requirements, campaigns, and content (default: true) |
+
+*Identification requirements: At least one of `visitor_id` or `lead_id` is required for identification purposes if `userId` is not provided. `userId` is optional as it can be derived from the site_id.
+
+#### Example Request
+
+```json
+{
+  "participants": [
+    "jane.smith@example.com",
+    "john.davis@example.com"
+  ],
+  "phone_numbers": [
+    "+1234567890",
+    "+9876543210"
+  ],
+  "meeting_agenda": "1. Review Q1 campaign performance\n2. Discuss Q2 priorities\n3. Allocate budget for upcoming initiatives",
+  "site_id": "site_456",
+  "userId": "user_789",
+  "include_context_summary": true
+}
+```
+
+### Telephony Integration with Vapi
+
+The API supports integration with Vapi for initiating phone calls to stakeholders. When phone numbers are provided in the request, the system will:
+
+1. Create a virtual assistant with the appropriate system prompts for guiding the CMO stakeholder coordination call
+2. Initiate a phone call to the first number in the `phone_numbers` array
+3. Include information about the call in the response
+
+#### Call Response Format
+
+When a call is initiated, the response will include a `call` object with the following properties:
+
+```json
+{
+  "id": "call_12345",
+  "status": "pending",
+  "phone_number": "+1234567890"
+}
+```
+
+#### Call Status Values
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Call has been initiated but not yet connected |
+| `in_progress` | Call is currently active |
+| `completed` | Call has successfully completed |
+| `failed` | Call failed to connect or encountered an error |
+
+#### Setup Requirements
+
+To use the telephony integration, you need to:
+
+1. Set up a Vapi account at [vapi.ai](https://vapi.ai)
+2. Obtain an API token from the Vapi dashboard
+3. Configure a phone number in your Vapi account
+4. Add the required environment variables to your `.env.local` file:
+   ```
+   VAPI_API_TOKEN=your_vapi_api_token
+   VAPI_PHONE_NUMBER=your_vapi_phone_number
+   ```
+
+### Try It
+
+<UnifiedApiTester apiId="cmo-stakeholder-coordination" />
+
+### Generated Command Structure
+
+The system generates a command object with the following structure to provide system prompts for the conversational agent handling the stakeholder call.
+
+```json
+{
+  "targets": [
+    {
+      "meeting_details": {
+        "title": "Q2 Marketing Strategy Alignment",
+        "objective": "Align on Q2 priorities and reallocate budget based on Q1 performance",
+        "dynamic": false
+      }
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are a CMO agent facilitating a call with the primary objective to discuss marketing strategy and identify priorities. Follow these guidelines during the call:\n\nKEY TALKING POINTS:\n1. Current marketing performance metrics review\n2. Analysis of channel performance and engagement\n3. Opportunity identification across channels\n4. Budget allocation considerations\n5. Resource needs assessment\n\nDOS:\n- Reference specific metrics from relevant reports\n- Ask for participant input on strategic decisions\n- Suggest concrete next steps for each action item\n- Connect budget decisions to expected ROI\n- Maintain focus on strategic objectives\n\nDON'TS:\n- Don't discuss personnel matters beyond resource requirements\n- Avoid excessive technical details on implementation\n- Don't commit to specific budget numbers without approval\n- Don't mention competitor strategies that haven't been cleared for discussion\n- Avoid discussing sensitive product roadmap items not on the agenda\n\nPENDING TASKS TO REFERENCE:\nRefer to existing tasks and initiatives in the context"
+        }
+      ]
+    },
+    {
+      "messages": [
+        {
+          "role": "system",
+          "content": "After the stakeholder call, generate a comprehensive meeting summary including these elements:\n\n1. KEY POINTS: Summarize the most important discussion points and insights shared during the call\n\n2. DECISIONS: List all decisions made during the call, including budget allocations, strategy changes, and resource commitments\n\n3. ACTION ITEMS: Create tasks based on the call with clear assignees, due dates, priorities, and descriptions\n\n4. REQUIREMENTS: Identify project requirements that emerged from the call, including costs, priorities, owners, and approval needs"
+        }
+      ]
+    }
+  ],
+  "context": "As a CMO agent, your primary responsibility is to guide strategic marketing conversations and ensure they produce actionable outcomes. These system prompts serve as your comprehensive playbook for conducting effective stakeholder calls. The pre-call prompt establishes your conversational guidelines—what topics to prioritize, what approaches to take, and what boundaries to maintain.\n\nYou have access to critical company context including: recent marketing performance metrics (Q1 campaign data shows 24% over-performance in social media but 5% decline in email engagement), pending marketing initiatives (content creation expansion, budget reallocation considerations), existing task assignments (Jane's Q1 report, John's budget proposal), company goals (15% YoY growth target), and competitive landscape (3 key competitors recently expanded digital presence).\n\nThe context will include a comprehensive summary of:\n1. EXISTING TASKS: Current marketing tasks in progress, their status, ownership, and deadlines\n2. REQUIREMENTS: Pending project requirements with budget estimates and approval status\n3. ACTIVE CAMPAIGNS: Performance data for all running campaigns with KPIs and ROI metrics\n4. CONTENT INVENTORY: Status of existing content assets and planned content initiatives\n5. RESOURCE ALLOCATION: Current budget and team resource distribution across initiatives\n\nThis detailed context will serve as the foundation for discussing and determining the optimal course of action. You'll use this information to guide decision-making around resource reallocation, prioritization of initiatives, and strategic pivots based on performance data.\n\nBegin each call with a clear agenda review, maintain focus on decision-making throughout, and conclude with explicit next steps. After the call, your summary must not only document what was discussed but transform conversations into executable action plans. Every decision must be linked to specific owners and deadlines. This is not just documentation—it's the critical bridge between strategic discussion and operational execution.",
+  "supervisors": [
+    {
+      "agent_role": "marketing_director",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "project_manager",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "orchestrate stakeholder call with guidance and generate summary",
+  "description": "Create comprehensive guidance for a CMO agent navigating high-stakes marketing strategy discussions. These prompts define the agent's conversational framework—what topics to address, which approaches to take, and how to navigate sensitive areas. They transform marketing expertise into structured conversation guardrails that ensure productive discussions while avoiding organizational pitfalls. The pre-call prompt establishes the strategic direction and boundaries, while the post-call prompt ensures discussions translate into documentable decisions and actionable tasks with clear ownership. These prompts don't just guide a conversation; they establish the CMO agent as a strategic facilitator who transforms stakeholder input into executable marketing initiatives.",
+  "site_id": "site_456"
+}
+```
+
+### Response
+
+#### Success Response - System Prompts Generated
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "92e8d889-d7bd-459d-82e2-f4706eb8984b",
+    "conversation_id": "8a2c1e3f-9d4b-5c7a-8e5f-1d2a3b4c5d6e",
+    "status": "completed",
+    "meeting_details": {
+      "title": "Marketing Strategy Discussion",
+      "objective": "Discuss marketing strategy and align on priorities"
+    },
+    "system_prompts": [
+      {
+        "id": "prompt_123",
+        "role": "system",
+        "phase": "pre_call",
+        "content": "You are a CMO agent facilitating a call with the primary objective to discuss marketing strategy and identify priorities. Follow these guidelines during the call:\n\nKEY TALKING POINTS:\n1. Current marketing performance metrics review\n2. Analysis of channel performance and engagement\n3. Opportunity identification across channels\n4. Budget allocation considerations\n5. Resource needs assessment\n\nDOS:\n- Reference specific metrics from relevant reports\n- Ask for participant input on strategic decisions\n- Suggest concrete next steps for each action item\n- Connect budget decisions to expected ROI\n- Maintain focus on strategic objectives\n\nDON'TS:\n- Don't discuss personnel matters beyond resource requirements\n- Avoid excessive technical details on implementation\n- Don't commit to specific budget numbers without approval\n- Don't mention competitor strategies that haven't been cleared for discussion\n- Avoid discussing sensitive product roadmap items not on the agenda\n\nPENDING TASKS TO REFERENCE:\nRefer to existing tasks and initiatives in the context"
+      },
+      {
+        "id": "prompt_124",
+        "role": "system",
+        "phase": "post_call",
+        "content": "After the stakeholder call, generate a comprehensive meeting summary including these elements:\n\n1. KEY POINTS: Summarize the most important discussion points and insights shared during the call\n\n2. DECISIONS: List all decisions made during the call, including budget allocations, strategy changes, and resource commitments\n\n3. ACTION ITEMS: Create tasks based on the call with clear assignees, due dates, priorities, and descriptions\n\n4. REQUIREMENTS: Identify project requirements that emerged from the call, including costs, priorities, owners, and approval needs"
+      }
+    ],
+    "context_summary": {
+      "tasks": [
+        {
+          "id": "task_123",
+          "title": "Finalize Q1 Performance Report",
+          "status": "in_progress",
+          "owner": "jane.smith@example.com",
+          "due_date": "2023-04-05",
+          "description": "Complete analysis of Q1 marketing performance metrics and create comprehensive report"
+        },
+        {
+          "id": "task_234",
+          "title": "Draft Initial Q2 Budget Proposal",
+          "status": "completed",
+          "owner": "john.davis@example.com",
+          "completion_date": "2023-04-02",
+          "description": "Create preliminary Q2 budget based on expected marketing initiatives"
+        }
+      ],
+      "requirements": [
+        {
+          "id": "req_456",
+          "title": "Video Content Production Resources",
+          "status": "pending_approval",
+          "estimated_cost": 12000,
+          "priority": "medium",
+          "description": "Equipment and software needed for expanded video content creation"
+        },
+        {
+          "id": "req_567",
+          "title": "Social Media Advertising Budget Increase",
+          "status": "under_review",
+          "estimated_cost": 15000,
+          "priority": "high",
+          "description": "Additional budget for expanded social media campaigns in Q2"
+        }
+      ],
+      "campaigns": [
+        {
+          "id": "camp_789",
+          "title": "Q1 Email Newsletter Series",
+          "status": "active",
+          "performance": {
+            "open_rate": "18%",
+            "decline_from_previous": "5%",
+            "conversion_rate": "2.3%",
+            "roi": 1.8
+          }
+        },
+        {
+          "id": "camp_890",
+          "title": "Q1 Social Media Brand Awareness",
+          "status": "active",
+          "performance": {
+            "engagement_rate": "4.2%",
+            "improvement_from_previous": "24%",
+            "conversion_rate": "3.1%",
+            "roi": 2.7
+          }
+        }
+      ],
+      "content": [
+        {
+          "id": "cont_123",
+          "title": "Product Feature Videos",
+          "status": "planned",
+          "description": "Series of videos highlighting key product features",
+          "target_completion": "Q2 2023"
+        },
+        {
+          "id": "cont_234",
+          "title": "Customer Success Stories",
+          "status": "in_progress",
+          "description": "Case studies of customer implementations",
+          "completion_percentage": 60
+        }
+      ],
+      "resource_allocation": {
+        "budget": {
+          "q1_total": 100000,
+          "q1_spent": 95000,
+          "q1_remaining": 5000,
+          "q2_projected": 120000
+        },
+        "distribution": {
+          "social_media": "25%",
+          "email_marketing": "30%",
+          "content_creation": "20%",
+          "events": "15%",
+          "other": "10%"
+        }
+      }
+    },
+    "call": {
+      "id": "simulated-1715896322548",
+      "status": "pending",
+      "phone_number": "+1234567890"
+    }
+  }
+}
+```
+
+#### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Missing required field: site_id"
+  }
+}
+```
