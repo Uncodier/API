@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
 
+
 /**
  * API DE SESIONES DE VISITANTES
  * 
@@ -188,7 +189,9 @@ function errorResponse(message: string, status: number = 400, details: any = nul
       details,
       request_id: uuidv4()
     }
-  }, { status });
+  }, { 
+    status
+  });
 }
 
 /**
@@ -296,7 +299,9 @@ export async function POST(request: NextRequest) {
           };
           
           console.log(`[POST /api/visitors/session] Respuesta enviada (sesión existente):`, apiResponse);
-          return NextResponse.json(apiResponse, { status: 200 });
+          return NextResponse.json(apiResponse, { 
+            status: 200
+          });
         }
       } else {
         console.log(`[POST /api/visitors/session] No se encontró visitante con fingerprint: ${sessionData.fingerprint}`);
@@ -309,7 +314,7 @@ export async function POST(request: NextRequest) {
     const validation = validateAndPrepareSessionData(sessionData, sessionId, visitorId, startTime);
     if (!validation.valid) {
       console.error(`[POST /api/visitors/session] Error de validación de datos para DB:`, validation.error);
-      return errorResponse(`Error al preparar datos: ${validation.error}`, 400);
+      return errorResponse(`Error al preparar datos: ${validation.error}`);
     }
     
     const newSession = validation.data;
@@ -357,7 +362,7 @@ export async function POST(request: NextRequest) {
         
         if (visitorInsertError) {
           console.error(`[POST /api/visitors/session] Error al crear visitante:`, visitorInsertError);
-          return errorResponse(`Error al crear visitante: ${visitorInsertError.message || 'Error desconocido'}`, 500);
+          return errorResponse(`Error al crear visitante: ${visitorInsertError.message || 'Error desconocido'}`);
         }
         
         console.log(`[POST /api/visitors/session] Visitante creado con éxito`);
@@ -401,12 +406,12 @@ export async function POST(request: NextRequest) {
           details: error.details,
           hint: error.hint
         });
-        return errorResponse(`Error al crear la sesión: ${error.message || 'Error desconocido en la base de datos'}`, 500);
+        return errorResponse(`Error al crear la sesión: ${error.message || 'Error desconocido en la base de datos'}`);
       }
       
       if (!data) {
         console.error('[POST /api/visitors/session] No se recibieron datos aunque no hubo error');
-        return errorResponse('Error al crear la sesión: No se recibieron datos de confirmación', 500);
+        return errorResponse('Error al crear la sesión: No se recibieron datos de confirmación');
       }
       
       console.log(`[POST /api/visitors/session] Sesión creada con éxito:`, data);
@@ -437,14 +442,16 @@ export async function POST(request: NextRequest) {
       };
       
       console.log(`[POST /api/visitors/session] Respuesta enviada:`, apiResponse);
-      return NextResponse.json(apiResponse, { status: 201 });
+      return NextResponse.json(apiResponse, { 
+        status: 201
+      });
     } catch (dbError: any) {
       console.error('[POST /api/visitors/session] Error de excepción al insertar:', dbError);
-      return errorResponse(`Error interno al insertar en la base de datos: ${dbError.message || 'Error desconocido'}`, 500);
+      return errorResponse(`Error interno al insertar en la base de datos: ${dbError.message || 'Error desconocido'}`);
     }
   } catch (error: any) {
     console.error('[POST /api/visitors/session] Error inesperado:', error);
-    return errorResponse(`Error interno del servidor: ${error.message}`, 500);
+    return errorResponse(`Error interno del servidor: ${error.message}`);
   }
 }
 
@@ -552,7 +559,7 @@ export async function GET(request: NextRequest) {
     
   } catch (error: any) {
     console.error('[GET /api/visitors/session] Error inesperado:', error);
-    return errorResponse(`Error interno del servidor: ${error.message}`, 500);
+    return errorResponse(`Error interno del servidor: ${error.message}`);
   }
 }
 
@@ -637,7 +644,7 @@ export async function PUT(request: NextRequest) {
     
     if (error) {
       console.error('[PUT /api/visitors/session] Error al actualizar la sesión:', error);
-      return errorResponse(`Error al actualizar la sesión: ${error.message}`, 500);
+      return errorResponse(`Error al actualizar la sesión: ${error.message}`);
     }
     
     console.log(`[PUT /api/visitors/session] Sesión actualizada con éxito:`, data);
@@ -670,6 +677,6 @@ export async function PUT(request: NextRequest) {
     
   } catch (error: any) {
     console.error('[PUT /api/visitors/session] Error inesperado:', error);
-    return errorResponse(`Error interno del servidor: ${error.message}`, 500);
+    return errorResponse(`Error interno del servidor: ${error.message}`);
   }
-} 
+}
