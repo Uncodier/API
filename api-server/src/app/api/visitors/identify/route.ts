@@ -267,20 +267,18 @@ export async function POST(request: NextRequest) {
         lead = existingLeads[0];
       } else {
         // Create new lead if none found
-        const newLeadId = uuidv4();
         const { data: newLead, error: createLeadError } = await supabaseAdmin
           .from('leads')
           .insert([{
-            id: newLeadId,
             site_id: validatedData.site_id,
             user_id: site.user_id,
             email: validatedData.traits?.email,
             phone: validatedData.traits?.phone,
             name: validatedData.traits?.name,
             position: validatedData.traits?.position,
-            status: 'new', // Valor por defecto
+            status: 'contacted', // Valor por defecto
             notes: '',
-            origin: validatedData.traits?.origin || 'web_identification',
+            origin: validatedData.traits?.origin || 'website',
             birthday: validatedData.traits?.birthday,
             social_networks: validatedData.traits?.social_networks || {},
             address: validatedData.traits?.address || {},
