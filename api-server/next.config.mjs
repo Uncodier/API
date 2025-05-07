@@ -1,21 +1,17 @@
 import nextra from 'nextra'
- 
+
 const withNextra = nextra({
   contentDirBasePath: '/',
   defaultShowCopyCode: true,
   staticImage: true
 })
- 
+
 // You can include other Next.js configuration options here, in addition to Nextra settings:
 export default withNextra({
   reactStrictMode: true,
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', 'localhost:3456']
-    },
-    serverComponentsExternalPackages: ['ws'],
-    webSocketServer: {
-      path: '/api/agents/chat/websocket'
+      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', 'localhost:3456']
     }
   },
   // Configuración para imágenes optimizadas
@@ -61,7 +57,7 @@ export default withNextra({
           {
             key: 'Strict-Transport-Security',
             value: 'max-age=63072000; includeSubDomains; preload',
-          },
+          }
         ],
       },
       {
@@ -69,10 +65,7 @@ export default withNextra({
         source: '/api/agents/chat/websocket',
         headers: [
           { key: 'Connection', value: 'upgrade' },
-          { key: 'Upgrade', value: 'websocket' },
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' }
+          { key: 'Upgrade', value: 'websocket' }
         ]
       }
     ]
