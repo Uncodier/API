@@ -15,6 +15,9 @@ POST /api/agents/customerSupport/message
 | `message` | string | Yes | The message content from the customer |
 | `visitor_id` | string | No* | ID of the visitor (for non-authenticated users) |
 | `lead_id` | string | No* | ID of the lead associated with this interaction |
+| `name` | string | No | Name of the lead/customer (used for lead creation if lead_id is not provided) |
+| `email` | string | No | Email of the lead/customer (used for lead creation if lead_id is not provided) |
+| `phone` | string | No | Phone number of the lead/customer (used for lead creation if lead_id is not provided) |
 | `userId` | string | No | ID of the authenticated user (optional, can be derived from site_id) |
 | `conversationId` | string | No | Optional ID of existing conversation |
 | `agentId` | string | No | ID of the customer support agent (optional, will be found using site_id if not provided) |
@@ -37,6 +40,18 @@ With lead ID:
 ```json
 {
   "lead_id": "lead_123",
+  "message": "I need help with my recent order",
+  "site_id": "site_456"
+}
+```
+
+With lead information for creating a new lead:
+```json
+{
+  "visitor_id": "visitor_789",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone": "+1234567890",
   "message": "I need help with my recent order",
   "site_id": "site_456"
 }
@@ -188,6 +203,11 @@ The system generates a command object with the following structure to control su
   - Lead identification via `lead_id` (for leads in the system)
   - User identification via `userId` (optional, can be derived from site_id)
 - At least one identification parameter must be provided (`visitor_id`, `lead_id`, or `userId`)
+- **Lead Management**:
+  - If `lead_id` is provided, the system will use the existing lead
+  - If `lead_id` is not provided but `name`, `email` or `phone` are included, the system will:
+    - First look for an existing lead with matching information
+    - Create a new lead if no matching lead is found
 - If `agentId` is not provided and `site_id` is available, the system will automatically find an active customer support agent for that site
 - If no agent is found or no `site_id` is provided, a default agent will be used
 - Conversations are saved with the generated title and site_id in the database
@@ -205,6 +225,11 @@ Identification (at least one required):
 - **Visitor ID**: The ID of the non-authenticated visitor
 - **Lead ID**: The ID of the lead associated with this interaction
 - **User ID**: (Optional) The ID of the authenticated user
+
+Lead Information (optional, for lead creation/lookup):
+- **Name**: Name of the lead/customer
+- **Email**: Email of the lead/customer
+- **Phone**: Phone number of the lead/customer
 
 Optional fields:
 - **Conversation ID**: If continuing an existing conversation, provide the ID

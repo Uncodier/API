@@ -21,6 +21,8 @@ import ChatApi from './ChatApi';
 import GrowthApi from './GrowthApi';
 import InterventionApi from './InterventionApi';
 import SalesApi from './SalesApi';
+import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
+import EmailAnalysisApi from './EmailAnalysisApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -45,5 +47,7 @@ apiRegistry.register(ChatApi);
 apiRegistry.register(GrowthApi);
 apiRegistry.register(InterventionApi);
 apiRegistry.register(SalesApi);
+apiRegistry.register(CmoStakeholderCoordinationApi);
+apiRegistry.register(EmailAnalysisApi);
 
 export default apiRegistry; 
