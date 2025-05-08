@@ -1,15 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { ComposioService } from '@/lib/services/composio-service';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET /api/agents/integrations/[id]
  * Retrieves details for a specific integration by ID
  */
-export async function GET(
-  req: NextRequest,
-  context: { params: { id: string } }
-) {
-  const { id } = context.params;
+export async function GET(request: NextRequest) {
+  // Get the id from the path parameter using the URL object
+  const url = new URL(request.url);
+  const pathSegments = url.pathname.split('/');
+  const id = pathSegments[pathSegments.length - 1];
   
   console.log(`[API] Starting Composio integration request for ID: ${id}`);
   

@@ -3,6 +3,8 @@ import { analyzeSiteAction } from '@/lib/actions/analyze-site'
 import { z } from 'zod'
 import { validateApiKey } from '@/lib/api-keys'
 
+export const dynamic = 'force-dynamic';
+
 /**
  * API BÁSICA DE ANÁLISIS DE SITIOS WEB
  * 
@@ -71,10 +73,9 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Obtener la IP del cliente para rate limiting
+    // Obtener la IP del cliente para rate limiting - eliminamos request.ip que no existe
     const ip = request.headers.get('x-forwarded-for') || 
                request.headers.get('x-real-ip') || 
-               request.ip || 
                '0.0.0.0'
     
     // Obtener y validar el cuerpo de la solicitud

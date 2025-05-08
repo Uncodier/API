@@ -3,7 +3,9 @@
 import React, { useState, useEffect } from 'react';
 import apiRegistry from './apis';
 import { codeExamples } from './types';
-import { formatJsonWithSyntax, highlightCode, FormField } from './utils';
+import { generateUUID } from './utils';
+import { formatJsonWithSyntax, highlightCode } from './utils/index';
+import { FormField } from './components/FormComponents';
 import ApiResults from './components/ApiResults';
 import ApiImplementation from './components/ApiImplementation';
 import styles from '../ApiTester.module.css';

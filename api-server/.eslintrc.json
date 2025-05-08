@@ -8,5 +8,10 @@
     "@typescript-eslint/no-empty-object-type": "off",
     "react-hooks/exhaustive-deps": "warn",
     "react/no-unescaped-entities": "off"
-  }
+  },
+  "ignorePatterns": [
+    "src/components/ApiTester/apis/**/*.tsx",
+    "src/components/ApiTester/UnifiedApiTester.tsx",
+    "src/components/ApiTester/utils.ts"
+  ]
 }

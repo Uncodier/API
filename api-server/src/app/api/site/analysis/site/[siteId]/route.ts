@@ -1,17 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSiteAnalysesBySite } from '@/lib/database/site-analysis-db';
 
+export const dynamic = 'force-dynamic';
+
 /**
  * GET endpoint to retrieve all site analyses for a specific site
  * Requires user_id as a query parameter for authorization
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { siteId: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const siteId = params.siteId;
-    const { searchParams } = new URL(request.url);
+    // Extract siteId from URL path
+    const url = new URL(request.url);
+    const pathSegments = url.pathname.split('/');
+    const siteId = pathSegments[pathSegments.length - 1];
+    const { searchParams } = url;
     const userId = searchParams.get('user_id');
     
     if (!siteId) {

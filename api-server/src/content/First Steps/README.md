@@ -40,7 +40,7 @@ Para probar el middleware, puedes usar cualquiera de estos métodos:
 1. **Método recomendado**: Iniciar el servidor de desarrollo y realizar solicitudes a las rutas de API:
    ```bash
    npm run dev
-   # Luego visita http://localhost:3000/api/conversation o cualquier otra ruta
+   # Luego visita http://localhost:3001/api/conversation o cualquier otra ruta
    ```
 
 2. **Usando el script de prueba**:
@@ -83,7 +83,7 @@ Para probar el middleware, puedes usar cualquiera de estos métodos:
    yarn dev
    ```
 
-5. Abre [http://localhost:3000](http://localhost:3000) en tu navegador.
+5. Abre [http://localhost:3001](http://localhost:3001) en tu navegador.
 
 ## Uso
 

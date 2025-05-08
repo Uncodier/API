@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 
+export const dynamic = 'force-dynamic';
+
 // Initialize the command service
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -18,12 +20,12 @@ function isValidUUID(uuid: string): boolean {
 /**
  * GET handler to check the status of a lead generation command
  */
-export async function GET(
-  request: NextRequest,
-  { params }: { params: { command_id: string } }
-) {
+export async function GET(request: NextRequest) {
   try {
-    const { command_id } = params;
+    // Extract command_id from URL path
+    const url = new URL(request.url);
+    const pathSegments = url.pathname.split('/');
+    const command_id = pathSegments[pathSegments.length - 1];
     
     // Validate the command_id
     if (!command_id || !isValidUUID(command_id)) {

@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
-import { AgentInitializer } from '@/lib/agentbase';
+import AgentInitializerInstance, { AgentInitializer } from '@/lib/agentbase';
+
+export const dynamic = 'force-dynamic';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -12,10 +14,9 @@ function isLegacyId(id: string): boolean {
   return id.startsWith('cmd_');
 }
 
-// Obtener el servicio de comandos desde el inicializador
-const agentInitializer = AgentInitializer.getInstance();
-agentInitializer.initialize();
-const commandService = agentInitializer.getCommandService();
+// Obtener el servicio de comandos desde la instancia importada
+AgentInitializerInstance.initialize();
+const commandService = AgentInitializerInstance.getCommandService();
 
 export async function GET(request: Request) {
   try {

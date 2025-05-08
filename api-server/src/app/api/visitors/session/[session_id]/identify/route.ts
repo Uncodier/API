@@ -4,6 +4,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
 import { manageLeadCreation } from '@/lib/services/leads/lead-service'
 
+export const dynamic = 'force-dynamic';
+
 /**
  * API para asociar un lead a una sesión de visitante
  * 
@@ -46,11 +48,14 @@ function errorResponse(message: string, status: number = 400, details: any = nul
  * 
  * Identifica un lead y lo asocia a una sesión
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { session_id: string } }
-) {
+export async function POST(request: NextRequest) {
   try {
+    // Extraer session_id de la URL
+    const url = new URL(request.url);
+    const pathSegments = url.pathname.split('/');
+    const sessionIndex = pathSegments.findIndex(segment => segment === 'session') + 1;
+    const sessionId = pathSegments[sessionIndex];
+    
     // Verificar API key en el encabezado
     const apiKey = request.headers.get('X-SA-API-KEY');
     if (!apiKey) {
@@ -60,13 +65,11 @@ export async function POST(
     // TODO: Validar API key contra la base de datos
     
     // Validar el ID de sesión en la URL
-    const { session_id: sessionId } = await params;
     if (!sessionId) {
       return errorResponse('ID de sesión no proporcionado', 400);
     }
     
     // Obtener el site_id de los parámetros de la consulta
-    const url = new URL(request.url);
     const siteId = url.searchParams.get('site_id');
     if (!siteId) {
       return errorResponse('site_id es requerido como parámetro de consulta', 400);

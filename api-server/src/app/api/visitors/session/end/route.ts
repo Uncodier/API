@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
 
+export const dynamic = 'force-dynamic';
+
 /**
  * API para cerrar explícitamente una sesión de visitante
  * 
@@ -37,11 +39,14 @@ function errorResponse(message: string, status: number = 400, details: any = nul
  * 
  * Cierra explícitamente una sesión
  */
-export async function POST(
-  request: NextRequest,
-  { params }: { params: { session_id: string } }
-) {
+export async function POST(request: NextRequest) {
   try {
+    // Extraer el ID de sesión de la URL
+    const url = new URL(request.url);
+    const pathSegments = url.pathname.split('/');
+    const sessionIndex = pathSegments.findIndex(segment => segment === 'session') + 1;
+    const sessionId = pathSegments[sessionIndex];
+    
     // Verificar API key en el encabezado
     const apiKey = request.headers.get('X-SA-API-KEY');
     if (!apiKey) {
@@ -51,13 +56,11 @@ export async function POST(
     // TODO: Validar API key contra la base de datos
     
     // Validar el ID de sesión en la URL
-    const sessionId = params.session_id;
     if (!sessionId) {
       return errorResponse('ID de sesión no proporcionado', 400);
     }
     
     // Obtener el site_id de los parámetros de la consulta
-    const url = new URL(request.url);
     const siteId = url.searchParams.get('site_id');
     if (!siteId) {
       return errorResponse('site_id es requerido como parámetro de consulta', 400);

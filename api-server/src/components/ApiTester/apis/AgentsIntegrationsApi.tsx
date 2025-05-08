@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { FormField, SectionLabel } from '../components/FormComponents';
 
 // Props específicas para la API de Apps de Agentes
 export interface AgentsIntegrationsApiProps {

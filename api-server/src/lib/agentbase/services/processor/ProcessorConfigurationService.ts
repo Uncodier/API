@@ -77,4 +77,6 @@ export class ProcessorConfigurationService {
   }
 }
 
-export default new ProcessorConfigurationService(); 
+// Crear una instancia antes de exportar
+const processorConfigurationService = new ProcessorConfigurationService();
+export default processorConfigurationService; 
