@@ -42,3 +42,4 @@ next-env.d.ts
 
 # Ignore site-analyzer directory
 ../site-analyzer/
+.cursor/
