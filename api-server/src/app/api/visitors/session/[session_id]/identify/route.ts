@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
+import { manageLeadCreation } from '@/lib/services/leads/lead-service'
 
 /**
  * API para asociar un lead a una sesión de visitante
@@ -13,8 +14,18 @@ import { v4 as uuidv4 } from 'uuid'
 
 // Esquema para validar identificación de lead
 const IdentifyLeadSchema = z.object({
-  lead_id: z.string().uuid("lead_id debe ser un UUID válido"),
-  lead_data: z.record(z.any()).optional()
+  lead_id: z.string().uuid("lead_id debe ser un UUID válido").optional(),
+  lead_data: z.record(z.any()).optional(),
+  name: z.string().optional(),
+  email: z.string().email("Email no válido").optional(),
+  phone: z.string().optional(),
+  create_task: z.boolean().optional().default(false)
+}).refine(data => {
+  // Debe proporcionarse lead_id O al menos el nombre
+  return !!data.lead_id || !!data.name;
+}, {
+  message: "Debe proporcionar lead_id o al menos el nombre del lead",
+  path: ["lead_id", "name"]
 });
 
 // Función auxiliar para generar respuesta de error
@@ -49,7 +60,7 @@ export async function POST(
     // TODO: Validar API key contra la base de datos
     
     // Validar el ID de sesión en la URL
-    const sessionId = params.session_id;
+    const { session_id: sessionId } = await params;
     if (!sessionId) {
       return errorResponse('ID de sesión no proporcionado', 400);
     }
@@ -87,9 +98,25 @@ export async function POST(
       });
     }
     
+    // Gestionar el lead: buscar, crear o usar el existente
+    const { leadId, isNewLead, taskId } = await manageLeadCreation({
+      leadId: identifyData.lead_id,
+      name: identifyData.name,
+      email: identifyData.email,
+      phone: identifyData.phone,
+      siteId: siteId,
+      visitorId: session.visitor_id,
+      origin: 'website_session',
+      createTask: identifyData.create_task
+    });
+    
+    if (!leadId) {
+      return errorResponse('No se pudo crear o encontrar un lead válido', 400);
+    }
+    
     // Preparar datos para la actualización
     const updates: any = {
-      lead_id: identifyData.lead_id,
+      lead_id: leadId,
       lead_data: identifyData.lead_data || null,
       identified_at: Date.now(),
       updated_at: new Date().toISOString()
@@ -114,9 +141,11 @@ export async function POST(
       success: true,
       data: {
         session_id: sessionId,
-        lead_id: identifyData.lead_id,
+        lead_id: leadId,
         identified_at: updates.identified_at,
-        visitor_id: session.visitor_id
+        visitor_id: session.visitor_id,
+        is_new_lead: isNewLead,
+        task_id: taskId || null
       },
       meta: {
         api_version: '1.0',

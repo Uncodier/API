@@ -5,6 +5,7 @@ import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
+import { manageLeadCreation } from '@/lib/services/leads/lead-service';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -581,8 +582,73 @@ async function findLeadByInfo(email?: string, phone?: string, name?: string, sit
   }
 }
 
+// Función para crear una tarea para un lead
+async function createTaskForLead(leadId: string, siteId?: string, userId?: string, commandId?: string): Promise<string | null> {
+  try {
+    if (!isValidUUID(leadId)) {
+      console.error(`❌ ID de lead no válido para crear tarea: ${leadId}`);
+      return null;
+    }
+    
+    console.log(`✏️ Creando tarea para lead: ${leadId}`);
+    
+    // Obtener información del lead para usar en la tarea
+    const { data: lead, error: leadError } = await supabaseAdmin
+      .from('leads')
+      .select('id, name, user_id, site_id')
+      .eq('id', leadId)
+      .single();
+    
+    if (leadError || !lead) {
+      console.error(`❌ Error al obtener información del lead para la tarea:`, leadError || 'Lead no encontrado');
+      return null;
+    }
+    
+    // Preparar datos para la tarea
+    const taskData: any = {
+      lead_id: leadId,
+      title: `Seguimiento para ${lead.name}`,
+      type: 'follow_up',
+      stage: 'pending',
+      status: 'active',
+      // Programar seguimiento para el siguiente día hábil (aquí usamos +1 día)
+      scheduled_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      description: `Tarea de seguimiento creada automáticamente para el lead generado vía chat web.`,
+    };
+    
+    // Priorizar los IDs proporcionados, pero usar los del lead como respaldo
+    taskData.user_id = userId || lead.user_id;
+    taskData.site_id = siteId || lead.site_id;
+    
+    // Añadir command_id si está presente y es válido
+    if (commandId && isValidUUID(commandId)) {
+      taskData.command_id = commandId;
+    }
+    
+    console.log(`📋 Datos para la tarea:`, JSON.stringify(taskData));
+    
+    // Insertar la tarea en la base de datos
+    const { data: task, error: taskError } = await supabaseAdmin
+      .from('tasks')
+      .insert([taskData])
+      .select()
+      .single();
+    
+    if (taskError) {
+      console.error(`❌ Error al crear tarea para lead:`, taskError);
+      return null;
+    }
+    
+    console.log(`✅ Tarea creada exitosamente con ID: ${task.id}`);
+    return task.id;
+  } catch (error) {
+    console.error(`❌ Excepción al crear tarea para lead:`, error);
+    return null;
+  }
+}
+
 // Función para crear un nuevo lead
-async function createLead(name: string, email?: string, phone?: string, siteId?: string, visitorId?: string): Promise<string | null> {
+async function createLead(name: string, email?: string, phone?: string, siteId?: string, visitorId?: string, origin?: string): Promise<string | null> {
   try {
     // Validar que tengamos al menos la información básica necesaria
     if (!name) {
@@ -590,13 +656,13 @@ async function createLead(name: string, email?: string, phone?: string, siteId?:
       return null;
     }
     
-    console.log(`➕ Creando nuevo lead con name=${name}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${siteId || 'N/A'}, visitor_id=${visitorId || 'N/A'}`);
+    console.log(`➕ Creando nuevo lead con name=${name}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${siteId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, origin=${origin || 'chat'}`);
     
     // Crear objeto con datos mínimos
     const leadData: any = {
       name: name,
       status: 'contacted',
-      origin: 'chat'
+      origin: origin || 'chat'
     };
     
     // Agregar campos opcionales si están presentes
@@ -702,8 +768,27 @@ export async function POST(request: Request) {
       visitor_id,
       name,
       email,
-      phone
+      phone,
+      website_chat_origin // Nuevo parámetro para indicar si el origen es "website_chat"
     } = body;
+    
+    /**
+     * Parámetros de la API:
+     * - conversationId: UUID opcional de la conversación (si ya existe)
+     * - userId: UUID opcional del usuario que envía el mensaje
+     * - message: Texto del mensaje a procesar (requerido)
+     * - agentId: UUID opcional del agente que procesará el mensaje
+     * - site_id: UUID opcional del sitio asociado
+     * - lead_id: UUID opcional del lead asociado
+     * - visitor_id: UUID opcional del visitante que envía el mensaje
+     * - name: Nombre opcional del contacto/lead
+     * - email: Email opcional del contacto/lead
+     * - phone: Teléfono opcional del contacto/lead
+     * - website_chat_origin: Booleano opcional que indica si el origen es un chat web
+     *   Cuando website_chat_origin=true:
+     *   1. El lead creado tendrá "website_chat" como origen en lugar de "chat"
+     *   2. Se creará automáticamente una tarea de seguimiento para el lead
+     */
     
     // Verificamos si tenemos al menos un identificador de usuario o cliente
     if (!visitor_id && !lead_id && !userId && !site_id) {
@@ -757,63 +842,32 @@ export async function POST(request: Request) {
       console.log(`⚠️ No site_id provided for request`);
     }
     
-    // Manejar lead_id - buscar o crear lead si se proporciona información
-    let effectiveLeadId = lead_id;
-    if (!effectiveLeadId && (name || email || phone)) {
-      console.log(`🔍 Buscando o creando lead con: name=${name || 'N/A'}, email=${email || 'N/A'}, phone=${phone || 'N/A'}, site_id=${effectiveSiteId || 'N/A'}`);
-      
-      // Primero intentar buscar un lead existente si tenemos email o phone
-      let foundLeadId = null;
-      if (email || phone) {
-        console.log(`🔎 Intentando buscar lead existente por email o teléfono ${effectiveSiteId ? `para el sitio ${effectiveSiteId}` : ''}`);
-        foundLeadId = await findLeadByInfo(email, phone, name, effectiveSiteId);
-      }
-      
-      if (foundLeadId) {
-        console.log(`✅ Lead existente encontrado con ID: ${foundLeadId}`);
-        effectiveLeadId = foundLeadId;
-      } else {
-        // Si no se encuentra lead, tenemos que crear uno nuevo específico para este sitio
-        if (name) {
-          console.log(`🆕 No se encontró lead existente. Creando nuevo lead con nombre: ${name} para el sitio: ${effectiveSiteId || 'sin sitio'}`);
-          
-          // Verificar email y phone para diagnóstico
-          if (!email) console.log(`⚠️ Creando lead sin email`);
-          if (!phone) console.log(`⚠️ Creando lead sin teléfono`);
-          if (!effectiveSiteId) console.log(`⚠️ Creando lead sin sitio asociado`);
-          
-          const newLeadId = await createLead(name, email, phone, effectiveSiteId, visitor_id);
-          
-          if (newLeadId) {
-            console.log(`✅ Nuevo lead creado exitosamente con ID: ${newLeadId}`);
-            effectiveLeadId = newLeadId;
-          } else {
-            console.error(`❌ Error al crear nuevo lead para: ${name} en sitio: ${effectiveSiteId || 'sin sitio'}`);
-            
-            // Intentar diagnóstico del problema
-            console.error(`❌ Diagnóstico: ¿Existe la tabla 'leads'? Comprobando estructura...`);
-            try {
-              const { data: tableInfo, error: tableError } = await supabaseAdmin
-                .rpc('get_table_ddl', { table_name: 'leads' });
-              
-              if (tableError) {
-                console.error(`❌ Error al consultar estructura de tabla:`, tableError);
-              } else {
-                console.log(`ℹ️ Estructura de tabla 'leads' encontrada:`, tableInfo);
-              }
-            } catch (e) {
-              console.error(`❌ Excepción al consultar estructura de tabla:`, e);
-            }
-          }
-        } else {
-          console.log(`⚠️ No hay suficiente información para crear un lead (se requiere al menos el nombre)`);
-        }
-      }
-    }
+    // Determinar el origen del lead basado en el parámetro website_chat_origin
+    const leadOrigin = website_chat_origin === true ? 'website_chat' : 'chat';
+    console.log(`🏷️ Origen del lead: ${leadOrigin}`);
     
-    // Verificar si tenemos un lead_id efectivo después de la búsqueda/creación
+    // Gestionar lead_id utilizando el nuevo servicio
+    const leadManagementResult = await manageLeadCreation({
+      leadId: lead_id,
+      name,
+      email,
+      phone,
+      siteId: effectiveSiteId,
+      visitorId: visitor_id,
+      origin: leadOrigin,
+      createTask: website_chat_origin === true
+    });
+    
+    const effectiveLeadId = leadManagementResult.leadId;
+    const isNewLead = leadManagementResult.isNewLead;
+    const taskId = leadManagementResult.taskId;
+    
+    // Verificar si tenemos un lead_id efectivo después de la gestión
     if (effectiveLeadId) {
-      console.log(`👤 Usando lead_id: ${effectiveLeadId} para esta conversación`);
+      console.log(`👤 Usando lead_id: ${effectiveLeadId} para esta conversación. Es nuevo: ${isNewLead}`);
+      if (taskId) {
+        console.log(`✅ Tarea creada para el lead con ID: ${taskId}`);
+      }
     } else {
       console.log(`⚠️ No hay lead_id disponible para esta conversación. Causas posibles:`);
       if (!name && !email && !phone) {
@@ -1164,7 +1218,7 @@ export async function POST(request: Request) {
         assistantMessage, 
         conversationId, 
         conversationTitle, 
-        effectiveLeadId, 
+        effectiveLeadId || undefined, 
         visitor_id, 
         effectiveAgentId, 
         effectiveSiteId, 
@@ -1208,6 +1262,7 @@ export async function POST(request: Request) {
             conversation_id: savedMessages.conversationId,
             conversation_title: savedMessages.conversationTitle,
             lead_id: effectiveLeadId || null,
+            task_id: taskId || null,
             messages: {
               user: {
                 content: message,
@@ -1306,7 +1361,7 @@ export async function POST(request: Request) {
       assistantMessage, 
       conversationId, 
       conversationTitle, 
-      effectiveLeadId,
+      effectiveLeadId || undefined,
       visitor_id, 
       effectiveAgentId, 
       effectiveSiteId, 
@@ -1350,6 +1405,7 @@ export async function POST(request: Request) {
           conversation_id: savedMessages.conversationId,
           conversation_title: savedMessages.conversationTitle,
           lead_id: effectiveLeadId || null,
+          task_id: taskId || null,
           messages: {
             user: {
               content: message,
