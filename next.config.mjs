@@ -1,5 +1,5 @@
 import nextra from 'nextra'
-import { getNextJsCorsConfig } from './cors.config.js'
+import { getNextJsCorsConfig, getAllowedOrigins } from './cors.config.js'
 
 const withNextra = nextra({
   contentDirBasePath: '/',
@@ -60,6 +60,36 @@ export default withNextra({
   async headers() {
     console.log('[NEXT-CONFIG] Generando headers para Next.js');
     
+    // Obtener orígenes permitidos de cors.config.js
+    const allowedOrigins = getAllowedOrigins();
+    console.log(`[NEXT-CONFIG] Usando orígenes permitidos: ${allowedOrigins.join(', ')}`);
+    
+    // Crear configuraciones específicas para cada origen permitido
+    const corsHeadersPerOrigin = allowedOrigins.map(origin => ({
+      source: '/api/:path*',
+      headers: [
+        { key: 'Access-Control-Allow-Credentials', value: 'true' },
+        { key: 'Access-Control-Allow-Origin', value: origin },
+        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+        { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
+        { key: 'Vary', value: 'Origin' }
+      ]
+    }));
+    
+    // Crear configuraciones OPTIONS específicas para cada origen permitido
+    const corsOptionsHeadersPerOrigin = allowedOrigins.map(origin => ({
+      source: '/api/:path*',
+      methods: ['OPTIONS'],
+      headers: [
+        { key: 'Access-Control-Allow-Credentials', value: 'true' },
+        { key: 'Access-Control-Allow-Origin', value: origin },
+        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+        { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
+        { key: 'Access-Control-Max-Age', value: '86400' },
+        { key: 'Vary', value: 'Origin' }
+      ]
+    }));
+    
     const baseHeaders = [
       {
         // Aplicar estos encabezados a todas las rutas
@@ -81,7 +111,7 @@ export default withNextra({
         headers: [
           { key: 'Connection', value: 'upgrade' },
           { key: 'Upgrade', value: 'websocket' },
-          // Encabezados CORS para WebSockets
+          // Encabezados CORS para WebSockets - usamos * aquí porque WebSockets no soportan orígenes múltiples
           { key: 'Access-Control-Allow-Origin', value: '*' },
           { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
@@ -89,8 +119,8 @@ export default withNextra({
       }
     ];
     
-    // Añadir configuración CORS de cors.config.js
-    const allHeaders = [...baseHeaders, ...corsConfig];
+    // Combinamos todo
+    const allHeaders = [...baseHeaders, ...corsHeadersPerOrigin, ...corsOptionsHeadersPerOrigin];
     console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
     
     return allHeaders;
