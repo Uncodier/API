@@ -6,6 +6,14 @@ import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.co
  * Este se ejecuta como una Edge Function
  */
 export default function middleware(request) {
+  // Logs intensivos para depuración en Vercel
+  console.log('==========================================');
+  console.log('MIDDLEWARE EJECUTÁNDOSE - INICIO');
+  console.log('Ruta:', request.nextUrl.pathname);
+  console.log('Método:', request.method);
+  console.log('Headers:', JSON.stringify(Object.fromEntries([...request.headers])));
+  console.log('==========================================');
+  
   const isDevMode = process.env.NODE_ENV !== 'production';
   console.log(`[CORS-DEBUG] Middleware ejecutándose: ${request.method} ${request.nextUrl.pathname} (${isDevMode ? 'DEV' : 'PROD'})`);
   console.log(`[CORS-DEBUG] NODE_ENV=${process.env.NODE_ENV}`);
@@ -57,6 +65,10 @@ export default function middleware(request) {
       });
     }
     
+    console.log('==========================================');
+    console.log('MIDDLEWARE EJECUTÁNDOSE - FIN PREFLIGHT');
+    console.log('==========================================');
+    
     return response;
   }
   
@@ -77,12 +89,22 @@ export default function middleware(request) {
       headerObj[key] = value;
     });
     console.log('[CORS-DEBUG] Headers de respuesta desarrollo:', headerObj);
+    
+    console.log('==========================================');
+    console.log('MIDDLEWARE EJECUTÁNDOSE - FIN DEV MODE');
+    console.log('==========================================');
+    
     return response;
   }
   
   // Rechazar si el origen no está permitido (solo en producción)
   if (origin && !originAllowed && !isDevMode) {
     console.log('[CORS-DEBUG] Solicitud rechazada para:', origin);
+    
+    console.log('==========================================');
+    console.log('MIDDLEWARE EJECUTÁNDOSE - FIN RECHAZADO');
+    console.log('==========================================');
+    
     return new NextResponse(null, {
       status: 403,
       statusText: 'Forbidden - Origin not allowed'
@@ -112,10 +134,17 @@ export default function middleware(request) {
     console.log('[CORS-DEBUG] Headers de respuesta normal:', headerObj);
   }
   
+  console.log('==========================================');
+  console.log('MIDDLEWARE EJECUTÁNDOSE - FIN NORMAL');
+  console.log('==========================================');
+  
   return response;
 }
 
 // Aplicar el middleware solo a rutas de API
 export const config = {
-  matcher: ['/api/:path*'],
+  matcher: [
+    '/api/:path*',
+    '/((?!_next/static|_next/image|favicon.ico).*)'
+  ],
 }; 
