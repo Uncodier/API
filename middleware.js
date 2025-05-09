@@ -1,12 +1,11 @@
 import { NextResponse } from 'next/server';
-import type { NextRequest } from 'next/server';
 import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.config.js';
 
 /**
  * Middleware CORS completo
  * Este se ejecuta como una Edge Function
  */
-export default function middleware(request: NextRequest) {
+export default function middleware(request) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   console.log(`[CORS-DEBUG] Middleware ejecutándose: ${request.method} ${request.nextUrl.pathname} (${isDevMode ? 'DEV' : 'PROD'})`);
   console.log(`[CORS-DEBUG] NODE_ENV=${process.env.NODE_ENV}`);
@@ -45,7 +44,7 @@ export default function middleware(request: NextRequest) {
       console.log('[CORS-DEBUG] Preflight aceptado para:', origin);
       
       // Convertir headers a objeto para logging
-      const headerObj: Record<string, string> = {};
+      const headerObj = {};
       response.headers.forEach((value, key) => {
         headerObj[key] = value;
       });
@@ -73,7 +72,7 @@ export default function middleware(request: NextRequest) {
     response.headers.set('X-Middleware-Executed', 'true');
     
     // Convertir headers a objeto para logging
-    const headerObj: Record<string, string> = {};
+    const headerObj = {};
     response.headers.forEach((value, key) => {
       headerObj[key] = value;
     });
@@ -106,7 +105,7 @@ export default function middleware(request: NextRequest) {
     console.log('[CORS-DEBUG] Encabezados añadidos para:', origin);
     
     // Convertir headers a objeto para logging
-    const headerObj: Record<string, string> = {};
+    const headerObj = {};
     response.headers.forEach((value, key) => {
       headerObj[key] = value;
     });
@@ -119,4 +118,4 @@ export default function middleware(request: NextRequest) {
 // Aplicar el middleware solo a rutas de API
 export const config = {
   matcher: ['/api/:path*'],
-};
+}; 
