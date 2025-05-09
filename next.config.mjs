@@ -1,10 +1,16 @@
 import nextra from 'nextra'
+import { getNextJsCorsConfig } from './cors.config.js'
 
 const withNextra = nextra({
   contentDirBasePath: '/',
   defaultShowCopyCode: true,
   staticImage: true
 })
+
+// Obtener la configuración CORS y loggear para depuración
+console.log('[NEXT-CONFIG] Cargando configuración CORS desde cors.config.js');
+const corsConfig = getNextJsCorsConfig();
+console.log(`[NEXT-CONFIG] Configuración CORS cargada con ${corsConfig.length} entradas`);
 
 // You can include other Next.js configuration options here, in addition to Nextra settings:
 export default withNextra({
@@ -52,7 +58,9 @@ export default withNextra({
     COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g'
   },
   async headers() {
-    return [
+    console.log('[NEXT-CONFIG] Generando headers para Next.js');
+    
+    const baseHeaders = [
       {
         // Aplicar estos encabezados a todas las rutas
         source: '/(.*)',
@@ -79,6 +87,12 @@ export default withNextra({
           { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
         ]
       }
-    ]
+    ];
+    
+    // Añadir configuración CORS de cors.config.js
+    const allHeaders = [...baseHeaders, ...corsConfig];
+    console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
+    
+    return allHeaders;
   }
 })

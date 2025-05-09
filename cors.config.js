@@ -40,13 +40,17 @@ const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, Accept, Orig
  */
 export const getAllowedOrigins = () => {
   const environment = process.env.NODE_ENV === 'production' ? 'production' : 'development';
-  return corsConfig[environment].origins;
+  console.log(`[CORS-CONFIG] Entorno: ${environment}, NODE_ENV=${process.env.NODE_ENV}`);
+  const origins = corsConfig[environment].origins;
+  console.log(`[CORS-CONFIG] Orígenes permitidos (${origins.length}):`, origins);
+  return origins;
 };
 
 /**
  * Obtiene la lista de encabezados permitidos
  */
 export const getAllowedHeaders = () => {
+  console.log('[CORS-CONFIG] Headers permitidos:', ALLOWED_HEADERS);
   return ALLOWED_HEADERS;
 };
 
@@ -54,21 +58,33 @@ export const getAllowedHeaders = () => {
  * Verifica si un origen está permitido
  */
 export const isOriginAllowed = (origin) => {
+  console.log(`[CORS-CONFIG] Verificando origen: "${origin}"`);
+  
   // Si no hay origen o estamos en desarrollo, permitir
-  if (!origin) return true;
-  if (process.env.NODE_ENV !== 'production') return true;
+  if (!origin) {
+    console.log('[CORS-CONFIG] No hay origen, permitido por defecto');
+    return true;
+  }
+  
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('[CORS-CONFIG] Entorno no es producción, permitido por defecto');
+    return true;
+  }
   
   // En producción, verificar contra la lista de orígenes permitidos
-  return getAllowedOrigins().includes(origin);
+  const allowed = getAllowedOrigins().includes(origin);
+  console.log(`[CORS-CONFIG] Origen ${allowed ? 'permitido' : 'rechazado'} en lista`);
+  return allowed;
 };
 
 /**
  * Genera configuración CORS para next.config.mjs
  */
 export const getNextJsCorsConfig = () => {
+  console.log('[CORS-CONFIG] Generando config para next.config.mjs');
   const allowedOrigins = getAllowedOrigins();
   
-  return allowedOrigins.map(origin => ({
+  const config = allowedOrigins.map(origin => ({
     source: '/api/:path*',
     headers: [
       { key: 'Access-Control-Allow-Credentials', value: 'true' },
@@ -78,6 +94,9 @@ export const getNextJsCorsConfig = () => {
       { key: 'Vary', value: 'Origin' }
     ]
   }));
+  
+  console.log(`[CORS-CONFIG] Configuración generada para ${allowedOrigins.length} orígenes`);
+  return config;
 };
 
 // Exportación por defecto para ES modules
