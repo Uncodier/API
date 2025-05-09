@@ -4,6 +4,7 @@ import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.co
 
 /**
  * Middleware CORS completo
+ * Este se ejecuta como una Edge Function
  */
 export function middleware(request: NextRequest) {
   const isDevMode = process.env.NODE_ENV !== 'production';
@@ -118,4 +119,7 @@ export function middleware(request: NextRequest) {
 // Aplicar el middleware solo a rutas de API
 export const config = {
   matcher: ['/api/:path*'],
-}; 
+};
+
+// Marcar explícitamente como una runtime Edge
+export const runtime = 'edge'; 
