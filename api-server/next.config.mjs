@@ -72,7 +72,11 @@ export default withNextra({
         source: '/api/agents/chat/websocket',
         headers: [
           { key: 'Connection', value: 'upgrade' },
-          { key: 'Upgrade', value: 'websocket' }
+          { key: 'Upgrade', value: 'websocket' },
+          // Encabezados CORS para WebSockets
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
         ]
       }
     ]

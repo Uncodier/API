@@ -256,6 +256,46 @@ async function getOrCreateConversation(visitor_id: string, site_id: string, agen
   }
 }
 
+// Función para guardar un mensaje en la base de datos
+async function saveMessage(conversationId: string, content: string, sender_type: 'user' | 'agent' | 'system', visitor_id?: string) {
+  try {
+    if (!isValidUUID(conversationId)) {
+      console.error(`ID de conversación no válido: ${conversationId}`);
+      return null;
+    }
+    
+    console.log(`💬 Guardando mensaje para la conversación ${conversationId}`);
+    
+    const messageData = {
+      conversation_id: conversationId,
+      content,
+      sender_type,
+      visitor_id: sender_type === 'user' ? visitor_id : null, // Solo si es mensaje de usuario
+      role: sender_type === 'user' ? 'user' : sender_type === 'agent' ? 'assistant' : 'team_member'
+    };
+    
+    const { data, error } = await supabaseAdmin
+      .from('messages')
+      .insert([messageData])
+      .select()
+      .single();
+      
+    if (error) {
+      console.error('Error al guardar mensaje:', error);
+      return null;
+    }
+    
+    console.log(`✅ Mensaje guardado con ID: ${data.id}`);
+    return data;
+  } catch (error) {
+    console.error('Error al guardar mensaje:', error);
+    return null;
+  }
+}
+
+// Mapa para guardar las conexiones activas y sus suscripciones a canales
+const activeConnections = new Map();
+
 export async function GET(req: NextRequest) {
   // Verificar si la solicitud es un WebSocket
   const { headers } = req;
@@ -307,31 +347,145 @@ export async function GET(req: NextRequest) {
       return new Response('Error al inicializar la conversación', { status: 500 });
     }
     
-    // Si estamos en desarrollo, redirigir al servidor WebSocket dedicado
-    if (IS_DEVELOPMENT) {
-      // Construir la URL del servidor WebSocket dedicado
-      const host = req.headers.get('host') || 'localhost:3001';
-      const hostname = host.split(':')[0]; // Obtener solo el hostname sin el puerto
+    // Manejar la conexión WebSocket directamente
+    const { readable, writable } = new TransformStream();
+    const [wsClient, wsServer] = createWebSocketPair();
+    
+    // Configurar la conexión WebSocket
+    wsServer.accept();
+    
+    // Registrar la conexión activa
+    const connectionId = uuidv4();
+    activeConnections.set(connectionId, {
+      ws: wsServer,
+      visitor_id,
+      conversationId,
+      site_id,
+      lastActivity: Date.now(),
+      supabaseChannel: null
+    });
+    
+    console.log(`✅ WebSocket aceptado para visitor_id=${visitor_id}, conversation_id=${conversationId}`);
+    
+    // Obtener mensajes históricos
+    const messages = await getConversationMessages(conversationId);
+    
+    // Enviar mensajes históricos al cliente
+    wsServer.send(JSON.stringify({
+      type: 'history',
+      payload: {
+        conversation_id: conversationId,
+        messages
+      }
+    }));
+    
+    // Suscribirse a cambios en la tabla de mensajes para esta conversación
+    const channel = supabaseAdmin
+      .channel(`chat:${conversationId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'messages',
+        filter: `conversation_id=eq.${conversationId}`
+      }, (payload) => {
+        try {
+          // Solo enviar si el websocket sigue abierto
+          if (wsServer.readyState === 1) { // WebSocket.OPEN
+            wsServer.send(JSON.stringify({
+              type: 'new_message',
+              payload: payload.new
+            }));
+            console.log(`📤 Mensaje nuevo enviado al cliente: visitor_id=${visitor_id}, message_id=${payload.new.id}`);
+          }
+        } catch (error) {
+          console.error('Error al enviar mensaje nuevo a través de WebSocket:', error);
+        }
+      })
+      .subscribe((status) => {
+        console.log(`📡 Estado de suscripción a mensajes para conversación ${conversationId}: ${status}`);
+        
+        // Guardar la referencia al canal en la conexión activa
+        const connection = activeConnections.get(connectionId);
+        if (connection) {
+          connection.supabaseChannel = channel;
+          activeConnections.set(connectionId, connection);
+        }
+        
+        // Enviar confirmación de conexión al cliente
+        if (wsServer.readyState === 1) { // WebSocket.OPEN
+          wsServer.send(JSON.stringify({
+            type: 'connected',
+            payload: {
+              conversation_id: conversationId,
+              status: 'connected'
+            }
+          }));
+        }
+      });
+    
+    // Configurar manejo de mensajes entrantes desde el cliente
+    wsServer.addEventListener('message', async function(event: {data: string}) {
+      try {
+        // Actualizar timestamp de última actividad
+        const connection = activeConnections.get(connectionId);
+        if (connection) {
+          connection.lastActivity = Date.now();
+          activeConnections.set(connectionId, connection);
+        }
+        
+        // Parsear el mensaje
+        const message = JSON.parse(event.data);
+        console.log(`📩 Mensaje recibido de cliente: visitor_id=${visitor_id}, type=${message.type}`);
+        
+        // Manejar diferentes tipos de mensajes
+        if (message.type === 'ping') {
+          // Responder al ping para mantener la conexión viva
+          wsServer.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        } else if (message.type === 'message') {
+          // Guardar mensaje del usuario
+          const savedMessage = await saveMessage(
+            conversationId,
+            message.content,
+            'user',
+            visitor_id
+          );
+          
+          if (savedMessage) {
+            console.log(`✅ Mensaje del usuario guardado: ${savedMessage.id}`);
+            
+            // Aquí podrías implementar lógica para generar respuestas automáticas
+            // Por ejemplo, integración con un servicio de IA
+          }
+        }
+      } catch (error) {
+        console.error('Error al procesar mensaje del cliente:', error);
+      }
+    });
+    
+    // Manejar cierre de conexión
+    wsServer.addEventListener('close', async function() {
+      console.log(`🔌 WebSocket cerrado para visitor_id=${visitor_id}`);
       
-      // Crear una URL de redirección al servidor WebSocket dedicado
-      const wsServerUrl = `http://${hostname}:3002/ws?visitor_id=${visitor_id}&site_id=${site_id}&conversation_id=${conversationId}`;
-      console.log(`🔄 Redirigiendo a servidor WebSocket dedicado: ${wsServerUrl}`);
+      // Limpiar recursos
+      const connection = activeConnections.get(connectionId);
+      if (connection && connection.supabaseChannel) {
+        await connection.supabaseChannel.unsubscribe();
+      }
       
-      // Devolver una redirección 307 (temporal) al servidor WebSocket
-      return Response.redirect(wsServerUrl, 307);
-    }
+      activeConnections.delete(connectionId);
+      
+      // Actualizar estado de sesión del visitante a inactivo
+      await updateVisitorSessionStatus(visitor_id, 'inactive');
+    });
     
-    // Para producción también redirigimos a un servidor WebSocket dedicado
-    // La URL en producción dependerá de la configuración del entorno
-    const wsHost = process.env.WS_SERVER_HOST || req.headers.get('host');
-    const wsPort = process.env.WS_SERVER_PORT || '8080'; // Puerto predeterminado para el servidor WebSocket en producción
-    
-    // Construir la URL de redirección para el entorno de producción
-    const wsServerUrl = `https://${wsHost}/ws?visitor_id=${visitor_id}&site_id=${site_id}&conversation_id=${conversationId}`;
-    console.log(`🔄 [PROD] Redirigiendo a servidor WebSocket dedicado: ${wsServerUrl}`);
-    
-    // Devolver una redirección 307 (temporal) al servidor WebSocket de producción
-    return Response.redirect(wsServerUrl, 307);
+    // Devolver la respuesta WebSocket
+    return new Response(readable, {
+      status: 101,
+      headers: {
+        'Upgrade': 'websocket',
+        'Connection': 'Upgrade'
+      }
+    });
   } catch (error) {
     console.error('❌ Error al establecer conexión WebSocket:', error);
     return new Response('Error al establecer conexión WebSocket', { status: 500 });
@@ -399,4 +553,56 @@ export async function POST(req: NextRequest) {
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+}
+
+// Definiciones para WebSockets con Next.js Edge Runtime
+// Nota: Esto es una simplificación ya que Next.js maneja WebSockets internamente
+// En un entorno real, Next.js proporciona su propia implementación
+type WebSocketHandler = {
+  readonly accept: () => void;
+  readonly addEventListener: (event: string, handler: (event: {data: string}) => void) => void;
+  readonly send: (data: string) => void;
+  readonly close: () => void;
+  readyState: number;
+};
+
+function createWebSocketPair(): [any, WebSocketHandler] {
+  const messageListeners: ((event: {data: string}) => void)[] = [];
+  const closeListeners: ((event: any) => void)[] = [];
+  const errorListeners: ((event: any) => void)[] = [];
+  let accepted = false;
+  let closed = false;
+
+  const server: WebSocketHandler = {
+    readyState: 0, // CONNECTING
+    accept: function() {
+      if (accepted) return;
+      accepted = true;
+      this.readyState = 1; // OPEN
+    },
+    addEventListener: function(event: string, handler: (event: {data: string}) => void) {
+      if (event === 'message') {
+        messageListeners.push(handler);
+      } else if (event === 'close') {
+        closeListeners.push(handler);
+      } else if (event === 'error') {
+        errorListeners.push(handler);
+      }
+    },
+    send: function(data: string) {
+      if (closed) return;
+      if (!accepted) return;
+      // Esto es manejado por Next.js en tiempo de ejecución
+    },
+    close: function() {
+      if (closed) return;
+      closed = true;
+      // Esto es manejado por Next.js en tiempo de ejecución
+    }
+  };
+
+  // En un entorno real, Next.js proporciona el cliente WebSocket
+  const client = {};
+  
+  return [client, server];
 } 

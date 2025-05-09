@@ -6,7 +6,8 @@ import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.co
  * Middleware CORS completo
  */
 export function middleware(request: NextRequest) {
-  console.log('[CORS] Middleware ejecutándose:', request.method, request.nextUrl.pathname);
+  const isDevMode = process.env.NODE_ENV !== 'production';
+  console.log(`[CORS] Middleware ejecutándose: ${request.method} ${request.nextUrl.pathname} (${isDevMode ? 'DEV' : 'PROD'})`);
   
   // Obtener el origen
   const origin = request.headers.get('origin');
@@ -28,8 +29,8 @@ export function middleware(request: NextRequest) {
     response.headers.set('Vary', 'Origin');
     response.headers.set('Access-Control-Max-Age', '86400');
     
-    // Si el origen es permitido, establecer encabezados específicos
-    if (origin && originAllowed) {
+    // Si el origen es permitido o estamos en desarrollo, establecer encabezados específicos
+    if (origin && (originAllowed || isDevMode)) {
       response.headers.set('Access-Control-Allow-Origin', origin);
       response.headers.set('Access-Control-Allow-Credentials', 'true');
       console.log('[CORS] Preflight aceptado para:', origin);
@@ -44,8 +45,20 @@ export function middleware(request: NextRequest) {
     return response;
   }
   
-  // Rechazar si el origen no está permitido
-  if (origin && !originAllowed) {
+  // En desarrollo, permitir todos los orígenes
+  if (isDevMode && origin) {
+    console.log('[CORS] Modo desarrollo: permitiendo origen:', origin);
+    const response = NextResponse.next();
+    response.headers.set('Access-Control-Allow-Origin', origin);
+    response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());
+    response.headers.set('Access-Control-Allow-Credentials', 'true');
+    response.headers.set('Vary', 'Origin');
+    return response;
+  }
+  
+  // Rechazar si el origen no está permitido (solo en producción)
+  if (origin && !originAllowed && !isDevMode) {
     console.log('[CORS] Solicitud rechazada para:', origin);
     return new NextResponse(null, {
       status: 403,
@@ -60,7 +73,7 @@ export function middleware(request: NextRequest) {
   response.headers.set('Vary', 'Origin');
   
   // Si hay un origen y está permitido, añadir encabezados CORS
-  if (origin && originAllowed) {
+  if (origin && (originAllowed || isDevMode)) {
     response.headers.set('Access-Control-Allow-Origin', origin);
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());

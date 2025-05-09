@@ -8,7 +8,14 @@ const corsConfig = {
   production: {
     origins: [
       'https://salocal.site',
-      'https://www.salocal.site'
+      'https://www.salocal.site',
+      // También permitir orígenes de desarrollo en producción para pruebas
+      'http://localhost:3000',
+      'http://localhost:3456',
+      'http://localhost:3001',
+      'http://127.0.0.1:3456',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:3001'
     ]
   },
   development: {
@@ -47,7 +54,11 @@ export const getAllowedHeaders = () => {
  * Verifica si un origen está permitido
  */
 export const isOriginAllowed = (origin) => {
+  // Si no hay origen o estamos en desarrollo, permitir
   if (!origin) return true;
+  if (process.env.NODE_ENV !== 'production') return true;
+  
+  // En producción, verificar contra la lista de orígenes permitidos
   return getAllowedOrigins().includes(origin);
 };
 
