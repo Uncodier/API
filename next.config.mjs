@@ -72,19 +72,6 @@ export default withNextra({
         { key: 'Access-Control-Allow-Origin', value: origin },
         { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
         { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
-        { key: 'Vary', value: 'Origin' }
-      ]
-    }));
-    
-    // Crear configuraciones OPTIONS específicas para cada origen permitido
-    const corsOptionsHeadersPerOrigin = allowedOrigins.map(origin => ({
-      source: '/api/:path*',
-      methods: ['OPTIONS'],
-      headers: [
-        { key: 'Access-Control-Allow-Credentials', value: 'true' },
-        { key: 'Access-Control-Allow-Origin', value: origin },
-        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
-        { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
         { key: 'Access-Control-Max-Age', value: '86400' },
         { key: 'Vary', value: 'Origin' }
       ]
@@ -120,7 +107,7 @@ export default withNextra({
     ];
     
     // Combinamos todo
-    const allHeaders = [...baseHeaders, ...corsHeadersPerOrigin, ...corsOptionsHeadersPerOrigin];
+    const allHeaders = [...baseHeaders, ...corsHeadersPerOrigin];
     console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
     
     return allHeaders;
