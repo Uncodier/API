@@ -64,19 +64,7 @@ export default withNextra({
     const allowedOrigins = getAllowedOrigins();
     console.log(`[NEXT-CONFIG] Usando orígenes permitidos: ${allowedOrigins.join(', ')}`);
     
-    // Crear configuraciones específicas para cada origen permitido
-    const corsHeadersPerOrigin = allowedOrigins.map(origin => ({
-      source: '/api/:path*',
-      headers: [
-        { key: 'Access-Control-Allow-Credentials', value: 'true' },
-        { key: 'Access-Control-Allow-Origin', value: origin },
-        { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
-        { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
-        { key: 'Access-Control-Max-Age', value: '86400' },
-        { key: 'Vary', value: 'Origin' }
-      ]
-    }));
-    
+    // Configuración básica para CORS
     const baseHeaders = [
       {
         // Aplicar estos encabezados a todas las rutas
@@ -91,25 +79,40 @@ export default withNextra({
             value: 'max-age=63072000; includeSubDomains; preload',
           }
         ],
-      },
-      {
-        // Configuración específica para la ruta WebSocket
-        source: '/api/agents/chat/websocket',
-        headers: [
-          { key: 'Connection', value: 'upgrade' },
-          { key: 'Upgrade', value: 'websocket' },
-          // Encabezados CORS para WebSockets - usamos * aquí porque WebSockets no soportan orígenes múltiples
-          { key: 'Access-Control-Allow-Origin', value: '*' },
-          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
-          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
-        ]
       }
     ];
     
-    // Combinamos todo
-    const allHeaders = [...baseHeaders, ...corsHeadersPerOrigin];
-    console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
+    // Agregar configuración específica para CORS con cada origen
+    // Necesitamos crear una configuración para cada origen permitido
+    allowedOrigins.forEach(origin => {
+      baseHeaders.push({
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: origin },
+          { key: 'Access-Control-Allow-Methods', value: 'GET,DELETE,PATCH,POST,PUT,OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
+          { key: 'Access-Control-Allow-Credentials', value: 'true' },
+          { key: 'Access-Control-Max-Age', value: '86400' },
+          { key: 'Vary', value: 'Origin' }
+        ]
+      });
+    });
     
-    return allHeaders;
+    // Agregar configuración para WebSockets
+    baseHeaders.push({
+      source: '/api/agents/chat/websocket',
+      headers: [
+        { key: 'Connection', value: 'upgrade' },
+        { key: 'Upgrade', value: 'websocket' },
+        // Para WebSockets tenemos que usar * porque no hay forma de especificar múltiples orígenes
+        { key: 'Access-Control-Allow-Origin', value: '*' },
+        { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
+        { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
+      ]
+    });
+    
+    console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${baseHeaders.length}`);
+    
+    return baseHeaders;
   }
 })
