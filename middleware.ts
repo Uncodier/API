@@ -120,6 +120,3 @@ export function middleware(request: NextRequest) {
 export const config = {
   matcher: ['/api/:path*'],
 };
-
-// Marcar explícitamente como una runtime Edge
-export const runtime = 'edge'; 
