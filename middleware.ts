@@ -6,7 +6,7 @@ import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.co
  * Middleware CORS completo
  * Este se ejecuta como una Edge Function
  */
-export function middleware(request: NextRequest) {
+export default function middleware(request: NextRequest) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   console.log(`[CORS-DEBUG] Middleware ejecutándose: ${request.method} ${request.nextUrl.pathname} (${isDevMode ? 'DEV' : 'PROD'})`);
   console.log(`[CORS-DEBUG] NODE_ENV=${process.env.NODE_ENV}`);
