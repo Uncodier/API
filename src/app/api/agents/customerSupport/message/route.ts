@@ -739,11 +739,18 @@ async function createLead(name: string, email?: string, phone?: string, siteId?:
 }
 
 // Función auxiliar para manejar CORS
-function corsHeaders() {
+function corsHeaders(request: Request) {
+  // Obtener el origen de la solicitud
+  const origin = request.headers.get('origin') || '*';
+  
+  // Debug para identificar el origen exacto
+  console.log(`[CORS-HEADERS] Setting Access-Control-Allow-Origin to: ${origin}`);
+  
   return {
-    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Origin': origin,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Date, X-Api-Version',
+    'Access-Control-Allow-Credentials': 'true',
     'Access-Control-Max-Age': '86400',
   };
 }
@@ -1165,7 +1172,7 @@ export async function POST(request: Request) {
           },
           { 
             status: 500,
-            headers: corsHeaders()
+            headers: corsHeaders(request)
           }
         );
       }
@@ -1249,7 +1256,7 @@ export async function POST(request: Request) {
           },
           { 
             status: 500,
-            headers: corsHeaders()
+            headers: corsHeaders(request)
           }
         );
       }
@@ -1285,7 +1292,7 @@ export async function POST(request: Request) {
         },
         { 
           status: 200,
-          headers: corsHeaders()
+          headers: corsHeaders(request)
         }
       );
     }
@@ -1308,7 +1315,7 @@ export async function POST(request: Request) {
         },
         { 
           status: 500,
-          headers: corsHeaders()
+          headers: corsHeaders(request)
         }
       );
     }
@@ -1392,7 +1399,7 @@ export async function POST(request: Request) {
         },
         { 
           status: 500,
-          headers: corsHeaders()
+          headers: corsHeaders(request)
         }
       );
     }
@@ -1428,7 +1435,7 @@ export async function POST(request: Request) {
       },
       { 
         status: 200,
-        headers: corsHeaders()
+        headers: corsHeaders(request)
       }
     );
   } catch (error) {
@@ -1438,4 +1445,21 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
+}
+
+export async function OPTIONS(request: Request) {
+  console.log("[CORS-PREFLIGHT] Handling OPTIONS request");
+  
+  // Obtener el origen de la solicitud
+  const origin = request.headers.get('origin') || '*';
+  console.log(`[CORS-PREFLIGHT] Request origin: ${origin}`);
+  
+  // Para seguir el mismo comportamiento del middleware, verificar si el origen está permitido
+  const isAllowed = true; // Aquí podrías implementar la misma lógica de cors.config.js
+  
+  // Crear respuesta preflight
+  return new NextResponse(null, {
+    status: 204,
+    headers: corsHeaders(request)
+  });
 }
