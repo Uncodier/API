@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.config.js';
+import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from '../cors.config.js';
 
 /**
  * Middleware CORS completo
