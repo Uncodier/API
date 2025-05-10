@@ -98,6 +98,9 @@ export default function middleware(request) {
   
   // Si hay un origen y está permitido, añadir encabezados CORS
   if (origin && (originAllowed || isDevMode)) {
+    // IMPORTANTE: Nunca usar el comodín cuando hay credenciales
+    console.log(`[CORS-DEBUG] Configurando Access-Control-Allow-Origin: ${origin}`);
+    
     response.headers.set('Access-Control-Allow-Origin', origin);
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());

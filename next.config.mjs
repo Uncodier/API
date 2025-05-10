@@ -60,6 +60,7 @@ export default withNextra({
   async headers() {
     console.log('[NEXT-CONFIG] Generando headers para Next.js');
     
+    // Configuración para desarrollo y producción
     const baseHeaders = [
       {
         // Aplicar estos encabezados a todas las rutas
@@ -74,6 +75,18 @@ export default withNextra({
             value: 'max-age=63072000; includeSubDomains; preload',
           }
         ],
+      },
+      {
+        // Configuración CORS explícita para localhost:3456 (desarrollo local)
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: 'http://localhost:3456' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
+          { key: 'Access-Control-Allow-Credentials', value: 'true' },
+          { key: 'Access-Control-Max-Age', value: '86400' },
+          { key: 'Vary', value: 'Origin' }
+        ]
       },
       {
         // Configuración específica para la ruta WebSocket
