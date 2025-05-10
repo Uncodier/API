@@ -9,6 +9,8 @@ const corsConfig = {
     origins: [
       'https://salocal.site',
       'https://www.salocal.site',
+      'https://www.uncodie.com',
+      'https://uncodie.com',
       // También permitir orígenes de desarrollo en producción para pruebas
       'http://localhost:3000',
       'http://localhost:3456',
@@ -27,7 +29,9 @@ const corsConfig = {
       'http://127.0.0.1:3000',
       'http://127.0.0.1:3001',
       'http://192.168.87.64:3001',
-      'http://192.168.87.64:3456'
+      'http://192.168.87.64:3456',
+      'https://www.uncodie.com',
+      'https://uncodie.com'
     ]
   }
 };
