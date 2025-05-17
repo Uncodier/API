@@ -1,78 +1,93 @@
-# Bienvenido a Uncodie
+# Uncodie API
 
-## La plataforma de ventas en linea impulsada por IA
+## La API de análisis web impulsada por IA
 
-Site Analyzer es una potente herramienta que utiliza modelos avanzados de inteligencia artificial para analizar sitios web y proporcionar información valiosa sobre su estructura, contenido, diseño y experiencia de usuario.
+Uncodie es una API REST que te permite analizar sitios web utilizando modelos avanzados de inteligencia artificial. Obtén insights detallados sobre estructura, contenido y experiencia de usuario de cualquier sitio web a través de endpoints simples y bien documentados.
 
-![Site Analyzer Banner](/images/banner.svg)
+## Características de la API
 
-## Características principales
+- **Análisis Semántico** - Obtén análisis profundo del contenido y estructura de sitios web
+- **Múltiples Modelos de IA** - Flexibilidad para elegir entre Claude 3.5, GPT-4 o Gemini 1.5
+- **Rate Limits Generosos** - Hasta 100 solicitudes por minuto en planes básicos
+- **Respuestas Estructuradas** - Datos en formato JSON limpio y consistente
+- **Soporte WebSocket** - Para análisis en tiempo real y streaming de respuestas
 
-- **Análisis completo de sitios web** - Obtenga información detallada sobre cualquier sitio web
-- **Impulsado por IA avanzada** - Utiliza modelos como Claude 3.5, GPT-4o y Gemini 1.5
-- **API flexible y potente** - Integre fácilmente en sus aplicaciones y flujos de trabajo
-- **Análisis estructurado** - Obtenga datos estructurados sobre la composición del sitio
-- **Conversaciones contextuales** - Mantenga conversaciones sobre sitios específicos
+## Inicio Rápido
 
-## Comience rápidamente
-
-```bash
-# Instalar dependencias
-npm install
-
-# Iniciar el servidor de desarrollo
-npm run dev
-
-# Construir para producción
-npm run build
-```
-
-## Documentación completa
-
-Explore nuestra [documentación completa de la API](/docs/api) para obtener información detallada sobre todos los endpoints disponibles, parámetros, ejemplos de solicitudes y respuestas.
-
-## Ejemplos de uso
-
-### Análisis básico de un sitio web
+### Autenticación
 
 ```javascript
-// Ejemplo de análisis básico con JavaScript
-async function analyzeSite(url) {
-  const response = await fetch('/api/analyze', {
+// Obtén tu API key en https://uncodie.com/dashboard
+const UNCODIE_API_KEY = 'tu-api-key';
+
+// Incluye la key en los headers de tus requests
+const headers = {
+  'Authorization': `Bearer ${UNCODIE_API_KEY}`,
+  'Content-Type': 'application/json'
+};
+```
+
+### Análisis Básico
+
+```javascript
+// Ejemplo de análisis básico
+async function analyzeWebsite(url) {
+  const response = await fetch('https://api.uncodie.com/v1/analyze', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ url }),
+    headers,
+    body: JSON.stringify({ 
+      url,
+      model: 'claude-3' // Opcional, por defecto usa Claude 3
+    })
   });
   
-  const data = await response.json();
-  console.log(data.result.summary);
-  console.log(data.result.insights);
+  const analysis = await response.json();
+  return analysis;
 }
 ```
 
-### Conversación sobre un sitio web
+### Análisis con Streaming
 
 ```javascript
-// Ejemplo de conversación con la IA sobre un sitio web
-async function startConversation(message, siteUrl) {
-  const response = await fetch('/api/conversation', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      messages: [{ role: 'user', content: message }],
-      siteUrl
-    }),
-  });
-  
-  const data = await response.json();
-  console.log(data.choices[0].message.content);
-}
+// Ejemplo de análisis con respuestas en tiempo real
+const ws = new WebSocket('wss://api.uncodie.com/v1/analyze/stream');
+ws.onmessage = (event) => {
+  const update = JSON.parse(event.data);
+  console.log('Nuevo insight:', update);
+};
+
+ws.send(JSON.stringify({
+  url: 'https://ejemplo.com',
+  apiKey: UNCODIE_API_KEY
+}));
 ```
 
-## Soporte y contribuciones
+## Documentación Completa
 
-¿Tiene preguntas o sugerencias? [Abra un issue](https://github.com/your-repo/site-analyzer/issues) en nuestro repositorio de GitHub o póngase en contacto con nuestro equipo de soporte.
+Explora nuestra [documentación detallada](/docs/api) para información sobre:
+
+- Todos los endpoints disponibles
+- Parámetros y opciones de configuración
+- Ejemplos de respuestas
+- Guías de integración
+- Mejores prácticas
+- Manejo de errores
+
+## Planes y Precios
+
+- **Free**: 1000 requests/mes
+- **Pro**: 10000 requests/mes
+- **Enterprise**: Volumen personalizado
+
+[Ver planes detallados](/pricing)
+
+## Soporte
+
+- [Dashboard](https://uncodie.com/dashboard)
+- [Documentación](/docs)
+- [Status](https://status.uncodie.com)
+- [GitHub](https://github.com/uncodie/api)
 
 ---
 
-[Comenzar ahora](/docs/api) | [Ver en GitHub](https://github.com/your-repo/site-analyzer)
+[Comenzar ahora](/docs/quickstart) | [Ver precios](/pricing) | [Dashboard](https://uncodie.com/dashboard)

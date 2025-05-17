@@ -25,6 +25,13 @@ import { UnifiedApiTester } from '@/components/ApiTester';
       required: true
     },
     {
+      name: "segment_id",
+      label: "ID del Segmento",
+      type: "text",
+      placeholder: "seg_xyz789",
+      required: false
+    },
+    {
       name: "event_type",
       label: "Tipo de Evento",
       type: "select",
@@ -145,12 +152,13 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 | Parámetro | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
 | `site_id` | string | Sí | Identificador único del sitio |
-| `event_type` | string | Sí | Tipo de evento (`pageview`, `click`, `custom`, `purchase`, `action`, `mousemove`, `scroll`, `keypress`, `resize`, `focus`, `blur`, `form_submit`, `form_change`, `form_error`, `error`, `performance`, `session_recording`) |
+| `event_type` | string | Sí | Tipo de evento (`pageview`, `click`, `custom`, `purchase`, `action`, `mousemove`, `scroll`, `keypress`, `resize`, `focus`, `form_submit`, `form_change`, `form_error`, `error`, `performance`, `session_recording`) |
 | `event_name` | string | No | Nombre del evento personalizado (requerido si `event_type` es `custom`) |
 | `url` | string | Sí | URL donde ocurrió el evento |
 | `referrer` | string | No | URL de referencia |
 | `visitor_id` | string | No | ID único del visitante (generado por el script si no se proporciona) |
 | `session_id` | string | No | ID de la sesión actual |
+| `segment_id` | string | No | ID del segmento al que pertenece el visitante |
 | `timestamp` | number | No | Marca de tiempo en milisegundos (se usa la del servidor si no se proporciona) |
 | `properties` | object | No | Propiedades adicionales del evento |
 | `user_agent` | string | No | User-Agent del navegador |
@@ -166,6 +174,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   "referrer": "https://google.com",
   "visitor_id": "vis_abcd1234",
   "session_id": "sess_xyz789",
+  "segment_id": "seg_premium_users",
   "timestamp": 1646123456789,
   "properties": {
     "page_title": "Catálogo de Productos",
@@ -185,6 +194,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   "url": "https://ejemplo.com/productos/zapato-casual",
   "visitor_id": "vis_abcd1234",
   "session_id": "sess_xyz789",
+  "segment_id": "seg_active_shoppers",
   "timestamp": 1646123456789,
   "properties": {
     "product_id": "prod_123",
@@ -205,6 +215,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   "url": "https://ejemplo.com/checkout/confirmation",
   "visitor_id": "vis_abcd1234",
   "session_id": "sess_xyz789",
+  "segment_id": "seg_buyers",
   "timestamp": 1646123456789,
   "properties": {
     "order_id": "ord_12345",
@@ -468,6 +479,7 @@ Una grabación de sesión incluye metadatos básicos como ID de grabación, tiem
   "url": "https://ejemplo.com/productos",
   "visitor_id": "vis_abcd1234",
   "session_id": "sess_xyz789",
+  "segment_id": "seg_power_users",
   "timestamp": 1646123456789,
   "properties": {
     "recording_id": "rec_12345",
@@ -476,15 +488,7 @@ Una grabación de sesión incluye metadatos básicos como ID de grabación, tiem
     "duration": 332667,
     "events": [
       { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
-      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
-      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
-      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
-    ],
-    "activity": [
-      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
-      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
-      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
-      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
+      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } }
     ],
     "metadata": {
       "screen_size": "1920x1080",
@@ -507,121 +511,9 @@ Los siguientes subtipos de eventos pueden incluirse en los arrays `events` y `ac
 | `click` | `x`, `y`, `timestamp` | `element` | Clic del ratón |
 | `scroll` | `timestamp` | `x`, `y`, `percentage_scrolled`, `document_height`, `viewport_height` | Desplazamiento de página |
 | `keypress` | `timestamp`, `key` | `key_code`, `element`, `is_sensitive` | Pulsación de tecla |
-| `resize` | `timestamp`, `width`, `height` | `previous_width`, `previous_height`, `orientation` | Cambio de tamaño de ventana |
-| `focus` | `timestamp`, `element` | `focus_duration` | Enfoque en elemento |
-| `blur` | `timestamp`, `element` | `blur_duration` | Pérdida de enfoque |
-| `form_change` | `timestamp`, `form_id` | `form_name`, `field_name`, `field_value`, `field_type` | Cambio en campo de formulario |
+| `resize` | `timestamp`, `width`, `height` | `
 
-### Optimización para Envío de Eventos
-
-El sistema de tracking utiliza un mecanismo de buffer para recopilar y enviar eventos de forma eficiente:
-
-1. **Recopilación en Buffer**: Los eventos del usuario se recopilan en un buffer hasta que alcanza un tamaño predefinido (por ejemplo, 50 eventos) o ha transcurrido un intervalo de tiempo (por ejemplo, 1 segundo).
-2. **Envío en Lote**: Una vez que el buffer está lleno o se alcanza el intervalo, los eventos se envían a la API en una sola solicitud como un evento `session_recording`.
-
-### Beneficios
-
-- **Análisis Detallado**: Permite reconstruir y analizar la sesión completa del usuario para entender su comportamiento.
-- **Depuración de UX**: Identifica puntos de fricción y problemas de usabilidad en la interfaz.
-- **Reducción de Llamadas API**: Al enviar eventos en lotes, se reduce significativamente el número de llamadas a la API.
-- **Flexibilidad**: Al incluir el tipo de cada evento, se pueden capturar diferentes tipos de interacciones del usuario en un solo lote.
-
-### Buenas Prácticas para Grabación de Sesiones
-
-1. **Optimización de datos**
-   - Throttle los eventos de mouse (ej: cada 100ms)
-   - Muestreo de sesiones (ej: grabar solo 10% de las sesiones)
-   - Compresión de datos antes de enviar
-   - Agrupación de eventos en lotes
-
-2. **Privacidad y seguridad**
-   - No grabar campos sensibles (passwords, tarjetas de crédito)
-   - Ofrecer opción de pausar/stop la grabación
-   - Cumplir con GDPR y otras regulaciones
-   - Obtener consentimiento explícito del usuario
-
-## Respuesta
-
-El endpoint responde con un objeto JSON que incluye:
-
-```json
-{
-  "success": true,
-  "event_id": "evt_12345abcde",
-  "timestamp": 1646123456790
-}
-```
-
-## Códigos de estado HTTP
-
-- `200 OK`: Evento registrado correctamente
-- `400 Bad Request`: Parámetros inválidos o faltantes
-- `401 Unauthorized`: API key inválida o faltante
-- `403 Forbidden`: El sitio no tiene permisos para usar el tracking
-- `429 Too Many Requests`: Se ha excedido el límite de peticiones
-- `500 Internal Server Error`: Error en el servidor
-
-## Gestión de errores
-
-En caso de error, la respuesta incluirá detalles sobre el problema:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "invalid_parameters",
-    "message": "El parámetro site_id es obligatorio",
-    "details": {
-      "missing_fields": ["site_id"]
-    }
-  }
-}
-```
-
-## Procesamiento asíncrono
-
-Todos los eventos son procesados de forma asíncrona en segundo plano. El endpoint responde inmediatamente después de validar y encolar el evento, incluso antes de que se complete todo el procesamiento. Esto garantiza una baja latencia para el script de tracking en el cliente.
-
-## Buenas prácticas
-
-1. **Agrupar eventos**: Si es posible, agrupa múltiples eventos en una sola petición para reducir el número de llamadas a la API.
-
-2. **Retry con backoff exponencial**: Implementa un mecanismo de reintento con espera exponencial en el script de tracking para casos de fallo en la red.
-
-3. **Filtrar datos sensibles**: No envíes información personal sensible como contraseñas, números de tarjetas de crédito o datos médicos.
-
-4. **Respetar la privacidad**: Solo envía eventos si el usuario ha aceptado las cookies de análisis.
-
-## Límites y cuotas
-
-- **Máximo de eventos por petición**: 50
-- **Tamaño máximo de payload**: 100KB
-- **Peticiones por minuto**: 100 por IP
-- **Propiedades personalizadas**: 50 por evento
-
-## Límites y cuotas para grabación de sesiones
-
-- **Duración máxima por sesión**: 30 minutos
-- **Tamaño máximo de grabación**: 10MB
-- **Eventos por segundo**: 10 eventos/s
-- **Sesiones grabadas**: 10% del total
-- **Retención de datos**: 30 días
-- **Rate limit**: 100 grabaciones/hora
-
-## Activity Bulk Event Type
-
-El tipo de evento `activity_bulk` es una solución eficiente para enviar múltiples eventos de actividad del usuario en una sola solicitud, especialmente útil para eventos de movimiento del ratón, scroll, keypress, etc.
-
-En lugar de enviar cada evento individualmente, el sistema de tracking recopila los eventos en un buffer y los envía en lotes, reduciendo significativamente el número de llamadas a la API y mejorando el rendimiento.
-
-### Cómo Funciona
-
-1. **Recopilación en Buffer**: Los eventos del usuario se recopilan en un buffer hasta que alcanza un tamaño predefinido (por ejemplo, 50 eventos) o ha transcurrido un intervalo de tiempo (por ejemplo, 1 segundo).
-2. **Envío en Lote**: Una vez que el buffer está lleno o se alcanza el intervalo, los eventos se envían a la API en una sola solicitud como un evento `activity_bulk`.
-
-### Estructura de Eventos en Activity
-
-Cada evento en el array `activity` debe incluir un campo `type` que indique el subtipo de evento. Esto permite recopilar diferentes tipos de interacción del usuario en un solo lote:
+## Ejemplo de payload para activity bulk
 
 ```json
 {
@@ -630,15 +522,10 @@ Cada evento en el array `activity` debe incluir un campo `type` que indique el s
   "url": "https://ejemplo.com/productos",
   "visitor_id": "vis_abcd1234",
   "session_id": "sess_xyz789",
+  "segment_id": "seg_active_users",
   "timestamp": 1646123456789,
   "properties": {
     "events": [
-      { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
-      { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
-      { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
-      { "type": "keypress", "key": "Enter", "timestamp": 1646123456792, "key_code": 13 }
-    ],
-    "activity": [
       { "type": "mousemove", "x": 100, "y": 200, "timestamp": 1646123456789 },
       { "type": "click", "x": 150, "y": 250, "timestamp": 1646123456790, "element": { "tag": "button", "id": "add-to-cart" } },
       { "type": "scroll", "x": 0, "y": 300, "timestamp": 1646123456791, "percentage_scrolled": 25 },
@@ -648,28 +535,18 @@ Cada evento en el array `activity` debe incluir un campo `type` que indique el s
 }
 ```
 
-### Subtipos de Eventos Soportados
+## Respuesta
 
-Los siguientes subtipos de eventos pueden incluirse en el array `activity`:
+El endpoint responde con un objeto JSON que incluye:
 
-| Subtipo | Propiedades Requeridas | Propiedades Opcionales | Descripción |
-|---------|------------------------|------------------------|-------------|
-| `mousemove` | `x`, `y`, `timestamp` | `viewport`, `element` | Movimiento del ratón |
-| `click` | `x`, `y`, `timestamp` | `element` | Clic del ratón |
-| `scroll` | `timestamp` | `x`, `y`, `percentage_scrolled`, `document_height`, `viewport_height` | Desplazamiento de página |
-| `keypress` | `timestamp`, `key` | `key_code`, `element`, `is_sensitive` | Pulsación de tecla |
-| `resize` | `timestamp`, `width`, `height` | `previous_width`, `previous_height`, `orientation` | Cambio de tamaño de ventana |
-| `focus` | `timestamp`, `element` | `focus_duration` | Enfoque en elemento |
-| `blur` | `timestamp`, `element` | `blur_duration` | Pérdida de enfoque |
-| `form_change` | `timestamp`, `form_id` | `form_name`, `field_name`, `field_value`, `field_type` | Cambio en campo de formulario |
-
-### Beneficios
-
-- **Reducción de Llamadas API**: Al enviar eventos en lotes, se reduce significativamente el número de llamadas a la API, lo que ayuda a gestionar la carga del servidor y mejora los tiempos de respuesta.
-- **Mejora de Rendimiento**: El almacenamiento en buffer de eventos permite una transmisión y procesamiento de datos más eficiente.
-- **Historial Completo**: La propiedad `activity` permite mantener un historial completo de los eventos del usuario, lo que puede ser útil para el análisis y la depuración.
-- **Flexibilidad**: Al incluir el tipo de cada evento, se pueden capturar diferentes tipos de interacciones del usuario en un solo lote.
-
-### Implementación
-
-La clase `MouseEventTracker` en la biblioteca de tracking maneja el almacenamiento en buffer y el envío de eventos. Se inicializa con los IDs de sesión y visitante necesarios, y gestiona automáticamente el proceso de recopilación y envío de eventos.
+```json
+{
+  "success": true,
+  "event_id": "evt_12345abcde",
+  "visitor_id": "vis_abcd1234",
+  "lead_id": "lead_xyz789",
+  "session_id": "sess_xyz789",
+  "segment_id": "seg_premium_users",
+  "timestamp": 1646123456790
+}
+```

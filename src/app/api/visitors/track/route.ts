@@ -33,6 +33,7 @@ const baseEventSchema = z.object({
   id: z.string().optional(),
   visitor_id: z.string().optional(),
   session_id: z.string().uuid().optional(),
+  segment_id: z.string().optional(),
   timestamp: z.number().optional(),
   user_agent: z.string().optional(),
   ip: z.string().optional(),
@@ -259,6 +260,7 @@ function validateAndPrepareEventData(eventData: any, eventId: string) {
       referrer: eventData.referrer || null,
       visitor_id: eventData.visitor_id || eventData.id || null,
       session_id: eventData.session_id || null,
+      segment_id: eventData.segment_id || null,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
       user_agent: eventData.user_agent || null,
@@ -367,6 +369,7 @@ export async function POST(request: NextRequest) {
       referrer: eventData.referrer,
       visitor_id: visitorId,
       session_id: eventData.session_id,
+      segment_id: eventData.segment_id,
       timestamp: eventData.timestamp || Date.now(),
       properties: eventData.properties || {},
       user_agent: userAgent,
@@ -406,6 +409,7 @@ export async function POST(request: NextRequest) {
       visitor_id: visitorId,
       lead_id: visitorData?.lead_id || null,
       session_id: eventData.session_id,
+      segment_id: eventData.segment_id || null,
       timestamp: data.timestamp
     });
     

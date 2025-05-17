@@ -16,6 +16,7 @@ El endpoint `/api/visitors/identify` permite vincular un visitante anónimo con 
 | `site_id` | string | Sí | Identificador único del sitio |
 | `visitor_id` | string | Sí | ID del visitante anónimo generado por el script de tracking |
 | `lead_id` | string | Sí* | Identificador único del lead en tu sistema (*al menos uno de `lead_id` o `traits` debe proporcionarse) |
+| `segment_id` | string | No | ID del segmento al que pertenece el lead |
 | `traits` | object | Sí* | Atributos del lead para identificación (*al menos uno de `lead_id` o `traits` debe proporcionarse) |
 | `timestamp` | number | No | Marca de tiempo en milisegundos |
 
@@ -71,6 +72,7 @@ El objeto `traits` puede incluir cualquier propiedad para identificar y enriquec
   "site_id": "site_123abc",
   "visitor_id": "vis_abcd1234",
   "lead_id": "lead_5678",
+  "segment_id": "seg_premium",
   "timestamp": 1646123456789
 }
 ```
@@ -82,6 +84,7 @@ El objeto `traits` puede incluir cualquier propiedad para identificar y enriquec
   "site_id": "site_123abc",
   "visitor_id": "vis_abcd1234",
   "lead_id": "lead_5678",
+  "segment_id": "seg_premium_users",
   "traits": {
     "email": "usuario@ejemplo.com",
     "phone": "+34612345678",
@@ -114,6 +117,7 @@ El objeto `traits` puede incluir cualquier propiedad para identificar y enriquec
   "success": true,
   "visitor_id": "vis_abcd1234",
   "lead_id": "lead_5678",
+  "segment_id": "seg_premium_users",
   "profile_id": "prof_987654",
   "merged": true,
   "merged_ids": ["vis_previous1", "vis_previous2"]
@@ -237,4 +241,52 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   showJsonOption={true}
   showSiteUrlField={false}
   showUrlField={false}
+  additionalFields={[
+    {
+      name: "site_id",
+      label: "ID del Sitio",
+      type: "text",
+      defaultValue: "site_123abc",
+      placeholder: "site_123abc",
+      required: true
+    },
+    {
+      name: "visitor_id",
+      label: "ID del Visitante",
+      type: "text",
+      defaultValue: "vis_abcd1234",
+      placeholder: "vis_abcd1234",
+      required: true
+    },
+    {
+      name: "lead_id",
+      label: "ID del Lead",
+      type: "text",
+      defaultValue: "lead_5678",
+      placeholder: "lead_5678",
+      required: false
+    },
+    {
+      name: "segment_id",
+      label: "ID del Segmento",
+      type: "text",
+      placeholder: "seg_xyz789",
+      required: false
+    },
+    {
+      name: "traits",
+      label: "Traits (JSON)",
+      type: "textarea",
+      defaultValue: JSON.stringify({
+        email: "usuario@ejemplo.com",
+        name: "Ana García",
+        company: {
+          name: "Empresa Innovadora SL",
+          role: "Marketing Manager"
+        }
+      }, null, 2),
+      placeholder: '{"email": "usuario@ejemplo.com"}',
+      required: false
+    }
+  ]}
 />

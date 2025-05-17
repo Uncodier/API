@@ -16,9 +16,12 @@ export interface AdditionalField {
   required?: boolean;
 }
 
+// Tipo para los tipos de API disponibles
+export type ApiType = 'general' | 'ai' | 'site' | 'segments' | 'tester' | 'icp' | 'content' | 'visitor_segment';
+
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {
-  id: string;
+  id: ApiType;
   name: string;
   description: string;
   defaultEndpoint: string;

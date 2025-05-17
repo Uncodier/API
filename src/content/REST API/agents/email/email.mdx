@@ -1,6 +1,6 @@
-# Email
+# Email Analysis
 
-Creates a command object to fetch and analyze email messages from the site's email provider and generate insights using AI agents.
+Creates a command object to fetch and analyze email messages from the site's email provider, determine if they require commercial responses, and generate insights using AI agents.
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
@@ -14,150 +14,23 @@ POST /api/agents/email
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `agentId` | string | Yes | ID of the agent to handle the analysis |
+| `agentId` | string | No | ID of the agent to handle the analysis. If not provided, will use the site's Customer Support agent |
 | `site_id` | string | Yes | ID of the site associated with these emails |
 | `limit` | number | No | Maximum number of emails to fetch (default: 10) |
+| `lead_id` | string | No | Optional lead ID to associate with the analysis |
+| `user_id` | string | No | Optional user ID to associate with the command |
+| `team_member_id` | string | No | Optional team member ID to associate with the analysis |
+| `analysis_type` | string | No | Type of analysis to perform (default: comprehensive) |
 
 ### Example Request
 
 ```json
 {
-  "agentId": "agent_email_analyzer_123",
   "site_id": "site_abc123",
-  "limit": 15
-}
-```
-
-## Try It
-
-You can test this API directly using our API Tester interface. The Email Analysis API tester allows you to analyze emails using any agent type and see the results.
-
-Required fields:
-- **Agent ID**: The ID of the agent
-- **Site ID**: The ID of the site associated with these emails
-
-Optional fields:
-- **Limit**: Maximum number of emails to fetch and analyze
-
-<UnifiedApiTester apiId="email-analysis" />
-
-## How It Works
-
-The API works as follows:
-
-1. It gets the site's email configuration from `settings.channels` array where email is configured
-2. It retrieves the corresponding encrypted credentials from the `secure_tokens` table
-3. It connects to the email provider using SMTP/IMAP with the decrypted credentials
-4. It fetches the most recent emails based on the specified limit
-5. It uses the specified agent to analyze the email content
-
-## Generated Command Structure
-
-The system generates a command object with the following structure to control supervised email analysis tasks with failure handling, tools, contexts, etc.
-
-```json
-{
-  "targets": [
-    {
-      "analysis": {
-        "summary": "Email thread summary goes here",
-        "insights": [
-          "Key insight 1 from email analysis",
-          "Key insight 2 from email analysis",
-          "Key insight 3 from email analysis"
-        ],
-        "sentiment": "positive",
-        "priority": "high",
-        "action_items": [
-          "Suggested action item 1",
-          "Suggested action item 2"
-        ],
-        "response_suggestions": [
-          "Suggested response 1",
-          "Suggested response 2"
-        ]
-      }
-    }
-  ],
-  "tools": [
-    {
-      "name": "email_extraction",
-      "description": "extract content and metadata from emails",
-      "status": "not_initialized",
-      "type": "synchronous",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "site_id": {
-            "type": "string",
-            "description": "The site ID to get email configuration"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Maximum number of emails to extract"
-          },
-          "extract_attachments": {
-            "type": "boolean",
-            "description": "Whether to extract attachment contents"
-          }
-        },
-        "required": ["site_id"]
-      }
-    },
-    {
-      "name": "sentiment_analysis",
-      "description": "analyze sentiment of email content",
-      "status": "not_initialized",
-      "type": "synchronous",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "text": {
-            "type": "string",
-            "description": "The text content to analyze for sentiment"
-          },
-          "detailed": {
-            "type": "boolean",
-            "description": "Whether to return detailed sentiment breakdown"
-          }
-        },
-        "required": ["text"]
-      }
-    },
-    {
-      "name": "knowledge_base_search",
-      "description": "search knowledge base for relevant information",
-      "status": "not_initialized",
-      "type": "synchronous",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "query": {
-            "type": "string",
-            "description": "The search query for knowledge base"
-          },
-          "site_id": {
-            "type": "string",
-            "description": "The site ID for the knowledge base"
-          }
-        },
-        "required": ["query", "site_id"]
-      }
-    }
-  ],
-  "context": "Contents of emails and relevant customer history",
-  "supervisors": [
-    {
-      "agent_role": "email_specialist",
-      "status": "not_initialized"
-    },
-    {
-      "agent_role": "customer_service_manager",
-      "status": "not_initialized"
-    }
-  ],
-  "task": "analyze emails",
-  "description": "Analyze the provided emails to extract key insights, determine sentiment, identify action items, and suggest appropriate responses based on email content and context."
+  "limit": 15,
+  "agentId": "agent_email_analyzer_123",
+  "user_id": "user_xyz789",
+  "analysis_type": "commercial_opportunity"
 }
 ```
 
@@ -169,7 +42,7 @@ The system generates a command object with the following structure to control su
 {
   "success": true,
   "data": {
-    "commandId": "cmd_123456",
+    "commandId": "cmd_xyz789",
     "status": "processing",
     "message": "Command created successfully",
     "emailCount": 15
@@ -183,8 +56,8 @@ The system generates a command object with the following structure to control su
 {
   "success": false,
   "error": {
-    "code": "INVALID_REQUEST",
-    "message": "Invalid request parameters"
+    "code": "EMAIL_CONFIG_NOT_FOUND",
+    "message": "Email configuration not found for site"
   }
 }
 ```
@@ -193,13 +66,91 @@ The system generates a command object with the following structure to control su
 
 | Code | Description |
 |------|-------------|
-| `INVALID_REQUEST` | The request parameters are invalid |
-| `AGENT_NOT_FOUND` | The specified agent does not exist |
-| `EMAIL_CONFIG_NOT_FOUND` | Email configuration not found in settings.channels |
-| `EMAIL_CREDENTIALS_ERROR` | Unable to decrypt or use email credentials |
-| `SMTP_CONNECTION_ERROR` | Failed to connect to the email provider |
-| `USER_NOT_FOUND` | The specified user does not exist |
-| `SYSTEM_ERROR` | Internal system error occurred |
+| `INVALID_REQUEST` | Invalid request parameters |
+| `UNAUTHORIZED` | Unauthorized access |
+| `NOT_FOUND` | Resource not found |
+| `EMAIL_CONFIG_NOT_FOUND` | Email configuration not found |
+| `EMAIL_CREDENTIALS_ERROR` | Error with email credentials |
+| `SMTP_CONNECTION_ERROR` | Error connecting to email server |
+| `SYSTEM_ERROR` | Internal system error |
+
+## How It Works
+
+The API works as follows:
+
+1. Gets the site's email configuration from `settings.channels` array where email is configured
+2. Retrieves the corresponding encrypted credentials from the `secure_tokens` table
+3. Connects to the email provider using SMTP/IMAP with the decrypted credentials
+4. Fetches the most recent emails based on the specified limit
+5. Creates a command for the AI agent to analyze the emails with the following capabilities:
+   - Email content and metadata analysis
+   - Sentiment analysis
+   - Commercial opportunity detection
+   - Lead qualification
+   - Response suggestion generation
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control supervised email analysis tasks:
+
+```json
+{
+  "task": "analyze_emails",
+  "description": "Analyze incoming emails to determine if they require a commercial response, categorize them, and suggest appropriate actions.",
+  "targets": [
+    {
+      "analysis": {
+        "summary": "",
+        "insights": [],
+        "sentiment": "",
+        "priority": "",
+        "action_items": [],
+        "response_suggestions": [],
+        "commercial_opportunity": {
+          "requires_response": false,
+          "response_type": null,
+          "priority_level": null,
+          "suggested_actions": [],
+          "potential_value": null,
+          "next_steps": []
+        }
+      }
+    }
+  ],
+  "tools": [
+    {
+      "name": "email_analysis",
+      "description": "analyze email content and metadata",
+      "status": "not_initialized",
+      "type": "synchronous"
+    },
+    {
+      "name": "sentiment_analysis",
+      "description": "analyze sentiment and tone of email content",
+      "status": "not_initialized",
+      "type": "synchronous"
+    },
+    {
+      "name": "commercial_opportunity_detection",
+      "description": "detect potential commercial opportunities in email content",
+      "status": "not_initialized",
+      "type": "synchronous"
+    },
+    {
+      "name": "lead_qualification",
+      "description": "qualify potential leads based on email content",
+      "status": "not_initialized",
+      "type": "synchronous"
+    },
+    {
+      "name": "response_suggestion",
+      "description": "generate appropriate response suggestions",
+      "status": "not_initialized",
+      "type": "synchronous"
+    }
+  ]
+}
+```
 
 ## Notes
 
@@ -208,15 +159,26 @@ The system generates a command object with the following structure to control su
 - No emails are stored in the database; they are fetched on-demand for analysis
 - The system will analyze the entire email thread for context
 - Analysis results can be retrieved using a separate endpoint once processing is complete
-- Site ID is a required parameter and must be provided in the request
-- The generated command controls the agent's behavior with:
-  - `targets`: Defines the expected output structure for the analysis
-  - `tools`: Specifies what actions the agent can take for email analysis
-    - Each tool has a status (initially "not_initialized") and type ("synchronous" or "asynchronous")
-    - Tools follow the OpenAI format with parameters defined as objects containing properties and required fields
-  - `context`: Provides email content and relevant customer history
-  - `supervisors`: Defines which agent roles can intervene if needed
-  - `task`: Specifies the high-level objective for the agent
-  - `description`: Contains the detailed instructions for the email analysis task
+- The analysis includes:
+  - Commercial opportunity detection
+  - Lead qualification
+  - Sentiment analysis
+  - Response suggestions
+  - Priority assessment
+  - Next steps recommendations
 
-The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly. 
+## Try It
+
+You can test this API directly using our API Tester interface. The Email Analysis API tester allows you to analyze emails using any agent type and see the results.
+
+Required fields:
+- **Agent ID**: The ID of the agent
+- **Site ID**: The ID of the site associated with these emails
+
+Optional fields:
+- **Limit**: Maximum number of emails to fetch and analyze
+- **Analysis Type**: Type of analysis to perform
+- **Lead ID**: ID of an associated lead
+- **Team Member ID**: ID of the team member requesting the analysis
+
+<UnifiedApiTester apiId="email-analysis" /> 

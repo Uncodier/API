@@ -17,6 +17,7 @@ const identifySchema = z.object({
   site_id: z.string(),
   id: z.string(),
   lead_id: z.string().optional(),
+  segment_id: z.string().optional(),
   traits: z.object({
     email: z.string().email().optional(),
     phone: z.string().optional(),
@@ -353,6 +354,7 @@ export async function POST(request: NextRequest) {
       .from('visitors')
       .update({
         lead_id: lead?.id,
+        segment_id: validatedData.segment_id,
         is_identified: true,
         updated_at: new Date().toISOString()
       })
@@ -400,6 +402,7 @@ export async function POST(request: NextRequest) {
       success: true,
       id: updatedVisitor.id,
       lead_id: lead?.id,
+      segment_id: updatedVisitor.segment_id,
       merged: relatedVisitors.length > 0,
       merged_ids: relatedVisitors.map(v => v.id)
     });

@@ -1,242 +1,124 @@
+import { UnifiedApiTester } from '@/components/ApiTester/UnifiedApiTester';
+import VisitorSegmentApi from '@/components/ApiTester/apis/VisitorSegmentApi';
+
 # Endpoint de Segmentación
 
-El endpoint `/api/visitors/segment` permite gestionar la segmentación de visitantes en función de su comportamiento, características demográficas o acciones realizadas en el sitio.
+El endpoint `/api/visitors/segment` permite gestionar la segmentación de visitantes en función de su comportamiento, características demográficas o acciones realizadas en el sitio. La API verifica automáticamente si existen segmentos configurados para la URL proporcionada y asigna los segmentos correspondientes al visitante y/o lead.
 
 ## Especificación de la API
 
 - **URL**: `/api/visitors/segment`
-- **Métodos**: `POST`, `GET`, `PUT`, `DELETE`
+- **Método**: `POST`
 - **Formato de datos**: JSON
 - **Autenticación**: API Key en encabezado `X-SA-API-KEY`
 
-## Crear un nuevo segmento (POST)
+## Parámetros de Búsqueda
+
+Para identificar un segmento específico, puedes usar cualquiera de estos parámetros:
+- `segment_id` o `s`: ID del segmento
+- `name` o `n`: Nombre del segmento
 
 ### Parámetros del Request
 
 | Parámetro | Tipo | Requerido | Descripción |
 |-----------|------|-----------|-------------|
 | `site_id` | string | Sí | Identificador único del sitio |
-| `name` | string | Sí | Nombre del segmento |
-| `description` | string | No | Descripción del segmento |
-| `rules` | array | Sí | Array de reglas para la segmentación |
-| `is_dynamic` | boolean | No | Si es `true`, los visitantes entran y salen del segmento automáticamente según cumplan las reglas (por defecto: `true`) |
-| `color` | string | No | Código de color hexadecimal para identificar visualmente el segmento |
+| `url` | string | Sí | URL de la página donde se aplicará el segmento |
+| `visitor_id` | string | Sí | Identificador único del visitante |
+| `segment_id` o `s` | string | Condicional* | Identificador único del segmento |
+| `name` o `n` | string | Condicional* | Nombre del segmento |
+| `lead_id` | string | No | Identificador del lead si está disponible |
+| `rules` | array | No | Array de reglas para la segmentación |
 
-### Estructura de las reglas
+*\* `segment_id` (o `s`) o `name` (o `n`) se vuelven requeridos si existen múltiples segmentos para la URL proporcionada.*
 
-Cada regla es un objeto con la siguiente estructura:
+### Comportamiento Automático
 
-```json
-{
-  "field": "string",     // Campo a evaluar (ej: "page_view.url", "event.name", "visitor.location.country")
-  "operator": "string",  // Operador de comparación (ej: "equals", "contains", "gt", "lt")
-  "value": "any",        // Valor contra el que comparar
-  "type": "string"       // Tipo de regla: "event", "user", "session", "page"
-}
-```
+La API realiza las siguientes acciones al recibir una solicitud:
 
-### Ejemplo de payload
+1. Busca segmentos existentes que coincidan con la URL proporcionada
+2. Si encuentra un único segmento:
+   - Lo usa directamente para la asignación
+3. Si encuentra múltiples segmentos:
+   - Busca coincidencia usando `segment_id` (o `s`) o `name` (o `n`)
+   - Si no se proporciona ninguno de estos parámetros, retorna un error 400 solicitando especificar el segmento
+4. Si no encuentra ningún segmento:
+   - Crea uno nuevo con los datos proporcionados
+   - Si se proporciona `segment_id` o `name`, los usa para el nuevo segmento
+   - Si no se proporciona ninguno, genera un ID automáticamente
+5. Asigna el segmento al visitante
+6. Si se proporciona un `lead_id`, también actualiza la segmentación del lead
+
+### Ejemplo de payload (un segmento conocido)
 
 ```json
 {
   "site_id": "site_123abc",
+  "url": "https://ejemplo.com/productos/zapatos",
+  "visitor_id": "vis_789xyz",
+  "segment_id": "seg_123456"
+}
+```
+
+### Ejemplo de payload (nuevo segmento)
+
+```json
+{
+  "site_id": "site_123abc",
+  "url": "https://ejemplo.com/productos/zapatos",
+  "visitor_id": "vis_789xyz",
   "name": "Compradores de calzado",
-  "description": "Visitantes que han comprado zapatos en los últimos 30 días",
   "rules": [
     {
-      "field": "event.name",
-      "operator": "equals",
-      "value": "purchase",
-      "type": "event"
-    },
-    {
-      "field": "event.properties.category",
+      "field": "page.url",
       "operator": "contains",
-      "value": "zapatos",
-      "type": "event"
-    },
-    {
-      "field": "event.timestamp",
-      "operator": "gt",
-      "value": "now-30d",
-      "type": "event"
-    }
-  ],
-  "is_dynamic": true,
-  "color": "#FF5733"
-}
-```
-
-### Respuesta
-
-```json
-{
-  "success": true,
-  "segment_id": "seg_123456",
-  "created_at": 1646123456789,
-  "estimated_size": 245
-}
-```
-
-## Obtener información de un segmento (GET)
-
-### Parámetros de URL
-
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `segment_id` | string | Sí* | ID del segmento a consultar (*requerido si no se especifica `site_id`) |
-| `site_id` | string | Sí* | Identificador único del sitio (*requerido si no se especifica `segment_id`) |
-
-### Ejemplos de URL
-
-Para obtener un segmento específico:
-```
-/api/visitors/segment?segment_id=seg_123456
-```
-
-Para listar todos los segmentos de un sitio:
-```
-/api/visitors/segment?site_id=site_123abc
-```
-
-### Respuesta para un segmento específico
-
-```json
-{
-  "segment_id": "seg_123456",
-  "site_id": "site_123abc",
-  "name": "Compradores de calzado",
-  "description": "Visitantes que han comprado zapatos en los últimos 30 días",
-  "rules": [
-    {
-      "field": "event.name",
-      "operator": "equals",
-      "value": "purchase",
-      "type": "event"
-    },
-    {
-      "field": "event.properties.category",
-      "operator": "contains",
-      "value": "zapatos",
-      "type": "event"
-    },
-    {
-      "field": "event.timestamp",
-      "operator": "gt",
-      "value": "now-30d",
-      "type": "event"
-    }
-  ],
-  "is_dynamic": true,
-  "color": "#FF5733",
-  "created_at": 1646123456789,
-  "updated_at": 1646123456789,
-  "visitor_count": 267,
-  "conversion_rate": 2.3
-}
-```
-
-### Respuesta para lista de segmentos
-
-```json
-{
-  "segments": [
-    {
-      "segment_id": "seg_123456",
-      "name": "Compradores de calzado",
-      "description": "Visitantes que han comprado zapatos en los últimos 30 días",
-      "visitor_count": 267,
-      "conversion_rate": 2.3
-    },
-    {
-      "segment_id": "seg_123457",
-      "name": "Visitantes móviles",
-      "description": "Usuarios que acceden desde dispositivos móviles",
-      "visitor_count": 1255,
-      "conversion_rate": 1.8
-    }
-  ],
-  "total": 2,
-  "site_id": "site_123abc"
-}
-```
-
-## Actualizar un segmento (PUT)
-
-### Parámetros del Request
-
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `segment_id` | string | Sí | ID del segmento a actualizar |
-| `site_id` | string | Sí | Identificador único del sitio |
-| `name` | string | No | Nuevo nombre del segmento |
-| `description` | string | No | Nueva descripción |
-| `rules` | array | No | Nuevas reglas de segmentación |
-| `is_dynamic` | boolean | No | Si es dinámico o estático |
-| `color` | string | No | Nuevo código de color |
-
-### Ejemplo de payload
-
-```json
-{
-  "segment_id": "seg_123456",
-  "site_id": "site_123abc",
-  "name": "Compradores frecuentes de calzado",
-  "rules": [
-    {
-      "field": "event.name",
-      "operator": "equals",
-      "value": "purchase",
-      "type": "event"
-    },
-    {
-      "field": "event.properties.category",
-      "operator": "contains",
-      "value": "zapatos",
-      "type": "event"
-    },
-    {
-      "field": "event.count",
-      "operator": "gt",
-      "value": 2,
-      "type": "event"
+      "value": "/productos",
+      "type": "page"
     }
   ]
 }
 ```
 
-### Respuesta
+### Respuesta Exitosa
 
 ```json
 {
   "success": true,
   "segment_id": "seg_123456",
-  "updated_at": 1646124000000,
-  "recalculation_status": "in_progress"
+  "name": "Compradores de calzado",
+  "created_at": 1646123456789,
+  "estimated_size": 245,
+  "visitor_id": "vis_789xyz",
+  "lead_id": "lead_456def",
+  "auto_assigned_segments": [
+    {
+      "segment_id": "seg_abc123",
+      "name": "Visitantes de categoría zapatos",
+      "assigned_at": 1646123456789
+    }
+  ]
 }
 ```
 
-## Eliminar un segmento (DELETE)
-
-### Parámetros del Request
-
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `segment_id` | string | Sí | ID del segmento a eliminar |
-| `site_id` | string | Sí | Identificador único del sitio |
-
-### Ejemplo de URL
-
-```
-/api/visitors/segment?segment_id=seg_123456&site_id=site_123abc
-```
-
-### Respuesta
+### Respuesta de Error (Múltiples Segmentos)
 
 ```json
 {
-  "success": true,
-  "deleted_at": 1646124000000
+  "success": false,
+  "error": {
+    "code": "multiple_segments_found",
+    "message": "Se encontraron múltiples segmentos para la URL proporcionada. Por favor, especifique segment_id o name.",
+    "segments": [
+      {
+        "segment_id": "seg_123456",
+        "name": "Compradores de calzado"
+      },
+      {
+        "segment_id": "seg_789012",
+        "name": "Visitantes de zapatos"
+      }
+    ]
+  }
 }
 ```
 
@@ -292,4 +174,8 @@ Para los campos de tipo fecha/hora, se pueden usar valores relativos:
 
 3. **Usar segmentos dinámicos**: Para la mayoría de los casos, los segmentos dinámicos son más útiles ya que se actualizan automáticamente.
 
-4. **Documentar bien**: Usa descripciones claras para que otros miembros del equipo entiendan el propósito del segmento. 
+4. **Documentar bien**: Usa descripciones claras para que otros miembros del equipo entiendan el propósito del segmento.
+
+## Prueba la API
+
+<UnifiedApiTester apiType="visitor_segment" /> 

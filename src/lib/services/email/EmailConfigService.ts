@@ -1,0 +1,217 @@
+import { createClient } from '@supabase/supabase-js';
+import CryptoJS from 'crypto-js';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+
+export interface EmailConfig {
+  user?: string;
+  email?: string;
+  password: string;
+  host?: string;
+  imapHost?: string;
+  port?: number;
+  imapPort?: number;
+  smtpHost?: string;
+  smtpPort?: number;
+  tls?: boolean;
+}
+
+export class EmailConfigService {
+  /**
+   * Obtiene la configuración de email para un sitio
+   */
+  static async getEmailConfig(siteId: string): Promise<EmailConfig> {
+    try {
+      // Obtener settings del sitio
+      const { data: settings, error: settingsError } = await supabaseAdmin
+        .from('settings')
+        .select('channels')
+        .eq('site_id', siteId)
+        .single();
+        
+      if (settingsError) {
+        throw new Error(`Failed to retrieve site settings: ${settingsError.message}`);
+      }
+      
+      if (!settings) {
+        throw new Error(`Site settings not found for site ${siteId}`);
+      }
+
+      // Obtener el token de email
+      const tokenValue = await this.getEmailToken(siteId);
+      
+      if (!tokenValue) {
+        throw new Error(`No se encontró token de email para el sitio ${siteId}. Por favor almacena un token de email usando el endpoint /api/secure-tokens`);
+      }
+
+      try {
+        // Intentar parsear como JSON
+        const parsedValue = JSON.parse(tokenValue);
+        
+        if (parsedValue.password) {
+          return {
+            user: parsedValue.email || parsedValue.user || settings.channels?.email?.email,
+            email: parsedValue.email || parsedValue.user || settings.channels?.email?.email,
+            password: parsedValue.password,
+            host: parsedValue.host || parsedValue.imapHost || settings.channels?.email?.incomingServer || 'imap.gmail.com',
+            imapHost: parsedValue.imapHost || parsedValue.host || settings.channels?.email?.incomingServer || 'imap.gmail.com',
+            imapPort: parsedValue.imapPort || parsedValue.port || settings.channels?.email?.incomingPort || 993,
+            smtpHost: parsedValue.smtpHost || parsedValue.host || settings.channels?.email?.outgoingServer || 'smtp.gmail.com',
+            smtpPort: parsedValue.smtpPort || settings.channels?.email?.outgoingPort || 587,
+            tls: true
+          };
+        }
+      } catch (jsonError) {
+        // Si no es JSON, usar como contraseña directa
+        return {
+          user: settings.channels?.email?.email,
+          email: settings.channels?.email?.email,
+          password: tokenValue,
+          host: settings.channels?.email?.incomingServer || 'imap.gmail.com',
+          imapHost: settings.channels?.email?.incomingServer || 'imap.gmail.com',
+          imapPort: settings.channels?.email?.incomingPort || 993,
+          smtpHost: settings.channels?.email?.outgoingServer || 'smtp.gmail.com',
+          smtpPort: settings.channels?.email?.outgoingPort || 587,
+          tls: true
+        };
+      }
+      
+      throw new Error("El token de email no contiene una contraseña");
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  /**
+   * Obtiene y desencripta el token de email
+   */
+  private static async getEmailToken(siteId: string): Promise<string | null> {
+    try {
+      // 1. Intentar obtener el token del servicio de desencriptación
+      const tokenFromService = await this.getTokenFromService(siteId);
+      if (tokenFromService) {
+        return tokenFromService;
+      }
+
+      // 2. Si el servicio falla, intentar obtener directamente de la base de datos
+      const { data: settings } = await supabaseAdmin
+        .from('settings')
+        .select('channels')
+        .eq('site_id', siteId)
+        .single();
+
+      const email = settings?.channels?.email?.email;
+      
+      // Consulta base para el token
+      let query = supabaseAdmin
+        .from('secure_tokens')
+        .select('*')
+        .eq('site_id', siteId)
+        .eq('token_type', 'email');
+      
+      // Si tenemos email, primero intentar con identifier
+      if (email) {
+        const { data: withIdentifier } = await query.eq('identifier', email).maybeSingle();
+        if (withIdentifier?.encrypted_value) {
+          return this.decryptToken(withIdentifier.encrypted_value);
+        }
+      }
+
+      // Si no se encontró con identifier o no hay email, intentar sin identifier
+      const { data: withoutIdentifier } = await query.maybeSingle();
+      if (withoutIdentifier?.encrypted_value) {
+        return this.decryptToken(withoutIdentifier.encrypted_value);
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Obtiene el token del servicio de desencriptación
+   */
+  private static async getTokenFromService(siteId: string): Promise<string | null> {
+    try {
+      const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
+      const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
+      
+      const response = await fetch(decryptUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          site_id: siteId,
+          token_type: 'email'
+        })
+      });
+      
+      const result = await response.json();
+      
+      if (!response.ok || !result.success || !result.data?.tokenValue) {
+        return null;
+      }
+      
+      const decryptedValue = result.data.tokenValue;
+      return typeof decryptedValue === 'object' ? JSON.stringify(decryptedValue) : decryptedValue;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Desencripta un token usando la clave de encriptación
+   */
+  private static decryptToken(encryptedValue: string): string {
+    const encryptionKey = process.env.ENCRYPTION_KEY || '';
+    
+    if (!encryptionKey) {
+      throw new Error("Missing ENCRYPTION_KEY environment variable");
+    }
+    
+    if (encryptedValue.includes(':')) {
+      const [salt, encrypted] = encryptedValue.split(':');
+      const combinedKey = encryptionKey + salt;
+      
+      try {
+        // 1. Intentar con la clave del environment
+        const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
+        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+        
+        if (decryptedText) {
+          return decryptedText;
+        }
+
+        throw new Error("La desencriptación produjo un texto vacío");
+      } catch (error) {
+        try {
+          // 2. Intentar con la clave fija original
+          const originalKey = 'Encryption-key';
+          const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
+          const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+          
+          if (decryptedText) {
+            return decryptedText;
+          }
+          
+          throw new Error("La desencriptación produjo un texto vacío con clave original");
+        } catch (errorOriginal) {
+          // 3. Intentar con clave alternativa en desarrollo
+          const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
+          if (altEncryptionKey && process.env.NODE_ENV === 'development') {
+            const altCombinedKey = altEncryptionKey + salt;
+            const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
+            const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+            
+            if (decryptedText) {
+              return decryptedText;
+            }
+          }
+          
+          throw new Error("No se pudo desencriptar el token con ninguna clave disponible");
+        }
+      }
+    }
+    
+    throw new Error("Formato de token no soportado, se esperaba salt:encrypted");
+  }
+} 

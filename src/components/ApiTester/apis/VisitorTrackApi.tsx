@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { BaseApiConfig, ApiType } from '../types';
+import { FormField, SectionLabel } from '../components/FormComponents';
 import { v4 as generateUUID } from 'uuid';
 
 // Props específicas para la API de Tracking de Visitantes
@@ -28,6 +28,7 @@ export interface VisitorTrackApiState {
   referrer: string;
   visitor_id: string;
   session_id: string;
+  segment_id: string;
   timestamp: string;
   properties: string;
   user_agent: string;
@@ -102,9 +103,12 @@ export interface VisitorTrackApiState {
   activity_bulk_events: string;
 }
 
+// Tipo para el valor del manejador de cambios
+type FieldValue = string | number | boolean;
+
 // Configuración de la API de Tracking de Visitantes
 const VisitorTrackApi: BaseApiConfig = {
-  id: 'visitor_track',
+  id: 'visitor_track' as ApiType,
   name: 'API de Tracking de Visitantes',
   description: 'API para registrar eventos de visitantes en un sitio web',
   defaultEndpoint: '/api/visitors/track',
@@ -124,6 +128,7 @@ const VisitorTrackApi: BaseApiConfig = {
       referrer: 'https://google.com',
       visitor_id: props.defaultVisitorId || generateUUID(),
       session_id: props.defaultSessionId || generateUUID(),
+      segment_id: '',
       timestamp: Date.now().toString(),
       properties: JSON.stringify({
         page_title: "Product Catalog",
@@ -348,6 +353,7 @@ const VisitorTrackApi: BaseApiConfig = {
     if (state.referrer) body.referrer = state.referrer;
     if (state.visitor_id) body.visitor_id = state.visitor_id;
     if (state.session_id) body.session_id = state.session_id;
+    if (state.segment_id) body.segment_id = state.segment_id;
     if (state.timestamp) body.timestamp = parseInt(state.timestamp);
     if (state.user_agent) body.user_agent = state.user_agent;
     if (state.ip) body.ip = state.ip;
@@ -535,8 +541,8 @@ const VisitorTrackApi: BaseApiConfig = {
     const { state, setState } = props;
     
     // Función para manejar los cambios en los campos del formulario
-    const handleChange = (field: keyof VisitorTrackApiState, value: any) => {
-      setState({ ...state, [field]: value });
+    const handleChange = (field: keyof VisitorTrackApiState, value: FieldValue) => {
+      setState(prevState => ({ ...prevState, [field]: value }));
     };
 
     // Función para renderizar campos específicos según el tipo de evento
@@ -1249,6 +1255,15 @@ const VisitorTrackApi: BaseApiConfig = {
           value={state.session_id}
           onChange={(value) => handleChange('session_id', value)}
           placeholder="sess_xyz789"
+        />
+
+        <FormField
+          label="ID del Segmento"
+          id="segment_id"
+          type="text"
+          value={state.segment_id}
+          onChange={(value) => handleChange('segment_id', value)}
+          placeholder="seg_xyz789"
         />
 
         <FormField

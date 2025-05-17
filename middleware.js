@@ -1,16 +1,16 @@
 /**
- * MIDDLEWARE CORS PARA PRODUCCIÓN (VERCEL)
+ * MIDDLEWARE CORS PARA DESARROLLO LOCAL
  * 
  * IMPORTANTE: Este archivo está duplicado intencionalmente.
- * - Este archivo (en /src) es usado por Vercel en producción
- * - El archivo en /middleware.js es usado por Next.js en desarrollo local
+ * - Este archivo (en la raíz) es usado por Next.js en desarrollo local
+ * - El archivo en /src/middleware.js es usado por Vercel en producción
  * 
  * NO ELIMINAR NINGUNO DE LOS DOS ARCHIVOS
  * Ambos son necesarios para que el CORS funcione correctamente en todos los entornos.
  */
 
 import { NextResponse } from 'next/server';
-import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from '../cors.config.js';
+import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.config.js';
 
 /**
  * Middleware CORS completo
