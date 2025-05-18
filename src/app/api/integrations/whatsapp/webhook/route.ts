@@ -328,8 +328,8 @@ export async function GET(request: NextRequest) {
     const token = searchParams.get('hub.verify_token');
     const challenge = searchParams.get('hub.challenge');
     
-    // Get the verification token from environment variables
-    const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    // Hardcoded verification token
+    const verifyToken = 'fg3eU9TPc32AXB5Tf6T6996P2FyXwVr7@Yp9MW2Uh3$b3&*bsq^D959$v7E82cSt';
     
     // Log verification attempt
     console.log(`🔄 Verificación de webhook WhatsApp: mode=${mode}, token=${token ? 'provided' : 'missing'}`);
