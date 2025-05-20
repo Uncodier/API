@@ -24,6 +24,10 @@ const EmailAgentRequestSchema = z.object({
   user_id: z.string().optional(),
   team_member_id: z.string().optional(),
   analysis_type: z.string().optional(),
+  since_date: z.string().optional().refine(
+    (date) => !date || !isNaN(Date.parse(date)),
+    "since_date debe ser una fecha válida en formato ISO"
+  ),
 });
 
 // Error codes
@@ -159,14 +163,14 @@ export async function POST(request: NextRequest) {
     
     console.log('[EMAIL_API] Validation successful, parsed data:', JSON.stringify(validationResult.data, null, 2));
     
-    const { site_id, limit = 10, lead_id, agentId, team_member_id, analysis_type, user_id } = validationResult.data;
+    const { site_id, limit = 10, lead_id, agentId, team_member_id, analysis_type, user_id, since_date } = validationResult.data;
     
     try {
       // Get email configuration
       const emailConfig = await EmailConfigService.getEmailConfig(site_id);
       
       // Fetch emails
-      const emails = await EmailService.fetchEmails(emailConfig, limit);
+      const emails = await EmailService.fetchEmails(emailConfig, limit, since_date);
 
       // Si no se proporciona agentId, buscar el agente de soporte
       const effectiveAgentId = agentId || await findSupportAgent(site_id);

@@ -1,102 +1,138 @@
 'use client';
 
 import React from 'react';
-import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../components/FormComponents';
+import { emailEndpoints } from './EmailApi';
+import { FormField } from '../components/FormComponents';
+import styles from '../../ApiTester.module.css';
 
-// Props específicas para la API de Análisis de Email
-export interface EmailAnalysisApiProps {
-  defaultAgentId?: string;
-  defaultSiteId?: string;
-  defaultLimit?: number;
-}
-
-// Estado específico para la API de Análisis de Email
-export interface EmailAnalysisApiState {
-  agentId: string;
-  site_id: string;
-  limit?: number;
-}
-
-// Configuración de la API de Análisis de Email
-const EmailAnalysisApi: BaseApiConfig = {
+const EmailAnalysisApi = {
   id: 'email-analysis',
-  name: 'API de Análisis de Email',
-  description: 'API para análisis de emails utilizando agentes de IA',
+  name: 'Email Analysis API',
+  description: 'API para obtener y analizar emails',
   defaultEndpoint: '/api/agents/email',
+  endpoints: emailEndpoints,
 
-  // Obtener el estado inicial
-  getInitialState: (props: EmailAnalysisApiProps): EmailAnalysisApiState => {
-    return {
-      agentId: props.defaultAgentId || '',
-      site_id: props.defaultSiteId || '',
-      limit: props.defaultLimit || 10
-    };
-  },
+  getInitialState: () => ({
+    site_id: '',
+    limit: 10,
+    since_date: undefined,
+    lead_id: undefined,
+    agentId: undefined,
+    user_id: undefined,
+    team_member_id: undefined,
+    analysis_type: undefined,
+  }),
 
-  // Construir el cuerpo de la solicitud
-  buildRequestBody: (state: EmailAnalysisApiState): Record<string, any> => {
-    const body: Record<string, any> = {
-      agentId: state.agentId,
-      site_id: state.site_id
+  buildRequestBody: (state: any) => {
+    const body: any = {
+      site_id: state.site_id,
+      limit: parseInt(state.limit) || 10,
     };
-    
-    // Agregar campo opcional solo si tiene valor
-    if (state.limit !== undefined) body.limit = state.limit;
-    
+
+    // Agregar campos opcionales solo si tienen valor
+    if (state.since_date) body.since_date = state.since_date;
+    if (state.lead_id) body.lead_id = state.lead_id;
+    if (state.agentId) body.agentId = state.agentId;
+    if (state.user_id) body.user_id = state.user_id;
+    if (state.team_member_id) body.team_member_id = state.team_member_id;
+    if (state.analysis_type) body.analysis_type = state.analysis_type;
+
     return body;
   },
 
-  // Renderizar los campos del formulario
-  renderFields: (props: {
-    state: EmailAnalysisApiState;
-    setState: React.Dispatch<React.SetStateAction<EmailAnalysisApiState>>;
-    additionalFields?: any[];
-  }) => {
-    const { state, setState } = props;
-    
-    const handleChange = (field: keyof EmailAnalysisApiState, value: string | number | boolean) => {
-      setState(prev => ({ ...prev, [field]: value }));
-    };
-    
-    return (
-      <>
-        <SectionLabel>Campos Requeridos</SectionLabel>
-        <FormField
-          label="Agent ID"
-          id="agentId"
-          type="text"
-          value={state.agentId}
-          onChange={(value: string) => handleChange('agentId', value)}
-          placeholder="agent_email_analyzer_123"
-          required
+  renderFields: ({ state, setState, control }: any) => (
+    <div className="space-y-4">
+      <FormField
+        label="Site ID"
+        id="site_id"
+        type="text"
+        value={state.site_id}
+        onChange={(value: string) => setState({ site_id: value })}
+        placeholder="ID del sitio"
+        required
+      />
+
+      <FormField
+        label="Límite de emails"
+        id="limit"
+        type="number"
+        value={state.limit}
+        onChange={(value: string) => setState({ limit: parseInt(value) || 10 })}
+        placeholder="10"
+      />
+
+      <div className={styles.formGroup}>
+        <label className="block text-sm font-medium mb-1">Desde fecha (opcional)</label>
+        <input
+          type="date"
+          id="since_date"
+          value={state.since_date ? new Date(state.since_date).toISOString().split('T')[0] : ''}
+          onChange={(e) => {
+            const value = e.target.value;
+            if (value) {
+              // Convertir la fecha a ISO string con hora 00:00:00
+              const isoDate = new Date(value + 'T00:00:00Z').toISOString();
+              setState({ since_date: isoDate });
+            } else {
+              setState({ since_date: undefined });
+            }
+          }}
+          className={styles.formControl}
+          placeholder="Selecciona una fecha"
         />
-        
-        <FormField
-          label="Site ID"
-          id="site_id"
-          type="text"
-          value={state.site_id}
-          onChange={(value: string) => handleChange('site_id', value)}
-          placeholder="site_abc123"
-          required
-        />
-        
-        <SectionLabel>Campos Opcionales</SectionLabel>
-        
-        <FormField
-          label="Limit"
-          id="limit"
-          type="number"
-          value={state.limit || 10}
-          onChange={(value: string) => handleChange('limit', Number(value))}
-          placeholder="Máximo número de emails (por defecto: 10)"
-          min={1}
-          max={50}
-        />
-      </>
-    );
-  }
+      </div>
+
+      <FormField
+        label="Lead ID (opcional)"
+        id="lead_id"
+        type="text"
+        value={state.lead_id}
+        onChange={(value: string) => setState({ lead_id: value })}
+        placeholder="ID del lead"
+      />
+
+      <FormField
+        label="Agent ID (opcional)"
+        id="agentId"
+        type="text"
+        value={state.agentId}
+        onChange={(value: string) => setState({ agentId: value })}
+        placeholder="ID del agente"
+      />
+
+      <FormField
+        label="User ID (opcional)"
+        id="user_id"
+        type="text"
+        value={state.user_id}
+        onChange={(value: string) => setState({ user_id: value })}
+        placeholder="ID del usuario"
+      />
+
+      <FormField
+        label="Team Member ID (opcional)"
+        id="team_member_id"
+        type="text"
+        value={state.team_member_id}
+        onChange={(value: string) => setState({ team_member_id: value })}
+        placeholder="ID del miembro del equipo"
+      />
+
+      <FormField
+        label="Tipo de análisis (opcional)"
+        id="analysis_type"
+        type="select"
+        value={state.analysis_type}
+        onChange={(value: string) => setState({ analysis_type: value })}
+        options={[
+          { value: '', label: 'Seleccionar tipo' },
+          { value: 'commercial', label: 'Comercial' },
+          { value: 'support', label: 'Soporte' },
+          { value: 'general', label: 'General' }
+        ]}
+      />
+    </div>
+  ),
 };
 
 export default EmailAnalysisApi; 

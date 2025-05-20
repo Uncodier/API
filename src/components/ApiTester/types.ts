@@ -190,4 +190,21 @@ export interface ApiFormState {
   
   // Para campos adicionales dinámicos
   [key: string]: string | number | boolean | undefined;
+}
+
+import { Control, UseFormRegister, FieldErrors, FieldValues } from 'react-hook-form';
+import { z } from 'zod';
+
+export interface ApiEndpoint<T extends FieldValues> {
+  name: string;
+  description: string;
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
+  path: string;
+  schema: z.ZodType<T>;
+  defaultValues: T;
+  renderForm: (props: {
+    register: UseFormRegister<T>;
+    control: Control<T>;
+    errors: FieldErrors<T>;
+  }) => React.ReactNode;
 } 

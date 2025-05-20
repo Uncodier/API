@@ -28,8 +28,15 @@ export interface EmailConfig {
 export class EmailService {
   /**
    * Obtiene emails desde un servidor IMAP
+   * @param emailConfig Configuración del servidor de email
+   * @param limit Número máximo de emails a obtener
+   * @param sinceDate Fecha ISO string desde la cual obtener emails
    */
-  static async fetchEmails(emailConfig: EmailConfig, limit: number = 10): Promise<EmailMessage[]> {
+  static async fetchEmails(
+    emailConfig: EmailConfig, 
+    limit: number = 10,
+    sinceDate?: string
+  ): Promise<EmailMessage[]> {
     return new Promise((resolve, reject) => {
       try {
         // Parse ports to ensure they are numbers
@@ -57,78 +64,91 @@ export class EmailService {
               imap.end();
               return reject(new Error(`Error opening inbox: ${err.message}`));
             }
-            
-            const totalMessages = box.messages.total;
-            const startMessage = Math.max(totalMessages - limit + 1, 1);
-            
-            if (totalMessages === 0) {
-              imap.end();
-              return resolve([]);
-            }
-            
-            const f = imap.seq.fetch(`${startMessage}:${totalMessages}`, {
-              bodies: ['HEADER.FIELDS (FROM TO SUBJECT DATE)', 'TEXT'],
-              struct: true
-            });
-            
-            f.on('message', (msg: any, seqno: number) => {
-              const email: EmailMessage = {
-                id: `${seqno}`,
-                headers: null,
-                body: null
-              };
+
+            // Crear criterios de búsqueda si hay fecha
+            const searchCriteria = sinceDate 
+              ? [['SINCE', new Date(sinceDate)]]
+              : [['ALL']];
+
+            imap.search(searchCriteria, (searchErr: any, results: number[]) => {
+              if (searchErr) {
+                imap.end();
+                return reject(new Error(`Search error: ${searchErr.message}`));
+              }
+
+              if (results.length === 0) {
+                imap.end();
+                return resolve([]);
+              }
+
+              // Ordenar resultados de más reciente a más antiguo y limitar
+              results.sort((a, b) => b - a);
+              const messagesToFetch = results.slice(0, limit);
               
-              msg.on('body', (stream: any, info: any) => {
-                let buffer = '';
+              const f = imap.fetch(messagesToFetch, {
+                bodies: ['HEADER.FIELDS (FROM TO SUBJECT DATE)', 'TEXT'],
+                struct: true
+              });
+            
+              f.on('message', (msg: any, seqno: number) => {
+                const email: EmailMessage = {
+                  id: `${seqno}`,
+                  headers: null,
+                  body: null
+                };
                 
-                stream.on('data', (chunk: Buffer) => {
-                  buffer += chunk.toString('utf8');
-                });
-                
-                stream.once('end', () => {
-                  if (info.which.includes('HEADER')) {
-                    const headerLines = buffer.split('\r\n');
-                    const headers: any = {};
-                    let currentHeader = '';
-                    
-                    for (const line of headerLines) {
-                      if (!line.trim()) continue;
+                msg.on('body', (stream: any, info: any) => {
+                  let buffer = '';
+                  
+                  stream.on('data', (chunk: Buffer) => {
+                    buffer += chunk.toString('utf8');
+                  });
+                  
+                  stream.once('end', () => {
+                    if (info.which.includes('HEADER')) {
+                      const headerLines = buffer.split('\r\n');
+                      const headers: any = {};
+                      let currentHeader = '';
                       
-                      if (line.match(/^\s/)) {
-                        if (currentHeader) {
-                          headers[currentHeader] += ' ' + line.trim();
-                        }
-                      } else {
-                        const match = line.match(/^([^:]+):\s*(.*)$/);
-                        if (match) {
-                          currentHeader = match[1].toLowerCase();
-                          headers[currentHeader] = match[2];
+                      for (const line of headerLines) {
+                        if (!line.trim()) continue;
+                        
+                        if (line.match(/^\s/)) {
+                          if (currentHeader) {
+                            headers[currentHeader] += ' ' + line.trim();
+                          }
+                        } else {
+                          const match = line.match(/^([^:]+):\s*(.*)$/);
+                          if (match) {
+                            currentHeader = match[1].toLowerCase();
+                            headers[currentHeader] = match[2];
+                          }
                         }
                       }
+                      
+                      email.subject = headers.subject || 'No Subject';
+                      email.from = headers.from || 'Unknown';
+                      email.to = headers.to || 'Unknown';
+                      email.date = headers.date || new Date().toISOString();
+                    } else {
+                      email.body = buffer;
                     }
-                    
-                    email.subject = headers.subject || 'No Subject';
-                    email.from = headers.from || 'Unknown';
-                    email.to = headers.to || 'Unknown';
-                    email.date = headers.date || new Date().toISOString();
-                  } else {
-                    email.body = buffer;
-                  }
+                  });
+                });
+                
+                msg.once('end', () => {
+                  emails.push(email);
                 });
               });
               
-              msg.once('end', () => {
-                emails.push(email);
+              f.once('error', (err: any) => {
+                imap.end();
+                reject(new Error(`Fetch error: ${err.message}`));
               });
-            });
-            
-            f.once('error', (err: any) => {
-              imap.end();
-              reject(new Error(`Fetch error: ${err.message}`));
-            });
-            
-            f.once('end', () => {
-              imap.end();
+              
+              f.once('end', () => {
+                imap.end();
+              });
             });
           });
         });
