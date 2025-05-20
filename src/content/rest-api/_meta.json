@@ -1,0 +1,34 @@
+{
+  "index": {
+    "title": "REST API",
+    "type": "page"
+  },
+  "analyze": {
+    "title": "Análisis de Sitios",
+    "type": "page"
+  },
+  "ai": {
+    "title": "Inteligencia Artificial",
+    "type": "page"
+  },
+  "site": {
+    "title": "Gestión de Sitios",
+    "type": "page"
+  },
+  "conversation": {
+    "title": "Conversación",
+    "type": "page"
+  },
+  "visitors": {
+    "title": "Visitantes",
+    "type": "page"
+  },
+  "experiments": {
+    "title": "Experimentos",
+    "type": "page"
+  },
+  "agents": {
+    "title": "Agentes",
+    "type": "page"
+  }
+} 

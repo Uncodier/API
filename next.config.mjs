@@ -4,7 +4,11 @@ import { getNextJsCorsConfig } from './cors.config.js'
 const withNextra = nextra({
   contentDirBasePath: '/',
   defaultShowCopyCode: true,
-  staticImage: true
+  staticImage: true,
+  mdxOptions: {
+    remarkPlugins: [],
+    rehypePlugins: []
+  }
 })
 
 // Obtener la configuración CORS y loggear para depuración

@@ -21,4 +21,10 @@ module.exports = {
   plugins: [
     require('@tailwindcss/typography'),
   ],
+  // Configuración para evitar conflictos con Nextra
+  important: false,
+  prefix: 'tw-',
+  corePlugins: {
+    preflight: false,
+  },
 }

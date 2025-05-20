@@ -1,4 +1,4 @@
-# Recomendaciones para el flujo de `agent_background` en Agentbase
+# Recomendaciones flujos
 
 ## Problema detectado
 

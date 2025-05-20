@@ -1,0 +1,13 @@
+{
+  "message": "Send Message",
+  "conversations": "Get Conversations",
+  "conversation-messages": "Get Conversation Messages",
+  "index": {
+    "title": "Introducción",
+    "type": "page"
+  },
+  "analyze": {
+    "title": "Análisis de Soporte",
+    "type": "page"
+  }
+} 
