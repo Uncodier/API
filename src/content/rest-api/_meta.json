@@ -3,6 +3,10 @@
     "title": "REST API",
     "type": "page"
   },
+  "authentication": {
+    "title": "Autenticación",
+    "type": "page"
+  },
   "analyze": {
     "title": "Análisis de Sitios",
     "type": "page"

@@ -1,0 +1,532 @@
+# API Keys
+
+## Overview
+
+Our API uses secure API keys for authentication. Each key follows a specific format and includes built-in security features to ensure safe and traceable usage.
+
+## API Key Structure
+
+Each API key consists of two parts:
+
+```bash
+[prefix]_[random_part]
+```
+
+- `prefix`: Identifier that helps track the key's purpose and owner (e.g., prod, dev, admin)
+- `random_part`: A cryptographically secure random string with 256 bits of entropy
+
+## Using API Keys
+
+To authenticate your requests, include your API key in the `X-API-Key` header:
+
+```bash
+GET https://api.uncodie.com/sites
+X-API-Key: your_api_key_here
+```
+
+For example, using fetch:
+
+```javascript
+const response = await fetch('https://api.uncodie.com/sites', {
+  headers: {
+    'X-API-Key': 'your_api_key_here'
+  }
+});
+```
+
+Or using curl:
+
+```bash
+curl -X GET 'https://api.uncodie.com/sites' \
+  -H 'X-API-Key: your_api_key_here'
+```
+
+## Available Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | /sites | List all sites |
+| GET | /sites/\{site_id\} | Get site details |
+| GET | /sites/\{site_id\}/stats | Get site statistics |
+| POST | /sites/\{site_id\}/commands | Create a new command |
+| GET | /sites/\{site_id\}/commands | List commands |
+| GET | /sites/\{site_id\}/commands/\{command_id\} | Get command details |
+
+## Required Scopes
+
+Each endpoint requires specific scopes:
+
+| Endpoint | Required Scope |
+|----------|---------------|
+| /sites (GET) | read |
+| /sites/\{site_id\} (GET) | read |
+| /sites/\{site_id\}/stats (GET) | read |
+| /sites/\{site_id\}/commands (POST) | write |
+| /sites/\{site_id\}/commands (GET) | read |
+| /sites/\{site_id\}/commands/\{command_id\} (GET) | read |
+
+## Security Features
+
+- **Automatic Rotation**: Keys automatically expire after a configurable period
+- **Usage Limits**: Built-in rate limiting and usage quotas
+- **Scoped Access**: Keys can be limited to specific endpoints or operations
+- **Audit Logging**: All key usage is logged for security monitoring
+- **Revocation**: Keys can be immediately revoked if compromised
+
+## Frontend Implementation
+
+### Creating an API Key
+
+```typescript
+import { createApiKey } from '@/lib/api';
+
+// Create a new API key
+const createKey = async () => {
+  try {
+    const response = await fetch('/api/keys', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        name: 'My API Key',
+        scopes: ['read', 'write'],
+        site_id: 'your-site-id',
+        expirationDays: 90, // optional, defaults to 90
+        prefix: 'prod' // optional, defaults to 'key'
+      })
+    });
+
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error.message);
+    }
+
+    // IMPORTANT: Store this key securely, it will only be shown once
+    console.log('Your API Key:', data.data.apiKey);
+    return data.data;
+  } catch (error) {
+    console.error('Error creating API key:', error);
+    throw error;
+  }
+};
+```
+
+### Listing API Keys
+
+```typescript
+// List all API keys for a site
+const listKeys = async (siteId: string) => {
+  try {
+    const response = await fetch(`/api/keys?site_id=${siteId}`);
+    const data = await response.json();
+    
+    if (!data.success) {
+      throw new Error(data.error.message);
+    }
+
+    return data.data; // Array of API keys
+  } catch (error) {
+    console.error('Error listing API keys:', error);
+    throw error;
+  }
+};
+```
+
+### Revoking an API Key
+
+```typescript
+// Revoke an API key
+const revokeKey = async (keyId: string, siteId: string) => {
+  try {
+    const response = await fetch(`/api/keys?id=${keyId}&site_id=${siteId}`, {
+      method: 'DELETE'
+    });
+    
+    const data = await response.json();
+    if (!data.success) {
+      throw new Error(data.error.message);
+    }
+
+    return true; // Key revoked successfully
+  } catch (error) {
+    console.error('Error revoking API key:', error);
+    throw error;
+  }
+};
+```
+
+### React Component Example
+
+```typescript
+import { useState, useEffect } from 'react';
+import { Button, Table, Modal, Form } from 'your-ui-library';
+
+interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  status: 'active' | 'expired' | 'revoked';
+  expires_at: string;
+  created_at: string;
+}
+
+export function ApiKeysManager({ siteId }: { siteId: string }) {
+  const [keys, setKeys] = useState<ApiKey[]>([]);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // Load API keys
+  useEffect(() => {
+    const loadKeys = async () => {
+      setLoading(true);
+      try {
+        const keys = await listKeys(siteId);
+        setKeys(keys);
+      } catch (error) {
+        // Handle error
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadKeys();
+  }, [siteId]);
+
+  // Create new key
+  const handleCreate = async (values: any) => {
+    try {
+      const newKey = await createKey({
+        ...values,
+        site_id: siteId
+      });
+      
+      // Show the key to the user (only time it will be visible)
+      alert(`Your API Key: ${newKey.apiKey}`);
+      
+      // Refresh the list
+      setKeys(await listKeys(siteId));
+      setShowCreateModal(false);
+    } catch (error) {
+      // Handle error
+    }
+  };
+
+  // Revoke key
+  const handleRevoke = async (keyId: string) => {
+    if (!confirm('Are you sure you want to revoke this key?')) {
+      return;
+    }
+
+    try {
+      await revokeKey(keyId, siteId);
+      // Refresh the list
+      setKeys(await listKeys(siteId));
+    } catch (error) {
+      // Handle error
+    }
+  };
+
+  return (
+    <div>
+      <Button onClick={() => setShowCreateModal(true)}>
+        Create New API Key
+      </Button>
+
+      <Table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Prefix</th>
+            <th>Status</th>
+            <th>Expires</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {keys.map(key => (
+            <tr key={key.id}>
+              <td>{key.name}</td>
+              <td>{key.prefix}</td>
+              <td>{key.status}</td>
+              <td>{new Date(key.expires_at).toLocaleDateString()}</td>
+              <td>
+                {key.status === 'active' && (
+                  <Button onClick={() => handleRevoke(key.id)}>
+                    Revoke
+                  </Button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </Table>
+
+      <Modal
+        open={showCreateModal}
+        onClose={() => setShowCreateModal(false)}
+      >
+        <Form onSubmit={handleCreate}>
+          <Form.Input
+            name="name"
+            label="Key Name"
+            required
+          />
+          <Form.Select
+            name="scopes"
+            label="Permissions"
+            multiple
+            required
+            options={[
+              { value: 'read', label: 'Read' },
+              { value: 'write', label: 'Write' }
+            ]}
+          />
+          <Form.Input
+            name="expirationDays"
+            label="Expires In (days)"
+            type="number"
+            defaultValue={90}
+          />
+          <Form.Input
+            name="prefix"
+            label="Key Prefix"
+            placeholder="prod"
+          />
+          <Button type="submit">Create Key</Button>
+        </Form>
+      </Modal>
+    </div>
+  );
+}
+```
+
+## API Reference
+
+### Managing API Keys
+
+These endpoints require session authentication (not API key) as they are for managing API keys themselves.
+
+#### Create API Key
+
+```http
+POST /api/keys
+Content-Type: application/json
+Authorization: Bearer {session_token}
+
+{
+  "name": "My API Key",
+  "scopes": ["read", "write"],
+  "site_id": "123e4567-e89b-12d3-a456-426614174000",
+  "expirationDays": 90,
+  "prefix": "prod"
+}
+```
+
+**Request Parameters**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| name | string | Yes | A descriptive name for the key |
+| scopes | string[] | Yes | Array of permissions (read, write) |
+| site_id | string (UUID) | Yes | The site this key belongs to |
+| expirationDays | number | No | Days until key expires (default: 90) |
+| prefix | string | No | Key prefix (default: "key") |
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "apiKey": "prod_bG9yZW1pcHN1bWRvbG9yc2l0YW1ldA",
+    "id": "key_123",
+    "prefix": "prod",
+    "expires_at": "2024-06-20T00:00:00Z"
+  }
+}
+```
+
+⚠️ **Important**: The full API key is only shown once upon creation. Store it securely as it cannot be retrieved later.
+
+#### List API Keys
+
+```http
+GET /api/keys?site_id={site_id}
+Authorization: Bearer {session_token}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "key_123",
+      "name": "My API Key",
+      "prefix": "prod",
+      "status": "active",
+      "scopes": ["read", "write"],
+      "expires_at": "2024-06-20T00:00:00Z",
+      "created_at": "2024-03-20T00:00:00Z"
+    }
+  ]
+}
+```
+
+#### Revoke API Key
+
+```http
+DELETE /api/keys?id={key_id}&site_id={site_id}
+Authorization: Bearer {session_token}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "message": "API key revoked successfully"
+}
+```
+
+### Using API Keys
+
+Once you have an API key, you can use it to authenticate requests to the API endpoints:
+
+#### List Sites
+
+```http
+GET /sites
+X-API-Key: your_api_key_here
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "site_123",
+      "name": "My Site",
+      "domain": "example.com",
+      "created_at": "2024-03-20T00:00:00Z"
+    }
+  ]
+}
+```
+
+#### Get Site Details
+
+```http
+GET /sites/{site_id}
+X-API-Key: your_api_key_here
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "site_123",
+    "name": "My Site",
+    "domain": "example.com",
+    "created_at": "2024-03-20T00:00:00Z",
+    "settings": {
+      // Site specific settings
+    }
+  }
+}
+```
+
+#### Create Command
+
+```http
+POST /sites/{site_id}/commands
+X-API-Key: your_api_key_here
+Content-Type: application/json
+
+{
+  "task": "analyze_emails",
+  "description": "Analyze incoming emails",
+  "parameters": {
+    // Command specific parameters
+  }
+}
+```
+
+**Response**
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_123",
+    "status": "processing",
+    "created_at": "2024-03-20T00:00:00Z"
+  }
+}
+```
+
+### Error Responses
+
+All endpoints return errors in this format:
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human readable error message"
+  }
+}
+```
+
+Common error codes:
+
+| Code | Description |
+|------|-------------|
+| UNAUTHORIZED | Authentication required or invalid |
+| INVALID_REQUEST | Invalid request parameters |
+| FORBIDDEN | Insufficient permissions |
+| NOT_FOUND | API key not found |
+| SYSTEM_ERROR | Internal server error |
+
+## Best Practices
+
+### Storage:
+
+Never store API keys in:
+- Version control
+- Plain text files
+- Environment variables in public locations
+- Client-side code
+
+Use secure credential managers or environment variables for server-side applications
+
+### Usage:
+
+- Use different keys for different environments (dev/staging/prod)
+- Rotate keys regularly
+- Monitor key usage for suspicious activity
+- Use the minimum required scope for each key
+
+### Security:
+
+- Always transmit keys over HTTPS
+- Implement key rotation in your applications
+- Revoke compromised keys immediately
+- Use rate limiting and monitoring
+
+## Rate Limiting
+
+API keys are subject to the following rate limits:
+
+| Plan | Requests/minute | Concurrent requests |
+|------|----------------|-------------------|
+| Basic | 60 | 5 |
+| Pro | 300 | 20 |
+| Enterprise | Custom | Custom | 

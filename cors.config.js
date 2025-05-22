@@ -30,6 +30,8 @@ const corsConfig = {
       'http://127.0.0.1:3001',
       'http://192.168.87.64:3001',
       'http://192.168.87.64:3456',
+      'http://192.168.87.79:3001',
+      'http://192.168.87.79:3456',
       'https://www.uncodie.com',
       'https://uncodie.com'
     ]
@@ -44,9 +46,7 @@ const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, Accept, Orig
  */
 export const getAllowedOrigins = () => {
   const environment = process.env.NODE_ENV === 'production' ? 'production' : 'development';
-  console.log(`[CORS-CONFIG] Entorno: ${environment}, NODE_ENV=${process.env.NODE_ENV}`);
   const origins = corsConfig[environment].origins;
-  console.log(`[CORS-CONFIG] Orígenes permitidos (${origins.length}):`, origins);
   return origins;
 };
 
@@ -54,7 +54,6 @@ export const getAllowedOrigins = () => {
  * Obtiene la lista de encabezados permitidos
  */
 export const getAllowedHeaders = () => {
-  console.log('[CORS-CONFIG] Headers permitidos:', ALLOWED_HEADERS);
   return ALLOWED_HEADERS;
 };
 
@@ -62,8 +61,7 @@ export const getAllowedHeaders = () => {
  * Verifica si un origen está permitido
  */
 export const isOriginAllowed = (origin) => {
-  console.log(`[CORS-CONFIG] Verificando origen: "${origin}"`);
-  
+
   // Si no hay origen o estamos en desarrollo, permitir
   if (!origin) {
     console.log('[CORS-CONFIG] No hay origen, permitido por defecto');

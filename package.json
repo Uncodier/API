@@ -69,7 +69,7 @@
     "@testing-library/jest-dom": "^6.0.0",
     "@testing-library/react": "^14.0.0",
     "@types/imap": "^0.8.42",
-    "@types/jest": "^29.5.8",
+    "@types/jest": "^29.5.14",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^20.9.1",
     "@types/nodemailer": "^6.4.17",
@@ -85,6 +85,7 @@
     "pagefind": "^1.0.4",
     "postcss": "^8.5.3",
     "tailwindcss": "^4.1.5",
+    "ts-jest": "^29.3.4",
     "typescript": "^5.2.2"
   }
 }
