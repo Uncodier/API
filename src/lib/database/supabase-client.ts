@@ -3,20 +3,33 @@ import { createClient } from '@supabase/supabase-js';
 // Obtener las variables de entorno para Supabase
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
 // Verificar si las variables de entorno están definidas
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase URL o Anon Key no están definidas en las variables de entorno');
+  console.warn('⚠️ Supabase URL o Anon Key no están definidas en las variables de entorno');
 }
 
-// Add the service role key for admin operations
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+if (!supabaseServiceRoleKey) {
+  console.warn('⚠️ Supabase Service Role Key no está definida en las variables de entorno');
+}
 
-// Create and export the admin client using the service role key
-export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey);
+// Crear y exportar el cliente normal usando la anon key
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+    detectSessionInUrl: true
+  }
+});
 
-// Create and export the regular client using the anon key
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+// Crear y exportar el cliente admin usando la service role key
+export const supabaseAdmin = createClient(supabaseUrl, supabaseServiceRoleKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false
+  }
+});
 
 // Función para verificar la conexión a Supabase
 export async function checkSupabaseConnection(): Promise<boolean> {
