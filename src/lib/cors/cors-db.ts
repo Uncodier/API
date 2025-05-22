@@ -147,7 +147,6 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
   // Check cache first
   const cachedResult = domainCache.get(domain);
   if (cachedResult !== null) {
-    console.log('[CORS-DB] Using cached result for domain:', domain);
     return cachedResult;
   }
 
@@ -166,7 +165,6 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
       const siteUrl = siteData.url;
       const siteDomain = extractDomain(siteUrl);
       if (siteDomain === domain) {
-        console.log('[CORS-DB] Domain found in sites table');
         domainCache.set(domain, true);
         return true;
       }
@@ -175,18 +173,16 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
     // Then check in allowed_domains table
     const { data: domainData, error: domainError } = await supabaseAdmin
       .from('allowed_domains')
-      .select('sites')
-      .contains('sites', [domain]);
+      .select('domain')
+      .ilike('domain', `%${domain}%`);
 
     if (domainError) {
       console.error('[CORS-DB] Error checking allowed_domains table:', domainError);
     } else if (domainData && domainData.length > 0) {
-      console.log('[CORS-DB] Domain found in allowed_domains table');
       domainCache.set(domain, true);
       return true;
     }
 
-    console.log('[CORS-DB] Domain not found in any table:', domain);
     domainCache.set(domain, false);
     return false;
 

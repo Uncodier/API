@@ -59,19 +59,16 @@ export const getAllowedHeaders = () => {
 export const isOriginAllowed = async (origin) => {
   // Si no hay origen o estamos en desarrollo, permitir
   if (!origin) {
-    console.log('[CORS-CONFIG] No hay origen, permitido por defecto');
     return true;
   }
   
   if (process.env.NODE_ENV !== 'production') {
-    console.log('[CORS-CONFIG] Entorno no es producción, permitido por defecto');
     return true;
   }
 
   // Primero verificar contra la lista de orígenes permitidos
   const allowedOrigins = getAllowedOrigins();
   if (allowedOrigins.includes(origin)) {
-    console.log('[CORS-CONFIG] Origen encontrado en lista estática');
     return true;
   }
 
@@ -79,7 +76,6 @@ export const isOriginAllowed = async (origin) => {
   try {
     const { isOriginAllowedInDb } = await import('@/lib/cors/cors-db');
     const isAllowed = await isOriginAllowedInDb(origin);
-    console.log(`[CORS-CONFIG] Origen ${isAllowed ? 'permitido' : 'rechazado'} por base de datos`);
     return isAllowed;
   } catch (error) {
     console.error('[CORS-CONFIG] Error al verificar origen en base de datos:', error);
@@ -91,7 +87,6 @@ export const isOriginAllowed = async (origin) => {
  * Genera configuración CORS para next.config.mjs
  */
 export const getNextJsCorsConfig = () => {
-  console.log('[CORS-CONFIG] Generando config para next.config.mjs');
   const allowedOrigins = getAllowedOrigins();
   
   const config = allowedOrigins.map(origin => ({
@@ -105,7 +100,6 @@ export const getNextJsCorsConfig = () => {
     ]
   }));
   
-  console.log(`[CORS-CONFIG] Configuración generada para ${allowedOrigins.length} orígenes`);
   return config;
 };
 
