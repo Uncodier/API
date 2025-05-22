@@ -9,8 +9,6 @@ const corsConfig = {
     origins: [
       'https://salocal.site',
       'https://www.salocal.site',
-      'https://www.uncodie.com',
-      'https://uncodie.com',
       // También permitir orígenes de desarrollo en producción para pruebas
       'http://localhost:3000',
       'http://localhost:3456',
@@ -31,9 +29,7 @@ const corsConfig = {
       'http://192.168.87.64:3001',
       'http://192.168.87.64:3456',
       'http://192.168.87.79:3001',
-      'http://192.168.87.79:3456',
-      'https://www.uncodie.com',
-      'https://uncodie.com'
+      'http://192.168.87.79:3456'
     ]
   }
 };
@@ -60,8 +56,7 @@ export const getAllowedHeaders = () => {
 /**
  * Verifica si un origen está permitido
  */
-export const isOriginAllowed = (origin) => {
-
+export const isOriginAllowed = async (origin) => {
   // Si no hay origen o estamos en desarrollo, permitir
   if (!origin) {
     console.log('[CORS-CONFIG] No hay origen, permitido por defecto');
@@ -72,11 +67,24 @@ export const isOriginAllowed = (origin) => {
     console.log('[CORS-CONFIG] Entorno no es producción, permitido por defecto');
     return true;
   }
-  
-  // En producción, verificar contra la lista de orígenes permitidos
-  const allowed = getAllowedOrigins().includes(origin);
-  console.log(`[CORS-CONFIG] Origen ${allowed ? 'permitido' : 'rechazado'} en lista`);
-  return allowed;
+
+  // Primero verificar contra la lista de orígenes permitidos
+  const allowedOrigins = getAllowedOrigins();
+  if (allowedOrigins.includes(origin)) {
+    console.log('[CORS-CONFIG] Origen encontrado en lista estática');
+    return true;
+  }
+
+  // Si no está en la lista estática, verificar en la base de datos
+  try {
+    const { isOriginAllowedInDb } = await import('@/lib/cors/cors-db');
+    const isAllowed = await isOriginAllowedInDb(origin);
+    console.log(`[CORS-CONFIG] Origen ${isAllowed ? 'permitido' : 'rechazado'} por base de datos`);
+    return isAllowed;
+  } catch (error) {
+    console.error('[CORS-CONFIG] Error al verificar origen en base de datos:', error);
+    return false;
+  }
 };
 
 /**
