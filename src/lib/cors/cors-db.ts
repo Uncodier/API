@@ -7,7 +7,7 @@ class DomainCache {
   private cache: Map<string, { allowed: boolean; timestamp: number }>;
   private readonly maxEntries: number;
   private readonly cacheDuration: number;
-  private cleanupInterval: NodeJS.Timeout | null;
+  private cleanupInterval: any;
 
   constructor(options: {
     maxEntries?: number;
@@ -19,8 +19,10 @@ class DomainCache {
     this.cacheDuration = options.cacheDuration || 5 * 60 * 1000; // Default 5 minutes
     this.cleanupInterval = null;
     
-    // Start cleanup interval
-    this.startCleanup(options.cleanupInterval || 60 * 1000); // Default 1 minute cleanup
+    // Start cleanup interval if we're in a Node.js environment
+    if (typeof setInterval === 'function') {
+      this.startCleanup(options.cleanupInterval || 60 * 1000); // Default 1 minute cleanup
+    }
   }
 
   /**
@@ -34,11 +36,6 @@ class DomainCache {
     this.cleanupInterval = setInterval(() => {
       this.cleanup();
     }, interval);
-    
-    // Prevent the interval from keeping the process alive
-    if (this.cleanupInterval.unref) {
-      this.cleanupInterval.unref();
-    }
   }
 
   /**
@@ -73,13 +70,25 @@ class DomainCache {
    * Set a value in cache
    */
   set(domain: string, allowed: boolean): void {
-    // If cache is full, remove oldest entry
+    // Clean up if cache is getting full
     if (this.cache.size >= this.maxEntries) {
-      const oldestKey = Array.from(this.cache.entries())
-        .reduce((oldest, current) => 
-          current[1].timestamp < oldest[1].timestamp ? current : oldest
-        )[0];
-      this.cache.delete(oldestKey);
+      const now = Date.now();
+      
+      // First try to remove expired entries
+      Array.from(this.cache.entries()).forEach(([key, entry]) => {
+        if (now - entry.timestamp > this.cacheDuration) {
+          this.cache.delete(key);
+        }
+      });
+      
+      // If still full, remove oldest entry
+      if (this.cache.size >= this.maxEntries) {
+        const oldestKey = Array.from(this.cache.entries())
+          .reduce((oldest, current) => 
+            current[1].timestamp < oldest[1].timestamp ? current : oldest
+          )[0];
+        this.cache.delete(oldestKey);
+      }
     }
 
     this.cache.set(domain, {
@@ -101,11 +110,6 @@ class DomainCache {
 
 // Create cache instance with default settings
 const domainCache = new DomainCache();
-
-// Ensure cleanup on process exit
-process.on('beforeExit', () => {
-  domainCache.stop();
-});
 
 /**
  * Extracts the domain from a URL or origin string
