@@ -6,11 +6,10 @@ import { v4 as uuidv4 } from 'uuid';
  * Tipos de notificaciones soportados por el sistema
  */
 export enum NotificationType {
-  HUMAN_INTERVENTION = 'human_intervention',
-  SYSTEM_ALERT = 'system_alert',
-  TASK_COMPLETION = 'task_completion',
-  LEAD_GENERATED = 'lead_generated',
-  CONVERSATION_ASSIGNED = 'conversation_assigned',
+  INFO = 'info',
+  SUCCESS = 'success',
+  WARNING = 'warning',
+  ERROR = 'error',
 }
 
 /**
@@ -42,9 +41,8 @@ export interface CreateNotificationParams {
   message: string;
   type: NotificationType;
   priority: NotificationPriority;
-  entity_type?: string;
-  entity_id?: string;
-  metadata?: Record<string, any>;
+  related_entity_type?: string;
+  related_entity_id?: string;
 }
 
 /**
@@ -121,13 +119,11 @@ export class NotificationService {
         title: params.title,
         message: params.message,
         type: params.type,
-        priority: params.priority,
         user_id: params.user_id,
         site_id: params.site_id,
-        entity_type: params.entity_type,
-        entity_id: params.entity_id,
-        status: NotificationStatus.UNREAD,
-        metadata: params.metadata || {},
+        related_entity_type: params.related_entity_type,
+        related_entity_id: params.related_entity_id,
+        is_read: false,
         created_at: new Date().toISOString(),
       };
 
@@ -220,8 +216,8 @@ export class NotificationService {
       const { error } = await supabaseAdmin
         .from('notifications')
         .update({ 
-          status: NotificationStatus.READ,
-          read_at: new Date().toISOString()
+          is_read: true,
+          updated_at: new Date().toISOString()
         })
         .eq('id', notificationId);
 
@@ -243,8 +239,8 @@ export class NotificationService {
       const { error } = await supabaseAdmin
         .from('notifications')
         .update({ 
-          status: NotificationStatus.ARCHIVED,
-          archived_at: new Date().toISOString()
+          is_read: true,
+          updated_at: new Date().toISOString()
         })
         .eq('id', notificationId);
 
@@ -260,13 +256,13 @@ export class NotificationService {
    * 
    * @param userId ID del usuario
    * @param limit Límite de notificaciones a obtener
-   * @param status Estado de las notificaciones a obtener (opcional)
+   * @param onlyUnread Si solo obtener notificaciones no leídas (opcional)
    * @returns Lista de notificaciones o null si hubo un error
    */
   static async getUserNotifications(
     userId: string, 
     limit: number = 50, 
-    status?: NotificationStatus
+    onlyUnread?: boolean
   ): Promise<any[] | null> {
     try {
       let query = supabaseAdmin
@@ -276,8 +272,8 @@ export class NotificationService {
         .order('created_at', { ascending: false })
         .limit(limit);
 
-      if (status) {
-        query = query.eq('status', status);
+      if (onlyUnread) {
+        query = query.eq('is_read', false);
       }
 
       const { data, error } = await query;

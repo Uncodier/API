@@ -1,0 +1,516 @@
+# Chat API Reference
+
+<div className="api-reference">
+
+## Introducción
+
+El Chat API de MarketFit proporciona una interfaz completa para integrar funcionalidades de chat en tiempo real en tu sitio web. Este sistema permite crear experiencias de chat contextuales, gestionar conversaciones y automatizar interacciones con usuarios.
+
+## Instalación y Configuración
+
+### Inicialización
+
+```javascript
+// Inicializar el sistema completo con chat habilitado
+window.MarketFit.init({
+  siteId: 'tu-site-id',
+  apiEndpoint: 'https://api.tu-dominio.com',
+  chat: {
+    enabled: true,
+    agentName: 'Soporte',
+    welcomeMessage: '¡Hola! ¿En qué puedo ayudarte?',
+    title: 'Chat con nosotros',
+    position: 'bottom-right',
+    theme: {
+      primaryColor: '#007bff',
+      secondaryColor: '#e9ecef',
+      textColor: '#212529'
+    },
+    accentColor: '#2f66c9',
+    allowAnonymousMessages: false
+  }
+});
+```
+
+## Funciones Principales
+
+### `openChatWithWelcomeMessage()`
+
+Abre el chat mostrando un mensaje de bienvenida personalizado del agente.
+
+#### Sintaxis
+```javascript
+window.MarketFit.openChatWithWelcomeMessage(welcomeMessage, options)
+```
+
+#### Parámetros
+- **welcomeMessage** `string` (requerido): Mensaje de bienvenida a mostrar
+- **options** `object` (opcional): Configuraciones adicionales
+
+#### Opciones disponibles
+```typescript
+{
+  clearExistingMessages?: boolean;  // default: false
+  agentName?: string;               // default: configuración global
+  replaceWelcomeMessage?: boolean;  // default: false
+  newConversation?: boolean;        // default: false
+}
+```
+
+#### Ejemplos
+
+<div className="example-grid">
+
+**Ejemplo básico:**
+```javascript
+window.MarketFit.openChatWithWelcomeMessage(
+  "¡Hola! Vi que estás navegando por nuestros productos. ¿Te puedo ayudar?"
+);
+```
+
+**Con opciones:**
+```javascript
+window.MarketFit.openChatWithWelcomeMessage(
+  "Bienvenido a nuestro soporte premium. ¿Cómo podemos asistirte?",
+  {
+    clearExistingMessages: true,
+    newConversation: true,
+    agentName: "Soporte Premium"
+  }
+);
+```
+
+</div>
+
+---
+
+### `openChatWithTask()`
+
+Función más versátil que permite mostrar mensajes de bienvenida y/o pre-rellenar tareas específicas del usuario.
+
+#### Sintaxis
+```javascript
+window.MarketFit.openChatWithTask(options)
+```
+
+#### Parámetros
+- **options** `object` (requerido): Configuración de la tarea del chat
+
+#### Opciones disponibles
+```typescript
+{
+  welcomeMessage?: string;          // Mensaje de bienvenida del agente
+  task?: string;                   // Tarea a pre-rellenar para el usuario
+  clearExistingMessages?: boolean; // default: false
+  newConversation?: boolean;       // default: false
+  autoSend?: boolean;             // default: false
+  replaceWelcomeMessage?: boolean; // default: false
+}
+```
+
+#### Ejemplos
+
+<div className="example-grid">
+
+**Pre-rellenar tarea del usuario:**
+```javascript
+window.MarketFit.openChatWithTask({
+  task: "Quiero agendar una reunión para discutir precios",
+  clearExistingMessages: true
+});
+```
+
+**Combinar bienvenida y tarea:**
+```javascript
+window.MarketFit.openChatWithTask({
+  welcomeMessage: "¡Perfecto! Te ayudo a agendar una reunión.",
+  task: "Prefiero una llamada el lunes o martes por la mañana",
+  clearExistingMessages: true,
+  newConversation: true
+});
+```
+
+**Auto-envío de tarea:**
+```javascript
+window.MarketFit.openChatWithTask({
+  welcomeMessage: "Te conecto con nuestro equipo de ventas inmediatamente.",
+  task: "Quiero más información sobre el plan Enterprise",
+  autoSend: true,
+  clearExistingMessages: true
+});
+```
+
+</div>
+
+---
+
+## Funciones de Control
+
+### `toggleChat()`
+
+Abre o cierra el widget de chat según su estado actual.
+
+#### Sintaxis
+```javascript
+window.MarketFit.toggleChat()
+```
+
+#### Ejemplo
+```javascript
+// Botón para abrir/cerrar chat
+document.getElementById('chat-toggle').addEventListener('click', () => {
+  window.MarketFit.toggleChat();
+});
+```
+
+---
+
+### `sendChatMessage()`
+
+Envía un mensaje programáticamente al chat.
+
+#### Sintaxis
+```javascript
+window.MarketFit.sendChatMessage(content)
+```
+
+#### Parámetros
+- **content** `string` (requerido): Contenido del mensaje a enviar
+
+#### Ejemplo
+```javascript
+// Enviar mensaje automático
+window.MarketFit.sendChatMessage("Usuario necesita asistencia urgente");
+```
+
+---
+
+### `setChatWelcomeMessage()`
+
+Cambia el mensaje de bienvenida por defecto del chat.
+
+#### Sintaxis
+```javascript
+window.MarketFit.setChatWelcomeMessage(message)
+```
+
+#### Parámetros
+- **message** `string` (requerido): Nuevo mensaje de bienvenida por defecto
+
+#### Ejemplo
+```javascript
+// Cambiar mensaje según la temporada
+window.MarketFit.setChatWelcomeMessage(
+  "¡Oferta especial de Black Friday! ¿Cómo podemos ayudarte?"
+);
+```
+
+---
+
+## Funciones de Gestión
+
+### Gestión de Conversaciones
+
+```javascript
+// Verificar si hay conversaciones existentes
+const hasConversations = window.MarketFit.chat.hasConversations();
+
+// Obtener lista de conversaciones
+const conversations = window.MarketFit.chat.getConversations();
+
+// Obtener estado actual del chat
+const chatState = window.MarketFit.chat.getState();
+
+// Obtener configuración del chat
+const chatConfig = window.MarketFit.chat.getConfig();
+```
+
+### Control de Estado
+
+```javascript
+// Minimizar chat
+window.MarketFit.chat.minimize();
+
+// Maximizar chat
+window.MarketFit.chat.maximize();
+
+// Verificar si está habilitado
+const isEnabled = window.MarketFit.chat.isEnabled();
+
+// Remover completamente el chat
+window.MarketFit.chat.remove();
+```
+
+---
+
+## Casos de Uso Prácticos
+
+### Por Páginas Específicas
+
+```javascript
+function initContextualChat() {
+  const currentPage = window.location.pathname;
+  
+  switch(true) {
+    case currentPage.includes('/pricing'):
+      window.MarketFit.openChatWithTask({
+        welcomeMessage: "¿Necesitas ayuda eligiendo el plan perfecto?",
+        task: "Quiero comparar los planes Pro y Enterprise",
+        clearExistingMessages: true
+      });
+      break;
+      
+    case currentPage.includes('/demo'):
+      window.MarketFit.openChatWithTask({
+        welcomeMessage: "¡Excelente! Te ayudo a programar una demo.",
+        task: "Quisiera agendar una demo para la próxima semana",
+        clearExistingMessages: true
+      });
+      break;
+      
+    case currentPage.includes('/support'):
+      window.MarketFit.openChatWithTask({
+        welcomeMessage: "Estoy aquí para resolver cualquier problema técnico.",
+        task: "Tengo un problema con ",
+        clearExistingMessages: true,
+        newConversation: true
+      });
+      break;
+      
+    default:
+      window.MarketFit.openChatWithWelcomeMessage(
+        "¡Hola! ¿En qué puedo ayudarte hoy?"
+      );
+  }
+}
+```
+
+### Botones de Acción Específica
+
+```javascript
+// Agendar Demo
+function scheduleDemo() {
+  window.MarketFit.openChatWithTask({
+    welcomeMessage: "¡Perfecto! Te ayudo a agendar una demo personalizada.",
+    task: "Quiero ver una demo de la plataforma",
+    newConversation: true,
+    clearExistingMessages: true
+  });
+}
+
+// Obtener Cotización
+function getQuote() {
+  window.MarketFit.openChatWithTask({
+    welcomeMessage: "Te ayudo a obtener una cotización personalizada.",
+    task: "Necesito una cotización para mi empresa",
+    newConversation: true,
+    clearExistingMessages: true
+  });
+}
+
+// Contactar Ventas
+function contactSales() {
+  window.MarketFit.openChatWithTask({
+    task: "Quiero hablar con alguien del equipo de ventas",
+    autoSend: true,
+    newConversation: true,
+    clearExistingMessages: true
+  });
+}
+
+// Soporte Técnico
+function technicalSupport() {
+  window.MarketFit.openChatWithTask({
+    welcomeMessage: "Soy especialista en soporte técnico. ¿Qué problema tienes?",
+    task: "Tengo un problema técnico con ",
+    newConversation: true,
+    clearExistingMessages: true
+  });
+}
+```
+
+### Triggers Automáticos
+
+```javascript
+// Tiempo en página
+setTimeout(() => {
+  window.MarketFit.openChatWithTask({
+    welcomeMessage: "He notado que has estado explorando nuestro sitio. ¿Alguna pregunta?",
+    task: "Sí, tengo preguntas sobre ",
+    clearExistingMessages: false
+  });
+}, 45000); // 45 segundos
+
+// Exit Intent
+document.addEventListener('mouseleave', function(e) {
+  if (e.clientY <= 0) {
+    window.MarketFit.openChatWithTask({
+      welcomeMessage: "¡Espera! ¿Hay algo en lo que pueda ayudarte antes de irte?",
+      task: "Necesito más información sobre ",
+      clearExistingMessages: true
+    });
+  }
+});
+
+// Scroll profundo
+let deepScrollTriggered = false;
+window.addEventListener('scroll', () => {
+  if (!deepScrollTriggered && window.scrollY > document.body.scrollHeight * 0.8) {
+    deepScrollTriggered = true;
+    window.MarketFit.openChatWithTask({
+      welcomeMessage: "Veo que has leído mucho contenido. ¿Te gustaría hablar con un experto?",
+      task: "Sí, me gustaría más información sobre ",
+    });
+  }
+});
+```
+
+---
+
+## Configuración Avanzada
+
+### Configuración del Chat
+
+```typescript
+interface ChatConfig {
+  enabled: boolean;                    // Habilitar/deshabilitar chat
+  position?: 'bottom-right' | 'bottom-left'; // Posición del widget
+  theme?: {
+    primaryColor?: string;             // Color principal
+    secondaryColor?: string;           // Color secundario  
+    textColor?: string;                // Color del texto
+  };
+  accentColor?: string;                // Color de acento
+  agentName?: string;                  // Nombre del agente
+  agentAvatar?: string;                // Avatar del agente
+  agentId?: string;                    // ID del agente
+  welcomeMessage?: string;             // Mensaje de bienvenida por defecto
+  chatTitle?: string;                  // Título del chat
+  allowAnonymousMessages?: boolean;    // Permitir mensajes anónimos
+}
+```
+
+### Estados del Chat
+
+```typescript
+interface ChatState {
+  isOpen: boolean;                     // Chat abierto/cerrado
+  messages: ChatMessage[];             // Array de mensajes
+  unreadCount: number;                 // Contador de no leídos
+  minimized: boolean;                  // Chat minimizado
+}
+
+interface ChatMessage {
+  id: string;                          // ID único del mensaje
+  content: string;                     // Contenido del mensaje
+  timestamp: number;                   // Timestamp del mensaje
+  sender: 'user' | 'agent';           // Remitente del mensaje
+  status?: 'sent' | 'delivered' | 'read'; // Estado del mensaje
+}
+```
+
+---
+
+## Integración con Eventos
+
+### Event Listeners
+
+```javascript
+// Escuchar cuando se abre el chat
+window.addEventListener('marketfit:chat:opened', (event) => {
+  console.log('Chat abierto', event.detail);
+});
+
+// Escuchar cuando se envía un mensaje
+window.addEventListener('marketfit:chat:message:sent', (event) => {
+  console.log('Mensaje enviado', event.detail);
+});
+
+// Escuchar cuando llega un nuevo mensaje
+window.addEventListener('marketfit:chat:message:received', (event) => {
+  console.log('Nuevo mensaje recibido', event.detail);
+});
+```
+
+### Callbacks de Configuración
+
+```javascript
+window.MarketFit.init({
+  // ... otras configuraciones
+  chat: {
+    enabled: true,
+    onLeadInfoSubmit: (leadInfo) => {
+      // Manejar información de lead capturada
+      console.log('Lead capturado:', leadInfo);
+      
+      // Integrar con tu CRM
+      sendToCRM(leadInfo);
+    }
+  }
+});
+```
+
+---
+
+## Mejores Prácticas
+
+### 1. Uso Contextual
+- Utiliza `openChatWithTask()` para crear experiencias dirigidas
+- Pre-rellena tareas específicas según el contexto de la página
+- Usa `newConversation: true` para asegurar contexto limpio
+
+### 2. UX Optimization
+- No abuses de los triggers automáticos
+- Usa `clearExistingMessages: true` para contextos nuevos
+- Considera usar `autoSend: true` solo para acciones muy específicas
+
+### 3. Personalización
+- Adapta `welcomeMessage` según la sección del sitio
+- Usa diferentes `agentName` para diferentes tipos de soporte
+- Configura temas que coincidan con tu brand
+
+### 4. Performance
+- Inicializa el chat solo cuando sea necesario
+- Usa `chat.remove()` para limpiar recursos cuando no se necesite
+- Monitorea el estado del chat para evitar operaciones innecesarias
+
+---
+
+## Troubleshooting
+
+### Problemas Comunes
+
+**Chat no aparece:**
+```javascript
+// Verificar inicialización
+if (!window.MarketFit.chat.isEnabled()) {
+  console.log('Chat no está habilitado');
+}
+
+// Verificar configuración
+console.log(window.MarketFit.chat.getConfig());
+```
+
+**Mensajes no se envían:**
+```javascript
+// Verificar estado de conexión
+const state = window.MarketFit.chat.getState();
+console.log('Estado del chat:', state);
+```
+
+**Widget no responde:**
+```javascript
+// Reinicializar widget
+window.MarketFit.chat.remove();
+// Reconfigurar según necesidad
+```
+
+</div>
+
+---
+
+## Soporte y Recursos
+
+- **Documentación completa**: Consulta ejemplos adicionales en `CHAT_API_USAGE.md`
+- **Archivo de ejemplos**: Revisa `EXAMPLE_USAGE.html` para implementaciones prácticas
+- **Configuración**: Consulta la configuración completa del tracker para opciones adicionales

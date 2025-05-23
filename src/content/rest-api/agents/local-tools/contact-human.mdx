@@ -3,6 +3,8 @@ title: 'contact-human'
 description: 'Solicita intervención humana en una conversación'
 ---
 
+import { UnifiedApiTester } from '@/components/ApiTester';
+
 # contact-human
 
 Este tool permite solicitar la intervención de un humano en una conversación, proporcionando un mensaje, detalles de contacto y un resumen opcional del contexto.
@@ -22,6 +24,34 @@ Notifica a los administradores del sitio para que intervengan en una conversaci�
 | summary         | string   | No        | Resumen de la conversación o contexto adicional           |
 | name            | string   | No        | Nombre de la persona de contacto                           |
 | email           | string   | No        | Correo electrónico de la persona de contacto               |
+
+## Probar API
+
+Utiliza el API Tester integrado para probar este endpoint de manera interactiva:
+
+<UnifiedApiTester apiId="contact-human" />
+
+### Características del API Tester:
+
+- **Campos preconfigurados**: Incluye todos los parámetros necesarios con ejemplos realistas
+- **Validación automática**: Verifica que los campos obligatorios estén completos
+- **Selector de prioridad**: Dropdown con las opciones disponibles (low, normal, high, urgent)
+- **Generación de código**: Ejemplos automáticos en cURL, JavaScript, Python y PHP
+- **Respuesta en tiempo real**: Muestra la respuesta del servidor inmediatamente
+- **Estadísticas de notificación**: Información sobre cuántas notificaciones y emails fueron enviados
+
+### Campos del formulario:
+
+**Obligatorios:**
+- `conversation_id`: ID de la conversación (formato UUID)
+- `message`: Mensaje de solicitud de intervención 
+- `priority`: Nivel de prioridad de la solicitud
+
+**Opcionales:**
+- `agent_id`: ID del agente que solicita la intervención
+- `summary`: Resumen o contexto adicional
+- `name`: Nombre de la persona de contacto
+- `email`: Email de la persona de contacto
 
 ## Respuesta
 
@@ -124,8 +154,27 @@ También es posible consultar el estado de una intervención mediante el endpoin
 }
 ```
 
+## API Tester
+
+Puedes probar este endpoint usando el componente integrado de API Tester. Este componente está disponible en la interfaz de administración y permite:
+
+- Configurar todos los parámetros del endpoint de manera interactiva
+- Enviar solicitudes de prueba con datos reales o de ejemplo
+- Ver las respuestas en tiempo real
+- Generar código de ejemplo en múltiples lenguajes (cURL, JavaScript, Python, PHP)
+- Validar el comportamiento del sistema de notificaciones al equipo
+
+El API Tester incluye:
+- **Campos obligatorios**: conversation_id, message, priority
+- **Campos opcionales**: agent_id, summary, name, email
+- **Selector de prioridad**: con opciones low, normal, high, urgent
+- **Notas informativas**: sobre el comportamiento de las notificaciones por email
+- **Estadísticas de respuesta**: muestra cuántas notificaciones y emails fueron enviados
+
 ## Notas adicionales
 
 - Al crear una solicitud de intervención, se genera automáticamente un mensaje en la conversación indicando que se ha solicitado intervención humana.
-- Se envían notificaciones por correo electrónico a los administradores del sitio si hay direcciones de correo configuradas.
+- Se envían notificaciones por correo electrónico solo a los miembros del equipo que tienen habilitadas las notificaciones por email (`profile.notifications.email === true`).
+- Los administradores sin configuración de notificaciones se incluyen por defecto.
 - Si se proporciona información de contacto (nombre y email), esta se incluirá en las notificaciones.
+- El sistema utiliza SendGrid para el envío de correos y crea notificaciones internas simultáneamente.

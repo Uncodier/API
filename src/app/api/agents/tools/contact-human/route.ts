@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { NotificationService, NotificationType } from '@/lib/services/notification-service';
+import { TeamNotificationService } from '@/lib/services/team-notification-service';
+import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
 import { v4 as uuidv4 } from 'uuid';
 import { 
-  NotificationService, 
-  NotificationType, 
   NotificationPriority 
 } from '@/lib/services/notification-service';
 
@@ -13,117 +14,9 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-/**
- * Función para obtener los destinatarios de correo según la solicitud
- * @param siteId ID del sitio donde se origina la solicitud
- * @returns Lista de correos electrónicos de los administradores del sitio
- */
-async function getEmailRecipients(siteId: string): Promise<string[]> {
-  try {
-    // Obtener los administradores del sitio
-    const { data: admins, error } = await supabaseAdmin
-      .from('site_users')
-      .select('user_id')
-      .eq('site_id', siteId)
-      .eq('role', 'admin');
-    
-    if (error || !admins || admins.length === 0) {
-      console.warn('No se encontraron administradores para el sitio:', siteId);
-      return [];
-    }
-    
-    // Extraer los IDs de usuario
-    const userIds = admins.map(admin => admin.user_id);
-    
-    // Obtener los correos de los usuarios
-    const { data: users, error: usersError } = await supabaseAdmin
-      .from('users')
-      .select('email')
-      .in('id', userIds);
-    
-    if (usersError || !users || users.length === 0) {
-      console.warn('No se encontraron usuarios con los IDs:', userIds);
-      return [];
-    }
-    
-    // Extraer los correos electrónicos
-    return users.map(user => user.email).filter(Boolean);
-  } catch (error) {
-    console.error('Error al obtener destinatarios de correo:', error);
-    return [];
-  }
-}
 
-/**
- * Función para generar el contenido HTML del correo
- * @param interventionData Datos de la intervención
- * @param conversationData Datos de la conversación
- * @param agentData Datos del agente (opcional)
- * @param summary Resumen de la conversación o contexto adicional
- * @returns Contenido HTML del correo
- */
-function generateEmailHtml(
-  interventionData: any,
-  conversationData: any,
-  agentData: any | null,
-  summary?: string
-): string {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-  const conversationUrl = `${baseUrl}/sites/${conversationData.site_id}/conversations/${conversationData.id}`;
-  
-  const agentText = agentData ? `El agente <strong>${agentData.name}</strong> ha` : "Se ha";
-  
-  // Verificar si hay datos de contacto
-  const hasContactInfo = interventionData.contact_name || interventionData.contact_email;
-  
-  return `
-    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-      <h2 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">Solicitud de intervención humana</h2>
-      
-      <p style="margin: 20px 0; font-size: 16px;">
-        ${agentText} solicitado la intervención de un humano 
-        en una conversación con prioridad <strong>${interventionData.priority}</strong>.
-      </p>
-      
-      <div style="background-color: #f9f9f9; padding: 15px; border-left: 4px solid #6366f1; margin: 20px 0;">
-        <p style="margin: 0; font-style: italic;">"${interventionData.message}"</p>
-      </div>
-      
-      ${summary ? `
-      <h3 style="margin-top: 25px; color: #444;">Resumen de la conversación:</h3>
-      <div style="background-color: #f5f5f5; padding: 15px; border-radius: 4px; margin: 15px 0;">
-        <p style="margin: 0;">${summary}</p>
-      </div>
-      ` : ''}
-      
-      ${hasContactInfo ? `
-      <h3 style="margin-top: 25px; color: #444;">Información de contacto:</h3>
-      <div style="background-color: #f0f7ff; padding: 15px; border-radius: 4px; margin: 15px 0;">
-        ${interventionData.contact_name ? `<p><strong>Nombre:</strong> ${interventionData.contact_name}</p>` : ''}
-        ${interventionData.contact_email ? `<p><strong>Email:</strong> <a href="mailto:${interventionData.contact_email}">${interventionData.contact_email}</a></p>` : ''}
-      </div>
-      ` : ''}
-      
-      <h3 style="margin-top: 25px; color: #444;">Detalles de la solicitud:</h3>
-      <ul style="padding-left: 20px;">
-        <li><strong>ID de intervención:</strong> ${interventionData.id}</li>
-        <li><strong>Conversación:</strong> ${conversationData.title || 'Sin título'}</li>
-        <li><strong>Fecha de solicitud:</strong> ${new Date(interventionData.requested_at).toLocaleString()}</li>
-        <li><strong>Estado:</strong> Pendiente</li>
-      </ul>
-      
-      <div style="margin: 30px 0; text-align: center;">
-        <a href="${conversationUrl}" style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-          Ver conversación
-        </a>
-      </div>
-      
-      <p style="color: #777; font-size: 14px; margin-top: 40px;">
-        Este correo fue generado automáticamente. Por favor, no responda a este mensaje.
-      </p>
-    </div>
-  `;
-}
+
+
 
 /**
  * Endpoint para solicitar la intervención de un humano en una conversación
@@ -269,10 +162,9 @@ export async function POST(request: NextRequest) {
       role: 'system',
       agent_id,
       user_id: conversationData.user_id,
-      site_id: siteId,
       lead_id: conversationData.lead_id,
       visitor_id: conversationData.visitor_id,
-      metadata: {
+      custom_data: {
         intervention_id: interventionId,
         priority,
         summary
@@ -305,13 +197,6 @@ export async function POST(request: NextRequest) {
         notificationPriority = NotificationPriority.NORMAL;
     }
     
-    // Obtener correos de los administradores del sitio
-    const emailRecipients = await getEmailRecipients(siteId);
-    
-    // Crear título y mensaje para la notificación
-    const notificationTitle = `Intervención humana solicitada${agent_id ? ` por ${agentData?.name || 'Agente no especificado'}` : ''}`;
-    const notificationMessage = `Se requiere intervención humana en una conversación. Mensaje: "${message}"`;
-    
     // Crear objeto de metadatos para la notificación
     const notificationMetadata = {
       intervention_id: interventionId,
@@ -323,89 +208,73 @@ export async function POST(request: NextRequest) {
       contact_email: email || null
     };
 
-    // Notificar a través del servicio de notificaciones
-    if (emailRecipients.length > 0) {
-      // Para el email, podemos simular los datos de intervención
-      const interventionData = {
-        id: interventionId,
-        conversation_id,
-        agent_id: agent_id || null,
-        message,
-        priority,
-        status: 'pending',
-        user_id: conversationData.user_id,
-        requested_at: new Date().toISOString(),
-        requested_by: agent_id ? 'agent' : 'system',
-        site_id: siteId,
-        lead_id: conversationData.lead_id,
-        visitor_id: conversationData.visitor_id,
-        summary: summary || null,
-        contact_name: name || null,
-        contact_email: email || null
-      };
-      
-      // Generar el HTML para el correo
-      const emailHtml = generateEmailHtml(
-        interventionData,
-        conversationData,
-        agentData,
-        summary
-      );
-      
-      // Enviar notificación y correo
-      await NotificationService.notify(
-        {
-          user_id: conversationData.user_id,
-          site_id: siteId,
-          title: notificationTitle,
-          message: notificationMessage,
-          type: NotificationType.HUMAN_INTERVENTION,
-          priority: notificationPriority,
-          entity_type: 'conversation',
-          entity_id: conversation_id,
-          metadata: notificationMetadata
-        },
-        {
-          to: emailRecipients,
-          subject: notificationTitle,
-          html: emailHtml,
-          text: `${notificationMessage} Accede a la plataforma para revisar la conversación.`
-        }
-      );
+    // Usar el nuevo servicio de notificación al equipo
+    const teamNotificationResult = await TeamNotificationService.notifyHumanIntervention({
+      siteId,
+      conversationId: conversation_id,
+      message,
+      priority,
+      agentName: agentData?.name,
+      summary,
+      contactName: name,
+      contactEmail: email
+    });
+
+    // Obtener lista de correos de los miembros notificados
+    const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(siteId);
+    const notifiedEmails = teamMembers.map(member => member.email);
+
+    if (!teamNotificationResult.success) {
+      console.error('Error al notificar al equipo:', teamNotificationResult.errors);
     } else {
-      // Solo crear notificación en el sistema si no hay destinatarios de correo
-      await NotificationService.createNotification({
-        user_id: conversationData.user_id,
-        site_id: siteId,
-        title: notificationTitle,
-        message: notificationMessage,
-        type: NotificationType.HUMAN_INTERVENTION,
-        priority: notificationPriority,
-        entity_type: 'conversation',
-        entity_id: conversation_id,
-        metadata: notificationMetadata
-      });
+      console.log(`Equipo notificado exitosamente: ${teamNotificationResult.notificationsSent} notificaciones, ${teamNotificationResult.emailsSent} emails`);
+      
+      // Si la notificación al equipo fue exitosa y tenemos email del visitante, notificar al visitante
+      if (email) {
+        console.log(`📧 Enviando confirmación al visitante: ${email}`);
+        
+        const visitorNotificationResult = await VisitorNotificationService.notifyMessageReceived({
+          visitorEmail: email,
+          visitorName: name,
+          message,
+          agentName: agentData?.name,
+          summary,
+          supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
+        });
+        
+        if (visitorNotificationResult.success) {
+          console.log(`✅ Visitante notificado exitosamente: ${email}`);
+        } else {
+          console.error(`❌ Error al notificar al visitante ${email}:`, visitorNotificationResult.error);
+        }
+      }
     }
     
     // Respuesta exitosa con los datos de la intervención
-    return NextResponse.json(
-      {
-        success: true,
+    return NextResponse.json({
+      success: true,
+      data: {
         intervention_id: interventionId,
         conversation_id,
-        agent_id: agent_id || null,
+        message,
+        priority,
         status: 'pending',
-        message: {
-          content: message,
-          priority
+        created_at: new Date().toISOString(),
+        summary,
+        contact_name: name,
+        contact_email: email,
+        team_notification: {
+          notifications_sent: teamNotificationResult.notificationsSent,
+          emails_sent: teamNotificationResult.emailsSent,
+          notified_emails: notifiedEmails,
+          total_members: teamNotificationResult.totalMembers
         },
-        summary: summary || null,
-        contact_name: name || null,
-        contact_email: email || null,
-        requested_at: new Date().toISOString()
-      },
-      { status: 201 }
-    );
+        visitor_notification: {
+          sent: !!email && teamNotificationResult.success,
+          email: email || null
+        }
+      }
+    }, { status: 201 });
     
   } catch (error) {
     console.error('Error al procesar la solicitud de contacto humano:', error);
@@ -448,8 +317,8 @@ export async function GET(request: NextRequest) {
     // Consulta base (ahora consultamos la tabla de notificaciones)
     let query = supabaseAdmin
       .from('notifications')
-      .select('id, title, message, type, site_id, user_id, created_at, related_entity_id, metadata')
-      .eq('type', NotificationType.HUMAN_INTERVENTION);
+      .select('id, title, message, type, site_id, user_id, created_at, related_entity_id')
+      .eq('type', NotificationType.WARNING);
     
     // Filtrar por ID de intervención o conversación
     if (interventionId) {
@@ -465,8 +334,8 @@ export async function GET(request: NextRequest) {
           { status: 400 }
         );
       }
-      // Filtramos por el ID de intervención en los metadatos
-      query = query.contains('metadata', { intervention_id: interventionId });
+      // Filtrar por el ID directamente (ya que no tenemos metadata)
+      query = query.eq('id', interventionId);
     } else if (conversationId) {
       if (!isValidUUID(conversationId)) {
         return NextResponse.json(
@@ -480,7 +349,7 @@ export async function GET(request: NextRequest) {
           { status: 400 }
         );
       }
-      // Filtramos por el ID de conversación en el campo entity_id
+      // Filtramos por el ID de conversación en el campo related_entity_id
       query = query.eq('related_entity_id', conversationId);
     }
     
@@ -516,20 +385,19 @@ export async function GET(request: NextRequest) {
     
     // Transformar los datos de las notificaciones al formato esperado de intervenciones
     const interventions = data.map(notification => {
-      const metadata = notification.metadata || {};
       return {
-        id: metadata.intervention_id || notification.id,
+        id: notification.id,
         conversation_id: notification.related_entity_id,
-        agent_id: metadata.agent_id || null,
+        agent_id: null, // No metadata available
         message: notification.message,
-        priority: metadata.priority || 'normal',
+        priority: 'normal', // Default since no metadata
         status: 'pending', // Las notificaciones no tienen estado, asumimos pending
         requested_at: notification.created_at,
         resolved_at: null,
         resolved_by: null,
-        summary: metadata.summary || null,
-        contact_name: metadata.contact_name || null,
-        contact_email: metadata.contact_email || null
+        summary: null, // No metadata available
+        contact_name: null, // No metadata available
+        contact_email: null // No metadata available
       };
     });
     
