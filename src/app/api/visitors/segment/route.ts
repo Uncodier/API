@@ -13,7 +13,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client'
 
 // Esquema para validar el cuerpo de la solicitud
 const segmentSchema = z.object({
-  segment_id: z.string(),
+  segment_id: z.string().optional(),
   site_id: z.string(),
   url: z.string().url(),
   visitor_id: z.string(),
@@ -81,36 +81,44 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check if segment exists
-    console.log("[POST /api/visitors/segment] Checking segment:", validatedData.segment_id);
-    const { data: segment, error: segmentError } = await supabaseAdmin
-      .from('segments')
-      .select('*')
-      .eq('id', validatedData.segment_id)
-      .single();
+    let segment = null;
+    let segmentError = null;
 
-    console.log("[POST /api/visitors/segment] Segment check result:", {
-      segment,
-      error: segmentError,
-      query: 'SELECT * FROM segments WHERE id = ' + validatedData.segment_id
-    });
+    // Only check segment if segment_id is provided
+    if (validatedData.segment_id) {
+      console.log("[POST /api/visitors/segment] Checking segment:", validatedData.segment_id);
+      const segmentResult = await supabaseAdmin
+        .from('segments')
+        .select('*')
+        .eq('id', validatedData.segment_id)
+        .single();
 
-    if (segmentError || !segment) {
-      console.log("[POST /api/visitors/segment] Segment not found or error:", { segmentError });
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'segment_not_found',
-            message: `Segment with ID ${validatedData.segment_id} not found`,
-            details: segmentError
-          }
-        },
-        { status: 400 }
-      );
+      segment = segmentResult.data;
+      segmentError = segmentResult.error;
+
+      console.log("[POST /api/visitors/segment] Segment check result:", {
+        segment,
+        error: segmentError,
+        query: 'SELECT * FROM segments WHERE id = ' + validatedData.segment_id
+      });
+
+      if (segmentError || !segment) {
+        console.log("[POST /api/visitors/segment] Segment not found or error:", { segmentError });
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'segment_not_found',
+              message: `Segment with ID ${validatedData.segment_id} not found`,
+              details: segmentError
+            }
+          },
+          { status: 400 }
+        );
+      }
     }
 
-    // Update visitor with segment
+    // Update visitor with segment (if provided)
     console.log("[POST /api/visitors/segment] Updating visitor with segment:", {
       visitor_id: validatedData.visitor_id,
       segment_id: validatedData.segment_id
@@ -183,8 +191,8 @@ export async function POST(request: NextRequest) {
     // Return successful response
     const response = {
       success: true,
-      segment_id: segment.id,
-      name: segment.name,
+      segment_id: validatedData.segment_id,
+      name: segment?.name,
       visitor_id: validatedData.visitor_id,
       lead_id: validatedData.lead_id,
       updated_at: new Date().toISOString()

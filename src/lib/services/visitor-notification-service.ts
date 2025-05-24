@@ -27,6 +27,27 @@ export interface NotifyVisitorResult {
 export class VisitorNotificationService {
   
   /**
+   * Obtiene el texto de branding desde variables de entorno
+   */
+  private static getBrandingText(): string {
+    return process.env.UNCODIE_BRANDING_TEXT || 'Uncodie, your AI Sales Team';
+  }
+  
+  /**
+   * Obtiene el email de soporte desde variables de entorno
+   */
+  private static getSupportEmail(): string {
+    return process.env.UNCODIE_SUPPORT_EMAIL || 'support@uncodie.com';
+  }
+  
+  /**
+   * Obtiene el nombre de la compañía desde variables de entorno
+   */
+  private static getCompanyName(): string {
+    return process.env.UNCODIE_COMPANY_NAME || 'Uncodie';
+  }
+  
+  /**
    * Notifica al visitante que su mensaje fue recibido y será atendido
    */
   static async notifyMessageReceived(params: NotifyVisitorParams): Promise<NotifyVisitorResult> {
@@ -74,7 +95,7 @@ export class VisitorNotificationService {
   private static generateMessageReceivedHtml(params: NotifyVisitorParams): string {
     const greeting = params.visitorName ? `Hi ${params.visitorName}` : "Hello";
     const agentText = params.agentName ? `our AI assistant ${params.agentName}` : "our AI assistant";
-    const supportEmail = params.supportEmail || "support@uncodie.com";
+    const supportEmail = params.supportEmail || this.getSupportEmail();
     
     return `
       <!DOCTYPE html>
@@ -177,7 +198,7 @@ export class VisitorNotificationService {
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
             <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-              Thank you for choosing Uncodie!<br>
+              Thank you for choosing ${this.getCompanyName()}!<br>
               This email was sent automatically. Please do not reply to this message.
             </p>
           </div>
@@ -187,7 +208,7 @@ export class VisitorNotificationService {
         <!-- Powered by -->
         <div style="text-align: center; margin: 24px 0;">
           <p style="margin: 0; color: #94a3b8; font-size: 12px;">
-            Powered by <strong style="color: #667eea;">Uncodie</strong>
+            Powered by <strong style="color: #667eea;">${this.getBrandingText()}</strong>
           </p>
         </div>
         

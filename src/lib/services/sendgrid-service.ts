@@ -286,7 +286,7 @@ export class SendGridService {
     
     return this.sendEmail({
       to,
-      subject: `¡Bienvenido a Uncodie, ${userData.name}!`,
+      subject: `¡Bienvenido a ${this.getCompanyName()}, ${userData.name}!`,
       html,
       categories: ['welcome', 'transactional']
     });
@@ -337,7 +337,7 @@ export class SendGridService {
     
     return this.sendEmail({
       to,
-      subject: 'Restablecer tu contraseña de Uncodie',
+      subject: `Restablecer tu contraseña de ${this.getCompanyName()}`,
       html,
       categories: ['password-reset', 'transactional']
     });
@@ -350,7 +350,7 @@ export class SendGridService {
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #6366f1; margin: 0;">¡Bienvenido a Uncodie!</h1>
+          <h1 style="color: #6366f1; margin: 0;">¡Bienvenido a ${this.getCompanyName()}!</h1>
         </div>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
@@ -358,7 +358,7 @@ export class SendGridService {
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          ¡Gracias por unirte a Uncodie! Estamos emocionados de tenerte en nuestra plataforma.
+          ¡Gracias por unirte a ${this.getCompanyName()}! Estamos emocionados de tenerte en nuestra plataforma.
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
@@ -366,7 +366,7 @@ export class SendGridService {
         </p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com'}" 
+          <a href="${this.getAppUrl()}" 
              style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Acceder a mi cuenta
           </a>
@@ -508,7 +508,7 @@ export class SendGridService {
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
             <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-              This email was generated automatically by Uncodie.<br>
+              This email was generated automatically by ${this.getCompanyName()}.<br>
               Please do not reply to this message.
             </p>
           </div>
@@ -518,7 +518,7 @@ export class SendGridService {
         <!-- Powered by -->
         <div style="text-align: center; margin: 24px 0;">
           <p style="margin: 0; color: #94a3b8; font-size: 12px;">
-            Powered by <strong style="color: #667eea;">Uncodie</strong>
+            Powered by <strong style="color: #667eea;">${this.getBrandingText()}</strong>
           </p>
         </div>
         
@@ -544,7 +544,7 @@ export class SendGridService {
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          Hemos recibido una solicitud para restablecer la contraseña de tu cuenta en Uncodie.
+          Hemos recibido una solicitud para restablecer la contraseña de tu cuenta en ${this.getCompanyName()}.
         </p>
         
         <div style="text-align: center; margin: 30px 0;">
@@ -593,6 +593,27 @@ export class SendGridService {
       console.error('SendGrid health check failed:', error);
       return false;
     }
+  }
+
+  /**
+   * Obtiene el texto de branding desde variables de entorno
+   */
+  private getBrandingText(): string {
+    return process.env.UNCODIE_BRANDING_TEXT || 'Uncodie, your AI Sales Team';
+  }
+
+  /**
+   * Obtiene el nombre de la compañía desde variables de entorno
+   */
+  private getCompanyName(): string {
+    return process.env.UNCODIE_COMPANY_NAME || 'Uncodie';
+  }
+
+  /**
+   * Obtiene la URL de la aplicación desde variables de entorno
+   */
+  private getAppUrl(): string {
+    return process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
   }
 }
 

@@ -117,14 +117,27 @@ const domainCache = new DomainCache();
  */
 function extractDomain(origin: string): string | null {
   try {
-    // Remove any trailing slashes
-    origin = origin.trim().replace(/\/$/, '');
+    // Validate input
+    if (!origin || origin === 'null' || origin === 'undefined' || typeof origin !== 'string') {
+      console.warn('[CORS-DB] Invalid origin provided:', origin);
+      return null;
+    }
+
+    // Remove any trailing slashes and trim
+    const cleanOrigin = origin.trim().replace(/\/$/, '');
+    
+    // Check if it's a valid URL format (must start with protocol)
+    if (!cleanOrigin.match(/^https?:\/\//)) {
+      console.warn('[CORS-DB] Origin does not start with http(s)://:', cleanOrigin);
+      return null;
+    }
     
     // Try to parse as URL
-    const url = new URL(origin);
+    const url = new URL(cleanOrigin);
     return url.hostname;
   } catch (error) {
     console.error('[CORS-DB] Error extracting domain from origin:', error);
+    console.error('[CORS-DB] Origin value was:', typeof origin, origin);
     return null;
   }
 }
@@ -133,14 +146,21 @@ function extractDomain(origin: string): string | null {
  * Check if a given origin is allowed by checking the sites and allowed_domains tables
  */
 export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
-  if (!origin) {
-    return true;
+  // Handle null, undefined, 'null' string, or empty origins
+  if (!origin || origin === 'null' || origin === 'undefined' || typeof origin !== 'string') {
+    console.warn('[CORS-DB] Invalid or missing origin, allowing request:', origin);
+    return true; // Allow requests without valid origin (like Postman, curl, etc.)
   }
 
   // Extract domain from origin
   const domain = extractDomain(origin);
   if (!domain) {
     console.error('[CORS-DB] Could not extract domain from origin:', origin);
+    // If we can't extract domain but it's a localhost origin, allow it
+    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+      console.info('[CORS-DB] Allowing localhost origin:', origin);
+      return true;
+    }
     return false;
   }
 

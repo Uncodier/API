@@ -16,7 +16,7 @@ import { getAllowedOrigins, getAllowedHeaders, isOriginAllowed } from './cors.co
  * Middleware CORS completo
  * Este se ejecuta como una Edge Function
  */
-export default function middleware(request) {
+export default async function middleware(request) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   
   // Obtener el origen
@@ -25,7 +25,7 @@ export default function middleware(request) {
   // Verificar si el origen está permitido
   const allowedOrigins = getAllowedOrigins();
   
-  const originAllowed = isOriginAllowed(origin);
+  const originAllowed = await isOriginAllowed(origin);
   
   // Para solicitudes preflight OPTIONS
   if (request.method === 'OPTIONS') {
