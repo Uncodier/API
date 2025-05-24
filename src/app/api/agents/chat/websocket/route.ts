@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
- import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 
 // Verificar si estamos ejecutando en un entorno de desarrollo
@@ -259,21 +259,48 @@ async function getOrCreateConversation(visitor_id: string, site_id: string, agen
 // Función para guardar un mensaje en la base de datos
 async function saveMessage(conversationId: string, content: string, sender_type: 'user' | 'agent' | 'system', visitor_id?: string) {
   try {
+    console.log(`💬 [saveMessage] Iniciando guardado de mensaje...`);
+    console.log(`💬 [saveMessage] Parámetros:`, {
+      conversationId,
+      content: content?.substring(0, 100) + (content?.length > 100 ? '...' : ''),
+      sender_type,
+      visitor_id: visitor_id || 'NO_PROPORCIONADO'
+    });
+    
     if (!isValidUUID(conversationId)) {
-      console.error(`ID de conversación no válido: ${conversationId}`);
+      console.error(`❌ [saveMessage] ID de conversación no válido: ${conversationId}`);
       return null;
     }
     
-    console.log(`💬 Guardando mensaje para la conversación ${conversationId}`);
+    // Verificar que la conversación existe
+    console.log(`🔍 [saveMessage] Verificando que la conversación ${conversationId} existe...`);
+    const { data: convCheck, error: convError } = await supabaseAdmin
+      .from('conversations')
+      .select('id, status')
+      .eq('id', conversationId)
+      .single();
+    
+    if (convError || !convCheck) {
+      console.error(`❌ [saveMessage] La conversación ${conversationId} no existe:`, convError);
+      return null;
+    }
+    
+    console.log(`✅ [saveMessage] Conversación verificada:`, convCheck);
     
     const messageData = {
       conversation_id: conversationId,
       content,
       sender_type,
-      visitor_id: sender_type === 'user' ? visitor_id : null, // Solo si es mensaje de usuario
+      visitor_id: sender_type === 'user' ? visitor_id : null,
       role: sender_type === 'user' ? 'user' : sender_type === 'agent' ? 'assistant' : 'team_member'
     };
     
+    console.log(`📝 [saveMessage] Datos del mensaje a insertar:`, {
+      ...messageData,
+      content: messageData.content?.substring(0, 100) + (messageData.content?.length > 100 ? '...' : '')
+    });
+    
+    console.log(`🚀 [saveMessage] Insertando en la base de datos...`);
     const { data, error } = await supabaseAdmin
       .from('messages')
       .insert([messageData])
@@ -281,14 +308,29 @@ async function saveMessage(conversationId: string, content: string, sender_type:
       .single();
       
     if (error) {
-      console.error('Error al guardar mensaje:', error);
+      console.error(`❌ [saveMessage] Error de Supabase al insertar:`, {
+        code: error.code,
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        fullError: error
+      });
       return null;
     }
     
-    console.log(`✅ Mensaje guardado con ID: ${data.id}`);
+    if (!data) {
+      console.error(`❌ [saveMessage] No se recibieron datos después de la inserción`);
+      return null;
+    }
+    
+    console.log(`✅ [saveMessage] Mensaje guardado exitosamente con ID: ${data.id}`);
     return data;
   } catch (error) {
-    console.error('Error al guardar mensaje:', error);
+    console.error(`❌ [saveMessage] Error inesperado:`, {
+      name: (error as Error).name,
+      message: (error as Error).message,
+      stack: (error as Error).stack
+    });
     return null;
   }
 }
@@ -297,22 +339,6 @@ async function saveMessage(conversationId: string, content: string, sender_type:
 const activeConnections = new Map();
 
 export async function GET(req: NextRequest) {
-  // Verificar si la solicitud es un WebSocket
-  const { headers } = req;
-  const upgradeHeader = headers.get('connection');
-  
-  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'upgrade') {
-    console.log('❌ Esta solicitud no es una conexión WebSocket:', req.method, req.nextUrl.pathname);
-    return new Response('Esta ruta requiere una conexión WebSocket', { 
-      status: 426,
-      headers: {
-        'Content-Type': 'text/plain',
-        'Upgrade': 'websocket',
-        'Connection': 'Upgrade'
-      }
-    });
-  }
-  
   try {
     // Obtener parámetros de consulta
     const searchParams = req.nextUrl.searchParams;
@@ -321,7 +347,7 @@ export async function GET(req: NextRequest) {
     const agent_id = searchParams.get('agent_id');
     const conversation_id = searchParams.get('conversation_id');
     
-    console.log(`🔌 Intento de conexión WebSocket: visitor_id=${visitor_id}, site_id=${site_id}, conversation_id=${conversation_id}`);
+    console.log(`🔌 Intento de conexión SSE: visitor_id=${visitor_id}, site_id=${site_id}, conversation_id=${conversation_id}`);
     
     // Validar parámetros requeridos
     if (!visitor_id || !isValidUUID(visitor_id)) {
@@ -346,192 +372,445 @@ export async function GET(req: NextRequest) {
       console.log('❌ Error al inicializar la conversación');
       return new Response('Error al inicializar la conversación', { status: 500 });
     }
+
+    // Crear el stream SSE
+    const encoder = new TextEncoder();
+    let isClosed = false;
+    let supabaseChannel: any = null;
     
-    // Manejar la conexión WebSocket directamente
-    const { readable, writable } = new TransformStream();
-    const [wsClient, wsServer] = createWebSocketPair();
-    
-    // Configurar la conexión WebSocket
-    wsServer.accept();
-    
-    // Registrar la conexión activa
-    const connectionId = uuidv4();
-    activeConnections.set(connectionId, {
-      ws: wsServer,
-      visitor_id,
-      conversationId,
-      site_id,
-      lastActivity: Date.now(),
-      supabaseChannel: null
-    });
-    
-    console.log(`✅ WebSocket aceptado para visitor_id=${visitor_id}, conversation_id=${conversationId}`);
-    
-    // Obtener mensajes históricos
-    const messages = await getConversationMessages(conversationId);
-    
-    // Enviar mensajes históricos al cliente
-    wsServer.send(JSON.stringify({
-      type: 'history',
-      payload: {
-        conversation_id: conversationId,
-        messages
-      }
-    }));
-    
-    // Suscribirse a cambios en la tabla de mensajes para esta conversación
-    const channel = supabaseAdmin
-      .channel(`chat:${conversationId}`)
-      .on('postgres_changes', {
-        event: 'INSERT',
-        schema: 'public',
-        table: 'messages',
-        filter: `conversation_id=eq.${conversationId}`
-      }, (payload) => {
-        try {
-          // Solo enviar si el websocket sigue abierto
-          if (wsServer.readyState === 1) { // WebSocket.OPEN
-            wsServer.send(JSON.stringify({
-              type: 'new_message',
-              payload: payload.new
-            }));
-            console.log(`📤 Mensaje nuevo enviado al cliente: visitor_id=${visitor_id}, message_id=${payload.new.id}`);
-          }
-        } catch (error) {
-          console.error('Error al enviar mensaje nuevo a través de WebSocket:', error);
-        }
-      })
-      .subscribe((status) => {
-        console.log(`📡 Estado de suscripción a mensajes para conversación ${conversationId}: ${status}`);
+    const stream = new ReadableStream({
+      start(controller) {
+        const connectionId = uuidv4();
         
-        // Guardar la referencia al canal en la conexión activa
-        const connection = activeConnections.get(connectionId);
-        if (connection) {
-          connection.supabaseChannel = channel;
-          activeConnections.set(connectionId, connection);
-        }
-        
-        // Enviar confirmación de conexión al cliente
-        if (wsServer.readyState === 1) { // WebSocket.OPEN
-          wsServer.send(JSON.stringify({
-            type: 'connected',
-            payload: {
-              conversation_id: conversationId,
-              status: 'connected'
+        // Función para enviar datos al cliente
+        const sendData = (data: any) => {
+          if (!isClosed) {
+            try {
+              const message = `data: ${JSON.stringify(data)}\n\n`;
+              controller.enqueue(encoder.encode(message));
+            } catch (error) {
+              console.error('Error al enviar datos SSE:', error);
             }
-          }));
-        }
-      });
-    
-    // Configurar manejo de mensajes entrantes desde el cliente
-    wsServer.addEventListener('message', async function(event: {data: string}) {
-      try {
-        // Actualizar timestamp de última actividad
-        const connection = activeConnections.get(connectionId);
-        if (connection) {
-          connection.lastActivity = Date.now();
-          activeConnections.set(connectionId, connection);
-        }
-        
-        // Parsear el mensaje
-        const message = JSON.parse(event.data);
-        console.log(`📩 Mensaje recibido de cliente: visitor_id=${visitor_id}, type=${message.type}`);
-        
-        // Manejar diferentes tipos de mensajes
-        if (message.type === 'ping') {
-          // Responder al ping para mantener la conexión viva
-          wsServer.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-        } else if (message.type === 'message') {
-          // Guardar mensaje del usuario
-          const savedMessage = await saveMessage(
-            conversationId,
-            message.content,
-            'user',
-            visitor_id
-          );
-          
-          if (savedMessage) {
-            console.log(`✅ Mensaje del usuario guardado: ${savedMessage.id}`);
-            
-            // Aquí podrías implementar lógica para generar respuestas automáticas
-            // Por ejemplo, integración con un servicio de IA
           }
-        }
-      } catch (error) {
-        console.error('Error al procesar mensaje del cliente:', error);
+        };
+
+        // Registrar la conexión activa
+        activeConnections.set(connectionId, {
+          visitor_id,
+          conversationId,
+          site_id,
+          lastActivity: Date.now(),
+          sendData,
+          supabaseChannel: null
+        });
+
+        console.log(`✅ SSE aceptado para visitor_id=${visitor_id}, conversation_id=${conversationId}`);
+
+        // Enviar mensajes históricos
+        const initializeConnection = async () => {
+          try {
+            // Obtener mensajes históricos
+            const messages = await getConversationMessages(conversationId);
+            
+            // Enviar mensajes históricos al cliente
+            sendData({
+              type: 'history',
+              payload: {
+                conversation_id: conversationId,
+                messages
+              }
+            });
+
+            // Suscribirse a cambios en la tabla de mensajes para esta conversación
+            supabaseChannel = supabaseAdmin
+              .channel(`chat:${conversationId}`)
+              .on('postgres_changes', {
+                event: 'INSERT',
+                schema: 'public',
+                table: 'messages',
+                filter: `conversation_id=eq.${conversationId}`
+              }, (payload) => {
+                try {
+                  sendData({
+                    type: 'new_message',
+                    payload: payload.new
+                  });
+                  console.log(`📤 Mensaje nuevo enviado al cliente: visitor_id=${visitor_id}, message_id=${payload.new.id}`);
+                } catch (error) {
+                  console.error('Error al enviar mensaje nuevo a través de SSE:', error);
+                }
+              })
+              .subscribe((status) => {
+                console.log(`📡 Estado de suscripción a mensajes para conversación ${conversationId}: ${status}`);
+                
+                // Guardar la referencia al canal en la conexión activa
+                const connection = activeConnections.get(connectionId);
+                if (connection) {
+                  connection.supabaseChannel = supabaseChannel;
+                  activeConnections.set(connectionId, connection);
+                }
+                
+                // Enviar confirmación de conexión al cliente
+                sendData({
+                  type: 'connected',
+                  payload: {
+                    conversation_id: conversationId,
+                    status: 'connected'
+                  }
+                });
+              });
+
+            // Configurar heartbeat para mantener la conexión viva
+            const heartbeatInterval = setInterval(() => {
+              if (!isClosed) {
+                sendData({ type: 'ping', timestamp: Date.now() });
+                
+                // Actualizar timestamp de última actividad
+                const connection = activeConnections.get(connectionId);
+                if (connection) {
+                  connection.lastActivity = Date.now();
+                  activeConnections.set(connectionId, connection);
+                }
+              } else {
+                clearInterval(heartbeatInterval);
+              }
+            }, 30000); // Cada 30 segundos
+
+            // Cleanup cuando se cierra la conexión
+            const cleanup = async () => {
+              console.log(`🔌 SSE cerrado para visitor_id=${visitor_id}`);
+              isClosed = true;
+              
+              // Limpiar recursos
+              if (supabaseChannel) {
+                await supabaseChannel.unsubscribe();
+              }
+              
+              activeConnections.delete(connectionId);
+              clearInterval(heartbeatInterval);
+              
+              // Actualizar estado de sesión del visitante a inactivo
+              await updateVisitorSessionStatus(visitor_id, 'inactive');
+            };
+
+            // Configurar limpieza cuando el cliente cierre la conexión
+            req.signal?.addEventListener('abort', cleanup);
+            
+          } catch (error) {
+            console.error('Error al inicializar conexión SSE:', error);
+            sendData({
+              type: 'error',
+              payload: { message: 'Error al inicializar conexión' }
+            });
+          }
+        };
+
+        // Inicializar la conexión
+        initializeConnection();
+      },
+      
+      cancel() {
+        console.log('🔌 SSE stream cancelado');
+        isClosed = true;
       }
     });
     
-    // Manejar cierre de conexión
-    wsServer.addEventListener('close', async function() {
-      console.log(`🔌 WebSocket cerrado para visitor_id=${visitor_id}`);
-      
-      // Limpiar recursos
-      const connection = activeConnections.get(connectionId);
-      if (connection && connection.supabaseChannel) {
-        await connection.supabaseChannel.unsubscribe();
-      }
-      
-      activeConnections.delete(connectionId);
-      
-      // Actualizar estado de sesión del visitante a inactivo
-      await updateVisitorSessionStatus(visitor_id, 'inactive');
-    });
-    
-    // Devolver la respuesta WebSocket
-    return new Response(readable, {
-      status: 101,
+    // Devolver la respuesta SSE
+    return new Response(stream, {
+      status: 200,
       headers: {
-        'Upgrade': 'websocket',
-        'Connection': 'Upgrade'
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache, no-transform',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
       }
     });
   } catch (error) {
-    console.error('❌ Error al establecer conexión WebSocket:', error);
-    return new Response('Error al establecer conexión WebSocket', { status: 500 });
+    console.error('❌ Error al establecer conexión SSE:', error);
+    return new Response('Error al establecer conexión SSE', { status: 500 });
   }
 }
 
-// Endpoint para obtener mensajes HTTP (fallback cuando WebSocket no está disponible)
+// Endpoint para enviar mensajes (mantener la lógica existente)
 export async function POST(req: NextRequest) {
+  console.log('🚀 [POST] Iniciando procesamiento de solicitud');
+  
   try {
-    const body = await req.json();
-    const { visitor_id, site_id, agent_id, conversation_id } = body;
+    // Log de headers
+    console.log('📋 [POST] Headers:', {
+      'content-type': req.headers.get('content-type'),
+      'user-agent': req.headers.get('user-agent'),
+      'origin': req.headers.get('origin')
+    });
+    
+    // Intentar parsear el body
+    let body;
+    try {
+      body = await req.json();
+      console.log('📦 [POST] Body recibido:', JSON.stringify(body, null, 2));
+    } catch (parseError) {
+      console.error('❌ [POST] Error al parsear JSON:', parseError);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: { 
+            code: 'INVALID_JSON', 
+            message: 'El cuerpo de la solicitud no es JSON válido',
+            details: (parseError as Error).message 
+          } 
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    // Detectar formato del mensaje y nivel de autenticación
+    let visitor_id, site_id, agent_id, conversation_id, message, content;
+    let user_type: 'visitor' | 'lead' = 'visitor'; // Determinar el tipo de usuario
+    let user_id: string = ''; // ID unificado para uso interno
+    
+    if (body.type && body.payload) {
+      // Formato WebSocket legacy
+      console.log('🔄 [POST] Detectado formato WebSocket legacy');
+      const payload = body.payload;
+      
+      // Detectar tipo de usuario y asignar ID apropiado
+      if (payload.lead_id) {
+        user_type = 'lead';
+        user_id = payload.lead_id;
+        visitor_id = payload.lead_id; // Para compatibilidad con funciones existentes
+        console.log('👤 [POST] Usuario autenticado (lead):', user_id);
+      } else if (payload.visitor_id) {
+        user_type = 'visitor';
+        user_id = payload.visitor_id;
+        visitor_id = payload.visitor_id;
+        console.log('👻 [POST] Usuario anónimo (visitor):', user_id);
+      } else {
+        console.log('⚠️ [POST] No se encontró lead_id ni visitor_id en payload WebSocket');
+      }
+      
+      site_id = payload.site_id;
+      agent_id = payload.agent_id;
+      conversation_id = payload.conversation_id;
+      message = payload.message || payload.content;
+      content = payload.content || payload.message;
+      
+      console.log('🔄 [POST] Payload WebSocket mapeado:', {
+        type: body.type,
+        event: payload.event,
+        user_type,
+        user_id: user_id || 'FALTANTE',
+        site_id: site_id || 'FALTANTE',
+        conversation_id: conversation_id || 'FALTANTE',
+        hasMessage: !!(message || content)
+      });
+      
+      // Si es solo una suscripción sin mensaje, devolver success
+      if (body.type === 'subscribe' && !message && !content) {
+        console.log(`✅ [POST] Suscripción WebSocket procesada para ${user_type} (sin mensaje)`);
+        return new Response(
+          JSON.stringify({
+            success: true,
+            data: {
+              type: 'subscription_ack',
+              conversation_id: conversation_id,
+              user_type,
+              user_id,
+              message: `Suscripción procesada para ${user_type}. Usa SSE GET para recibir mensajes en tiempo real.`
+            }
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      
+    } else {
+      // Formato REST directo
+      console.log('🔄 [POST] Detectado formato REST');
+      
+      // Detectar tipo de usuario en formato REST
+      if (body.lead_id) {
+        user_type = 'lead';
+        user_id = body.lead_id;
+        visitor_id = body.lead_id;
+        console.log('👤 [POST] Usuario autenticado (lead):', user_id);
+      } else if (body.visitor_id) {
+        user_type = 'visitor';
+        user_id = body.visitor_id;
+        visitor_id = body.visitor_id;
+        console.log('👻 [POST] Usuario anónimo (visitor):', user_id);
+      } else {
+        console.log('⚠️ [POST] No se encontró lead_id ni visitor_id en formato REST');
+      }
+      
+      site_id = body.site_id;
+      agent_id = body.agent_id;
+      conversation_id = body.conversation_id;
+      message = body.message;
+      content = body.content;
+    }
+    
+    console.log('🔍 [POST] Parámetros finales extraídos:', {
+      user_type,
+      user_id: user_id || 'FALTANTE',
+      visitor_id: visitor_id || 'FALTANTE',
+      site_id: site_id || 'FALTANTE', 
+      agent_id: agent_id || 'NO_PROPORCIONADO',
+      conversation_id: conversation_id || 'NO_PROPORCIONADO',
+      message: message || 'NO_PROPORCIONADO',
+      content: content || 'NO_PROPORCIONADO',
+      hasMessage: !!(message || content)
+    });
     
     // Validar parámetros requeridos
-    if (!visitor_id || !isValidUUID(visitor_id)) {
+    if (!user_id) {
+      console.error('❌ [POST] user_id faltante (visitor_id o lead_id requerido)');
       return new Response(
-        JSON.stringify({ success: false, error: { code: 'INVALID_REQUEST', message: 'Se requiere un visitor_id válido' } }),
+        JSON.stringify({ 
+          success: false, 
+          error: { 
+            code: 'MISSING_USER_ID', 
+            message: 'Se requiere visitor_id (anónimo) o lead_id (autenticado)' 
+          } 
+        }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
     
-    if (!site_id || !isValidUUID(site_id)) {
+    if (!isValidUUID(user_id)) {
+      console.error(`❌ [POST] ${user_type}_id no válido:`, user_id);
       return new Response(
-        JSON.stringify({ success: false, error: { code: 'INVALID_REQUEST', message: 'Se requiere un site_id válido' } }),
+        JSON.stringify({ 
+          success: false, 
+          error: { 
+            code: 'INVALID_USER_ID', 
+            message: `${user_type}_id debe ser un UUID válido` 
+          } 
+        }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
     
-    // Actualizar estado de sesión del visitante a activo
-    await updateVisitorSessionStatus(visitor_id, 'active');
+    // Para usuarios autenticados (leads), podemos intentar obtener site_id de la conversación si no se proporciona
+    if (!site_id && conversation_id) {
+      console.log('🔍 [POST] site_id faltante, obteniendo de la conversación...');
+      const { data: convData, error: convError } = await supabaseAdmin
+        .from('conversations')
+        .select('site_id')
+        .eq('id', conversation_id)
+        .single();
+        
+      if (convData && convData.site_id) {
+        site_id = convData.site_id;
+        console.log('✅ [POST] site_id obtenido de la conversación:', site_id);
+      } else {
+        console.error('❌ [POST] No se pudo obtener site_id de la conversación:', convError);
+      }
+    }
+    
+    if (!site_id) {
+      console.error('❌ [POST] site_id faltante');
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: { 
+            code: 'MISSING_SITE_ID', 
+            message: 'Se requiere site_id o una conversación válida' 
+          } 
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    
+    if (!isValidUUID(site_id)) {
+      console.error('❌ [POST] site_id no válido:', site_id);
+      return new Response(
+        JSON.stringify({ 
+          success: false, 
+          error: { 
+            code: 'INVALID_SITE_ID', 
+            message: 'site_id debe ser un UUID válido' 
+          } 
+        }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`✅ [POST] Validaciones básicas pasadas para ${user_type}: ${user_id}`);
+
+    // Actualizar estado de sesión del usuario a activo
+    console.log(`🔄 [POST] Actualizando estado de sesión del ${user_type}...`);
+    await updateVisitorSessionStatus(user_id, 'active');
+    console.log(`✅ [POST] Estado de sesión actualizado para ${user_type}`);
     
     // Usar el conversation_id proporcionado o crear uno nuevo
     let conversationId = conversation_id;
     
     if (!conversationId || !isValidUUID(conversationId)) {
-      conversationId = await getOrCreateConversation(visitor_id, site_id, agent_id);
+      console.log(`🔄 [POST] Creando nueva conversación para ${user_type}...`);
+      conversationId = await getOrCreateConversation(user_id, site_id, agent_id);
       
       if (!conversationId) {
+        console.error('❌ [POST] Error al crear conversación');
         return new Response(
-          JSON.stringify({ success: false, error: { code: 'SERVER_ERROR', message: 'Error al inicializar la conversación' } }),
+          JSON.stringify({ 
+            success: false, 
+            error: { 
+              code: 'SERVER_ERROR', 
+              message: 'Error al inicializar la conversación' 
+            } 
+          }),
           { status: 500, headers: { 'Content-Type': 'application/json' } }
         );
       }
+      console.log(`✅ [POST] Nueva conversación creada para ${user_type}:`, conversationId);
+    } else {
+      console.log(`✅ [POST] Usando conversación existente para ${user_type}:`, conversationId);
+    }
+
+    // Si hay un mensaje para guardar, guardarlo
+    if (message || content) {
+      const messageContent = message || content;
+      console.log(`💬 [POST] Guardando mensaje de ${user_type}:`, {
+        conversationId,
+        messageContent: messageContent.substring(0, 100) + (messageContent.length > 100 ? '...' : ''),
+        sender_type: 'user',
+        user_id,
+        user_type
+      });
+      
+      const savedMessage = await saveMessage(
+        conversationId,
+        messageContent,
+        'user',
+        user_id
+      );
+      
+      if (!savedMessage) {
+        console.error('❌ [POST] Error al guardar mensaje');
+        return new Response(
+          JSON.stringify({ 
+            success: false, 
+            error: { 
+              code: 'SERVER_ERROR', 
+              message: 'Error al guardar el mensaje' 
+            } 
+          }),
+          { status: 500, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      
+      console.log(`✅ [POST] Mensaje guardado exitosamente para ${user_type}:`, savedMessage.id);
+    } else {
+      console.log(`ℹ️ [POST] No hay mensaje para guardar (${user_type})`);
     }
     
-    // Obtener mensajes de la conversación (ya incluye el role gracias a la modificación en getConversationMessages)
+    // Obtener mensajes de la conversación
+    console.log('📚 [POST] Obteniendo mensajes de la conversación...');
     const messages = await getConversationMessages(conversationId);
+    console.log('✅ [POST] Mensajes obtenidos:', messages.length);
+    
+    console.log(`✅ [POST] Procesamiento completado exitosamente para ${user_type}`);
     
     // Devolver respuesta con los mensajes y datos de la conversación
     return new Response(
@@ -539,7 +818,9 @@ export async function POST(req: NextRequest) {
         success: true,
         data: {
           conversation_id: conversationId,
-          visitor_id,
+          user_type,
+          user_id,
+          visitor_id: user_id, // Para compatibilidad
           site_id,
           messages
         }
@@ -547,62 +828,21 @@ export async function POST(req: NextRequest) {
       { status: 200, headers: { 'Content-Type': 'application/json' } }
     );
   } catch (error) {
-    console.error('Error al procesar la solicitud HTTP:', error);
+    console.error('❌ [POST] Error inesperado:', {
+      name: (error as Error).name,
+      message: (error as Error).message,
+      stack: (error as Error).stack
+    });
     return new Response(
-      JSON.stringify({ success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'Error interno del servidor' } }),
+      JSON.stringify({ 
+        success: false, 
+        error: { 
+          code: 'INTERNAL_SERVER_ERROR', 
+          message: 'Error interno del servidor',
+          details: (error as Error).message 
+        } 
+      }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
-}
-
-// Definiciones para WebSockets con Next.js Edge Runtime
-// Nota: Esto es una simplificación ya que Next.js maneja WebSockets internamente
-// En un entorno real, Next.js proporciona su propia implementación
-type WebSocketHandler = {
-  readonly accept: () => void;
-  readonly addEventListener: (event: string, handler: (event: {data: string}) => void) => void;
-  readonly send: (data: string) => void;
-  readonly close: () => void;
-  readyState: number;
-};
-
-function createWebSocketPair(): [any, WebSocketHandler] {
-  const messageListeners: ((event: {data: string}) => void)[] = [];
-  const closeListeners: ((event: any) => void)[] = [];
-  const errorListeners: ((event: any) => void)[] = [];
-  let accepted = false;
-  let closed = false;
-
-  const server: WebSocketHandler = {
-    readyState: 0, // CONNECTING
-    accept: function() {
-      if (accepted) return;
-      accepted = true;
-      this.readyState = 1; // OPEN
-    },
-    addEventListener: function(event: string, handler: (event: {data: string}) => void) {
-      if (event === 'message') {
-        messageListeners.push(handler);
-      } else if (event === 'close') {
-        closeListeners.push(handler);
-      } else if (event === 'error') {
-        errorListeners.push(handler);
-      }
-    },
-    send: function(data: string) {
-      if (closed) return;
-      if (!accepted) return;
-      // Esto es manejado por Next.js en tiempo de ejecución
-    },
-    close: function() {
-      if (closed) return;
-      closed = true;
-      // Esto es manejado por Next.js en tiempo de ejecución
-    }
-  };
-
-  // En un entorno real, Next.js proporciona el cliente WebSocket
-  const client = {};
-  
-  return [client, server];
 } 
