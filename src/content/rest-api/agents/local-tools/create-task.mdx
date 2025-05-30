@@ -1,0 +1,193 @@
+---
+title: 'Create Task'
+description: 'Creates a task with the expected category for the client'
+---
+
+## Create Task
+
+This tool creates a new task in the database using the appropriate category based on the client's needs and business context.
+
+### Input Schema
+
+```json
+{
+  "title": "string", // Required - Title of the task
+  "description": "string", // Optional - Detailed description of the task
+  "type": "string", // Required - Type/category of the task
+  "status": "string", // Optional - Status of the task (default: "active")
+  "stage": "string", // Optional - Current stage of the task (default: "pending")
+  "priority": "string", // Optional - Priority level (low, medium, high, urgent)
+  "user_id": "string", // Required - ID of the user assigned to the task
+  "site_id": "string", // Required - ID of the site this task belongs to
+  "lead_id": "string", // Optional - ID of the related lead (if applicable)
+  "due_date": "string", // Optional - Due date for the task (ISO format)
+  "scheduled_date": "string", // Optional - Scheduled date for the task (ISO format)
+  "command_id": "string", // Optional - ID of the command that generated this task
+  "agent_id": "string", // Optional - ID of the agent that created this task
+  "metadata": "object" // Optional - Additional metadata for the task
+}
+```
+
+### Output Schema
+
+```json
+{
+  "success": "boolean",
+  "task": {
+    "id": "string",
+    "title": "string",
+    "description": "string",
+    "type": "string",
+    "status": "string",
+    "stage": "string",
+    "priority": "string",
+    "user_id": "string",
+    "site_id": "string",
+    "lead_id": "string",
+    "due_date": "string",
+    "scheduled_date": "string",
+    "command_id": "string",
+    "agent_id": "string",
+    "metadata": "object",
+    "created_at": "string",
+    "updated_at": "string"
+  },
+  "error": "string" // Only included if there was an error
+}
+```
+
+### Description
+
+The Create Task tool automatically creates tasks with the most appropriate category based on the client's context and business needs. The tool handles:
+
+1. **Automatic category selection** based on the business context and client requirements
+2. **Lead-based tasks** for follow-up and customer engagement activities
+3. **Marketing tasks** for campaigns, content creation, and promotional activities
+4. **Sales tasks** for prospecting, demos, and deal management
+5. **Support tasks** for customer service and issue resolution
+6. **Content tasks** for content planning, creation, and publishing
+7. **Administrative tasks** for internal processes and documentation
+
+### Task Categories/Types
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `follow_up` | Follow-up tasks for leads and customers | Lead nurturing, customer check-ins |
+| `marketing_campaign` | Marketing campaign execution tasks | Campaign planning, content creation |
+| `sales_demo` | Sales demonstration tasks | Product demos, sales presentations |
+| `content_creation` | Content development tasks | Blog posts, social media, videos |
+| `lead_qualification` | Lead qualification and scoring | Lead analysis, qualification process |
+| `customer_support` | Customer support and service tasks | Issue resolution, support tickets |
+| `meeting_preparation` | Meeting and call preparation | Stakeholder meetings, client calls |
+| `market_research` | Market analysis and research tasks | Competitor analysis, market studies |
+| `product_feedback` | Product feedback collection | User feedback, feature requests |
+| `administrative` | Administrative and operational tasks | Documentation, reporting, planning |
+
+### Task Stages
+
+| Stage | Description |
+|-------|-------------|
+| `pending` | Task is created but not yet started |
+| `in_progress` | Task is currently being worked on |
+| `review` | Task is completed and awaiting review |
+| `completed` | Task has been finished successfully |
+| `on_hold` | Task is temporarily paused |
+| `cancelled` | Task has been cancelled |
+
+### Task Status
+
+| Status | Description |
+|--------|-------------|
+| `active` | Task is active and can be worked on |
+| `inactive` | Task is inactive or disabled |
+| `archived` | Task has been archived |
+
+### Priority Levels
+
+| Priority | Description |
+|----------|-------------|
+| `low` | Low priority task |
+| `medium` | Medium priority task (default) |
+| `high` | High priority task |
+| `urgent` | Urgent task requiring immediate attention |
+
+### Example Usage
+
+```javascript
+// Example 1: Create a follow-up task for a lead
+{
+  "title": "Follow up with John Doe",
+  "description": "Call to discuss product demo feedback and next steps",
+  "type": "follow_up",
+  "priority": "high",
+  "user_id": "user_123",
+  "site_id": "site_456",
+  "lead_id": "lead_789",
+  "scheduled_date": "2023-12-15T14:00:00Z"
+}
+
+// Example 2: Create a marketing campaign task
+{
+  "title": "Launch Q1 Social Media Campaign",
+  "description": "Create and schedule social media posts for Q1 product launch",
+  "type": "marketing_campaign",
+  "priority": "medium",
+  "user_id": "user_456",
+  "site_id": "site_456",
+  "due_date": "2023-12-20T00:00:00Z",
+  "metadata": {
+    "campaign_id": "campaign_123",
+    "platforms": ["facebook", "twitter", "linkedin"],
+    "budget": 5000
+  }
+}
+
+// Example 3: Create a content creation task
+{
+  "title": "Write blog post about AI trends",
+  "description": "Research and write a comprehensive blog post about AI trends in 2024",
+  "type": "content_creation",
+  "priority": "medium",
+  "user_id": "user_789",
+  "site_id": "site_456",
+  "due_date": "2023-12-18T00:00:00Z",
+  "metadata": {
+    "content_type": "blog_post",
+    "target_word_count": 2000,
+    "keywords": ["AI", "trends", "2024", "technology"]
+  }
+}
+```
+
+### Error Handling
+
+The tool will return an error in the following scenarios:
+
+- Missing required fields (title, type, user_id, site_id)
+- Invalid user ID (user not found in the database)
+- Invalid site ID (site not found in the database)
+- Invalid lead ID (if provided but lead not found)
+- Invalid date formats for due_date or scheduled_date
+- Invalid task type or category
+- Invalid priority level
+- Database connection errors
+
+If an error occurs, the response will include an `error` field with a descriptive message, and the `success` field will be `false`.
+
+### Automatic Category Detection
+
+The tool includes intelligent category detection based on context:
+
+- **Keywords in title/description**: Automatically detects task type based on keywords
+- **Lead association**: Tasks with lead_id default to follow_up type
+- **User role**: Assigns appropriate categories based on user's role
+- **Site context**: Considers the business type and industry for category selection
+- **Agent context**: Uses agent type to suggest appropriate task categories
+
+### Integration with Other Systems
+
+- **CRM Integration**: Automatically syncs tasks with connected CRM systems
+- **Calendar Integration**: Can create calendar events for scheduled tasks
+- **Notification System**: Sends notifications to assigned users
+- **Reporting**: Tasks are included in productivity and performance reports
+- **Workflow Automation**: Can trigger automated workflows based on task completion

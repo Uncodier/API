@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
-import { supabase, supabaseAdmin } from '@/lib/database/supabase-client';
+import { createSupabaseClient } from '@/lib/database/supabase-server';
 
 // Schema para validar la creación de API keys
 const CreateApiKeySchema = z.object({
@@ -16,6 +16,15 @@ const CreateApiKeySchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    // Crear cliente de Supabase con el contexto apropiado
+    const supabase = createSupabaseClient(request);
+    
+    console.log('[Keys API] POST request headers:', {
+      origin: request.headers.get('origin') || 'NO_ORIGIN',
+      hasAuth: !!request.headers.get('authorization'),
+      hasApiKey: !!request.headers.get('x-api-key-data'),
+    });
+
     // Validar request body
     const body = await request.json();
     const validationResult = CreateApiKeySchema.safeParse(body);
@@ -49,6 +58,11 @@ export async function POST(request: NextRequest) {
     }
 
     // Verificar que el usuario tiene acceso al sitio
+    console.log('[Keys API] Checking site access:', {
+      site_id: validationResult.data.site_id,
+      user_id: validationResult.data.user_id,
+    });
+
     const { data: siteAccess, error: siteError } = await supabase
       .from('sites')
       .select('id')
@@ -56,13 +70,19 @@ export async function POST(request: NextRequest) {
       .eq('user_id', validationResult.data.user_id)
       .single();
 
+    console.log('[Keys API] Site access check result:', {
+      hasAccess: !!siteAccess,
+      error: siteError?.message || null
+    });
+
     if (siteError || !siteAccess) {
       return NextResponse.json(
         {
           success: false,
           error: {
             code: 'FORBIDDEN',
-            message: 'You do not have access to this site'
+            message: 'You do not have access to this site',
+            details: process.env.NODE_ENV === 'development' ? siteError?.message : undefined
           }
         },
         { status: 403 }
@@ -92,6 +112,7 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error) {
+    console.error('[Keys API] Error:', error);
     return NextResponse.json(
       {
         success: false,
@@ -107,6 +128,15 @@ export async function POST(request: NextRequest) {
 
 export async function GET(request: NextRequest) {
   try {
+    // Crear cliente de Supabase con el contexto apropiado
+    const supabase = createSupabaseClient(request);
+    
+    console.log('[Keys API] GET request headers:', {
+      origin: request.headers.get('origin') || 'NO_ORIGIN',
+      hasAuth: !!request.headers.get('authorization'),
+      hasApiKey: !!request.headers.get('x-api-key-data'),
+    });
+
     // Obtener user_id y site_id de los query params
     const { searchParams } = new URL(request.url);
     const userId = searchParams.get('user_id');
@@ -135,12 +165,18 @@ export async function GET(request: NextRequest) {
         .single();
 
       if (siteError || !siteAccess) {
+        console.log('[Keys API] Access denied:', {
+          error: siteError?.message,
+          siteId,
+          userId
+        });
         return NextResponse.json(
           {
             success: false,
             error: {
               code: 'FORBIDDEN',
-              message: 'You do not have access to this site'
+              message: 'You do not have access to this site',
+              details: process.env.NODE_ENV === 'development' ? siteError?.message : undefined
             }
           },
           { status: 403 }
@@ -155,7 +191,7 @@ export async function GET(request: NextRequest) {
         data: apiKeys
       });
     } catch (error) {
-      console.error('Error listing API keys:', error);
+      console.error('[Keys API] Error listing API keys:', error);
       return NextResponse.json(
         {
           success: false,
@@ -168,7 +204,7 @@ export async function GET(request: NextRequest) {
       );
     }
   } catch (error) {
-    console.error('Error in request:', error);
+    console.error('[Keys API] Error in request:', error);
     return NextResponse.json(
       {
         success: false,
@@ -184,6 +220,15 @@ export async function GET(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
+    // Crear cliente de Supabase con el contexto apropiado
+    const supabase = createSupabaseClient(request);
+    
+    console.log('[Keys API] DELETE request headers:', {
+      origin: request.headers.get('origin') || 'NO_ORIGIN',
+      hasAuth: !!request.headers.get('authorization'),
+      hasApiKey: !!request.headers.get('x-api-key-data'),
+    });
+
     // Obtener parámetros
     const { searchParams } = new URL(request.url);
     const keyId = searchParams.get('id');
@@ -246,7 +291,7 @@ export async function DELETE(request: NextRequest) {
         message: 'API key revoked successfully'
       });
     } catch (error) {
-      console.error('Error revoking API key:', error);
+      console.error('[Keys API] Error revoking API key:', error);
       return NextResponse.json(
         {
           success: false,
@@ -259,7 +304,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
   } catch (error) {
-    console.error('Error in request:', error);
+    console.error('[Keys API] Error in request:', error);
     return NextResponse.json(
       {
         success: false,

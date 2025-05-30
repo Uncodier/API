@@ -89,8 +89,8 @@ export function generateTeamInviteHtml(data: TeamInviteEmailData): string {
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px 40px; text-align: center;">
           <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 12px; margin-bottom: 16px;">
-            <div style="width: 24px; height: 24px; background-color: #ffffff; border-radius: 50%; position: relative;">
-              <div style="position: absolute; top: 6px; left: 6px; width: 12px; height: 12px; background-color: #667eea; border-radius: 50%;"></div>
+            <div style="width: 24px; height: 24px; background-color: #ffffff; border-radius: 50%; position: relative; display: flex; align-items: center; justify-content: center;">
+              <div style="width: 12px; height: 12px; background-color: #667eea; border-radius: 50%;"></div>
             </div>
           </div>
           <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">You're Invited!</h1>

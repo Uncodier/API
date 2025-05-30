@@ -1,5 +1,3 @@
-import crypto from 'crypto';
-import { createHash } from 'crypto';
 import { supabase, supabaseAdmin } from '@/lib/database/supabase-client';
 
 export interface ApiKeyData {
@@ -16,43 +14,53 @@ export class ApiKeyService {
   private static readonly PREFIX_LENGTH = 8;
   
   /**
-   * Genera una nueva API key
+   * Genera una nueva API key usando Web Crypto API
    */
   static generateApiKey(prefix: string = 'key'): string {
-    const randomBytes = crypto.randomBytes(this.KEY_LENGTH);
-    const key = randomBytes.toString('base64url');
+    // Usar Web Crypto API para generar bytes aleatorios
+    const array = new Uint8Array(this.KEY_LENGTH);
+    crypto.getRandomValues(array);
+    
+    // Convertir a base64url
+    const key = btoa(String.fromCharCode(...Array.from(array)))
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+      .replace(/=/g, '');
+    
     return `${prefix}_${key}`;
   }
 
   /**
-   * Encripta una API key usando AES-256-CBC
+   * Deriva una clave de encriptación usando Web Crypto API
    */
-  private static encryptApiKey(apiKey: string): string {
-    const encryptionKey = process.env.ENCRYPTION_KEY;
-    
-    if (!encryptionKey) {
-      throw new Error("Missing ENCRYPTION_KEY environment variable");
-    }
-    
-    // Create key and IV from the encryption key
-    const key = createHash('sha256').update(String(encryptionKey)).digest();
-    const iv = createHash('sha256').update(key).digest().subarray(0, 16); // Usar los primeros 16 bytes
-    
-    // Create cipher
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
-    
-    // Encrypt
-    let encrypted = cipher.update(Buffer.from(apiKey, 'utf8'));
-    encrypted = Buffer.concat([encrypted, cipher.final()]);
-    
-    // Return only the encrypted value in base64
-    return encrypted.toString('base64');
+  private static async deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey> {
+    const encoder = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      encoder.encode(password),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveKey']
+    );
+
+    return crypto.subtle.deriveKey(
+      {
+        name: 'PBKDF2',
+        salt: salt,
+        iterations: 100000,
+        hash: 'SHA-256'
+      },
+      keyMaterial,
+      { name: 'AES-GCM', length: 256 },
+      false,
+      ['encrypt', 'decrypt']
+    );
   }
 
   /**
-   * Desencripta una API key
+   * Encripta una API key usando Web Crypto API (AES-GCM)
    */
-  private static decryptApiKey(encryptedKey: string): string {
+  private static async encryptApiKey(apiKey: string): Promise<string> {
     const encryptionKey = process.env.ENCRYPTION_KEY;
     
     if (!encryptionKey) {
@@ -60,23 +68,113 @@ export class ApiKeyService {
     }
     
     try {
-      // Create key and IV from the encryption key (same as in encryption)
-      const key = createHash('sha256').update(String(encryptionKey)).digest();
-      const iv = createHash('sha256').update(key).digest().subarray(0, 16);
+      const encoder = new TextEncoder();
+      const data = encoder.encode(apiKey);
       
-      // Convert from base64
-      const encryptedBuffer = Buffer.from(encryptedKey, 'base64');
+      // Generar salt aleatorio
+      const salt = crypto.getRandomValues(new Uint8Array(16));
       
-      // Create decipher
-      const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+      // Generar IV aleatorio
+      const iv = crypto.getRandomValues(new Uint8Array(12));
       
-      // Decrypt
-      let decrypted = decipher.update(encryptedBuffer);
-      decrypted = Buffer.concat([decrypted, decipher.final()]);
+      // Derivar clave
+      const key = await this.deriveKey(encryptionKey, salt);
       
-      return decrypted.toString('utf8');
+      // Encriptar
+      const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: iv },
+        key,
+        data
+      );
+      
+      // Combinar salt + iv + datos encriptados
+      const result = new Uint8Array(salt.length + iv.length + encrypted.byteLength);
+      result.set(salt, 0);
+      result.set(iv, salt.length);
+      result.set(new Uint8Array(encrypted), salt.length + iv.length);
+      
+      // Convertir a base64
+      return btoa(String.fromCharCode(...Array.from(result)));
     } catch (error) {
-      console.error('Error decrypting key:', error);
+      console.error('[ApiKeyService] Error encrypting:', error);
+      throw new Error("Failed to encrypt API key");
+    }
+  }
+
+  /**
+   * Desencripta una API key. Intenta Web Crypto API primero, luego fallback a Node.js crypto
+   */
+  private static async decryptApiKey(encryptedKey: string): Promise<string> {
+    const encryptionKey = process.env.ENCRYPTION_KEY;
+    
+    if (!encryptionKey) {
+      throw new Error("Missing ENCRYPTION_KEY environment variable");
+    }
+    
+    // Intentar con el nuevo formato (AES-GCM) primero para keys nuevas
+    try {
+      const data = new Uint8Array(
+        atob(encryptedKey).split('').map(char => char.charCodeAt(0))
+      );
+      
+      // Verificar si tiene el tamaño correcto para el nuevo formato (salt + iv + data)
+      if (data.length >= 28) {
+        const salt = data.slice(0, 16);
+        const iv = data.slice(16, 28);
+        const encrypted = data.slice(28);
+        
+        const key = await this.deriveKey(encryptionKey, salt);
+        
+        const decrypted = await crypto.subtle.decrypt(
+          { name: 'AES-GCM', iv: iv },
+          key,
+          encrypted
+        );
+        
+        const decoder = new TextDecoder();
+        return decoder.decode(decrypted);
+      }
+    } catch (error) {
+      console.log('[ApiKeyService] New format failed, trying legacy format');
+    }
+    
+    // Fallback para keys existentes (AES-256-CBC) usando Web Crypto API
+    try {
+      const encoder = new TextEncoder();
+      
+      // Crear hash SHA-256 de la clave de encriptación usando Web Crypto API
+      const keyData = await crypto.subtle.digest('SHA-256', encoder.encode(encryptionKey));
+      const keyArray = new Uint8Array(keyData);
+      
+      // Crear IV derivado usando SHA-256 del key
+      const ivData = await crypto.subtle.digest('SHA-256', keyArray);
+      const iv = new Uint8Array(ivData).slice(0, 16);
+      
+      // Importar la clave para AES-CBC
+      const cryptoKey = await crypto.subtle.importKey(
+        'raw',
+        keyArray,
+        { name: 'AES-CBC' },
+        false,
+        ['decrypt']
+      );
+      
+      // Decodificar de base64
+      const encryptedData = new Uint8Array(
+        atob(encryptedKey).split('').map(char => char.charCodeAt(0))
+      );
+      
+      // Desencriptar
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-CBC', iv: iv },
+        cryptoKey,
+        encryptedData
+      );
+      
+      const decoder = new TextDecoder();
+      return decoder.decode(decrypted);
+    } catch (error) {
+      console.error('[ApiKeyService] Both decryption methods failed:', error);
       throw new Error("Invalid encrypted key format");
     }
   }
@@ -92,7 +190,7 @@ export class ApiKeyService {
   }> {
     const prefix = data.prefix || 'key';
     const apiKey = this.generateApiKey(prefix);
-    const encryptedKey = this.encryptApiKey(apiKey);
+    const encryptedKey = await this.encryptApiKey(apiKey);
 
     // Calcular fecha de expiración
     const expiresAt = new Date();
@@ -141,33 +239,52 @@ export class ApiKeyService {
       }
 
       // Buscar todas las keys activas con ese prefijo
-      const { data: activeKeys, error } = await supabase
+      const { data: activeKeys, error } = await supabaseAdmin
         .from('api_keys')
         .select('*')
         .eq('status', 'active')
         .eq('prefix', prefix);
 
       if (error || !activeKeys?.length) {
+        console.log('[ApiKeyService] No active keys found:', {
+          error: error?.message,
+          keysFound: activeKeys?.length || 0,
+          prefix
+        });
         return { isValid: false };
       }
+
+      console.log('[ApiKeyService] Found active keys:', activeKeys.length);
 
       // Intentar encontrar la key correcta
       for (const key of activeKeys) {
         try {
-          const decryptedKey = this.decryptApiKey(key.key_hash);
+          const decryptedKey = await this.decryptApiKey(key.key_hash);
+          console.log('[ApiKeyService] Comparing keys:', {
+            keyId: key.id,
+            inputKeyLength: apiKey.length,
+            decryptedKeyLength: decryptedKey.length,
+            match: decryptedKey === apiKey,
+            // Solo mostrar los primeros caracteres para seguridad
+            inputPrefix: apiKey.substring(0, 10) + '...',
+            decryptedPrefix: decryptedKey.substring(0, 10) + '...'
+          });
+          
           if (decryptedKey === apiKey) {
             // Verificar expiración
             if (new Date(key.expires_at) < new Date()) {
+              console.log('[ApiKeyService] Key expired:', key.id);
               // Marcar como expirada
-              await supabase
+              await supabaseAdmin
                 .from('api_keys')
                 .update({ status: 'expired' })
                 .eq('id', key.id);
               return { isValid: false };
             }
             
+            console.log('[ApiKeyService] Valid key found:', key.id);
             // Actualizar último uso
-            await supabase
+            await supabaseAdmin
               .from('api_keys')
               .update({ last_used_at: new Date().toISOString() })
               .eq('id', key.id);
@@ -194,7 +311,7 @@ export class ApiKeyService {
    * Revoca una API key
    */
   static async revokeApiKey(userId: string, keyId: string, siteId: string): Promise<boolean> {
-    const { error } = await supabase
+    const { error } = await supabaseAdmin
       .from('api_keys')
       .update({ status: 'revoked' })
       .eq('id', keyId)
@@ -208,7 +325,7 @@ export class ApiKeyService {
    * Lista las API keys de un usuario para un sitio específico
    */
   static async listApiKeys(userId: string, siteId: string) {
-    const { data, error } = await supabase
+    const { data, error } = await supabaseAdmin
       .from('api_keys')
       .select('id, name, prefix, status, scopes, last_used_at, expires_at, created_at')
       .eq('user_id', userId)

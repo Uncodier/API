@@ -1,0 +1,400 @@
+---
+title: 'Get Tasks'
+description: 'Retrieves tasks from the database with filtering and pagination options'
+---
+
+## Get Tasks
+
+This tool retrieves tasks from the database with comprehensive filtering, sorting, and pagination capabilities.
+
+### Input Schema
+
+```json
+{
+  "user_id": "string", // Optional - Filter by assigned user ID
+  "site_id": "string", // Optional - Filter by site ID
+  "lead_id": "string", // Optional - Filter by associated lead ID
+  "visitor_id": "string", // Optional - Filter by visitor ID (tasks related to leads from this visitor)
+  "agent_id": "string", // Optional - Filter by agent that created the task
+  "command_id": "string", // Optional - Filter by command that generated the task
+  "type": "string", // Optional - Filter by task type/category
+  "status": "string", // Optional - Filter by task status
+  "stage": "string", // Optional - Filter by task stage
+  "priority": "string", // Optional - Filter by priority level
+  "due_date_from": "string", // Optional - Filter tasks due after this date (ISO format)
+  "due_date_to": "string", // Optional - Filter tasks due before this date (ISO format)
+  "scheduled_date_from": "string", // Optional - Filter tasks scheduled after this date (ISO format)
+  "scheduled_date_to": "string", // Optional - Filter tasks scheduled before this date (ISO format)
+  "created_date_from": "string", // Optional - Filter tasks created after this date (ISO format)
+  "created_date_to": "string", // Optional - Filter tasks created before this date (ISO format)
+  "search": "string", // Optional - Search in title and description
+  "sort_by": "string", // Optional - Sort field (created_at, due_date, priority, title)
+  "sort_order": "string", // Optional - Sort order (asc, desc) - default: desc
+  "limit": "number", // Optional - Maximum number of tasks to return (default: 50, max: 500)
+  "offset": "number", // Optional - Number of tasks to skip (default: 0)
+  "include_completed": "boolean", // Optional - Include completed tasks (default: true)
+  "include_archived": "boolean" // Optional - Include archived tasks (default: false)
+}
+```
+
+### Output Schema
+
+```json
+{
+  "success": "boolean",
+  "data": {
+    "tasks": [
+      {
+        "id": "string",
+        "serial_id": "string",
+        "title": "string",
+        "description": "string",
+        "address": "string",
+        "type": "string",
+        "status": "string",
+        "stage": "string",
+        "priority": "string",
+        "user_id": "string",
+        "site_id": "string",
+        "lead_id": "string",
+        "due_date": "string",
+        "scheduled_date": "string",
+        "command_id": "string",
+        "agent_id": "string",
+        "metadata": "object",
+        "created_at": "string",
+        "updated_at": "string",
+        "completion_date": "string",
+        "assigned_user": {
+          "id": "string",
+          "name": "string",
+          "email": "string"
+        },
+        "related_lead": {
+          "id": "string",
+          "name": "string",
+          "email": "string",
+          "company": "string"
+        },
+        "site": {
+          "id": "string",
+          "name": "string",
+          "url": "string"
+        },
+        "task_categories": [
+          {
+            "id": "string",
+            "name": "string",
+            "description": "string",
+            "created_at": "string"
+          }
+        ],
+        "task_comments": [
+          {
+            "id": "string",
+            "content": "string",
+            "user_id": "string",
+            "created_at": "string",
+            "updated_at": "string",
+            "user": {
+              "id": "string",
+              "name": "string",
+              "email": "string"
+            }
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "total": "number",
+      "count": "number",
+      "offset": "number",
+      "limit": "number",
+      "has_more": "boolean"
+    },
+    "filters_applied": "object",
+    "summary": {
+      "total_tasks": "number",
+      "by_status": "object",
+      "by_stage": "object",
+      "by_priority": "object",
+      "by_type": "object",
+      "overdue_tasks": "number",
+      "due_today": "number",
+      "due_this_week": "number"
+    }
+  },
+  "error": "string" // Only included if there was an error
+}
+```
+
+### Description
+
+The Get Tasks tool provides comprehensive task retrieval functionality with advanced filtering, sorting, and analytics capabilities. The tool includes:
+
+1. **Flexible filtering** by user, site, lead, dates, status, and more
+2. **Full-text search** across task titles and descriptions
+3. **Relational data** including user, lead, and site information
+4. **Task categories** with detailed category information (name, description, color)
+5. **Task comments** with complete comment history and user details
+6. **Pagination support** for handling large datasets
+7. **Task analytics** with summary statistics and counts
+8. **Date range filtering** for time-based queries
+9. **Priority and status aggregations** for dashboard views
+
+### Filtering Options
+
+#### By Assignment and Ownership
+- **user_id**: Tasks assigned to specific users
+- **site_id**: Tasks belonging to specific sites
+- **lead_id**: Tasks related to specific leads
+- **visitor_id**: Tasks related to leads that originated from a specific visitor
+- **agent_id**: Tasks created by specific agents
+- **command_id**: Tasks generated by specific commands
+
+#### By Status and Stage
+- **type**: Filter by task category (follow_up, marketing_campaign, etc.)
+- **status**: Filter by task status (active, inactive, archived)
+- **stage**: Filter by current stage (pending, in_progress, completed, etc.)
+- **priority**: Filter by priority level (low, medium, high, urgent)
+
+#### By Date Ranges
+- **due_date_from/to**: Filter by due date range
+- **scheduled_date_from/to**: Filter by scheduled date range
+- **created_date_from/to**: Filter by creation date range
+
+#### Advanced Options
+- **search**: Full-text search in title and description
+- **include_completed**: Include or exclude completed tasks
+- **include_archived**: Include or exclude archived tasks
+
+### Sorting Options
+
+| Sort Field | Description |
+|------------|-------------|
+| `created_at` | Sort by creation date (default) |
+| `updated_at` | Sort by last modification date |
+| `due_date` | Sort by due date |
+| `scheduled_date` | Sort by scheduled date |
+| `priority` | Sort by priority level |
+| `title` | Sort alphabetically by title |
+| `type` | Sort by task type |
+| `status` | Sort by task status |
+
+### Task Categories and Comments
+
+#### Task Categories
+Each task can be assigned to one or more categories for better organization and filtering:
+
+- **id**: Unique identifier for the category
+- **name**: Display name of the category (e.g., "Marketing Campaign", "Customer Support")
+- **description**: Detailed description of what the category represents
+- **created_at**: When the category was created
+
+Categories help organize tasks by business function, department, or project type, making it easier to filter and analyze task workloads.
+
+#### Task Comments
+Each task maintains a complete comment history for collaboration and tracking:
+
+- **id**: Unique identifier for the comment
+- **content**: The actual comment text/content
+- **user_id**: ID of the user who made the comment
+- **created_at**: When the comment was created
+- **updated_at**: When the comment was last modified
+- **user**: User information including name and email for context
+
+Comments provide a chronological record of task progress, decisions made, and communication between team members.
+
+### Example Usage
+
+```javascript
+// Example 1: Get all active tasks for a user
+{
+  "user_id": "user_123",
+  "status": "active",
+  "sort_by": "due_date",
+  "sort_order": "asc",
+  "limit": 20
+}
+
+// Example 2: Get overdue tasks across all users
+{
+  "site_id": "site_456",
+  "due_date_to": "2023-12-10T00:00:00Z",
+  "stage": "pending",
+  "sort_by": "due_date",
+  "sort_order": "asc"
+}
+
+// Example 3: Get marketing tasks for this week
+{
+  "type": "marketing_campaign",
+  "scheduled_date_from": "2023-12-11T00:00:00Z",
+  "scheduled_date_to": "2023-12-17T23:59:59Z",
+  "sort_by": "scheduled_date",
+  "sort_order": "asc"
+}
+
+// Example 4: Search for specific tasks
+{
+  "search": "follow up",
+  "user_id": "user_123",
+  "sort_by": "created_at",
+  "sort_order": "desc",
+  "limit": 10
+}
+
+// Example 5: Get all tasks for a specific lead
+{
+  "lead_id": "lead_789",
+  "include_completed": true,
+  "sort_by": "created_at",
+  "sort_order": "desc"
+}
+
+// Example 6: Get all tasks related to a specific visitor
+{
+  "visitor_id": "visitor_456",
+  "sort_by": "created_at",
+  "sort_order": "desc",
+  "limit": 25
+}
+
+// Example 7: Get tasks with complete collaboration data
+{
+  "user_id": "user_123",
+  "status": "active",
+  "sort_by": "updated_at",
+  "sort_order": "desc"
+}
+// Returns tasks with full category and comment history for collaboration tracking
+```
+
+### Response Examples
+
+```json
+// Example response with multiple tasks
+{
+  "success": true,
+  "data": {
+    "tasks": [
+      {
+        "id": "task_123",
+        "serial_id": "TSK-2023-001234",
+        "title": "Follow up with John Doe",
+        "description": "Call to discuss product demo feedback",
+        "address": "1234 Business Ave, Suite 100, New York, NY 10001",
+        "type": "follow_up",
+        "status": "active",
+        "stage": "pending",
+        "priority": "high",
+        "user_id": "user_123",
+        "site_id": "site_456",
+        "lead_id": "lead_789",
+        "due_date": "2023-12-15T14:00:00Z",
+        "scheduled_date": "2023-12-15T14:00:00Z",
+        "created_at": "2023-12-10T10:30:00Z",
+        "updated_at": "2023-12-10T10:30:00Z",
+        "completion_date": "2023-12-15T14:00:00Z",
+        "assigned_user": {
+          "id": "user_123",
+          "name": "Jane Smith",
+          "email": "jane.smith@example.com"
+        },
+        "related_lead": {
+          "id": "lead_789",
+          "name": "John Doe",
+          "email": "john.doe@company.com",
+          "company": "Acme Corp"
+        },
+        "site": {
+          "id": "site_456",
+          "name": "Main Website",
+          "url": "https://example.com"
+        },
+        "task_categories": [
+          {
+            "id": "category_123",
+            "name": "Marketing Campaign",
+            "description": "Tasks related to marketing campaigns",
+            "created_at": "2023-12-05T09:00:00Z"
+          },
+          {
+            "id": "category_456",
+            "name": "Lead Follow-up",
+            "description": "Tasks for following up with leads and prospects",
+            "created_at": "2023-12-01T10:15:00Z"
+          }
+        ],
+        "task_comments": [
+          {
+            "id": "comment_123",
+            "content": "Successfully contacted John via phone. He expressed interest in our enterprise package and wants to schedule a demo for next week.",
+            "user_id": "user_123",
+            "created_at": "2023-12-12T15:30:00Z",
+            "updated_at": "2023-12-12T15:30:00Z",
+            "user": {
+              "id": "user_123",
+              "name": "Jane Smith",
+              "email": "jane.smith@example.com"
+            }
+          },
+          {
+            "id": "comment_124",
+            "content": "Demo scheduled for December 18th at 2 PM. Sending calendar invite and preparation materials.",
+            "user_id": "user_456",
+            "created_at": "2023-12-12T16:45:00Z",
+            "updated_at": "2023-12-12T16:45:00Z",
+            "user": {
+              "id": "user_456",
+              "name": "Michael Johnson",
+              "email": "michael.johnson@example.com"
+            }
+          }
+        ]
+      }
+    ],
+    "pagination": {
+      "total": 42,
+      "count": 1,
+      "offset": 0,
+      "limit": 50,
+      "has_more": false
+    },
+    "filters_applied": {
+      "user_id": "user_123",
+      "status": "active"
+    },
+    "summary": {
+      "total_tasks": 42,
+      "by_status": {
+        "active": 35,
+        "inactive": 5,
+        "archived": 2
+      },
+      "by_stage": {
+        "pending": 20,
+        "in_progress": 12,
+        "review": 3,
+        "completed": 7
+      },
+      "by_priority": {
+        "low": 8,
+        "medium": 22,
+        "high": 10,
+        "urgent": 2
+      },
+      "by_type": {
+        "follow_up": 15,
+        "marketing_campaign": 8,
+        "content_creation": 12,
+        "sales_demo": 5,
+        "administrative": 2
+      },
+      "overdue_tasks": 3,
+      "due_today": 5,
+      "due_this_week": 18
+    }
+  }
+}
+```
