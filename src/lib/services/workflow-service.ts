@@ -446,7 +446,7 @@ export class WorkflowService {
       console.log(`🏢 Site ID: ${params.site_id}`);
       console.log(`👤 User ID: ${params.userId}`);
 
-      const handle = await client.workflow.start('scheduleCustomerSupport', {
+      const handle = await client.workflow.start('scheduleCustomerSupportMessagesWorkflow', {
         args: [params],
         taskQueue,
         workflowId,

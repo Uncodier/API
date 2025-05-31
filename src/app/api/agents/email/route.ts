@@ -205,15 +205,38 @@ async function scheduleCustomerSupportAfterAnalysis(
     if (analysisArray.length > 0) {
       console.log(`[EMAIL_API] Encontrados ${analysisArray.length} análisis, programando customer support...`);
       
-      // Llamar al servicio de Temporal
-      const workflowService = WorkflowService.getInstance();
-      const scheduleParams: ScheduleCustomerSupportParams = {
-        analysisArray,
+      // Extraer solo los datos esenciales para el workflow
+      const emailsForWorkflow = analysisArray.map((analysis, index) => ({
+        email: {
+          summary: analysis.summary || "Email analysis summary",
+          contact_info: {
+            name: analysis.lead_extraction?.contact_info?.name || null,
+            email: analysis.lead_extraction?.contact_info?.email || null,
+            phone: analysis.lead_extraction?.contact_info?.phone || null,
+            company: analysis.lead_extraction?.contact_info?.company || null
+          }
+        },
+        // Campos requeridos del API
         site_id: siteId,
-        userId: userId
-      };
+        user_id: userId,
+        lead_notification: true, // Always send a notification for each email that is a lead
+        priority: analysis.priority || "medium",
+        response_type: analysis.commercial_opportunity?.response_type || "informational",
+        potential_value: analysis.commercial_opportunity?.potential_value || "unknown",
+        intent: analysis.lead_extraction?.intent || "inquiry",
+        // ID único para tracking
+        analysis_id: `analysis_${Date.now()}_${index}`
+      }));
       
-      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', scheduleParams);
+      // Llamar al servicio de Temporal con los datos simplificados
+      const workflowService = WorkflowService.getInstance();
+      
+      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', {
+        emails: emailsForWorkflow,
+        site_id: siteId,
+        user_id: userId,
+        total_emails: emailsForWorkflow.length
+      });
       
       if (result.success) {
         console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
@@ -240,35 +263,14 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     description: 'Analyze incoming emails to identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
     targets: [
       {
-        analysis: {
-          summary: "",
-          insights: [],
-          sentiment: "positive | negative | neutral",
-          priority: "high | medium | low",
-          action_items: [],
-          response: [],
-          lead_extraction: {
+        email: {
+          summary: "Summary of the commercial opportunity and message and client inquiry",
             contact_info: {
               name: null,
               email: null,
               phone: null,
               company: null
-            },
-            intent: "inquiry | complaint | purchase | support | partnership | demo_request",
-            requirements: [],
-            budget_indication: null,
-            timeline: null,
-            decision_maker: "yes | no | unknown",
-            source: "website | referral | social_media | advertising | cold_outreach"
-          },
-          commercial_opportunity: {
-            requires_response: false,
-            response_type: "commercial | support | informational | follow_up",
-            priority_level: "high | medium | low",
-            suggested_actions: [],
-            potential_value: "high | medium | low | unknown",
-            next_steps: []
-          }
+            }
         }
       }
     ],

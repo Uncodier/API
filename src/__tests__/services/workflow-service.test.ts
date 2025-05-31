@@ -342,7 +342,7 @@ describe('WorkflowService', () => {
     it('debería programar customer support exitosamente', async () => {
       const result = await workflowService.scheduleCustomerSupport(mockScheduleParams);
 
-      expect(mockClient.workflow.start).toHaveBeenCalledWith('scheduleCustomerSupport', {
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('scheduleCustomerSupportMessagesWorkflow', {
         args: [mockScheduleParams],
         taskQueue: 'default',
         workflowId: expect.stringMatching(/^customer-support-\d+-[a-z0-9]+$/)
@@ -440,7 +440,7 @@ describe('WorkflowService', () => {
 
       await workflowService.scheduleCustomerSupport(mockScheduleParams, customOptions);
 
-      expect(mockClient.workflow.start).toHaveBeenCalledWith('scheduleCustomerSupport', {
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('scheduleCustomerSupportMessagesWorkflow', {
         args: [mockScheduleParams],
         taskQueue: 'customer-support-queue',
         workflowId: 'custom-support-workflow-id'
