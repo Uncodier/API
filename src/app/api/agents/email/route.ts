@@ -197,46 +197,95 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
  * Programa el customer support después de que se complete el análisis
  */
 async function scheduleCustomerSupportAfterAnalysis(
-  analysisArray: AnalysisData[], 
+  emailsArray: any[], 
   siteId: string, 
   userId: string
 ): Promise<void> {
   try {
-    if (analysisArray.length > 0) {
-      console.log(`[EMAIL_API] Encontrados ${analysisArray.length} análisis, programando customer support...`);
+    if (emailsArray.length > 0) {
+      console.log(`[EMAIL_API] Encontrados ${emailsArray.length} emails, programando customer support...`);
       
-      // Extraer solo los datos esenciales para el workflow
-      const emailsForWorkflow = analysisArray.map((analysis, index) => ({
-        email: {
-          summary: analysis.summary || "Email analysis summary",
-          contact_info: {
-            name: analysis.lead_extraction?.contact_info?.name || null,
-            email: analysis.lead_extraction?.contact_info?.email || null,
-            phone: analysis.lead_extraction?.contact_info?.phone || null,
-            company: analysis.lead_extraction?.contact_info?.company || null
+      // Validar y filtrar emails válidos antes de enviar al workflow
+      const validEmailsForWorkflow = emailsArray
+        .map((email, index) => {
+          // Validar que tenga al menos un summary o información de contacto
+          const hasValidSummary = email.summary && email.summary.trim().length > 0;
+          const hasValidContactInfo = email.contact_info && (
+            email.contact_info.email ||
+            email.contact_info.name ||
+            email.contact_info.company
+          );
+          
+          // Si no tiene información válida, skip este email
+          if (!hasValidSummary && !hasValidContactInfo) {
+            console.log(`[EMAIL_API] Skipping email ${index} - no tiene información válida`);
+            return null;
           }
-        },
-        // Campos requeridos del API
-        site_id: siteId,
-        user_id: userId,
-        lead_notification: true, // Always send a notification for each email that is a lead
-        priority: analysis.priority || "medium",
-        response_type: analysis.commercial_opportunity?.response_type || "informational",
-        potential_value: analysis.commercial_opportunity?.potential_value || "unknown",
-        intent: analysis.lead_extraction?.intent || "inquiry",
-        // ID único para tracking
-        analysis_id: `analysis_${Date.now()}_${index}`
-      }));
+          
+          // Validar email si existe
+          const emailAddress = email.contact_info?.email;
+          if (emailAddress && !isValidEmail(emailAddress)) {
+            console.log(`[EMAIL_API] Warning: email inválido encontrado: ${emailAddress}`);
+          }
+          
+          return {
+            email: {
+              summary: email.summary || "Email analysis summary",
+              original_subject: email.original_subject || null,
+              contact_info: {
+                name: email.contact_info?.name || null,
+                email: emailAddress || null,
+                phone: email.contact_info?.phone || null,
+                company: email.contact_info?.company || null
+              }
+            },
+            // Campos requeridos del API
+            site_id: siteId,
+            user_id: userId,
+            lead_notification: true, // Send notification for valid emails
+            priority: "medium",
+            response_type: "informational",
+            potential_value: "unknown",
+            intent: "inquiry",
+            // ID único para tracking
+            analysis_id: `email_${Date.now()}_${index}`
+          };
+        })
+        .filter(Boolean); // Remover entradas null
       
-      // Llamar al servicio de Temporal con los datos simplificados
+      // Validar que tengamos al menos un email válido
+      if (validEmailsForWorkflow.length === 0) {
+        console.log(`[EMAIL_API] No hay emails válidos para programar customer support`);
+        return;
+      }
+      
+      // Validar parámetros del workflow
+      if (!siteId || siteId.trim().length === 0) {
+        console.error(`[EMAIL_API] Error: site_id inválido: ${siteId}`);
+        return;
+      }
+      
+      if (!userId || userId.trim().length === 0) {
+        console.error(`[EMAIL_API] Error: user_id inválido: ${userId}`);
+        return;
+      }
+      
+      console.log(`[EMAIL_API] Enviando ${validEmailsForWorkflow.length} emails válidos al workflow`);
+      
+      // Llamar al servicio de Temporal con los datos validados
       const workflowService = WorkflowService.getInstance();
       
-      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', {
-        emails: emailsForWorkflow,
+      const workflowPayload = {
+        emails: validEmailsForWorkflow,
         site_id: siteId,
         user_id: userId,
-        total_emails: emailsForWorkflow.length
-      });
+        total_emails: validEmailsForWorkflow.length,
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log(`[EMAIL_API] Payload del workflow:`, JSON.stringify(workflowPayload, null, 2));
+      
+      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', workflowPayload);
       
       if (result.success) {
         console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
@@ -244,11 +293,17 @@ async function scheduleCustomerSupportAfterAnalysis(
         console.error(`[EMAIL_API] Error al programar customer support:`, result.error);
       }
     } else {
-      console.log(`[EMAIL_API] No se encontraron análisis para programar customer support`);
+      console.log(`[EMAIL_API] No se encontraron emails para programar customer support`);
     }
   } catch (error) {
     console.error(`[EMAIL_API] Error en scheduleCustomerSupportAfterAnalysis:`, error);
   }
+}
+
+// Función de validación de email
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
 }
 
 // Create command object for email analysis
@@ -260,16 +315,17 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
     site_id: siteId,
-    description: 'Analyze incoming emails to identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
+    description: 'Identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
     targets: [
       {
         email: {
-          summary: "Summary of each individual email that is a commercial opportunity or has a message and client inquiry",
+          original_subject: "Original subject of the email",
+          summary: "Summary of the message and client inquiry",
             contact_info: {
-              name: null,
-              email: null,
-              phone: null,
-              company: null
+              name: "name found in the email",
+              email: "from email address",
+              phone: "phone found in the email",
+              company: "company found in the email"
             }
         }
       }
@@ -384,32 +440,35 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      // Extraer los análisis de los results/targets para programar customer support
-      const analysisArray: AnalysisData[] = [];
+      // Extraer los datos de email de los results/targets para programar customer support
+      const emailsForWorkflow: any[] = [];
       
+      // Extraer de results si los hay
       if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
         for (const result of executedCommand.results) {
-          if (result.analysis) {
-            analysisArray.push(result.analysis as AnalysisData);
+          if (result.email) {
+            emailsForWorkflow.push(result.email);
           }
         }
       }
       
-      // Si también hay targets con análisis, los incluimos
+      // Extraer de targets (que ahora tienen estructura de email)
       if (executedCommand && executedCommand.targets && Array.isArray(executedCommand.targets)) {
         for (const target of executedCommand.targets) {
-          if (target.analysis) {
-            analysisArray.push(target.analysis as AnalysisData);
+          if (target.email) {
+            emailsForWorkflow.push(target.email);
           }
         }
       }
+      
+      console.log(`[EMAIL_API] Emails extraídos para procesamiento: ${emailsForWorkflow.length}`);
       
       // Programar customer support de forma asíncrona (sin bloquear la respuesta)
       const effectiveUserId = user_id || team_member_id || '00000000-0000-0000-0000-000000000000';
       console.log(`[EMAIL_API] Programando customer support asíncronamente...`);
       
       // Ejecutar sin await para no bloquear la respuesta
-      scheduleCustomerSupportAfterAnalysis(analysisArray, site_id, effectiveUserId)
+      scheduleCustomerSupportAfterAnalysis(emailsForWorkflow, site_id, effectiveUserId)
         .catch(error => {
           console.error(`[EMAIL_API] Error en programación asíncrona de customer support:`, error);
         });
@@ -421,7 +480,7 @@ export async function POST(request: NextRequest) {
           status: executedCommand?.status || 'completed',
           message: "Análisis de emails completado exitosamente",
           emailCount: emails.length,
-          analysisCount: analysisArray.length
+          analysisCount: emailsForWorkflow.length
         }
       });
       
