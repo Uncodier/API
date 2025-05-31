@@ -10,7 +10,7 @@ import { EmailSendService } from '@/lib/services/email/EmailSendService';
  * 
  * Parámetros de la solicitud:
  * - email: (Requerido) Email del destinatario
- * - from: (Requerido) Email del remitente
+ * - from: (Opcional) Nombre del remitente (el email se obtiene de la configuración del sitio)
  * - subject: (Requerido) Asunto del email
  * - message: (Requerido) Contenido del mensaje
  * - site_id: (Requerido) ID del sitio para obtener configuración SMTP
@@ -34,7 +34,6 @@ export async function POST(request: NextRequest) {
     // Validar parámetros requeridos
     const requiredFields = [
       { field: 'email', value: email },
-      { field: 'from', value: from },
       { field: 'subject', value: subject },
       { field: 'message', value: message },
       { field: 'site_id', value: site_id }
@@ -55,7 +54,55 @@ export async function POST(request: NextRequest) {
       }
     }
     
-    // Validar formato de emails
+    // Obtener configuración del sitio para validar el email del remitente
+    const { data: siteSettings, error: settingsError } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', site_id)
+      .single();
+      
+    if (settingsError || !siteSettings) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'SITE_CONFIG_NOT_FOUND', 
+            message: 'Site configuration not found or email not configured' 
+          } 
+        },
+        { status: 404 }
+      );
+    }
+    
+    const configuredEmail = siteSettings.channels?.email?.email;
+    if (!configuredEmail) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'EMAIL_NOT_CONFIGURED', 
+            message: 'Email is not configured for this site. Please configure email in site settings.' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Validar formato del email configurado
+    if (!EmailSendService.isValidEmail(configuredEmail)) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_CONFIGURED_EMAIL', 
+            message: 'The configured email in site settings has an invalid format' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Validar formato del email destinatario
     const targetEmail = email === 'no-email@example.com' ? email : email;
     
     if (targetEmail !== 'no-email@example.com' && !EmailSendService.isValidEmail(targetEmail)) {
@@ -64,20 +111,7 @@ export async function POST(request: NextRequest) {
           success: false, 
           error: { 
             code: 'INVALID_REQUEST', 
-            message: 'Invalid email format' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    if (!EmailSendService.isValidEmail(from)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'Invalid from email format' 
+            message: 'Invalid recipient email format' 
           } 
         },
         { status: 400 }
@@ -87,7 +121,8 @@ export async function POST(request: NextRequest) {
     // Enviar el email usando el servicio
     const result = await EmailSendService.sendEmail({
       email: targetEmail,
-      from,
+      from: from || '', // Nombre del remitente (opcional)
+      fromEmail: configuredEmail, // Email del remitente desde configuración
       subject,
       message,
       agent_id,

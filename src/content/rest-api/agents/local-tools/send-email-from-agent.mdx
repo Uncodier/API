@@ -11,20 +11,45 @@ Este tool permite a los agentes AI enviar correos electrónicos automáticamente
 
 ## Descripción
 
-Envía correos electrónicos usando la configuración SMTP privada configurada para cada sitio. El tool obtiene automáticamente la configuración de email del sitio, incluyendo servidor SMTP, credenciales y puertos. Maneja el formato HTML del mensaje, la validación de emails y proporciona logging completo de los envíos.
+Envía correos electrónicos usando la configuración SMTP privada configurada para cada sitio. El tool obtiene automáticamente la configuración de email del sitio, incluyendo servidor SMTP, credenciales y puertos. El email del remitente se obtiene de `settings.channels.email.email` del sitio, y el parámetro `from` puede usarse opcionalmente como nombre del remitente. Maneja el formato HTML del mensaje, la validación de emails y proporciona logging completo de los envíos.
 
 ## Parámetros
 
 | Nombre          | Tipo     | Requerido | Descripción                                                |
 |-----------------|----------|-----------|-----------------------------------------------------------|
 | email           | string   | Sí        | Dirección de correo electrónico del destinatario           |
-| from            | string   | Sí        | Dirección de correo electrónico del remitente              |
+| from            | string   | No        | Nombre del remitente (opcional). El email se obtiene de la configuración del sitio |
 | subject         | string   | Sí        | Asunto del correo electrónico                              |
 | message         | string   | Sí        | Contenido del mensaje (se convierte automáticamente a HTML) |
 | site_id         | string   | Sí        | ID del sitio para obtener la configuración SMTP            |
 | agent_id        | string   | No        | ID del agente que envía el email (para logging)            |
 | conversation_id | string   | No        | ID de la conversación relacionada (para logging)           |
 | lead_id         | string   | No        | ID del lead relacionado (para logging)                     |
+
+## Configuración del Email del Remitente
+
+El sistema utiliza la configuración de email del sitio para determinar el remitente:
+
+- **Email del remitente**: Se obtiene automáticamente de `settings.channels.email.email` del sitio
+- **Nombre del remitente**: Se puede especificar opcionalmente en el parámetro `from`
+- **Formato final**: `"Nombre del Remitente <email@configurado.com>"` o solo `"email@configurado.com"` si no se especifica nombre
+
+Ejemplo de configuración en `settings.channels`:
+```json
+{
+  "email": {
+    "email": "sergio@uncodie.com",
+    "status": "synced",
+    "enabled": true,
+    "password": "STORED_SECURELY",
+    "provider": "Gmail",
+    "incomingPort": "993",
+    "outgoingPort": "587",
+    "incomingServer": "imap.gmail.com",
+    "outgoingServer": "smtp.gmail.com"
+  }
+}
+```
 
 ## Probar API
 
@@ -45,12 +70,12 @@ Utiliza el API Tester integrado para probar este endpoint de manera interactiva:
 
 **Obligatorios:**
 - `email`: Dirección de correo del destinatario
-- `from`: Dirección de correo del remitente
 - `subject`: Asunto del email
 - `message`: Contenido del mensaje
+- `site_id`: ID del sitio para obtener la configuración SMTP
 
 **Opcionales:**
-- `site_id`: ID del sitio para obtener la configuración SMTP
+- `from`: Nombre del remitente (el email se obtiene de la configuración del sitio)
 - `agent_id`: ID del agente para logging
 - `conversation_id`: ID de la conversación para logging
 - `lead_id`: ID del lead para logging
@@ -62,7 +87,7 @@ Utiliza el API Tester integrado para probar este endpoint de manera interactiva:
   "success": true,
   "email_id": "f87bdc7f-0efe-4aa5-b499-49d85be4b154",
   "recipient": "cliente@empresa.com",
-  "sender": "ventas@miempresa.com",
+  "sender": "Equipo de Ventas <sergio@uncodie.com>",
   "subject": "Propuesta comercial personalizada",
   "message_preview": "Estimado cliente, esperamos que se encuentre bien. Nos complace presentarle nuestra propuesta...",
   "sent_at": "2023-11-15T14:30:42.123Z",
@@ -87,8 +112,59 @@ Utiliza el API Tester integrado para probar este endpoint de manera interactiva:
 |--------|-----------------|--------------------------------------------------------------|
 | 201    | Created         | El email fue enviado exitosamente                            |
 | 200    | OK              | Email temporal detectado, no se envió email real             |
-| 400    | Bad Request     | Parámetros inválidos o formato de email incorrecto           |
+| 400    | Bad Request     | Parámetros inválidos, formato de email incorrecto o email no configurado |
+| 404    | Not Found       | Configuración del sitio no encontrada                        |
 | 500    | Server Error    | Error del servidor al enviar el email                        |
+
+## Errores de configuración
+
+### SITE_CONFIG_NOT_FOUND (404)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "SITE_CONFIG_NOT_FOUND",
+    "message": "Site configuration not found or email not configured"
+  }
+}
+```
+El sitio especificado no existe o no tiene configuración en la tabla `settings`.
+
+### EMAIL_NOT_CONFIGURED (400)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EMAIL_NOT_CONFIGURED",
+    "message": "Email is not configured for this site. Please configure email in site settings."
+  }
+}
+```
+El sitio existe pero no tiene configurado el email en `settings.channels.email.email`.
+
+### INVALID_CONFIGURED_EMAIL (400)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_CONFIGURED_EMAIL",
+    "message": "The configured email in site settings has an invalid format"
+  }
+}
+```
+El email configurado en `settings.channels.email.email` tiene un formato inválido.
+
+### EMAIL_CONFIG_NOT_FOUND (404)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EMAIL_CONFIG_NOT_FOUND",
+    "message": "Email configuration not found for site [site_id]. Please configure email settings and store email token using /api/secure-tokens endpoint."
+  }
+}
+```
+No se encontró la configuración SMTP o el token de email en `secure_tokens`.
 
 ## Ejemplo de uso
 
@@ -98,7 +174,7 @@ const result = await agent.useTools([
     name: "send_email_from_agent",
     input: {
       email: "cliente@empresa.com",
-      from: "ventas@miempresa.com",
+      from: "Equipo de Ventas", // Nombre opcional del remitente
       subject: "Propuesta comercial personalizada",
       message: "Estimado cliente,\n\nEsperamos que se encuentre bien. Nos complace presentarle nuestra propuesta comercial personalizada basada en sus necesidades específicas.\n\nAdjuntamos los detalles de nuestra solución que incluye:\n- Análisis de requerimientos\n- Propuesta técnica\n- Cronograma de implementación\n- Presupuesto detallado\n\nQuedamos atentos a sus comentarios.\n\nSaludos cordiales,\nEquipo de Ventas",
       site_id: "site-12345"

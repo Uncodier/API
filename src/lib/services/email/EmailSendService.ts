@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 
 export interface SendEmailParams {
   email: string;
-  from: string;
+  from: string; // Nombre del remitente (opcional)
+  fromEmail?: string; // Email del remitente desde configuración del sitio
   subject: string;
   message: string;
   agent_id?: string;
@@ -35,13 +36,14 @@ export class EmailSendService {
    * Envía un email usando la configuración SMTP del sitio
    */
   static async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-    const { email, from, subject, message, agent_id, conversation_id, lead_id, site_id } = params;
+    const { email, from, fromEmail, subject, message, agent_id, conversation_id, lead_id, site_id } = params;
     
     // Si el email es el temporal, no enviar email real
     if (email === 'no-email@example.com') {
       console.log('📧 Email temporal detectado, no se enviará email real:', {
         to: email,
-        from,
+        from: from || 'AI Assistant',
+        fromEmail: fromEmail,
         subject,
         messagePreview: message.substring(0, 100) + '...'
       });
@@ -50,7 +52,7 @@ export class EmailSendService {
         success: true,
         email_id: uuidv4(),
         recipient: email,
-        sender: from,
+        sender: fromEmail || from,
         subject,
         message_preview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
         sent_at: new Date().toISOString(),
@@ -62,6 +64,13 @@ export class EmailSendService {
     try {
       // Obtener configuración de email para el sitio
       const emailConfig = await EmailConfigService.getEmailConfig(site_id);
+      
+      // Usar el email configurado del sitio o el del parámetro fromEmail
+      const senderEmail = fromEmail || emailConfig.user || emailConfig.email;
+      
+      if (!senderEmail) {
+        throw new Error('No se pudo determinar el email del remitente');
+      }
       
       // Crear transporter con la configuración SMTP del sitio
       const transporter = nodemailer.createTransport({
@@ -80,14 +89,18 @@ export class EmailSendService {
       // Preparar el contenido HTML del email
       const htmlContent = this.buildHtmlContent(message);
 
+      // Determinar el nombre y email del remitente
+      const fromName = from || 'AI Assistant';
+      const fromAddress = senderEmail;
+
       // Configurar opciones del email
       const mailOptions: nodemailer.SendMailOptions = {
-        from: `AI Assistant <${emailConfig.user || emailConfig.email}>`,
+        from: `${fromName} <${fromAddress}>`,
         to: email,
         subject,
         html: htmlContent,
         text: message, // Versión de texto plano
-        replyTo: from
+        replyTo: fromAddress
       };
 
       // Enviar el email
@@ -96,14 +109,14 @@ export class EmailSendService {
       console.log('✅ Email enviado exitosamente:', {
         messageId: info.messageId,
         to: email,
-        from,
+        from: `${fromName} <${fromAddress}>`,
         subject
       });
 
       // Guardar registro del email enviado en la base de datos (opcional)
       await this.saveEmailLog({
         recipient_email: email,
-        sender_email: from,
+        sender_email: fromAddress,
         subject,
         message_content: message,
         agent_id,
@@ -116,7 +129,7 @@ export class EmailSendService {
         success: true,
         email_id: info.messageId,
         recipient: email,
-        sender: from,
+        sender: `${fromName} <${fromAddress}>`,
         subject,
         message_preview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
         sent_at: new Date().toISOString(),
