@@ -242,7 +242,7 @@ async function scheduleCustomerSupportAfterAnalysis(
             // Campos requeridos del API
             site_id: siteId,
             user_id: userId,
-            lead_notification: true, // Send notification for valid emails
+            lead_notification: "email", // Send notification for valid emails
             priority: "medium",
             response_type: "informational",
             potential_value: "unknown",
@@ -272,7 +272,7 @@ async function scheduleCustomerSupportAfterAnalysis(
       
       console.log(`[EMAIL_API] Enviando ${validEmailsForWorkflow.length} emails válidos al workflow`);
       
-      // Llamar al servicio de Temporal con los datos validados
+      // Llamar al servicio de Temporal con el workflow padre que manejará el child workflow
       const workflowService = WorkflowService.getInstance();
       
       const workflowPayload = {
@@ -280,12 +280,15 @@ async function scheduleCustomerSupportAfterAnalysis(
         site_id: siteId,
         user_id: userId,
         total_emails: validEmailsForWorkflow.length,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        // Especificar que debe ejecutar el child workflow de customer support messages
+        child_workflow: 'scheduleCustomerSupportMessagesWorkflow'
       };
       
-      console.log(`[EMAIL_API] Payload del workflow:`, JSON.stringify(workflowPayload, null, 2));
+      console.log(`[EMAIL_API] Payload del workflow padre:`, JSON.stringify(workflowPayload, null, 2));
       
-      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', workflowPayload);
+      // Llamar al workflow padre que ejecutará el child workflow internamente
+      const result = await workflowService.executeWorkflow('syncEmailsScheduleWorkflow', workflowPayload);
       
       if (result.success) {
         console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
@@ -440,26 +443,22 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      // Extraer los datos de email de los results/targets para programar customer support
+      // Extraer los datos de email de los results para programar customer support
+      // NOTA: Solo extraemos de results, NO de targets (que contienen solo templates)
       const emailsForWorkflow: any[] = [];
       
-      // Extraer de results si los hay
+      // Extraer SOLO de results (que contienen los emails procesados por el agente)
       if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
         for (const result of executedCommand.results) {
           if (result.email) {
+            console.log(`[EMAIL_API] Email encontrado en results:`, JSON.stringify(result.email, null, 2));
             emailsForWorkflow.push(result.email);
           }
         }
       }
       
-      // Extraer de targets (que ahora tienen estructura de email)
-      if (executedCommand && executedCommand.targets && Array.isArray(executedCommand.targets)) {
-        for (const target of executedCommand.targets) {
-          if (target.email) {
-            emailsForWorkflow.push(target.email);
-          }
-        }
-      }
+      // NO extraer de targets ya que contienen solo templates/placeholders
+      // Los targets son la estructura esperada, no los resultados reales
       
       console.log(`[EMAIL_API] Emails extraídos para procesamiento: ${emailsForWorkflow.length}`);
       
