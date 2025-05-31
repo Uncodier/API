@@ -213,7 +213,7 @@ async function scheduleCustomerSupportAfterAnalysis(
         userId: userId
       };
       
-      const result = await workflowService.scheduleCustomerSupport(scheduleParams);
+      const result = await workflowService.executeWorkflow('scheduleCustomerSupportMessagesWorkflow', scheduleParams);
       
       if (result.success) {
         console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
@@ -229,7 +229,7 @@ async function scheduleCustomerSupportAfterAnalysis(
 }
 
 // Create command object for email analysis
-function createEmailCommand(agentId: string, siteId: string, emails: any[], analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
+function createEmailCommand(agentId: string, siteId: string, emails: any[], emailConfig: any, analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
 
   return CommandFactory.createCommand({
@@ -276,9 +276,19 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
     context: JSON.stringify({
       emails,
       site_id: siteId,
+      inbox_info: {
+        email_address: emailConfig?.email_address || 'unknown',
+        provider: emailConfig?.provider || 'unknown',
+        display_name: emailConfig?.display_name || emailConfig?.email_address || 'Unknown Inbox',
+        company_name: emailConfig?.company_name || 'Unknown Company',
+        business_type: emailConfig?.business_type || 'Unknown Business Type',
+        industry: emailConfig?.industry || 'Unknown Industry'
+      },
+      email_count: emails.length,
       analysis_type: analysisType,
       lead_id: leadId,
-      team_member_id: teamMemberId
+      team_member_id: teamMemberId,
+      special_instructions: 'Ignore all emails from the team members, do not-reply emails, and spam emails.'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },
@@ -333,7 +343,7 @@ export async function POST(request: NextRequest) {
       const effectiveAgentId = agentId || await findSupportAgent(site_id);
       
       // Create and submit command
-      const command = createEmailCommand(effectiveAgentId, site_id, emails, analysis_type, lead_id, team_member_id, user_id);
+      const command = createEmailCommand(effectiveAgentId, site_id, emails, emailConfig, analysis_type, lead_id, team_member_id, user_id);
       const internalCommandId = await commandService.submitCommand(command);
       
       console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
