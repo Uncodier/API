@@ -1,5 +1,5 @@
 // Importamos las APIs
-import './apis';
+import './apis/index';
 
 // Exportamos el componente principal
 import UnifiedApiTester, { UnifiedApiTesterProps } from './UnifiedApiTester';
@@ -9,7 +9,7 @@ import ApiResults from './components/ApiResults';
 import ApiImplementation from './components/ApiImplementation';
 
 // Re-exportamos los componentes de utilidades
-import { FormField, SectionLabel } from './utils';
+import { FormField, SectionLabel } from './components/FormComponents';
 
 // Exportación por defecto
 export default UnifiedApiTester;

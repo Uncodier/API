@@ -22,8 +22,16 @@ POST /api/agents/customerSupport/message
 | `conversationId` | string | No | Optional ID of existing conversation |
 | `agentId` | string | No | ID of the customer support agent (optional, will be found using site_id if not provided) |
 | `site_id` | string | No | ID of the site associated with this interaction |
+| `lead_notification` | string | No | Type of notification to send for lead interactions. See [Lead Notification Types](#lead-notification-types) |
 
 *Identification requirements: At least one of `visitor_id` or `lead_id` is required for identification purposes. `userId` is optional as it can be derived from the site_id.
+
+### Lead Notification Types
+
+| Value | Description |
+|-------|-------------|
+| `email` | Send email notification when a new lead is created or when significant lead interactions occur |
+| `none` | No notifications will be sent (default behavior) |
 
 ### Example Request
 
@@ -64,6 +72,19 @@ With optional userId:
   "message": "I need help with my recent order",
   "conversationId": "conv_123456",
   "site_id": "site_456"
+}
+```
+
+With lead notification enabled:
+```json
+{
+  "visitor_id": "visitor_789",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone": "+1234567890",
+  "message": "I need help with my recent order",
+  "site_id": "site_456",
+  "lead_notification": "email"
 }
 ```
 
@@ -195,6 +216,7 @@ The system generates a command object with the following structure to control su
 | `AGENT_NOT_FOUND` | The specified agent does not exist |
 | `COMMAND_EXECUTION_FAILED` | The command did not complete successfully |
 | `INTERNAL_SERVER_ERROR` | Internal system error occurred |
+| `WORKFLOW_NOTIFICATION_ERROR` | Error occurred while sending lead notification |
 
 ## Notes
 
@@ -208,6 +230,10 @@ The system generates a command object with the following structure to control su
   - If `lead_id` is not provided but `name`, `email` or `phone` are included, the system will:
     - First look for an existing lead with matching information
     - Create a new lead if no matching lead is found
+- **Lead Notifications**:
+  - When `lead_notification` is set to `email`, the system will send email notifications for lead interactions
+  - Email notifications are sent via the configured workflows server using the `sendEmailFromAgent` workflow
+  - If the workflows server is not configured or fails, the lead creation will still succeed but no notification will be sent
 - If `agentId` is not provided and `site_id` is available, the system will automatically find an active customer support agent for that site
 - If no agent is found or no `site_id` is provided, a default agent will be used
 - Conversations are saved with the generated title and site_id in the database
@@ -235,3 +261,4 @@ Optional fields:
 - **Conversation ID**: If continuing an existing conversation, provide the ID
 - **Agent ID**: The ID of the customer support agent (will be found using site_id if not provided)
 - **Site ID**: The ID of the site associated with this interaction
+- **Lead Notification**: Type of notification to send (email, none)

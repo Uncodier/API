@@ -1,8 +1,8 @@
 'use client';
 
 import React from 'react';
-import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { BaseApiConfig, ApiType } from '../types';
+import { FormField, SectionLabel } from '../components/FormComponents';
 
 // Props específicas para la API de Sesiones de Visitantes
 export interface VisitorSessionApiProps {

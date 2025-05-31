@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { FormField, SectionLabel } from '../components/FormComponents';
 
 // Props específicas para la API de Personalización HTML
 export interface HtmlPersonalizationApiProps {

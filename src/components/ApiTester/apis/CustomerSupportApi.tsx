@@ -13,6 +13,10 @@ export interface CustomerSupportApiProps {
   defaultSiteId?: string;
   defaultVisitorId?: string;
   defaultLeadId?: string;
+  defaultName?: string;
+  defaultEmail?: string;
+  defaultPhone?: string;
+  defaultLeadNotification?: string;
 }
 
 // State for CustomerSupportApi
@@ -24,6 +28,10 @@ export interface CustomerSupportApiState {
   site_id: string;
   visitor_id: string;
   lead_id: string;
+  name: string;
+  email: string;
+  phone: string;
+  lead_notification: string;
   jsonResponse: boolean;
   showResponse: boolean;
   loading: boolean;
@@ -54,7 +62,11 @@ const CustomerSupportApi: BaseApiConfig = {
       message: props.defaultMessage || '',
       site_id: props.defaultSiteId || '',
       visitor_id: props.defaultVisitorId || '',
-      lead_id: props.defaultLeadId || ''
+      lead_id: props.defaultLeadId || '',
+      name: props.defaultName || '',
+      email: props.defaultEmail || '',
+      phone: props.defaultPhone || '',
+      lead_notification: props.defaultLeadNotification || 'none'
     };
   },
 
@@ -87,6 +99,24 @@ const CustomerSupportApi: BaseApiConfig = {
 
     if (state.lead_id) {
       body.lead_id = state.lead_id;
+    }
+
+    // Agregar campos de información de lead
+    if (state.name) {
+      body.name = state.name;
+    }
+
+    if (state.email) {
+      body.email = state.email;
+    }
+
+    if (state.phone) {
+      body.phone = state.phone;
+    }
+
+    // Agregar lead_notification si no es 'none'
+    if (state.lead_notification && state.lead_notification !== 'none') {
+      body.lead_notification = state.lead_notification;
     }
 
     return body;
@@ -122,14 +152,19 @@ const CustomerSupportApi: BaseApiConfig = {
         if (state.conversationId) requestBody.conversationId = state.conversationId;
         if (state.agentId) requestBody.agentId = state.agentId;
         if (state.site_id) requestBody.site_id = state.site_id;
+        if (state.name) requestBody.name = state.name;
+        if (state.email) requestBody.email = state.email;
+        if (state.phone) requestBody.phone = state.phone;
+        if (state.lead_notification && state.lead_notification !== 'none') {
+          requestBody.lead_notification = state.lead_notification;
+        }
 
-        // Validar que haya al menos un parámetro de identificación
-        // Nota: userId no es estrictamente necesario (puede derivarse del site_id)
-        if (!requestBody.userId && !requestBody.visitor_id && !requestBody.lead_id) {
+        // Validar que userId sea requerido
+        if (!requestBody.userId) {
           setState(prev => ({
             ...prev,
             loading: false,
-            error: 'Se requiere al menos un parámetro de identificación (visitor_id, lead_id o userId)',
+            error: 'El campo User ID es requerido',
             showResponse: false
           }));
           return;
@@ -177,7 +212,17 @@ const CustomerSupportApi: BaseApiConfig = {
           required
         />
 
-        <SectionLabel>Identification (at least one required)</SectionLabel>
+        <FormField
+          label="User ID"
+          id="userId"
+          type="text"
+          value={state.userId}
+          placeholder="user_123"
+          onChange={(value: string) => handleChange('userId', value)}
+          required
+        />
+
+        <SectionLabel>Identification (optional)</SectionLabel>
 
         <FormField
           label="Visitor ID"
@@ -197,13 +242,33 @@ const CustomerSupportApi: BaseApiConfig = {
           onChange={(value: string) => handleChange('lead_id', value)}
         />
 
+        <SectionLabel>Lead Information (for lead creation/lookup)</SectionLabel>
+
         <FormField
-          label="User ID (optional)"
-          id="userId"
+          label="Name"
+          id="name"
           type="text"
-          value={state.userId}
-          placeholder="user_123"
-          onChange={(value: string) => handleChange('userId', value)}
+          value={state.name}
+          placeholder="John Doe"
+          onChange={(value: string) => handleChange('name', value)}
+        />
+
+        <FormField
+          label="Email"
+          id="email"
+          type="text"
+          value={state.email}
+          placeholder="john.doe@example.com"
+          onChange={(value: string) => handleChange('email', value)}
+        />
+
+        <FormField
+          label="Phone"
+          id="phone"
+          type="text"
+          value={state.phone}
+          placeholder="+1234567890"
+          onChange={(value: string) => handleChange('phone', value)}
         />
         
         <SectionLabel>Optional Fields</SectionLabel>
@@ -233,6 +298,18 @@ const CustomerSupportApi: BaseApiConfig = {
           value={state.site_id}
           placeholder="site_123456"
           onChange={(value: string) => handleChange('site_id', value)}
+        />
+
+        <FormField
+          label="Lead Notification"
+          id="lead_notification"
+          type="select"
+          value={state.lead_notification}
+          onChange={(value: string) => handleChange('lead_notification', value)}
+          options={[
+            { value: 'none', label: 'None (no notifications)' },
+            { value: 'email', label: 'Email notification' }
+          ]}
         />
       </>
     );

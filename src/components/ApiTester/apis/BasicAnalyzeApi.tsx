@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig } from '../types';
-import { FormField, SectionLabel } from '../utils';
+import { FormField, SectionLabel } from '../components/FormComponents';
 import { API_KEYS } from '@/lib/api-keys';
 
 // Props específicas para la API Básica de Análisis

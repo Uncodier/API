@@ -1,0 +1,306 @@
+---
+title: 'Send Email From Agent'
+description: 'Envía emails automáticamente desde un agente AI'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# Send email from agent
+
+Este tool permite a los agentes AI enviar correos electrónicos automáticamente a leads, clientes o cualquier dirección de correo electrónico especificada.
+
+## Descripción
+
+Envía correos electrónicos usando la configuración SMTP privada configurada para cada sitio. El tool obtiene automáticamente la configuración de email del sitio, incluyendo servidor SMTP, credenciales y puertos. Maneja el formato HTML del mensaje, la validación de emails y proporciona logging completo de los envíos.
+
+## Parámetros
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| email           | string   | Sí        | Dirección de correo electrónico del destinatario           |
+| from            | string   | Sí        | Dirección de correo electrónico del remitente              |
+| subject         | string   | Sí        | Asunto del correo electrónico                              |
+| message         | string   | Sí        | Contenido del mensaje (se convierte automáticamente a HTML) |
+| site_id         | string   | Sí        | ID del sitio para obtener la configuración SMTP            |
+| agent_id        | string   | No        | ID del agente que envía el email (para logging)            |
+| conversation_id | string   | No        | ID de la conversación relacionada (para logging)           |
+| lead_id         | string   | No        | ID del lead relacionado (para logging)                     |
+
+## Probar API
+
+Utiliza el API Tester integrado para probar este endpoint de manera interactiva:
+
+<UnifiedApiTester apiId="send-email-from-agent" />
+
+### Características del API Tester:
+
+- **Campos preconfigurados**: Incluye todos los parámetros necesarios con ejemplos realistas
+- **Validación automática**: Verifica formato de emails y campos obligatorios
+- **Vista previa del mensaje**: Muestra cómo se verá el email formateado
+- **Generación de código**: Ejemplos automáticos en cURL, JavaScript, Python y PHP
+- **Respuesta en tiempo real**: Muestra la respuesta del servidor y el estado del envío
+- **Manejo de emails temporales**: Detecta y maneja el email especial 'no-email@example.com'
+
+### Campos del formulario:
+
+**Obligatorios:**
+- `email`: Dirección de correo del destinatario
+- `from`: Dirección de correo del remitente
+- `subject`: Asunto del email
+- `message`: Contenido del mensaje
+
+**Opcionales:**
+- `site_id`: ID del sitio para obtener la configuración SMTP
+- `agent_id`: ID del agente para logging
+- `conversation_id`: ID de la conversación para logging
+- `lead_id`: ID del lead para logging
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "email_id": "f87bdc7f-0efe-4aa5-b499-49d85be4b154",
+  "recipient": "cliente@empresa.com",
+  "sender": "ventas@miempresa.com",
+  "subject": "Propuesta comercial personalizada",
+  "message_preview": "Estimado cliente, esperamos que se encuentre bien. Nos complace presentarle nuestra propuesta...",
+  "sent_at": "2023-11-15T14:30:42.123Z",
+  "status": "sent"
+}
+```
+
+| Campo            | Tipo    | Descripción                                               |
+|------------------|---------|-----------------------------------------------------------|
+| success          | boolean | Indica si el email fue enviado exitosamente               |
+| email_id         | string  | ID único del mensaje en SendGrid para seguimiento         |
+| recipient        | string  | Dirección de correo del destinatario                       |
+| sender           | string  | Dirección de correo del remitente                          |
+| subject          | string  | Asunto del email enviado                                  |
+| message_preview  | string  | Vista previa de los primeros 100 caracteres del mensaje   |
+| sent_at          | string  | Marca de tiempo del envío                                 |
+| status           | string  | Estado del envío ("sent", "skipped", "failed")           |
+
+## Códigos de respuesta
+
+| Código | Estado          | Descripción                                                  |
+|--------|-----------------|--------------------------------------------------------------|
+| 201    | Created         | El email fue enviado exitosamente                            |
+| 200    | OK              | Email temporal detectado, no se envió email real             |
+| 400    | Bad Request     | Parámetros inválidos o formato de email incorrecto           |
+| 500    | Server Error    | Error del servidor al enviar el email                        |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "send_email_from_agent",
+    input: {
+      email: "cliente@empresa.com",
+      from: "ventas@miempresa.com",
+      subject: "Propuesta comercial personalizada",
+      message: "Estimado cliente,\n\nEsperamos que se encuentre bien. Nos complace presentarle nuestra propuesta comercial personalizada basada en sus necesidades específicas.\n\nAdjuntamos los detalles de nuestra solución que incluye:\n- Análisis de requerimientos\n- Propuesta técnica\n- Cronograma de implementación\n- Presupuesto detallado\n\nQuedamos atentos a sus comentarios.\n\nSaludos cordiales,\nEquipo de Ventas",
+      site_id: "site-12345"
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Email enviado exitosamente. ID: ${result.email_id}. Estado: ${result.status}`);
+}
+```
+
+## Consulta del historial de emails
+
+También es posible consultar el historial de emails enviados mediante el endpoint GET.
+
+### Parámetros de consulta
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| email_id        | string   | No        | ID único del email a consultar                             |
+| agent_id        | string   | No        | ID del agente para filtrar emails                          |
+| conversation_id | string   | No        | ID de la conversación para filtrar emails                  |
+| limit           | number   | No        | Número máximo de resultados (por defecto: 10)              |
+
+### Ejemplo de respuesta de consulta
+
+```json
+{
+  "success": true,
+  "count": 2,
+  "emails": [
+    {
+      "id": "f87bdc7f-0efe-4aa5-b499-49d85be4b154",
+      "recipient_email": "cliente@empresa.com",
+      "sender_email": "ventas@miempresa.com",
+      "subject": "Propuesta comercial personalizada",
+      "message_content": "Estimado cliente, esperamos que se encuentre bien...",
+      "agent_id": "a6c4e791-8c6d-4a04-b912-9fd71bf4d9c3",
+      "conversation_id": "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      "lead_id": "12345678-1234-5678-9012-123456789012",
+      "sendgrid_message_id": "message_id_from_sendgrid",
+      "sent_at": "2023-11-15T14:30:42.123Z",
+      "status": "sent"
+    }
+  ]
+}
+```
+
+## Formato del mensaje
+
+El tool convierte automáticamente el mensaje de texto plano a HTML con el siguiente formato:
+
+- **Saltos de línea**: Se convierten a párrafos HTML (`<p>`)
+- **Estilo**: Se aplica un diseño limpio y profesional
+- **Responsive**: El email se adapta a diferentes dispositivos
+- **Footer**: Se incluye automáticamente una nota indicando que es un email automatizado
+
+### Ejemplo de conversión:
+
+**Texto de entrada:**
+```
+Hola Juan,
+
+Gracias por tu interés en nuestros servicios.
+
+Saludos,
+Equipo de Ventas
+```
+
+**HTML generado:**
+```html
+<div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
+  <div style="margin-bottom: 20px;">
+    <p style="margin: 10px 0;">Hola Juan,</p>
+    <p style="margin: 10px 0;"></p>
+    <p style="margin: 10px 0;">Gracias por tu interés en nuestros servicios.</p>
+    <p style="margin: 10px 0;"></p>
+    <p style="margin: 10px 0;">Saludos,</p>
+    <p style="margin: 10px 0;">Equipo de Ventas</p>
+  </div>
+  
+  <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
+  
+  <p style="font-size: 12px; color: #777; text-align: center;">
+    Este email fue enviado automaticamente por nuestro asistente AI.
+  </p>
+</div>
+```
+
+## Manejo de emails temporales
+
+El tool incluye manejo especial para el email temporal `no-email@example.com`:
+
+- **Detección automática**: Reconoce cuando se usa este email especial
+- **No envío real**: No se envía email real a SendGrid
+- **Respuesta simulada**: Retorna una respuesta exitosa con estado "skipped"
+- **Logging consistente**: Mantiene el mismo formato de respuesta para compatibilidad
+
+Esto es útil para:
+- **Testing**: Probar funcionalidad sin enviar emails reales
+- **Leads sin email**: Manejar casos donde no hay dirección de correo válida
+- **Desarrollo**: Evitar envíos accidentales durante desarrollo
+
+## API Tester
+
+Puedes probar este endpoint usando el componente integrado de API Tester. Este componente está disponible en la interfaz de administración y permite:
+
+- Configurar todos los parámetros del endpoint de manera interactiva
+- Enviar solicitudes de prueba con datos reales o de ejemplo
+- Ver las respuestas en tiempo real
+- Generar código de ejemplo en múltiples lenguajes (cURL, JavaScript, Python, PHP)
+- Validar el comportamiento del sistema de envío de emails
+
+El API Tester incluye:
+- **Campos obligatorios**: email, from, subject, message
+- **Campos opcionales**: site_id, agent_id, conversation_id, lead_id
+- **Validación de emails**: Verifica formato de direcciones de correo
+- **Vista previa**: Muestra cómo se verá el mensaje formateado
+- **Estadísticas de envío**: Información sobre el estado del envío
+
+## Notas adicionales
+
+- **Servicio de Email**: Utiliza SendGrid como proveedor de email transaccional
+- **Categorización**: Los emails se etiquetan automáticamente como 'agent-email' y 'automated'
+- **Logging**: Se guarda un registro de cada email enviado en la tabla `email_logs` (si existe)
+- **Formato HTML**: Los mensajes se convierten automáticamente a HTML con estilo profesional
+- **Versión de texto**: Se incluye tanto versión HTML como texto plano del mensaje
+- **Metadatos**: Se incluyen metadatos de site_id, agent_id, conversation_id y lead_id para tracking
+- **Manejo de errores**: Respuestas detalladas en caso de errores de validación o envío
+
+## Configuración requerida
+
+Para que este tool funcione correctamente, cada sitio debe tener configurada su propia configuración SMTP:
+
+### 1. Configuración de Email del Sitio
+
+La configuración de email debe estar almacenada en la tabla `settings` con la siguiente estructura:
+
+```json
+{
+  "channels": {
+    "email": {
+      "email": "tu-email@empresa.com",
+      "incomingServer": "imap.empresa.com",
+      "incomingPort": 993,
+      "outgoingServer": "smtp.empresa.com", 
+      "outgoingPort": 587
+    }
+  }
+}
+```
+
+### 2. Token de Email Seguro
+
+Las credenciales de email deben estar almacenadas de forma segura usando el endpoint `/api/secure-tokens`:
+
+```bash
+POST /api/secure-tokens
+{
+  "site_id": "tu-site-id",
+  "token_type": "email",
+  "identifier": "tu-email@empresa.com",
+  "token_value": {
+    "email": "tu-email@empresa.com",
+    "password": "tu-password-de-aplicacion",
+    "smtpHost": "smtp.empresa.com",
+    "smtpPort": 587,
+    "imapHost": "imap.empresa.com", 
+    "imapPort": 993
+  }
+}
+```
+
+### 3. Variables de Entorno
+
+Asegúrate de tener configurada la clave de encriptación:
+
+```bash
+ENCRYPTION_KEY=tu-clave-de-encriptacion-secreta
+```
+
+### Proveedores Soportados
+
+El servicio es compatible con cualquier proveedor SMTP estándar:
+- **Gmail**: smtp.gmail.com:587 (requiere contraseña de aplicación)
+- **Outlook**: smtp-mail.outlook.com:587  
+- **Servidores personalizados**: Cualquier servidor SMTP estándar
+- **Puertos seguros**: 587 (STARTTLS) o 465 (SSL/TLS)
+
+### Configuración de Gmail
+
+Para usar Gmail como proveedor SMTP:
+
+1. Habilita la verificación en 2 pasos en tu cuenta de Google
+2. Genera una contraseña de aplicación específica
+3. Usa la contraseña de aplicación (no tu contraseña normal) en el token
+
+### Configuración de Outlook
+
+Para usar Outlook/Hotmail como proveedor SMTP:
+
+1. Habilita la autenticación moderna en tu cuenta
+2. Usa tu contraseña normal (o contraseña de aplicación si está habilitada)
+3. Configura el servidor SMTP: `smtp-mail.outlook.com:587` 

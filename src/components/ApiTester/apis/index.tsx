@@ -25,6 +25,7 @@ import SalesApi from './SalesApi';
 import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
 import EmailAnalysisApi from './EmailAnalysisApi';
 import ContactHumanApi from './ContactHumanApi';
+import SendEmailFromAgentApi from './SendEmailFromAgentApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -53,5 +54,38 @@ apiRegistry.register(SalesApi);
 apiRegistry.register(CmoStakeholderCoordinationApi);
 apiRegistry.register(EmailAnalysisApi);
 apiRegistry.register(ContactHumanApi);
+apiRegistry.register(SendEmailFromAgentApi);
 
-export default apiRegistry; 
+// Exportar el registry como default
+export default apiRegistry;
+
+// Exportar también APIs individuales para casos específicos
+export {
+  GeneralApi,
+  AiApi,
+  SiteApi,
+  SegmentsApi,
+  TesterApi,
+  IcpApi,
+  ContentApi,
+  RequirementsApi,
+  BasicAnalyzeApi,
+  VisitorSessionApi,
+  HtmlPersonalizationApi,
+  VisitorTrackApi,
+  VisitorIdentifyApi,
+  VisitorSegmentApi,
+  AgentsIntegrationsApi,
+  CustomerSupportApi,
+  CustomerSupportConversationsApi,
+  CustomerSupportConversationMessagesApi,
+  CopywriterApi,
+  ChatApi,
+  GrowthApi,
+  InterventionApi,
+  SalesApi,
+  CmoStakeholderCoordinationApi,
+  EmailAnalysisApi,
+  ContactHumanApi,
+  SendEmailFromAgentApi
+}; 

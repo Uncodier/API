@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { codeExamples } from '../types';
-import { highlightCode } from '../utils';
+import { highlightCode } from '../utils/index';
 import styles from '../../ApiTester.module.css';
 
 interface ApiImplementationProps {

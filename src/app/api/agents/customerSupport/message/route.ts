@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
+import { WorkflowService } from '@/lib/services/workflow-service';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -755,6 +756,148 @@ function corsHeaders(request: Request) {
   };
 }
 
+// Función para enviar notificación por email del lead
+async function sendLeadNotificationEmail(userId: string, userMessage: string, assistantMessage: string, conversationTitle: string | null, leadId: string | null, siteId?: string, agentId?: string, conversationId?: string): Promise<void> {
+  try {
+    if (!leadId) {
+      console.log('⚠️ No se puede enviar notificación: leadId no disponible');
+      return;
+    }
+
+    if (!siteId) {
+      console.log('⚠️ No se puede enviar notificación: site_id no disponible (requerido por el workflow)');
+      return;
+    }
+
+    // Obtener información del lead y del sitio para construir el email
+    const { data: lead, error: leadError } = await supabaseAdmin
+      .from('leads')
+      .select('id, name, email, phone, site_id')
+      .eq('id', leadId)
+      .single();
+
+    if (leadError || !lead) {
+      console.error('❌ Error al obtener información del lead para la notificación:', leadError);
+      return;
+    }
+
+    // Verificar que el lead tenga email
+    if (!lead.email) {
+      console.log('⚠️ No se puede enviar notificación: el lead no tiene email registrado');
+      return;
+    }
+
+    // Obtener información del sitio
+    const { data: site, error: siteError } = await supabaseAdmin
+      .from('sites')
+      .select('id, name, url')
+      .eq('id', lead.site_id)
+      .single();
+
+    if (siteError || !site) {
+      console.error('❌ Error al obtener información del sitio para la notificación:', siteError);
+      return;
+    }
+
+    // Obtener información del agente para usar su nombre en el "from"
+    const { data: agentInfo, error: agentError } = await supabaseAdmin
+      .from('agents')
+      .select('id, name, role')
+      .eq('user_id', userId)
+      .eq('role', 'Customer Support')
+      .eq('status', 'active')
+      .single();
+
+    // Obtener el historial completo de la conversación si existe conversationId
+    let conversationHistory = '';
+    if (conversationId && isValidUUID(conversationId)) {
+      console.log(`📧 Obteniendo historial completo para el email de la conversación: ${conversationId}`);
+      const historyMessages = await getConversationHistory(conversationId);
+      
+      if (historyMessages && historyMessages.length > 0) {
+        console.log(`📧 Se encontraron ${historyMessages.length} mensajes para incluir en el email`);
+        
+        // Formatear el historial para el email usando nombres reales
+        conversationHistory = '\n\n--- CONVERSACIÓN COMPLETA ---\n';
+        
+        for (let index = 0; index < historyMessages.length; index++) {
+          const msg = historyMessages[index];
+          let senderName = 'User';
+          
+          // Determinar el nombre del remitente según el rol
+          if (msg.role === 'user' || msg.role === 'visitor') {
+            // Para mensajes del cliente, usar el nombre del lead
+            senderName = lead.name || 'Customer';
+          } else if (msg.role === 'assistant' || msg.role === 'agent') {
+            // Para mensajes del asistente, usar el nombre del agente
+            senderName = agentInfo?.name || 'Assistant';
+          } else if (msg.role === 'team_member') {
+            senderName = 'Team Member';
+          } else if (msg.role === 'system') {
+            senderName = 'System';
+          }
+          
+          conversationHistory += `\n[${index + 1}] ${senderName}: ${msg.content.trim()}\n`;
+          
+          // Añadir separador entre mensajes para mejor legibilidad
+          if (index < historyMessages.length - 1) {
+            conversationHistory += '---\n';
+          }
+        }
+        
+        conversationHistory += '\n--- FIN DE LA CONVERSACIÓN ---';
+      } else {
+        console.log(`⚠️ No se encontró historial para incluir en el email de la conversación: ${conversationId}`);
+      }
+    }
+
+    const workflowService = WorkflowService.getInstance();
+    
+    // Construir el subject incluyendo el conversation_id si está disponible
+    let emailSubject = conversationTitle || `Nuevo mensaje de soporte - ${lead.name}`;
+    if (conversationId) {
+      emailSubject += ` (ID: ${conversationId})`;
+    }
+    
+    const emailFrom = agentInfo?.name || 'Agente de Soporte';
+    
+    // Construir el mensaje completo incluyendo la respuesta del asistente y el historial
+    const fullMessage = assistantMessage + conversationHistory;
+    
+    // Preparar parámetros para el workflow incluyendo todos los requeridos y opcionales
+    const emailParams = {
+      email: lead.email,
+      from: emailFrom,
+      subject: emailSubject,
+      message: fullMessage,
+      site_id: siteId, // Parámetro requerido
+      // Parámetros opcionales para logging
+      agent_id: agentId,
+      conversation_id: conversationId,
+      lead_id: leadId
+    };
+
+    console.log(`📧 Enviando notificación con parámetros:`, JSON.stringify({
+      ...emailParams,
+      message: `${fullMessage.substring(0, 100)}...` // Truncar para logging
+    }));
+
+    const result = await workflowService.sendEmailFromAgent(emailParams);
+
+    if (result.success) {
+      console.log(`✅ Notificación de lead enviada exitosamente para leadId: ${leadId}`);
+      if (conversationHistory) {
+        console.log(`📧 Email incluye historial completo de la conversación`);
+      }
+    } else {
+      console.error(`❌ Error al enviar notificación de lead:`, result.error);
+    }
+
+  } catch (error) {
+    console.error('❌ Excepción al enviar notificación de lead:', error);
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -776,7 +919,8 @@ export async function POST(request: Request) {
       name,
       email,
       phone,
-      website_chat_origin // Nuevo parámetro para indicar si el origen es "website_chat"
+      website_chat_origin, // Nuevo parámetro para indicar si el origen es "website_chat"
+      lead_notification // Nuevo parámetro para indicar si se debe enviar una notificación por email
     } = body;
     
     /**
@@ -795,6 +939,11 @@ export async function POST(request: Request) {
      *   Cuando website_chat_origin=true:
      *   1. El lead creado tendrá "website_chat" como origen en lugar de "chat"
      *   2. Se creará automáticamente una tarea de seguimiento para el lead
+     * - lead_notification: String opcional que indica el tipo de notificación a enviar
+     *   Valores posibles: "email", "none"
+     *   Cuando lead_notification="email":
+     *   1. Se enviará una notificación por email cuando se cree o actualice un lead
+     *   2. El email se envía a través del WORKFLOWS_SERVER_URL usando el workflow "sendEmailFromAgent"
      */
     
     // Verificamos si tenemos al menos un identificador de usuario o cliente
@@ -1261,6 +1410,20 @@ export async function POST(request: Request) {
         );
       }
       
+      // Enviar notificación por email si se especifica lead_notification
+      if (lead_notification === 'email' && effectiveLeadId) {
+        await sendLeadNotificationEmail(
+          effectiveUserId,
+          message,
+          assistantMessage,
+          conversationTitle,
+          effectiveLeadId,
+          effectiveSiteId,
+          effectiveAgentId,
+          conversationId
+        );
+      }
+      
       return NextResponse.json(
         { 
           success: true, 
@@ -1401,6 +1564,20 @@ export async function POST(request: Request) {
           status: 500,
           headers: corsHeaders(request)
         }
+      );
+    }
+    
+    // Enviar notificación por email si se especifica lead_notification
+    if (lead_notification === 'email' && effectiveLeadId) {
+      await sendLeadNotificationEmail(
+        effectiveUserId,
+        message,
+        assistantMessage,
+        conversationTitle,
+        effectiveLeadId,
+        effectiveSiteId,
+        effectiveAgentId,
+        conversationId
       );
     }
     

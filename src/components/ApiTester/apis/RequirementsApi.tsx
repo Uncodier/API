@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField } from '../components/FormComponents';
 
 // Estilos CSS en línea para los checkboxes y selects
 const styles: Record<string, React.CSSProperties> = {

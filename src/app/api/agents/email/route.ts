@@ -9,6 +9,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { WorkflowService, ScheduleCustomerSupportParams, AnalysisData } from '@/lib/services/workflow-service';
 
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
@@ -57,6 +58,85 @@ async function findSupportAgent(siteId: string): Promise<string> {
   return data.id;
 }
 
+/**
+ * Espera la finalización del comando y programa el customer support
+ */
+async function waitForCommandAndScheduleSupport(
+  commandId: string, 
+  siteId: string, 
+  userId: string
+): Promise<void> {
+  try {
+    console.log(`[EMAIL_API] Esperando finalización del comando: ${commandId}`);
+    
+    // Configurar timeout para evitar esperas infinitas
+    const timeout = 5 * 60 * 1000; // 5 minutos
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeout) {
+      try {
+        const command = await commandService.getCommandById(commandId);
+        
+        if (command && command.status === 'completed') {
+          console.log(`[EMAIL_API] Comando completado, extrayendo análisis...`);
+          
+          // Extraer los datos de análisis de los targets
+          const analysisArray: AnalysisData[] = [];
+          
+          if (command.targets && Array.isArray(command.targets)) {
+            for (const target of command.targets) {
+              if (target.analysis) {
+                analysisArray.push(target.analysis as AnalysisData);
+              }
+            }
+          }
+          
+          if (analysisArray.length > 0) {
+            console.log(`[EMAIL_API] Encontrados ${analysisArray.length} análisis, programando customer support...`);
+            
+            // Llamar al servicio de Temporal
+            const workflowService = WorkflowService.getInstance();
+            const scheduleParams: ScheduleCustomerSupportParams = {
+              analysisArray,
+              site_id: siteId,
+              userId: userId
+            };
+            
+            const result = await workflowService.scheduleCustomerSupport(scheduleParams);
+            
+            if (result.success) {
+              console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
+            } else {
+              console.error(`[EMAIL_API] Error al programar customer support:`, result.error);
+            }
+          } else {
+            console.log(`[EMAIL_API] No se encontraron análisis en el comando completado`);
+          }
+          
+          return; // Salir del bucle
+        }
+        
+        if (command && command.status === 'failed') {
+          console.error(`[EMAIL_API] Comando falló, no se puede programar customer support`);
+          return;
+        }
+        
+        // Esperar antes de verificar nuevamente
+        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 segundos
+        
+      } catch (error) {
+        console.error(`[EMAIL_API] Error al verificar estado del comando:`, error);
+        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 segundos
+      }
+    }
+    
+    console.warn(`[EMAIL_API] Timeout esperando finalización del comando: ${commandId}`);
+    
+  } catch (error) {
+    console.error(`[EMAIL_API] Error en waitForCommandAndScheduleSupport:`, error);
+  }
+}
+
 // Create command object for email analysis
 function createEmailCommand(agentId: string, siteId: string, emails: any[], analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
@@ -72,16 +152,30 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
         analysis: {
           summary: "",
           insights: [],
-          sentiment: "",
-          priority: "",
+          sentiment: "positive | negative | neutral",
+          priority: "high | medium | low",
           action_items: [],
-          response_suggestions: [],
+          response: [],
+          lead_extraction: {
+            contact_info: {
+              name: null,
+              email: null,
+              phone: null,
+              company: null
+            },
+            intent: "inquiry | complaint | purchase | support | partnership | demo_request",
+            requirements: [],
+            budget_indication: null,
+            timeline: null,
+            decision_maker: "yes | no | unknown",
+            source: "website | referral | social_media | advertising | cold_outreach"
+          },
           commercial_opportunity: {
             requires_response: false,
-            response_type: null,
-            priority_level: null,
+            response_type: "commercial | support | informational | follow_up",
+            priority_level: "high | medium | low",
             suggested_actions: [],
-            potential_value: null,
+            potential_value: "high | medium | low | unknown",
             next_steps: []
           }
         }
@@ -178,6 +272,16 @@ export async function POST(request: NextRequest) {
       // Create and submit command
       const command = createEmailCommand(effectiveAgentId, site_id, emails, analysis_type, lead_id, team_member_id, user_id);
       const internalCommandId = await commandService.submitCommand(command);
+      
+      // Ejecutar programación de customer support de forma asíncrona (sin bloquear la respuesta)
+      const effectiveUserId = user_id || team_member_id || '00000000-0000-0000-0000-000000000000';
+      console.log(`[EMAIL_API] Programando customer support asíncronamente para comando: ${internalCommandId}`);
+      
+      // Ejecutar sin await para no bloquear la respuesta
+      waitForCommandAndScheduleSupport(internalCommandId, site_id, effectiveUserId)
+        .catch(error => {
+          console.error(`[EMAIL_API] Error en programación asíncrona de customer support:`, error);
+        });
       
       return NextResponse.json({
         success: true,

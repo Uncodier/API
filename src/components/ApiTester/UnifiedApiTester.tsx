@@ -1,8 +1,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import apiRegistry from './apis';
-import { codeExamples } from './types';
+import apiRegistry from './apis/index';
+import { codeExamples, BaseApiConfig } from './types';
 import { generateUUID } from './utils';
 import { formatJsonWithSyntax, highlightCode } from './utils/index';
 import { FormField } from './components/FormComponents';
@@ -294,7 +294,7 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
         }}>
           <p><strong>Error:</strong> {error || `No se pudo cargar la configuración para la API: "${apiId || apiType}"`}</p>
           <p>Asegúrate de que el ID o tipo de API sea válido y que esté registrado correctamente.</p>
-          <p>APIs disponibles: {apiRegistry.getAll().map(api => `"${api.id}"`).join(', ')}</p>
+          <p>APIs disponibles: {apiRegistry.getAll().map((api: BaseApiConfig) => `"${api.id}"`).join(', ')}</p>
         </div>
       </div>
     );

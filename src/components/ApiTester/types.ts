@@ -17,7 +17,33 @@ export interface AdditionalField {
 }
 
 // Tipo para los tipos de API disponibles
-export type ApiType = 'general' | 'ai' | 'site' | 'segments' | 'tester' | 'icp' | 'content' | 'visitor_segment';
+export type ApiType = 
+  | 'general' 
+  | 'ai' 
+  | 'site' 
+  | 'segments' 
+  | 'tester' 
+  | 'icp' 
+  | 'content' 
+  | 'visitor_segment' 
+  | 'send-email-from-agent' 
+  | 'customer-support'
+  | 'email-analysis'
+  | 'visitor_identify'
+  | 'visitor_track'
+  | 'visitor_session'
+  | 'agents-apps'
+  | 'customer-support-conversation-messages'
+  | 'sales'
+  | 'intervention'
+  | 'growth'
+  | 'cmo-stakeholder-coordination'
+  | 'customer-support-conversations'
+  | 'requirements'
+  | 'html-personalization'
+  | 'basic-analyze'
+  | 'copywriter'
+  | 'chat';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {

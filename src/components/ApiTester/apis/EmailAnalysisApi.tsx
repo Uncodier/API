@@ -1,16 +1,16 @@
 'use client';
 
 import React from 'react';
+import { BaseApiConfig, ApiType } from '../types';
 import { emailEndpoints } from './EmailApi';
 import { FormField } from '../components/FormComponents';
 import styles from '../../ApiTester.module.css';
 
-const EmailAnalysisApi = {
-  id: 'email-analysis',
+const EmailAnalysisApi: BaseApiConfig = {
+  id: 'email-analysis' as ApiType,
   name: 'Email Analysis API',
   description: 'API para obtener y analizar emails',
   defaultEndpoint: '/api/agents/email',
-  endpoints: emailEndpoints,
 
   getInitialState: () => ({
     site_id: '',

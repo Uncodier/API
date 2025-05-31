@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { BaseApiConfig, ModelProviderType, MODEL_OPTIONS } from '../types';
-import { FormField } from '../utils';
+import { FormField } from '../components/FormComponents';
 
 // Props específicas para la API de Tester
 export interface TesterApiProps {
