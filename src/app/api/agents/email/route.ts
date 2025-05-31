@@ -264,7 +264,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     targets: [
       {
         email: {
-          summary: "Summary of the commercial opportunity and message and client inquiry",
+          summary: "Summary of each individual email that is a commercial opportunity or has a message and client inquiry",
             contact_info: {
               name: null,
               email: null,
@@ -290,7 +290,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
       analysis_type: analysisType,
       lead_id: leadId,
       team_member_id: teamMemberId,
-      special_instructions: 'Ignore all emails from the team members, do not-reply emails, and spam emails.'
+      special_instructions: 'This is not a summary of the email inbox, its a regontition of each individual email with a commercial interest. Ignore all emails from the team members, do not-reply emails, and spam emails.'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },
