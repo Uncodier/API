@@ -40,6 +40,12 @@ const ERROR_CODES = {
   AGENT_NOT_FOUND: 'AGENT_NOT_FOUND'
 };
 
+// Función para validar UUIDs
+function isValidUUID(uuid: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+}
+
 /**
  * Busca el agente de soporte para un sitio
  */
@@ -58,82 +64,167 @@ async function findSupportAgent(siteId: string): Promise<string> {
   return data.id;
 }
 
+// Función para obtener el UUID de la base de datos para un comando
+async function getCommandDbUuid(internalId: string): Promise<string | null> {
+  try {
+    // Intentar obtener el comando
+    const command = await commandService.getCommandById(internalId);
+    
+    // Verificar metadata
+    if (command && command.metadata && command.metadata.dbUuid) {
+      if (isValidUUID(command.metadata.dbUuid)) {
+        console.log(`🔑 UUID encontrado en metadata: ${command.metadata.dbUuid}`);
+        return command.metadata.dbUuid;
+      }
+    }
+    
+    // Buscar en el mapa de traducción interno del CommandService
+    try {
+      // @ts-ignore - Accediendo a propiedades internas
+      const idMap = (commandService as any).idTranslationMap;
+      if (idMap && idMap.get && idMap.get(internalId)) {
+        const mappedId = idMap.get(internalId);
+        if (isValidUUID(mappedId)) {
+          console.log(`🔑 UUID encontrado en mapa interno: ${mappedId}`);
+          return mappedId;
+        }
+      }
+    } catch (err) {
+      console.log('No se pudo acceder al mapa de traducción interno');
+    }
+    
+    // Buscar en la base de datos directamente por algún campo que pueda relacionarse
+    if (command) {
+      const { data, error } = await supabaseAdmin
+        .from('commands')
+        .select('id')
+        .eq('task', command.task)
+        .eq('user_id', command.user_id)
+        .eq('status', command.status)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      
+      if (!error && data && data.length > 0) {
+        console.log(`🔑 UUID encontrado en búsqueda directa: ${data[0].id}`);
+        return data[0].id;
+      }
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error al obtener UUID de base de datos:', error);
+    return null;
+  }
+}
+
+// Función para esperar a que un comando se complete
+async function waitForCommandCompletion(commandId: string, maxAttempts = 60, delayMs = 1000) {
+  let executedCommand = null;
+  let attempts = 0;
+  let dbUuid: string | null = null;
+  
+  console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
+  
+  // Crear una promesa que se resuelve cuando el comando se completa o se agota el tiempo
+  return new Promise<{command: any, dbUuid: string | null, completed: boolean}>((resolve) => {
+    const checkInterval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        executedCommand = await commandService.getCommandById(commandId);
+        
+        if (!executedCommand) {
+          console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
+          clearInterval(checkInterval);
+          resolve({command: null, dbUuid: null, completed: false});
+          return;
+        }
+        
+        // Guardar el UUID de la base de datos si está disponible
+        if (executedCommand.metadata && executedCommand.metadata.dbUuid) {
+          dbUuid = executedCommand.metadata.dbUuid as string;
+          console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
+        }
+        
+        // Considerar comandos en estado 'failed' como completados si tienen resultados
+        const hasResults = executedCommand.results && executedCommand.results.length > 0;
+        const commandFinished = executedCommand.status === 'completed' || 
+                               (executedCommand.status === 'failed' && hasResults);
+                               
+        if (commandFinished) {
+          console.log(`✅ Comando ${commandId} terminado con estado: ${executedCommand.status}${hasResults ? ' (con resultados)' : ''}`);
+          
+          // Intentar obtener el UUID de la base de datos si aún no lo tenemos
+          if (!dbUuid || !isValidUUID(dbUuid)) {
+            dbUuid = await getCommandDbUuid(commandId);
+            console.log(`🔍 UUID obtenido después de completar: ${dbUuid || 'No encontrado'}`);
+          }
+          
+          clearInterval(checkInterval);
+          // Consideramos un comando fallido como "completado" si tiene resultados
+          const effectivelyCompleted = executedCommand.status === 'completed' || 
+                                     (executedCommand.status === 'failed' && hasResults);
+          resolve({command: executedCommand, dbUuid, completed: effectivelyCompleted});
+          return;
+        }
+        
+        console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
+        
+        if (attempts >= maxAttempts) {
+          console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
+          
+          // Último intento de obtener el UUID
+          if (!dbUuid || !isValidUUID(dbUuid)) {
+            dbUuid = await getCommandDbUuid(commandId);
+            console.log(`🔍 UUID obtenido antes de timeout: ${dbUuid || 'No encontrado'}`);
+          }
+          
+          clearInterval(checkInterval);
+          // Verificar si, a pesar del timeout, hay resultados utilizables
+          const usableResults = executedCommand.results && executedCommand.results.length > 0;
+          resolve({command: executedCommand, dbUuid, completed: usableResults});
+        }
+      } catch (error) {
+        console.error(`Error al verificar estado del comando ${commandId}:`, error);
+        clearInterval(checkInterval);
+        resolve({command: null, dbUuid: null, completed: false});
+      }
+    }, delayMs);
+  });
+}
+
 /**
- * Espera la finalización del comando y programa el customer support
+ * Programa el customer support después de que se complete el análisis
  */
-async function waitForCommandAndScheduleSupport(
-  commandId: string, 
+async function scheduleCustomerSupportAfterAnalysis(
+  analysisArray: AnalysisData[], 
   siteId: string, 
   userId: string
 ): Promise<void> {
   try {
-    console.log(`[EMAIL_API] Esperando finalización del comando: ${commandId}`);
-    
-    // Configurar timeout para evitar esperas infinitas
-    const timeout = 5 * 60 * 1000; // 5 minutos
-    const startTime = Date.now();
-    
-    while (Date.now() - startTime < timeout) {
-      try {
-        const command = await commandService.getCommandById(commandId);
-        
-        if (command && command.status === 'completed') {
-          console.log(`[EMAIL_API] Comando completado, extrayendo análisis...`);
-          
-          // Extraer los datos de análisis de los targets
-          const analysisArray: AnalysisData[] = [];
-          
-          if (command.targets && Array.isArray(command.targets)) {
-            for (const target of command.targets) {
-              if (target.analysis) {
-                analysisArray.push(target.analysis as AnalysisData);
-              }
-            }
-          }
-          
-          if (analysisArray.length > 0) {
-            console.log(`[EMAIL_API] Encontrados ${analysisArray.length} análisis, programando customer support...`);
-            
-            // Llamar al servicio de Temporal
-            const workflowService = WorkflowService.getInstance();
-            const scheduleParams: ScheduleCustomerSupportParams = {
-              analysisArray,
-              site_id: siteId,
-              userId: userId
-            };
-            
-            const result = await workflowService.scheduleCustomerSupport(scheduleParams);
-            
-            if (result.success) {
-              console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
-            } else {
-              console.error(`[EMAIL_API] Error al programar customer support:`, result.error);
-            }
-          } else {
-            console.log(`[EMAIL_API] No se encontraron análisis en el comando completado`);
-          }
-          
-          return; // Salir del bucle
-        }
-        
-        if (command && command.status === 'failed') {
-          console.error(`[EMAIL_API] Comando falló, no se puede programar customer support`);
-          return;
-        }
-        
-        // Esperar antes de verificar nuevamente
-        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 segundos
-        
-      } catch (error) {
-        console.error(`[EMAIL_API] Error al verificar estado del comando:`, error);
-        await new Promise(resolve => setTimeout(resolve, 5000)); // 5 segundos
+    if (analysisArray.length > 0) {
+      console.log(`[EMAIL_API] Encontrados ${analysisArray.length} análisis, programando customer support...`);
+      
+      // Llamar al servicio de Temporal
+      const workflowService = WorkflowService.getInstance();
+      const scheduleParams: ScheduleCustomerSupportParams = {
+        analysisArray,
+        site_id: siteId,
+        userId: userId
+      };
+      
+      const result = await workflowService.scheduleCustomerSupport(scheduleParams);
+      
+      if (result.success) {
+        console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
+      } else {
+        console.error(`[EMAIL_API] Error al programar customer support:`, result.error);
       }
+    } else {
+      console.log(`[EMAIL_API] No se encontraron análisis para programar customer support`);
     }
-    
-    console.warn(`[EMAIL_API] Timeout esperando finalización del comando: ${commandId}`);
-    
   } catch (error) {
-    console.error(`[EMAIL_API] Error en waitForCommandAndScheduleSupport:`, error);
+    console.error(`[EMAIL_API] Error en scheduleCustomerSupportAfterAnalysis:`, error);
   }
 }
 
@@ -142,7 +233,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
 
   return CommandFactory.createCommand({
-    task: 'analyze_emails',
+    task: 'analyze emails',
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
     site_id: siteId,
@@ -181,35 +272,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
         }
       }
     ],
-    tools: [
-      {
-        name: "email_analysis",
-        description: "analyze email content and metadata",
-        status: "not_initialized",
-        type: "synchronous",
-        parameters: {
-          type: "object",
-          properties: {
-            content: { type: "string", description: "The email content to analyze" },
-            metadata: { type: "object", description: "Email metadata like sender, subject, date" }
-          },
-          required: ["content"]
-        }
-      },
-      {
-        name: "sentiment_analysis",
-        description: "analyze sentiment and tone of email content",
-        status: "not_initialized",
-        type: "synchronous",
-        parameters: {
-          type: "object",
-          properties: {
-            text: { type: "string", description: "The text content to analyze for sentiment" }
-          },
-          required: ["text"]
-        }
-      }
-    ],
+    tools: [],
     context: JSON.stringify({
       emails,
       site_id: siteId,
@@ -273,12 +336,68 @@ export async function POST(request: NextRequest) {
       const command = createEmailCommand(effectiveAgentId, site_id, emails, analysis_type, lead_id, team_member_id, user_id);
       const internalCommandId = await commandService.submitCommand(command);
       
-      // Ejecutar programación de customer support de forma asíncrona (sin bloquear la respuesta)
+      console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+      
+      // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
+      let initialDbUuid = await getCommandDbUuid(internalCommandId);
+      if (initialDbUuid) {
+        console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
+      }
+      
+      // Esperar a que el comando se complete utilizando nuestra función
+      const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+      
+      // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
+      const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
+      
+      // Si no completado y no hay resultados, retornar error
+      if (!completed) {
+        console.warn(`⚠️ Comando ${internalCommandId} no completó exitosamente en el tiempo esperado`);
+        
+        if (!executedCommand || !executedCommand.results || executedCommand.results.length === 0) {
+          // Solo fallar si realmente no hay resultados utilizables
+          return NextResponse.json(
+            { 
+              success: false, 
+              error: { 
+                code: 'COMMAND_EXECUTION_FAILED', 
+                message: 'El comando no completó exitosamente y no se generaron resultados válidos' 
+              } 
+            },
+            { status: 500 }
+          );
+        } else {
+          // Si hay resultados a pesar del estado, continuamos con advertencia
+          console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando`);
+        }
+      }
+      
+      // Extraer los análisis de los results/targets para programar customer support
+      const analysisArray: AnalysisData[] = [];
+      
+      if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
+        for (const result of executedCommand.results) {
+          if (result.analysis) {
+            analysisArray.push(result.analysis as AnalysisData);
+          }
+        }
+      }
+      
+      // Si también hay targets con análisis, los incluimos
+      if (executedCommand && executedCommand.targets && Array.isArray(executedCommand.targets)) {
+        for (const target of executedCommand.targets) {
+          if (target.analysis) {
+            analysisArray.push(target.analysis as AnalysisData);
+          }
+        }
+      }
+      
+      // Programar customer support de forma asíncrona (sin bloquear la respuesta)
       const effectiveUserId = user_id || team_member_id || '00000000-0000-0000-0000-000000000000';
-      console.log(`[EMAIL_API] Programando customer support asíncronamente para comando: ${internalCommandId}`);
+      console.log(`[EMAIL_API] Programando customer support asíncronamente...`);
       
       // Ejecutar sin await para no bloquear la respuesta
-      waitForCommandAndScheduleSupport(internalCommandId, site_id, effectiveUserId)
+      scheduleCustomerSupportAfterAnalysis(analysisArray, site_id, effectiveUserId)
         .catch(error => {
           console.error(`[EMAIL_API] Error en programación asíncrona de customer support:`, error);
         });
@@ -286,10 +405,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         data: {
-          commandId: internalCommandId,
-          status: "processing",
-          message: "Comando creado con éxito",
-          emailCount: emails.length
+          commandId: effectiveDbUuid || internalCommandId,
+          status: executedCommand?.status || 'completed',
+          message: "Análisis de emails completado exitosamente",
+          emailCount: emails.length,
+          analysisCount: analysisArray.length
         }
       });
       
