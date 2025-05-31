@@ -237,7 +237,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
     site_id: siteId,
-    description: 'Analyze incoming emails to identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers.',
+    description: 'Analyze incoming emails to identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
     targets: [
       {
         analysis: {
