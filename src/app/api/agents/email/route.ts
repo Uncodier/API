@@ -237,7 +237,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], anal
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
     site_id: siteId,
-    description: 'Analyze incoming emails to determine if they require a commercial response, categorize them, and suggest appropriate actions.',
+    description: 'Analyze incoming emails to identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers.',
     targets: [
       {
         analysis: {
