@@ -19,3 +19,14 @@ export {
   applyPersonalizations,
   applyPersonalizationCode
 } from './js-sanitizer'; 
+
+// Exportando utilidades para conversión de casos (camelCase <-> snake_case)
+export { 
+  CaseConverterService,
+  camelToSnake,
+  snakeToCamel,
+  objectKeysToSnake,
+  objectKeysToCamel,
+  getFlexibleProperty,
+  setFlexibleProperty
+} from './case-converter'; 

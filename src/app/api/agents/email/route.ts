@@ -9,6 +9,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
@@ -251,7 +252,11 @@ export async function POST(request: NextRequest) {
     const requestData = await request.json();
     console.log('[EMAIL_API] Request data received:', JSON.stringify(requestData, null, 2));
     
-    const validationResult = EmailAgentRequestSchema.safeParse(requestData);
+    // Normalizar datos del request para aceptar tanto camelCase como snake_case
+    const normalizedData = CaseConverterService.normalizeRequestData(requestData, 'snake');
+    console.log('[EMAIL_API] Normalized data:', JSON.stringify(normalizedData, null, 2));
+    
+    const validationResult = EmailAgentRequestSchema.safeParse(normalizedData);
     
     if (!validationResult.success) {
       console.error("[EMAIL_API] Validation error details:", JSON.stringify({
@@ -274,20 +279,32 @@ export async function POST(request: NextRequest) {
     
     console.log('[EMAIL_API] Validation successful, parsed data:', JSON.stringify(validationResult.data, null, 2));
     
-    const { site_id, limit = 10, lead_id, agentId, team_member_id, analysis_type, user_id, since_date } = validationResult.data;
+    // Extraer parámetros usando getFlexibleProperty para máxima compatibilidad
+    const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
+    const limit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 10;
+    const leadId = getFlexibleProperty(requestData, 'lead_id') || validationResult.data.lead_id;
+    const agentId = getFlexibleProperty(requestData, 'agentId') || getFlexibleProperty(requestData, 'agent_id') || validationResult.data.agentId;
+    const teamMemberId = getFlexibleProperty(requestData, 'team_member_id') || validationResult.data.team_member_id;
+    const analysisType = getFlexibleProperty(requestData, 'analysis_type') || validationResult.data.analysis_type;
+    const userId = getFlexibleProperty(requestData, 'user_id') || validationResult.data.user_id;
+    const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
+    
+    console.log('[EMAIL_API] Extracted parameters:', {
+      siteId, limit, leadId, agentId, teamMemberId, analysisType, userId, sinceDate
+    });
     
     try {
       // Get email configuration
-      const emailConfig = await EmailConfigService.getEmailConfig(site_id);
+      const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       
       // Fetch emails
-      const emails = await EmailService.fetchEmails(emailConfig, limit, since_date);
+      const emails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
 
       // Si no se proporciona agentId, buscar el agente de soporte
-      const effectiveAgentId = agentId || await findSupportAgent(site_id);
+      const effectiveAgentId = agentId || await findSupportAgent(siteId);
       
       // Create and submit command
-      const command = createEmailCommand(effectiveAgentId, site_id, emails, emailConfig, analysis_type, lead_id, team_member_id, user_id);
+      const command = createEmailCommand(effectiveAgentId, siteId, emails, emailConfig, analysisType, leadId, teamMemberId, userId);
       const internalCommandId = await commandService.submitCommand(command);
       
       console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
