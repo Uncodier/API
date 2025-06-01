@@ -473,6 +473,62 @@ export class WorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta un parent workflow que internamente ejecuta un child workflow
+   */
+  public async executeParentChildWorkflow(
+    parentWorkflowType: string, 
+    childWorkflowType: string, 
+    args: any, 
+    options?: WorkflowExecutionOptions
+  ): Promise<WorkflowExecutionResponse> {
+    try {
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `${parentWorkflowType}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🔄 Ejecutando parent workflow ${parentWorkflowType} que ejecutará child ${childWorkflowType}: ${workflowId}`);
+      console.log(`🔧 Using task queue: ${taskQueue}`);
+      
+      // Modificar el payload para incluir información del child workflow
+      const parentArgs = {
+        ...args,
+        childWorkflow: {
+          type: childWorkflowType,
+          args: args
+        }
+      };
+
+      const handle = await client.workflow.start(parentWorkflowType, {
+        args: [parentArgs],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Parent workflow ${parentWorkflowType} iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+      console.log(`👶 Child workflow a ejecutar: ${childWorkflowType}`);
+
+      return {
+        success: true,
+        executionId: handle.firstExecutionRunId,
+        workflowId: handle.workflowId,
+        runId: handle.firstExecutionRunId,
+        status: 'running'
+      };
+
+    } catch (error) {
+      console.error(`❌ Error al ejecutar parent-child workflow ${parentWorkflowType}/${childWorkflowType}:`, error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar parent-child workflow'
+        }
+      };
+    }
+  }
 }
 
 export default WorkflowService;
