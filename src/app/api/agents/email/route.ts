@@ -286,7 +286,7 @@ async function scheduleCustomerSupportAfterAnalysis(
       console.log(`[EMAIL_API] Payload del workflow padre:`, JSON.stringify(workflowPayload, null, 2));
       
       // Llamar al workflow padre que ejecutará el child workflow internamente
-      const result = await workflowService.executeWorkflow('syncEmailsScheduleWorkflow', workflowPayload);
+      const result = await workflowService.executeWorkflow('syncEmailsWorkflow', workflowPayload);
       
       if (result.success) {
         console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
