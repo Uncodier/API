@@ -9,7 +9,6 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { WorkflowService, ScheduleCustomerSupportParams, AnalysisData } from '@/lib/services/workflow-service';
 
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
@@ -193,125 +192,6 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
   });
 }
 
-/**
- * Programa el customer support después de que se complete el análisis
- */
-async function scheduleCustomerSupportAfterAnalysis(
-  emailsArray: any[], 
-  siteId: string, 
-  userId: string
-): Promise<void> {
-  console.log(`[EMAIL_API] 🚀🚀🚀 INICIANDO scheduleCustomerSupportAfterAnalysis`);
-  console.log(`[EMAIL_API] 🚀 Parámetros recibidos: emailsArray.length=${emailsArray.length}, siteId=${siteId}, userId=${userId}`);
-  
-  try {
-    if (emailsArray.length > 0) {
-      console.log(`[EMAIL_API] Encontrados ${emailsArray.length} emails, programando customer support...`);
-      
-      // Validar y filtrar emails válidos antes de enviar al workflow
-      const validEmailsForWorkflow = emailsArray
-        .map((email, index) => {
-          // Validar que tenga al menos un summary o información de contacto
-          const hasValidSummary = email.summary && email.summary.trim().length > 0;
-          const hasValidContactInfo = email.contact_info && (
-            email.contact_info.email ||
-            email.contact_info.name ||
-            email.contact_info.company
-          );
-          
-          // Si no tiene información válida, skip este email
-          if (!hasValidSummary && !hasValidContactInfo) {
-            console.log(`[EMAIL_API] Skipping email ${index} - no tiene información válida`);
-            return null;
-          }
-          
-          // Validar email si existe
-          const emailAddress = email.contact_info?.email;
-          if (emailAddress && !isValidEmail(emailAddress)) {
-            console.log(`[EMAIL_API] Warning: email inválido encontrado: ${emailAddress}`);
-          }
-          
-          return {
-            email: {
-              summary: email.summary || "Email analysis summary",
-              original_subject: email.original_subject || null,
-              contact_info: {
-                name: email.contact_info?.name || null,
-                email: emailAddress || null,
-                phone: email.contact_info?.phone || null,
-                company: email.contact_info?.company || null
-              }
-            },
-            // Campos requeridos del API
-            site_id: siteId,
-            user_id: userId,
-            lead_notification: "email", // Send notification for valid emails            // ID único para tracking
-            analysis_id: `email_${Date.now()}_${index}`
-          };
-        })
-        .filter(Boolean); // Remover entradas null
-      
-      // Validar que tengamos al menos un email válido
-      if (validEmailsForWorkflow.length === 0) {
-        console.log(`[EMAIL_API] No hay emails válidos para programar customer support`);
-        return;
-      }
-      
-      // Validar parámetros del workflow
-      if (!siteId || siteId.trim().length === 0) {
-        console.error(`[EMAIL_API] Error: site_id inválido: ${siteId}`);
-        return;
-      }
-      
-      if (!userId || userId.trim().length === 0) {
-        console.error(`[EMAIL_API] Error: user_id inválido: ${userId}`);
-        return;
-      }
-      
-      console.log(`[EMAIL_API] Enviando ${validEmailsForWorkflow.length} emails válidos al workflow`);
-      
-      // Llamar al servicio de Temporal con el workflow padre que manejará el child workflow
-      const workflowService = WorkflowService.getInstance();
-      
-      const workflowPayload = {
-        emails: validEmailsForWorkflow,
-        site_id: siteId,
-        user_id: userId,
-        total_emails: validEmailsForWorkflow.length,
-        timestamp: new Date().toISOString()
-      };
-      
-      console.log(`[EMAIL_API] Payload del workflow:`, JSON.stringify(workflowPayload, null, 2));
-      
-      // Llamar al parent workflow que ejecutará el child workflow internamente usando executeChild
-      const result = await workflowService.executeParentChildWorkflow(
-        'syncEmailsWorkflow', 
-        'scheduleCustomerSupportMessagesWorkflow', 
-        workflowPayload
-      );
-      
-      if (result.success) {
-        console.log(`[EMAIL_API] Customer support programado exitosamente: ${result.workflowId}`);
-      } else {
-        console.error(`[EMAIL_API] Error al programar customer support:`, result.error);
-      }
-    } else {
-      console.log(`[EMAIL_API] No se encontraron emails para programar customer support`);
-    }
-  } catch (error) {
-    console.error(`[EMAIL_API] ❌❌❌ Error en scheduleCustomerSupportAfterAnalysis:`, error);
-    console.error(`[EMAIL_API] ❌ Error stack:`, error instanceof Error ? error.stack : 'No stack available');
-  }
-  
-  console.log(`[EMAIL_API] 🏁🏁🏁 FINALIZANDO scheduleCustomerSupportAfterAnalysis`);
-}
-
-// Función de validación de email
-function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
-}
-
 // Create command object for email analysis
 function createEmailCommand(agentId: string, siteId: string, emails: any[], emailConfig: any, analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
@@ -446,9 +326,9 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      // Extraer los datos de email de los results para programar customer support
+      // Extraer los datos de email de los results para incluir en la respuesta
       // NOTA: Solo extraemos de results, NO de targets (que contienen solo templates)
-      const emailsForWorkflow: any[] = [];
+      const emailsForResponse: any[] = [];
       
       console.log(`[EMAIL_API] 🔍 Diagnosticando comando ejecutado:`);
       console.log(`[EMAIL_API] executedCommand existe: ${!!executedCommand}`);
@@ -473,7 +353,7 @@ export async function POST(request: NextRequest) {
           console.log(`[EMAIL_API] 📧 Resultado encontrado:`, JSON.stringify(result, null, 2));
           if (result.email) {
             console.log(`[EMAIL_API] ✅ Email encontrado en results:`, JSON.stringify(result.email, null, 2));
-            emailsForWorkflow.push(result.email);
+            emailsForResponse.push(result.email);
           } else {
             console.log(`[EMAIL_API] ❌ Result no tiene propiedad email:`, Object.keys(result));
           }
@@ -485,24 +365,7 @@ export async function POST(request: NextRequest) {
       // NO extraer de targets ya que contienen solo templates/placeholders
       // Los targets son la estructura esperada, no los resultados reales
       
-      console.log(`[EMAIL_API] 📊 Emails extraídos para procesamiento: ${emailsForWorkflow.length}`);
-      
-      // Programar customer support de forma asíncrona (sin bloquear la respuesta)
-      const effectiveUserId = user_id || team_member_id || '00000000-0000-0000-0000-000000000000';
-      console.log(`[EMAIL_API] 🎯 Programando customer support asíncronamente con userId: ${effectiveUserId}...`);
-      console.log(`[EMAIL_API] 🎯 site_id: ${site_id}, emailsForWorkflow.length: ${emailsForWorkflow.length}`);
-      
-      // Verificar si hay emails antes de llamar la función
-      if (emailsForWorkflow.length > 0) {
-        console.log(`[EMAIL_API] ✅ Hay ${emailsForWorkflow.length} emails para procesar, llamando a scheduleCustomerSupportAfterAnalysis...`);
-        // Ejecutar sin await para no bloquear la respuesta
-        scheduleCustomerSupportAfterAnalysis(emailsForWorkflow, site_id, effectiveUserId)
-          .catch(error => {
-            console.error(`[EMAIL_API] ❌ Error en programación asíncrona de customer support:`, error);
-          });
-      } else {
-        console.log(`[EMAIL_API] ⚠️ No hay emails para procesar, saltando llamada a scheduleCustomerSupportAfterAnalysis`);
-      }
+      console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
       
       return NextResponse.json({
         success: true,
@@ -511,7 +374,8 @@ export async function POST(request: NextRequest) {
           status: executedCommand?.status || 'completed',
           message: "Análisis de emails completado exitosamente",
           emailCount: emails.length,
-          analysisCount: emailsForWorkflow.length
+          analysisCount: emailsForResponse.length,
+          emails: emailsForResponse
         }
       });
       
@@ -554,4 +418,10 @@ export async function GET(request: NextRequest) {
     success: true,
     message: "This endpoint requires a POST request with email analysis parameters. Please refer to the documentation."
   }, { status: 200 });
+}
+
+// Función de validación de email
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
 } 
