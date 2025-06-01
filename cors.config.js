@@ -1,6 +1,16 @@
 /**
  * Configuración CORS para next.config.mjs
  * Versión ES modules para ser compatible con middleware.ts y next.config.mjs
+ * 
+ * NOTA IMPORTANTE SOBRE TWILIO WEBHOOKS:
+ * Twilio no proporciona rangos específicos de IP para webhooks.
+ * En su lugar, utilizan un pool dinámico de IPs y recomiendan validar
+ * las requests usando el header X-Twilio-Signature.
+ * 
+ * Para manejar webhooks de Twilio de forma segura:
+ * 1. Valida el X-Twilio-Signature header en tu endpoint
+ * 2. No dependas de allowlists de IP para autenticación
+ * 3. Usa HTTPS para todos los webhooks
  */
 
 // Orígenes permitidos por entorno
@@ -15,7 +25,11 @@ const corsConfig = {
       'http://localhost:3001',
       'http://127.0.0.1:3456',
       'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001'
+      'http://127.0.0.1:3001',
+      // Dominios de Twilio (para casos especiales, no típico para webhooks)
+      'https://twilio.com',
+      'https://www.twilio.com',
+      'https://webhooks.twilio.com'
     ]
   },
   development: {
@@ -29,7 +43,11 @@ const corsConfig = {
       'http://192.168.87.64:3000',
       'http://192.168.87.64:3456',
       'http://192.168.87.79:3000',
-      'http://192.168.87.79:3456'
+      'http://192.168.87.79:3456',
+      // Dominios de Twilio para desarrollo y testing
+      'https://twilio.com',
+      'https://www.twilio.com',
+      'https://webhooks.twilio.com'
     ]
   }
 };
