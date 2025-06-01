@@ -369,14 +369,12 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json({
         success: true,
-        data: {
-          commandId: effectiveDbUuid || internalCommandId,
-          status: executedCommand?.status || 'completed',
-          message: "Análisis de emails completado exitosamente",
-          emailCount: emails.length,
-          analysisCount: emailsForResponse.length,
-          emails: emailsForResponse
-        }
+        commandId: effectiveDbUuid || internalCommandId,
+        status: executedCommand?.status || 'completed',
+        message: "Análisis de emails completado exitosamente",
+        emailCount: emails.length,
+        analysisCount: emailsForResponse.length,
+        emails: emailsForResponse
       });
       
     } catch (error: unknown) {
