@@ -201,6 +201,9 @@ async function scheduleCustomerSupportAfterAnalysis(
   siteId: string, 
   userId: string
 ): Promise<void> {
+  console.log(`[EMAIL_API] 🚀🚀🚀 INICIANDO scheduleCustomerSupportAfterAnalysis`);
+  console.log(`[EMAIL_API] 🚀 Parámetros recibidos: emailsArray.length=${emailsArray.length}, siteId=${siteId}, userId=${userId}`);
+  
   try {
     if (emailsArray.length > 0) {
       console.log(`[EMAIL_API] Encontrados ${emailsArray.length} emails, programando customer support...`);
@@ -242,12 +245,7 @@ async function scheduleCustomerSupportAfterAnalysis(
             // Campos requeridos del API
             site_id: siteId,
             user_id: userId,
-            lead_notification: "email", // Send notification for valid emails
-            priority: "medium",
-            response_type: "informational",
-            potential_value: "unknown",
-            intent: "inquiry",
-            // ID único para tracking
+            lead_notification: "email", // Send notification for valid emails            // ID único para tracking
             analysis_id: `email_${Date.now()}_${index}`
           };
         })
@@ -299,8 +297,11 @@ async function scheduleCustomerSupportAfterAnalysis(
       console.log(`[EMAIL_API] No se encontraron emails para programar customer support`);
     }
   } catch (error) {
-    console.error(`[EMAIL_API] Error en scheduleCustomerSupportAfterAnalysis:`, error);
+    console.error(`[EMAIL_API] ❌❌❌ Error en scheduleCustomerSupportAfterAnalysis:`, error);
+    console.error(`[EMAIL_API] ❌ Error stack:`, error instanceof Error ? error.stack : 'No stack available');
   }
+  
+  console.log(`[EMAIL_API] 🏁🏁🏁 FINALIZANDO scheduleCustomerSupportAfterAnalysis`);
 }
 
 // Función de validación de email
@@ -447,30 +448,59 @@ export async function POST(request: NextRequest) {
       // NOTA: Solo extraemos de results, NO de targets (que contienen solo templates)
       const emailsForWorkflow: any[] = [];
       
+      console.log(`[EMAIL_API] 🔍 Diagnosticando comando ejecutado:`);
+      console.log(`[EMAIL_API] executedCommand existe: ${!!executedCommand}`);
+      console.log(`[EMAIL_API] executedCommand.results existe: ${!!(executedCommand && executedCommand.results)}`);
+      console.log(`[EMAIL_API] executedCommand.results es array: ${!!(executedCommand && executedCommand.results && Array.isArray(executedCommand.results))}`);
+      console.log(`[EMAIL_API] executedCommand.results.length: ${executedCommand?.results?.length || 0}`);
+      
+      if (executedCommand) {
+        console.log(`[EMAIL_API] 📋 Estructura completa del comando:`, JSON.stringify({
+          status: executedCommand.status,
+          results: executedCommand.results,
+          targets: executedCommand.targets,
+          resultsCount: executedCommand.results?.length || 0,
+          targetsCount: executedCommand.targets?.length || 0
+        }, null, 2));
+      }
+      
       // Extraer SOLO de results (que contienen los emails procesados por el agente)
       if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
+        console.log(`[EMAIL_API] 🔄 Iterando sobre ${executedCommand.results.length} resultados...`);
         for (const result of executedCommand.results) {
+          console.log(`[EMAIL_API] 📧 Resultado encontrado:`, JSON.stringify(result, null, 2));
           if (result.email) {
-            console.log(`[EMAIL_API] Email encontrado en results:`, JSON.stringify(result.email, null, 2));
+            console.log(`[EMAIL_API] ✅ Email encontrado en results:`, JSON.stringify(result.email, null, 2));
             emailsForWorkflow.push(result.email);
+          } else {
+            console.log(`[EMAIL_API] ❌ Result no tiene propiedad email:`, Object.keys(result));
           }
         }
+      } else {
+        console.log(`[EMAIL_API] ❌ No se encontraron results válidos para procesar`);
       }
       
       // NO extraer de targets ya que contienen solo templates/placeholders
       // Los targets son la estructura esperada, no los resultados reales
       
-      console.log(`[EMAIL_API] Emails extraídos para procesamiento: ${emailsForWorkflow.length}`);
+      console.log(`[EMAIL_API] 📊 Emails extraídos para procesamiento: ${emailsForWorkflow.length}`);
       
       // Programar customer support de forma asíncrona (sin bloquear la respuesta)
       const effectiveUserId = user_id || team_member_id || '00000000-0000-0000-0000-000000000000';
-      console.log(`[EMAIL_API] Programando customer support asíncronamente...`);
+      console.log(`[EMAIL_API] 🎯 Programando customer support asíncronamente con userId: ${effectiveUserId}...`);
+      console.log(`[EMAIL_API] 🎯 site_id: ${site_id}, emailsForWorkflow.length: ${emailsForWorkflow.length}`);
       
-      // Ejecutar sin await para no bloquear la respuesta
-      scheduleCustomerSupportAfterAnalysis(emailsForWorkflow, site_id, effectiveUserId)
-        .catch(error => {
-          console.error(`[EMAIL_API] Error en programación asíncrona de customer support:`, error);
-        });
+      // Verificar si hay emails antes de llamar la función
+      if (emailsForWorkflow.length > 0) {
+        console.log(`[EMAIL_API] ✅ Hay ${emailsForWorkflow.length} emails para procesar, llamando a scheduleCustomerSupportAfterAnalysis...`);
+        // Ejecutar sin await para no bloquear la respuesta
+        scheduleCustomerSupportAfterAnalysis(emailsForWorkflow, site_id, effectiveUserId)
+          .catch(error => {
+            console.error(`[EMAIL_API] ❌ Error en programación asíncrona de customer support:`, error);
+          });
+      } else {
+        console.log(`[EMAIL_API] ⚠️ No hay emails para procesar, saltando llamada a scheduleCustomerSupportAfterAnalysis`);
+      }
       
       return NextResponse.json({
         success: true,
