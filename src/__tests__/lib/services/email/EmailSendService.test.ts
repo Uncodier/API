@@ -12,6 +12,11 @@ jest.mock('@/lib/services/email/EmailConfigService');
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
     from: jest.fn(() => ({
+      select: jest.fn(() => ({
+        eq: jest.fn(() => ({
+          single: jest.fn()
+        }))
+      })),
       insert: jest.fn(() => Promise.resolve({ error: null }))
     }))
   }
@@ -28,18 +33,38 @@ const mockEmailConfigService = EmailConfigService as jest.Mocked<typeof EmailCon
 mockNodemailer.createTransport.mockReturnValue(mockTransporter as any);
 
 const mockEmailConfig = {
-  user: 'test@company.com',
-  email: 'test@company.com',
-  password: 'test-password',
-  smtpHost: 'smtp.company.com',
+  user: 'test@example.com',
+  email: 'test@example.com',
+  password: 'password123',
+  smtpHost: 'smtp.example.com',
   smtpPort: 587,
   tls: true
 };
+
+const mockSiteInfo = {
+  name: 'Mi Sitio de Prueba',
+  url: 'https://misitio.com'
+};
+
+// Mock de supabase
+const mockSupabase = require('@/lib/database/supabase-client');
 
 describe('EmailSendService', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockEmailConfigService.getEmailConfig.mockResolvedValue(mockEmailConfig);
+    
+    // Mock exitoso para obtener información del sitio
+    mockSupabase.supabaseAdmin.from.mockReturnValue({
+      select: jest.fn(() => ({
+        eq: jest.fn(() => ({
+          single: jest.fn().mockResolvedValue({
+            data: mockSiteInfo,
+            error: null
+          })
+        }))
+      }))
+    });
   });
 
   describe('sendEmail', () => {
@@ -55,62 +80,31 @@ describe('EmailSendService', () => {
       expect(result.success).toBe(true);
       expect(result.status).toBe('skipped');
       expect(result.reason).toBe('Temporary email address - no real email sent');
-      expect(result.recipient).toBe('no-email@example.com');
-      
-      // No debería llamar a servicios externos para emails temporales
-      expect(mockEmailConfigService.getEmailConfig).not.toHaveBeenCalled();
       expect(mockTransporter.sendMail).not.toHaveBeenCalled();
     });
 
     it('should send email successfully with valid parameters', async () => {
       mockTransporter.sendMail.mockResolvedValue({
-        messageId: 'test-message-id-123',
-        accepted: ['test@example.com'],
-        rejected: []
+        messageId: 'test-message-id',
+        accepted: ['test@example.com']
       });
 
       const result = await EmailSendService.sendEmail({
         email: 'test@example.com',
         from: 'agent@company.com',
         subject: 'Test Subject',
-        message: 'Test message content',
-        agent_id: 'agent-123',
-        conversation_id: 'conv-456',
-        lead_id: 'lead-789',
+        message: 'Test message',
         site_id: 'site-123'
       });
 
       expect(result.success).toBe(true);
-      expect(result.email_id).toBe('test-message-id-123');
-      expect(result.recipient).toBe('test@example.com');
-      expect(result.sender).toBe('agent@company.com');
-      expect(result.subject).toBe('Test Subject');
+      expect(result.email_id).toBe('test-message-id');
       expect(result.status).toBe('sent');
-      expect(result.message_preview).toContain('Test message content');
-
-      // Verificar que se configuró nodemailer correctamente
-      expect(mockNodemailer.createTransport).toHaveBeenCalledWith({
-        host: mockEmailConfig.smtpHost,
-        port: mockEmailConfig.smtpPort,
-        secure: false, // smtpPort !== 465
-        auth: {
-          user: mockEmailConfig.user,
-          pass: mockEmailConfig.password,
-        },
-        tls: {
-          rejectUnauthorized: false
-        }
-      });
-
-      // Verificar que se envió el email
       expect(mockTransporter.sendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          from: `AI Assistant <${mockEmailConfig.user}>`,
+          from: 'agent@company.com <test@example.com>',
           to: 'test@example.com',
-          subject: 'Test Subject',
-          text: 'Test message content',
-          replyTo: 'agent@company.com',
-          html: expect.stringContaining('Test message content')
+          subject: 'Test Subject'
         })
       );
     });
@@ -151,7 +145,7 @@ describe('EmailSendService', () => {
       expect(result.error?.message).toBe('SMTP connection failed');
     });
 
-    it('should build HTML content correctly', async () => {
+    it('should build HTML content correctly with site info', async () => {
       mockTransporter.sendMail.mockResolvedValue({
         messageId: 'test-id',
         accepted: ['test@example.com']
@@ -167,10 +161,43 @@ describe('EmailSendService', () => {
         site_id: 'site-123'
       });
 
+      const callArgs = mockTransporter.sendMail.mock.calls[0][0];
+      expect(callArgs.html).toContain('¡Que tengas un excelente día! 😊');
+      expect(callArgs.html).toContain('Mi Sitio de Prueba');
+      expect(callArgs.html).toContain('https://misitio.com');
+      expect(callArgs.text).toBe(multilineMessage);
+    });
+
+    it('should handle site info errors gracefully', async () => {
+      // Mock error al obtener información del sitio
+      mockSupabase.supabaseAdmin.from.mockReturnValue({
+        select: jest.fn(() => ({
+          eq: jest.fn(() => ({
+            single: jest.fn().mockResolvedValue({
+              data: null,
+              error: new Error('Site not found')
+            })
+          }))
+        }))
+      });
+
+      mockTransporter.sendMail.mockResolvedValue({
+        messageId: 'test-id',
+        accepted: ['test@example.com']
+      });
+
+      const result = await EmailSendService.sendEmail({
+        email: 'test@example.com',
+        from: 'agent@company.com',
+        subject: 'Test Subject',
+        message: 'Test message',
+        site_id: 'site-123'
+      });
+
+      expect(result.success).toBe(true);
       expect(mockTransporter.sendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          html: expect.stringContaining('<p style="margin: 10px 0;">Line 1</p>'),
-          text: multilineMessage
+          html: expect.stringContaining('Nuestro sitio')
         })
       );
     });

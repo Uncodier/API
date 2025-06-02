@@ -7,19 +7,40 @@ jest.mock('@/lib/services/email/EmailSendService');
 // Mock completo del cliente de Supabase
 jest.mock('@/lib/database/supabase-client', () => ({
   supabaseAdmin: {
-    from: jest.fn(() => ({
-      select: jest.fn(() => ({
-        eq: jest.fn(() => ({
-          order: jest.fn(() => ({
-            limit: jest.fn(() => Promise.resolve({
-              data: [],
-              error: null
+    from: jest.fn((tableName) => {
+      if (tableName === 'settings') {
+        return {
+          select: jest.fn(() => ({
+            eq: jest.fn(() => ({
+              single: jest.fn(() => Promise.resolve({
+                data: {
+                  channels: {
+                    email: {
+                      email: 'test@example.com'
+                    }
+                  }
+                },
+                error: null
+              }))
             }))
           }))
-        }))
-      })),
-      insert: jest.fn(() => Promise.resolve({ error: null }))
-    }))
+        };
+      } else {
+        return {
+          select: jest.fn(() => ({
+            eq: jest.fn(() => ({
+              order: jest.fn(() => ({
+                limit: jest.fn(() => Promise.resolve({
+                  data: [],
+                  error: null
+                }))
+              }))
+            }))
+          })),
+          insert: jest.fn(() => Promise.resolve({ error: null }))
+        };
+      }
+    })
   }
 }));
 
@@ -80,6 +101,7 @@ describe('/api/agents/tools/sendEmail', () => {
       expect(mockEmailSendService.sendEmail).toHaveBeenCalledWith({
         email: 'test@example.com',
         from: 'agent@company.com',
+        fromEmail: 'test@example.com',
         subject: 'Test Subject',
         message: 'Test message content',
         agent_id: 'agent-123',
@@ -132,7 +154,7 @@ describe('/api/agents/tools/sendEmail', () => {
         method: 'POST',
         body: JSON.stringify({
           email: 'test@example.com',
-          // Missing: from, subject, message, site_id
+          // Missing: subject, message, site_id (from is optional)
         }),
       });
 
@@ -142,7 +164,7 @@ describe('/api/agents/tools/sendEmail', () => {
       expect(response.status).toBe(400);
       expect(responseData.success).toBe(false);
       expect(responseData.error.code).toBe('INVALID_REQUEST');
-      expect(responseData.error.message).toContain('from is required');
+      expect(responseData.error.message).toContain('subject is required');
     });
 
     it('should return error for missing site_id', async () => {
@@ -189,33 +211,7 @@ describe('/api/agents/tools/sendEmail', () => {
       expect(response.status).toBe(400);
       expect(responseData.success).toBe(false);
       expect(responseData.error.code).toBe('INVALID_REQUEST');
-      expect(responseData.error.message).toBe('Invalid email format');
-    });
-
-    it('should return error for invalid from email format', async () => {
-      mockEmailSendService.isValidEmail.mockImplementation((email: string) => {
-        if (email === 'invalid-from-email') return false;
-        return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/sendEmail', {
-        method: 'POST',
-        body: JSON.stringify({
-          email: 'test@example.com',
-          from: 'invalid-from-email',
-          subject: 'Test Subject',
-          message: 'Test message',
-          site_id: 'site-123'
-        }),
-      });
-
-      const response = await POST(request);
-      const responseData = await response.json();
-
-      expect(response.status).toBe(400);
-      expect(responseData.success).toBe(false);
-      expect(responseData.error.code).toBe('INVALID_REQUEST');
-      expect(responseData.error.message).toBe('Invalid from email format');
+      expect(responseData.error.message).toBe('Invalid recipient email format');
     });
 
     it('should handle email configuration errors', async () => {

@@ -31,6 +31,11 @@ export interface SendEmailResult {
   };
 }
 
+interface SiteInfo {
+  name: string;
+  url?: string;
+}
+
 export class EmailSendService {
   /**
    * Envía un email usando la configuración SMTP del sitio
@@ -62,6 +67,9 @@ export class EmailSendService {
     }
 
     try {
+      // Obtener información del sitio
+      const siteInfo = await this.getSiteInfo(site_id);
+      
       // Obtener configuración de email para el sitio
       const emailConfig = await EmailConfigService.getEmailConfig(site_id);
       
@@ -87,7 +95,7 @@ export class EmailSendService {
       });
 
       // Preparar el contenido HTML del email
-      const htmlContent = this.buildHtmlContent(message);
+      const htmlContent = this.buildHtmlContent(message, siteInfo);
 
       // Determinar el nombre y email del remitente
       const fromName = from || 'AI Assistant';
@@ -159,20 +167,57 @@ export class EmailSendService {
   }
 
   /**
+   * Obtiene información del sitio desde la base de datos
+   */
+  private static async getSiteInfo(siteId: string): Promise<SiteInfo> {
+    try {
+      const { data: site, error } = await supabaseAdmin
+        .from('sites')
+        .select('name, url')
+        .eq('id', siteId)
+        .single();
+
+      if (error || !site) {
+        console.warn(`No se pudo obtener información del sitio ${siteId}, usando valores por defecto`);
+        return { name: 'Nuestro sitio' };
+      }
+
+      return {
+        name: site.name || 'Nuestro sitio',
+        url: site.url
+      };
+    } catch (error) {
+      console.warn(`Error obteniendo información del sitio ${siteId}:`, error);
+      return { name: 'Nuestro sitio' };
+    }
+  }
+
+  /**
    * Construye el contenido HTML del email
    */
-  private static buildHtmlContent(message: string): string {
+  private static buildHtmlContent(message: string, siteInfo: SiteInfo): string {
     return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-        <div style="margin-bottom: 20px;">
-          ${message.split('\n').map((line: string) => `<p style="margin: 10px 0;">${line}</p>`).join('')}
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
+        <div style="line-height: 1.6; font-size: 16px;">
+          ${message.split('\n').map((line: string) => 
+            line.trim() ? `<p style="margin: 0 0 16px 0;">${line}</p>` : '<br>'
+          ).join('')}
         </div>
         
-        <hr style="border: none; border-top: 1px solid #e0e0e0; margin: 30px 0;">
-        
-        <p style="font-size: 12px; color: #777; text-align: center;">
-          Este email fue enviado automaticamente por nuestro asistente AI.
-        </p>
+        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
+          <p style="font-size: 14px; color: #666; margin: 0; font-style: italic;">
+            ¡Que tengas un excelente día! 😊
+          </p>
+          ${siteInfo.url ? `
+          <p style="font-size: 12px; color: #999; margin: 8px 0 0 0;">
+            Enviado desde <a href="${siteInfo.url}" style="color: #007bff; text-decoration: none;">${siteInfo.name}</a>
+          </p>
+          ` : `
+          <p style="font-size: 12px; color: #999; margin: 8px 0 0 0;">
+            Enviado desde ${siteInfo.name}
+          </p>
+          `}
+        </div>
       </div>
     `;
   }

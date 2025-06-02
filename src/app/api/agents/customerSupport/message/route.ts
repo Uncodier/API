@@ -220,9 +220,9 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string) {
   try {
-    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}`);
+    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}`);
     
     let effectiveConversationId: string | undefined = conversationId;
     
@@ -232,7 +232,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       console.log(`🔍 Verificando existencia de conversación: ${conversationId}`);
       const { data: existingConversation, error: checkError } = await supabaseAdmin
         .from('conversations')
-        .select('id, user_id, lead_id, visitor_id, agent_id, site_id')
+        .select('id, user_id, lead_id, visitor_id, agent_id, site_id, custom_data')
         .eq('id', conversationId)
         .single();
       
@@ -268,6 +268,14 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       // Añadir el título si está presente
       if (conversationTitle) conversationData.title = conversationTitle;
       
+      // Añadir custom_data con channel si origin está presente
+      if (origin) {
+        conversationData.custom_data = {
+          channel: origin
+        };
+        console.log(`📺 Estableciendo channel="${origin}" en custom_data de la conversación`);
+      }
+      
       console.log(`🗣️ Creando nueva conversación con datos:`, JSON.stringify(conversationData));
       
       const { data: conversation, error: convError } = await supabaseAdmin
@@ -283,12 +291,33 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
-    } else if (conversationTitle || siteId || leadId) {
-      // Actualizar la conversación existente si se proporciona un nuevo título, site_id o lead_id
+    } else if (conversationTitle || siteId || leadId || origin) {
+      // Actualizar la conversación existente si se proporciona un nuevo título, site_id, lead_id o origin
       const updateData: any = {};
       if (conversationTitle) updateData.title = conversationTitle;
       if (siteId) updateData.site_id = siteId;
       if (leadId) updateData.lead_id = leadId;
+      
+      // Actualizar custom_data con channel si origin está presente
+      if (origin) {
+        // Primero obtenemos el custom_data existente
+        const { data: existingConv, error: fetchError } = await supabaseAdmin
+          .from('conversations')
+          .select('custom_data')
+          .eq('id', effectiveConversationId)
+          .single();
+        
+        let existingCustomData = {};
+        if (!fetchError && existingConv && existingConv.custom_data) {
+          existingCustomData = existingConv.custom_data;
+        }
+        
+        updateData.custom_data = {
+          ...existingCustomData,
+          channel: origin
+        };
+        console.log(`📺 Actualizando channel="${origin}" en custom_data de la conversación`);
+      }
       
       console.log(`✏️ Actualizando conversación: ${effectiveConversationId} con:`, JSON.stringify(updateData));
       
@@ -310,6 +339,9 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         }
         if (leadId) {
           console.log(`👤 Lead ID de conversación actualizado: "${leadId}"`);
+        }
+        if (origin) {
+          console.log(`📺 Channel de conversación actualizado: "${origin}"`);
         }
       }
     }
@@ -920,7 +952,8 @@ export async function POST(request: Request) {
       email,
       phone,
       website_chat_origin, // Nuevo parámetro para indicar si el origen es "website_chat"
-      lead_notification // Nuevo parámetro para indicar si se debe enviar una notificación por email
+      lead_notification, // Nuevo parámetro para indicar si se debe enviar una notificación por email
+      origin // Nuevo parámetro para indicar el canal de origen: 'website', 'email', 'whatsapp'
     } = body;
     
     /**
@@ -944,6 +977,9 @@ export async function POST(request: Request) {
      *   Cuando lead_notification="email":
      *   1. Se enviará una notificación por email cuando se cree o actualice un lead
      *   2. El email se envía a través del WORKFLOWS_SERVER_URL usando el workflow "sendEmailFromAgent"
+     * - origin: String opcional que indica el canal de origen de la conversación
+     *   Valores posibles: "website", "email", "whatsapp"
+     *   Se establece en conversation.custom_data.channel y en lead/visitor.origin
      */
     
     // Verificamos si tenemos al menos un identificador de usuario o cliente
@@ -983,6 +1019,15 @@ export async function POST(request: Request) {
       );
     }
     
+    // Validar el parámetro origin si está presente
+    const validOrigins = ['website', 'email', 'whatsapp'];
+    if (origin && !validOrigins.includes(origin)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: `origin must be one of: ${validOrigins.join(', ')}` } },
+        { status: 400 }
+      );
+    }
+    
     if (!message) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'message is required' } },
@@ -998,9 +1043,20 @@ export async function POST(request: Request) {
       console.log(`⚠️ No site_id provided for request`);
     }
     
-    // Determinar el origen del lead basado en el parámetro website_chat_origin
-    const leadOrigin = website_chat_origin === true ? 'website_chat' : 'chat';
-    console.log(`🏷️ Origen del lead: ${leadOrigin}`);
+    // Determinar el origen del lead basado en los parámetros
+    let leadOrigin = 'chat'; // valor por defecto
+    
+    if (origin) {
+      // Si se proporciona 'origin', usarlo directamente
+      leadOrigin = origin;
+      console.log(`🏷️ Origen del lead establecido desde 'origin': ${leadOrigin}`);
+    } else if (website_chat_origin === true) {
+      // Si website_chat_origin=true, usar 'website_chat' (para mantener compatibilidad)
+      leadOrigin = 'website_chat';
+      console.log(`🏷️ Origen del lead establecido desde 'website_chat_origin': ${leadOrigin}`);
+    }
+    
+    console.log(`🏷️ Origen final del lead: ${leadOrigin}`);
     
     // Gestionar lead_id utilizando el nuevo servicio
     const leadManagementResult = await manageLeadCreation({
@@ -1378,7 +1434,8 @@ export async function POST(request: Request) {
         visitor_id, 
         effectiveAgentId, 
         effectiveSiteId, 
-        effectiveDbUuid || undefined
+        effectiveDbUuid || undefined,
+        origin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
       );
       
       if (!savedMessages) {
@@ -1535,7 +1592,8 @@ export async function POST(request: Request) {
       visitor_id, 
       effectiveAgentId, 
       effectiveSiteId, 
-      effectiveDbUuid || undefined
+      effectiveDbUuid || undefined,
+      origin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
     );
     
     if (!savedMessages) {

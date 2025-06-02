@@ -1,0 +1,269 @@
+---
+title: 'Send WhatsApp Message Tool'
+description: 'Tool for sending WhatsApp messages from an agent during conversations'
+---
+
+# Send WhatsApp Message Tool
+
+This endpoint allows agents to send WhatsApp messages during conversations. It's designed to be used as a tool within agent workflows to communicate with leads and customers via WhatsApp.
+
+## Endpoint
+
+```http
+POST /api/agents/tools/sendWhatsApp
+```
+
+## Request Body
+
+### Required Fields
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `phone_number` | string | **Required**. Recipient's phone number in international format (e.g., +1234567890) |
+| `message` | string | **Required**. The message content to send |
+| `site_id` | string | **Required**. Site ID for WhatsApp configuration |
+
+### Optional Fields
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `from` | string | Sender name (defaults to "AI Assistant" if not provided) |
+| `agent_id` | string | ID of the agent sending the message |
+| `conversation_id` | string | ID of the conversation |
+| `lead_id` | string | ID of the lead associated with the message |
+
+### Example Request
+
+```json
+{
+  "phone_number": "+1234567890",
+  "message": "Hello! Thank you for your interest in our product. How can I help you today?",
+  "from": "Sales Team",
+  "site_id": "site-uuid-here",
+  "agent_id": "agent-uuid-here",
+  "conversation_id": "conv-uuid-here",
+  "lead_id": "lead-uuid-here"
+}
+```
+
+## Configuration Requirements
+
+Before using this tool, ensure WhatsApp is properly configured:
+
+### Option 1: Environment Variables (Global)
+```bash
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_API_TOKEN=your_whatsapp_api_token
+```
+
+### Option 2: Site Settings (Per Site)
+Configure WhatsApp settings in your site's channel configuration:
+```json
+{
+  "channels": {
+    "whatsapp": {
+      "phoneNumberId": "your_phone_number_id",
+      "accessToken": "your_whatsapp_api_token"
+    }
+  }
+}
+```
+
+## Phone Number Format
+
+Phone numbers must be in international format:
+- **Correct**: `+1234567890`, `+34612345678`
+- **Incorrect**: `1234567890`, `612345678`, `+1 (234) 567-890`
+
+The service automatically normalizes phone numbers by removing spaces, dashes, and parentheses.
+
+## Response Format
+
+### Success Response (Message Sent)
+
+```json
+{
+  "success": true,
+  "message_id": "wamid.unique_message_id",
+  "recipient": "+1234567890",
+  "sender": "Sales Team",
+  "message_preview": "Hello! Thank you for your interest in our product. How can I help you today?",
+  "sent_at": "2024-01-15T10:30:00.000Z",
+  "status": "sent"
+}
+```
+
+### Success Response (Test Mode)
+
+```json
+{
+  "success": true,
+  "message_id": "temp-uuid-here",
+  "recipient": "no-phone-example",
+  "sender": "Sales Team",
+  "message_preview": "Hello! Thank you for your interest in our product. How can I help you today?",
+  "sent_at": "2024-01-15T10:30:00.000Z",
+  "status": "skipped",
+  "reason": "Temporary phone number - no real message sent"
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human readable error message"
+  }
+}
+```
+
+## Error Codes
+
+| Code | HTTP Status | Description |
+|------|-------------|-------------|
+| `INVALID_REQUEST` | 400 | Missing required fields |
+| `INVALID_PHONE_NUMBER` | 400 | Invalid phone number format |
+| `WHATSAPP_NOT_CONFIGURED` | 400 | WhatsApp not configured for site |
+| `SITE_CONFIG_NOT_FOUND` | 404 | Site configuration not found |
+| `WHATSAPP_CONFIG_NOT_FOUND` | 404 | WhatsApp configuration not found |
+| `WHATSAPP_SEND_FAILED` | 500 | Failed to send WhatsApp message |
+| `INTERNAL_SERVER_ERROR` | 500 | Internal server error |
+
+## Query WhatsApp Logs
+
+You can query sent WhatsApp messages using the GET endpoint:
+
+```http
+GET /api/agents/tools/sendWhatsApp?agent_id=uuid&limit=10
+```
+
+### Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `message_id` | string | Filter by WhatsApp message ID |
+| `agent_id` | string | Filter by agent ID |
+| `conversation_id` | string | Filter by conversation ID |
+| `limit` | number | Limit results (default: 10) |
+
+### Query Response
+
+```json
+{
+  "success": true,
+  "messages": [
+    {
+      "id": "log-uuid",
+      "recipient_phone": "+1234567890",
+      "sender_name": "Sales Team",
+      "message_content": "Hello! Thank you for your interest...",
+      "whatsapp_message_id": "wamid.unique_message_id",
+      "agent_id": "agent-uuid",
+      "conversation_id": "conv-uuid",
+      "lead_id": "lead-uuid",
+      "sent_at": "2024-01-15T10:30:00.000Z",
+      "status": "sent"
+    }
+  ],
+  "count": 1
+}
+```
+
+## Usage Examples
+
+### cURL Example
+
+```bash
+curl -X POST https://your-domain.com/api/agents/tools/sendWhatsApp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer your-token" \
+  -d '{
+    "phone_number": "+1234567890",
+    "message": "Hello! Thank you for your interest in our product.",
+    "from": "Sales Team",
+    "site_id": "site-uuid-here"
+  }'
+```
+
+### JavaScript Example
+
+```javascript
+const response = await fetch('/api/agents/tools/sendWhatsApp', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    'Authorization': 'Bearer your-token'
+  },
+  body: JSON.stringify({
+    phone_number: '+1234567890',
+    message: 'Hello! Thank you for your interest in our product.',
+    from: 'Sales Team',
+    site_id: 'site-uuid-here',
+    agent_id: 'agent-uuid-here',
+    conversation_id: 'conv-uuid-here'
+  })
+});
+
+const result = await response.json();
+console.log(result);
+```
+
+### Python Example
+
+```python
+import requests
+import json
+
+url = "https://your-domain.com/api/agents/tools/sendWhatsApp"
+headers = {
+    "Content-Type": "application/json",
+    "Authorization": "Bearer your-token"
+}
+data = {
+    "phone_number": "+1234567890",
+    "message": "Hello! Thank you for your interest in our product.",
+    "from": "Sales Team",
+    "site_id": "site-uuid-here",
+    "agent_id": "agent-uuid-here"
+}
+
+response = requests.post(url, headers=headers, data=json.dumps(data))
+result = response.json()
+print(result)
+```
+
+## Features
+
+- **Automatic Formatting**: Messages are automatically formatted with sender information
+- **Phone Number Validation**: Validates and normalizes phone numbers
+- **Test Mode**: Supports test phone numbers that don't send real messages
+- **Logging**: Automatically logs all sent messages for audit purposes
+- **Flexible Configuration**: Supports both global and per-site WhatsApp configuration
+- **Error Handling**: Comprehensive error handling with detailed error codes
+
+## Integration with WhatsApp Business API
+
+This tool uses the WhatsApp Business Cloud API to send messages. Ensure you have:
+
+1. A WhatsApp Business Account
+2. A verified business phone number
+3. Access tokens and phone number ID from Facebook Developer Console
+4. Proper webhook configuration for receiving responses
+
+## Best Practices
+
+1. **Phone Number Format**: Always use international format with country code
+2. **Message Length**: Keep messages concise and relevant
+3. **Rate Limits**: Be aware of WhatsApp API rate limits
+4. **Testing**: Use test phone numbers during development
+5. **Error Handling**: Implement proper error handling in your agent workflows
+6. **Compliance**: Ensure compliance with WhatsApp Business API policies
+
+## Related Endpoints
+
+- [Send Email Tool](/rest-api/agents/tools/send-email) - For sending emails
+- [Customer Support Message](/rest-api/agents/customer-support/message) - For website chat
+- [WhatsApp Webhook](/rest-api/agents/whatsapp) - For receiving WhatsApp messages 

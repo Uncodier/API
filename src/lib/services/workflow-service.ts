@@ -71,6 +71,21 @@ interface ScheduleCustomerSupportParams {
   userId?: string;      //requerido
 }
 
+// Nueva interfaz para el workflow de WhatsApp
+interface WhatsAppMessageWorkflowArgs {
+  phoneNumber: string;
+  messageContent: string;
+  businessAccountId: string;
+  messageId: string;
+  conversationId: string;
+  agentId: string;
+  siteId: string;
+  userId?: string; // ID del usuario dueño del sitio
+  senderName?: string; // Nombre del perfil de WhatsApp del remitente
+  visitorId?: string;
+  leadId?: string;
+}
+
 export class WorkflowService {
   private static instance: WorkflowService;
   private client: Client | null = null;
@@ -473,9 +488,64 @@ export class WorkflowService {
       };
     }
   }
+
+  /**
+   * Inicia el workflow para procesar y responder mensajes de WhatsApp
+   */
+  public async answerWhatsappMessage(args: WhatsAppMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.phoneNumber || !args.messageContent || !args.businessAccountId || !args.messageId || !args.conversationId || !args.agentId || !args.siteId) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, conversationId, agentId y siteId para procesar el mensaje de WhatsApp'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `whatsapp-message-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📱 Iniciando workflow de WhatsApp: ${workflowId}`);
+      console.log(`📱 Mensaje de ${args.phoneNumber.substring(0, 5)}*** en conversación ${args.conversationId}`);
+      console.log(`🤖 Agente: ${args.agentId}`);
+      console.log(`🏢 Site ID: ${args.siteId}`);
+      console.log(`🔧 Using task queue: ${taskQueue}`);
+
+      const handle = await client.workflow.start('answerWhatsappMessageWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de WhatsApp iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+      return {
+        success: true,
+        executionId: handle.firstExecutionRunId,
+        workflowId: handle.workflowId,
+        runId: handle.firstExecutionRunId,
+        status: 'running'
+      };
+
+    } catch (error) {
+      console.error('❌ Error al iniciar workflow de WhatsApp:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al iniciar workflow de WhatsApp'
+        }
+      };
+    }
+  }
 }
 
 export default WorkflowService;
 
 // Exportar las interfaces para uso externo
-export type { AnalysisData, ScheduleCustomerSupportParams, WorkflowExecutionResponse, WorkflowExecutionOptions }; 
+export type { AnalysisData, ScheduleCustomerSupportParams, WhatsAppMessageWorkflowArgs, WorkflowExecutionResponse, WorkflowExecutionOptions }; 

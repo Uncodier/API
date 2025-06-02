@@ -198,11 +198,11 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
 
   return CommandFactory.createCommand({
-    task: 'analyze emails',
+    task: 'reply to emails',
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
     site_id: siteId,
-    description: 'Identify potential leads and commercial opportunities. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
+    description: 'Identify potential leads, commercial opportunities and clients inqueries to reply. Focus ONLY on emails from prospects showing genuine interest in our products/services. IGNORE: transactional emails, vendor outreach, spam, and cold sales pitches from other companies unless they demonstrate clear interest in becoming customers. IMPORTANT: If no emails require a response or qualify as potential leads, return an empty array in the results. []',
     targets: [
       {
         email: {
@@ -240,7 +240,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
       { agent_role: "sales_manager", status: "not_initialized" },
       { agent_role: "customer_service_manager", status: "not_initialized" }
     ],
-    model: "gpt-4",
+    model: "gpt-4.1",
     modelType: "openai"
   });
 }

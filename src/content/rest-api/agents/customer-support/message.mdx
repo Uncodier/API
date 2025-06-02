@@ -22,9 +22,23 @@ POST /api/agents/customerSupport/message
 | `conversationId` | string | No | Optional ID of existing conversation |
 | `agentId` | string | No | ID of the customer support agent (optional, will be found using site_id if not provided) |
 | `site_id` | string | No | ID of the site associated with this interaction |
+| `origin` | string | No | Channel origin of the conversation. See [Origin Types](#origin-types) |
 | `lead_notification` | string | No | Type of notification to send for lead interactions. See [Lead Notification Types](#lead-notification-types) |
 
 *Identification requirements: At least one of `visitor_id` or `lead_id` is required for identification purposes. `userId` is optional as it can be derived from the site_id.
+
+### Origin Types
+
+| Value | Description |
+|-------|-------------|
+| `website` | Message originated from website chat widget |
+| `email` | Message originated from email communication |
+| `whatsapp` | Message originated from WhatsApp integration |
+
+When `origin` is provided:
+- It will be stored in `conversation.custom_data.channel`
+- It will be set as the `origin` property for newly created leads or visitors
+- If not provided, defaults to `'chat'` for backward compatibility
 
 ### Lead Notification Types
 
@@ -85,6 +99,34 @@ With lead notification enabled:
   "message": "I need help with my recent order",
   "site_id": "site_456",
   "lead_notification": "email"
+}
+```
+
+With origin channel specified:
+```json
+{
+  "visitor_id": "visitor_789",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone": "+1234567890",
+  "message": "I need help with my recent order",
+  "site_id": "site_456",
+  "origin": "whatsapp"
+}
+```
+
+Complete example with all optional parameters:
+```json
+{
+  "visitor_id": "visitor_789",
+  "name": "John Doe",
+  "email": "john.doe@example.com",
+  "phone": "+1234567890",
+  "message": "I need help with my recent order",
+  "site_id": "site_456",
+  "origin": "website",
+  "lead_notification": "email",
+  "conversationId": "conv_123456"
 }
 ```
 
@@ -225,18 +267,25 @@ The system generates a command object with the following structure to control su
   - Lead identification via `lead_id` (for leads in the system)
   - User identification via `userId` (optional, can be derived from site_id)
 - At least one identification parameter must be provided (`visitor_id`, `lead_id`, or `userId`)
+- **Channel Origin**:
+  - The `origin` parameter specifies the channel where the conversation originated
+  - Valid values are: `website`, `email`, `whatsapp`
+  - When provided, it's stored in `conversation.custom_data.channel`
+  - It's also set as the `origin` property for newly created leads or visitors
+  - If not provided, defaults to `'chat'` for backward compatibility
 - **Lead Management**:
   - If `lead_id` is provided, the system will use the existing lead
   - If `lead_id` is not provided but `name`, `email` or `phone` are included, the system will:
     - First look for an existing lead with matching information
     - Create a new lead if no matching lead is found
+  - The lead's `origin` property will be set based on the `origin` parameter or default to `'chat'`
 - **Lead Notifications**:
   - When `lead_notification` is set to `email`, the system will send email notifications for lead interactions
   - Email notifications are sent via the configured workflows server using the `sendEmailFromAgent` workflow
   - If the workflows server is not configured or fails, the lead creation will still succeed but no notification will be sent
 - If `agentId` is not provided and `site_id` is available, the system will automatically find an active customer support agent for that site
 - If no agent is found or no `site_id` is provided, a default agent will be used
-- Conversations are saved with the generated title and site_id in the database
+- Conversations are saved with the generated title, site_id, and channel information in the database
 - The command executes asynchronously but the API waits for completion before responding
 - The system automatically creates conversation and message records in the database
 
@@ -261,4 +310,5 @@ Optional fields:
 - **Conversation ID**: If continuing an existing conversation, provide the ID
 - **Agent ID**: The ID of the customer support agent (will be found using site_id if not provided)
 - **Site ID**: The ID of the site associated with this interaction
+- **Origin**: Channel origin of the conversation (website, email, whatsapp)
 - **Lead Notification**: Type of notification to send (email, none)

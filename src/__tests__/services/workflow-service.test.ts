@@ -447,4 +447,115 @@ describe('WorkflowService', () => {
       });
     });
   });
+
+  describe('answerWhatsappMessage', () => {
+    const mockWhatsAppArgs = {
+      phoneNumber: '+1234567890',
+      messageContent: 'Hola, necesito ayuda con mi pedido',
+      businessAccountId: 'twilio-account-123',
+      messageId: 'msg_abc123',
+      conversationId: 'conv_def456',
+      agentId: 'agent-whatsapp-789',
+      siteId: 'site-test-123',
+      visitorId: 'visitor_xyz789',
+      leadId: 'lead_uvw101'
+    };
+
+    it('debería iniciar workflow de WhatsApp exitosamente', async () => {
+      const result = await workflowService.answerWhatsappMessage(mockWhatsAppArgs);
+
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('answerWhatsappMessageWorkflow', {
+        args: [mockWhatsAppArgs],
+        taskQueue: 'default',
+        workflowId: expect.stringMatching(/^whatsapp-message-\d+-[a-z0-9]+$/)
+      });
+
+      expect(result).toEqual({
+        success: true,
+        executionId: 'test-run-id',
+        workflowId: 'test-workflow-id',
+        runId: 'test-run-id',
+        status: 'running'
+      });
+    });
+
+    it('debería validar argumentos requeridos para WhatsApp', async () => {
+      const invalidArgs = {
+        phoneNumber: '',
+        messageContent: 'Test message',
+        businessAccountId: 'account-123',
+        messageId: 'msg-123',
+        conversationId: 'conv-123',
+        agentId: 'agent-123',
+        siteId: ''
+      };
+
+      const result = await workflowService.answerWhatsappMessage(invalidArgs);
+
+      expect(result).toEqual({
+        success: false,
+        error: {
+          code: 'INVALID_ARGUMENTS',
+          message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, conversationId, agentId y siteId para procesar el mensaje de WhatsApp'
+        }
+      });
+
+      expect(mockClient.workflow.start).not.toHaveBeenCalled();
+    });
+
+    it('debería usar opciones personalizadas para workflow de WhatsApp', async () => {
+      const customOptions = {
+        taskQueue: 'whatsapp-queue',
+        workflowId: 'custom-whatsapp-workflow-id'
+      };
+
+      await workflowService.answerWhatsappMessage(mockWhatsAppArgs, customOptions);
+
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('answerWhatsappMessageWorkflow', {
+        args: [mockWhatsAppArgs],
+        taskQueue: 'whatsapp-queue',
+        workflowId: 'custom-whatsapp-workflow-id'
+      });
+    });
+
+    it('debería manejar errores de Temporal para WhatsApp', async () => {
+      // Reset client to ensure fresh initialization
+      (workflowService as any).client = null;
+      (workflowService as any).connection = null;
+      
+      Connection.connect.mockRejectedValueOnce(new Error('WhatsApp workflow connection failed'));
+
+      const result = await workflowService.answerWhatsappMessage(mockWhatsAppArgs);
+
+      expect(result).toEqual({
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: 'WhatsApp workflow connection failed'
+        }
+      });
+    });
+
+    it('debería aceptar argumentos opcionales para WhatsApp', async () => {
+      const argsWithoutOptionals = {
+        phoneNumber: '+1234567890',
+        messageContent: 'Test message',
+        businessAccountId: 'account-123',
+        messageId: 'msg-123',
+        conversationId: 'conv-123',
+        agentId: 'agent-123',
+        siteId: 'site-123'
+        // visitorId y leadId son opcionales
+      };
+
+      const result = await workflowService.answerWhatsappMessage(argsWithoutOptionals);
+
+      expect(result.success).toBe(true);
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('answerWhatsappMessageWorkflow', {
+        args: [argsWithoutOptionals],
+        taskQueue: 'default',
+        workflowId: expect.stringMatching(/^whatsapp-message-\d+-[a-z0-9]+$/)
+      });
+    });
+  });
 }); 
