@@ -9,6 +9,7 @@ export interface SendEmailParams {
   fromEmail?: string; // Email del remitente desde configuración del sitio
   subject: string;
   message: string;
+  signatureHtml?: string; // Firma HTML profesional
   agent_id?: string;
   conversation_id?: string;
   lead_id?: string;
@@ -41,7 +42,7 @@ export class EmailSendService {
    * Envía un email usando la configuración SMTP del sitio
    */
   static async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-    const { email, from, fromEmail, subject, message, agent_id, conversation_id, lead_id, site_id } = params;
+    const { email, from, fromEmail, subject, message, signatureHtml, agent_id, conversation_id, lead_id, site_id } = params;
     
     // Si el email es el temporal, no enviar email real
     if (email === 'no-email@example.com') {
@@ -95,7 +96,7 @@ export class EmailSendService {
       });
 
       // Preparar el contenido HTML del email
-      const htmlContent = this.buildHtmlContent(message, siteInfo);
+      const htmlContent = this.buildHtmlContent(message, siteInfo, signatureHtml);
 
       // Determinar el nombre y email del remitente
       const fromName = from || 'AI Assistant';
@@ -195,7 +196,7 @@ export class EmailSendService {
   /**
    * Construye el contenido HTML del email
    */
-  private static buildHtmlContent(message: string, siteInfo: SiteInfo): string {
+  private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
     return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
         <div style="line-height: 1.6; font-size: 16px;">
@@ -203,21 +204,7 @@ export class EmailSendService {
             line.trim() ? `<p style="margin: 0 0 16px 0;">${line}</p>` : '<br>'
           ).join('')}
         </div>
-        
-        <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #f0f0f0;">
-          <p style="font-size: 14px; color: #666; margin: 0; font-style: italic;">
-            ¡Que tengas un excelente día! 😊
-          </p>
-          ${siteInfo.url ? `
-          <p style="font-size: 12px; color: #999; margin: 8px 0 0 0;">
-            Enviado desde <a href="${siteInfo.url}" style="color: #007bff; text-decoration: none;">${siteInfo.name}</a>
-          </p>
-          ` : `
-          <p style="font-size: 12px; color: #999; margin: 8px 0 0 0;">
-            Enviado desde ${siteInfo.name}
-          </p>
-          `}
-        </div>
+        ${signatureHtml ? `<div style="margin-top: 20px; font-size: 14px; color: #666;">${signatureHtml}</div>` : ''}
       </div>
     `;
   }

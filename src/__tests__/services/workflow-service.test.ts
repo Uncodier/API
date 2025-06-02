@@ -485,7 +485,7 @@ describe('WorkflowService', () => {
         messageContent: 'Test message',
         businessAccountId: 'account-123',
         messageId: 'msg-123',
-        conversationId: 'conv-123',
+        conversationId: null,
         agentId: 'agent-123',
         siteId: ''
       };
@@ -496,7 +496,7 @@ describe('WorkflowService', () => {
         success: false,
         error: {
           code: 'INVALID_ARGUMENTS',
-          message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, conversationId, agentId y siteId para procesar el mensaje de WhatsApp'
+          message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, agentId y siteId para procesar el mensaje de WhatsApp'
         }
       });
 
@@ -553,6 +553,27 @@ describe('WorkflowService', () => {
       expect(result.success).toBe(true);
       expect(mockClient.workflow.start).toHaveBeenCalledWith('answerWhatsappMessageWorkflow', {
         args: [argsWithoutOptionals],
+        taskQueue: 'default',
+        workflowId: expect.stringMatching(/^whatsapp-message-\d+-[a-z0-9]+$/)
+      });
+    });
+
+    it('debería aceptar conversationId null para nuevas conversaciones', async () => {
+      const argsWithNullConversation = {
+        phoneNumber: '+1234567890',
+        messageContent: 'Test message',
+        businessAccountId: 'account-123',
+        messageId: 'msg-123',
+        conversationId: null,
+        agentId: 'agent-123',
+        siteId: 'site-123'
+      };
+
+      const result = await workflowService.answerWhatsappMessage(argsWithNullConversation);
+
+      expect(result.success).toBe(true);
+      expect(mockClient.workflow.start).toHaveBeenCalledWith('answerWhatsappMessageWorkflow', {
+        args: [argsWithNullConversation],
         taskQueue: 'default',
         workflowId: expect.stringMatching(/^whatsapp-message-\d+-[a-z0-9]+$/)
       });

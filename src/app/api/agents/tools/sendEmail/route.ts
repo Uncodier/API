@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
+import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 
 /**
  * Endpoint para enviar emails desde un agente
@@ -118,13 +119,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Generar firma del agente basada en la información del sitio
+    let signatureHtml = '';
+    try {
+      const signature = await EmailSignatureService.generateAgentSignature(site_id, from);
+      // Solo usar la versión HTML de la firma, no agregarla al texto plano
+      signatureHtml = signature.formatted;
+    } catch (signatureError) {
+      console.warn('No se pudo generar la firma del agente:', signatureError);
+      // Continuar sin firma si hay error
+    }
+
     // Enviar el email usando el servicio
     const result = await EmailSendService.sendEmail({
       email: targetEmail,
       from: from || '', // Nombre del remitente (opcional)
       fromEmail: configuredEmail, // Email del remitente desde configuración
       subject,
-      message,
+      message: message, // Usar el mensaje original sin agregar firma aquí
+      signatureHtml, // Pasar la firma HTML
       agent_id,
       conversation_id,
       lead_id,

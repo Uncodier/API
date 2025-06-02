@@ -77,7 +77,7 @@ interface WhatsAppMessageWorkflowArgs {
   messageContent: string;
   businessAccountId: string;
   messageId: string;
-  conversationId: string;
+  conversationId: string | null; // Permitir null para nuevas conversaciones
   agentId: string;
   siteId: string;
   userId?: string; // ID del usuario dueño del sitio
@@ -494,13 +494,13 @@ export class WorkflowService {
    */
   public async answerWhatsappMessage(args: WhatsAppMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
-      // Validar argumentos requeridos
-      if (!args.phoneNumber || !args.messageContent || !args.businessAccountId || !args.messageId || !args.conversationId || !args.agentId || !args.siteId) {
+      // Validar argumentos requeridos (conversationId puede ser null o vacío para nuevas conversaciones)
+      if (!args.phoneNumber || !args.messageContent || !args.businessAccountId || !args.messageId || !args.agentId || !args.siteId) {
         return {
           success: false,
           error: {
             code: 'INVALID_ARGUMENTS',
-            message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, conversationId, agentId y siteId para procesar el mensaje de WhatsApp'
+            message: 'Se requieren phoneNumber, messageContent, businessAccountId, messageId, agentId y siteId para procesar el mensaje de WhatsApp'
           }
         };
       }
@@ -511,7 +511,7 @@ export class WorkflowService {
       const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
 
       console.log(`📱 Iniciando workflow de WhatsApp: ${workflowId}`);
-      console.log(`📱 Mensaje de ${args.phoneNumber.substring(0, 5)}*** en conversación ${args.conversationId}`);
+      console.log(`📱 Mensaje de ${args.phoneNumber.substring(0, 5)}*** en conversación ${args.conversationId || 'nueva'}`);
       console.log(`🤖 Agente: ${args.agentId}`);
       console.log(`🏢 Site ID: ${args.siteId}`);
       console.log(`🔧 Using task queue: ${taskQueue}`);

@@ -300,7 +300,7 @@ async function processTwilioWebhook(
       messageContent,
       businessAccountId,
       messageId,
-      conversationId: conversationId || '', // Pasar conversationId si existe, vacío si no
+      conversationId: conversationId || null, // Pasar conversationId si existe, null si no
       agentId,
       siteId,
       userId, // ID del usuario dueño del sitio

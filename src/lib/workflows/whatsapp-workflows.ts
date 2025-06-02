@@ -6,7 +6,7 @@ interface WhatsAppMessageWorkflowArgs {
   messageContent: string;
   businessAccountId: string;
   messageId: string;
-  conversationId: string;
+  conversationId: string | null; // Permitir null para nuevas conversaciones
   agentId: string;
   siteId: string;
   userId?: string; // ID del usuario dueño del sitio

@@ -162,9 +162,9 @@ describe('EmailSendService', () => {
       });
 
       const callArgs = mockTransporter.sendMail.mock.calls[0][0];
-      expect(callArgs.html).toContain('¡Que tengas un excelente día! 😊');
-      expect(callArgs.html).toContain('Mi Sitio de Prueba');
-      expect(callArgs.html).toContain('https://misitio.com');
+      expect(callArgs.html).toContain('Line 1');
+      expect(callArgs.html).toContain('Line 2');
+      expect(callArgs.html).toContain('Line 3');
       expect(callArgs.text).toBe(multilineMessage);
     });
 
@@ -197,7 +197,7 @@ describe('EmailSendService', () => {
       expect(result.success).toBe(true);
       expect(mockTransporter.sendMail).toHaveBeenCalledWith(
         expect.objectContaining({
-          html: expect.stringContaining('Nuestro sitio')
+          html: expect.stringContaining('Test message')
         })
       );
     });
