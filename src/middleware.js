@@ -20,6 +20,9 @@ import { apiKeyAuth } from './middleware/apiKeyAuth';
 export default async function middleware(request) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   
+  // Verificar si es la ruta de WhatsApp webhook (tiene su propia validación de Twilio)
+  const isWhatsAppWebhook = request.nextUrl.pathname === '/api/agents/whatsapp';
+  
   // Obtener el origen
   const origin = request.headers.get('origin');
   
@@ -28,12 +31,22 @@ export default async function middleware(request) {
     method: request.method,
     origin: origin || 'NO_ORIGIN',
     isDevMode,
+    isWhatsAppWebhook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
       'authorization': request.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
       'user-agent': request.headers.get('user-agent'),
     }
   });
+  
+  // Para WhatsApp webhook, permitir sin validación (Twilio valida en la ruta)
+  if (isWhatsAppWebhook) {
+    console.log('[Middleware] WhatsApp webhook detected - skipping origin/API validation');
+    const response = NextResponse.next();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-WhatsApp-Webhook', 'true');
+    return response;
+  }
   
   // Verificar si el origen está permitido
   const allowedOrigins = getAllowedOrigins();

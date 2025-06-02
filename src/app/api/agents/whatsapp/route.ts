@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { TwilioValidationService } from '@/lib/services/twilio/TwilioValidationService';
 
 // Interfaz para el webhook de Twilio WhatsApp
 interface TwilioWhatsAppWebhook {
@@ -261,6 +262,47 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    
+    // VALIDACIÓN DE TWILIO - Verificar que la petición viene realmente de Twilio
+    const twilioSignature = request.headers.get('x-twilio-signature');
+    
+    if (!twilioSignature) {
+      console.error('❌ Falta la firma de Twilio (X-Twilio-Signature)');
+      return NextResponse.json(
+        { success: false, error: 'Missing Twilio signature' },
+        { status: 403 }
+      );
+    }
+    
+    // Extraer el número de WhatsApp para buscar el auth token
+    const whatsappNumber = extractPhoneNumber(webhookData.From);
+    
+    // Construir la URL completa para la validación
+    const fullUrl = request.url;
+    
+    // Validar la firma de Twilio
+    console.log('🔐 Validando firma de Twilio...');
+    const validationResult = await TwilioValidationService.validateTwilioRequest(
+      fullUrl,
+      webhookData,
+      twilioSignature,
+      whatsappNumber,
+      siteId
+    );
+    
+    if (!validationResult.isValid) {
+      console.error('❌ Validación de Twilio fallida:', validationResult.error);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: 'Invalid Twilio signature - request not authorized',
+          details: validationResult.error 
+        },
+        { status: 403 }
+      );
+    }
+    
+    console.log('✅ Validación de Twilio exitosa');
     
     // Procesar el webhook de Twilio
     const result = await processTwilioWebhook(webhookData, siteId, agentId);
