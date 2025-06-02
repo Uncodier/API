@@ -3,8 +3,8 @@
 import React, { useState, useEffect } from 'react';
 import apiRegistry from './apis/index';
 import { codeExamples, BaseApiConfig } from './types';
-import { generateUUID } from './utils';
-import { formatJsonWithSyntax, highlightCode } from './utils/index';
+import { generateUUID } from './utilsComponents';
+import { formatJsonWithSyntax, highlightCode } from './utilsComponents';
 import { FormField } from './components/FormComponents';
 import ApiResults from './components/ApiResults';
 import ApiImplementation from './components/ApiImplementation';

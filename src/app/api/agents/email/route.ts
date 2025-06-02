@@ -8,6 +8,7 @@ import { z } from 'zod';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
@@ -197,6 +198,27 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 60, del
 function createEmailCommand(agentId: string, siteId: string, emails: any[], emailConfig: any, analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
 
+  // Optimizar emails extrayendo solo el texto relevante
+  console.log(`[EMAIL_API] 🔧 Optimizando ${emails.length} emails antes del análisis...`);
+  const optimizedEmails = EmailTextExtractorService.extractMultipleEmailsText(emails, {
+    maxTextLength: 2000, // Limitar texto por email
+    removeSignatures: true,
+    removeQuotedText: true,
+    removeHeaders: true,
+    removeLegalDisclaimer: true
+  });
+
+  // Calcular estadísticas de optimización
+  const totalOriginalLength = optimizedEmails.reduce((sum, email) => sum + email.originalLength, 0);
+  const totalOptimizedLength = optimizedEmails.reduce((sum, email) => sum + email.textLength, 0);
+  const compressionRatio = totalOriginalLength > 0 ? (totalOptimizedLength / totalOriginalLength) : 0;
+  
+  console.log(`[EMAIL_API] 📊 Optimización completada:`);
+  console.log(`[EMAIL_API] - Texto original: ${totalOriginalLength} caracteres`);
+  console.log(`[EMAIL_API] - Texto optimizado: ${totalOptimizedLength} caracteres`);
+  console.log(`[EMAIL_API] - Ratio de compresión: ${(compressionRatio * 100).toFixed(1)}%`);
+  console.log(`[EMAIL_API] - Ahorro de tokens: ~${Math.round((totalOriginalLength - totalOptimizedLength) / 4)} tokens`);
+
   return CommandFactory.createCommand({
     task: 'reply to emails',
     userId: userId || teamMemberId || defaultUserId,
@@ -219,7 +241,10 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     ],
     tools: [],
     context: JSON.stringify({
-      emails,
+      emails: optimizedEmails, // Usar emails optimizados en lugar de originales
+      original_email_count: emails.length,
+      optimized_email_count: optimizedEmails.length,
+      text_compression_ratio: compressionRatio,
       site_id: siteId,
       inbox_info: {
         email_address: emailConfig?.email_address || 'unknown',
@@ -233,7 +258,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
       analysis_type: analysisType,
       lead_id: leadId,
       team_member_id: teamMemberId,
-      special_instructions: 'This is not a summary of the email inbox, its a regontition of each individual email with a commercial interest. Ignore all emails from the team members, do not-reply emails, and spam emails.'
+      special_instructions: 'This is not a summary of the email inbox, its a regontition of each individual email with a commercial interest. Ignore all emails from the team members, do not-reply emails, and spam emails. Note: Email content has been optimized to include only relevant text (signatures, quoted text, and headers removed).'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },

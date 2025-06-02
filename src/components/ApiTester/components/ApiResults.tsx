@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { formatJsonWithSyntax } from '../utils/index';
+import { formatJsonWithSyntax } from '../utilsComponents';
 import styles from '../../ApiTester.module.css';
 
 interface ApiResultsProps {

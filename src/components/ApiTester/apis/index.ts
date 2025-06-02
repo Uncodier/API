@@ -24,6 +24,7 @@ import InterventionApi from './InterventionApi';
 import SalesApi from './SalesApi';
 import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
 import EmailAnalysisApi from './EmailAnalysisApi';
+import EmailOptimizedApi from './EmailOptimizedApi';
 import ContactHumanApi from './ContactHumanApi';
 import SendEmailFromAgentApi from './SendEmailFromAgentApi';
 
@@ -53,6 +54,7 @@ apiRegistry.register(InterventionApi);
 apiRegistry.register(SalesApi);
 apiRegistry.register(CmoStakeholderCoordinationApi);
 apiRegistry.register(EmailAnalysisApi);
+apiRegistry.register(EmailOptimizedApi);
 apiRegistry.register(ContactHumanApi);
 apiRegistry.register(SendEmailFromAgentApi);
 
@@ -86,6 +88,7 @@ export {
   SalesApi,
   CmoStakeholderCoordinationApi,
   EmailAnalysisApi,
+  EmailOptimizedApi,
   ContactHumanApi,
   SendEmailFromAgentApi
 }; 

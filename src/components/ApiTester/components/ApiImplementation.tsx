@@ -2,8 +2,9 @@
 
 import React, { useState } from 'react';
 import { codeExamples } from '../types';
-import { highlightCode } from '../utils/index';
+import { highlightCode } from '../utilsComponents';
 import styles from '../../ApiTester.module.css';
+import { SectionLabel } from '../utilsComponents';
 
 interface ApiImplementationProps {
   requestBody: any;
