@@ -3,6 +3,23 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TwilioValidationService } from '@/lib/services/twilio/TwilioValidationService';
 
+/**
+ * Webhook de Twilio para WhatsApp
+ * 
+ * Este webhook NO requiere site_id o agent_id como parámetros en la URL.
+ * En su lugar, determina automáticamente estos valores basándose en:
+ * 
+ * 1. El número de WhatsApp del destinatario (campo 'To' del webhook)
+ * 2. Busca la configuración en la tabla 'secure_tokens' donde:
+ *    - token_type = 'twilio_whatsapp'
+ *    - identifier contiene el número de negocio
+ * 3. Extrae el site_id del registro encontrado
+ * 4. Extrae el agent_id del metadata del token o busca un agente activo del sitio
+ * 5. Valida la autenticidad usando el secure_token almacenado
+ * 
+ * Formato esperado del webhook: POST /api/agents/whatsapp
+ */
+
 // Interfaz para el webhook de Twilio WhatsApp
 interface TwilioWhatsAppWebhook {
   MessageSid: string;
@@ -104,6 +121,126 @@ async function findWhatsAppConversation(leadId: string): Promise<string | null> 
   }
 }
 
+// Función para buscar la configuración de WhatsApp basada en el número del destinatario
+async function findWhatsAppConfiguration(businessPhoneNumber: string): Promise<{
+  success: boolean;
+  siteId?: string;
+  agentId?: string;
+  error?: string;
+}> {
+  try {
+    console.log(`🔍 Buscando configuración para número de negocio: ${businessPhoneNumber}`);
+    
+    // Buscar en secure_tokens la configuración que coincida con el número de negocio
+    const { data: tokens, error } = await supabaseAdmin
+      .from('secure_tokens')
+      .select('*')
+      .eq('token_type', 'twilio_whatsapp')
+      .like('identifier', `%${businessPhoneNumber}%`);
+
+    if (error) {
+      console.error('❌ Error en consulta a secure_tokens:', error);
+      return {
+        success: false,
+        error: `Database error: ${error.message}`
+      };
+    }
+
+    if (!tokens || tokens.length === 0) {
+      console.log('❌ No se encontró configuración para este número de negocio');
+      return {
+        success: false,
+        error: `No WhatsApp configuration found for business number ${businessPhoneNumber}`
+      };
+    }
+
+    // Tomar el primer token encontrado
+    const tokenRecord = tokens[0];
+    console.log(`✅ Configuración encontrada en secure_tokens: ${tokenRecord.id}`);
+
+    // El site_id debe estar en el registro
+    const siteId = tokenRecord.site_id;
+    if (!siteId) {
+      return {
+        success: false,
+        error: 'No site_id found in WhatsApp configuration'
+      };
+    }
+
+    // Buscar el agent_id en la configuración del sitio o en el metadata del token
+    let agentId: string | undefined;
+
+    // Primero intentar obtener agent_id del metadata del token
+    if (tokenRecord.metadata && typeof tokenRecord.metadata === 'object') {
+      agentId = tokenRecord.metadata.agent_id;
+    }
+
+    // Si no está en metadata, buscar un agente activo para este sitio
+    if (!agentId) {
+      // Primero intentar encontrar un agente con rol "Customer Support"
+      const { data: customerSupportAgent, error: csAgentError } = await supabaseAdmin
+        .from('agents')
+        .select('id')
+        .eq('site_id', siteId)
+        .eq('status', 'active')
+        .contains('configuration', { role: 'Customer Support' })
+        .limit(1)
+        .single();
+
+      if (csAgentError && csAgentError.code !== 'PGRST116') {
+        console.warn('⚠️ Error al buscar agente de Customer Support:', csAgentError);
+      }
+
+      if (customerSupportAgent) {
+        agentId = customerSupportAgent.id;
+        console.log(`🤖 Usando agente de Customer Support del sitio: ${agentId}`);
+      } else {
+        // Fallback: buscar cualquier agente activo si no hay uno de Customer Support
+        console.log('⚠️ No se encontró agente de Customer Support, buscando cualquier agente activo...');
+        
+        const { data: fallbackAgent, error: fallbackError } = await supabaseAdmin
+          .from('agents')
+          .select('id')
+          .eq('site_id', siteId)
+          .eq('status', 'active')
+          .limit(1)
+          .single();
+
+        if (fallbackError && fallbackError.code !== 'PGRST116') {
+          console.warn('⚠️ Error al buscar agente fallback:', fallbackError);
+        }
+
+        if (fallbackAgent) {
+          agentId = fallbackAgent.id;
+          console.log(`🤖 Usando agente activo como fallback: ${agentId}`);
+        }
+      }
+    }
+
+    if (!agentId) {
+      return {
+        success: false,
+        error: `No active agent found for site ${siteId}`
+      };
+    }
+
+    console.log(`✅ Configuración encontrada - Site: ${siteId}, Agent: ${agentId}`);
+    
+    return {
+      success: true,
+      siteId,
+      agentId
+    };
+
+  } catch (error) {
+    console.error('❌ Error al buscar configuración de WhatsApp:', error);
+    return {
+      success: false,
+      error: `Error finding WhatsApp configuration: ${error instanceof Error ? error.message : 'Unknown error'}`
+    };
+  }
+}
+
 // Función para procesar el webhook de Twilio
 async function processTwilioWebhook(
   webhookData: TwilioWhatsAppWebhook,
@@ -198,7 +335,7 @@ async function processTwilioWebhook(
  * GET handler - redirige a la documentación
  */
 export async function GET() {
-  return NextResponse.redirect(new URL('/REST%20API/agents/whatsapp/analyze', 'https://uncodie.com'));
+  return NextResponse.redirect(new URL('/REST%20API/agents/whatsapp/webhook', 'https://uncodie.com'));
 }
 
 /**
@@ -207,28 +344,6 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     console.log('📩 Webhook de Twilio WhatsApp recibido');
-    
-    // Obtener los parámetros de consulta para site_id y agent_id
-    const searchParams = request.nextUrl.searchParams;
-    const siteId = searchParams.get('site_id');
-    const agentId = searchParams.get('agent_id');
-    
-    // Validar parámetros requeridos
-    if (!siteId || !isValidUUID(siteId)) {
-      console.error('❌ site_id inválido o faltante en los parámetros del webhook');
-      return NextResponse.json(
-        { success: false, error: 'Invalid or missing site_id parameter' },
-        { status: 400 }
-      );
-    }
-    
-    if (!agentId || !isValidUUID(agentId)) {
-      console.error('❌ agent_id inválido o faltante en los parámetros del webhook');
-      return NextResponse.json(
-        { success: false, error: 'Invalid or missing agent_id parameter' },
-        { status: 400 }
-      );
-    }
     
     // Obtener el cuerpo de la solicitud (datos del webhook de Twilio)
     // Twilio envía datos como application/x-www-form-urlencoded
@@ -255,13 +370,31 @@ export async function POST(request: NextRequest) {
     console.log(`📄 Datos del webhook:`, JSON.stringify(webhookData, null, 2));
     
     // Validar que tenemos los datos mínimos necesarios
-    if (!webhookData.MessageSid || !webhookData.From || !webhookData.Body) {
+    if (!webhookData.MessageSid || !webhookData.From || !webhookData.To || !webhookData.Body) {
       console.error('❌ Datos incompletos en el webhook de Twilio');
       return NextResponse.json(
         { success: false, error: 'Missing required webhook data' },
         { status: 400 }
       );
     }
+
+    // Extraer el número de negocio (destinatario) para buscar la configuración
+    const businessPhoneNumber = extractPhoneNumber(webhookData.To);
+    console.log(`🏢 Número de negocio: ${businessPhoneNumber}`);
+    
+    // Buscar la configuración de WhatsApp basada en el número de negocio
+    const configResult = await findWhatsAppConfiguration(businessPhoneNumber);
+    
+    if (!configResult.success) {
+      console.error('❌ No se pudo encontrar la configuración de WhatsApp:', configResult.error);
+      return NextResponse.json(
+        { success: false, error: configResult.error },
+        { status: 404 }
+      );
+    }
+
+    const { siteId, agentId } = configResult;
+    console.log(`✅ Configuración encontrada - Site: ${siteId}, Agent: ${agentId}`);
     
     // VALIDACIÓN DE TWILIO - Verificar que la petición viene realmente de Twilio
     const twilioSignature = request.headers.get('x-twilio-signature');
@@ -274,20 +407,20 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Extraer el número de WhatsApp para buscar el auth token
-    const whatsappNumber = extractPhoneNumber(webhookData.From);
+    // Extraer el número de WhatsApp del remitente para la validación
+    const senderPhoneNumber = extractPhoneNumber(webhookData.From);
     
     // Construir la URL completa para la validación
     const fullUrl = request.url;
     
-    // Validar la firma de Twilio
+    // Validar la firma de Twilio usando el número de negocio
     console.log('🔐 Validando firma de Twilio...');
     const validationResult = await TwilioValidationService.validateTwilioRequest(
       fullUrl,
       webhookData,
       twilioSignature,
-      whatsappNumber,
-      siteId
+      businessPhoneNumber, // Usar el número de negocio para buscar el token
+      siteId!
     );
     
     if (!validationResult.isValid) {
@@ -305,7 +438,7 @@ export async function POST(request: NextRequest) {
     console.log('✅ Validación de Twilio exitosa');
     
     // Procesar el webhook de Twilio
-    const result = await processTwilioWebhook(webhookData, siteId, agentId);
+    const result = await processTwilioWebhook(webhookData, siteId!, agentId!);
     
     if (result.success) {
       console.log(`✅ Webhook procesado exitosamente. Workflow ID: ${result.workflowId}`);
