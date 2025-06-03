@@ -26,6 +26,7 @@ import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
 import EmailAnalysisApi from './EmailAnalysisApi';
 import ContactHumanApi from './ContactHumanApi';
 import SendEmailFromAgentApi from './SendEmailFromAgentApi';
+import SendWhatsAppApi from './SendWhatsAppApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -55,6 +56,7 @@ apiRegistry.register(CmoStakeholderCoordinationApi);
 apiRegistry.register(EmailAnalysisApi);
 apiRegistry.register(ContactHumanApi);
 apiRegistry.register(SendEmailFromAgentApi);
+apiRegistry.register(SendWhatsAppApi);
 
 // Exportar el registry como default
 export default apiRegistry;
@@ -87,5 +89,6 @@ export {
   CmoStakeholderCoordinationApi,
   EmailAnalysisApi,
   ContactHumanApi,
-  SendEmailFromAgentApi
+  SendEmailFromAgentApi,
+  SendWhatsAppApi
 }; 

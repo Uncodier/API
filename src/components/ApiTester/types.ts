@@ -27,6 +27,7 @@ export type ApiType =
   | 'content' 
   | 'visitor_segment' 
   | 'send-email-from-agent' 
+  | 'send-whatsapp'
   | 'customer-support'
   | 'email-analysis'
   | 'visitor_identify'

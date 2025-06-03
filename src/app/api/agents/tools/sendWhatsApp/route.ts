@@ -32,6 +32,16 @@ export async function POST(request: NextRequest) {
       site_id
     } = body;
     
+    console.log('🔍 [SendWhatsApp] Parámetros recibidos:', {
+      phone_number,
+      from,
+      message,
+      agent_id,
+      conversation_id,
+      lead_id,
+      site_id
+    });
+    
     // Validar parámetros requeridos
     const requiredFields = [
       { field: 'phone_number', value: phone_number },
@@ -41,6 +51,7 @@ export async function POST(request: NextRequest) {
 
     for (const { field, value } of requiredFields) {
       if (!value) {
+        console.error(`❌ [SendWhatsApp] Campo requerido faltante: ${field}`);
         return NextResponse.json(
           { 
             success: false, 
@@ -54,14 +65,27 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    console.log(`🔎 [SendWhatsApp] Buscando configuración para site_id: ${site_id}`);
+    
     // Obtener configuración del sitio para validar la configuración de WhatsApp
     const { data: siteSettings, error: settingsError } = await supabaseAdmin
       .from('settings')
       .select('channels')
       .eq('site_id', site_id)
       .single();
+    
+    console.log('📊 [SendWhatsApp] Resultado de consulta settings:', {
+      siteSettings,
+      settingsError: settingsError?.message || settingsError,
+      hasData: !!siteSettings
+    });
       
     if (settingsError || !siteSettings) {
+      console.error('❌ [SendWhatsApp] No se encontró configuración del sitio:', {
+        site_id,
+        error: settingsError?.message || settingsError,
+        hasData: !!siteSettings
+      });
       return NextResponse.json(
         { 
           success: false, 
@@ -74,27 +98,67 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Verificar si WhatsApp está configurado (en settings del sitio o variables de entorno)
-    const hasWhatsAppInSettings = siteSettings.channels?.whatsapp?.phoneNumberId && 
-                                  siteSettings.channels?.whatsapp?.accessToken;
+    console.log('🔧 [SendWhatsApp] Configuración de channels encontrada:', {
+      channels: siteSettings.channels,
+      hasChannels: !!siteSettings.channels,
+      hasWhatsApp: !!siteSettings.channels?.whatsapp,
+      whatsappConfig: siteSettings.channels?.whatsapp
+    });
+    
+    // Verificar si WhatsApp está configurado (en settings, secure_tokens o variables de entorno)
+    const hasWhatsAppInSettings = siteSettings.channels?.whatsapp?.enabled === true;
     const hasWhatsAppInEnv = process.env.WHATSAPP_PHONE_NUMBER_ID && 
                             process.env.WHATSAPP_API_TOKEN;
     
-    if (!hasWhatsAppInSettings && !hasWhatsAppInEnv) {
+    // Verificar si hay tokens en secure_tokens (esto lo hará el servicio)
+    let hasWhatsAppTokens = false;
+    try {
+      const { data: tokens } = await supabaseAdmin
+        .from('secure_tokens')
+        .select('id')
+        .eq('token_type', 'twilio_whatsapp')
+        .eq('site_id', site_id)
+        .limit(1);
+      hasWhatsAppTokens = !!(tokens && tokens.length > 0);
+    } catch (error) {
+      console.warn('⚠️ [SendWhatsApp] Error verificando secure_tokens:', error);
+    }
+    
+    console.log('🔍 [SendWhatsApp] Verificación de configuraciones:', {
+      hasWhatsAppInSettings,
+      hasWhatsAppInEnv,
+      hasWhatsAppTokens,
+      settingsEnabled: siteSettings.channels?.whatsapp?.enabled,
+      settingsStatus: siteSettings.channels?.whatsapp?.status,
+      envPhoneNumberId: !!process.env.WHATSAPP_PHONE_NUMBER_ID,
+      envApiToken: !!process.env.WHATSAPP_API_TOKEN
+    });
+    
+    if (!hasWhatsAppInSettings && !hasWhatsAppInEnv && !hasWhatsAppTokens) {
+      console.error('❌ [SendWhatsApp] WhatsApp no está configurado:', {
+        site_id,
+        hasWhatsAppInSettings,
+        hasWhatsAppInEnv,
+        hasWhatsAppTokens,
+        channels: siteSettings.channels
+      });
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'WHATSAPP_NOT_CONFIGURED', 
-            message: 'WhatsApp is not configured for this site. Please configure WhatsApp settings or environment variables.' 
+            message: 'WhatsApp is not configured for this site. Please configure WhatsApp settings, environment variables, or secure tokens.' 
           } 
         },
         { status: 400 }
       );
     }
     
+    console.log('✅ [SendWhatsApp] Configuración de WhatsApp válida, procediendo con validación de teléfono');
+    
     // Validar formato del número de teléfono
     if (!WhatsAppSendService.isValidPhoneNumber(phone_number)) {
+      console.error('❌ [SendWhatsApp] Formato de teléfono inválido:', phone_number);
       return NextResponse.json(
         { 
           success: false, 
@@ -107,6 +171,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log('📤 [SendWhatsApp] Enviando mensaje via WhatsAppSendService con parámetros:', {
+      phone_number,
+      from: from || '',
+      messageLength: message.length,
+      agent_id,
+      conversation_id,
+      lead_id,
+      site_id
+    });
+
     // Enviar el mensaje usando el servicio
     const result = await WhatsAppSendService.sendMessage({
       phone_number,
@@ -118,8 +192,19 @@ export async function POST(request: NextRequest) {
       site_id
     });
 
+    console.log('📨 [SendWhatsApp] Resultado del envío:', {
+      success: result.success,
+      status: result.status,
+      error: result.error,
+      messageId: result.message_id
+    });
+
     if (!result.success) {
       const statusCode = result.error?.code === 'WHATSAPP_CONFIG_NOT_FOUND' ? 404 : 500;
+      console.error('❌ [SendWhatsApp] Error en el envío:', {
+        error: result.error,
+        statusCode
+      });
       return NextResponse.json(
         { 
           success: false, 
@@ -130,10 +215,22 @@ export async function POST(request: NextRequest) {
     }
 
     const statusCode = result.status === 'skipped' ? 200 : 201;
+    console.log('✅ [SendWhatsApp] Mensaje enviado exitosamente:', {
+      statusCode,
+      result: {
+        success: result.success,
+        status: result.status,
+        message_id: result.message_id
+      }
+    });
+    
     return NextResponse.json(result, { status: statusCode });
     
   } catch (error) {
-    console.error('Error en endpoint send_whatsapp_from_agent:', error);
+    console.error('💥 [SendWhatsApp] Error general en endpoint:', {
+      error: error instanceof Error ? error.message : 'Error desconocido',
+      stack: error instanceof Error ? error.stack : undefined
+    });
     
     return NextResponse.json(
       { 

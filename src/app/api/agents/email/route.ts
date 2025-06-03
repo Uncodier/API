@@ -201,7 +201,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
   // Optimizar emails extrayendo solo el texto relevante
   console.log(`[EMAIL_API] 🔧 Optimizando ${emails.length} emails antes del análisis...`);
   const optimizedEmails = EmailTextExtractorService.extractMultipleEmailsText(emails, {
-    maxTextLength: 2000, // Limitar texto por email
+    maxTextLength: 1000, // Reducir aún más el límite de texto por email
     removeSignatures: true,
     removeQuotedText: true,
     removeHeaders: true,
@@ -218,6 +218,26 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
   console.log(`[EMAIL_API] - Texto optimizado: ${totalOptimizedLength} caracteres`);
   console.log(`[EMAIL_API] - Ratio de compresión: ${(compressionRatio * 100).toFixed(1)}%`);
   console.log(`[EMAIL_API] - Ahorro de tokens: ~${Math.round((totalOriginalLength - totalOptimizedLength) / 4)} tokens`);
+
+  // Crear versión ultra-optimizada con solo los datos esenciales para el contexto
+  const essentialEmailData = optimizedEmails.map(email => ({
+    subject: email.subject,
+    from: email.from,
+    to: email.to,
+    content: email.extractedText, // Solo el texto optimizado, NO el original
+    date: emails[optimizedEmails.indexOf(email)]?.date || emails[optimizedEmails.indexOf(email)]?.received_date || 'unknown'
+  }));
+
+  // Calcular estadísticas finales con los datos esenciales
+  const finalDataSize = JSON.stringify(essentialEmailData).length;
+  const originalDataSize = JSON.stringify(optimizedEmails).length;
+  const finalCompressionRatio = originalDataSize > 0 ? (finalDataSize / originalDataSize) : 0;
+  
+  console.log(`[EMAIL_API] 🚀 Optimización final completada:`);
+  console.log(`[EMAIL_API] - Datos optimizados completos: ${originalDataSize} caracteres`);
+  console.log(`[EMAIL_API] - Datos esenciales finales: ${finalDataSize} caracteres`);
+  console.log(`[EMAIL_API] - Compresión adicional: ${(finalCompressionRatio * 100).toFixed(1)}%`);
+  console.log(`[EMAIL_API] - Ahorro total vs original: ~${Math.round((totalOriginalLength - finalDataSize) / 4)} tokens`);
 
   return CommandFactory.createCommand({
     task: 'reply to emails',
@@ -241,10 +261,15 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     ],
     tools: [],
     context: JSON.stringify({
-      emails: optimizedEmails, // Usar emails optimizados en lugar de originales
-      original_email_count: emails.length,
-      optimized_email_count: optimizedEmails.length,
-      text_compression_ratio: compressionRatio,
+      emails: essentialEmailData, // Usar solo datos esenciales en lugar de optimizedEmails
+      email_count: emails.length,
+      optimized_email_count: essentialEmailData.length,
+      text_compression_stats: {
+        original_chars: totalOriginalLength,
+        final_chars: finalDataSize,
+        compression_ratio: (finalDataSize / totalOriginalLength * 100).toFixed(1) + '%',
+        tokens_saved: Math.round((totalOriginalLength - finalDataSize) / 4)
+      },
       site_id: siteId,
       inbox_info: {
         email_address: emailConfig?.email_address || 'unknown',
@@ -254,11 +279,10 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
         business_type: emailConfig?.business_type || 'Unknown Business Type',
         industry: emailConfig?.industry || 'Unknown Industry'
       },
-      email_count: emails.length,
       analysis_type: analysisType,
       lead_id: leadId,
       team_member_id: teamMemberId,
-      special_instructions: 'This is not a summary of the email inbox, its a regontition of each individual email with a commercial interest. Ignore all emails from the team members, do not-reply emails, and spam emails. Note: Email content has been optimized to include only relevant text (signatures, quoted text, and headers removed).'
+      special_instructions: 'Analyze only the essential email data provided. Email content has been heavily optimized: signatures, quoted text, headers, and legal disclaimers removed. Text limited to 1000 chars per email. Focus on emails showing genuine commercial interest.'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },

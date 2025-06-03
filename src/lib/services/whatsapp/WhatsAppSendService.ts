@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import CryptoJS from 'crypto-js';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -87,7 +88,8 @@ export class WhatsAppSendService {
         normalizedPhone,
         formattedMessage,
         whatsappConfig.phoneNumberId,
-        whatsappConfig.accessToken
+        whatsappConfig.accessToken,
+        whatsappConfig.fromNumber
       );
 
       if (!result.success) {
@@ -149,99 +151,362 @@ export class WhatsAppSendService {
   }
 
   /**
-   * Obtiene la configuración de WhatsApp desde las variables de entorno o configuración del sitio
+   * Obtiene la configuración de WhatsApp desde las variables de entorno o secure_tokens
    */
   private static async getWhatsAppConfig(siteId: string): Promise<{
     phoneNumberId: string;
     accessToken: string;
+    fromNumber: string;
   }> {
     // Validar que siteId no sea undefined o null
     if (!siteId) {
       throw new Error('Site ID is required');
     }
 
+    console.log(`🔍 [WhatsAppSendService] Buscando configuración de WhatsApp para site_id: ${siteId}`);
+
     // Primero intentar obtener desde variables de entorno globales
     const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
     const accessToken = process.env.WHATSAPP_API_TOKEN;
     
     if (phoneNumberId && accessToken) {
-      return { phoneNumberId, accessToken };
+      console.log('✅ [WhatsAppSendService] Usando configuración de variables de entorno');
+      return { phoneNumberId, accessToken, fromNumber: process.env.TWILIO_WHATSAPP_FROM || '+14155238886' };
     }
 
-    // Si no están en env, intentar obtener desde configuración del sitio
+    // Si no están en env, buscar y desencriptar desde secure_tokens
     try {
-      const { data: siteSettings, error } = await supabaseAdmin
-        .from('settings')
-        .select('channels')
-        .eq('site_id', siteId)
-        .single();
+      console.log('🔎 [WhatsAppSendService] Buscando en secure_tokens...');
+      
+      const decryptedToken = await this.getTokenFromService(siteId);
+      
+      if (decryptedToken) {
+        console.log('✅ [WhatsAppSendService] Token desencriptado exitosamente desde secure_tokens');
         
-      if (error || !siteSettings?.channels?.whatsapp) {
-        throw new Error('WhatsApp not configured for this site');
+        console.log('🔍 [WhatsAppSendService] Contenido del token desencriptado:');
+        console.log('- Tipo:', typeof decryptedToken);
+        console.log('- Longitud:', decryptedToken?.length || 'N/A');
+        console.log('- Primeros 20 caracteres:', typeof decryptedToken === 'string' ? decryptedToken.substring(0, 20) + '...' : JSON.stringify(decryptedToken).substring(0, 20));
+        
+        // El token desencriptado es directamente el auth token de Twilio
+        const authToken = typeof decryptedToken === 'string' ? decryptedToken : String(decryptedToken);
+        
+        // Obtener el Account SID desde settings.channels.whatsapp
+        console.log('🔍 [WhatsAppSendService] Obteniendo Account SID desde settings...');
+        
+        const { data: siteSettings, error: settingsError } = await supabaseAdmin
+          .from('settings')
+          .select('channels')
+          .eq('site_id', siteId)
+          .single();
+          
+        if (settingsError || !siteSettings?.channels?.whatsapp) {
+          console.error('❌ [WhatsAppSendService] No se pudo obtener settings para Account SID:', settingsError);
+          throw new Error('No se pudo obtener Account SID desde settings');
+        }
+        
+        const accountSid = siteSettings.channels.whatsapp.account_sid;
+        
+        console.log('📋 [WhatsAppSendService] Credenciales obtenidas:', {
+          hasAccountSid: !!accountSid,
+          hasAuthToken: !!authToken,
+          accountSidPreview: accountSid ? accountSid.substring(0, 10) + '...' : 'No encontrado',
+          authTokenPreview: authToken ? authToken.substring(0, 10) + '...' : 'No encontrado',
+          whatsappConfig: siteSettings.channels.whatsapp
+        });
+        
+        if (!accountSid || !authToken) {
+          throw new Error('AccountSid or AuthToken missing - accountSid debe estar en settings.channels.whatsapp.account_sid');
+        }
+        
+        return {
+          phoneNumberId: accountSid, 
+          accessToken: authToken,
+          fromNumber: siteSettings.channels.whatsapp.existingNumber
+        };
+      } else {
+        console.log('❌ [WhatsAppSendService] No se pudo desencriptar el token desde secure_tokens');
+        throw new Error('WhatsApp configuration not found in secure_tokens');
       }
-      
-      const whatsappSettings = siteSettings.channels.whatsapp;
-      
-      if (!whatsappSettings.phoneNumberId || !whatsappSettings.accessToken) {
-        throw new Error('WhatsApp configuration incomplete');
-      }
-      
-      return {
-        phoneNumberId: whatsappSettings.phoneNumberId,
-        accessToken: whatsappSettings.accessToken
-      };
+
     } catch (error) {
-      throw new Error(`WhatsApp configuration not found: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      console.error('❌ [WhatsAppSendService] Error obteniendo configuración de WhatsApp:', error);
+      
+      // Si falla secure_tokens, intentar fallback con settings (configuración anterior)
+      try {
+        console.log('🔄 [WhatsAppSendService] Intentando fallback con settings...');
+        
+        const { data: siteSettings, error: settingsError } = await supabaseAdmin
+          .from('settings')
+          .select('channels')
+          .eq('site_id', siteId)
+          .single();
+          
+        if (settingsError || !siteSettings?.channels?.whatsapp) {
+          throw new Error('WhatsApp not configured in settings either');
+        }
+        
+        const whatsappSettings = siteSettings.channels.whatsapp;
+        
+        if (!whatsappSettings.phoneNumberId || !whatsappSettings.accessToken) {
+          throw new Error('WhatsApp configuration incomplete in settings');
+        }
+        
+        console.log('✅ [WhatsAppSendService] Usando configuración de settings como fallback');
+        
+        return {
+          phoneNumberId: whatsappSettings.phoneNumberId,
+          accessToken: whatsappSettings.accessToken,
+          fromNumber: whatsappSettings.existingNumber
+        };
+      } catch (fallbackError) {
+        console.error('❌ [WhatsAppSendService] Fallback también falló:', fallbackError);
+        throw new Error(`WhatsApp configuration not found: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      }
     }
   }
 
   /**
-   * Envía el mensaje usando la API de WhatsApp Business
+   * Obtiene y desencripta el token directamente desde la base de datos
+   */
+  private static async getTokenFromService(siteId: string): Promise<any | null> {
+    try {
+      console.log('🔓 [WhatsAppSendService] Obteniendo token directamente desde base de datos...');
+      
+      // 1. Intentar obtener el token del servicio de desencriptación (con try-catch para evitar fallos)
+      try {
+        const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
+        const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
+        
+        const response = await fetch(decryptUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            site_id: siteId,
+            token_type: 'twilio_whatsapp'
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok && result.success && result.data?.tokenValue) {
+          console.log('✅ [WhatsAppSendService] Token obtenido del servicio HTTP');
+          const decryptedValue = result.data.tokenValue;
+          return typeof decryptedValue === 'object' ? decryptedValue : JSON.parse(decryptedValue);
+        }
+      } catch (httpError) {
+        console.log('⚠️ [WhatsAppSendService] Servicio HTTP falló, intentando acceso directo:', httpError);
+      }
+      
+      // 2. Si el servicio falla, obtener directamente de la base de datos
+      const { data, error } = await supabaseAdmin
+        .from('secure_tokens')
+        .select('*')
+        .eq('site_id', siteId)
+        .eq('token_type', 'twilio_whatsapp')
+        .maybeSingle();
+      
+      if (error) {
+        console.error('❌ [WhatsAppSendService] Error consultando secure_tokens:', error);
+        return null;
+      }
+      
+      if (!data) {
+        console.log('❌ [WhatsAppSendService] No se encontró token en secure_tokens');
+        return null;
+      }
+      
+      console.log('📊 [WhatsAppSendService] Token encontrado en base de datos:', {
+        id: data.id,
+        hasEncryptedValue: !!data.encrypted_value,
+        hasValue: !!data.value,
+        hasTokenValue: !!data.token_value
+      });
+      
+      // 3. Determinar qué campo usar para desencriptar
+      let encryptedValue;
+      if (data.encrypted_value) {
+        encryptedValue = data.encrypted_value;
+      } else if (data.value && typeof data.value === 'string' && data.value.includes(':')) {
+        encryptedValue = data.value;
+      } else if (data.token_value && typeof data.token_value === 'string' && data.token_value.includes(':')) {
+        encryptedValue = data.token_value;
+      } else {
+        console.log('❌ [WhatsAppSendService] No se encontró valor encriptado válido');
+        return null;
+      }
+      
+      console.log('🔐 [WhatsAppSendService] Desencriptando token...');
+      
+      // 4. Desencriptar el token
+      const decryptedValue = this.decryptToken(encryptedValue);
+      
+      if (!decryptedValue) {
+        console.log('❌ [WhatsAppSendService] Falló la desencriptación');
+        return null;
+      }
+      
+      console.log('✅ [WhatsAppSendService] Token desencriptado exitosamente');
+      
+      // 5. Actualizar last_used si el campo existe
+      if (data.hasOwnProperty('last_used')) {
+        await supabaseAdmin
+          .from('secure_tokens')
+          .update({ last_used: new Date().toISOString() })
+          .eq('id', data.id);
+      }
+      
+      // 6. Intentar parsear como JSON
+      try {
+        return JSON.parse(decryptedValue);
+      } catch (jsonError) {
+        // Si no es JSON, retornar como string
+        console.log('⚠️ [WhatsAppSendService] Token no es JSON, retornando como string:', decryptedValue);
+        return decryptedValue;
+      }
+      
+    } catch (error) {
+      console.error('❌ [WhatsAppSendService] Error obteniendo/desencriptando token:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Desencripta un token usando CryptoJS con el mismo patrón que EmailConfigService
+   */
+  private static decryptToken(encryptedValue: string): string | null {
+    const encryptionKey = process.env.ENCRYPTION_KEY || '';
+    
+    if (!encryptionKey) {
+      console.error('❌ [WhatsAppSendService] ENCRYPTION_KEY no está configurada');
+      return null;
+    }
+    
+    if (encryptedValue.includes(':')) {
+      const [salt, encrypted] = encryptedValue.split(':');
+      const combinedKey = encryptionKey + salt;
+      
+      try {
+        console.log('🔑 [WhatsAppSendService] Intentando desencriptar con clave del environment...');
+        // 1. Intentar con la clave del environment
+        const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
+        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+        
+        if (decryptedText) {
+          console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave del environment');
+          return decryptedText;
+        }
+
+        throw new Error("La desencriptación produjo un texto vacío");
+      } catch (error) {
+        try {
+          console.log('🔑 [WhatsAppSendService] Intentando con clave fija original...');
+          // 2. Intentar con la clave fija original
+          const originalKey = 'Encryption-key';
+          const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
+          const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+          
+          if (decryptedText) {
+            console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave original');
+            return decryptedText;
+          }
+          
+          throw new Error("La desencriptación produjo un texto vacío con clave original");
+        } catch (errorOriginal) {
+          // 3. Intentar con clave alternativa en desarrollo
+          const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
+          if (altEncryptionKey && process.env.NODE_ENV === 'development') {
+            try {
+              console.log('🔑 [WhatsAppSendService] Intentando con clave alternativa de desarrollo...');
+              const altCombinedKey = altEncryptionKey + salt;
+              const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
+              const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+              
+              if (decryptedText) {
+                console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave alternativa');
+                return decryptedText;
+              }
+            } catch (altError) {
+              console.log('❌ [WhatsAppSendService] Falló clave alternativa también');
+            }
+          }
+          
+          console.error('❌ [WhatsAppSendService] No se pudo desencriptar el token con ninguna clave disponible');
+          return null;
+        }
+      }
+    }
+    
+    console.error('❌ [WhatsAppSendService] Formato de token no soportado, se esperaba salt:encrypted');
+    return null;
+  }
+
+  /**
+   * Envía el mensaje usando la API de Twilio WhatsApp
    */
   private static async sendWhatsAppMessage(
     phoneNumber: string,
     message: string,
-    phoneNumberId: string,
-    accessToken: string
+    accountSid: string,
+    authToken: string,
+    fromNumber: string
   ): Promise<{ success: boolean; messageId?: string; error?: string }> {
     try {
-      const apiUrl = `https://graph.facebook.com/v17.0/${phoneNumberId}/messages`;
+      console.log('📤 [WhatsAppSendService] Enviando via API de Twilio WhatsApp...');
+      
+      // URL de la API de Twilio para enviar mensajes
+      const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+      
+      // Crear las credenciales de autenticación básica
+      const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+      
+      // Preparar el cuerpo de la solicitud como form data
+      const formData = new URLSearchParams();
+      formData.append('From', `whatsapp:${fromNumber}`);
+      formData.append('To', `whatsapp:${phoneNumber}`);
+      formData.append('Body', message);
+      
+      console.log('🔐 [WhatsAppSendService] Datos de envío:', {
+        url: apiUrl,
+        from: `whatsapp:${fromNumber}`,
+        to: `whatsapp:${phoneNumber}`,
+        messageLength: message.length
+      });
       
       const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
+          'Authorization': `Basic ${credentials}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: JSON.stringify({
-          messaging_product: 'whatsapp',
-          recipient_type: 'individual',
-          to: phoneNumber,
-          type: 'text',
-          text: {
-            body: message,
-          },
-        }),
+        body: formData.toString()
       });
       
       if (!response.ok) {
         const errorData = await response.json();
-        console.error('❌ Error de API de WhatsApp:', errorData);
+        console.error('❌ [WhatsAppSendService] Error de API de Twilio:', errorData);
         return { 
           success: false, 
-          error: `WhatsApp API error: ${errorData.error?.message || response.statusText}` 
+          error: `Twilio API error: ${errorData.message || response.statusText}` 
         };
       }
       
       const responseData = await response.json();
       
+      console.log('✅ [WhatsAppSendService] Respuesta exitosa de Twilio:', {
+        sid: responseData.sid,
+        status: responseData.status,
+        from: responseData.from,
+        to: responseData.to
+      });
+      
       return { 
         success: true, 
-        messageId: responseData.messages?.[0]?.id 
+        messageId: responseData.sid 
       };
       
     } catch (error) {
-      console.error('❌ Error en llamada a API de WhatsApp:', error);
+      console.error('❌ [WhatsAppSendService] Error en llamada a API de Twilio:', error);
       return { 
         success: false, 
         error: `Exception: ${error instanceof Error ? error.message : 'Unknown error'}` 
