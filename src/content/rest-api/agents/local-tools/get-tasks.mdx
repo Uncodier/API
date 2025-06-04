@@ -1,37 +1,62 @@
 ---
 title: 'Get Tasks'
-description: 'Retrieves tasks from the database with filtering and pagination options'
+description: 'Retrieves tasks with advanced filtering capabilities'
 ---
+
+import { UnifiedApiTester } from '@/components/ApiTester/UnifiedApiTester';
 
 ## Get Tasks
 
-This tool retrieves tasks from the database with comprehensive filtering, sorting, and pagination capabilities.
+This tool retrieves tasks from the database with comprehensive filtering, pagination, and sorting capabilities. **The tool is primarily designed to work with lead_id** as the main filter to get all tasks related to a specific lead.
+
+### Primary Usage
+
+The most common usage pattern is to filter tasks by lead_id to get all tasks associated with a specific lead:
+
+```json
+{
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890"
+}
+```
 
 ### Input Schema
 
 ```json
 {
-  "user_id": "string", // Optional - Filter by assigned user ID
-  "site_id": "string", // Optional - Filter by site ID
-  "lead_id": "string", // Optional - Filter by associated lead ID
-  "visitor_id": "string", // Optional - Filter by visitor ID (tasks related to leads from this visitor)
-  "agent_id": "string", // Optional - Filter by agent that created the task
-  "command_id": "string", // Optional - Filter by command that generated the task
-  "type": "string", // Optional - Filter by task type/category
-  "status": "string", // Optional - Filter by task status
-  "stage": "string", // Optional - Filter by task stage
-  "priority": "string", // Optional - Filter by priority level
+  // Primary Filter (Recommended)
+  "lead_id": "string", // UUID - Get all tasks for a specific lead
+  
+  // Additional Entity Filters
+  "user_id": "string", // Optional - Filter by assigned user
+  "site_id": "string", // Optional - Filter by site
+  "visitor_id": "string", // Optional - Filter by visitor
+  "agent_id": "string", // Optional - Filter by agent
+  "command_id": "string", // Optional - Filter by command
+  
+  // Property Filters
+  "type": "string", // Optional - Filter by task type
+  "status": "string", // Optional - Filter by status (active, inactive, archived)
+  "stage": "string", // Optional - Filter by stage (pending, in_progress, review, completed, on_hold, cancelled)
+  "priority": "string", // Optional - Filter by priority (low, medium, high, urgent)
+  
+  // Date Range Filters
   "due_date_from": "string", // Optional - Filter tasks due after this date (ISO format)
   "due_date_to": "string", // Optional - Filter tasks due before this date (ISO format)
   "scheduled_date_from": "string", // Optional - Filter tasks scheduled after this date (ISO format)
   "scheduled_date_to": "string", // Optional - Filter tasks scheduled before this date (ISO format)
   "created_date_from": "string", // Optional - Filter tasks created after this date (ISO format)
   "created_date_to": "string", // Optional - Filter tasks created before this date (ISO format)
+  
+  // Search and Sorting
   "search": "string", // Optional - Search in title and description
-  "sort_by": "string", // Optional - Sort field (created_at, due_date, priority, title)
-  "sort_order": "string", // Optional - Sort order (asc, desc) - default: desc
-  "limit": "number", // Optional - Maximum number of tasks to return (default: 50, max: 500)
-  "offset": "number", // Optional - Number of tasks to skip (default: 0)
+  "sort_by": "string", // Optional - Sort field (default: "created_at")
+  "sort_order": "string", // Optional - Sort order: "asc" or "desc" (default: "desc")
+  
+  // Pagination
+  "limit": "number", // Optional - Number of results to return (default: 50, max: 500)
+  "offset": "number", // Optional - Number of results to skip (default: 0)
+  
+  // Inclusion Options
   "include_completed": "boolean", // Optional - Include completed tasks (default: true)
   "include_archived": "boolean" // Optional - Include archived tasks (default: false)
 }
@@ -205,69 +230,104 @@ Each task maintains a complete comment history for collaboration and tracking:
 
 Comments provide a chronological record of task progress, decisions made, and communication between team members.
 
+### Task Types (Suggested Examples)
+
+*Note: The `type` field accepts any string value. These are common examples, but custom task types are also supported.*
+
+| Type | Description |
+|------|-------------|
+| `website_visit` | Website visit tracking tasks |
+| `demo` | Product demonstration tasks |
+| `meeting` | Meeting and appointment tasks |
+| `email` | Email communication tasks |
+| `call` | Phone call tasks |
+| `quote` | Quote generation tasks |
+| `contract` | Contract management tasks |
+| `payment` | Payment processing tasks |
+| `referral` | Referral tracking tasks |
+| `feedback` | Feedback collection tasks |
+| `follow_up` | General follow-up tasks |
+| `support` | Customer support tasks |
+| `custom_type` | Any custom task type |
+
+### Task Stages (Customer Journey)
+
+| Stage | Description |
+|-------|-------------|
+| `awareness` | Customer becomes aware of the product/service |
+| `consideration` | Customer is considering the product/service |
+| `decision` | Customer is making a decision about purchasing |
+| `purchase` | Customer is in the purchasing process |
+| `retention` | Customer has purchased and is being retained |
+| `referral` | Customer is referring others to the product/service |
+
+*Note: These are the standard customer journey stages, but custom stages can also be used as needed.*
+
+### Task Status
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Task is created but not yet started |
+| `in_progress` | Task is currently being worked on |
+| `completed` | Task has been finished successfully |
+| `failed` | Task has failed or encountered an error |
+
 ### Example Usage
 
 ```javascript
-// Example 1: Get all active tasks for a user
+// Example 1: Get all tasks for a specific lead (most common usage)
 {
-  "user_id": "user_123",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890"
+}
+
+// Example 2: Get active tasks for a lead, sorted by priority
+{
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
   "status": "active",
-  "sort_by": "due_date",
-  "sort_order": "asc",
-  "limit": 20
+  "sort_by": "priority",
+  "sort_order": "desc"
 }
 
-// Example 2: Get overdue tasks across all users
+// Example 3: Get pending tasks for a lead with pagination
 {
-  "site_id": "site_456",
-  "due_date_to": "2023-12-10T00:00:00Z",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
   "stage": "pending",
-  "sort_by": "due_date",
-  "sort_order": "asc"
+  "limit": 20,
+  "offset": 0
 }
 
-// Example 3: Get marketing tasks for this week
+// Example 4: Get recent tasks for a lead (exclude completed)
 {
-  "type": "marketing_campaign",
-  "scheduled_date_from": "2023-12-11T00:00:00Z",
-  "scheduled_date_to": "2023-12-17T23:59:59Z",
-  "sort_by": "scheduled_date",
-  "sort_order": "asc"
-}
-
-// Example 4: Search for specific tasks
-{
-  "search": "follow up",
-  "user_id": "user_123",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
+  "include_completed": false,
   "sort_by": "created_at",
   "sort_order": "desc",
   "limit": 10
 }
 
-// Example 5: Get all tasks for a specific lead
+// Example 5: Search for specific tasks within a lead
 {
-  "lead_id": "lead_789",
-  "include_completed": true,
-  "sort_by": "created_at",
-  "sort_order": "desc"
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
+  "search": "follow up",
+  "type": "follow_up"
 }
 
-// Example 6: Get all tasks related to a specific visitor
+// Example 6: Get tasks by user (alternative usage)
 {
-  "visitor_id": "visitor_456",
-  "sort_by": "created_at",
-  "sort_order": "desc",
-  "limit": 25
-}
-
-// Example 7: Get tasks with complete collaboration data
-{
-  "user_id": "user_123",
+  "user_id": "12345678-1234-1234-1234-123456789012",
   "status": "active",
-  "sort_by": "updated_at",
-  "sort_order": "desc"
+  "sort_by": "due_date",
+  "sort_order": "asc"
 }
-// Returns tasks with full category and comment history for collaboration tracking
+
+// Example 7: Complex filtering with date ranges
+{
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
+  "due_date_from": "2024-01-01T00:00:00Z",
+  "due_date_to": "2024-01-31T23:59:59Z",
+  "priority": "high",
+  "status": "active"
+}
 ```
 
 ### Response Examples
@@ -398,3 +458,19 @@ Comments provide a chronological record of task progress, decisions made, and co
   }
 }
 ```
+
+### Error Responses
+
+All error responses follow a consistent format with appropriate HTTP status codes and descriptive error messages to help with debugging and integration.
+
+## API Tester
+
+Prueba la API de Get Tasks directamente desde esta documentación:
+
+<UnifiedApiTester 
+  apiType="get-task"
+  title="Consultar Tareas"
+  description="Usa este formulario para probar la consulta de tareas con filtros avanzados."
+  defaultEndpoint="/api/agents/tools/getTask"
+  showModelOptions={false}
+/>

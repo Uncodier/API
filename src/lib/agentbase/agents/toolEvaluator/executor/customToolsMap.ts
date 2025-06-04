@@ -600,6 +600,172 @@ export const customTools: Record<string, ApiResponseConfig> = {
         code: 'code'
       }
     }
+  },
+
+  /**
+   * Herramienta: Crear tarea para seguimiento de leads
+   * 
+   * Ejemplos de respuestas según código HTTP:
+   * 
+   * 201 Created (Éxito):
+   * {
+   *   "success": true,
+   *   "task": {
+   *     "id": "task-123",
+   *     "title": "Seguimiento de lead",
+   *     "type": "call",
+   *     "status": "pending",
+   *     "stage": "consideration",
+   *     "priority": 5,
+   *     "lead_id": "lead-456",
+   *     "scheduled_date": "2024-01-15T14:00:00Z",
+   *     "amount": 1500.50,
+   *     "address": {
+   *       "street": "123 Main St",
+   *       "city": "New York",
+   *       "country": "USA"
+   *     },
+   *     "created_at": "2024-01-10T10:00:00Z"
+   *   }
+   * }
+   * 
+   * 400 Bad Request (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "INVALID_REQUEST",
+   *     "message": "title, type, and lead_id are required"
+   *   }
+   * }
+   * 
+   * 404 Not Found (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "LEAD_NOT_FOUND",
+   *     "message": "Lead with ID lead-456 not found"
+   *   }
+   * }
+   */
+  CREATE_TASK: {
+    endpoint: {
+      url: '/api/agents/tools/createTask',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      requiresAuth: false
+    },
+    responseMapping: {
+      // Propiedades del objeto de respuesta
+      success: 'success',                  // Indicador de éxito de la operación
+      task_id: 'task.id',                 // ID único de la tarea creada
+      title: 'task.title',                // Título de la tarea
+      type: 'task.type',                  // Tipo de tarea
+      status: 'task.status',              // Estado de la tarea
+      stage: 'task.stage',                // Etapa en el customer journey
+      priority: 'task.priority',          // Prioridad de la tarea
+      lead_id: 'task.lead_id',            // ID del lead asociado
+      scheduled_date: 'task.scheduled_date', // Fecha programada
+      amount: 'task.amount',              // Monto asociado
+      address: 'task.address',            // Dirección como objeto
+      created_at: 'task.created_at'       // Fecha de creación
+    },
+    errors: {
+      400: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      404: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      500: {
+        message: 'error.message',
+        code: 'error.code'
+      }
+    }
+  },
+
+  /**
+   * Herramienta: Obtener tareas con filtros avanzados
+   * 
+   * Ejemplos de respuestas según código HTTP:
+   * 
+   * 200 OK (Éxito):
+   * {
+   *   "success": true,
+   *   "tasks": [
+   *     {
+   *       "id": "task-123",
+   *       "title": "Seguimiento de lead",
+   *       "type": "call",
+   *       "status": "pending",
+   *       "stage": "consideration",
+   *       "priority": 5,
+   *       "scheduled_date": "2024-01-15T14:00:00Z",
+   *       "amount": 1500.50,
+   *       "created_at": "2024-01-10T10:00:00Z"
+   *     }
+   *   ],
+   *   "pagination": {
+   *     "total": 25,
+   *     "limit": 50,
+   *     "offset": 0,
+   *     "has_more": false
+   *   }
+   * }
+   * 
+   * 400 Bad Request (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "INVALID_REQUEST",
+   *     "message": "lead_id is required"
+   *   }
+   * }
+   * 
+   * 404 Not Found (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "NO_TASKS_FOUND",
+   *     "message": "No tasks found matching the specified criteria"
+   *   }
+   * }
+   */
+  GET_TASKS: {
+    endpoint: {
+      url: '/api/agents/tools/getTask',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      requiresAuth: false
+    },
+    responseMapping: {
+      // Propiedades del objeto de respuesta
+      success: 'success',                 // Indicador de éxito de la operación
+      tasks: 'tasks',                     // Array de tareas encontradas
+      total_tasks: 'pagination.total',    // Total de tareas que coinciden con los filtros
+      limit: 'pagination.limit',          // Límite de resultados por página
+      offset: 'pagination.offset',        // Offset usado en la consulta
+      has_more: 'pagination.has_more'     // Indica si hay más resultados disponibles
+    },
+    errors: {
+      400: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      404: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      500: {
+        message: 'error.message',
+        code: 'error.code'
+      }
+    }
   }
 };
 

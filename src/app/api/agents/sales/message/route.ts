@@ -797,6 +797,146 @@ export async function POST(request: Request) {
             },
             strict: true
           }
+        },
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'CREATE_TASK',
+            description: 'create a new task for lead follow-up, customer support activities, or other customer interactions',
+            parameters: {
+              type: 'object',
+              properties: {
+                title: {
+                  type: 'string',
+                  description: 'Title of the task to be created'
+                },
+                type: {
+                  type: 'string',
+                  description: 'Type of task to create (e.g., call, email, demo, meeting, quote, payment, follow_up, support, custom types allowed)'
+                },
+                lead_id: {
+                  type: 'string',
+                  description: 'The ID of the lead this task is related to (required)'
+                },
+                description: {
+                  type: 'string',
+                  description: 'Detailed description of what needs to be done'
+                },
+                stage: {
+                  type: 'string',
+                  enum: ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'],
+                  description: 'Stage from customer journey'
+                },
+                scheduled_date: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'When the task should be scheduled (ISO 8601 format)'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'Additional notes about the task'
+                },
+                amount: {
+                  type: 'number',
+                  description: 'Monetary amount associated with the task (e.g., quote value, payment amount)'
+                },
+                address: {
+                  type: 'object',
+                  description: 'Address information as JSON object',
+                  properties: {
+                    street: {
+                      type: 'string',
+                      description: 'Street address'
+                    },
+                    city: {
+                      type: 'string', 
+                      description: 'City name'
+                    },
+                    state: {
+                      type: 'string',
+                      description: 'State or province'
+                    },
+                    postal_code: {
+                      type: 'string',
+                      description: 'Postal or ZIP code'
+                    },
+                    country: {
+                      type: 'string',
+                      description: 'Country name'
+                    }
+                  },
+                  required: ['street', 'city', 'country'],
+                  additionalProperties: true
+                }
+              },
+              required: ['title', 'type', 'lead_id'],
+              additionalProperties: false
+            },
+            strict: true
+          }
+        },
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'GET_TASKS',
+            description: 'retrieve tasks with filtering options to check order status, track deliveries, and review task progress',
+            parameters: {
+              type: 'object',
+              properties: {
+                lead_id: {
+                  type: 'string',
+                  description: 'The ID of the lead to get tasks for (primary filter)'
+                },
+                type: {
+                  type: 'string',
+                  description: 'Type of task to filter by (e.g., call, email, demo, meeting, quote, payment)'
+                },
+                status: {
+                  type: 'string',
+                  enum: ['pending', 'in_progress', 'completed', 'failed'],
+                  description: 'Status of tasks to retrieve'
+                },
+                stage: {
+                  type: 'string',
+                  enum: ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'],
+                  description: 'Stage of tasks to filter by (from customer_journey)'
+                },
+                priority: {
+                  type: 'integer',
+                  description: 'Priority level to filter by (higher numbers = higher priority)'
+                },
+                search: {
+                  type: 'string',
+                  description: 'Search text to find in task titles or descriptions'
+                },
+                sort_by: {
+                  type: 'string',
+                  enum: ['created_at', 'updated_at', 'scheduled_date', 'priority', 'title'],
+                  description: 'Field to sort results by'
+                },
+                sort_order: {
+                  type: 'string',
+                  enum: ['asc', 'desc'],
+                  description: 'Sort order for results'
+                },
+                limit: {
+                  type: 'integer',
+                  minimum: 1,
+                  maximum: 100,
+                  description: 'Maximum number of tasks to return'
+                },
+                include_completed: {
+                  type: 'boolean',
+                  description: 'Whether to include completed tasks in results'
+                }
+              },
+              required: ['lead_id'],
+              additionalProperties: false
+            },
+            strict: true
+          }
         }
       ],
       // Context includes the current message and conversation history

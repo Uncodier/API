@@ -44,7 +44,9 @@ export type ApiType =
   | 'html-personalization'
   | 'basic-analyze'
   | 'copywriter'
-  | 'chat';
+  | 'chat'
+  | 'create-task'
+  | 'get-task';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {

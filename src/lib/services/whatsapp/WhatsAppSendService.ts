@@ -541,13 +541,10 @@ export class WhatsAppSendService {
   }
 
   /**
-   * Formatea el mensaje añadiendo información del sitio
+   * Formatea el mensaje (actualmente sin modificaciones)
    */
   private static formatMessage(message: string, siteInfo: SiteInfo, from?: string): string {
-    return `${message}
-
-—
-${from || 'Equipo de'} ${siteInfo.name}`;
+    return message;
   }
 
   /**

@@ -1,94 +1,112 @@
-import apiRegistry from '../apiRegistry';
-import GeneralApi from './GeneralApi';
+import './GeneralApi';
 import AiApi from './AiApi';
 import SiteApi from './SiteApi';
 import SegmentsApi from './SegmentsApi';
 import TesterApi from './TesterApi';
 import IcpApi from './IcpApi';
 import ContentApi from './ContentApi';
-import RequirementsApi from './RequirementsApi';
-import BasicAnalyzeApi from './BasicAnalyzeApi';
-import VisitorSessionApi from './VisitorSessionApi';
-import HtmlPersonalizationApi from './HtmlPersonalizationApi';
-import VisitorTrackApi from './VisitorTrackApi';
-import VisitorIdentifyApi from './VisitorIdentifyApi';
 import VisitorSegmentApi from './VisitorSegmentApi';
-import AgentsIntegrationsApi from './AgentsIntegrationsApi';
-import CustomerSupportApi from './CustomerSupportApi';
-import CustomerSupportConversationsApi from './CustomerSupportConversationsApi';
-import CustomerSupportConversationMessagesApi from './CustomerSupportConversationMessagesApi';
-import CopywriterApi from './CopywriterApi';
-import ChatApi from './ChatApi';
-import GrowthApi from './GrowthApi';
-import InterventionApi from './InterventionApi';
-import SalesApi from './SalesApi';
-import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
-import EmailAnalysisApi from './EmailAnalysisApi';
-import ContactHumanApi from './ContactHumanApi';
 import SendEmailFromAgentApi from './SendEmailFromAgentApi';
 import SendWhatsAppApi from './SendWhatsAppApi';
+import CustomerSupportApi from './CustomerSupportApi';
+import EmailAnalysisApi from './EmailAnalysisApi';
+import VisitorIdentifyApi from './VisitorIdentifyApi';
+import VisitorTrackApi from './VisitorTrackApi';
+import VisitorSessionApi from './VisitorSessionApi';
+import AgentsAppsApi from './AgentsAppsApi';
+import CustomerSupportConversationMessagesApi from './CustomerSupportConversationMessagesApi';
+import SalesApi from './SalesApi';
+import InterventionApi from './InterventionApi';
+import GrowthApi from './GrowthApi';
+import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
+import CustomerSupportConversationsApi from './CustomerSupportConversationsApi';
+import RequirementsApi from './RequirementsApi';
+import HtmlPersonalizationApi from './HtmlPersonalizationApi';
+import BasicAnalyzeApi from './BasicAnalyzeApi';
+import CopywriterApi from './CopywriterApi';
+import ChatApi from './ChatApi';
+import CreateTaskApi from './CreateTaskApi';
+import GetTaskApi from './GetTaskApi';
 
-// Registrar todas las APIs
-apiRegistry.register(GeneralApi);
+// ApiRegistry class
+class ApiRegistry {
+  private apis: Map<string, any> = new Map();
+
+  register(api: any) {
+    this.apis.set(api.id, api);
+  }
+
+  get(id: string) {
+    return this.apis.get(id);
+  }
+
+  getAll() {
+    return Array.from(this.apis.values());
+  }
+}
+
+const apiRegistry = new ApiRegistry();
+
+// Register all APIs
 apiRegistry.register(AiApi);
 apiRegistry.register(SiteApi);
 apiRegistry.register(SegmentsApi);
 apiRegistry.register(TesterApi);
 apiRegistry.register(IcpApi);
 apiRegistry.register(ContentApi);
-apiRegistry.register(RequirementsApi);
-apiRegistry.register(BasicAnalyzeApi);
-apiRegistry.register(VisitorSessionApi);
-apiRegistry.register(HtmlPersonalizationApi);
-apiRegistry.register(VisitorTrackApi);
-apiRegistry.register(VisitorIdentifyApi);
 apiRegistry.register(VisitorSegmentApi);
-apiRegistry.register(AgentsIntegrationsApi);
-apiRegistry.register(CustomerSupportApi);
-apiRegistry.register(CustomerSupportConversationsApi);
-apiRegistry.register(CustomerSupportConversationMessagesApi);
-apiRegistry.register(CopywriterApi);
-apiRegistry.register(ChatApi);
-apiRegistry.register(GrowthApi);
-apiRegistry.register(InterventionApi);
-apiRegistry.register(SalesApi);
-apiRegistry.register(CmoStakeholderCoordinationApi);
-apiRegistry.register(EmailAnalysisApi);
-apiRegistry.register(ContactHumanApi);
 apiRegistry.register(SendEmailFromAgentApi);
 apiRegistry.register(SendWhatsAppApi);
+apiRegistry.register(CustomerSupportApi);
+apiRegistry.register(EmailAnalysisApi);
+apiRegistry.register(VisitorIdentifyApi);
+apiRegistry.register(VisitorTrackApi);
+apiRegistry.register(VisitorSessionApi);
+apiRegistry.register(AgentsAppsApi);
+apiRegistry.register(CustomerSupportConversationMessagesApi);
+apiRegistry.register(SalesApi);
+apiRegistry.register(InterventionApi);
+apiRegistry.register(GrowthApi);
+apiRegistry.register(CmoStakeholderCoordinationApi);
+apiRegistry.register(CustomerSupportConversationsApi);
+apiRegistry.register(RequirementsApi);
+apiRegistry.register(HtmlPersonalizationApi);
+apiRegistry.register(BasicAnalyzeApi);
+apiRegistry.register(CopywriterApi);
+apiRegistry.register(ChatApi);
+apiRegistry.register(CreateTaskApi);
+apiRegistry.register(GetTaskApi);
 
-// Exportar el registry como default
 export default apiRegistry;
 
 // Exportar también APIs individuales para casos específicos
 export {
-  GeneralApi,
   AiApi,
   SiteApi,
   SegmentsApi,
   TesterApi,
   IcpApi,
   ContentApi,
-  RequirementsApi,
-  BasicAnalyzeApi,
-  VisitorSessionApi,
-  HtmlPersonalizationApi,
-  VisitorTrackApi,
-  VisitorIdentifyApi,
   VisitorSegmentApi,
-  AgentsIntegrationsApi,
+  SendEmailFromAgentApi,
+  SendWhatsAppApi,
   CustomerSupportApi,
-  CustomerSupportConversationsApi,
+  EmailAnalysisApi,
+  VisitorIdentifyApi,
+  VisitorTrackApi,
+  VisitorSessionApi,
+  AgentsAppsApi,
   CustomerSupportConversationMessagesApi,
+  SalesApi,
+  InterventionApi,
+  GrowthApi,
+  CmoStakeholderCoordinationApi,
+  CustomerSupportConversationsApi,
+  RequirementsApi,
+  HtmlPersonalizationApi,
+  BasicAnalyzeApi,
   CopywriterApi,
   ChatApi,
-  GrowthApi,
-  InterventionApi,
-  SalesApi,
-  CmoStakeholderCoordinationApi,
-  EmailAnalysisApi,
-  ContactHumanApi,
-  SendEmailFromAgentApi,
-  SendWhatsAppApi
+  CreateTaskApi,
+  GetTaskApi
 }; 

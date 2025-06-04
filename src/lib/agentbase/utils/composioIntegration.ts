@@ -23,7 +23,7 @@ export interface ComposioIntegrationConfig {
 // Variable global para configuración sin dependencias circulares
 let globalConfig: ComposioIntegrationConfig = {
   enabled: true,
-  apps : ["whatsapp"]
+  apps : []
 };
 
 /**

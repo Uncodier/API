@@ -3,28 +3,34 @@ title: 'Create Task'
 description: 'Creates a task with the expected category for the client'
 ---
 
+import { UnifiedApiTester } from '@/components/ApiTester/UnifiedApiTester';
+
 ## Create Task
 
-This tool creates a new task in the database using the appropriate category based on the client's needs and business context.
+This tool creates a new task in the database using the appropriate category based on the client's needs and business context. **The tool only requires the lead_id** and automatically obtains user_id and site_id from the lead information.
 
 ### Input Schema
 
 ```json
 {
   "title": "string", // Required - Title of the task
+  "type": "string", // Required - Type/category of the task (free text, any custom type allowed)
+  "lead_id": "string", // Required - ID of the lead (UUID format)
   "description": "string", // Optional - Detailed description of the task
-  "type": "string", // Required - Type/category of the task
-  "status": "string", // Optional - Status of the task (default: "active")
+  "status": "string", // Optional - Status of the task (default: "pending")
   "stage": "string", // Optional - Current stage of the task (default: "pending")
-  "priority": "string", // Optional - Priority level (low, medium, high, urgent)
-  "user_id": "string", // Required - ID of the user assigned to the task
-  "site_id": "string", // Required - ID of the site this task belongs to
-  "lead_id": "string", // Optional - ID of the related lead (if applicable)
+  "priority": "number", // Optional - Priority level (integer, 0 = lowest)
+  "user_id": "string", // Optional - ID of the user (obtained automatically from lead if not specified)
+  "site_id": "string", // Optional - ID of the site (obtained automatically from lead if not specified)
   "due_date": "string", // Optional - Due date for the task (ISO format)
   "scheduled_date": "string", // Optional - Scheduled date for the task (ISO format)
+  "amount": "number", // Optional - Monetary amount associated with the task
+  "assignee": "string", // Optional - User assigned to the task (UUID format)
+  "notes": "string", // Optional - Additional notes about the task
   "command_id": "string", // Optional - ID of the command that generated this task
   "agent_id": "string", // Optional - ID of the agent that created this task
-  "metadata": "object" // Optional - Additional metadata for the task
+  "metadata": "object", // Optional - Additional metadata for the task
+  "address": "object" // Optional - Address information as JSON object
 }
 ```
 
@@ -40,15 +46,19 @@ This tool creates a new task in the database using the appropriate category base
     "type": "string",
     "status": "string",
     "stage": "string",
-    "priority": "string",
+    "priority": "number",
     "user_id": "string",
     "site_id": "string",
     "lead_id": "string",
     "due_date": "string",
     "scheduled_date": "string",
+    "amount": "number",
+    "assignee": "string",
+    "notes": "string",
     "command_id": "string",
     "agent_id": "string",
     "metadata": "object",
+    "address": "object",
     "created_at": "string",
     "updated_at": "string"
   },
@@ -68,39 +78,47 @@ The Create Task tool automatically creates tasks with the most appropriate categ
 6. **Content tasks** for content planning, creation, and publishing
 7. **Administrative tasks** for internal processes and documentation
 
-### Task Categories/Types
+### Task Categories/Types (Suggested Examples)
+
+*Note: The `type` field accepts any string value. These are common examples, but you can create custom task types as needed.*
 
 | Type | Description | Use Case |
 |------|-------------|----------|
-| `follow_up` | Follow-up tasks for leads and customers | Lead nurturing, customer check-ins |
-| `marketing_campaign` | Marketing campaign execution tasks | Campaign planning, content creation |
-| `sales_demo` | Sales demonstration tasks | Product demos, sales presentations |
-| `content_creation` | Content development tasks | Blog posts, social media, videos |
-| `lead_qualification` | Lead qualification and scoring | Lead analysis, qualification process |
-| `customer_support` | Customer support and service tasks | Issue resolution, support tickets |
-| `meeting_preparation` | Meeting and call preparation | Stakeholder meetings, client calls |
-| `market_research` | Market analysis and research tasks | Competitor analysis, market studies |
-| `product_feedback` | Product feedback collection | User feedback, feature requests |
-| `administrative` | Administrative and operational tasks | Documentation, reporting, planning |
+| `website_visit` | Website visit tracking tasks | Tracking and following up on website visits |
+| `demo` | Product demonstration tasks | Scheduling and conducting product demos |
+| `meeting` | Meeting and appointment tasks | Scheduling meetings with leads and clients |
+| `email` | Email communication tasks | Email follow-ups and communication |
+| `call` | Phone call tasks | Making calls to leads and customers |
+| `quote` | Quote generation tasks | Creating and sending quotes |
+| `contract` | Contract management tasks | Contract creation and management |
+| `payment` | Payment processing tasks | Payment follow-ups and processing |
+| `referral` | Referral tracking tasks | Managing and tracking referrals |
+| `feedback` | Feedback collection tasks | Collecting customer feedback |
+| `follow_up` | General follow-up tasks | Following up with leads and customers |
+| `support` | Customer support tasks | Handling customer support issues |
+| `custom_type` | Any custom task type | Create your own task types as needed |
 
-### Task Stages
+### Task Stages (Customer Journey)
 
 | Stage | Description |
 |-------|-------------|
-| `pending` | Task is created but not yet started |
-| `in_progress` | Task is currently being worked on |
-| `review` | Task is completed and awaiting review |
-| `completed` | Task has been finished successfully |
-| `on_hold` | Task is temporarily paused |
-| `cancelled` | Task has been cancelled |
+| `awareness` | Customer becomes aware of the product/service |
+| `consideration` | Customer is considering the product/service |
+| `decision` | Customer is making a decision about purchasing |
+| `purchase` | Customer is in the purchasing process |
+| `retention` | Customer has purchased and is being retained |
+| `referral` | Customer is referring others to the product/service |
+
+*Note: These are the standard customer journey stages, but custom stages can also be used as needed.*
 
 ### Task Status
 
 | Status | Description |
 |--------|-------------|
-| `active` | Task is active and can be worked on |
-| `inactive` | Task is inactive or disabled |
-| `archived` | Task has been archived |
+| `pending` | Task is created but not yet started |
+| `in_progress` | Task is currently being worked on |
+| `completed` | Task has been finished successfully |
+| `failed` | Task has failed or encountered an error |
 
 ### Priority Levels
 
@@ -111,51 +129,150 @@ The Create Task tool automatically creates tasks with the most appropriate categ
 | `high` | High priority task |
 | `urgent` | Urgent task requiring immediate attention |
 
+### Address Object Format
+
+The `address` field accepts a JSON object with flexible structure. Here are examples of common formats:
+
+#### Basic Address Format
+```json
+{
+  "street": "123 Main Street",
+  "city": "New York",
+  "state": "NY",
+  "zipcode": "10001",
+  "country": "USA"
+}
+```
+
+#### Business Address Format
+```json
+{
+  "company": "ABC Corporation",
+  "street": "456 Business Ave",
+  "floor": "5th Floor",
+  "suite": "Suite 500",
+  "city": "San Francisco",
+  "state": "CA",
+  "zipcode": "94105",
+  "country": "USA",
+  "timezone": "PST"
+}
+```
+
+#### International Address Format
+```json
+{
+  "street": "Calle Revolución 123",
+  "neighborhood": "Zona Rosa",
+  "city": "Ciudad de México",
+  "state": "CDMX",
+  "postal_code": "06600",
+  "country": "México",
+  "coordinates": {
+    "lat": 19.4326,
+    "lng": -99.1332
+  }
+}
+```
+
+#### Meeting Location Format
+```json
+{
+  "venue_name": "Conference Center Downtown",
+  "street": "789 Convention Blvd",
+  "room": "Meeting Room A",
+  "city": "Miami",
+  "state": "FL",
+  "zipcode": "33101",
+  "country": "USA",
+  "parking_instructions": "Valet parking available at main entrance",
+  "access_code": "1234"
+}
+```
+
+#### Delivery Address Format
+```json
+{
+  "recipient": "John Doe",
+  "company": "Tech Solutions Inc",
+  "street": "321 Innovation Drive",
+  "apartment": "Unit 15B",
+  "city": "Austin",
+  "state": "TX",
+  "zipcode": "78701",
+  "country": "USA",
+  "delivery_notes": "Ring doorbell twice, leave at front door if no answer",
+  "preferred_time": "9:00 AM - 5:00 PM"
+}
+```
+
+#### Virtual/Online Address Format
+```json
+{
+  "type": "virtual",
+  "platform": "Zoom",
+  "meeting_url": "https://zoom.us/j/1234567890",
+  "meeting_id": "123 456 7890",
+  "passcode": "meeting123",
+  "backup_phone": "+1-555-000-0000"
+}
+```
+
+*Note: The address field is completely flexible - you can include any JSON structure that makes sense for your specific task type.*
+
 ### Example Usage
 
 ```javascript
-// Example 1: Create a follow-up task for a lead
+// Example 1: Minimal task creation (only required fields)
+{
+  "title": "Follow up with John Doe",
+  "type": "call",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890"
+}
+
+// Example 2: Task with additional details
 {
   "title": "Follow up with John Doe",
   "description": "Call to discuss product demo feedback and next steps",
   "type": "follow_up",
-  "priority": "high",
-  "user_id": "user_123",
-  "site_id": "site_456",
-  "lead_id": "lead_789",
+  "stage": "consideration",
+  "priority": 10,
+  "status": "pending",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
   "scheduled_date": "2023-12-15T14:00:00Z"
 }
 
-// Example 2: Create a marketing campaign task
+// Example 3: Custom task type
 {
-  "title": "Launch Q1 Social Media Campaign",
-  "description": "Create and schedule social media posts for Q1 product launch",
-  "type": "marketing_campaign",
-  "priority": "medium",
-  "user_id": "user_456",
-  "site_id": "site_456",
-  "due_date": "2023-12-20T00:00:00Z",
-  "metadata": {
-    "campaign_id": "campaign_123",
-    "platforms": ["facebook", "twitter", "linkedin"],
-    "budget": 5000
+  "title": "Technical consultation",
+  "description": "Provide technical consultation for enterprise integration",
+  "type": "technical_consultation",
+  "stage": "decision",
+  "priority": 15,
+  "status": "pending",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
+  "scheduled_date": "2023-12-20T00:00:00Z",
+  "address": {
+    "street": "123 Business Ave",
+    "city": "New York",
+    "state": "NY",
+    "zipcode": "10001",
+    "country": "USA"
   }
 }
 
-// Example 3: Create a content creation task
+// Example 4: Quote task with amount
 {
-  "title": "Write blog post about AI trends",
-  "description": "Research and write a comprehensive blog post about AI trends in 2024",
-  "type": "content_creation",
-  "priority": "medium",
-  "user_id": "user_789",
-  "site_id": "site_456",
-  "due_date": "2023-12-18T00:00:00Z",
-  "metadata": {
-    "content_type": "blog_post",
-    "target_word_count": 2000,
-    "keywords": ["AI", "trends", "2024", "technology"]
-  }
+  "title": "Send follow-up email about pricing",
+  "description": "Send detailed pricing information and answer client questions",
+  "type": "quote",
+  "stage": "purchase",
+  "priority": 8,
+  "status": "pending",
+  "lead_id": "abcdef12-3456-7890-abcd-ef1234567890",
+  "scheduled_date": "2023-12-18T00:00:00Z",
+  "amount": 25000.50,
+  "notes": "Client interested in enterprise package with custom integrations"
 }
 ```
 
@@ -163,26 +280,29 @@ The Create Task tool automatically creates tasks with the most appropriate categ
 
 The tool will return an error in the following scenarios:
 
-- Missing required fields (title, type, user_id, site_id)
-- Invalid user ID (user not found in the database)
-- Invalid site ID (site not found in the database)
-- Invalid lead ID (if provided but lead not found)
-- Invalid date formats for due_date or scheduled_date
-- Invalid task type or category
+- Missing required fields (title, type, lead_id)
+- Invalid lead ID (lead not found in the database)
+- Invalid user ID (if manually specified and user not found)
+- Invalid site ID (if manually specified and site not found)
+- Invalid date formats for scheduled_date
 - Invalid priority level
 - Database connection errors
 
+*Note: Task type validation has been removed - any string value is now accepted for maximum flexibility.*
+
 If an error occurs, the response will include an `error` field with a descriptive message, and the `success` field will be `false`.
 
-### Automatic Category Detection
+### Automatic Data Assignment
 
-The tool includes intelligent category detection based on context:
+The tool includes intelligent data assignment based on lead information:
 
-- **Keywords in title/description**: Automatically detects task type based on keywords
-- **Lead association**: Tasks with lead_id default to follow_up type
-- **User role**: Assigns appropriate categories based on user's role
-- **Site context**: Considers the business type and industry for category selection
+- **User Assignment**: Automatically obtains the user_id from the lead's assigned user
+- **Site Assignment**: Automatically obtains the site_id from the lead's associated site
+- **Override Capability**: Manual specification of user_id or site_id will override the automatic assignment
+- **Lead context**: Uses lead information to suggest appropriate task categories
 - **Agent context**: Uses agent type to suggest appropriate task categories
+- **Customer Journey Stages**: Uses standard customer journey stages for better task categorization
+- **Flexible Task Types**: Supports any custom task type to meet specific business needs
 
 ### Integration with Other Systems
 
@@ -191,3 +311,15 @@ The tool includes intelligent category detection based on context:
 - **Notification System**: Sends notifications to assigned users
 - **Reporting**: Tasks are included in productivity and performance reports
 - **Workflow Automation**: Can trigger automated workflows based on task completion
+
+## API Tester
+
+Prueba la API de Create Task directamente desde esta documentación:
+
+<UnifiedApiTester 
+  apiType="create-task"
+  title="Crear Nueva Tarea"
+  description="Usa este formulario para probar la creación de tareas en tiempo real."
+  defaultEndpoint="/api/agents/tools/createTask"
+  showModelOptions={false}
+/>
