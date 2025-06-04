@@ -140,6 +140,112 @@ interface ApiResponseConfig {
  */
 export const customTools: Record<string, ApiResponseConfig> = {
   /**
+   * Herramienta: Identificar a un visitante como lead potencial
+   * 
+   * Ejemplos de respuestas según código HTTP:
+   * 
+   * 201 Created (Éxito):
+   * {
+   *   "success": true,
+   *   "lead": {
+   *     "id": "lead-123",
+   *     "visitor_id": "visitor-456",
+   *     "lead_score": 75,
+   *     "source": "website",
+   *     "contact_info": {
+   *       "name": "John Doe",
+   *       "email": "john@example.com",
+   *       "phone": "+1234567890"
+   *     },
+   *     "company_info": {
+   *       "name": "Acme Corp",
+   *       "size": "medium",
+   *       "industry": "technology"
+   *     },
+   *     "interest_level": "high",
+   *     "product_interest": ["product-1", "product-2"],
+   *     "pages_visited": ["/pricing", "/features"],
+   *     "time_spent": 300,
+   *     "visit_count": 3,
+   *     "status": "new",
+   *     "created_at": "2024-01-10T10:00:00Z"
+   *   },
+   *   "next_actions": [
+   *     {
+   *       "action_type": "email",
+   *       "priority": "high",
+   *       "description": "Send personalized welcome email"
+   *     }
+   *   ]
+   * }
+   * 
+   * 400 Bad Request (Error):
+   * {
+   *   "success": false,
+   *   "error": "visitor_id is required"
+   * }
+   * 
+   * 404 Not Found (Error):
+   * {
+   *   "success": false,
+   *   "error": "Visitor not found"
+   * }
+   * 
+   * 409 Conflict (Error):
+   * {
+   *   "success": false,
+   *   "error": "Visitor already identified as a lead"
+   * }
+   */
+  IDENTIFY_LEAD: {
+    endpoint: {
+      url: '/api/agents/tools/identify-lead',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      requiresAuth: false
+    },
+    responseMapping: {
+      // Propiedades del objeto de respuesta
+      success: 'success',                    // Indicador de éxito de la operación
+      lead_id: 'lead.id',                   // ID único del lead creado
+      visitor_id: 'lead.visitor_id',        // ID del visitante identificado
+      lead_score: 'lead.lead_score',        // Puntuación del lead
+      source: 'lead.source',                // Origen del lead
+      contact_info: 'lead.contact_info',    // Información de contacto
+      company_info: 'lead.company_info',    // Información de la empresa
+      interest_level: 'lead.interest_level', // Nivel de interés
+      product_interest: 'lead.product_interest', // Productos de interés
+      pages_visited: 'lead.pages_visited',  // Páginas visitadas
+      time_spent: 'lead.time_spent',        // Tiempo en el sitio
+      visit_count: 'lead.visit_count',      // Número de visitas
+      status: 'lead.status',                // Estado del lead
+      notes: 'lead.notes',                  // Notas adicionales
+      created_at: 'lead.created_at',        // Fecha de creación
+      next_actions: 'next_actions'          // Acciones sugeridas
+    },
+    errors: {
+      400: {
+        message: 'error',
+        code: 'error'
+      },
+      404: {
+        message: 'error',
+        code: 'error'
+      },
+      409: {
+        message: 'error',
+        code: 'error'
+      },
+      500: {
+        message: 'error',
+        code: 'error'
+      }
+    }
+  },
+
+  /**
    * Herramienta: Contactar a un humano para asistencia
    * 
    * Ejemplos de respuestas según código HTTP:
@@ -751,6 +857,95 @@ export const customTools: Record<string, ApiResponseConfig> = {
       limit: 'pagination.limit',          // Límite de resultados por página
       offset: 'pagination.offset',        // Offset usado en la consulta
       has_more: 'pagination.has_more'     // Indica si hay más resultados disponibles
+    },
+    errors: {
+      400: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      404: {
+        message: 'error.message',
+        code: 'error.code'
+      },
+      500: {
+        message: 'error.message',
+        code: 'error.code'
+      }
+    }
+  },
+
+  /**
+   * Herramienta: Actualizar tarea existente
+   * 
+   * Ejemplos de respuestas según código HTTP:
+   * 
+   * 200 OK (Éxito):
+   * {
+   *   "success": true,
+   *   "task": {
+   *     "id": "task-123",
+   *     "title": "Seguimiento de lead actualizado",
+   *     "type": "follow_up",
+   *     "status": "in_progress",
+   *     "stage": "decision",
+   *     "priority": 10,
+   *     "lead_id": "lead-456",
+   *     "scheduled_date": "2024-01-20T15:00:00Z",
+   *     "amount": 2500.00,
+   *     "address": {
+   *       "venue_name": "Oficina del cliente",
+   *       "street": "456 Business Ave",
+   *       "city": "San Francisco",
+   *       "country": "USA"
+   *     },
+   *     "updated_at": "2024-01-15T14:30:00Z"
+   *   }
+   * }
+   * 
+   * 400 Bad Request (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "INVALID_REQUEST",
+   *     "message": "task_id is required"
+   *   }
+   * }
+   * 
+   * 404 Not Found (Error):
+   * {
+   *   "success": false,
+   *   "error": {
+   *     "code": "TASK_NOT_FOUND",
+   *     "message": "Task with ID task-123 not found"
+   *   }
+   * }
+   */
+  UPDATE_TASK: {
+    endpoint: {
+      url: '/api/agents/tools/updateTask',
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      requiresAuth: false
+    },
+    responseMapping: {
+      // Propiedades del objeto de respuesta
+      success: 'success',                  // Indicador de éxito de la operación
+      task_id: 'task.id',                 // ID único de la tarea actualizada
+      title: 'task.title',                // Título de la tarea
+      type: 'task.type',                  // Tipo de tarea
+      status: 'task.status',              // Estado de la tarea
+      stage: 'task.stage',                // Etapa en el customer journey
+      priority: 'task.priority',          // Prioridad de la tarea
+      lead_id: 'task.lead_id',            // ID del lead asociado
+      scheduled_date: 'task.scheduled_date', // Fecha programada
+      completed_date: 'task.completed_date', // Fecha de completado
+      amount: 'task.amount',              // Monto asociado
+      address: 'task.address',            // Dirección como objeto
+      assignee: 'task.assignee',          // Usuario asignado
+      notes: 'task.notes',                // Notas de la tarea
+      updated_at: 'task.updated_at'       // Fecha de última actualización
     },
     errors: {
       400: {

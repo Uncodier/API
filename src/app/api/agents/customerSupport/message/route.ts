@@ -93,6 +93,49 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string, site_id
   }
 }
 
+// Función para obtener información completa del lead desde la base de datos
+async function getLeadInfo(leadId: string): Promise<any | null> {
+  try {
+    if (!isValidUUID(leadId)) {
+      console.error(`ID de lead no válido: ${leadId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Obteniendo información completa del lead: ${leadId}`);
+    
+    // Consultar el lead en la base de datos
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('id', leadId)
+      .single();
+    
+    if (error) {
+      console.error('Error al obtener información del lead:', error);
+      return null;
+    }
+    
+    if (!data) {
+      console.log(`⚠️ No se encontró el lead con ID: ${leadId}`);
+      return null;
+    }
+    
+    console.log(`✅ Información completa del lead recuperada: ${JSON.stringify({
+      id: data.id,
+      name: data.name,
+      email: data.email || 'N/A',
+      phone: data.phone || 'N/A',
+      status: data.status || 'N/A',
+      origin: data.origin || 'N/A'
+    })}`);
+    
+    return data;
+  } catch (error) {
+    console.error('Error al obtener información del lead:', error);
+    return null;
+  }
+}
+
 // Inicializar el agente y obtener el servicio de comandos
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -1151,10 +1194,63 @@ export async function POST(request: Request) {
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
     
-    // Añadir información del lead al contexto si está disponible
-    if (effectiveLeadId || name || email || phone) {
-      contextMessage += "\n\nLead Information:";
-      if (effectiveLeadId) contextMessage += `\nLead ID: ${effectiveLeadId}`;
+    // Obtener y añadir información completa del lead al contexto si está disponible
+    if (effectiveLeadId) {
+      console.log(`📋 Obteniendo información completa del lead para el contexto: ${effectiveLeadId}`);
+      const leadInfo = await getLeadInfo(effectiveLeadId);
+      
+      if (leadInfo) {
+        contextMessage += "\n\nLead Information:";
+        contextMessage += `\nLead ID: ${leadInfo.id}`;
+        contextMessage += `\nName: ${leadInfo.name || 'N/A'}`;
+        contextMessage += `\nEmail: ${leadInfo.email || 'N/A'}`;
+        contextMessage += `\nPhone: ${leadInfo.phone || 'N/A'}`;
+        contextMessage += `\nCompany: ${leadInfo.company || 'N/A'}`;
+        contextMessage += `\nStatus: ${leadInfo.status || 'N/A'}`;
+        contextMessage += `\nOrigin: ${leadInfo.origin || 'N/A'}`;
+        contextMessage += `\nLead Score: ${leadInfo.lead_score || 'N/A'}`;
+        contextMessage += `\nSource: ${leadInfo.source || 'N/A'}`;
+        
+        // Agregar fechas importantes
+        if (leadInfo.created_at) {
+          contextMessage += `\nCreated: ${new Date(leadInfo.created_at).toLocaleDateString()}`;
+        }
+        if (leadInfo.last_contact_date) {
+          contextMessage += `\nLast Contact: ${new Date(leadInfo.last_contact_date).toLocaleDateString()}`;
+        }
+        
+        // Agregar información adicional si está disponible
+        if (leadInfo.contact_info) {
+          try {
+            const contactInfo = typeof leadInfo.contact_info === 'string' 
+              ? JSON.parse(leadInfo.contact_info) 
+              : leadInfo.contact_info;
+            if (contactInfo && Object.keys(contactInfo).length > 0) {
+              contextMessage += `\nAdditional Contact Info: ${JSON.stringify(contactInfo)}`;
+            }
+          } catch (e) {
+            console.log('⚠️ Error parsing contact_info for context');
+          }
+        }
+        
+        if (leadInfo.notes) {
+          contextMessage += `\nNotes: ${leadInfo.notes}`;
+        }
+        
+        console.log(`✅ Información completa del lead agregada al contexto`);
+      } else {
+        // Si no pudimos obtener la información completa del lead, usar los parámetros de la request como respaldo
+        console.log(`⚠️ No se pudo obtener información completa del lead, usando parámetros de la request como respaldo`);
+        contextMessage += "\n\nLead Information (from request):";
+        contextMessage += `\nLead ID: ${effectiveLeadId}`;
+        if (name) contextMessage += `\nName: ${name}`;
+        if (email) contextMessage += `\nEmail: ${email}`;
+        if (phone) contextMessage += `\nPhone: ${phone}`;
+      }
+    } else if (name || email || phone) {
+      // Si no tenemos effectiveLeadId pero sí información de contacto de la request
+      console.log(`📋 No hay lead_id efectivo, pero usando información de contacto disponible de la request`);
+      contextMessage += "\n\nContact Information (no lead created yet):";
       if (name) contextMessage += `\nName: ${name}`;
       if (email) contextMessage += `\nEmail: ${email}`;
       if (phone) contextMessage += `\nPhone: ${phone}`;
@@ -1361,7 +1457,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'When the task should be scheduled (ISO 8601 format)'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format) with timezone'
                 },
                 notes: {
                   type: 'string',
@@ -1400,7 +1496,118 @@ export async function POST(request: Request) {
                   additionalProperties: true
                 }
               },
-              required: ['title', 'type', 'lead_id'],
+              required: ['title', 'type', 'lead_id', "scheduled_date"],
+              additionalProperties: false
+            },
+            strict: true
+          }
+        },
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'UPDATE_TASK',
+            description: 'update an existing task with new information, status changes, or progress updates',
+            parameters: {
+              type: 'object',
+              properties: {
+                task_id: {
+                  type: 'string',
+                  description: 'The ID of the task to update (required)'
+                },
+                title: {
+                  type: 'string',
+                  description: 'New title of the task'
+                },
+                type: {
+                  type: 'string',
+                  description: 'New type of task (e.g., call, email, demo, meeting, quote, payment, follow_up, support, custom types allowed)'
+                },
+                description: {
+                  type: 'string',
+                  description: 'New detailed description of what needs to be done'
+                },
+                status: {
+                  type: 'string',
+                  enum: ['pending', 'in_progress', 'completed', 'failed'],
+                  description: 'New status of the task'
+                },
+                stage: {
+                  type: 'string',
+                  enum: ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'],
+                  description: 'New stage from customer journey'
+                },
+                priority: {
+                  type: 'integer',
+                  minimum: 0,
+                  description: 'New priority level (higher numbers = higher priority)'
+                },
+                scheduled_date: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'New scheduled date for the task (ISO 8601 format) with timezone'
+                },
+                amount: {
+                  type: 'number',
+                  description: 'New monetary amount associated with the task (e.g., quote value, payment amount)'
+                },
+                assignee: {
+                  type: 'string',
+                  description: 'ID of the user to assign the task to'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'New or additional notes about the task'
+                },
+                address: {
+                  type: 'object',
+                  description: 'New address information as JSON object',
+                  properties: {
+                    street: {
+                      type: 'string',
+                      description: 'Street address'
+                    },
+                    city: {
+                      type: 'string', 
+                      description: 'City name'
+                    },
+                    state: {
+                      type: 'string',
+                      description: 'State or province'
+                    },
+                    postal_code: {
+                      type: 'string',
+                      description: 'Postal or ZIP code'
+                    },
+                    country: {
+                      type: 'string',
+                      description: 'Country name'
+                    },
+                    venue_name: {
+                      type: 'string',
+                      description: 'Name of the venue or location'
+                    },
+                    room: {
+                      type: 'string',
+                      description: 'Room or suite number'
+                    },
+                    floor: {
+                      type: 'string',
+                      description: 'Floor number'
+                    },
+                    parking_instructions: {
+                      type: 'string',
+                      description: 'Parking instructions'
+                    },
+                    access_code: {
+                      type: 'string',
+                      description: 'Access code for entry'
+                    }
+                  },
+                  additionalProperties: true
+                }
+              },
+              required: ['task_id'],
               additionalProperties: false
             },
             strict: true

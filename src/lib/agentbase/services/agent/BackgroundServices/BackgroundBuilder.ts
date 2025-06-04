@@ -104,6 +104,40 @@ export class BackgroundBuilder {
         siteSection += `These are key external resources relevant to the site that can provide additional context and information:\n`;
         siteSection += `${JSON.stringify(siteInfo.site.resource_urls)}\n`;
       }
+      
+      // Agregar horarios de atención si están disponibles (desde site)
+      if (siteInfo.site.business_hours && Object.keys(siteInfo.site.business_hours).length > 0) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo business_hours desde site`);
+        siteSection += `\n## Business Hours\n`;
+        try {
+          const businessHours = typeof siteInfo.site.business_hours === 'string'
+            ? JSON.parse(siteInfo.site.business_hours)
+            : siteInfo.site.business_hours;
+          
+          // Formatear los horarios de manera más legible
+          if (typeof businessHours === 'object' && businessHours !== null) {
+            Object.entries(businessHours).forEach(([day, hours]) => {
+              // Manejar diferentes tipos de valores para hours
+              let formattedHours = '';
+              if (typeof hours === 'string') {
+                formattedHours = hours;
+              } else if (Array.isArray(hours)) {
+                formattedHours = hours.join(', ');
+              } else if (typeof hours === 'object' && hours !== null) {
+                formattedHours = JSON.stringify(hours);
+              } else {
+                formattedHours = String(hours);
+              }
+              siteSection += `${day}: ${formattedHours}\n`;
+            });
+          } else {
+            siteSection += `${JSON.stringify(businessHours)}\n`;
+          }
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando business_hours desde site:`, error);
+          siteSection += `${JSON.stringify(siteInfo.site.business_hours)}\n`;
+        }
+      }
     }
     
     // Añadir configuración del sitio si está disponible
@@ -246,6 +280,43 @@ export class BackgroundBuilder {
         console.log(`🔍 [BackgroundBuilder] Añadiendo org_structure`);
         siteSection += `\n## Organizational Structure\n${JSON.stringify(siteInfo.settings.org_structure)}\n`;
       }
+      
+      // Agregar horarios de atención si están disponibles (desde site_settings)
+      // Solo agregar si no se agregaron ya desde site para evitar duplicación
+      if (siteInfo.settings.business_hours && 
+          Object.keys(siteInfo.settings.business_hours).length > 0 &&
+          (!siteInfo.site || !siteInfo.site.business_hours || Object.keys(siteInfo.site.business_hours).length === 0)) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo business_hours desde site_settings`);
+        siteSection += `\n## Business Hours\n`;
+        try {
+          const businessHours = typeof siteInfo.settings.business_hours === 'string'
+            ? JSON.parse(siteInfo.settings.business_hours)
+            : siteInfo.settings.business_hours;
+          
+          // Formatear los horarios de manera más legible
+          if (typeof businessHours === 'object' && businessHours !== null) {
+            Object.entries(businessHours).forEach(([day, hours]) => {
+              // Manejar diferentes tipos de valores para hours
+              let formattedHours = '';
+              if (typeof hours === 'string') {
+                formattedHours = hours;
+              } else if (Array.isArray(hours)) {
+                formattedHours = hours.join(', ');
+              } else if (typeof hours === 'object' && hours !== null) {
+                formattedHours = JSON.stringify(hours);
+              } else {
+                formattedHours = String(hours);
+              }
+              siteSection += `${day}: ${formattedHours}\n`;
+            });
+          } else {
+            siteSection += `${JSON.stringify(businessHours)}\n`;
+          }
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando business_hours desde site_settings:`, error);
+          siteSection += `${JSON.stringify(siteInfo.settings.business_hours)}\n`;
+        }
+      }
     } else {
       console.log(`⚠️ [BackgroundBuilder] No hay settings disponibles en siteInfo`);
     }
@@ -343,6 +414,14 @@ export class BackgroundBuilder {
       
       if (siteInfo.settings.services && !finalPrompt.includes('## Services')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Servicios pero no se encontró en el prompt final`);
+      }
+      
+      // Verificar business_hours desde cualquier fuente
+      const hasBusinessHoursInSite = siteInfo.site && siteInfo.site.business_hours && Object.keys(siteInfo.site.business_hours).length > 0;
+      const hasBusinessHoursInSettings = siteInfo.settings && siteInfo.settings.business_hours && Object.keys(siteInfo.settings.business_hours).length > 0;
+      
+      if ((hasBusinessHoursInSite || hasBusinessHoursInSettings) && !finalPrompt.includes('## Business Hours')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Business Hours pero no se encontró en el prompt final`);
       }
     }
   }

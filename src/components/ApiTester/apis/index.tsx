@@ -27,6 +27,7 @@ import CopywriterApi from './CopywriterApi';
 import ChatApi from './ChatApi';
 import CreateTaskApi from './CreateTaskApi';
 import GetTaskApi from './GetTaskApi';
+import UpdateTaskApi from './UpdateTaskApi';
 
 // ApiRegistry class
 class ApiRegistry {
@@ -76,6 +77,7 @@ apiRegistry.register(CopywriterApi);
 apiRegistry.register(ChatApi);
 apiRegistry.register(CreateTaskApi);
 apiRegistry.register(GetTaskApi);
+apiRegistry.register(UpdateTaskApi);
 
 export default apiRegistry;
 
@@ -108,5 +110,6 @@ export {
   CopywriterApi,
   ChatApi,
   CreateTaskApi,
-  GetTaskApi
+  GetTaskApi,
+  UpdateTaskApi
 }; 

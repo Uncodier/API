@@ -1,0 +1,360 @@
+---
+title: 'Update Task'
+description: 'Updates an existing task with new information'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester/UnifiedApiTester';
+
+## Update Task
+
+This tool updates an existing task in the database with new information. **The tool requires the task_id** to identify which task to update, and accepts any combination of updatable fields.
+
+### Input Schema
+
+```json
+{
+  "task_id": "string", // Required - ID of the task to update (UUID format)
+  "title": "string", // Optional - New title of the task
+  "type": "string", // Optional - New type/category of the task (free text, any custom type allowed)
+  "description": "string", // Optional - New detailed description of the task
+  "status": "string", // Optional - New status of the task
+  "stage": "string", // Optional - New current stage of the task
+  "priority": "number", // Optional - New priority level (integer, 0 = lowest)
+  "scheduled_date": "string", // Optional - New scheduled date for the task (ISO format)
+  "amount": "number", // Optional - New monetary amount associated with the task
+  "assignee": "string", // Optional - New user assigned to the task (UUID format)
+  "notes": "string", // Optional - New additional notes about the task
+  "address": "object", // Optional - New address information as JSON object
+  "completed_date": "string" // Optional - Completion date for the task (ISO format)
+}
+```
+
+### Output Schema
+
+```json
+{
+  "success": "boolean",
+  "task": {
+    "id": "string",
+    "title": "string",
+    "description": "string",
+    "type": "string",
+    "status": "string",
+    "stage": "string",
+    "priority": "number",
+    "user_id": "string",
+    "site_id": "string",
+    "lead_id": "string",
+    "scheduled_date": "string",
+    "completed_date": "string",
+    "amount": "number",
+    "assignee": "string",
+    "notes": "string",
+    "command_id": "string",
+    "agent_id": "string",
+    "address": "object",
+    "created_at": "string",
+    "updated_at": "string"
+  },
+  "error": "string" // Only included if there was an error
+}
+```
+
+### Description
+
+The Update Task tool allows modification of existing tasks to reflect changes in requirements, progress, or assignments. The tool handles:
+
+1. **Status updates** for tracking task progress through different stages
+2. **Assignment changes** when tasks need to be reassigned to different team members
+3. **Information updates** for title, description, notes, and other task details
+4. **Schedule modifications** for changing due dates or scheduled times
+5. **Priority adjustments** based on changing business needs
+6. **Stage progression** through the customer journey stages
+7. **Address updates** for location-based tasks
+8. **Completion tracking** with automatic completion date setting
+
+### Task Categories/Types (Suggested Examples)
+
+*Note: The `type` field accepts any string value. These are common examples, but you can create custom task types as needed.*
+
+| Type | Description | Use Case |
+|------|-------------|----------|
+| `website_visit` | Website visit tracking tasks | Tracking and following up on website visits |
+| `demo` | Product demonstration tasks | Scheduling and conducting product demos |
+| `meeting` | Meeting and appointment tasks | Scheduling meetings with leads and clients |
+| `email` | Email communication tasks | Email follow-ups and communication |
+| `call` | Phone call tasks | Making calls to leads and customers |
+| `quote` | Quote generation tasks | Creating and sending quotes |
+| `contract` | Contract management tasks | Contract creation and management |
+| `payment` | Payment processing tasks | Payment follow-ups and processing |
+| `referral` | Referral tracking tasks | Managing and tracking referrals |
+| `feedback` | Feedback collection tasks | Collecting customer feedback |
+| `follow_up` | General follow-up tasks | Following up with leads and customers |
+| `support` | Customer support tasks | Handling customer support issues |
+| `custom_type` | Any custom task type | Create your own task types as needed |
+
+### Task Stages (Customer Journey)
+
+| Stage | Description |
+|-------|-------------|
+| `awareness` | Customer becomes aware of the product/service |
+| `consideration` | Customer is considering the product/service |
+| `decision` | Customer is making a decision about purchasing |
+| `purchase` | Customer is in the purchasing process |
+| `retention` | Customer has purchased and is being retained |
+| `referral` | Customer is referring others to the product/service |
+
+*Note: These are the standard customer journey stages, but custom stages can also be used as needed.*
+
+### Task Status
+
+| Status | Description |
+|--------|-------------|
+| `pending` | Task is created but not yet started |
+| `in_progress` | Task is currently being worked on |
+| `completed` | Task has been finished successfully |
+| `failed` | Task has failed or encountered an error |
+
+### Priority Levels
+
+| Priority | Description |
+|----------|-------------|
+| `low` | Low priority task |
+| `medium` | Medium priority task (default) |
+| `high` | High priority task |
+| `urgent` | Urgent task requiring immediate attention |
+
+### Address Object Format
+
+The `address` field accepts a JSON object with flexible structure. Here are examples of common formats:
+
+#### Basic Address Format
+```json
+{
+  "street": "123 Main Street",
+  "city": "New York",
+  "state": "NY",
+  "zipcode": "10001",
+  "country": "USA"
+}
+```
+
+#### Business Address Format
+```json
+{
+  "company": "ABC Corporation",
+  "street": "456 Business Ave",
+  "floor": "5th Floor",
+  "suite": "Suite 500",
+  "city": "San Francisco",
+  "state": "CA",
+  "zipcode": "94105",
+  "country": "USA",
+  "timezone": "PST"
+}
+```
+
+#### International Address Format
+```json
+{
+  "street": "Calle Revolución 123",
+  "neighborhood": "Zona Rosa",
+  "city": "Ciudad de México",
+  "state": "CDMX",
+  "postal_code": "06600",
+  "country": "México",
+  "coordinates": {
+    "lat": 19.4326,
+    "lng": -99.1332
+  }
+}
+```
+
+#### Meeting Location Format
+```json
+{
+  "venue_name": "Conference Center Downtown",
+  "street": "789 Convention Blvd",
+  "room": "Meeting Room A",
+  "city": "Miami",
+  "state": "FL",
+  "zipcode": "33101",
+  "country": "USA",
+  "parking_instructions": "Valet parking available at main entrance",
+  "access_code": "1234"
+}
+```
+
+#### Delivery Address Format
+```json
+{
+  "recipient": "John Doe",
+  "company": "Tech Solutions Inc",
+  "street": "321 Innovation Drive",
+  "apartment": "Unit 15B",
+  "city": "Austin",
+  "state": "TX",
+  "zipcode": "78701",
+  "country": "USA",
+  "delivery_notes": "Ring doorbell twice, leave at front door if no answer",
+  "preferred_time": "9:00 AM - 5:00 PM"
+}
+```
+
+#### Virtual/Online Address Format
+```json
+{
+  "type": "virtual",
+  "platform": "Zoom",
+  "meeting_url": "https://zoom.us/j/1234567890",
+  "meeting_id": "123 456 7890",
+  "passcode": "meeting123",
+  "backup_phone": "+1-555-000-0000"
+}
+```
+
+*Note: The address field is completely flexible - you can include any JSON structure that makes sense for your specific task type.*
+
+### Example Usage
+
+```javascript
+// Example 1: Update task status and stage
+{
+  "task_id": "task-123-456-789",
+  "status": "in_progress",
+  "stage": "decision"
+}
+
+// Example 2: Update task with new assignment and priority
+{
+  "task_id": "task-123-456-789",
+  "assignee": "user-789-123-456",
+  "priority": 15,
+  "notes": "Escalated to senior team member due to complexity"
+}
+
+// Example 3: Complete a task
+{
+  "task_id": "task-123-456-789",
+  "status": "completed",
+  "stage": "completed",
+  "completed_date": "2023-12-20T16:30:00Z",
+  "notes": "Task completed successfully. Customer confirmed satisfaction."
+}
+
+// Example 4: Update task with new schedule and address
+{
+  "task_id": "task-123-456-789",
+  "title": "Updated: Client meeting at new location",
+  "scheduled_date": "2023-12-25T14:00:00Z",
+  "address": {
+    "venue_name": "Downtown Conference Center",
+    "street": "456 Business Blvd",
+    "city": "San Francisco",
+    "state": "CA",
+    "zipcode": "94107",
+    "country": "USA",
+    "room": "Conference Room B"
+  },
+  "notes": "Meeting moved to new location per client request"
+}
+
+// Example 5: Update task amount and type
+{
+  "task_id": "task-123-456-789",
+  "type": "contract_negotiation",
+  "amount": 50000.00,
+  "notes": "Updated to reflect final contract value after negotiations"
+}
+```
+
+### Error Handling
+
+The tool will return an error in the following scenarios:
+
+- Missing required field (task_id)
+- Invalid task ID (task not found in the database)
+- Invalid date formats for scheduled_date or completed_date
+- Invalid priority level
+- Invalid assignee ID (if specified and user not found)
+- Database connection errors
+
+*Note: Task type validation has been removed - any string value is now accepted for maximum flexibility.*
+
+If an error occurs, the response will include an `error` field with a descriptive message, and the `success` field will be `false`.
+
+### Update Behavior
+
+The tool follows these update principles:
+
+- **Partial Updates**: Only the fields provided in the request will be updated
+- **Preserve Existing**: Fields not included in the request remain unchanged
+- **Automatic Timestamps**: The `updated_at` field is automatically set to the current timestamp
+- **Validation**: Input validation ensures data integrity
+- **Atomic Operations**: Updates are performed atomically to prevent data corruption
+- **Audit Trail**: Changes are tracked through the updated_at timestamp
+
+### Common Update Patterns
+
+#### Progress Tracking
+Update task status and stage as work progresses:
+```json
+{
+  "task_id": "task-123",
+  "status": "in_progress",
+  "stage": "consideration",
+  "notes": "Initial contact made, customer showing interest"
+}
+```
+
+#### Task Completion
+Mark task as completed with completion date:
+```json
+{
+  "task_id": "task-123",
+  "status": "completed",
+  "stage": "completed",
+  "completed_date": "2023-12-20T16:30:00Z"
+}
+```
+
+#### Reassignment
+Transfer task to a different team member:
+```json
+{
+  "task_id": "task-123",
+  "assignee": "new-user-id",
+  "notes": "Reassigned to specialist for technical consultation"
+}
+```
+
+#### Schedule Changes
+Update timing for task execution:
+```json
+{
+  "task_id": "task-123",
+  "scheduled_date": "2023-12-25T10:00:00Z",
+  "notes": "Rescheduled per customer request"
+}
+```
+
+### Integration with Other Systems
+
+- **CRM Integration**: Automatically syncs task updates with connected CRM systems
+- **Calendar Integration**: Updates calendar events for scheduled tasks
+- **Notification System**: Sends notifications about task updates to relevant users
+- **Reporting**: Updated tasks are reflected in productivity and performance reports
+- **Workflow Automation**: Can trigger automated workflows based on task status changes
+- **Audit Logging**: All updates are logged for compliance and tracking purposes
+
+## API Tester
+
+Prueba la API de Update Task directamente desde esta documentación:
+
+<UnifiedApiTester 
+  apiType="update-task"
+  title="Actualizar Tarea Existente"
+  description="Usa este formulario para probar la actualización de tareas en tiempo real."
+  defaultEndpoint="/api/agents/tools/updateTask"
+  showModelOptions={false}
+/> 

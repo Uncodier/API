@@ -831,7 +831,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'When the task should be scheduled (ISO 8601 format)'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format) with timezone'
                 },
                 notes: {
                   type: 'string',
@@ -870,7 +870,118 @@ export async function POST(request: Request) {
                   additionalProperties: true
                 }
               },
-              required: ['title', 'type', 'lead_id'],
+              required: ['title', 'type', 'lead_id', "scheduled_date"],
+              additionalProperties: false
+            },
+            strict: true
+          }
+        },
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'UPDATE_TASK',
+            description: 'update an existing task with new information, status changes, or progress updates',
+            parameters: {
+              type: 'object',
+              properties: {
+                task_id: {
+                  type: 'string',
+                  description: 'The ID of the task to update (required)'
+                },
+                title: {
+                  type: 'string',
+                  description: 'New title of the task'
+                },
+                type: {
+                  type: 'string',
+                  description: 'New type of task (e.g., call, email, demo, meeting, quote, payment, follow_up, support, custom types allowed)'
+                },
+                description: {
+                  type: 'string',
+                  description: 'New detailed description of what needs to be done'
+                },
+                status: {
+                  type: 'string',
+                  enum: ['pending', 'in_progress', 'completed', 'failed'],
+                  description: 'New status of the task'
+                },
+                stage: {
+                  type: 'string',
+                  enum: ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'],
+                  description: 'New stage from customer journey'
+                },
+                priority: {
+                  type: 'integer',
+                  minimum: 0,
+                  description: 'New priority level (higher numbers = higher priority)'
+                },
+                scheduled_date: {
+                  type: 'string',
+                  format: 'date-time',
+                  description: 'New scheduled date for the task (ISO 8601 format) with timezone'
+                },
+                amount: {
+                  type: 'number',
+                  description: 'New monetary amount associated with the task (e.g., quote value, payment amount)'
+                },
+                assignee: {
+                  type: 'string',
+                  description: 'ID of the user to assign the task to'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'New or additional notes about the task'
+                },
+                address: {
+                  type: 'object',
+                  description: 'New address information as JSON object',
+                  properties: {
+                    street: {
+                      type: 'string',
+                      description: 'Street address'
+                    },
+                    city: {
+                      type: 'string', 
+                      description: 'City name'
+                    },
+                    state: {
+                      type: 'string',
+                      description: 'State or province'
+                    },
+                    postal_code: {
+                      type: 'string',
+                      description: 'Postal or ZIP code'
+                    },
+                    country: {
+                      type: 'string',
+                      description: 'Country name'
+                    },
+                    venue_name: {
+                      type: 'string',
+                      description: 'Name of the venue or location'
+                    },
+                    room: {
+                      type: 'string',
+                      description: 'Room or suite number'
+                    },
+                    floor: {
+                      type: 'string',
+                      description: 'Floor number'
+                    },
+                    parking_instructions: {
+                      type: 'string',
+                      description: 'Parking instructions'
+                    },
+                    access_code: {
+                      type: 'string',
+                      description: 'Access code for entry'
+                    }
+                  },
+                  additionalProperties: true
+                }
+              },
+              required: ['task_id'],
               additionalProperties: false
             },
             strict: true

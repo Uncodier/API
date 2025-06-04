@@ -98,9 +98,9 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1-nano',
+        modelId: 'gpt-4.1-mini',
         maxTokens: 32000,
-        temperature: .6
+        temperature: .7
       },
       "Evaluador de herramientas que analiza y selecciona las mejores herramientas para una tarea."
     );

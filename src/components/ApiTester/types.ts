@@ -46,7 +46,8 @@ export type ApiType =
   | 'copywriter'
   | 'chat'
   | 'create-task'
-  | 'get-task';
+  | 'get-task'
+  | 'update-task';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {

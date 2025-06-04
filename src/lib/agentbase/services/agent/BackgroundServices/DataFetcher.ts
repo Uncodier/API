@@ -12,6 +12,120 @@ export class DataFetcher {
   private static agentCache = AgentCacheService.getInstance();
   
   /**
+   * Valida específicamente la estructura de business_hours
+   * @param businessHours Los datos de business_hours a validar
+   * @returns true si contiene datos útiles, false si está vacío o mal estructurado
+   */
+  private static isBusinessHoursMeaningful(businessHours: any): boolean {
+    if (!businessHours) return false;
+    
+    // Si es un string, verificar que no esté vacío
+    if (typeof businessHours === 'string') {
+      return businessHours.trim().length > 0;
+    }
+    
+    // Si es un array, verificar que tenga elementos significativos
+    if (Array.isArray(businessHours)) {
+      return businessHours.length > 0 && businessHours.some(item => this.isValueMeaningful(item));
+    }
+    
+    // Si es un objeto, verificar estructura específica para business_hours
+    if (typeof businessHours === 'object' && businessHours !== null) {
+      const keys = Object.keys(businessHours);
+      if (keys.length === 0) return false;
+      
+      // Verificar que al menos una entrada tenga datos útiles
+      return keys.some(day => {
+        const hours = businessHours[day];
+        // Verificar que el valor no sea null, undefined, string vacío o objeto vacío
+        if (!hours) return false;
+        if (typeof hours === 'string' && hours.trim() === '') return false;
+        if (typeof hours === 'object' && hours !== null && Object.keys(hours).length === 0) return false;
+        return true;
+      });
+    }
+    
+    return true; // Para otros tipos (number, boolean)
+  }
+  
+  /**
+   * Valida si un campo JSON/Array contiene datos útiles
+   * @param value El valor a validar
+   * @returns true si el valor contiene datos útiles, false si está vacío
+   */
+  private static isValueMeaningful(value: any): boolean {
+    if (!value) return false;
+    
+    // Si es un string, verificar que no esté vacío después de trim
+    if (typeof value === 'string') {
+      return value.trim().length > 0;
+    }
+    
+    // Si es un array, verificar que tenga elementos
+    if (Array.isArray(value)) {
+      return value.length > 0 && value.some(item => this.isValueMeaningful(item));
+    }
+    
+    // Si es un objeto, verificar que tenga propiedades significativas
+    if (typeof value === 'object' && value !== null) {
+      const keys = Object.keys(value);
+      return keys.length > 0 && keys.some(key => this.isValueMeaningful(value[key]));
+    }
+    
+    // Para otros tipos (number, boolean), considerar que son significativos
+    return true;
+  }
+  
+  /**
+   * Procesa y limpia campos JSON para evitar incluir contenido vacío
+   * @param data El objeto que contiene los campos a procesar
+   * @param jsonFields Array con los nombres de los campos JSON a procesar
+   * @param context Contexto para logging (ej: "site_settings")
+   */
+  private static processJsonFields(data: any, jsonFields: string[], context: string): void {
+    jsonFields.forEach(field => {
+      if (data && data[field] !== undefined) {
+        // Verificar primero si el valor es null o string vacío
+        if (data[field] === null || (typeof data[field] === 'string' && data[field].trim() === '')) {
+          console.log(`🧹 [DataFetcher] Removiendo campo nulo/vacío ${field} de ${context} para ahorrar tokens`);
+          delete data[field];
+          return;
+        }
+        
+        // Si es un string, intentar parsearlo
+        if (typeof data[field] === 'string') {
+          try {
+            data[field] = JSON.parse(data[field]);
+          } catch (e) {
+            console.error(`[DataFetcher] Error parsing ${context} ${field}:`, e);
+            delete data[field]; // Remover campos que no se pueden parsear
+            return;
+          }
+        }
+        
+        // Validar si el valor es significativo
+        if (field === 'business_hours') {
+          // Usar validación específica para business_hours
+          if (!this.isBusinessHoursMeaningful(data[field])) {
+            console.log(`🧹 [DataFetcher] Removiendo business_hours vacío de ${context} para ahorrar tokens`);
+            delete data[field];
+          } else {
+            console.log(`✅ [DataFetcher] Campo business_hours de ${context} contiene datos útiles`);
+          }
+        } else {
+          // Usar validación general para otros campos
+          if (!this.isValueMeaningful(data[field])) {
+            console.log(`🧹 [DataFetcher] Removiendo campo vacío ${field} de ${context} para ahorrar tokens`);
+            delete data[field];
+          } else {
+            console.log(`✅ [DataFetcher] Campo ${field} de ${context} contiene datos útiles`);
+          }
+        }
+      }
+    });
+  }
+  
+  /**
    * Obtiene los datos de un agente desde caché y base de datos
    * @param agentId ID del agente
    * @param processor Procesador base
@@ -140,16 +254,8 @@ export class DataFetcher {
         result.site = siteData;
         
         // Verificar si tiene campos JSON que necesitan ser convertidos
-        const jsonFields = ['resource_urls', 'competitors', 'tracking'];
-        jsonFields.forEach(field => {
-          if (result.site && result.site[field] && typeof result.site[field] === 'string') {
-            try {
-              result.site[field] = JSON.parse(result.site[field]);
-            } catch (e) {
-              console.error(`[DataFetcher] Error parsing site ${field}:`, e);
-            }
-          }
-        });
+        const jsonFields = ['resource_urls', 'competitors', 'tracking', 'business_hours'];
+        this.processJsonFields(result.site, jsonFields, 'site');
       }
     } catch (siteError) {
       console.error(`❌ [DataFetcher] Error al obtener información del sitio:`, siteError);
@@ -167,18 +273,10 @@ export class DataFetcher {
           'products', 'services', 'swot', 'locations', 'marketing_budget', 
           'marketing_channels', 'social_media', 'goals',
           'tracking', 'team_members', 'team_roles', 
-          'org_structure'
+          'org_structure', 'business_hours'
         ];
         
-        jsonFields.forEach(field => {
-          if (result.settings && result.settings[field] && typeof result.settings[field] === 'string') {
-            try {
-              result.settings[field] = JSON.parse(result.settings[field]);
-            } catch (e) {
-              console.error(`[DataFetcher] Error parsing site_settings ${field}:`, e);
-            }
-          }
-        });
+        this.processJsonFields(result.settings, jsonFields, 'site_settings');
       } else {
         console.log(`⚠️ [DataFetcher] No se encontró configuración para el sitio: ${siteId}`);
       }
