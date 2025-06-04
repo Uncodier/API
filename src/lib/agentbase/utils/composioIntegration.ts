@@ -22,8 +22,8 @@ export interface ComposioIntegrationConfig {
 
 // Variable global para configuración sin dependencias circulares
 let globalConfig: ComposioIntegrationConfig = {
-  enabled: true,
-  apps : []
+  enabled: false,
+  apps: []
 };
 
 /**
@@ -41,9 +41,26 @@ export function getComposioConfig(): ComposioIntegrationConfig {
 }
 
 /**
- * Configura la integración global de Composio
+ * Configura la integración global de Composio de manera segura
+ * 
+ * IMPORTANTE: Para evitar sobrecarga del sistema, Composio solo se habilitará
+ * si se especifican apps concretas. Si se pasa enabled=true sin apps,
+ * la configuración se ajustará automáticamente para evitar cargar miles de tools.
  */
 export function configureComposio(config: ComposioIntegrationConfig): void {
+  // Validación de seguridad: Si se habilita Composio sin apps específicas, mostrar advertencia
+  if (config.enabled && (!config.apps || config.apps.length === 0)) {
+    console.warn(`[ComposioConfig] ⚠️ ADVERTENCIA: Composio habilitado sin apps específicas.`);
+    console.warn(`[ComposioConfig] ⚠️ Esto podría cargar miles de tools y causar problemas de rendimiento.`);
+    console.warn(`[ComposioConfig] ⚠️ Deshabilitando automáticamente para evitar sobrecarga.`);
+    
+    // Deshabilitar automáticamente para evitar problemas
+    config = {
+      ...config,
+      enabled: false
+    };
+  }
+  
   globalConfig = {
     ...globalConfig,
     ...config
@@ -51,11 +68,37 @@ export function configureComposio(config: ComposioIntegrationConfig): void {
   
   console.log(`[ComposioConfig] Configuración actualizada:`, {
     enabled: globalConfig.enabled,
-    apps: globalConfig.apps?.join(', '),
-    tags: globalConfig.tags?.join(', '),
-    entityId: globalConfig.entityId,
-    integrationId: globalConfig.integrationId,
-    filterByAvailableApps: globalConfig.filterByAvailableApps
+    apps: globalConfig.apps?.join(', ') || 'ninguna',
+    tags: globalConfig.tags?.join(', ') || 'ninguna',
+    entityId: globalConfig.entityId || 'default',
+    integrationId: globalConfig.integrationId || 'ninguna',
+    filterByAvailableApps: globalConfig.filterByAvailableApps || false
+  });
+}
+
+/**
+ * Configura Composio con apps específicas de manera segura
+ * Esta es la forma recomendada de habilitar Composio
+ */
+export function enableComposioWithApps(apps: string[], otherConfig?: Partial<ComposioIntegrationConfig>): void {
+  if (!apps || apps.length === 0) {
+    throw new Error('enableComposioWithApps requiere al menos una app específica');
+  }
+  
+  configureComposio({
+    enabled: true,
+    apps,
+    ...otherConfig
+  });
+}
+
+/**
+ * Deshabilita Composio completamente
+ */
+export function disableComposio(): void {
+  configureComposio({
+    enabled: false,
+    apps: []
   });
 }
 
@@ -116,10 +159,18 @@ export async function enrichWithComposioTools(
     
     // Si no está habilitado, devolver el comando sin cambios
     if (!config.enabled) {
+      console.log(`[ComposioIntegration] Composio está deshabilitado, saltando enriquecimiento`);
+      return command;
+    }
+    
+    // NUEVA VALIDACIÓN: Si no hay apps específicas, no cargar nada para evitar sobrecarga
+    if (!config.apps || config.apps.length === 0) {
+      console.log(`[ComposioIntegration] No hay apps específicas configuradas, saltando Composio para evitar sobrecarga`);
       return command;
     }
     
     console.log(`[ComposioIntegration] Enriqueciendo comando ${command.id} con herramientas de Composio`);
+    console.log(`[ComposioIntegration] Apps configuradas: ${config.apps.join(', ')}`);
     
     // Instanciar servicio con configuración específica
     const composioTools = new ComposioTools({

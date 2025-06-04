@@ -1020,8 +1020,16 @@ export async function POST(request: Request) {
     }
     
     // Validar el parámetro origin si está presente
-    const validOrigins = ['website', 'email', 'whatsapp'];
-    if (origin && !validOrigins.includes(origin)) {
+    const validOrigins = ['website', 'email', 'whatsapp', 'chat', 'website_chat', 'none', 'api'];
+    
+    // Si no se proporciona origin pero hay header origin, usar 'website' automáticamente
+    let effectiveOrigin = origin;
+    if (!effectiveOrigin && request.headers.get('origin')) {
+      effectiveOrigin = 'website';
+      console.log(`🌐 No se proporcionó origin, pero se detectó header origin. Estableciendo automáticamente: ${effectiveOrigin}`);
+    }
+    
+    if (effectiveOrigin && !validOrigins.includes(effectiveOrigin)) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: `origin must be one of: ${validOrigins.join(', ')}` } },
         { status: 400 }
@@ -1046,9 +1054,9 @@ export async function POST(request: Request) {
     // Determinar el origen del lead basado en los parámetros
     let leadOrigin = 'chat'; // valor por defecto
     
-    if (origin) {
+    if (effectiveOrigin) {
       // Si se proporciona 'origin', usarlo directamente
-      leadOrigin = origin;
+      leadOrigin = effectiveOrigin;
       console.log(`🏷️ Origen del lead establecido desde 'origin': ${leadOrigin}`);
     } else if (website_chat_origin === true) {
       // Si website_chat_origin=true, usar 'website_chat' (para mantener compatibilidad)
@@ -1575,7 +1583,7 @@ export async function POST(request: Request) {
         effectiveAgentId, 
         effectiveSiteId, 
         effectiveDbUuid || undefined,
-        origin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
+        effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
       );
       
       if (!savedMessages) {
@@ -1733,7 +1741,7 @@ export async function POST(request: Request) {
       effectiveAgentId, 
       effectiveSiteId, 
       effectiveDbUuid || undefined,
-      origin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
+      effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
     );
     
     if (!savedMessages) {

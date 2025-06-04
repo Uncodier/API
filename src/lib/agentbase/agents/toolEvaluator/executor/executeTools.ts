@@ -10,6 +10,20 @@ import { hasCustomTool, getCustomToolDefinition } from './customToolsMap';
 import { OpenAIToolSet } from "composio-core";
 import axios from 'axios';
 
+// Helper function para debug de headers
+function debugHeaders(headers: Record<string, string>, context: string) {
+  console.log(`[ToolExecutor] ${context} - Headers debug:`);
+  Object.keys(headers).forEach(key => {
+    if (key.toLowerCase().includes('auth') || key.toLowerCase().includes('api')) {
+      const value = headers[key];
+      const maskedValue = value ? `${value.substring(0, 10)}...` : 'EMPTY';
+      console.log(`[ToolExecutor]   ${key}: ${maskedValue}`);
+    } else {
+      console.log(`[ToolExecutor]   ${key}: ${headers[key]}`);
+    }
+  });
+}
+
 // Cache para el toolset de Composio (evita múltiples inicializaciones)
 let composioToolset: OpenAIToolSet | null = null;
 
@@ -116,13 +130,36 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
     // Preparar headers
     const headers = { ...apiConfig.endpoint.headers };
     
+    // Para URLs locales (que empiezan con /), siempre agregar SERVICE_API_KEY 
+    // para peticiones server-to-server, independientemente de requiresAuth
+    const isLocalUrl = url.startsWith('/') || url.includes('localhost') || url.includes('127.0.0.1') || url.includes('::1');
+    const serviceApiKey = process.env.SERVICE_API_KEY;
+    
+    if (isLocalUrl && serviceApiKey) {
+      // Verificar si ya hay un header de autorización configurado
+      if (!headers['Authorization'] && !headers['x-api-key']) {
+        // Usar x-api-key por defecto para peticiones internas
+        headers['x-api-key'] = serviceApiKey;
+        console.log(`[ToolExecutor] Added SERVICE_API_KEY to x-api-key header for local request`);
+      } else if (headers['Authorization'] && headers['Authorization'].includes('{{SERVICE_API_KEY}}')) {
+        // Si hay un placeholder específico para SERVICE_API_KEY, reemplazarlo
+        headers['Authorization'] = headers['Authorization'].replace('{{SERVICE_API_KEY}}', serviceApiKey);
+        console.log(`[ToolExecutor] Replaced {{SERVICE_API_KEY}} placeholder in Authorization header`);
+      }
+    }
+    
     // Procesar autenticación si es necesaria
     if (apiConfig.endpoint.requiresAuth) {
       switch (apiConfig.endpoint.authType) {
         case 'Bearer':
           // Reemplazar tokens de plantilla con valores reales
           if (headers['Authorization'] && headers['Authorization'].includes('{{')) {
-            headers['Authorization'] = headers['Authorization'].replace('{{SUPPORT_API_TOKEN}}', process.env.SUPPORT_API_TOKEN || '');
+            if (headers['Authorization'].includes('{{SUPPORT_API_TOKEN}}')) {
+              headers['Authorization'] = headers['Authorization'].replace('{{SUPPORT_API_TOKEN}}', process.env.SUPPORT_API_TOKEN || '');
+            }
+            if (headers['Authorization'].includes('{{SERVICE_API_KEY}}')) {
+              headers['Authorization'] = headers['Authorization'].replace('{{SERVICE_API_KEY}}', serviceApiKey || '');
+            }
           }
           break;
         case 'ApiKey':
@@ -132,6 +169,9 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
               if (headers[key].includes('{{WEATHER_API_KEY}}')) {
                 headers[key] = headers[key].replace('{{WEATHER_API_KEY}}', process.env.WEATHER_API_KEY || '');
               }
+              if (headers[key].includes('{{SERVICE_API_KEY}}')) {
+                headers[key] = headers[key].replace('{{SERVICE_API_KEY}}', serviceApiKey || '');
+              }
               // Agregar más sustituciones según sea necesario
             }
           });
@@ -139,6 +179,9 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
         // Añadir otros tipos de autenticación según sea necesario
       }
     }
+    
+    // Debug de headers antes de hacer la petición
+    debugHeaders(headers, `Before making ${apiConfig.endpoint.method} request to ${url}`);
     
     // Ejecutar la llamada HTTP con reintentos
     let response: any;
