@@ -982,6 +982,18 @@ export async function POST(request: Request) {
     console.log("🔍 Headers:", JSON.stringify(Object.fromEntries(request.headers)));
     console.log("🔍 Origen:", request.headers.get('origin'));
     
+    // Obtener información de ubicación y tiempo del request
+    const requestTimestamp = new Date().toISOString();
+    const clientIP = request.headers.get('x-forwarded-for') || 
+                    request.headers.get('x-real-ip') || 
+                    request.headers.get('x-client-ip') || 
+                    request.headers.get('cf-connecting-ip') || 
+                    'unknown';
+    const userAgent = request.headers.get('user-agent') || 'unknown';
+    const acceptLanguage = request.headers.get('accept-language') || 'unknown';
+    
+    console.log(`⏰ Request Info - Timestamp: ${requestTimestamp}, IP: ${clientIP}, User-Agent: ${userAgent}`);
+    
     // Extract required parameters from the request
     const { 
       conversationId, 
@@ -1194,6 +1206,16 @@ export async function POST(request: Request) {
     // Retrieve conversation history if a conversation ID is provided
     let contextMessage = `Current message: ${message}`;
     
+    // Agregar información del request al contexto
+    contextMessage += `\n\nRequest Information:`;
+    contextMessage += `\nTimestamp: ${requestTimestamp}`;
+    contextMessage += `\nClient IP: ${clientIP}`;
+    contextMessage += `\nUser Agent: ${userAgent}`;
+    contextMessage += `\nLanguage: ${acceptLanguage}`;
+    if (effectiveOrigin) {
+      contextMessage += `\nChannel: ${effectiveOrigin}`;
+    }
+    
     // Obtener y añadir información completa del lead al contexto si está disponible
     if (effectiveLeadId) {
       console.log(`📋 Obteniendo información completa del lead para el contexto: ${effectiveLeadId}`);
@@ -1205,7 +1227,24 @@ export async function POST(request: Request) {
         contextMessage += `\nName: ${leadInfo.name || 'N/A'}`;
         contextMessage += `\nEmail: ${leadInfo.email || 'N/A'}`;
         contextMessage += `\nPhone: ${leadInfo.phone || 'N/A'}`;
-        contextMessage += `\nCompany: ${leadInfo.company || 'N/A'}`;
+        
+        // Manejar el campo company correctamente
+        let companyDisplay = 'N/A';
+        if (leadInfo.company) {
+          if (typeof leadInfo.company === 'string') {
+            companyDisplay = leadInfo.company;
+          } else if (typeof leadInfo.company === 'object' && leadInfo.company.name) {
+            companyDisplay = leadInfo.company.name;
+          } else if (typeof leadInfo.company === 'object') {
+            // Si es un objeto sin campo name, intentar otros campos comunes
+            companyDisplay = leadInfo.company.company_name || 
+                           leadInfo.company.businessName || 
+                           leadInfo.company.title || 
+                           JSON.stringify(leadInfo.company);
+          }
+        }
+        contextMessage += `\nCompany: ${companyDisplay}`;
+        
         contextMessage += `\nStatus: ${leadInfo.status || 'N/A'}`;
         contextMessage += `\nOrigin: ${leadInfo.origin || 'N/A'}`;
         contextMessage += `\nLead Score: ${leadInfo.lead_score || 'N/A'}`;
