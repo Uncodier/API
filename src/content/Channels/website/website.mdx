@@ -144,6 +144,131 @@ window.MarketFit.openChatWithTask({
 
 ---
 
+### `identify()`
+
+Identifica al usuario actual en el chat con su información personal y campos personalizados. Esta función es esencial para proporcionar una experiencia personalizada y conectar las conversaciones con usuarios específicos.
+
+#### Sintaxis
+```javascript
+window.MarketFit.identify(leadInfo)
+```
+
+#### Parámetros
+- **leadInfo** `object` (requerido): Información del usuario a identificar
+
+#### Propiedades de leadInfo
+```typescript
+{
+  name?: string;           // Nombre completo del usuario
+  email?: string;          // Email del usuario
+  phone?: string;          // Teléfono del usuario
+  userId?: string;         // ID único del usuario en tu sistema
+  [key: string]: any;      // Campos personalizados adicionales
+}
+```
+
+#### Valor de retorno
+- **Promise** - Resuelve cuando la identificación es exitosa
+
+#### Ejemplos
+
+<div className="example-grid">
+
+**Identificación básica:**
+```javascript
+// Identificar usuario después del login
+window.MarketFit.identify({
+  name: 'Juan Pérez',
+  email: 'juan@ejemplo.com',
+  phone: '+34 123 456 789'
+});
+```
+
+**Con campos personalizados:**
+```javascript
+// Identificar con información adicional
+window.MarketFit.identify({
+  name: 'María García',
+  email: 'maria@empresa.com',
+  phone: '+34 987 654 321',
+  userId: 'user_12345',
+  subscriptionType: 'Premium',
+  company: 'Empresa SL',
+  role: 'CEO'
+});
+```
+
+**Con manejo de promesas:**
+```javascript
+// Manejar resultado de identificación
+window.MarketFit.identify({
+  name: 'Carlos Ruiz',
+  email: 'carlos@startup.com',
+  userId: 'usr_98765'
+})
+.then(() => {
+  console.log('Usuario identificado correctamente');
+  // Opcional: abrir chat con mensaje personalizado
+  window.MarketFit.openChatWithWelcomeMessage(
+    `¡Hola Carlos! ¿En qué puedo ayudarte hoy?`
+  );
+})
+.catch(error => {
+  console.error('Error identificando usuario:', error);
+});
+```
+
+**Integración con sistema de autenticación:**
+```javascript
+// Función para ejecutar después del login
+function onUserLogin(userData) {
+  if (window.MarketFit) {
+    window.MarketFit.identify({
+      name: userData.fullName,
+      email: userData.email,
+      phone: userData.phoneNumber,
+      userId: userData.id,
+      subscriptionType: userData.subscription,
+      lastLogin: new Date().toISOString()
+    })
+    .then(() => {
+      console.log('Usuario identificado en chat');
+    })
+    .catch(error => {
+      console.error('Error en identificación:', error);
+    });
+  }
+}
+```
+
+</div>
+
+#### Mejores Prácticas
+
+- **Ejecutar después del login**: Llama a `identify()` inmediatamente después de que el usuario se autentique
+- **Información mínima**: Incluye al menos name y email para identificación efectiva
+- **Campos personalizados**: Usa campos adicionales para contexto (plan, empresa, rol, etc.)
+- **Manejo de errores**: Siempre maneja las promesas para detectar problemas de identificación
+- **Verificar disponibilidad**: Asegúrate de que el chat esté inicializado antes de llamar `identify()`
+
+#### Verificar Estado de Identificación
+
+```javascript
+// Verificar si un usuario está identificado
+const hasUser = window.MarketFit.hasIdentifiedUser();
+console.log('Usuario identificado:', hasUser);
+
+// Verificar información del usuario actual
+const currentUser = window.MarketFit.getCurrentUser();
+console.log('Información del usuario:', currentUser);
+
+// También puedes obtener el estado del chat que incluye info del usuario
+const chatState = window.MarketFit.chat.getState();
+console.log('Estado completo del chat:', chatState);
+```
+
+---
+
 ## Funciones de Control
 
 ### `toggleChat()`
@@ -225,6 +350,26 @@ const chatState = window.MarketFit.chat.getState();
 const chatConfig = window.MarketFit.chat.getConfig();
 ```
 
+### Gestión de Usuarios
+
+```javascript
+// Identificar usuario actual
+await window.MarketFit.identify({
+  name: 'Usuario Ejemplo',
+  email: 'usuario@ejemplo.com',
+  userId: 'unique_user_id'
+});
+
+// Obtener información del usuario identificado
+const currentUser = window.MarketFit.getCurrentUser();
+
+// Verificar si hay un usuario identificado
+const hasUser = window.MarketFit.hasIdentifiedUser();
+
+// Limpiar identificación del usuario (logout)
+window.MarketFit.clearUserIdentity();
+```
+
 ### Control de Estado
 
 ```javascript
@@ -281,6 +426,52 @@ function initContextualChat() {
       window.MarketFit.openChatWithWelcomeMessage(
         "¡Hola! ¿En qué puedo ayudarte hoy?"
       );
+  }
+}
+```
+
+### Integración con Autenticación
+
+```javascript
+// Función completa de login con identificación de chat
+async function loginUser(credentials) {
+  try {
+    // 1. Autenticar usuario en tu sistema
+    const user = await authenticateUser(credentials);
+    
+    // 2. Identificar usuario en el chat
+    if (window.MarketFit) {
+      await window.MarketFit.identify({
+        name: user.fullName,
+        email: user.email,
+        phone: user.phone,
+        userId: user.id,
+        subscriptionType: user.subscription,
+        company: user.company,
+        role: user.role
+      });
+      
+      console.log('Usuario identificado en chat');
+    }
+    
+    // 3. Opcional: abrir chat con bienvenida personalizada
+    window.MarketFit.openChatWithWelcomeMessage(
+      `¡Hola ${user.firstName}! ¿En qué puedo ayudarte hoy?`
+    );
+    
+  } catch (error) {
+    console.error('Error en login:', error);
+  }
+}
+
+// Función de logout con limpieza
+function logoutUser() {
+  // 1. Logout de tu sistema
+  clearUserSession();
+  
+  // 2. Limpiar identificación del chat
+  if (window.MarketFit) {
+    window.MarketFit.clearUserIdentity();
   }
 }
 ```
@@ -398,6 +589,7 @@ interface ChatState {
   messages: ChatMessage[];             // Array de mensajes
   unreadCount: number;                 // Contador de no leídos
   minimized: boolean;                  // Chat minimizado
+  user?: UserInfo;                     // Información del usuario identificado
 }
 
 interface ChatMessage {
@@ -406,6 +598,14 @@ interface ChatMessage {
   timestamp: number;                   // Timestamp del mensaje
   sender: 'user' | 'agent';           // Remitente del mensaje
   status?: 'sent' | 'delivered' | 'read'; // Estado del mensaje
+}
+
+interface UserInfo {
+  name?: string;                       // Nombre del usuario
+  email?: string;                      // Email del usuario
+  phone?: string;                      // Teléfono del usuario
+  userId?: string;                     // ID único en tu sistema
+  [key: string]: any;                  // Campos personalizados
 }
 ```
 

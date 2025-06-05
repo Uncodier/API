@@ -84,11 +84,10 @@ export async function GET(request: Request) {
       .range(offset, offset + limit - 1);
 
     // Add filters based on provided parameters
+    // Priority: lead_id > visitor_id (if lead_id exists, don't filter by visitor_id)
     if (leadId) {
       query = query.eq('lead_id', leadId);
-    }
-
-    if (visitorId) {
+    } else if (visitorId) {
       query = query.eq('visitor_id', visitorId);
     }
 

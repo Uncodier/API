@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
-import { v4 as uuidv4 } from 'uuid'
 
 /**
  * API DE IDENTIFICACIÓN DE VISITANTES
@@ -45,10 +44,153 @@ const identifySchema = z.object({
     }).optional()
   }).optional(),
   timestamp: z.number().optional(),
-}).refine((data) => data.lead_id || (data.traits && (data.traits.email || data.traits.phone)), {
-  message: "Either lead_id or traits with email/phone must be provided",
+}).refine((data) => data.lead_id || (data.traits && (data.traits.email || data.traits.phone || data.traits.name)), {
+  message: "Either lead_id or traits with email/phone/name must be provided",
   path: ["lead_id", "traits"],
 });
+
+/**
+ * Busca un lead existente por email, phone o name
+ */
+async function findExistingLead(
+  siteId: string, 
+  email?: string, 
+  phone?: string, 
+  name?: string
+): Promise<any | null> {
+  if (!email && !phone && !name) {
+    return null;
+  }
+
+  let orFilters: string[] = [];
+  
+  if (email) orFilters.push(`email.eq."${email}"`);
+  if (phone) orFilters.push(`phone.eq."${phone}"`);
+  if (name) orFilters.push(`name.eq."${name}"`);
+  
+  const { data: leads, error } = await supabaseAdmin
+    .from('leads')
+    .select('*')
+    .eq('site_id', siteId)
+    .or(orFilters.join(','))
+    .limit(1);
+
+  if (error) {
+    console.error('[findExistingLead] Error searching for lead:', error);
+    throw error;
+  }
+
+  return leads && leads.length > 0 ? leads[0] : null;
+}
+
+/**
+ * Crea un nuevo lead
+ */
+async function createNewLead(siteId: string, userIdFromSite: string, traits: any): Promise<any> {
+  const { data: newLead, error } = await supabaseAdmin
+    .from('leads')
+    .insert([{
+      site_id: siteId,
+      user_id: userIdFromSite,
+      email: traits?.email,
+      phone: traits?.phone,
+      name: traits?.name,
+      position: traits?.position,
+      status: 'contacted',
+      notes: '',
+      origin: traits?.origin || 'website',
+      birthday: traits?.birthday,
+      social_networks: traits?.social_networks || {},
+      address: traits?.address || {},
+      company: traits?.company || {},
+      subscription: traits?.subscription || {},
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    }])
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[createNewLead] Error creating lead:', error);
+    throw error;
+  }
+
+  return newLead;
+}
+
+/**
+ * Actualiza los datos de un lead existente
+ */
+async function updateLeadIfNeeded(lead: any, traits: any): Promise<any> {
+  if (!traits) {
+    return lead;
+  }
+
+  // Verificar qué campos necesitan actualización
+  const updatedFields: any = {};
+  let needsUpdate = false;
+
+  if (traits.email && traits.email !== lead.email) {
+    updatedFields.email = traits.email;
+    needsUpdate = true;
+  }
+  if (traits.phone && traits.phone !== lead.phone) {
+    updatedFields.phone = traits.phone;
+    needsUpdate = true;
+  }
+  if (traits.name && traits.name !== lead.name) {
+    updatedFields.name = traits.name;
+    needsUpdate = true;
+  }
+  if (traits.position && traits.position !== lead.position) {
+    updatedFields.position = traits.position;
+    needsUpdate = true;
+  }
+  if (traits.origin && traits.origin !== lead.origin) {
+    updatedFields.origin = traits.origin;
+    needsUpdate = true;
+  }
+  if (traits.birthday && traits.birthday !== lead.birthday) {
+    updatedFields.birthday = traits.birthday;
+    needsUpdate = true;
+  }
+  if (traits.social_networks && JSON.stringify(traits.social_networks) !== JSON.stringify(lead.social_networks)) {
+    updatedFields.social_networks = traits.social_networks;
+    needsUpdate = true;
+  }
+  if (traits.address && JSON.stringify(traits.address) !== JSON.stringify(lead.address)) {
+    updatedFields.address = traits.address;
+    needsUpdate = true;
+  }
+  if (traits.company && JSON.stringify(traits.company) !== JSON.stringify(lead.company)) {
+    updatedFields.company = traits.company;
+    needsUpdate = true;
+  }
+  if (traits.subscription && JSON.stringify(traits.subscription) !== JSON.stringify(lead.subscription)) {
+    updatedFields.subscription = traits.subscription;
+    needsUpdate = true;
+  }
+
+  if (!needsUpdate) {
+    return lead;
+  }
+
+  updatedFields.updated_at = new Date().toISOString();
+
+  const { data: updatedLead, error } = await supabaseAdmin
+    .from('leads')
+    .update(updatedFields)
+    .eq('id', lead.id)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('[updateLeadIfNeeded] Error updating lead:', error);
+    throw error;
+  }
+
+  return updatedLead;
+}
 
 // Export the POST handler
 export async function POST(request: NextRequest) {
@@ -62,7 +204,7 @@ export async function POST(request: NextRequest) {
     const validatedData = identifySchema.parse(body);
     console.log("[POST /api/visitors/identify] Validated data:", validatedData);
 
-    // Check if site exists
+    // Check if site exists and get user_id
     console.log("[POST /api/visitors/identify] Checking site existence:", validatedData.site_id);
     const { data: site, error: siteError } = await supabaseAdmin
       .from('sites')
@@ -107,38 +249,13 @@ export async function POST(request: NextRequest) {
 
     // Check if visitor exists
     console.log("[POST /api/visitors/identify] Checking visitor existence:", validatedData.id);
-    
-    // Primero, veamos la estructura de la tabla
-    const { data: tableInfo, error: tableError } = await supabaseAdmin
-      .from('visitors')
-      .select('*')
-      .limit(1);
-    
-    console.log("[POST /api/visitors/identify] Table structure:", tableInfo ? Object.keys(tableInfo[0] || {}) : 'No data');
-    
-    // Verificar si el visitante existe en la tabla
-    const { data: visitorExists, error: existsError } = await supabaseAdmin
-      .from('visitors')
-      .select('id')
-      .eq('id', validatedData.id)
-      .limit(1);
-    
-    console.log("[POST /api/visitors/identify] Visitor exists check:", { visitorExists, existsError });
-    
-    // Ahora la consulta del visitante
     const { data: visitor, error: visitorError } = await supabaseAdmin
       .from('visitors')
       .select('*')
       .eq('id', validatedData.id)
       .single();
 
-    console.log("[POST /api/visitors/identify] Visitor query details:", {
-      visitor_id: validatedData.id,
-      query_result: visitor,
-      error: visitorError,
-      error_code: visitorError?.code,
-      error_message: visitorError?.message
-    });
+    console.log("[POST /api/visitors/identify] Visitor query result:", { visitor, visitorError });
 
     if (visitorError) {
       console.log("[POST /api/visitors/identify] Visitor error:", visitorError);
@@ -189,171 +306,84 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find or create lead
-    let lead;
+    // Gestión de leads según las especificaciones
+    let lead: any = null;
+
     if (validatedData.lead_id) {
-      // If lead_id is provided, try to find the lead
+      // 1. Si viene con lead_id, buscarlo y actualizar sus datos
+      console.log("[POST /api/visitors/identify] Finding lead by ID:", validatedData.lead_id);
+      
       const { data: existingLead, error: leadError } = await supabaseAdmin
         .from('leads')
         .select('*')
         .eq('id', validatedData.lead_id)
         .single();
 
-      if (leadError && leadError.code !== 'PGRST116') { // PGRST116 is "not found"
-        console.error('Error finding lead:', leadError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'lead_error',
-              message: 'Error finding lead'
-            }
-          },
-          { status: 500 }
-        );
-      }
-
-      lead = existingLead;
-    } else if (validatedData.traits) {
-      // If no lead_id but we have traits, try to find lead by email or phone
-      console.log("[POST /api/visitors/identify] Searching for lead with traits:", validatedData.traits);
-      
-      // Construir filtros para la búsqueda de leads
-      let orFilters = [];
-      
-      if (validatedData.traits.email) {
-        orFilters.push(`email.eq."${validatedData.traits.email}"`);
-      }
-      if (validatedData.traits.phone) {
-        orFilters.push(`phone.eq."${validatedData.traits.phone}"`);
-      }
-      
-      console.log("[POST /api/visitors/identify] Lead search query filters:", {
-        site_id: validatedData.site_id,
-        orFilters,
-        email: validatedData.traits?.email,
-        phone: validatedData.traits?.phone
-      });
-      
-      // Ejecutar la consulta
-      let leadQuery = supabaseAdmin
-        .from('leads')
-        .select('*')
-        .eq('site_id', validatedData.site_id);
-      
-      if (orFilters.length > 0) {
-        leadQuery = leadQuery.or(orFilters.join(','));
-      }
-      
-      const { data: existingLeads, error: searchError } = await leadQuery.limit(1);
-
-      console.log("[POST /api/visitors/identify] Lead search result:", { existingLeads, searchError });
-
-      if (searchError && searchError.code !== 'PGRST116') {
-        console.error('[POST /api/visitors/identify] Error searching for lead:', searchError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'lead_search_error',
-              message: 'Error searching for lead',
-              details: searchError
-            }
-          },
-          { status: 500 }
-        );
-      }
-
-      if (existingLeads && existingLeads.length > 0) {
-        lead = existingLeads[0];
-      } else {
-        // Create new lead if none found
-        const { data: newLead, error: createLeadError } = await supabaseAdmin
-          .from('leads')
-          .insert([{
-            site_id: validatedData.site_id,
-            user_id: site.user_id,
-            email: validatedData.traits?.email,
-            phone: validatedData.traits?.phone,
-            name: validatedData.traits?.name,
-            position: validatedData.traits?.position,
-            status: 'contacted', // Valor por defecto
-            notes: '',
-            origin: validatedData.traits?.origin || 'website',
-            birthday: validatedData.traits?.birthday,
-            social_networks: validatedData.traits?.social_networks || {},
-            address: validatedData.traits?.address || {},
-            company: validatedData.traits?.company || {},
-            subscription: validatedData.traits?.subscription || {},
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          }])
-          .select()
-          .single();
-
-        if (createLeadError) {
-          console.error('Error creating lead:', createLeadError);
+      if (leadError) {
+        if (leadError.code === 'PGRST116') {
           return NextResponse.json(
             {
               success: false,
               error: {
-                code: 'lead_creation_error',
-                message: 'Error creating lead',
-                details: createLeadError
+                code: 'lead_not_found',
+                message: `Lead with ID ${validatedData.lead_id} not found.`,
+                details: {
+                  lead_id: validatedData.lead_id
+                }
               }
             },
-            { status: 500 }
+            { status: 400 }
           );
         }
+        throw leadError;
+      }
 
-        lead = newLead;
+      // Actualizar el lead si es necesario
+      lead = await updateLeadIfNeeded(existingLead, validatedData.traits);
+      console.log("[POST /api/visitors/identify] Lead found and updated:", lead.id);
+
+    } else {
+      // 2. Si no viene con lead_id, buscarlo por cualquiera de los parámetros
+      console.log("[POST /api/visitors/identify] Searching for existing lead with traits:", validatedData.traits);
+      
+      lead = await findExistingLead(
+        validatedData.site_id,
+        validatedData.traits?.email,
+        validatedData.traits?.phone,
+        validatedData.traits?.name
+      );
+
+      if (lead) {
+        // Lead encontrado, actualizar si es necesario
+        lead = await updateLeadIfNeeded(lead, validatedData.traits);
+        console.log("[POST /api/visitors/identify] Existing lead found and updated:", lead.id);
+      } else {
+        // Lead no encontrado, crear uno nuevo
+        console.log("[POST /api/visitors/identify] Creating new lead");
+        lead = await createNewLead(validatedData.site_id, site.user_id, validatedData.traits);
+        console.log("[POST /api/visitors/identify] New lead created:", lead.id);
       }
     }
 
-    // Always update lead traits if provided, regardless of how we found the lead
-    if (lead && validatedData.traits) {
-      const { data: updatedLead, error: updateLeadError } = await supabaseAdmin
-        .from('leads')
-        .update({
-          email: validatedData.traits.email || lead.email,
-          phone: validatedData.traits.phone || lead.phone,
-          name: validatedData.traits.name || lead.name,
-          position: validatedData.traits.position || lead.position,
-          origin: validatedData.traits.origin || lead.origin,
-          birthday: validatedData.traits.birthday || lead.birthday,
-          social_networks: validatedData.traits.social_networks || lead.social_networks || {},
-          address: validatedData.traits.address || lead.address || {},
-          company: validatedData.traits.company || lead.company || {},
-          subscription: validatedData.traits.subscription || lead.subscription || {},
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', lead.id)
-        .select()
-        .single();
-
-      if (updateLeadError) {
-        console.error('Error updating lead:', updateLeadError);
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'lead_update_error',
-              message: 'Error updating lead',
-              details: updateLeadError
-            }
-          },
-          { status: 500 }
-        );
-      }
-
-      lead = updatedLead;
+    // 3. Traer el lead_id para terminar el proceso
+    if (!lead || !lead.id) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'lead_processing_error',
+            message: 'Failed to process lead information'
+          }
+        },
+        { status: 500 }
+      );
     }
 
     // Update visitor with lead information
     const { data: updatedVisitor, error: updateError } = await supabaseAdmin
       .from('visitors')
       .update({
-        lead_id: lead?.id,
+        lead_id: lead.id,
         segment_id: validatedData.segment_id,
         is_identified: true,
         updated_at: new Date().toISOString()
@@ -369,7 +399,8 @@ export async function POST(request: NextRequest) {
           success: false,
           error: {
             code: 'visitor_update_error',
-            message: 'Error updating visitor'
+            message: 'Error updating visitor',
+            details: updateError
           }
         },
         { status: 500 }
@@ -380,7 +411,7 @@ export async function POST(request: NextRequest) {
     const { data: relatedVisitors, error: relatedError } = await supabaseAdmin
       .from('visitors')
       .select('id')
-      .eq('lead_id', lead?.id)
+      .eq('lead_id', lead.id)
       .neq('id', validatedData.id);
 
     if (relatedError) {
@@ -401,10 +432,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       id: updatedVisitor.id,
-      lead_id: lead?.id,
+      lead_id: lead.id,
       segment_id: updatedVisitor.segment_id,
       merged: relatedVisitors.length > 0,
-      merged_ids: relatedVisitors.map(v => v.id)
+      merged_ids: relatedVisitors.map((v: any) => v.id)
     });
 
   } catch (error) {
@@ -429,7 +460,8 @@ export async function POST(request: NextRequest) {
         success: false,
         error: {
           code: 'internal_error',
-          message: 'Internal server error'
+          message: 'Internal server error',
+          details: error instanceof Error ? error.message : 'Unknown error'
         }
       },
       { status: 500 }

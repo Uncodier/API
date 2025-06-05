@@ -23,11 +23,13 @@ const IdentifyLeadSchema = z.object({
   phone: z.string().optional(),
   create_task: z.boolean().optional().default(false)
 }).refine(data => {
-  // Debe proporcionarse lead_id O al menos el nombre
-  return !!data.lead_id || !!data.name;
+  // Función helper para verificar si un campo tiene valor (no vacío)
+  const hasValue = (field: string | undefined) => field && field.trim().length > 0;
+  
+  // Debe proporcionarse lead_id O al menos uno de: nombre, email, teléfono (no vacíos)
+  return hasValue(data.lead_id) || hasValue(data.name) || hasValue(data.email) || hasValue(data.phone);
 }, {
-  message: "Debe proporcionar lead_id o al menos el nombre del lead",
-  path: ["lead_id", "name"]
+  message: "Debe proporcionar lead_id o al menos uno de: nombre, email o teléfono del lead"
 });
 
 // Función auxiliar para generar respuesta de error
