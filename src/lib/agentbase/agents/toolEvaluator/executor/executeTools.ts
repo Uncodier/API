@@ -8,7 +8,7 @@ import { FunctionCall, ToolExecutionResult } from '../types';
 import { ToolsMap } from './toolsMap';
 import { hasCustomTool, getCustomToolDefinition } from './customToolsMap';
 import { OpenAIToolSet } from "composio-core";
-import { WorkflowService } from '@/lib/services/workflow-service';
+import { WorkflowService } from '../../../../services/workflow-service';
 
 // Interfaz para el input del workflow
 interface ExecuteToolWorkflowInput {
@@ -143,22 +143,51 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
       workflowOptions
     );
     
-    if (result.success && result.status === 'completed') {
+    console.log(`[ToolExecutor] Resultado completo del workflow para ${toolName}:`, JSON.stringify(result, null, 2));
+    
+    // Verificar si el workflow fue exitoso
+    if (result.success) {
       console.log(`[ToolExecutor] Workflow ejecutado exitosamente para ${toolName}`);
       
-      // El resultado del workflow debería contener los datos en una estructura específica
-      // Necesitamos extraer los datos reales del resultado del workflow
-      const workflowResult = result as any; // Cast temporal para acceder a los datos
-      
-      if (workflowResult.data) {
-        return workflowResult.data;
+      // Extraer los datos del resultado del workflow
+      // El resultado puede tener diferentes estructuras dependiendo del tipo de respuesta
+      if (result.data) {
+        console.log(`[ToolExecutor] Datos extraídos del workflow para ${toolName}:`, JSON.stringify(result.data, null, 2));
+        return result.data;
       } else {
-        // Si no hay datos específicos, retornar el resultado completo
-        return result;
+        // Si no hay datos específicos, retornar indicador de éxito
+        console.log(`[ToolExecutor] Workflow exitoso pero sin datos específicos para ${toolName}`);
+        return { success: true, message: `Tool ${toolName} executed successfully` };
       }
     } else {
-      const errorMessage = result.error?.message || `Workflow failed for ${toolName}`;
-      console.error(`[ToolExecutor] Error en workflow para ${toolName}:`, errorMessage);
+      // El workflow falló - extraer información de error
+      let errorMessage = `Workflow failed for ${toolName}`;
+      
+      // Intentar extraer detalles del error dependiendo de la estructura
+      if (result.error) {
+        if (typeof result.error === 'string') {
+          errorMessage = result.error;
+        } else if (result.error.message) {
+          errorMessage = result.error.message;
+        } else {
+          errorMessage = JSON.stringify(result.error);
+        }
+      } else if (result.failure) {
+        // Manejar estructura de falla de Temporal
+        if (result.failure.message) {
+          errorMessage = result.failure.message;
+        }
+        
+        // Si hay información de causa, extraerla también
+        if (result.failure.cause && result.failure.cause.message) {
+          errorMessage = result.failure.cause.message;
+        }
+      } else if (result.type && result.type.includes('Failed')) {
+        // Manejar otros tipos de fallas
+        errorMessage = `Workflow execution failed: ${result.type}`;
+      }
+      
+      console.error(`[ToolExecutor] Error detallado en workflow para ${toolName}:`, errorMessage);
       throw new Error(errorMessage);
     }
     

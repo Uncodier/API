@@ -1204,7 +1204,7 @@ export async function POST(request: Request) {
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
     
     // Retrieve conversation history if a conversation ID is provided
-    let contextMessage = `Current message: ${message}`;
+    let contextMessage = `${message}`;
     
     // Agregar información del request al contexto
     contextMessage += `\n\nRequest Information:`;
@@ -1236,11 +1236,23 @@ export async function POST(request: Request) {
           } else if (typeof leadInfo.company === 'object' && leadInfo.company.name) {
             companyDisplay = leadInfo.company.name;
           } else if (typeof leadInfo.company === 'object') {
-            // Si es un objeto sin campo name, intentar otros campos comunes
-            companyDisplay = leadInfo.company.company_name || 
-                           leadInfo.company.businessName || 
-                           leadInfo.company.title || 
-                           JSON.stringify(leadInfo.company);
+            // Verificar si el objeto está vacío
+            const objectKeys = Object.keys(leadInfo.company);
+            if (objectKeys.length === 0) {
+              companyDisplay = 'N/A';
+            } else {
+              // Si es un objeto sin campo name, intentar otros campos comunes
+              companyDisplay = leadInfo.company.company_name || 
+                             leadInfo.company.businessName || 
+                             leadInfo.company.title || 
+                             leadInfo.company.organization || 
+                             leadInfo.company.business_name;
+              
+              // Si no se encontró ningún campo válido, usar N/A
+              if (!companyDisplay) {
+                companyDisplay = 'N/A';
+              }
+            }
           }
         }
         contextMessage += `\nCompany: ${companyDisplay}`;
@@ -1496,7 +1508,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format) with timezone'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format with timezone) example: 2025-03-24 20:21:51.906+00',
                 },
                 notes: {
                   type: 'string',
@@ -1535,7 +1547,7 @@ export async function POST(request: Request) {
                   additionalProperties: true
                 }
               },
-              required: ['title', 'type', 'lead_id', "scheduled_date"],
+              required: ['title', 'type', 'lead_id', "scheduled_date", "stage", "description"],
               additionalProperties: false
             },
             strict: true
@@ -1584,7 +1596,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'New scheduled date for the task (ISO 8601 format) with timezone'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format with timezone) example: 2025-03-24 20:21:51.906+00',
                 },
                 amount: {
                   type: 'number',

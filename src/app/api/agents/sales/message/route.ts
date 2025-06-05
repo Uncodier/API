@@ -622,7 +622,7 @@ export async function POST(request: Request) {
     console.log(`Creando comando para agente: ${effectiveAgentId}, usuario: ${effectiveUserId}, site: ${effectiveSiteId || 'N/A'}`);
     
     // Retrieve conversation history if a conversation ID is provided
-    let contextMessage = `Current message: ${message}`;
+    let contextMessage = `${message}`;
     
     if (conversationId && isValidUUID(conversationId)) {
       console.log(`🔄 Recuperando historial para la conversación: ${conversationId}`);
@@ -831,7 +831,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format) with timezone'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format with timezone) example: 2025-03-24 20:21:51.906+00',
                 },
                 notes: {
                   type: 'string',
@@ -870,7 +870,7 @@ export async function POST(request: Request) {
                   additionalProperties: true
                 }
               },
-              required: ['title', 'type', 'lead_id', "scheduled_date"],
+              required: ['title', 'type', 'lead_id', "scheduled_date", "stage", "description"],
               additionalProperties: false
             },
             strict: true
@@ -919,7 +919,7 @@ export async function POST(request: Request) {
                 scheduled_date: {
                   type: 'string',
                   format: 'date-time',
-                  description: 'New scheduled date for the task (ISO 8601 format) with timezone'
+                  description: 'When the task should be scheduled (or the same day if not specified) (ISO 8601 format with timezone) example: 2025-03-24 20:21:51.906+00',
                 },
                 amount: {
                   type: 'number',

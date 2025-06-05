@@ -30,6 +30,17 @@ interface WorkflowExecutionResponse {
     code: string;
     message: string;
   };
+  // Additional properties for completed workflows
+  data?: any;
+  failure?: {
+    message?: string;
+    cause?: {
+      message?: string;
+      source?: string;
+      stackTrace?: string;
+    };
+  };
+  type?: string;
 }
 
 // Interfaz para los datos de análisis
@@ -323,9 +334,11 @@ export class WorkflowService {
       
       const workflowId = options?.workflowId || `${workflowType}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+      const isAsync = options?.async !== false; // Por defecto es asíncrono, pero puede ser síncrono
 
       console.log(`🔄 Ejecutando workflow ${workflowType}: ${workflowId}`);
       console.log(`🔧 Using task queue: ${taskQueue}`);
+      console.log(`⏱️ Modo: ${isAsync ? 'Asíncrono' : 'Síncrono (esperando resultado)'}`);
 
       const handle = await client.workflow.start(workflowType, {
         args: [args],
@@ -335,13 +348,68 @@ export class WorkflowService {
 
       console.log(`✅ Workflow ${workflowType} iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
 
-      return {
-        success: true,
-        executionId: handle.firstExecutionRunId,
-        workflowId: handle.workflowId,
-        runId: handle.firstExecutionRunId,
-        status: 'running'
-      };
+      // Si es asíncrono, retornar inmediatamente
+      if (isAsync) {
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      }
+
+      // Si es síncrono, esperar el resultado del workflow
+      try {
+        console.log(`⏳ Esperando resultado del workflow ${workflowType}...`);
+        const result = await handle.result();
+        
+        console.log(`✅ Workflow ${workflowType} completado exitosamente`);
+        
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'completed',
+          data: result
+        };
+        
+      } catch (workflowError: any) {
+        console.error(`❌ Workflow ${workflowType} falló:`, workflowError);
+        
+        // Extraer información detallada del error de Temporal
+        let errorResponse: WorkflowExecutionResponse = {
+          success: false,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'failed',
+          error: {
+            code: 'WORKFLOW_EXECUTION_FAILED',
+            message: workflowError.message || 'Workflow execution failed'
+          }
+        };
+
+        // Si hay información adicional de falla de Temporal, incluirla
+        if (workflowError.cause) {
+          errorResponse.failure = {
+            message: workflowError.message,
+            cause: {
+              message: workflowError.cause.message,
+              source: workflowError.cause.source,
+              stackTrace: workflowError.cause.stackTrace
+            }
+          };
+        }
+
+        // Si hay información de tipo de falla
+        if (workflowError.type) {
+          errorResponse.type = workflowError.type;
+        }
+
+        return errorResponse;
+      }
 
     } catch (error) {
       console.error(`❌ Error al ejecutar workflow ${workflowType}:`, error);

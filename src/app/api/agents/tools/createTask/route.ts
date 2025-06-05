@@ -10,8 +10,20 @@ function transformToISO8601(dateInput: any): string | null {
   if (!dateInput) return null;
   
   try {
-    // Si ya es un string que parece ISO 8601, validarlo
-    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+    // Si ya es un string que parece ISO 8601 con timezone, preservarlo tal como está
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput; // Retornar el original si es válido
+    }
+    
+    // Si es ISO 8601 con 'Z' al final, también preservarlo
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput;
+    }
+    
+    // Si es ISO 8601 sin timezone, convertir a UTC
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)) {
       const date = new Date(dateInput);
       return isNaN(date.getTime()) ? null : date.toISOString();
     }
@@ -351,15 +363,23 @@ export async function GET() {
     task_types: "String libre (cualquier tipo personalizado permitido, ej: 'call', 'email', 'demo', 'custom_type')",
     priority_levels: "Número entero (0 = más baja, números más altos = mayor prioridad)",
     date_formats: {
-      description: "La API acepta múltiples formatos de fecha y los convierte automáticamente a ISO 8601",
+      description: "La API acepta múltiples formatos de fecha y los convierte automáticamente a ISO 8601. Las fechas con timezone se preservan tal como vienen.",
       supported_formats: [
-        "ISO 8601: '2023-12-15T14:00:00Z'",
+        "ISO 8601 con timezone: '2023-12-15T14:00:00-06:00' (se preserva tal como está)",
+        "ISO 8601 UTC: '2023-12-15T14:00:00Z' (se preserva tal como está)",
+        "ISO 8601 sin timezone: '2023-12-15T14:00:00' (se convierte a UTC)",
         "DD/MM/YYYY: '15/12/2023' o '15/12/2023 14:00'",
         "MM/DD/YYYY: '12/15/2023' o '12/15/2023 14:00'",
         "YYYY-MM-DD: '2023-12-15' o '2023-12-15 14:00'",
         "Timestamp Unix: 1702644000 (segundos) o 1702644000000 (milisegundos)",
         "Formatos nativos de JavaScript: 'Dec 15, 2023', 'December 15, 2023'"
       ],
+      timezone_handling: {
+        "with_timezone": "Las fechas con información de timezone (ej: -06:00, +02:00) se preservan exactamente como se envían",
+        "utc_dates": "Las fechas UTC (con Z) se preservan tal como están",
+        "local_dates": "Las fechas sin timezone se interpretan como UTC",
+        "other_formats": "Otros formatos se convierten a UTC"
+      },
       note: "Si no se puede parsear la fecha, se omitirá del registro para evitar errores"
     },
     automatic_fields: {
