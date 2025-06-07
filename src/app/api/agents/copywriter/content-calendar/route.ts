@@ -55,6 +55,7 @@ async function findContentCreatorAgent(siteId: string): Promise<{agentId: string
 async function saveContentItemsToDatabase(
   contentItems: any[],
   siteId: string,
+  commandId?: string,
   segmentId?: string,
   campaignId?: string,
   userId?: string
@@ -94,6 +95,7 @@ async function saveContentItemsToDatabase(
         site_id: siteId,
         segment_id: segmentId || null,
         campaign_id: campaignId || null,
+        command_id: commandId || null, // Add command_id to track the command that generated this content
         user_id: userId || 'system',
         estimated_reading_time: item.estimated_reading_time ? parseInt(item.estimated_reading_time, 10) : null,
         metadata: {
@@ -633,7 +635,11 @@ ${context}`;
       ...(siteId ? { site_id: siteId } : {}),
       description: 'Generate a comprehensive content calendar with strategic content ideas aligned with marketing goals, focused on the target audience, and optimized for the specified keywords and timeframe.',
       // Set the target for content generation
-      targets: [{
+      targets: [
+        {
+          deep_thinking: "Write a deep thinking reasoning about the content to be created",
+        },
+        {
         content: [{
           type: "Type of content from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page. Choose the most appropriate type for each content piece.",
           text: "Rich detailed copy with proper formatting and line breaks for readability",
@@ -731,6 +737,7 @@ ${context}`;
           savedContentItems = await saveContentItemsToDatabase(
             contentResults, 
             siteId, 
+            internalCommandId, // Use internal command ID as fallback since we don't have a valid DB UUID
             segmentId, 
             campaignId, 
             effectiveUserId
@@ -816,6 +823,7 @@ ${context}`;
         savedContentItems = await saveContentItemsToDatabase(
           contentResults, 
           siteId, 
+          effectiveDbUuid, // Use the effective database UUID
           segmentId, 
           campaignId, 
           effectiveUserId

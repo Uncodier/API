@@ -774,19 +774,24 @@ ${context}`;
       site_id: siteId,
       description: `Bulk improve and optimize ${draftContent.length} draft content items for site ${siteId} to enhance effectiveness, readability, and business impact while maintaining brand voice and optimizing for target keywords.`,
       // Set targets for all content items to be updated
-      targets: draftContent.map(content => ({
-        content_id: content.id,
-        action: 'update',
-        content: [{
-          improvements_applied: ["List of specific improvements made"],
-          text: "Improved markdown content with enhanced readability, SEO optimization, and engagement factors",
-          title: "Enhanced and optimized title",
-          description: "Improved and compelling description",
-          original_score: "Content quality score before improvement",
-          improvement_notes: "Summary of key improvements and optimizations applied",
-          improved_score: "Content quality score after improvement"
-        }]
-      })),
+      targets: [
+        {
+          deep_thinking: "Write a deep thinking reasoning about the content to be improved"
+        },
+        ...draftContent.map(content => ({
+          content_id: content.id,
+          action: 'update',
+          content: [{
+            improvements_applied: ["List of specific improvements made"],
+            text: "Improved markdown content with enhanced readability, SEO optimization, and engagement factors",
+            title: "Enhanced and optimized title",
+            description: "Improved and compelling description",
+            original_score: "Content quality score before improvement",
+            improvement_notes: "Summary of key improvements and optimizations applied",
+            improved_score: "Content quality score after improvement"
+          }]
+        }))
+      ],
       context: fullContext,
       supervisor: [
         {

@@ -472,6 +472,9 @@ Original content to edit:
       description: 'Edit the content according to the specified quick action and style controls, while considering the user preferences.',
       targets: [
         {
+          deep_thinking: "Write a deep thinking reasoning about the content to be edited",
+        },
+        {
           content: {
             title: "Improved title for the content",
             description: "Summary of the content",

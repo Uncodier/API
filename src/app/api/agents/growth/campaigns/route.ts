@@ -525,6 +525,7 @@ Your campaigns should be strategic, measurable, and aligned with business growth
       // Set the target as campaigns structure
       targets: [
         {
+          deep_thinking: "Write a deep thinking reasoning about the content to be created",
           campaigns: [
             {
               title: "Campaign title",
