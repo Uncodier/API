@@ -51,6 +51,47 @@ async function findContentCreatorAgent(siteId: string): Promise<{agentId: string
   }
 }
 
+// Function to find growth marketer agent for a site
+async function findGrowthMarketerAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  try {
+    if (!siteId || !isValidUUID(siteId)) {
+      console.error(`❌ Invalid site_id for growth marketer agent search: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Buscando agente con rol "Growth Marketer" para el sitio: ${siteId}`);
+    
+    // Buscar un agente activo con el rol adecuado
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id')
+      .eq('site_id', siteId)
+      .eq('status', 'active')
+      .eq('role', 'Growth Marketer')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.error('Error al buscar agente con rol "Growth Marketer":', error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró ningún agente con rol "Growth Marketer" activo para el sitio: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`✅ Agente con rol "Growth Marketer" encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    return {
+      agentId: data[0].id,
+      userId: data[0].user_id
+    };
+  } catch (error) {
+    console.error('Error al buscar agente de tipo Growth Marketer:', error);
+    return null;
+  }
+}
+
 // Function to save content items to the database
 async function saveContentItemsToDatabase(
   contentItems: any[],
@@ -437,6 +478,121 @@ ${campaignInfo.content_requirements ? `- Content Requirements: ${campaignInfo.co
   return contextParts.join('\n\n');
 }
 
+// Function to execute growth marketer planning command
+async function executeGrowthMarketerPlanning(
+  siteId: string,
+  agentId: string,
+  userId: string,
+  context: string,
+  additionalContext: string[]
+): Promise<any[] | null> {
+  try {
+    console.log(`📊 Ejecutando comando de planificación con Growth Marketer: ${agentId}`);
+    
+    // Build context for growth marketer
+    const growthMarketerPrompt = `Create a strategic content calendar plan focused on business growth and marketing objectives.
+
+ROLE: Growth Marketer - Focus on strategy, audience targeting, and business impact
+OBJECTIVE: Develop a comprehensive content planning strategy that maximizes ROI and supports business goals
+
+PLANNING REQUIREMENTS:
+- Analyze target audience segments and create content that drives engagement
+- Identify content types that will perform best for each business objective
+- Plan content distribution and timing for maximum impact
+- Consider content funnel strategy (awareness, consideration, decision)
+- Include performance metrics and KPIs for each content piece
+- Plan content themes and campaigns that build on each other
+- Consider seasonal opportunities and trending topics
+- Balance evergreen vs. timely content for sustainable growth
+- Be geneours with tiktok and reels content, is the easiest way to get engagement and traffic
+
+CONTENT STRATEGY ELEMENTS TO DEFINE:
+1. Content themes and topic clusters
+2. Optimal content mix and formats
+3. Publishing frequency and timing
+4. Target audience segments for each content piece
+5. Business objectives each piece should achieve
+6. Content distribution channels and promotion strategy
+7. Success metrics and KPIs
+8. Content dependencies and campaign sequences
+
+OUTPUT FORMAT:
+Provide a strategic content plan with the following structure for each content piece:
+- Strategic rationale and business goal
+- Content topic and angle
+- Recommended content type/format
+- Target audience segment
+- Key messages and themes
+- Optimal publishing timing
+- Distribution channels
+- Success metrics
+- Keywords and SEO considerations
+
+${context}
+
+${additionalContext.length > 0 ? `\nAdditional Parameters:\n${additionalContext.join('\n')}` : ''}`;
+
+    // Create command for growth marketer
+    const planningCommand = CommandFactory.createCommand({
+      task: 'create strategic content calendar plan',
+      userId: userId,
+      agentId: agentId,
+      site_id: siteId,
+      description: 'Generate strategic content planning and marketing strategy for content calendar',
+      targets: [
+        {
+          deep_thinking: "Analyze the business context and create a strategic reasoning for the content planning approach",
+        },
+        {
+          content_plan: [{
+            strategic_rationale: "Business goal and strategic reasoning for this content piece",
+            content_topic: "Main topic and content angle",
+            content_type: "Recommended content type/format",
+            target_audience: "Primary target audience segment",
+            key_messages: "Core messages and themes to communicate",
+            publishing_timing: "Optimal timing and scheduling recommendations",
+            distribution_channels: "Recommended channels for distribution",
+            success_metrics: "KPIs and metrics to track",
+            seo_keywords: "Primary and secondary keywords for SEO",
+            instructions: "Instructions for the team on how to publish or deliver that content to the target audience"
+          }]
+        }
+      ],
+      context: growthMarketerPrompt
+    });
+
+    // Execute planning command
+    const planningCommandId = await commandService.submitCommand(planningCommand);
+    console.log(`📈 Growth Marketer planning command created: ${planningCommandId}`);
+
+    // Wait for planning completion
+    const { command: planningResult, completed: planningCompleted } = await waitForCommandCompletion(planningCommandId);
+
+    if (!planningCompleted || !planningResult) {
+      console.error('❌ Growth Marketer planning command failed or timed out');
+      return null;
+    }
+
+    // Extract planning results
+    let planningData = [];
+    if (planningResult.results && Array.isArray(planningResult.results)) {
+      for (const result of planningResult.results) {
+        if (result.content_plan && Array.isArray(result.content_plan)) {
+          planningData = result.content_plan;
+          break;
+        }
+      }
+    }
+
+    console.log(`✅ Growth Marketer planning completed with ${planningData.length} strategic recommendations`);
+    return planningData;
+
+  } catch (error) {
+    console.error('❌ Error executing Growth Marketer planning:', error);
+    return null;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -470,32 +626,31 @@ export async function POST(request: Request) {
       );
     }
     
-    // Determine the user ID from the request or agent
-    let effectiveUserId = userId;
-    let effectiveAgentId = agent_id;
+    // STEP 1: Find Growth Marketer agent and execute planning command
+    const growthMarketerAgent = await findGrowthMarketerAgent(siteId);
     
-    // Si no se proporciona agent_id, buscar uno para el sitio
-    if (!effectiveAgentId) {
-      const foundAgent = await findContentCreatorAgent(siteId);
-      if (foundAgent) {
-        effectiveAgentId = foundAgent.agentId;
-        if (!effectiveUserId) {
-          effectiveUserId = foundAgent.userId;
-        }
-        console.log(`🤖 Usando agente con rol "Content Creator & Copywriter" encontrado: ${effectiveAgentId} (user_id: ${effectiveUserId})`);
-      } else {
-        // Use default agent if no specific agent found
-        effectiveAgentId = 'default_copywriter_agent';
-        console.log(`🤖 No se encontró agente específico, usando agente por defecto: ${effectiveAgentId}`);
-      }
+    if (!growthMarketerAgent) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'GROWTH_MARKETER_NOT_FOUND', 
+            message: 'No se encontró un agente con rol "Growth Marketer" para este sitio' 
+          } 
+        },
+        { status: 404 }
+      );
     }
+    
+    console.log(`🎯 Growth Marketer encontrado: ${growthMarketerAgent.agentId}`);
+    
+    // Determine the user ID from the request or agent
+    let effectiveUserId = userId || growthMarketerAgent.userId;
     
     // Set fallback userId if still not defined
     if (!effectiveUserId) {
       effectiveUserId = 'system';
     }
-    
-    console.log(`Creating command for agent: ${effectiveAgentId}, site: ${siteId}`);
     
     // Build context with site, segment, and campaign information
     const context = await buildContext(siteId, segmentId, campaignId);
@@ -542,17 +697,88 @@ export async function POST(request: Request) {
       
       additionalContext.push(groupedKeywords.join('\n'));
     }
-    
-    // Build the base context template
-    const baseContextTemplate = `Generate a strategic content calendar optimized for maximum business impact.
 
-OBJECTIVES:
-- Create comprehensive, data-driven content ideas aligned with business goals
-- Develop a balanced mix of content types and formats to engage different audience segments
-- Include detailed information for each content piece (title, description, keywords, estimated reading time, type)
-- Ensure all content aligns with marketing strategy, SEO goals, and brand voice
-- Optimize publishing schedule for maximum audience engagement
-- Provide strategic rationale for topic selection and content types
+    // STEP 2: Execute Growth Marketer planning command
+    console.log(`📊 INICIANDO PASO 1: Ejecutando planificación estratégica con Growth Marketer...`);
+    console.log(`⚠️ IMPORTANTE: NO se enviará respuesta al cliente hasta completar AMBOS comandos + guardado`);
+    
+    const growthPlanningResults = await executeGrowthMarketerPlanning(
+      siteId,
+      growthMarketerAgent.agentId,
+      effectiveUserId,
+      context,
+      additionalContext
+    );
+
+    if (!growthPlanningResults || growthPlanningResults.length === 0) {
+      console.log(`❌ FALLO EN PASO 1: Growth Marketer planning falló - enviando error response`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'GROWTH_PLANNING_FAILED', 
+            message: 'No se pudo obtener la planificación estratégica del Growth Marketer' 
+          } 
+        },
+        { status: 500 }
+      );
+    }
+
+    console.log(`✅ PASO 1 COMPLETADO: Planificación estratégica completada con ${growthPlanningResults.length} recomendaciones`);
+    console.log(`🔄 CONTINUANDO PASO 2: Iniciando creación de contenido con Copywriter...`);
+
+    // STEP 3: Find Content Creator & Copywriter agent
+    let effectiveAgentId = agent_id;
+    
+    // Si no se proporciona agent_id, buscar uno para el sitio
+    if (!effectiveAgentId) {
+      const foundAgent = await findContentCreatorAgent(siteId);
+      if (foundAgent) {
+        effectiveAgentId = foundAgent.agentId;
+        console.log(`🤖 Usando agente con rol "Content Creator & Copywriter" encontrado: ${effectiveAgentId}`);
+      } else {
+        // Use default agent if no specific agent found
+        effectiveAgentId = 'default_copywriter_agent';
+        console.log(`🤖 No se encontró agente específico, usando agente por defecto: ${effectiveAgentId}`);
+      }
+    }
+
+    console.log(`Creating content generation command for agent: ${effectiveAgentId}, site: ${siteId}`);
+    
+    // Build Growth Marketer planning context
+    const growthPlanningContext = `
+GROWTH MARKETER STRATEGIC PLANNING RESULTS:
+The following strategic content plan has been developed by our Growth Marketer. Use this as the foundation for creating the actual content pieces:
+
+${growthPlanningResults.map((plan, index) => `
+CONTENT PIECE ${index + 1}:
+- Strategic Rationale: ${plan.strategic_rationale || 'N/A'}
+- Content Topic: ${plan.content_topic || 'N/A'}
+- Recommended Type: ${plan.content_type || 'N/A'}
+- Target Audience: ${plan.target_audience || 'N/A'}
+- Key Messages: ${plan.key_messages || 'N/A'}
+- Publishing Timing: ${plan.publishing_timing || 'N/A'}
+- Distribution Channels: ${plan.distribution_channels || 'N/A'}
+- Success Metrics: ${plan.success_metrics || 'N/A'}
+- SEO Keywords: ${plan.seo_keywords || 'N/A'}
+`).join('\n')}
+
+IMPORTANT: Follow the Growth Marketer's strategic recommendations above as the foundation for your content creation.
+`;
+
+    // Build the base context template
+    const baseContextTemplate = `Generate a strategic content calendar optimized for maximum business impact based on the Growth Marketer's strategic planning.
+
+ROLE: Content Creator & Copywriter - Focus on creating compelling, high-quality content based on strategic direction
+OBJECTIVE: Create detailed, ready-to-publish content pieces that align with the Growth Marketer's strategic plan
+
+CONTENT CREATION REQUIREMENTS:
+- Follow the strategic guidance provided by the Growth Marketer
+- Create compelling, high-quality content that resonates with the target audience
+- Ensure each content piece aligns with the specified business goals and messaging
+- Develop content that supports the recommended distribution channels
+- Include proper SEO optimization based on the strategic keyword recommendations
+- Create content that can be measured against the specified success metrics
 
 CONTENT TYPE OPTIONS (AUTHORIZED VALUES ONLY):
 Choose from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page
@@ -572,34 +798,17 @@ TYPE DESCRIPTIONS:
 - landing_page: Landing Page (only if required by the business goals)
 
 CONTENT STRUCTURE GUIDELINES:
-1. Create at least 8-12 distinct content pieces organized chronologically
+1. Create content pieces based on the Growth Marketer's strategic recommendations
 2. For each content item include:
    - Clear, compelling title (50-60 characters)
    - Concise but descriptive summary (100-150 characters)
-   - Content type/format (choose from the authorized options above based on strategy and goals)
-   - Primary topic and 3-5 related keywords
+   - Content type/format (follow Growth Marketer's recommendations when possible)
+   - Primary topic and 3-5 related keywords (use strategic keywords provided)
    - Estimated reading/viewing time in seconds
-   - Optimal publishing date or timeframe
-   - Specific target audience segment
-   - Business goal this content supports
+   - Optimal publishing date or timeframe (follow timing recommendations)
+   - Specific target audience segment (use Growth Marketer's targeting)
+   - Business goal this content supports (align with strategic rationale)
    - Brief strategic notes on execution
-
-STRATEGIC CONSIDERATIONS:
-- Consider the business goals and the target audience to create the content
-- Consider the budget, team size, and resources available to create the content
-- Distribute content types across marketing funnel (awareness, consideration, decision)
-- Include a mix of evergreen and timely/seasonal content
-- Create topic clusters around primary keywords for improved SEO impact
-- Balance content frequency based on available resources and audience engagement patterns
-- Consider repurposing opportunities (e.g., blog post → infographic → social media series)
-- Plan content that aligns with specific conversion goals and sales cycles
-
-CALENDAR FORMAT:
-- If not specified, make a week of content at least
-- Organize content chronologically by week/month
-- Group related content to create thematic campaigns where appropriate
-- Include content distribution channels for each piece
-- Note any dependencies between content items
 
 CONTENT OUTPUT FORMAT:
 Split your response into TWO SEPARATE FIELDS:
@@ -617,8 +826,12 @@ Split your response into TWO SEPARATE FIELDS:
    - Repurposing opportunities and dependencies
    - Execution details and tactical notes for marketers
    - Publishing schedule and strategic rationale
+   - Alignment with Growth Marketer's strategic plan
 
 CRITICAL: Keep these completely separate. The "text" should be clean copy without any meta-information.
+
+${growthPlanningContext}
+
 ${context}`;
 
     // Add additional parameters if they exist
@@ -628,7 +841,7 @@ ${context}`;
     
     // Create the command using CommandFactory
     const command = CommandFactory.createCommand({
-      task: 'create content calendar',
+      task: 'create content copywriting',
       userId: effectiveUserId,
       agentId: effectiveAgentId,
       // Add site_id as a basic property if it exists
@@ -666,8 +879,9 @@ ${context}`;
     });
     
     // Submit the command for processing
+    console.log(`📝 PASO 2: Ejecutando comando de Content Creator & Copywriter...`);
     const internalCommandId = await commandService.submitCommand(command);
-    console.log(`📝 Command created with internal ID: ${internalCommandId}`);
+    console.log(`📝 Content Creator command created with internal ID: ${internalCommandId}`);
     
     // Try to get database UUID immediately after creating command
     let initialDbUuid = await getCommandDbUuid(internalCommandId);
@@ -679,99 +893,13 @@ ${context}`;
     const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
     
     // Use initially obtained UUID if no valid one after execution
-    const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
+    let effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
     
-    // Check that we have a valid database UUID
+    // Use effective database UUID - fallback to internal ID if no valid UUID
     if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
       console.error(`❌ Could not obtain a valid database UUID for command ${internalCommandId}`);
-      
-      // Continue with internal ID as fallback
-      console.log(`⚠️ Continuing with internal ID as fallback: ${internalCommandId}`);
-      
-      if (!completed || !executedCommand) {
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: { 
-              code: 'COMMAND_EXECUTION_FAILED', 
-              message: 'The command did not complete successfully in the expected time' 
-            } 
-          },
-          { status: 500 }
-        );
-      }
-      
-      // Extract content from results
-      let contentResults = [];
-      
-      console.log(`🔍 Debug: executedCommand.results structure:`, JSON.stringify(executedCommand.results, null, 2));
-      
-      if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        // Extract content as defined in targets: [{ content: [...] }]
-        for (const result of executedCommand.results) {
-          if (result.content && Array.isArray(result.content)) {
-            // Direct content array as defined in targets: { content: [items] }
-            contentResults = result.content;
-            console.log(`✅ Found content array with ${contentResults.length} items`);
-            break;
-          }
-        }
-        
-        // If no content found, log the structure for debugging
-        if (contentResults.length === 0) {
-          console.log(`⚠️ No content found. Available result keys:`, 
-            executedCommand.results.map((r: any) => Object.keys(r)).flat()
-          );
-        }
-      }
-      
-      console.log(`📊 Generated ${contentResults.length} content items`);
-      
-      // Save content items to database
-      let savedContentItems = [];
-      let savedToDatabase = false;
-      
-      if (contentResults.length > 0) {
-        try {
-          // Attempt to save to database, but if it fails, we'll still return the content
-          savedContentItems = await saveContentItemsToDatabase(
-            contentResults, 
-            siteId, 
-            internalCommandId, // Use internal command ID as fallback since we don't have a valid DB UUID
-            segmentId, 
-            campaignId, 
-            effectiveUserId
-          );
-          
-          // Set the saved flag based on whether we have saved items
-          savedToDatabase = savedContentItems && savedContentItems.length > 0;
-        } catch (error) {
-          // This should never happen now since saveContentItemsToDatabase doesn't throw,
-          // but we'll handle it just in case
-          console.error('Failed to save content to database:', error);
-          savedToDatabase = false;
-          savedContentItems = [];
-        }
-      }
-      
-      // Prepare the response - always include content, even if database save failed
-      const responseContent = savedContentItems.length > 0 ? savedContentItems : contentResults;
-      
-      // Respond using internal ID as fallback
-      return NextResponse.json(
-        { 
-          success: true, 
-          data: { 
-            command_id: internalCommandId, // Use internal ID as fallback
-            siteId,
-            segmentId,
-            campaignId,
-            content: responseContent,
-            saved_to_database: savedToDatabase
-          } 
-        },
-        { status: 200 }
-      );
+      console.log(`⚠️ Using internal ID as fallback: ${internalCommandId}`);
+      effectiveDbUuid = internalCommandId; // Use internal ID as fallback
     }
     
     if (!completed || !executedCommand) {
@@ -823,7 +951,7 @@ ${context}`;
         savedContentItems = await saveContentItemsToDatabase(
           contentResults, 
           siteId, 
-          effectiveDbUuid, // Use the effective database UUID
+          effectiveDbUuid || internalCommandId, // Use the effective database UUID or fallback to internal ID
           segmentId, 
           campaignId, 
           effectiveUserId
@@ -843,11 +971,14 @@ ${context}`;
     // Prepare the response - always include content, even if database save failed
     const responseContent = savedContentItems.length > 0 ? savedContentItems : contentResults;
     
+    console.log(`🎉 PROCESO COMPLETO: Enviando respuesta SUCCESS al cliente después de ambos comandos + guardado`);
+    console.log(`📊 Resumen final: ${responseContent.length} contenidos creados, guardados en DB: ${savedToDatabase}`);
+    
     return NextResponse.json(
       { 
         success: true, 
         data: { 
-          command_id: effectiveDbUuid,
+          command_id: effectiveDbUuid || internalCommandId,
           siteId,
           segmentId,
           campaignId,
