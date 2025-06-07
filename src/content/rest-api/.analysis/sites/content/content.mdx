@@ -5,17 +5,19 @@ description: Documentación para el API de recomendaciones de contenido personal
 
 # API de Contenido para Segmentos
 
-El endpoint `/api/site/content` permite obtener un conjunto de recomendaciones de contenido personalizado (posts, videos, anuncios, etc.) basado en segmentos de audiencia específicos. Esta API es útil para personalizar la experiencia de usuario y maximizar el engagement con diferentes tipos de audiencias.
+El endpoint `/api/site/content` permite obtener un conjunto de recomendaciones de contenido personalizado (posts, videos, anuncios, etc.) basado en segmentos de audiencia específicos o un resumen global de todos los segmentos. Esta API es útil para personalizar la experiencia de usuario y maximizar el engagement con diferentes tipos de audiencias.
 
-> 📊 **Contenido personalizado para cada segmento** 
+> 📊 **Contenido personalizado para cada segmento o análisis global** 
 > 
 > Esta API utiliza algoritmos avanzados de IA para recomendar el contenido más relevante
-> para cada segmento de audiencia, maximizando tasas de conversión, engagement y satisfacción
-> del usuario. Ideal para estrategias de marketing de contenidos y personalización web.
+> para cada segmento de audiencia específico, o generar un resumen completo cuando no se especifica
+> un segmento particular. Maximiza tasas de conversión, engagement y satisfacción del usuario.
+> Ideal para estrategias de marketing de contenidos y personalización web.
 
 ## Características principales
 
-- Recomendaciones de contenido personalizadas basadas en segmentos de audiencia
+- Recomendaciones de contenido personalizadas basadas en segmentos de audiencia específicos
+- **NUEVA**: Análisis global de todos los segmentos cuando no se especifica `segment_id`
 - Soporte para múltiples tipos de contenido (artículos, videos, podcasts, anuncios)
 - Filtrado por temática, formato, duración y otros atributos
 - Puntuaciones de relevancia y predicción de engagement
@@ -32,7 +34,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   defaultEndpoint="/api/site/content"
   defaultMethod="POST"
   defaultUrl="https://ejemplo.com"
-  defaultSegmentId="seg_content_creators"
+  defaultSegmentId=""
   defaultLimit={10}
   defaultTimeout="30000"
   showModelOptions={true}
@@ -50,11 +52,11 @@ import { UnifiedApiTester } from '@/components/ApiTester';
     },
     {
       name: "segment_id",
-      label: "ID del Segmento",
+      label: "ID del Segmento (opcional)",
       type: "text",
-      defaultValue: "seg_content_creators",
-      placeholder: "ID del segmento en la base de datos",
-      required: true
+      defaultValue: "",
+      placeholder: "Dejar vacío para analizar todos los segmentos",
+      required: false
     },
     {
       name: "content_types",
@@ -129,7 +131,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 | Parámetro | Tipo | Descripción | Valores posibles | Requerido |
 |-----------|------|-------------|------------------|-----------|
 | `url` | string | URL del sitio | URL válida | Sí |
-| `segment_id` | string | ID del segmento para el que se recomendarán contenidos | Cualquier ID válido | Sí |
+| `segment_id` | string | ID del segmento para el que se recomendarán contenidos. **Si se omite, se analizarán todos los segmentos** | Cualquier ID válido | **No** |
 | `content_types` | array | Tipos de contenido a recomendar | `posts`, `videos`, `podcasts`, `ads`, `social`, `downloads` | No (default: todos) |
 | `limit` | number | Número máximo de recomendaciones | 1-50 | No (default: 10) |
 | `user_id` | string | ID del usuario | Cualquier ID válido | No |
@@ -144,7 +146,16 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 
 ## Ejemplos de uso
 
-### Solicitud básica de recomendaciones
+### Análisis de todos los segmentos (NUEVO)
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "limit": 10
+}
+```
+
+### Solicitud básica de recomendaciones para un segmento específico
 
 ```json
 {
@@ -183,7 +194,11 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 
 ## Respuesta
 
-La respuesta incluye los siguientes campos:
+La respuesta varía dependiendo de si se especifica un `segment_id` o no:
+
+### Respuesta para segmento específico
+
+Cuando se proporciona un `segment_id`, la respuesta incluye los siguientes campos:
 
 | Campo | Tipo | Descripción |
 |-------|------|-------------|
@@ -194,7 +209,116 @@ La respuesta incluye los siguientes campos:
 | `returned_results` | number | Número de resultados devueltos (limitado por `limit`) |
 | `metadata` | object | Metadatos de la solicitud y análisis |
 
-### Ejemplo de respuesta completa
+### Respuesta para todos los segmentos (NUEVO)
+
+Cuando **NO** se proporciona un `segment_id`, la respuesta incluye los siguientes campos:
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| `url` | string | URL del sitio |
+| `analysis_type` | string | Siempre "all_segments" |
+| `segments_summary` | array | Resumen de cada segmento encontrado |
+| `global_recommendations` | array | Lista de contenidos recomendados globalmente |
+| `total_segments_analyzed` | number | Número total de segmentos analizados |
+| `total_content_items` | number | Número total de elementos de contenido encontrados |
+| `metadata` | object | Metadatos de la solicitud y análisis |
+
+### Ejemplo de respuesta para todos los segmentos
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "analysis_type": "all_segments",
+  "segments_summary": [
+    {
+      "segment_id": "seg_content_creators",
+      "segment_name": "Creadores de Contenido",
+      "content_count": 25,
+      "top_themes": ["herramientas", "productividad", "creatividad"],
+      "engagement_level": "high",
+      "primary_funnel_stage": "consideration"
+    },
+    {
+      "segment_id": "seg_small_businesses",
+      "segment_name": "Pequeñas Empresas",
+      "content_count": 18,
+      "top_themes": ["marketing", "automatización", "crecimiento"],
+      "engagement_level": "medium",
+      "primary_funnel_stage": "awareness"
+    },
+    {
+      "segment_id": "seg_freelancers",
+      "segment_name": "Freelancers",
+      "content_count": 22,
+      "top_themes": ["gestión de tiempo", "clientes", "finanzas"],
+      "engagement_level": "high",
+      "primary_funnel_stage": "decision"
+    }
+  ],
+  "global_recommendations": [
+    {
+      "id": "post_67890",
+      "type": "post",
+      "title": "Guía Completa para Emprendedores Digitales 2024",
+      "description": "Estrategias y herramientas esenciales para cualquier emprendedor que quiera destacar en el mundo digital, sin importar su nicho o experiencia.",
+      "url": "https://ejemplo.com/blog/guia-emprendedores-digitales-2024",
+      "duration": {
+        "unit": "minutes",
+        "value": 12
+      },
+      "topics": [
+        "emprendimiento",
+        "estrategia digital",
+        "herramientas"
+      ],
+      "funnelStage": "awareness",
+      "relevanceScore": 0.92,
+      "engagementPrediction": {
+        "score": 0.88,
+        "metrics": {
+          "crossSegmentAppeal": "Very high",
+          "shareability": "High",
+          "conversionPotential": "Medium-high"
+        }
+      },
+      "format": "comprehensive-guide",
+      "readingLevel": "intermediate",
+      "popularity": {
+        "views": 18450,
+        "shares": 526,
+        "comments": 89
+      }
+    }
+  ],
+  "total_segments_analyzed": 3,
+  "total_content_items": 65,
+  "metadata": {
+    "request": {
+      "timestamp": "2024-07-15T16:42:18Z",
+      "parameters": {
+        "analysis_type": "all_segments",
+        "content_types": ["posts", "videos"],
+        "limit": 1
+      }
+    },
+    "analysis": {
+      "modelUsed": "claude-3-5-sonnet-20240620",
+      "aiProvider": "anthropic",
+      "processingTime": "2.24 seconds",
+      "segmentsDataSource": "all_segments (last updated: 2024-07-10)",
+      "contentInventorySize": 65,
+      "filteringMetrics": [
+        "Relevancia cross-segmento",
+        "Engagement promedio por segmento",
+        "Recencia del contenido",
+        "Potencial de conversión global"
+      ]
+    }
+  }
+}
+```
+
+### Ejemplo de respuesta para segmento específico
 
 ```json
 {

@@ -1,0 +1,319 @@
+---
+title: Daily Planning
+description: Planifica el uso de recursos y actividades del día para el agente CMO, optimizando productividad y asignación de tiempo
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# API de Planificación Diaria de CMO
+
+Esta API facilita la planificación estratégica del día para el agente CMO, optimizando la asignación de recursos, tiempo y prioridades para maximizar la productividad y efectividad en las iniciativas de marketing.
+
+## Endpoint
+
+`POST /api/agents/cmo/plan`
+
+## Request Body
+
+| Campo | Tipo | Requerido | Descripción |
+|-------|------|-----------|-------------|
+| site_id | string | Sí | Identificador del sitio para contextualizar la planificación. |
+
+## Response
+
+| Campo | Tipo | Descripción |
+|-------|------|-------------|
+| success | boolean | Indica si la solicitud fue exitosa. |
+| data.command_id | string | Identificador único del comando creado. |
+| data.conversation_id | string | Identificador de la conversación asociada. |
+| data.status | string | Estado de la solicitud (e.g., "completed", "in_progress"). |
+| data.planning_details | object | Detalles de la planificación, incluyendo fecha y alcance. |
+| data.daily_schedule | array | Cronograma optimizado del día con bloques de tiempo asignados. |
+| data.resource_allocation | object | Distribución de recursos humanos y presupuestarios. |
+| data.priority_matrix | object | Matriz de prioridades con tareas categorizadas por urgencia e importancia. |
+| data.recommendations | array | Recomendaciones estratégicas para optimizar el día. |
+| data.context_analysis | object | Análisis de contexto si fue solicitado, incluyendo tareas, campañas, y métricas. |
+
+## Ejemplo de Uso
+
+<UnifiedApiTester apiId="cmo-plan" />
+
+## Características
+
+- Planificación inteligente basada en prioridades y contexto empresarial
+- Optimización automática de bloques de tiempo según tipo de actividad
+- Análisis de capacidad del equipo y recursos disponibles
+- Integración con tareas existentes y compromisos del calendario
+- Recomendaciones estratégicas para maximizar ROI del tiempo invertido
+- Adaptación dinámica basada en urgencias y cambios de prioridad
+
+## Casos de Uso
+
+- Planificación diaria de actividades de marketing estratégico
+- Optimización de asignación de tiempo entre diferentes iniciativas
+- Coordinación de recursos del equipo y presupuesto diario
+- Priorización inteligente de tareas basada en impacto empresarial
+- Adaptación de planes ante urgencias o cambios de prioridad
+- Seguimiento y optimización de productividad del equipo de marketing
+
+## English Documentation
+
+### Daily Planning
+
+Creates a comprehensive daily plan for CMO activities, optimizing resource allocation, time management, and strategic priorities to maximize marketing effectiveness and team productivity.
+
+### Endpoint
+
+```http
+POST /api/agents/cmo/plan
+```
+
+### Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string | Yes | ID of the site associated with this interaction |
+
+#### Example Request
+
+```json
+{
+  "site_id": "site_456"
+}
+```
+
+### Planning Algorithm
+
+The API uses an intelligent planning algorithm that considers:
+
+1. **Priority Matrix**: Tasks are categorized using the Eisenhower Matrix (urgent/important)
+2. **Time Blocking**: Optimal time blocks are assigned based on task complexity and focus requirements
+3. **Resource Optimization**: Team capacity and skills are matched to appropriate tasks
+4. **Context Switching**: Minimizes context switching by grouping similar activities
+5. **Energy Management**: Schedules high-cognitive tasks during peak productivity hours
+
+#### Time Block Categories
+
+| Category | Duration | Best Time | Description |
+|----------|----------|-----------|-------------|
+| Deep Work | 2-4 hours | Morning | Strategic planning, analysis, content creation |
+| Tactical Work | 30-90 minutes | Mid-day | Campaign optimization, quick reviews |
+| Administrative | 15-30 minutes | Any | Email, quick updates, status checks |
+| Collaborative | 30-120 minutes | Afternoon | Meetings, brainstorming, reviews |
+
+### Try It
+
+<UnifiedApiTester apiId="cmo-plan" />
+
+### Generated Command Structure
+
+The system generates a command object with comprehensive planning guidance and execution framework.
+
+```json
+{
+  "targets": [
+    {
+      "tool": "campaign-analysis",
+      "time": "09:00-10:30",
+      "description": "Analizar métricas de campañas activas y identificar oportunidades de optimización",
+      "priority": "high"
+    },
+    {
+      "tool": "budget-allocation",
+      "time": "10:30-11:15",
+      "description": "Revisar y ajustar asignación de presupuesto para Q2",
+      "priority": "high"
+    },
+    {
+      "tool": "content-strategy",
+      "time": "11:15-12:00",
+      "description": "Planificar contenido para próximas 2 semanas",
+      "priority": "medium"
+    },
+    {
+      "tool": "team-coordination",
+      "time": "14:00-14:30",
+      "description": "Coordinar tareas del equipo y resolver bloqueos",
+      "priority": "medium"
+    },
+    {
+      "tool": "performance-reporting",
+      "time": "15:00-16:00",
+      "description": "Generar reportes de performance para stakeholders",
+      "priority": "high"
+    },
+    {
+      "tool": "stakeholder-coordination",
+      "time": "16:00-17:00",
+      "description": "Llamada con stakeholders para alineación estratégica",
+      "priority": "urgent"
+    }
+  ],
+  "context": "As a CMO agent, your daily planning capabilities are central to maximizing marketing effectiveness and team productivity. This system provides you with comprehensive frameworks for intelligent time management, resource optimization, and strategic prioritization.\n\nYour planning process integrates multiple data sources including: current campaign performance metrics, pending task priorities and deadlines, team capacity and skill availability, budget constraints and spending patterns, strategic objectives and quarterly goals, and market opportunities requiring immediate attention.\n\nThe planning algorithm considers both quantitative factors (available hours, budget limits, team capacity) and qualitative elements (strategic importance, urgency levels, skill requirements). You'll analyze the current marketing landscape to identify the highest-impact activities that deserve precious time and resource allocation.\n\nYour planning output transforms abstract strategic goals into concrete, actionable daily schedules. Every time block should have clear ownership, measurable outcomes, and defined success criteria. The plan must balance strategic thinking time (essential for CMO effectiveness) with tactical execution (necessary for campaign performance) while maintaining flexibility for urgent market responses.\n\nEach daily plan serves as both a productivity tool and a strategic alignment mechanism, ensuring that daily activities consistently advance quarterly marketing objectives while optimizing team satisfaction and sustainable productivity patterns.",
+  "supervisors": [
+    {
+      "agent_role": "operations_manager",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "project_coordinator",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "optimize daily planning and resource allocation",
+  "description": "Generate intelligent daily plans that maximize CMO productivity and marketing team effectiveness. This system combines strategic planning principles with practical time management, creating optimized schedules that balance deep strategic work with tactical execution. The planning engine considers team capacity, budget constraints, and strategic priorities to produce actionable daily roadmaps that drive measurable business results while maintaining sustainable productivity patterns.",
+  "site_id": "site_456"
+}
+```
+
+### Response
+
+#### Success Response - Daily Plan Generated
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "a1b2c3d4-e5f6-789a-bcde-f0123456789a",
+    "conversation_id": "plan_123456",
+    "status": "completed",
+    "planning_details": {
+      "date": "2023-04-15",
+      "scope": "daily",
+      "total_hours": 8,
+      "focus_areas": ["campaigns", "strategy", "analytics"]
+    },
+    "daily_schedule": [
+      {
+        "time_block": "09:00-09:30",
+        "activity": "Team Standup",
+        "type": "meeting",
+        "priority": "medium",
+        "owner": "team",
+        "objectives": ["Align on daily priorities", "Address blockers"]
+      },
+      {
+        "time_block": "09:30-11:30",
+        "activity": "Q2 Strategy Deep Dive",
+        "type": "strategic",
+        "priority": "high",
+        "owner": "cmo",
+        "objectives": ["Finalize Q2 campaign strategy", "Review budget allocation"]
+      },
+      {
+        "time_block": "11:30-12:30",
+        "activity": "Campaign Performance Analysis",
+        "type": "analytics",
+        "priority": "high",
+        "owner": "cmo + analyst",
+        "objectives": ["Review current ROI metrics", "Identify optimization opportunities"]
+      },
+      {
+        "time_block": "14:00-15:30",
+        "activity": "Board Presentation Prep",
+        "type": "strategic",
+        "priority": "high",
+        "owner": "cmo",
+        "objectives": ["Prepare marketing update slides", "Practice key messaging"]
+      },
+      {
+        "time_block": "15:30-16:30",
+        "activity": "Urgent Task Review",
+        "type": "tactical",
+        "priority": "urgent",
+        "owner": "cmo",
+        "objectives": ["Address task_789 and task_456", "Delegate follow-ups"]
+      }
+    ],
+    "resource_allocation": {
+      "team_assignments": {
+        "content_creators": {
+          "capacity": 2,
+          "assigned_hours": 6,
+          "tasks": ["Blog post creation", "Social media content"]
+        },
+        "analysts": {
+          "capacity": 1,
+          "assigned_hours": 4,
+          "tasks": ["Campaign performance analysis", "ROI reporting"]
+        },
+        "campaign_managers": {
+          "capacity": 3,
+          "assigned_hours": 8,
+          "tasks": ["Campaign optimization", "A/B test monitoring"]
+        }
+      },
+      "budget_utilization": {
+        "ad_spend": 4500,
+        "content_production": 1800,
+        "remaining_daily_budget": 700
+      }
+    },
+    "priority_matrix": {
+      "urgent_important": [
+        {
+          "task_id": "task_789",
+          "title": "Fix campaign targeting issue",
+          "estimated_time": "45 minutes",
+          "impact": "high"
+        }
+      ],
+      "important_not_urgent": [
+        {
+          "task_id": "strategy_001",
+          "title": "Q2 strategic planning",
+          "estimated_time": "2 hours",
+          "impact": "high"
+        }
+      ],
+      "urgent_not_important": [
+        {
+          "task_id": "admin_001",
+          "title": "Approve expense reports",
+          "estimated_time": "15 minutes",
+          "impact": "low"
+        }
+      ],
+      "neither_urgent_nor_important": []
+    },
+    "recommendations": [
+      {
+        "type": "optimization",
+        "title": "Extend morning strategy block",
+        "description": "Consider extending the 9:30-11:30 strategy session to include budget reallocation decisions",
+        "impact": "medium"
+      },
+      {
+        "type": "delegation",
+        "title": "Delegate routine analytics",
+        "description": "Routine campaign monitoring can be delegated to campaign managers to free up strategic time",
+        "impact": "high"
+      },
+      {
+        "type": "scheduling",
+        "title": "Buffer time for urgent items",
+        "description": "Reserve 30 minutes at end of day for unexpected urgent priorities",
+        "impact": "medium"
+      }
+    ],
+    "context_analysis": {
+      "current_workload": "high",
+      "team_capacity_utilization": "85%",
+      "budget_burn_rate": "on_track",
+      "strategic_focus_time": "2.5 hours",
+      "collaboration_time": "1.5 hours"
+    }
+  }
+}
+```
+
+#### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Missing required field: site_id"
+  }
+}

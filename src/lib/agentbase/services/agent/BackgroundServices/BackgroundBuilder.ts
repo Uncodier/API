@@ -39,6 +39,7 @@ export class BackgroundBuilder {
     
     // Construir el prompt de forma estructurada por bloques
     const sections = [
+      this.createServerDateSection(),
       this.createIdentitySection(id, name),
       this.createBackstorySection(backstory),
       this.createDescriptionSection(description),
@@ -61,6 +62,14 @@ export class BackgroundBuilder {
     this.verifyPromptSections(finalPrompt, systemPrompt, agentPrompt, backstory, siteInfo);
     
     return finalPrompt;
+  }
+  
+  /**
+   * Crea la sección con la fecha del servidor
+   */
+  private static createServerDateSection(): string {
+    const serverDate = new Date().toISOString();
+    return `# Current Server Date & Time\nServer UTC: ${serverDate}`;
   }
   
   /**

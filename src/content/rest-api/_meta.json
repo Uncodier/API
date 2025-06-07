@@ -7,9 +7,10 @@
     "title": "Autenticación",
     "type": "page"
   },
-  "analyze": {
+  "analysis": {
     "title": "Análisis de Sitios",
-    "type": "page"
+    "type": "page",
+    "display": "hidden"
   },
   "ai": {
     "title": "Inteligencia Artificial",
@@ -29,7 +30,8 @@
   },
   "experiments": {
     "title": "Experimentos",
-    "type": "page"
+    "type": "page",
+    "display": "hidden"
   },
   "agents": {
     "title": "Agentes",

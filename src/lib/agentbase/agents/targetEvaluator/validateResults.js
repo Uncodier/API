@@ -157,14 +157,32 @@ function containsPlaceholderInObject(obj) {
 function isPlaceholderValue(value) {
   if (typeof value !== 'string') return false;
   
-  const placeholders = [
+  // Valores que claramente son placeholders exactos (no substring matching)
+  const exactPlaceholders = [
     "markdown detailed copy", 
     "title of the content", 
     "summary of the content",
     "placeholder",
-    "example",
-    "sample"
+    "sample content",
+    "example content"
   ];
   
-  return placeholders.some(p => value.toLowerCase().includes(p));
+  const lowerValue = value.toLowerCase().trim();
+  
+  // Solo considerar placeholder si es exactamente uno de estos valores
+  if (exactPlaceholders.includes(lowerValue)) {
+    return true;
+  }
+  
+  // También considerar placeholder si es muy corto y genérico
+  if (lowerValue.length < 10 && (lowerValue === "example" || lowerValue === "sample")) {
+    return true;
+  }
+  
+  // Si tiene contenido real (más de 20 caracteres y no es solo el placeholder), es válido
+  if (value.length > 20) {
+    return false;
+  }
+  
+  return false;
 } 

@@ -1,0 +1,190 @@
+# Create Audience Segments Command
+
+Creates a command object to analyze a website and identify the most profitable audience segments, evaluating behavior patterns, demographics, and monetization opportunities.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+POST /api/agents/growth/segments
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website to analyze for segments |
+| `agent_id` | string | No | ID of the agent to handle segment analysis |
+| `userId` | string | No | ID of the user creating the segments |
+| `segmentData` | object | No | Object containing segment analysis configuration |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456",
+  "agent_id": "agent_growth_123",
+  "userId": "user_789",
+  "segmentData": {
+    "segmentCount": 5
+  }
+}
+```
+
+## Try It
+
+You can test this API directly using our API Tester interface. The API tester allows you to analyze websites and generate profitable audience segments.
+
+Required fields:
+- **Site ID**: The ID of the website to analyze
+
+Optional fields:
+- **Agent ID**: ID of the agent to handle segment analysis
+- **User ID**: ID of the user creating the segments
+
+<UnifiedApiTester apiId="segments" />
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control the segment analysis process:
+
+```json
+{
+  "task": "analyze audience segments",
+  "userId": "user_789",
+  "agentId": "agent_growth_123",
+  "site_id": "site_456",
+  "description": "Analyze website and identify the most profitable audience segments",
+  "targets": [
+    {
+      "segments": [
+        {
+          "name": "Digital Content Creators",
+          "description": "Professionals aged 20-40 dedicated to creating digital content",
+          "targetAudience": "media_entertainment",
+          "estimatedSize": "189,000",
+          "estimatedValue": "9,000,000",
+          "profitabilityScore": 0.88
+        }
+      ]
+    }
+  ],
+  "context": "Segment Analysis Context:\n{\n  \"segmentCount\": 5\n}",
+  "supervisor": [
+    {
+      "agent_role": "data_analyst",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "marketing_strategist",
+      "status": "not_initialized"
+    }
+  ]
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_abc123",
+    "site_id": "site_456",
+    "url": "https://ejemplo.com",
+    "segmentsAnalyzed": 5,
+    "segmentsCreated": 3,
+    "segments": [
+      {
+        "id": "seg_content_creators",
+        "name": "Digital Content Creators",
+        "description": "Professionals aged 20-40 dedicated to creating digital content",
+        "estimatedSize": "189,000",
+        "estimatedValue": "9,000,000",
+        "profitabilityScore": 0.88,
+        "targetAudience": "media_entertainment"
+      },
+      {
+        "id": "seg_luxury_shoppers",
+        "name": "Luxury Mobile Shoppers",
+        "description": "High-income professionals who prefer mobile shopping",
+        "estimatedSize": "97,500",
+        "estimatedValue": "5,200,000",
+        "profitabilityScore": 0.92,
+        "targetAudience": "retail"
+      }
+    ],
+    "saved_to_database": true
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_URL",
+    "message": "The provided URL is not accessible or invalid"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `INVALID_URL` | The provided URL is not accessible or invalid |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `AI_PROCESSING_ERROR` | Error occurred during AI analysis |
+| `TIMEOUT_EXCEEDED` | Analysis timeout exceeded |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Segment Database Structure
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `id` | uuid | Yes | Unique identifier for the segment |
+| `name` | text | Yes | Name of the audience segment |
+| `description` | text | No | Detailed description of the segment |
+| `summary` | text | No | Brief summary of the segment |
+| `estimated_size` | text | No | Estimated audience size |
+| `estimated_value` | text | No | Estimated monetary value |
+| `profitability_score` | decimal | No | Profitability score (0-1) |
+| `confidence_score` | decimal | No | Analysis confidence score (0-1) |
+| `target_audience` | text | No | Target audience category |
+| `language` | text | No | Primary language of the segment |
+| `attributes` | jsonb | No | Segment attributes (demographic, behavioral, etc.) |
+| `audience_profile` | jsonb | No | Detailed audience profile for ad platforms |
+| `site_id` | uuid | Yes | ID of the website (foreign key to sites.id) |
+| `user_id` | uuid | No | ID of the user (foreign key to users.id) |
+| `created_at` | timestamptz | Auto | Creation timestamp (default: now()) |
+| `updated_at` | timestamptz | Auto | Last update timestamp (default: now()) |
+
+## Target Audiences
+
+| Category | Description |
+|----------|-------------|
+| `enterprise` | Large enterprise customers |
+| `smb` | Small and medium businesses |
+| `e_commerce` | E-commerce and retail focused |
+| `tech` | Technology sector audiences |
+| `finance` | Financial services sector |
+| `healthcare` | Healthcare and medical sector |
+| `education` | Educational institutions |
+| `media_entertainment` | Media and entertainment industry |
+| `professional` | Professional services |
+
+## Notes
+
+- The command executes asynchronously using advanced AI models
+- Automatically analyzes website content to identify profitable audience segments
+- Segments include detailed targeting information for advertising platforms
+- All segments are saved to the database with profitability scores
+- The system integrates with existing marketing automation platforms 

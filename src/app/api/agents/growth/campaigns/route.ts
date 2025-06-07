@@ -299,7 +299,7 @@ async function createCampaignsFromResults(command: any, siteId: string, userId: 
       const campaignToInsert = {
         title: campaignData.title || 'Campaña sin título',
         description: campaignData.description || '',
-        status: campaignData.status || 'active',
+        status: campaignData.status || 'pending',
         type: campaignData.type || 'general',
         priority: campaignData.priority || 'medium',
         budget: campaignData.budget || { 
@@ -428,13 +428,35 @@ export async function POST(request: Request) {
       );
     }
     
-    // Validar agent_id requerido
-    if (!agent_id) {
-      console.log('❌ Error: agent_id requerido no proporcionado');
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'agent_id is required' } },
-        { status: 400 }
-      );
+    // Validar agent_id requerido, o buscar agente Growth Marketer por defecto
+    let effectiveAgentId = agent_id;
+    if (!effectiveAgentId) {
+      console.log('🔍 No se proporcionó agent_id, buscando agente con rol "Growth Marketer"...');
+      try {
+        const { data: growthAgent, error: agentError } = await supabaseAdmin
+          .from('agents')
+          .select('id')
+          .eq('role', 'Growth Marketer')
+          .limit(1)
+          .single();
+        
+        if (agentError || !growthAgent) {
+          console.log('❌ Error: No se encontró agente con rol "Growth Marketer"');
+          return NextResponse.json(
+            { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'No agent_id provided and no Growth Marketer agent found' } },
+            { status: 400 }
+          );
+        }
+        
+        effectiveAgentId = growthAgent.id;
+        console.log(`✅ Agente Growth Marketer encontrado: ${effectiveAgentId}`);
+      } catch (error) {
+        console.error('Error al buscar agente Growth Marketer:', error);
+        return NextResponse.json(
+          { success: false, error: { code: 'AGENT_SEARCH_FAILED', message: 'Failed to search for Growth Marketer agent' } },
+          { status: 500 }
+        );
+      }
     }
     
     // Si no hay userId, verificar el sitio y buscar el usuario asociado
@@ -466,7 +488,7 @@ export async function POST(request: Request) {
       }
     }
     
-    console.log(`📨 Solicitud validada. SiteId: ${siteId}, UserId: ${effectiveUserId}, AgentId: ${agent_id}`);
+    console.log(`📨 Solicitud validada. SiteId: ${siteId}, UserId: ${effectiveUserId}, AgentId: ${effectiveAgentId}`);
     
     // Crear contexto simple para el comando
     const promptInstructions = `
@@ -491,7 +513,7 @@ Your campaigns should be strategic, measurable, and aligned with business growth
 
     const context = `Generate marketing campaign ideas for Site ID: ${siteId}\n\n${promptInstructions}`;
     
-    console.log(`🧠 Creando comando con agentId: ${agent_id}`);
+    console.log(`🧠 Creando comando con agentId: ${effectiveAgentId}`);
     
     // Crear el comando para generar campañas
     const command = CommandFactory.createCommand({
@@ -499,7 +521,7 @@ Your campaigns should be strategic, measurable, and aligned with business growth
       userId: effectiveUserId,
       site_id: siteId,
       description: 'Create marketing or growth campaigns',
-      agentId: agent_id,
+      agentId: effectiveAgentId,
       // Set the target as campaigns structure
       targets: [
         {

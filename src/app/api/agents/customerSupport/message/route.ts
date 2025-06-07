@@ -1262,14 +1262,6 @@ export async function POST(request: Request) {
         contextMessage += `\nLead Score: ${leadInfo.lead_score || 'N/A'}`;
         contextMessage += `\nSource: ${leadInfo.source || 'N/A'}`;
         
-        // Agregar fechas importantes
-        if (leadInfo.created_at) {
-          contextMessage += `\nCreated: ${new Date(leadInfo.created_at).toLocaleDateString()}`;
-        }
-        if (leadInfo.last_contact_date) {
-          contextMessage += `\nLast Contact: ${new Date(leadInfo.last_contact_date).toLocaleDateString()}`;
-        }
-        
         // Agregar información adicional si está disponible
         if (leadInfo.contact_info) {
           try {

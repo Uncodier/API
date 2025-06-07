@@ -97,7 +97,23 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
   const [error, setError] = useState<string | null>(null);
 
   // Estado para controlar la pestaña activa
-  const [activeTab, setActiveTab] = useState<'request' | 'implementation' | 'result'>('request');
+  const [activeTab, setActiveTab] = useState<'request' | 'implementation' | 'result' | 'authorization'>('request');
+
+  // Estado para el modo de editor libre
+  const [freeEditorMode, setFreeEditorMode] = useState<boolean>(false);
+  
+  // Estado para el editor libre
+  const [freeEditorState, setFreeEditorState] = useState({
+    endpoint: defaultEndpoint || '/api',
+    method: defaultMethod || 'POST',
+    body: '{\n  "message": "Hello World"\n}'
+  });
+
+  // Estado para la autorización
+  const [authConfig, setAuthConfig] = useState({
+    apiKey: '',
+    headerName: 'Authorization'
+  });
 
   const initialEndpoint = React.useMemo(() => {
     return defaultEndpoint || (apiConfig?.defaultEndpoint ?? '/api');
@@ -121,6 +137,7 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
     
     if (config) {
       setApiConfig(config);
+      setFreeEditorMode(false);
       
       try {
         // Inicializar el estado del formulario con los valores por defecto
@@ -160,8 +177,17 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
         setError('Error al inicializar el formulario. Consulta la consola para más detalles.');
       }
     } else {
-      console.warn(`API not found for ${apiId || apiType}`);
-      setError(`No se encontró la configuración para la API: "${apiId || apiType}". Verifica que el ID o tipo de API sea válido.`);
+      console.warn(`API not found for ${apiId || apiType}, enabling free editor mode`);
+      setFreeEditorMode(true);
+      setApiConfig(null);
+      setError(null);
+      
+      // Inicializar el editor libre con valores por defecto
+      setFreeEditorState({
+        endpoint: defaultEndpoint || '/api',
+        method: defaultMethod || 'POST',
+        body: defaultMessage ? `{\n  "message": "${defaultMessage}"\n}` : '{\n  "message": "Hello World"\n}'
+      });
     }
     // Incluimos solo las dependencias mínimas necesarias
   }, [apiId, apiType]);
@@ -195,134 +221,255 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
     }
   }, []);
 
+  // Función para manejar cambios en el editor libre
+  const handleFreeEditorChange = React.useCallback((field: string, value: string) => {
+    setFreeEditorState(prev => ({ ...prev, [field]: value }));
+  }, []);
+
+  // Función para validar JSON
+  const validateJSON = (jsonString: string): boolean => {
+    try {
+      JSON.parse(jsonString);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
   // Función para enviar la solicitud a la API
   const handleSubmit = React.useCallback(async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     
-    if (!apiConfig) {
-      setError('No se ha seleccionado una API válida.');
-      return;
-    }
-
     setLoading(true);
     setError(null);
     setApiResponse(null);
 
     try {
-      // Construir el cuerpo de la solicitud según la configuración de la API
-      const requestBody = apiConfig.buildRequestBody(formState);
-      
-      // Construir los encabezados según la configuración de la API
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json',
-      };
-      
-      // Si la API tiene una función para construir cabeceras, usarla
-      if (apiConfig.buildRequestHeaders) {
-        const customHeaders = apiConfig.buildRequestHeaders(formState);
-        Object.assign(headers, customHeaders);
-      }
-      
-      // Determine the method and prepare the endpoint
-      const method = formState.method || defaultMethod || 'POST';
-      let endpoint = formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint;
+      let requestBody: any = {};
+      let headers: Record<string, string> = {};
+      let method: string;
+      let endpoint: string;
 
-      // Use buildRequestUrl if it exists and it's a GET request
-      if (method === 'GET' && apiConfig.buildRequestUrl) {
-        endpoint = apiConfig.buildRequestUrl(formState, endpoint);
+      if (freeEditorMode) {
+        // Modo editor libre
+        method = freeEditorState.method;
+        endpoint = freeEditorState.endpoint;
         
-        // Realizar la solicitud GET a la API
-        const response = await fetch(endpoint, {
-          method,
-          headers
-        });
+        // Headers básicos para modo libre
+        headers = {
+          'Content-Type': 'application/json'
+        };
         
-        // Procesar la respuesta
-        const data = await response.json();
-        
-        if (!response.ok) {
-          throw new Error(data.message || 'Error en la solicitud');
+        // Parsear body para métodos que lo requieren
+        if (method !== 'GET' && method !== 'DELETE') {
+          try {
+            requestBody = JSON.parse(freeEditorState.body);
+          } catch (error) {
+            throw new Error('Invalid body: must be valid JSON');
+          }
         }
-        
-        // Actualizar el estado con la respuesta
-        setApiResponse(data);
-        setActiveTab('result');
       } else {
-        // Realizar la solicitud POST/PUT/DELETE a la API con body
-        const response = await fetch(endpoint, {
-          method,
-          headers,
-          body: JSON.stringify(requestBody)
-        });
-        
-        // Procesar la respuesta
-        const data = await response.json();
-        
-        if (!response.ok) {
-          // En lugar de lanzar un error, actualizamos el estado con el error
-          setError(data.error?.message || data.message || 'Error en la solicitud');
-          setApiResponse(data);
-          setActiveTab('result');
+        // Modo configuración de API
+        if (!apiConfig) {
+          setError('No valid API has been selected.');
           return;
         }
+
+        // Construir el cuerpo de la solicitud según la configuración de la API
+        requestBody = apiConfig.buildRequestBody(formState);
         
-        // Actualizar el estado con la respuesta
-        setApiResponse(data);
-        setError(null);
-        setActiveTab('result');
+        // Construir los encabezados según la configuración de la API
+        headers = {
+          'Content-Type': 'application/json',
+        };
+        
+        // Si la API tiene una función para construir cabeceras, usarla
+        if (apiConfig.buildRequestHeaders) {
+          const customHeaders = apiConfig.buildRequestHeaders(formState);
+          Object.assign(headers, customHeaders);
+        }
+        
+        // Determine the method and prepare the endpoint
+        method = formState.method || defaultMethod || 'POST';
+        endpoint = formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint;
+
+        // Use buildRequestUrl if it exists and it's a GET request
+        if (method === 'GET' && apiConfig.buildRequestUrl) {
+          endpoint = apiConfig.buildRequestUrl(formState, endpoint);
+        }
       }
+
+      // Agregar autorización si está configurada
+      if (authConfig.apiKey) {
+        headers[authConfig.headerName] = authConfig.apiKey;
+      }
+
+      // Configurar la solicitud
+      const requestConfig: RequestInit = {
+        method,
+        headers
+      };
+
+      // Agregar body solo si no es GET o DELETE
+      if (method !== 'GET' && method !== 'DELETE') {
+        requestConfig.body = JSON.stringify(requestBody);
+      }
+
+      // Realizar la solicitud a la API
+      const response = await fetch(endpoint, requestConfig);
+      
+      // Procesar la respuesta
+      const data = await response.json();
+      
+      if (!response.ok) {
+        // En lugar de lanzar un error, actualizamos el estado con el error
+        setError(data.error?.message || data.message || 'Request error');
+        setApiResponse(data);
+        setActiveTab('result');
+        return;
+      }
+      
+      // Actualizar el estado con la respuesta
+      setApiResponse(data);
+      setError(null);
+      setActiveTab('result');
     } catch (error: any) {
       console.error('Error al enviar la solicitud:', error);
-      setError(error.message || 'Error desconocido al procesar la solicitud.');
+      setError(error.message || 'Unknown error processing the request.');
     } finally {
       setLoading(false);
     }
-  }, [apiConfig, formState, defaultEndpoint, defaultMethod]);
+  }, [apiConfig, formState, defaultEndpoint, defaultMethod, freeEditorMode, freeEditorState, authConfig]);
 
-  // Si no hay configuración de API, mostrar un mensaje
-  if (!apiConfig) {
-    return (
-      <div className={styles.card}>
-        <h2>{title}</h2>
-        <p>{description}</p>
-        <div style={{ 
-          padding: '10px', 
-          backgroundColor: '#ffebee', 
-          color: '#c62828', 
-          borderRadius: '4px',
-          marginTop: '10px'
-        }}>
-          <p><strong>Error:</strong> {error || `No se pudo cargar la configuración para la API: "${apiId || apiType}"`}</p>
-          <p>Asegúrate de que el ID o tipo de API sea válido y que esté registrado correctamente.</p>
-          <p>APIs disponibles: {apiRegistry.getAll().map((api: BaseApiConfig) => `"${api.id}"`).join(', ')}</p>
+  // Renderizar el formulario del editor libre
+  const renderFreeEditor = () => (
+    <div className={styles.innerCard}>
+      <h3 className={styles.implementationTitle}>Free API Editor</h3>
+      <p style={{ marginBottom: '20px', color: '#666' }}>
+        No configuration found for "{apiId || apiType}". Use this free editor to test your API.
+      </p>
+      
+      <form onSubmit={handleSubmit} className={styles.formInCard}>
+        <FormField
+          label="Endpoint"
+          id="endpoint"
+          type="text"
+          value={freeEditorState.endpoint}
+          onChange={(value: string) => handleFreeEditorChange('endpoint', value)}
+          placeholder="/api/endpoint"
+          required
+        />
+        
+        <FormField
+          label="Method"
+          id="method"
+          type="select"
+          value={freeEditorState.method}
+          onChange={(value: string) => handleFreeEditorChange('method', value)}
+          options={[
+            { value: 'GET', label: 'GET' },
+            { value: 'POST', label: 'POST' },
+            { value: 'PUT', label: 'PUT' },
+            { value: 'DELETE', label: 'DELETE' },
+            { value: 'PATCH', label: 'PATCH' }
+          ]}
+        />
+        
+        {!['GET', 'DELETE'].includes(freeEditorState.method) && (
+          <div className={styles.formGroup}>
+            <label htmlFor="body" className={styles.label}>
+              Body (JSON)
+            </label>
+            <textarea
+              id="body"
+              value={freeEditorState.body}
+              onChange={(e) => handleFreeEditorChange('body', e.target.value)}
+              className={`${styles.textarea} ${!validateJSON(freeEditorState.body) ? styles.textareaError : ''}`}
+              rows={12}
+              placeholder='{"message": "Hello World"}'
+              style={{
+                fontFamily: 'monospace',
+                width: '100%',
+                minHeight: '300px'
+              }}
+            />
+            {!validateJSON(freeEditorState.body) && (
+              <small style={{ color: 'red' }}>Invalid JSON in body</small>
+            )}
+          </div>
+        )}
+        
+        <div className={styles.formActions}>
+                     <button 
+             type="submit" 
+             className={styles.submitButton}
+             disabled={loading || (!['GET', 'DELETE'].includes(freeEditorState.method) && !validateJSON(freeEditorState.body))}
+           >
+             {loading ? 'Sending...' : 'Send Request'}
+           </button>
         </div>
+      </form>
+    </div>
+  );
+
+  // Renderizar la pestaña de autorización
+  const renderAuthorizationTab = () => (
+    <div className={styles.innerCard}>
+      <h3 className={styles.implementationTitle}>Authorization Configuration</h3>
+      <p style={{ marginBottom: '20px', color: '#666' }}>
+        Configure authorization for your API requests.
+      </p>
+      
+      <div className={styles.formInCard}>
+        <FormField
+          label="API Key"
+          id="apiKey"
+          type="text"
+          value={authConfig.apiKey}
+          onChange={(value: string) => setAuthConfig(prev => ({ ...prev, apiKey: value }))}
+          placeholder="Enter your API key"
+        />
+        
+        <FormField
+          label="Header Name"
+          id="headerName"
+          type="text"
+          value={authConfig.headerName}
+          onChange={(value: string) => setAuthConfig(prev => ({ ...prev, headerName: value }))}
+          placeholder="Authorization"
+        />
+        
+        {authConfig.apiKey && (
+          <div className={styles.previewSection}>
+            <h4>Header preview:</h4>
+            <code style={{ 
+              backgroundColor: '#f8f9fa', 
+              padding: '8px 12px', 
+              borderRadius: '4px',
+              display: 'block',
+              marginTop: '8px'
+            }}>
+              {authConfig.headerName}: {authConfig.apiKey}
+            </code>
+          </div>
+        )}
       </div>
-    );
-  }
+    </div>
+  );
 
   // Renderizar el componente de pestañas
   const renderTabContent = () => {
-    if (!apiConfig) return null;
-    
-    // Construir el cuerpo de la solicitud para mostrar en la implementación
-    const requestBody = apiConfig.buildRequestBody(formState);
-    
-    // Construir las cabeceras para mostrar en la implementación
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    
-    // Si la API tiene una función para construir cabeceras, usarla
-    if (apiConfig.buildRequestHeaders) {
-      const customHeaders = apiConfig.buildRequestHeaders(formState);
-      Object.assign(headers, customHeaders);
-    }
-    
     switch (activeTab) {
       case 'request':
+        if (freeEditorMode) {
+          return renderFreeEditor();
+        }
+        
+        if (!apiConfig) return null;
+        
         return (
           <div className={styles.innerCard}>
-            <h3 className={styles.implementationTitle}>Solicitud</h3>
+            <h3 className={styles.implementationTitle}>Request</h3>
             <form onSubmit={handleSubmit} className={styles.formInCard}>
               {/* Campos comunes */}
               <FormField
@@ -369,14 +516,69 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
                   className={styles.submitButton}
                   disabled={loading}
                 >
-                  {loading ? 'Enviando...' : 'Enviar solicitud'}
+                  {loading ? 'Sending...' : 'Send Request'}
                 </button>
               </div>
             </form>
           </div>
         );
       
+      case 'authorization':
+        return renderAuthorizationTab();
+      
       case 'implementation':
+        if (freeEditorMode) {
+          // Mostrar implementación para el editor libre
+          let implementationHeaders: Record<string, string> = {};
+          let implementationBody: any = {};
+          
+          // Headers básicos para implementación en modo libre
+          implementationHeaders = { 'Content-Type': 'application/json' };
+          
+          if (!['GET', 'DELETE'].includes(freeEditorState.method)) {
+            try {
+              implementationBody = JSON.parse(freeEditorState.body);
+            } catch (error) {
+              implementationBody = {};
+            }
+          }
+
+          // Agregar autorización a los headers para la implementación
+          if (authConfig.apiKey) {
+            implementationHeaders[authConfig.headerName] = authConfig.apiKey;
+          }
+          
+          return (
+            <ApiImplementation 
+              requestBody={implementationBody} 
+              method={freeEditorState.method} 
+              endpoint={freeEditorState.endpoint}
+              headers={implementationHeaders}
+            />
+          );
+        }
+        
+        if (!apiConfig) return null;
+        
+        // Construir el cuerpo de la solicitud para mostrar en la implementación
+        const requestBody = apiConfig.buildRequestBody(formState);
+        
+        // Construir las cabeceras para mostrar en la implementación
+        const headers: Record<string, string> = {
+          'Content-Type': 'application/json',
+        };
+        
+        // Si la API tiene una función para construir cabeceras, usarla
+        if (apiConfig.buildRequestHeaders) {
+          const customHeaders = apiConfig.buildRequestHeaders(formState);
+          Object.assign(headers, customHeaders);
+        }
+
+        // Agregar autorización a los headers para la implementación
+        if (authConfig.apiKey) {
+          headers[authConfig.headerName] = authConfig.apiKey;
+        }
+        
         // Get the method and endpoint
         const method = formState.method || 'POST';
         let implementationEndpoint = formState.endpoint || defaultEndpoint || apiConfig.defaultEndpoint;
@@ -416,22 +618,28 @@ const UnifiedApiTester = (props: UnifiedApiTesterProps) => {
       
       <div className={styles.tabs}>
         <button 
-          className={`${styles.tabButton} ${activeTab === 'request' ? styles.activeTab : ''}`}
+          className={`${styles.mainTabButton} ${activeTab === 'request' ? styles.mainActiveTab : ''}`}
           onClick={() => setActiveTab('request')}
         >
-          Solicitud
+          {freeEditorMode ? 'Free Editor' : 'Request'}
         </button>
         <button 
-          className={`${styles.tabButton} ${activeTab === 'implementation' ? styles.activeTab : ''}`}
+          className={`${styles.mainTabButton} ${activeTab === 'authorization' ? styles.mainActiveTab : ''}`}
+          onClick={() => setActiveTab('authorization')}
+        >
+          Authorization
+        </button>
+        <button 
+          className={`${styles.mainTabButton} ${activeTab === 'implementation' ? styles.mainActiveTab : ''}`}
           onClick={() => setActiveTab('implementation')}
         >
-          Implementación
+          Implementation
         </button>
         <button 
-          className={`${styles.tabButton} ${activeTab === 'result' ? styles.activeTab : ''}`}
+          className={`${styles.mainTabButton} ${activeTab === 'result' ? styles.mainActiveTab : ''}`}
           onClick={() => setActiveTab('result')}
         >
-          Resultado
+          Result
         </button>
       </div>
       

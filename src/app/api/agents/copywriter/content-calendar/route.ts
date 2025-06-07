@@ -10,6 +10,47 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+// Function to find copywriter agent for a site
+async function findContentCreatorAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  try {
+    if (!siteId || !isValidUUID(siteId)) {
+      console.error(`❌ Invalid site_id for content creator agent search: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Buscando agente con rol "Content Creator & Copywriter" para el sitio: ${siteId}`);
+    
+    // Buscar un agente activo con el rol adecuado
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id')
+      .eq('site_id', siteId)
+      .eq('status', 'active')
+      .eq('role', 'Content Creator & Copywriter')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.error('Error al buscar agente con rol "Content Creator & Copywriter":', error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró ningún agente con rol "Content Creator & Copywriter" activo para el sitio: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`✅ Agente con rol "Content Creator & Copywriter" encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    return {
+      agentId: data[0].id,
+      userId: data[0].user_id
+    };
+  } catch (error) {
+    console.error('Error al buscar agente de tipo Content Creator:', error);
+    return null;
+  }
+}
+
 // Function to save content items to the database
 async function saveContentItemsToDatabase(
   contentItems: any[],
@@ -27,24 +68,46 @@ async function saveContentItemsToDatabase(
     console.log(`Saving ${contentItems.length} content items to database`);
     
     // Map content items to database structure
-    const formattedItems = contentItems.map(item => ({
-      title: item.title || '',
-      description: item.description || '',
-      text: item.text || item.content || '',
-      type: item.type || 'blog_post',
-      status: 'draft',
-      site_id: siteId,
-      segment_id: segmentId || null,
-      campaign_id: campaignId || null,
-      user_id: userId || 'system',
-      metadata: {
-        originalItem: item,
-        schedule: item.schedule || null,
-        topics: item.topics || [],
-        keywords: item.keywords || [],
-        estimated_reading_time: item.estimated_reading_time || null
+    const formattedItems = contentItems.map((item: any, index: number) => {
+      const contentType = item.type;
+      console.log(`💾 Guardando contenido ${index + 1}:`, {
+        title: item.title?.substring(0, 50) + '...',
+        type: contentType,
+        hasType: !!contentType,
+        hasInstructions: !!item.instructions,
+        textLength: item.text?.length || 0,
+        instructionsLength: item.instructions?.length || 0
+      });
+      
+      // Debug: Log the full item structure for the first content piece
+      if (index === 0) {
+        console.log(`🔍 Debug item structure:`, JSON.stringify(item, null, 2));
       }
-    }));
+      
+      return {
+        title: item.title || '',
+        description: item.description || '',
+        text: item.text || '', // Only use the text property, not concatenated content
+        instructions: item.instructions || '', // Strategic instructions and execution details
+        type: contentType, // Use exact type returned by agent
+        status: 'draft',
+        site_id: siteId,
+        segment_id: segmentId || null,
+        campaign_id: campaignId || null,
+        user_id: userId || 'system',
+        estimated_reading_time: item.estimated_reading_time ? parseInt(item.estimated_reading_time, 10) : null,
+        metadata: {
+          schedule: item.schedule || null,
+          topics: item.topics || [],
+          keywords: item.keywords || [],
+          // Solo guardar campos adicionales que no están mapeados directamente
+          ...(item.target_audience && { target_audience: item.target_audience }),
+          ...(item.business_goal && { business_goal: item.business_goal }),
+          ...(item.distribution_channels && { distribution_channels: item.distribution_channels }),
+          ...(item.publishing_date && { publishing_date: item.publishing_date })
+        }
+      };
+    });
     
     // Insert into content table (was previously content_items)
     const { data, error } = await supabaseAdmin
@@ -405,9 +468,30 @@ export async function POST(request: Request) {
       );
     }
     
-    // Get default agent ID if not provided
-    const effectiveAgentId = agent_id || 'default_copywriter_agent';
-    const effectiveUserId = userId || 'system';
+    // Determine the user ID from the request or agent
+    let effectiveUserId = userId;
+    let effectiveAgentId = agent_id;
+    
+    // Si no se proporciona agent_id, buscar uno para el sitio
+    if (!effectiveAgentId) {
+      const foundAgent = await findContentCreatorAgent(siteId);
+      if (foundAgent) {
+        effectiveAgentId = foundAgent.agentId;
+        if (!effectiveUserId) {
+          effectiveUserId = foundAgent.userId;
+        }
+        console.log(`🤖 Usando agente con rol "Content Creator & Copywriter" encontrado: ${effectiveAgentId} (user_id: ${effectiveUserId})`);
+      } else {
+        // Use default agent if no specific agent found
+        effectiveAgentId = 'default_copywriter_agent';
+        console.log(`🤖 No se encontró agente específico, usando agente por defecto: ${effectiveAgentId}`);
+      }
+    }
+    
+    // Set fallback userId if still not defined
+    if (!effectiveUserId) {
+      effectiveUserId = 'system';
+    }
     
     console.log(`Creating command for agent: ${effectiveAgentId}, site: ${siteId}`);
     
@@ -457,31 +541,50 @@ export async function POST(request: Request) {
       additionalContext.push(groupedKeywords.join('\n'));
     }
     
-    const fullContext = additionalContext.length > 0 
-      ? `Generate a strategic content calendar optimized for maximum business impact.
+    // Build the base context template
+    const baseContextTemplate = `Generate a strategic content calendar optimized for maximum business impact.
 
 OBJECTIVES:
 - Create comprehensive, data-driven content ideas aligned with business goals
 - Develop a balanced mix of content types and formats to engage different audience segments
-- Include detailed information for each content piece (title, description, keywords, estimated reading time)
+- Include detailed information for each content piece (title, description, keywords, estimated reading time, type)
 - Ensure all content aligns with marketing strategy, SEO goals, and brand voice
 - Optimize publishing schedule for maximum audience engagement
 - Provide strategic rationale for topic selection and content types
+
+CONTENT TYPE OPTIONS (AUTHORIZED VALUES ONLY):
+Choose from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page
+
+TYPE DESCRIPTIONS:
+- blog_post: Blog Post
+- video: Video content
+- podcast: Podcast episode
+- social_post: Social Media Post
+- newsletter: Newsletter content
+- case_study: Case Study
+- whitepaper: Whitepaper
+- infographic: Infographic
+- webinar: Webinar content
+- ebook: E-Book
+- ad: Advertisement
+- landing_page: Landing Page (only if required by the business goals)
 
 CONTENT STRUCTURE GUIDELINES:
 1. Create at least 8-12 distinct content pieces organized chronologically
 2. For each content item include:
    - Clear, compelling title (50-60 characters)
    - Concise but descriptive summary (100-150 characters)
-   - Content type/format (blog, case study, infographic, video, etc.)
+   - Content type/format (choose from the authorized options above based on strategy and goals)
    - Primary topic and 3-5 related keywords
-   - Estimated reading/viewing time
+   - Estimated reading/viewing time in seconds
    - Optimal publishing date or timeframe
    - Specific target audience segment
    - Business goal this content supports
    - Brief strategic notes on execution
 
 STRATEGIC CONSIDERATIONS:
+- Consider the business goals and the target audience to create the content
+- Consider the budget, team size, and resources available to create the content
 - Distribute content types across marketing funnel (awareness, consideration, decision)
 - Include a mix of evergreen and timely/seasonal content
 - Create topic clusters around primary keywords for improved SEO impact
@@ -490,50 +593,36 @@ STRATEGIC CONSIDERATIONS:
 - Plan content that aligns with specific conversion goals and sales cycles
 
 CALENDAR FORMAT:
+- If not specified, make a week of content at least
 - Organize content chronologically by week/month
 - Group related content to create thematic campaigns where appropriate
 - Include content distribution channels for each piece
 - Note any dependencies between content items
 
-${context}\n\nAdditional Parameters:\n${additionalContext.join('\n')}`
-      : `Generate a strategic content calendar optimized for maximum business impact.
+CONTENT OUTPUT FORMAT:
+Split your response into TWO SEPARATE FIELDS:
 
-OBJECTIVES:
-- Create comprehensive, data-driven content ideas aligned with business goals
-- Develop a balanced mix of content types and formats to engage different audience segments
-- Include detailed information for each content piece (title, description, keywords, estimated reading time)
-- Ensure all content aligns with marketing strategy, SEO goals, and brand voice
-- Optimize publishing schedule for maximum audience engagement
-- Provide strategic rationale for topic selection and content types
+1. "text" field: ONLY the final copy/content ready to be published
+   - Rich markdown detailed copy, add line breaks for readability and formatting
+   - Be creative and engaging
+   - NO strategic notes, NO distribution info, NO SEO keywords lists
+   - ONLY the actual content that readers will see
 
-CONTENT STRUCTURE GUIDELINES:
-1. Create at least 8-12 distinct content pieces organized chronologically
-2. For each content item include:
-   - Clear, compelling title (50-60 characters)
-   - Concise but descriptive summary (100-150 characters)
-   - Content type/format (blog, case study, infographic, video, etc.)
-   - Primary topic and 3-5 related keywords
-   - Estimated reading/viewing time
-   - Optimal publishing date or timeframe
-   - Specific target audience segment
-   - Business goal this content supports
-   - Brief strategic notes on execution
+2. "instructions" field: ALL strategic and tactical information
+   - Distribution guidelines and channel recommendations
+   - SEO keywords and optimization notes
+   - Target audience segments and conversion goals
+   - Repurposing opportunities and dependencies
+   - Execution details and tactical notes for marketers
+   - Publishing schedule and strategic rationale
 
-STRATEGIC CONSIDERATIONS:
-- Distribute content types across marketing funnel (awareness, consideration, decision)
-- Include a mix of evergreen and timely/seasonal content
-- Create topic clusters around primary keywords for improved SEO impact
-- Balance content frequency based on available resources and audience engagement patterns
-- Consider repurposing opportunities (e.g., blog post → infographic → social media series)
-- Plan content that aligns with specific conversion goals and sales cycles
-
-CALENDAR FORMAT:
-- Organize content chronologically by week/month
-- Group related content to create thematic campaigns where appropriate
-- Include content distribution channels for each piece
-- Note any dependencies between content items
-
+CRITICAL: Keep these completely separate. The "text" should be clean copy without any meta-information.
 ${context}`;
+
+    // Add additional parameters if they exist
+    const fullContext = additionalContext.length > 0 
+      ? `${baseContextTemplate}\n\nAdditional Parameters:\n${additionalContext.join('\n')}`
+      : baseContextTemplate;
     
     // Create the command using CommandFactory
     const command = CommandFactory.createCommand({
@@ -546,10 +635,12 @@ ${context}`;
       // Set the target for content generation
       targets: [{
         content: [{
-          text: "Rich markdown detailed copy, add line breaks for readability and formatting",
-          title: "title of the content",
-          description: "summary of the content",
-          estimated_reading_time: "Number of estimated reading time in seconds, ex 60"
+          type: "Type of content from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page. Choose the most appropriate type for each content piece.",
+          text: "Rich detailed copy with proper formatting and line breaks for readability",
+          title: "Clear, compelling title for the content piece", 
+          description: "Brief, descriptive summary of the content",
+          instructions: "Strategic instructions, notes, distribution guidelines, SEO considerations, and execution details for this content piece",
+          estimated_reading_time: "Reading time in seconds as integer (e.g., 60, 120, 240)"
         }]
       }],
       // No tools for this command
@@ -607,32 +698,24 @@ ${context}`;
       // Extract content from results
       let contentResults = [];
       
+      console.log(`🔍 Debug: executedCommand.results structure:`, JSON.stringify(executedCommand.results, null, 2));
+      
       if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        // Try to find content using different possible paths
-        const contentResult = executedCommand.results.find((r: any) => 
-          r.type === 'content' || 
-          (r.content && Array.isArray(r.content.content)) || 
-          (Array.isArray(r.content))
-        );
+        // Extract content as defined in targets: [{ content: [...] }]
+        for (const result of executedCommand.results) {
+          if (result.content && Array.isArray(result.content)) {
+            // Direct content array as defined in targets: { content: [items] }
+            contentResults = result.content;
+            console.log(`✅ Found content array with ${contentResults.length} items`);
+            break;
+          }
+        }
         
-        if (contentResult) {
-          // Handle different content structures
-          if (contentResult.content && Array.isArray(contentResult.content.content)) {
-            contentResults = contentResult.content.content;
-          } else if (Array.isArray(contentResult.content)) {
-            contentResults = contentResult.content;
-          } else if (contentResult.type === 'content' && Array.isArray(contentResult)) {
-            contentResults = contentResult;
-          }
-        } else {
-          // Direct array of content object structure
-          const directContentArray = executedCommand.results.find((r: any) => 
-            r.content && Array.isArray(r.content)
+        // If no content found, log the structure for debugging
+        if (contentResults.length === 0) {
+          console.log(`⚠️ No content found. Available result keys:`, 
+            executedCommand.results.map((r: any) => Object.keys(r)).flat()
           );
-          
-          if (directContentArray) {
-            contentResults = directContentArray.content;
-          }
         }
       }
       
@@ -700,32 +783,24 @@ ${context}`;
     // Extract content from results
     let contentResults = [];
     
+    console.log(`🔍 Debug: executedCommand.results structure:`, JSON.stringify(executedCommand.results, null, 2));
+    
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
-      // Try to find content using different possible paths
-      const contentResult = executedCommand.results.find((r: any) => 
-        r.type === 'content' || 
-        (r.content && Array.isArray(r.content.content)) || 
-        (Array.isArray(r.content))
-      );
+      // Extract content as defined in targets: [{ content: [...] }]
+      for (const result of executedCommand.results) {
+        if (result.content && Array.isArray(result.content)) {
+          // Direct content array as defined in targets: { content: [items] }
+          contentResults = result.content;
+          console.log(`✅ Found content array with ${contentResults.length} items`);
+          break;
+        }
+      }
       
-      if (contentResult) {
-        // Handle different content structures
-        if (contentResult.content && Array.isArray(contentResult.content.content)) {
-          contentResults = contentResult.content.content;
-        } else if (Array.isArray(contentResult.content)) {
-          contentResults = contentResult.content;
-        } else if (contentResult.type === 'content' && Array.isArray(contentResult)) {
-          contentResults = contentResult;
-        }
-      } else {
-        // Direct array of content object structure
-        const directContentArray = executedCommand.results.find((r: any) => 
-          r.content && Array.isArray(r.content)
+      // If no content found, log the structure for debugging
+      if (contentResults.length === 0) {
+        console.log(`⚠️ No content found. Available result keys:`, 
+          executedCommand.results.map((r: any) => Object.keys(r)).flat()
         );
-        
-        if (directContentArray) {
-          contentResults = directContentArray.content;
-        }
       }
     }
     

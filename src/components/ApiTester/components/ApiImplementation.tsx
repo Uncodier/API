@@ -22,16 +22,38 @@ const ApiImplementation: React.FC<ApiImplementationProps> = ({
   const [codeLanguage, setCodeLanguage] = useState<'curl' | 'javascript' | 'python' | 'php'>('curl');
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     const code = codeExamples[codeLanguage](requestBody, method, endpoint, headers);
-    navigator.clipboard.writeText(code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    
+    try {
+      // Try modern clipboard API first
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(code);
+      } else {
+        // Fallback to older method
+        const textArea = document.createElement('textarea');
+        textArea.value = code;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+      }
+      
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy text: ', err);
+      // You could set an error state here if needed
+    }
   };
 
   return (
     <div className={styles.innerCard}>
-      <h3 className={styles.implementationTitle}>Implementación</h3>
+      <h3 className={styles.implementationTitle}>Implementation</h3>
       
       <div className={styles.callout}>
         <div className={styles.calloutContent}>
@@ -46,31 +68,27 @@ const ApiImplementation: React.FC<ApiImplementationProps> = ({
       <div className={styles.techTabsContainer}>
         <div className={styles.techTabs}>
           <button 
-            className={`${styles.techTabButton} ${codeLanguage === 'curl' ? styles.activeTechTab : ''}`}
+            className={`${styles.mainTabButton} ${codeLanguage === 'curl' ? styles.mainActiveTab : ''}`}
             onClick={() => setCodeLanguage('curl')}
           >
-            <span className={styles.techTabIcon}>$</span>
             cURL
           </button>
           <button 
-            className={`${styles.techTabButton} ${codeLanguage === 'javascript' ? styles.activeTechTab : ''}`}
+            className={`${styles.mainTabButton} ${codeLanguage === 'javascript' ? styles.mainActiveTab : ''}`}
             onClick={() => setCodeLanguage('javascript')}
           >
-            <span className={styles.techTabIcon}>JS</span>
             JavaScript
           </button>
           <button 
-            className={`${styles.techTabButton} ${codeLanguage === 'python' ? styles.activeTechTab : ''}`}
+            className={`${styles.mainTabButton} ${codeLanguage === 'python' ? styles.mainActiveTab : ''}`}
             onClick={() => setCodeLanguage('python')}
           >
-            <span className={styles.techTabIcon}>PY</span>
             Python
           </button>
           <button 
-            className={`${styles.techTabButton} ${codeLanguage === 'php' ? styles.activeTechTab : ''}`}
+            className={`${styles.mainTabButton} ${codeLanguage === 'php' ? styles.mainActiveTab : ''}`}
             onClick={() => setCodeLanguage('php')}
           >
-            <span className={styles.techTabIcon}>PHP</span>
             PHP
           </button>
         </div>
@@ -80,7 +98,7 @@ const ApiImplementation: React.FC<ApiImplementationProps> = ({
         <button 
           className={styles.copyButton} 
           onClick={handleCopy}
-          aria-label="Copiar código"
+          aria-label="Copy code"
         >
           <svg 
             xmlns="http://www.w3.org/2000/svg" 
@@ -104,7 +122,7 @@ const ApiImplementation: React.FC<ApiImplementationProps> = ({
               </>
             )}
           </svg>
-          <span>{copied ? 'Copiado' : 'Copiar'}</span>
+          <span>{copied ? 'Copied' : 'Copy'}</span>
         </button>
         <pre 
           style={{ margin: 0 }}

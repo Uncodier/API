@@ -114,24 +114,193 @@ export class WorkflowService {
   }
 
   /**
-   * Verifica la configuración de Temporal
+   * Verifica la configuración de Temporal y determina si debe usarse local o cloud
    */
-  public getTemporalConfig(): { serverUrl: string; namespace: string; isConfigured: boolean } {
+  public getTemporalConfig(): { 
+    serverUrl: string; 
+    namespace: string; 
+    isConfigured: boolean;
+    deploymentType: 'local' | 'cloud' | 'custom';
+    environment: string | undefined;
+    forcedByEnvironment: boolean;
+    validationResult: {
+      isValid: boolean;
+      errors: string[];
+      warnings: string[];
+    };
+  } {
     const serverUrl = this.getTemporalServerUrl();
     const namespace = this.getTemporalNamespace();
-    const isConfigured = serverUrl !== 'localhost:7233' || process.env.TEMPORAL_SERVER_URL !== undefined;
+    const apiKey = this.getTemporalApiKey();
+    const temporalEnv = this.getTemporalEnvironment();
+    
+    // Validación de configuración
+    const validationResult = this.validateTemporalConfiguration();
+    
+    // Determinar tipo de deployment
+    let deploymentType: 'local' | 'cloud' | 'custom' = 'local';
+    let forcedByEnvironment = false;
+    
+    // Lógica de detección basada en configuración, no en environment
+    if (apiKey && (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud'))) {
+      deploymentType = 'cloud';
+    } else if (serverUrl !== 'localhost:7233' && !apiKey) {
+      deploymentType = 'custom';
+    } else if (serverUrl === 'localhost:7233' || serverUrl.startsWith('127.0.0.1') || serverUrl.startsWith('0.0.0.0')) {
+      deploymentType = 'local';
+    }
+    
+    const isConfigured = validationResult.isValid && (
+      deploymentType === 'cloud' || 
+      deploymentType === 'custom' || 
+      process.env.TEMPORAL_SERVER_URL !== undefined ||
+      temporalEnv === 'development'
+    );
     
     return {
       serverUrl,
       namespace,
-      isConfigured
+      isConfigured,
+      deploymentType,
+      environment: temporalEnv,
+      forcedByEnvironment,
+      validationResult
     };
+  }
+
+  /**
+   * Valida la configuración de Temporal
+   */
+  public validateTemporalConfiguration(): {
+    isValid: boolean;
+    errors: string[];
+    warnings: string[];
+  } {
+    const errors: string[] = [];
+    const warnings: string[] = [];
+    
+    const serverUrl = this.getTemporalServerUrl();
+    const namespace = this.getTemporalNamespace();
+    const apiKey = this.getTemporalApiKey();
+    const temporalEnv = this.getTemporalEnvironment();
+    
+    // Si TEMPORAL_ENV=development, validaciones simplificadas pero respetando configuración
+    if (temporalEnv === 'development') {
+      console.log('🧪 Modo desarrollo detectado - usando configuración especificada');
+      
+      // En modo desarrollo, solo verificar formatos básicos
+      if (!this.isValidServerUrl(serverUrl)) {
+        errors.push(`URL del servidor Temporal inválida: ${serverUrl}`);
+      }
+      
+      if (!this.isValidNamespace(namespace)) {
+        errors.push(`Namespace de Temporal inválido: ${namespace}`);
+      }
+      
+      // Informar sobre la configuración que se está usando
+      if (process.env.TEMPORAL_SERVER_URL) {
+        console.log(`📍 Usando servidor configurado: ${serverUrl}`);
+      } else {
+        console.log(`📍 Usando servidor por defecto: ${serverUrl}`);
+      }
+      
+      if (process.env.TEMPORAL_NAMESPACE) {
+        console.log(`📁 Usando namespace configurado: ${namespace}`);
+      } else {
+        console.log(`📁 Usando namespace por defecto: ${namespace}`);
+      }
+      
+      return {
+        isValid: errors.length === 0,
+        errors,
+        warnings
+      };
+    }
+    
+    // Validaciones completas para otros entornos
+    // Validaciones básicas
+    if (!serverUrl) {
+      errors.push('TEMPORAL_SERVER_URL no está configurado');
+    }
+    
+    if (!namespace) {
+      errors.push('TEMPORAL_NAMESPACE no está configurado');
+    }
+    
+    // Validaciones específicas para Temporal Cloud
+    if (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud')) {
+      if (!apiKey) {
+        errors.push('TEMPORAL_CLOUD_API_KEY es requerido para Temporal Cloud');
+      }
+      if (namespace === 'default') {
+        warnings.push('Se recomienda usar un namespace específico para Temporal Cloud en lugar de "default"');
+      }
+    }
+    
+    // Validaciones para servidor local
+    if (serverUrl === 'localhost:7233' || serverUrl.startsWith('127.0.0.1')) {
+      if (apiKey) {
+        warnings.push('TEMPORAL_CLOUD_API_KEY está configurado pero se está usando servidor local');
+      }
+      if (process.env.NODE_ENV === 'production') {
+        warnings.push('Se está usando servidor local en entorno de producción');
+      }
+    }
+    
+    // Validaciones de formato
+    if (!this.isValidServerUrl(serverUrl)) {
+      errors.push(`URL del servidor Temporal inválida: ${serverUrl}`);
+    }
+    
+    if (!this.isValidNamespace(namespace)) {
+      errors.push(`Namespace de Temporal inválido: ${namespace}`);
+    }
+    
+    return {
+      isValid: errors.length === 0,
+      errors,
+      warnings
+    };
+  }
+
+  /**
+   * Valida el formato de la URL del servidor
+   */
+  private isValidServerUrl(url: string): boolean {
+    // Permitir localhost, IPs locales y dominios válidos
+    const localHostPatterns = [
+      /^localhost:\d+$/,
+      /^127\.0\.0\.1:\d+$/,
+      /^0\.0\.0\.0:\d+$/
+    ];
+    
+    const cloudPatterns = [
+      /^[\w-]+\.tmprl\.cloud:\d+$/,
+      /^[\w-]+\.temporal\.cloud:\d+$/
+    ];
+    
+    const customPatterns = [
+      /^[\w.-]+:\d+$/
+    ];
+    
+    return localHostPatterns.some(pattern => pattern.test(url)) ||
+           cloudPatterns.some(pattern => pattern.test(url)) ||
+           customPatterns.some(pattern => pattern.test(url));
+  }
+
+  /**
+   * Valida el formato del namespace
+   */
+  private isValidNamespace(namespace: string): boolean {
+    // Namespace debe ser alfanumérico con guiones, sin espacios
+    return /^[a-zA-Z0-9_-]+$/.test(namespace) && namespace.length >= 1 && namespace.length <= 64;
   }
 
   /**
    * Obtiene la URL del servidor de Temporal
    */
   private getTemporalServerUrl(): string {
+    // Usar TEMPORAL_SERVER_URL si está configurado, incluso en desarrollo
     return process.env.TEMPORAL_SERVER_URL || 'localhost:7233';
   }
 
@@ -139,6 +308,7 @@ export class WorkflowService {
    * Obtiene el namespace de Temporal
    */
   private getTemporalNamespace(): string {
+    // Usar TEMPORAL_NAMESPACE si está configurado, incluso en desarrollo
     return process.env.TEMPORAL_NAMESPACE || 'default';
   }
 
@@ -146,53 +316,120 @@ export class WorkflowService {
    * Obtiene el API key de Temporal Cloud
    */
   private getTemporalApiKey(): string | undefined {
+    // Usar TEMPORAL_CLOUD_API_KEY si está configurado, incluso en desarrollo
     return process.env.TEMPORAL_CLOUD_API_KEY;
+  }
+
+  /**
+   * Obtiene el entorno de Temporal configurado
+   */
+  private getTemporalEnvironment(): string | undefined {
+    return process.env.TEMPORAL_ENV;
   }
 
   /**
    * Verifica si el servidor Temporal está disponible
    */
-  public async testConnection(): Promise<{ success: boolean; error?: string }> {
+  public async testConnection(): Promise<{ 
+    success: boolean; 
+    error?: string; 
+    config?: {
+      deploymentType: 'local' | 'cloud' | 'custom';
+      serverUrl: string;
+      namespace: string;
+      validationResult: {
+        isValid: boolean;
+        errors: string[];
+        warnings: string[];
+      };
+    };
+  }> {
     try {
-      const serverUrl = this.getTemporalServerUrl();
-      const namespace = this.getTemporalNamespace();
+      // Obtener y validar configuración
+      const config = this.getTemporalConfig();
+      
+      console.log(`🔍 Probando conexión a Temporal (${config.deploymentType.toUpperCase()})`);
+      console.log(`📍 Servidor: ${config.serverUrl}`);
+      console.log(`📁 Namespace: ${config.namespace}`);
+      
+      // Mostrar warnings si existen
+      if (config.validationResult.warnings.length > 0) {
+        console.warn('⚠️ Advertencias de configuración:');
+        config.validationResult.warnings.forEach(warning => {
+          console.warn(`   - ${warning}`);
+        });
+      }
+      
+      // Verificar si la configuración es válida antes de intentar conectar
+      if (!config.validationResult.isValid) {
+        const errorMessage = `Configuración de Temporal inválida: ${config.validationResult.errors.join(', ')}`;
+        console.error('❌', errorMessage);
+        return {
+          success: false,
+          error: errorMessage,
+          config
+        };
+      }
+      
       const apiKey = this.getTemporalApiKey();
-      console.log(`🔍 Probando conexión a Temporal: ${serverUrl}`);
       console.log(`🔑 API Key configurado: ${apiKey ? 'Sí' : 'No'}`);
       
-      // Configuración de conexión según la documentación oficial
+      // Configuración de conexión según el tipo de deployment
       const connectionOptions: any = {
-        address: serverUrl,
+        address: config.serverUrl,
         connectTimeout: '5s',
       };
 
-      // Si tenemos API key, es para Temporal Cloud y necesitamos TLS
-      if (apiKey) {
-        connectionOptions.tls = true;
-        connectionOptions.apiKey = apiKey;
-        connectionOptions.metadata = {
-          'temporal-namespace': namespace,
-        };
-        console.log('🌐 Configurando para Temporal Cloud con TLS y API Key');
-      } else {
-        // Sin API key, asumimos servidor local sin TLS
-        connectionOptions.tls = false;
-        console.log('🏠 Configurando para servidor local sin TLS');
+      switch (config.deploymentType) {
+        case 'cloud':
+          connectionOptions.tls = true;
+          connectionOptions.apiKey = apiKey;
+          connectionOptions.metadata = {
+            'temporal-namespace': config.namespace,
+          };
+          console.log('🌐 Configurando para Temporal Cloud con TLS y API Key');
+          break;
+          
+        case 'custom':
+          // Para servidores custom, intentar TLS primero, luego sin TLS
+          connectionOptions.tls = config.serverUrl.includes('https') || !config.serverUrl.includes('localhost');
+          console.log(`🔧 Configurando para servidor personalizado ${connectionOptions.tls ? 'con' : 'sin'} TLS`);
+          break;
+          
+        case 'local':
+        default:
+          connectionOptions.tls = false;
+          console.log('🏠 Configurando para servidor local sin TLS');
+          break;
       }
 
       const testConnection = await Connection.connect(connectionOptions);
       
       await testConnection.close();
-      console.log('✅ Conexión a Temporal exitosa');
+      console.log(`✅ Conexión a Temporal ${config.deploymentType.toUpperCase()} exitosa`);
       
-      return { success: true };
+      return { 
+        success: true,
+        config
+      };
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Error desconocido';
       console.error('❌ Error al probar conexión a Temporal:', errorMessage);
       
+      // Intentar dar sugerencias basadas en el error
+      let enhancedError = errorMessage;
+      if (errorMessage.includes('ECONNREFUSED')) {
+        enhancedError += ' - Verifica que el servidor Temporal esté ejecutándose y la URL sea correcta';
+      } else if (errorMessage.includes('certificate')) {
+        enhancedError += ' - Problema con certificados TLS. Verifica la configuración de seguridad';
+      } else if (errorMessage.includes('unauthorized') || errorMessage.includes('authentication')) {
+        enhancedError += ' - Problema de autenticación. Verifica el API Key de Temporal Cloud';
+      }
+      
       return {
         success: false,
-        error: errorMessage
+        error: enhancedError,
+        config: this.getTemporalConfig()
       };
     }
   }
@@ -206,53 +443,108 @@ export class WorkflowService {
     }
 
     try {
-      const serverUrl = this.getTemporalServerUrl();
-      const namespace = this.getTemporalNamespace();
-      const apiKey = this.getTemporalApiKey();
+      // Obtener y validar configuración
+      const config = this.getTemporalConfig();
+      
+      console.log(`🔌 Inicializando cliente Temporal (${config.deploymentType.toUpperCase()})`);
+      console.log(`📍 Servidor: ${config.serverUrl}`);
+      console.log(`📁 Namespace: ${config.namespace}`);
+      
+      // Mostrar warnings si existen
+      if (config.validationResult.warnings.length > 0) {
+        console.warn('⚠️ Advertencias de configuración:');
+        config.validationResult.warnings.forEach(warning => {
+          console.warn(`   - ${warning}`);
+        });
+      }
+      
+      // Verificar si la configuración es válida antes de intentar conectar
+      if (!config.validationResult.isValid) {
+        const errorMessage = `No se puede inicializar Temporal - Configuración inválida: ${config.validationResult.errors.join(', ')}`;
+        console.error('❌', errorMessage);
+        throw new Error(errorMessage);
+      }
 
-      console.log(`🔌 Conectando a Temporal: ${serverUrl}, namespace: ${namespace}`);
+      const apiKey = this.getTemporalApiKey();
       console.log(`🔑 API Key configurado: ${apiKey ? 'Sí' : 'No'}`);
 
-      // Configuración de conexión según la documentación oficial
+      // Configuración de conexión según el tipo de deployment
       const connectionOptions: any = {
-        address: serverUrl,
+        address: config.serverUrl,
         connectTimeout: '10s',
       };
 
-      // Si tenemos API key, es para Temporal Cloud y necesitamos TLS
-      if (apiKey) {
-        connectionOptions.tls = true;
-        connectionOptions.apiKey = apiKey;
-        connectionOptions.metadata = {
-          'temporal-namespace': namespace,
-        };
-        console.log('🌐 Configurando para Temporal Cloud con TLS y API Key');
-      } else {
-        // Sin API key, asumimos servidor local sin TLS
-        connectionOptions.tls = false;
-        console.log('🏠 Configurando para servidor local sin TLS');
+      switch (config.deploymentType) {
+        case 'cloud':
+          connectionOptions.tls = true;
+          connectionOptions.apiKey = apiKey;
+          connectionOptions.metadata = {
+            'temporal-namespace': config.namespace,
+          };
+          console.log('🌐 Configurando cliente para Temporal Cloud con TLS y API Key');
+          break;
+          
+        case 'custom':
+          // Para servidores custom, determinar TLS automáticamente
+          connectionOptions.tls = config.serverUrl.includes('https') || !config.serverUrl.includes('localhost');
+          if (apiKey) {
+            connectionOptions.apiKey = apiKey;
+            connectionOptions.metadata = {
+              'temporal-namespace': config.namespace,
+            };
+          }
+          console.log(`🔧 Configurando cliente para servidor personalizado ${connectionOptions.tls ? 'con' : 'sin'} TLS`);
+          break;
+          
+        case 'local':
+        default:
+          connectionOptions.tls = false;
+          console.log('🏠 Configurando cliente para servidor local sin TLS');
+          break;
       }
 
       this.connection = await Connection.connect(connectionOptions);
 
       this.client = new Client({
         connection: this.connection,
-        namespace,
+        namespace: config.namespace,
       });
 
-      console.log('✅ Cliente de Temporal inicializado exitosamente');
+      console.log(`✅ Cliente Temporal ${config.deploymentType.toUpperCase()} inicializado exitosamente`);
       return this.client;
 
     } catch (error) {
       console.error('❌ Error al inicializar cliente de Temporal:', error);
-      console.error('📍 URL de servidor:', this.getTemporalServerUrl());
-      console.error('📍 Namespace:', this.getTemporalNamespace());
-      console.error('📍 API Key configurado:', this.getTemporalApiKey() ? 'Sí' : 'No');
+      
+      const config = this.getTemporalConfig();
+      console.error('📍 Configuración actual:');
+      console.error(`   - Tipo: ${config.deploymentType}`);
+      console.error(`   - Servidor: ${config.serverUrl}`);
+      console.error(`   - Namespace: ${config.namespace}`);
+      console.error(`   - API Key: ${this.getTemporalApiKey() ? 'Configurado' : 'No configurado'}`);
+      
+      if (config.validationResult.errors.length > 0) {
+        console.error('📍 Errores de configuración:');
+        config.validationResult.errors.forEach(err => {
+          console.error(`   - ${err}`);
+        });
+      }
       
       // Intentar logging adicional para diagnosticar el problema
       if (error instanceof Error) {
         console.error('📍 Mensaje de error:', error.message);
-        console.error('📍 Stack trace:', error.stack);
+        
+        // Dar sugerencias específicas según el tipo de error
+        if (error.message.includes('ECONNREFUSED')) {
+          console.error('💡 Sugerencia: Verifica que el servidor Temporal esté ejecutándose');
+          if (config.deploymentType === 'local') {
+            console.error('   Para servidor local, ejecuta: temporal server start-dev');
+          }
+        } else if (error.message.includes('certificate') || error.message.includes('tls')) {
+          console.error('💡 Sugerencia: Problema de TLS/SSL. Verifica la configuración de certificados');
+        } else if (error.message.includes('unauthorized') || error.message.includes('authentication')) {
+          console.error('💡 Sugerencia: Problema de autenticación. Verifica el API Key de Temporal Cloud');
+        }
       }
       
       throw error;
@@ -269,6 +561,186 @@ export class WorkflowService {
       this.client = null;
       console.log('🔌 Conexión con Temporal cerrada');
     }
+  }
+
+  /**
+   * Obtiene un reporte completo del estado de la configuración de Temporal
+   */
+  public getConfigurationReport(): {
+    deploymentType: 'local' | 'cloud' | 'custom';
+    serverUrl: string;
+    namespace: string;
+    apiKeyConfigured: boolean;
+    environment: string | undefined;
+    forcedByEnvironment: boolean;
+    environmentVariables: {
+      TEMPORAL_ENV?: string;
+      TEMPORAL_SERVER_URL?: string;
+      TEMPORAL_NAMESPACE?: string;
+      TEMPORAL_CLOUD_API_KEY?: string;
+      NODE_ENV?: string;
+    };
+    validation: {
+      isValid: boolean;
+      errors: string[];
+      warnings: string[];
+    };
+    recommendations: string[];
+  } {
+    const config = this.getTemporalConfig();
+    const apiKey = this.getTemporalApiKey();
+    
+    const recommendations: string[] = [];
+    
+    // Recomendaciones específicas para TEMPORAL_ENV=development
+    if (config.environment === 'development') {
+      recommendations.push('🧪 Modo desarrollo activo - configuración automática para localhost');
+      if (process.env.NODE_ENV === 'production') {
+        recommendations.push('⚠️ TEMPORAL_ENV=development en NODE_ENV=production - revisar configuración');
+      }
+    } else {
+      // Generar recomendaciones normales
+      if (config.deploymentType === 'local' && process.env.NODE_ENV === 'production') {
+        recommendations.push('⚠️ Se recomienda usar Temporal Cloud o un servidor dedicado en producción');
+      }
+      
+      if (config.deploymentType === 'cloud' && !apiKey) {
+        recommendations.push('❌ Se requiere TEMPORAL_CLOUD_API_KEY para Temporal Cloud');
+      }
+      
+      if (config.namespace === 'default' && config.deploymentType === 'cloud') {
+        recommendations.push('💡 Se recomienda usar un namespace personalizado en lugar de "default"');
+      }
+      
+      if (!process.env.WORKFLOW_TASK_QUEUE) {
+        recommendations.push('💡 Considera configurar WORKFLOW_TASK_QUEUE para mejor organización');
+      }
+      
+      // Sugerir uso de TEMPORAL_ENV para desarrollo
+      if (config.deploymentType === 'local' && !config.environment && process.env.NODE_ENV === 'development') {
+        recommendations.push('💡 Para desarrollo, considera usar TEMPORAL_ENV=development para configuración automática');
+      }
+    }
+    
+    return {
+      deploymentType: config.deploymentType,
+      serverUrl: config.serverUrl,
+      namespace: config.namespace,
+      apiKeyConfigured: !!apiKey,
+      environment: config.environment,
+      forcedByEnvironment: config.forcedByEnvironment,
+      environmentVariables: {
+        TEMPORAL_ENV: process.env.TEMPORAL_ENV,
+        TEMPORAL_SERVER_URL: process.env.TEMPORAL_SERVER_URL,
+        TEMPORAL_NAMESPACE: process.env.TEMPORAL_NAMESPACE,
+        TEMPORAL_CLOUD_API_KEY: process.env.TEMPORAL_CLOUD_API_KEY ? '***configurado***' : undefined,
+        NODE_ENV: process.env.NODE_ENV
+      },
+      validation: config.validationResult,
+      recommendations
+    };
+  }
+
+  /**
+   * Detecta automáticamente la mejor configuración basada en el entorno
+   */
+  public getAutoDetectedConfiguration(): {
+    suggestedType: 'local' | 'cloud' | 'custom';
+    suggestedSettings: {
+      TEMPORAL_ENV?: string;
+      TEMPORAL_SERVER_URL?: string;
+      TEMPORAL_NAMESPACE?: string;
+      TEMPORAL_CLOUD_API_KEY?: string;
+    };
+    reasoning: string[];
+  } {
+    const reasoning: string[] = [];
+    let suggestedType: 'local' | 'cloud' | 'custom' = 'local';
+    const suggestedSettings: any = {};
+    
+    // Detectar entorno
+    const isProduction = process.env.NODE_ENV === 'production';
+    const isDevelopment = process.env.NODE_ENV === 'development';
+    const hasTemporalEnv = !!process.env.TEMPORAL_ENV;
+    const hasCloudApiKey = !!process.env.TEMPORAL_CLOUD_API_KEY;
+    const hasCustomUrl = process.env.TEMPORAL_SERVER_URL && !process.env.TEMPORAL_SERVER_URL.includes('localhost');
+    
+    // Si ya hay TEMPORAL_ENV=development, sugerir mantenerlo
+    if (process.env.TEMPORAL_ENV === 'development') {
+      suggestedType = 'local';
+      suggestedSettings.TEMPORAL_ENV = 'development';
+      reasoning.push('✅ TEMPORAL_ENV=development detectado - configuración automática activa');
+      reasoning.push('Todas las otras configuraciones se ignoran automáticamente');
+      
+      return {
+        suggestedType,
+        suggestedSettings,
+        reasoning
+      };
+    }
+    
+    // Si es desarrollo y no hay TEMPORAL_ENV, sugerirlo
+    if (isDevelopment && !hasTemporalEnv && !hasCloudApiKey && !hasCustomUrl) {
+      suggestedType = 'local';
+      suggestedSettings.TEMPORAL_ENV = 'development';
+      reasoning.push('💡 NODE_ENV=development detectado');
+      reasoning.push('🎯 RECOMENDACIÓN: Usar TEMPORAL_ENV=development para configuración automática');
+      reasoning.push('Esto configura automáticamente localhost:7233 con namespace default');
+      
+      return {
+        suggestedType,
+        suggestedSettings,
+        reasoning
+      };
+    }
+    
+    // Lógica normal para otros casos
+    if (hasCloudApiKey) {
+      suggestedType = 'cloud';
+      suggestedSettings.TEMPORAL_CLOUD_API_KEY = process.env.TEMPORAL_CLOUD_API_KEY;
+      
+      if (!process.env.TEMPORAL_SERVER_URL || process.env.TEMPORAL_SERVER_URL.includes('localhost')) {
+        suggestedSettings.TEMPORAL_SERVER_URL = 'tu-namespace.tmprl.cloud:7233';
+        reasoning.push('Detectado API Key de Cloud, sugiriendo URL de Temporal Cloud');
+      }
+      
+      if (!process.env.TEMPORAL_NAMESPACE || process.env.TEMPORAL_NAMESPACE === 'default') {
+        suggestedSettings.TEMPORAL_NAMESPACE = 'tu-namespace-de-produccion';
+        reasoning.push('Se recomienda un namespace específico para Temporal Cloud');
+      }
+    } else if (hasCustomUrl) {
+      suggestedType = 'custom';
+      reasoning.push('Detectada URL personalizada sin API Key de Cloud');
+      
+      if (!process.env.TEMPORAL_NAMESPACE || process.env.TEMPORAL_NAMESPACE === 'default') {
+        suggestedSettings.TEMPORAL_NAMESPACE = 'custom-namespace';
+        reasoning.push('Se recomienda un namespace personalizado para servidor custom');
+      }
+    } else {
+      suggestedType = 'local';
+      reasoning.push('No se detectó configuración cloud o custom, sugiriendo setup local');
+      
+      if (!process.env.TEMPORAL_SERVER_URL) {
+        suggestedSettings.TEMPORAL_SERVER_URL = 'localhost:7233';
+        reasoning.push('Configurando URL local por defecto');
+      }
+      
+      if (!process.env.TEMPORAL_NAMESPACE) {
+        suggestedSettings.TEMPORAL_NAMESPACE = 'default';
+        reasoning.push('Usando namespace default para desarrollo local');
+      }
+    }
+    
+    if (isProduction && suggestedType === 'local') {
+      reasoning.push('⚠️ ADVERTENCIA: Entorno de producción detectado pero configuración local sugerida');
+      reasoning.push('💡 Considera migrar a Temporal Cloud para producción');
+    }
+    
+    return {
+      suggestedType,
+      suggestedSettings,
+      reasoning
+    };
   }
 
   /**
@@ -607,6 +1079,225 @@ export class WorkflowService {
         error: {
           code: 'WORKFLOW_EXECUTION_ERROR',
           message: error instanceof Error ? error.message : 'Error desconocido al iniciar workflow de WhatsApp'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para construir campañas
+   */
+  public async buildCampaigns(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para construir campañas'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `build-campaigns-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🏗️ Iniciando workflow de construcción de campañas: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('buildCampaignsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de campañas iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('buildCampaignsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de campañas completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de construcción de campañas:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de construcción de campañas'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para construir contenido
+   */
+  public async buildContent(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para construir contenido'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `build-content-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📝 Iniciando workflow de construcción de contenido: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('buildContentWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de contenido iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('buildContentWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de contenido completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de construcción de contenido:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de construcción de contenido'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para construir segmentos
+   */
+  public async buildSegments(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para construir segmentos'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `build-segments-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`👥 Iniciando workflow de construcción de segmentos: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('buildSegmentsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de segmentos iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('buildSegmentsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de segmentos completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de construcción de segmentos:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de construcción de segmentos'
         }
       };
     }

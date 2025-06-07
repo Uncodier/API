@@ -57,12 +57,12 @@ const ApiResults: React.FC<ApiResultsProps> = ({ loading, error, apiResponse }) 
   return (
     <div className={styles.innerCard}>
       <div className={styles.responseHeader}>
-        <h3>Resultados</h3>
+        <h3>Results</h3>
         {!loading && !error && apiResponse && (
           <div className={styles.responseInfo}>
             {statusCode && (
               <div className={styles.statusInfo}>
-                <span>Estado:</span> {renderStatusBadge(statusCode)}
+                <span>Status:</span> {renderStatusBadge(statusCode)}
               </div>
             )}
             {responseTime && (
@@ -88,7 +88,7 @@ const ApiResults: React.FC<ApiResultsProps> = ({ loading, error, apiResponse }) 
             <button 
               className={styles.copyButton} 
               onClick={handleCopy}
-              aria-label="Copiar JSON"
+              aria-label="Copy JSON"
             >
               <svg 
                 xmlns="http://www.w3.org/2000/svg" 
@@ -112,7 +112,7 @@ const ApiResults: React.FC<ApiResultsProps> = ({ loading, error, apiResponse }) 
                   </>
                 )}
               </svg>
-              <span>{copied ? 'Copiado' : 'Copiar'}</span>
+              <span>{copied ? 'Copied' : 'Copy'}</span>
             </button>
           </div>
         )}
@@ -127,7 +127,7 @@ const ApiResults: React.FC<ApiResultsProps> = ({ loading, error, apiResponse }) 
       {loading && (
         <div className={styles.loadingIndicator}>
           <div className={styles.loadingSpinner}></div>
-          <p>Cargando resultados...</p>
+          <p>Loading results...</p>
         </div>
       )}
       
@@ -143,7 +143,7 @@ const ApiResults: React.FC<ApiResultsProps> = ({ loading, error, apiResponse }) 
       )}
       
       {!loading && !error && !apiResponse && (
-        <p>Aún no hay resultados. Envía una solicitud para ver la respuesta.</p>
+        <p>No results yet. Send a request to see the response.</p>
       )}
     </div>
   );

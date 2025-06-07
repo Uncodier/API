@@ -20,7 +20,7 @@
   border-radius: 4px;
   box-shadow: none;
   overflow: hidden;
-  border: 1px solid #8888;
+  border: 1px solid oklch(0.87 0.01 261.99);
   transition: all 0.3s ease;
   margin: 0;
   padding: 1.5rem;
@@ -36,7 +36,7 @@
   border-radius: 4px;
   box-shadow: none;
   overflow: hidden;
-  border: 1px solid #8888;
+  border: 1px solid oklch(0.87 0.01 261.99);
   transition: all 0.3s ease;
   margin: 0;
   padding: 1.5rem;
@@ -748,7 +748,8 @@
   z-index: 1;
 }
 
-.tabButton {
+/* Nuevas clases para pestañas principales */
+.mainTabButton {
   padding: 12px 20px;
   background: none;
   border: none;
@@ -759,33 +760,27 @@
   position: relative;
   transition: all 0.2s ease;
   outline: none;
+  box-shadow: inset 0 -2px 0 transparent;
 }
 
-.tabButton:hover {
+.mainTabButton:hover {
   color: var(--nextra-primary-color, #0d6efd);
 }
 
-.activeTab {
+.mainActiveTab {
   color: var(--nextra-primary-color, #0d6efd);
-  font-weight: 600;
-}
-
-.activeTab::after {
-  content: '';
-  position: absolute;
-  bottom: -1px;
-  left: 0;
-  width: 100%;
-  height: 2px;
-  background-color: var(--nextra-primary-color, #0d6efd);
+  box-shadow: inset 0 -2px 0 var(--nextra-primary-color, #0d6efd);
 }
 
 .tabContent {
   padding: 20px 0;
+  min-height: 500px;
+  height: 500px;
+  width: 100%;
   display: flex;
   flex-direction: column;
   flex: 1;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 /* Estilos específicos para tema oscuro */
@@ -795,14 +790,14 @@
 }
 
 :global(.dark) .card {
-  background-color: transparent;
-  border-color: #8888;
+  background-color: rgb(0, 0, 0);
+  border-color: oklch(0.37 0 0);
   box-shadow: none;
 }
 
 :global(.dark) .innerCard {
-  background-color: var(--nextra-card-background, #1a1a1a);
-  border-color: rgb(54, 65, 83);
+  background-color: rgb(0, 0, 0);
+  border-color: oklch(0.37 0 0);
   box-shadow: none;
 }
 
@@ -1056,9 +1051,12 @@
 
 .tabContent {
   padding: 20px 0;
-  height: 100%;
+  min-height: 500px;
+  height: 500px;
+  width: 100%;
   display: flex;
   flex-direction: column;
+  overflow-y: auto;
 }
 
 :global(.dark) .requestPreview {
@@ -1083,12 +1081,18 @@
   color: var(--nextra-callout-text-dark, #b0b0b0);
 }
 
-:global(.dark) .tabButton:hover {
+/* Estilos para tema oscuro de pestañas principales */
+:global(.dark) .mainTabButton {
+  color: var(--nextra-secondary-text-color, #6c757d);
+}
+
+:global(.dark) .mainTabButton:hover {
   color: var(--nextra-primary-color, #5a9ae2);
 }
 
-:global(.dark) .activeTab {
+:global(.dark) .mainActiveTab {
   color: var(--nextra-primary-color, #5a9ae2);
+  box-shadow: inset 0 -2px 0 var(--nextra-primary-color, #5a9ae2);
 }
 
 .requestSection {
@@ -1295,63 +1299,18 @@
   width: 20px;
 }
 
-/* Estilos mejorados para los tabs de tecnología */
+/* Contenedores para las pestañas técnicas */
 .techTabsContainer {
   margin-bottom: 16px;
-  border-bottom: 1px solid var(--nextra-border-color, #dee2e6);
 }
 
 .techTabs {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  border-bottom: 1px solid var(--nextra-border-color, #dee2e6);
 }
 
-.techTabButton {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: none;
-  border: none;
-  border-radius: 4px 4px 0 0;
-  font-size: 0.9rem;
-  color: var(--nextra-secondary-text-color, #6c757d);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-  margin-bottom: -1px;
-}
-
-.techTabIcon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  background-color: var(--nextra-callout-icon-bg, rgba(13, 110, 253, 0.1));
-  border-radius: 4px;
-  font-size: 0.8rem;
-  font-weight: bold;
-  color: var(--nextra-primary-color, #0d6efd);
-}
-
-.techTabButton:hover {
-  color: var(--nextra-primary-color, #0d6efd);
-  background-color: var(--nextra-callout-bg, rgba(13, 110, 253, 0.05));
-}
-
-.activeTechTab {
-  color: var(--nextra-primary-color, #0d6efd);
-  background-color: var(--nextra-card-background, #ffffff);
-  border: 1px solid var(--nextra-border-color, #dee2e6);
-  border-bottom: 1px solid var(--nextra-card-background, #ffffff);
-  font-weight: 500;
-}
-
-.activeTechTab .techTabIcon {
-  background-color: var(--nextra-primary-color, #0d6efd);
-  color: white;
+:global(.dark) .techTabs {
+  border-bottom-color: #404040;
 }
 
 /* Estilos mejorados para el encabezado de respuesta */
@@ -1417,21 +1376,7 @@
   color: #d4d4d4;
 }
 
-:global(.dark) .techTabButton {
-  color: var(--nextra-secondary-text-color, #adb5bd);
-}
 
-:global(.dark) .techTabButton:hover {
-  color: var(--nextra-primary-color, #0d6efd);
-  background-color: rgba(13, 110, 253, 0.1);
-}
-
-:global(.dark) .activeTechTab {
-  color: var(--nextra-primary-color, #0d6efd);
-  background-color: var(--nextra-card-background, #1e1e1e);
-  border-color: var(--nextra-border-color, #2d2d2d);
-  border-bottom-color: var(--nextra-card-background, #1e1e1e);
-}
 
 .implementationTitle {
   margin-top: 0;
@@ -1733,4 +1678,59 @@
   .infoGrid {
     grid-template-columns: 1fr;
   }
+}
+
+.formControl[readonly]:hover {
+  cursor: default;
+}
+
+/* Estilos específicos para textarea que hereda de formControl */
+.textarea {
+  padding: 12px 16px;
+  border: 1px solid var(--nextra-border-color, #ddd);
+  border-radius: 6px;
+  font-size: 1rem;
+  line-height: 1.5;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  background-color: var(--nextra-input-bg, #fff);
+  color: var(--nextra-primary-text-color, #333);
+  resize: vertical;
+  min-height: 100px;
+}
+
+.textarea:hover:not(:disabled) {
+  border-color: var(--nextra-primary-color, #0d6efd);
+}
+
+.textarea:focus {
+  outline: none;
+  border-color: var(--nextra-primary-color, #0d6efd);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.1);
+}
+
+/* Estilos para textarea en tema oscuro */
+:global(.dark) .textarea {
+  background-color: var(--nextra-input-bg, #1e1e1e);
+  border-color: var(--nextra-border-color, #444);
+  color: var(--nextra-primary-text-color, #e6e6e6);
+}
+
+:global(.dark) .textarea:hover:not(:disabled) {
+  border-color: var(--nextra-primary-color, #0d6efd);
+}
+
+:global(.dark) .textarea:focus {
+  border-color: var(--nextra-primary-color, #0d6efd);
+  box-shadow: 0 0 0 3px rgba(13, 110, 253, 0.15);
+}
+
+/* Estilos para textarea con error */
+.textareaError {
+  background-color: #ffe6e6 !important;
+  border-color: #dc3545 !important;
+}
+
+:global(.dark) .textareaError {
+  background-color: #4a1a1a !important;
+  border-color: #dc3545 !important;
 } 

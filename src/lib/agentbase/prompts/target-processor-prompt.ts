@@ -80,6 +80,7 @@ Important Reminders:
 Keep going until the job is completly solved before ending your turn.
 Use the info provided by your tools, not guess, if your unsure about something, ask the user for more information, in order to trigger a new tool call.
 Plan thoroughly before executing a tool, and reflect on the outcome after.
+Don´t by lazy.
 `;
 
 /**

@@ -46,6 +46,20 @@ export class ProcessorConfigurationService {
       }
     );
     
+    // 3. Procesador específico para copywriting
+    processors['default_copywriter_agent'] = new TargetProcessor(
+      'default_copywriter_agent',
+      'Copywriter Agent',
+      connector,
+      ['copywriting', 'content_creation', 'marketing'],
+      {
+        modelType: 'openai',
+        modelId: 'gpt-4.1',
+        maxTokens: 32000,
+        temperature: 0.7
+      }
+    );
+    
     console.log(`✅ Procesadores configurados: ${Object.keys(processors).join(', ')}`);
     
     return processors;

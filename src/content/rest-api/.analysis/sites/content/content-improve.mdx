@@ -1,0 +1,410 @@
+---
+title: API de Mejora de Contenido Existente
+description: Documentación para el API de mejora y optimización de contenido existente en estado draft
+---
+
+# API de Mejora de Contenido Existente
+
+El endpoint `/api/site/content/improve` permite analizar y mejorar contenido existente en estado "draft" basado en análisis de segmentos de audiencia específicos. Esta API busca contenido existente, lo analiza y genera versiones optimizadas del mismo manteniendo los IDs originales para facilitar la actualización.
+
+> 🔧 **Optimización inteligente de contenido existente** 
+> 
+> Esta API utiliza algoritmos avanzados de IA para identificar oportunidades de mejora en contenido existente
+> y generar versiones optimizadas. Conserva los IDs originales para operaciones de actualización,
+> proporciona comparaciones detalladas y métricas de mejora. Ideal para optimización SEO,
+> aumento de engagement y mejora de conversiones.
+
+## Características principales
+
+- **Mejora de contenido existente**: Optimiza contenido en lugar de crear nuevo
+- **Búsqueda automática**: Encuentra contenido en estado "draft" automáticamente
+- **Análisis contextual**: Evalúa el contenido actual antes de mejorarlo
+- **Preservación de IDs**: Mantiene identificadores originales para actualizaciones
+- **Múltiples tipos de mejora**: Calidad, engagement, SEO, conversión, legibilidad
+- **Comparación detallada**: Muestra diferencias entre original y mejorado
+- **Operación de actualización**: Retorna IDs en targets con operación "update"
+- **Métricas de mejora**: Puntuaciones y predicciones de impacto
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiType="content-improve" 
+  title="Optimizador de Contenido Existente"
+  description="Prueba el API de mejora de contenido para optimizar drafts existentes."
+  defaultEndpoint="/api/site/content/improve"
+  defaultMethod="POST"
+  defaultUrl="https://ejemplo.com"
+  defaultSegmentId=""
+  defaultLimit={10}
+  defaultTimeout="30000"
+  showModelOptions={true}
+  defaultModelType="anthropic"
+  defaultModel="claude-3-5-sonnet-20240620"
+  showSiteUrlField={true}
+  additionalFields={[
+    {
+      name: "url",
+      label: "URL del sitio",
+      type: "text",
+      defaultValue: "https://ejemplo.com",
+      placeholder: "https://tusitio.com",
+      required: true
+    },
+    {
+      name: "segment_id",
+      label: "ID del Segmento (opcional)",
+      type: "text",
+      defaultValue: "",
+      placeholder: "Dejar vacío para analizar todos los segmentos",
+      required: false
+    },
+    {
+      name: "content_types",
+      label: "Tipos de contenido",
+      type: "select",
+      multiple: true,
+      options: [
+        { value: "posts", label: "Artículos/Posts" },
+        { value: "videos", label: "Videos" },
+        { value: "podcasts", label: "Podcasts" },
+        { value: "ads", label: "Anuncios" },
+        { value: "social", label: "Contenido Social" },
+        { value: "downloads", label: "Descargables" }
+      ],
+      defaultValue: ["posts", "videos"]
+    },
+    {
+      name: "improvement_type",
+      label: "Tipo de mejora",
+      type: "select",
+      options: [
+        { value: "all", label: "Todas las mejoras" },
+        { value: "quality", label: "Calidad" },
+        { value: "engagement", label: "Engagement" },
+        { value: "seo", label: "SEO" },
+        { value: "conversion", label: "Conversión" },
+        { value: "readability", label: "Legibilidad" }
+      ],
+      defaultValue: "all"
+    },
+    {
+      name: "limit",
+      label: "Número máximo de contenidos a mejorar",
+      type: "number",
+      defaultValue: 10,
+      min: 1,
+      max: 50
+    },
+    {
+      name: "min_improvement_score",
+      label: "Puntuación mínima de mejora",
+      type: "number",
+      defaultValue: 0.3,
+      min: 0,
+      max: 1,
+      step: 0.1
+    },
+    {
+      name: "include_original",
+      label: "Incluir contenido original",
+      type: "checkbox",
+      defaultValue: true
+    },
+    {
+      name: "user_id",
+      label: "ID de Usuario (opcional)",
+      type: "text",
+      placeholder: "user_123456"
+    },
+    {
+      name: "site_id",
+      label: "ID del Sitio (opcional)",
+      type: "text",
+      placeholder: "site_789012"
+    },
+    {
+      name: "funnel_stage",
+      label: "Etapa del funnel",
+      type: "select",
+      options: [
+        { value: "all", label: "Todas las etapas" },
+        { value: "awareness", label: "Conocimiento (Awareness)" },
+        { value: "consideration", label: "Consideración" },
+        { value: "decision", label: "Decisión" },
+        { value: "retention", label: "Retención" }
+      ],
+      defaultValue: "all"
+    },
+    {
+      name: "sort_by",
+      label: "Criterio de ordenación",
+      type: "select",
+      options: [
+        { value: "improvement_potential", label: "Potencial de mejora" },
+        { value: "relevance", label: "Relevancia" },
+        { value: "date", label: "Fecha" },
+        { value: "popularity", label: "Popularidad" }
+      ],
+      defaultValue: "improvement_potential"
+    }
+  ]}
+/>
+
+## Parámetros de solicitud
+
+| Parámetro | Tipo | Descripción | Valores posibles | Requerido |
+|-----------|------|-------------|------------------|-----------|
+| `url` | string | URL del sitio | URL válida | Sí |
+| `segment_id` | string | ID del segmento específico | Cualquier ID válido | No |
+| `content_types` | array | Tipos de contenido a mejorar | `posts`, `videos`, `podcasts`, `ads`, `social`, `downloads` | No |
+| `improvement_type` | string | Tipo de mejora a aplicar | `quality`, `engagement`, `seo`, `conversion`, `readability`, `all` | No (default: `all`) |
+| `limit` | number | Número máximo de contenidos a mejorar | 1-50 | No (default: 10) |
+| `min_improvement_score` | number | Puntuación mínima de mejora requerida | 0.0-1.0 | No (default: 0.3) |
+| `include_original` | boolean | Incluir contenido original en la respuesta | `true`, `false` | No (default: `true`) |
+| `funnel_stage` | string | Filtrar por etapa del funnel | `all`, `awareness`, `consideration`, `decision`, `retention` | No |
+| `sort_by` | string | Criterio de ordenación | `improvement_potential`, `relevance`, `date`, `popularity` | No |
+| `user_id` | string | ID del usuario | Cualquier ID válido | No |
+| `site_id` | string | ID del sitio | Cualquier ID válido | No |
+| `topics` | array | Filtrar por temas específicos | Array de strings | No |
+| `provider` | string | Proveedor del modelo de IA | `openai`, `anthropic`, `gemini` | No |
+| `modelId` | string | ID del modelo de IA | Depende del proveedor | No |
+| `timeout` | number | Tiempo máximo de espera en ms | 5000-120000 | No (default: 30000) |
+
+## Tipos de mejoras disponibles
+
+### 🎯 Quality (Calidad)
+- Mejora en estructura y organización
+- Claridad y coherencia del mensaje
+- Corrección de errores gramaticales
+- Optimización del flujo narrativo
+
+### 📈 Engagement
+- Títulos más atractivos
+- Llamadas a la acción más efectivas
+- Contenido más interactivo
+- Elementos que generan participación
+
+### 🔍 SEO (Optimización para motores de búsqueda)
+- Palabras clave relevantes
+- Meta descripciones optimizadas
+- Estructura de encabezados
+- URLs amigables
+
+### 💰 Conversion (Conversión)
+- Mensajes orientados a objetivos
+- Ofertas y propuestas de valor claras
+- Reducción de fricción
+- Elementos de urgencia y escasez
+
+### 📖 Readability (Legibilidad)
+- Simplificación del lenguaje
+- Párrafos más cortos
+- Uso de listas y elementos visuales
+- Mejora en la estructura del texto
+
+## Ejemplos de uso
+
+### Mejora básica de contenido para un segmento
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "improvement_type": "engagement"
+}
+```
+
+### Optimización SEO específica
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "content_types": ["posts"],
+  "improvement_type": "seo",
+  "min_improvement_score": 0.6,
+  "limit": 5
+}
+```
+
+### Mejora completa con configuración avanzada
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_small_businesses",
+  "content_types": ["posts", "videos"],
+  "improvement_type": "all",
+  "limit": 10,
+  "min_improvement_score": 0.4,
+  "include_original": true,
+  "funnel_stage": "consideration",
+  "sort_by": "improvement_potential",
+  "provider": "anthropic",
+  "modelId": "claude-3-5-sonnet-20240620"
+}
+```
+
+## Respuesta
+
+La respuesta incluye el contenido mejorado con análisis detallado de los cambios:
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "segment_id": "seg_content_creators",
+  "operation": "update",
+  "targets": ["draft_post_001", "draft_video_002"],
+  "improvements": [
+    {
+      "id": "draft_post_001",
+      "type": "post",
+      "title": "Guía Completa de Marketing Digital para Emprendedores en 2024",
+      "description": "Descubre las estrategias de marketing digital más efectivas...",
+      "content": "El marketing digital se ha convertido en el pilar fundamental...",
+      "url": "https://ejemplo.com/blog/intro-marketing-digital",
+      "topics": ["marketing digital", "emprendimiento", "estrategia"],
+      "funnelStage": "awareness",
+      "improvements": {
+        "type": ["quality", "engagement", "seo"],
+        "description": "Mejora significativa en estructura, profundidad del contenido y optimización SEO",
+        "changes": [
+          "Título más específico y orientado a resultados",
+          "Descripción expandida con beneficios claros",
+          "Contenido estructurado con mayor profundidad"
+        ],
+        "expectedImpact": "Incremento esperado del 40% en engagement y 25% en conversión",
+        "improvementScore": 0.75
+      },
+      "comparison": {
+        "titleChanged": true,
+        "descriptionChanged": true,
+        "contentChanged": true,
+        "topicsAdded": ["emprendimiento", "estrategia"],
+        "topicsRemoved": []
+      },
+      "relevanceScore": 0.92,
+      "engagementPrediction": {
+        "score": 0.85,
+        "metrics": {
+          "timeOnPage": "High",
+          "shareability": "Very high",
+          "conversionPotential": "High"
+        }
+      },
+      "seoImprovements": {
+        "keywords": ["marketing digital 2024", "estrategias emprendedores"],
+        "metaDescription": "Guía completa de marketing digital para emprendedores...",
+        "headings": ["H1: Guía Completa de Marketing Digital", "H2: Fundamentos"]
+      }
+    }
+  ],
+  "original_content": [
+    {
+      "id": "draft_post_001",
+      "type": "post",
+      "title": "Introducción al Marketing Digital",
+      "description": "Una guía básica sobre marketing digital para principiantes.",
+      "content": "El marketing digital es importante en el mundo actual...",
+      "status": "draft",
+      "metrics": {
+        "views": 0,
+        "engagement": 0,
+        "conversion": 0
+      }
+    }
+  ],
+  "total_content_analyzed": 3,
+  "content_improved": 2,
+  "metadata": {
+    "request": {
+      "timestamp": "2024-07-15T16:42:18Z",
+      "parameters": {
+        "improvement_type": "engagement",
+        "content_types": ["posts", "videos"]
+      }
+    },
+    "analysis": {
+      "modelUsed": "claude-3-5-sonnet-20240620",
+      "aiProvider": "anthropic",
+      "processingTime": "2.5 seconds",
+      "contentSource": "draft_content (3 items found)",
+      "improvementTypes": ["quality", "engagement", "seo"],
+      "averageImprovementScore": 0.68
+    }
+  }
+}
+```
+
+## Campos de respuesta importantes
+
+| Campo | Descripción |
+|-------|-------------|
+| `operation` | Siempre "update" para indicar que es una operación de actualización |
+| `targets` | Array con los IDs del contenido que debe ser actualizado |
+| `improvements` | Array con el contenido mejorado |
+| `original_content` | Contenido original (si `include_original` es true) |
+| `improvements.comparison` | Comparación detallada entre original y mejorado |
+| `improvements.improvementScore` | Puntuación de mejora (0.0-1.0) |
+
+## Flujo de trabajo recomendado
+
+1. **Identificación**: La API busca automáticamente contenido en estado "draft"
+2. **Análisis**: Evalúa el contenido actual y identifica oportunidades de mejora
+3. **Mejora**: Genera versiones optimizadas manteniendo el propósito original
+4. **Comparación**: Proporciona análisis detallado de los cambios realizados
+5. **Actualización**: Retorna los IDs para actualizar el contenido en tu sistema
+
+## Diferencias con la API de Creación
+
+| Aspecto | Creación (`/content`) | Mejora (`/content/improve`) |
+|---------|----------------------|---------------------------|
+| **Propósito** | Genera contenido nuevo | Mejora contenido existente |
+| **Fuente** | Análisis del sitio web | Contenido en estado "draft" |
+| **IDs** | Genera nuevos IDs | Mantiene IDs originales |
+| **Operación** | `create` | `update` |
+| **Targets** | N/A | Array de IDs actualizados |
+| **Datos originales** | No incluye | Opcionalmente incluye original |
+
+## Códigos de estado
+
+| Código | Descripción |
+|--------|-------------|
+| `200` | Mejoras generadas exitosamente |
+| `400` | Parámetros inválidos |
+| `404` | No se encontró contenido draft para mejorar |
+| `422` | No se pudieron generar mejoras |
+| `500` | Error interno del servidor |
+
+## Limitaciones
+
+- Solo funciona con contenido en estado "draft"
+- Máximo 50 contenidos por solicitud
+- Requiere al menos una puntuación de mejora mínima
+- Los IDs del contenido deben existir en el sistema
+- Timeout máximo de 2 minutos
+
+## Mejores prácticas
+
+1. **Filtra por tipo de mejora**: Especifica `improvement_type` para mejoras focalizadas
+2. **Establece umbrales**: Usa `min_improvement_score` para contenido que realmente necesite mejoras
+3. **Revisa comparaciones**: Analiza el objeto `comparison` para entender los cambios
+4. **Incluye original**: Mantén `include_original: true` para auditoría
+5. **Procesa por lotes**: Mejora contenido en lotes pequeños para mejor control
+
+## Casos de uso
+
+### Optimización SEO masiva
+Ideal para mejorar el posicionamiento de contenido existente
+
+### Aumento de engagement
+Perfecto para contenido con bajo rendimiento que necesita revitalización
+
+### Auditoría de drafts
+Excelente para procesar y optimizar drafts acumulados antes de publicar
+
+### Personalización por segmentos
+Útil para adaptar contenido existente a diferentes audiencias
+
+---
+
+> 💡 **Tip**: Combina esta API con la [API de Creación de Contenido](/rest-api/analysis/sites/content) para un flujo completo: primero genera ideas, luego crea drafts, y finalmente optimízalos antes de publicar. 
