@@ -142,7 +142,7 @@ export class WorkflowService {
     let forcedByEnvironment = false;
     
     // Lógica de detección basada en configuración, no en environment
-    if (apiKey && (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud'))) {
+    if (apiKey && (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud') || serverUrl.includes('aws.api.temporal.io'))) {
       deploymentType = 'cloud';
     } else if (serverUrl !== 'localhost:7233' && !apiKey) {
       deploymentType = 'custom';
@@ -228,7 +228,7 @@ export class WorkflowService {
     }
     
     // Validaciones específicas para Temporal Cloud
-    if (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud')) {
+    if (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud') || serverUrl.includes('aws.api.temporal.io')) {
       if (!apiKey) {
         errors.push('TEMPORAL_CLOUD_API_KEY es requerido para Temporal Cloud');
       }
@@ -276,7 +276,8 @@ export class WorkflowService {
     
     const cloudPatterns = [
       /^[\w-]+\.tmprl\.cloud:\d+$/,
-      /^[\w-]+\.temporal\.cloud:\d+$/
+      /^[\w-]+\.temporal\.cloud:\d+$/,
+      /^[\w-]+\.aws\.api\.temporal\.io:\d+$/
     ];
     
     const customPatterns = [
@@ -292,8 +293,9 @@ export class WorkflowService {
    * Valida el formato del namespace
    */
   private isValidNamespace(namespace: string): boolean {
-    // Namespace debe ser alfanumérico con guiones, sin espacios
-    return /^[a-zA-Z0-9_-]+$/.test(namespace) && namespace.length >= 1 && namespace.length <= 64;
+    // Namespace debe ser alfanumérico con guiones, puntos y guiones bajos, sin espacios
+    // Permite formato de Temporal Cloud como "namespace.suffix"
+    return /^[a-zA-Z0-9._-]+$/.test(namespace) && namespace.length >= 1 && namespace.length <= 64;
   }
 
   /**
