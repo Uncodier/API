@@ -1,16 +1,30 @@
-# Create Audience Segments Command
+# Growth Agent Segments API
 
-Creates a command object to analyze a website and identify the most profitable audience segments, evaluating behavior patterns, demographics, and monetization opportunities.
+Creates audience segments and performs ICP analysis using Growth Marketer agents to identify profitable audiences and enhance targeting precision.
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
-## Endpoint
+## Endpoints
+
+### Create Audience Segments
 
 ```http
 POST /api/agents/growth/segments
 ```
 
+Creates new audience segments for a website using Growth Marketer agent analysis.
+
+### Enhance Segments with ICP Analysis
+
+```http
+POST /api/agents/growth/segments/icp
+```
+
+Performs detailed ICP (Ideal Customer Profile) analysis on existing segments to enhance targeting precision.
+
 ## Request Body
+
+### Create Segments Request
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -19,7 +33,13 @@ POST /api/agents/growth/segments
 | `userId` | string | No | ID of the user creating the segments |
 | `segmentData` | object | No | Object containing segment analysis configuration |
 
-### Example Request
+#### segmentData Object
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `segmentCount` | number | No | Number of segments to create (default: 5) |
+
+#### Example Request
 
 ```json
 {
@@ -32,16 +52,40 @@ POST /api/agents/growth/segments
 }
 ```
 
+### ICP Analysis Request
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website containing the segments |
+| `agent_id` | string | No | ID of the agent to handle ICP analysis |
+| `userId` | string | No | ID of the user requesting analysis |
+| `segmentIds` | array | Yes | Array of segment IDs to analyze |
+
+#### Example Request
+
+```json
+{
+  "siteId": "site_456",
+  "agent_id": "agent_growth_123",
+  "userId": "user_789",
+  "segmentIds": ["seg_123", "seg_456", "seg_789"]
+}
+```
+
 ## Try It
 
-You can test this API directly using our API Tester interface. The API tester allows you to analyze websites and generate profitable audience segments.
+You can test this API directly using our API Tester interface. The API tester allows you to create audience segments and perform ICP analysis.
 
-Required fields:
-- **Site ID**: The ID of the website to analyze
+**Create Segments Mode:**
+- **Site ID**: The ID of the website to analyze for segments
 
-Optional fields:
-- **Agent ID**: ID of the agent to handle segment analysis
-- **User ID**: ID of the user creating the segments
+**ICP Analysis Mode:**
+- **Site ID**: The ID of the website containing the segments
+- **Segment IDs**: Array of segment IDs to analyze
+
+**Optional fields for both modes:**
+- **Agent ID**: ID of the agent to handle analysis
+- **User ID**: ID of the user creating/analyzing segments
 
 <UnifiedApiTester apiId="segments" />
 
@@ -86,7 +130,7 @@ The system generates a command object with the following structure to control th
 
 ## Response
 
-### Success Response
+### Create Segments Success Response
 
 ```json
 {
@@ -94,7 +138,7 @@ The system generates a command object with the following structure to control th
   "data": {
     "command_id": "cmd_abc123",
     "site_id": "site_456",
-    "url": "https://ejemplo.com",
+    "url": null,
     "segmentsAnalyzed": 5,
     "segmentsCreated": 3,
     "segments": [
@@ -102,19 +146,75 @@ The system generates a command object with the following structure to control th
         "id": "seg_content_creators",
         "name": "Digital Content Creators",
         "description": "Professionals aged 20-40 dedicated to creating digital content",
+        "summary": "Highly profitable segment of digital creators",
         "estimatedSize": "189,000",
         "estimatedValue": "9,000,000",
         "profitabilityScore": 0.88,
-        "targetAudience": "media_entertainment"
-      },
+        "confidenceScore": 0.85,
+        "targetAudience": "media_entertainment",
+        "language": "en",
+        "attributes": {
+          "demographic": {
+            "ageRange": "20-40",
+            "gender": "mixed",
+            "income": "medium-high"
+          }
+        },
+        "audienceProfile": {
+          "adPlatforms": {
+            "googleAds": {
+              "demographics": {
+                "ageRanges": ["25-34", "35-44"]
+              }
+            }
+          }
+        },
+        "createdInDatabase": true,
+        "created_at": "2023-06-15T14:30:00Z"
+      }
+    ],
+    "saved_to_database": true
+  }
+}
+```
+
+### ICP Analysis Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_icp456",
+    "site_id": "site_456",
+    "segmentsAnalyzed": 3,
+    "segmentsUpdated": 3,
+    "segments": [
       {
-        "id": "seg_luxury_shoppers",
-        "name": "Luxury Mobile Shoppers",
-        "description": "High-income professionals who prefer mobile shopping",
-        "estimatedSize": "97,500",
-        "estimatedValue": "5,200,000",
-        "profitabilityScore": 0.92,
-        "targetAudience": "retail"
+        "id": "seg_content_creators",
+        "name": "Digital Content Creators",
+        "description": "Professionals aged 20-40 dedicated to creating digital content",
+        "icpEnhanced": true,
+        "icpEnhancementData": {
+          "demographic_insights": {
+            "age_distribution": "25-35 (60%), 36-45 (30%), 20-24 (10%)",
+            "income_analysis": "$50K-$100K annually with variable income",
+            "education_background": "Bachelor's degree in creative fields",
+            "geographic_distribution": "Urban areas, creative hubs"
+          },
+          "psychographic_profile": {
+            "values_and_beliefs": "Creativity, authenticity, innovation",
+            "lifestyle_preferences": "Work-life balance, flexible schedules",
+            "personality_traits": "Creative, ambitious, tech-savvy",
+            "motivations": "Self-expression, audience growth, monetization"
+          },
+          "behavioral_insights": {
+            "buying_behavior": "Research-heavy, value-conscious, trend-followers",
+            "media_consumption": "Video content, social media, podcasts",
+            "technology_adoption": "Early adopters, mobile-first",
+            "engagement_preferences": "Visual content, interactive formats"
+          }
+        },
+        "updated_at": "2023-06-15T15:30:00Z"
       }
     ],
     "saved_to_database": true
@@ -128,8 +228,8 @@ The system generates a command object with the following structure to control th
 {
   "success": false,
   "error": {
-    "code": "INVALID_URL",
-    "message": "The provided URL is not accessible or invalid"
+    "code": "SEGMENTS_NOT_FOUND",
+    "message": "No segments found for the provided IDs and site"
   }
 }
 ```
@@ -139,12 +239,17 @@ The system generates a command object with the following structure to control th
 | Code | Description |
 |------|-------------|
 | `INVALID_REQUEST` | The request parameters are invalid |
-| `INVALID_URL` | The provided URL is not accessible or invalid |
+| `INVALID_JSON` | Could not parse request body as JSON |
 | `SITE_NOT_FOUND` | The specified site does not exist |
 | `USER_NOT_FOUND` | The specified user does not exist |
-| `AI_PROCESSING_ERROR` | Error occurred during AI analysis |
-| `TIMEOUT_EXCEEDED` | Analysis timeout exceeded |
-| `SYSTEM_ERROR` | Internal system error occurred |
+| `GROWTH_MARKETER_NOT_FOUND` | No Growth Marketer agent found for this site |
+| `SEGMENTS_NOT_FOUND` | No segments found for the provided IDs and site |
+| `SEGMENTS_VERIFICATION_FAILED` | Failed to verify segments existence |
+| `SEGMENT_ANALYSIS_FAILED` | Growth Marketer segment analysis failed |
+| `ICP_ANALYSIS_FAILED` | Growth Marketer ICP analysis failed |
+| `NO_SEGMENTS_CREATED` | No segments could be created from analysis results |
+| `NO_SEGMENTS_UPDATED` | No segments could be updated with ICP results |
+| `INTERNAL_SERVER_ERROR` | An error occurred while processing the request |
 
 ## Segment Database Structure
 

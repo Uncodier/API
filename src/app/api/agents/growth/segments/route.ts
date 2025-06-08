@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { isValidUUID } from '@/lib/helpers/command-utils';
 import { findGrowthMarketerAgent } from '@/lib/helpers/agent-finder';
-import { executeGrowthMarketerCampaignPlanning } from '@/lib/helpers/campaign-commands';
-import { createCampaignsFromResults } from '@/lib/helpers/campaign-creators';
+import { executeGrowthMarketerSegmentAnalysis } from '@/lib/helpers/segment-commands';
+import { createSegmentsFromResults } from '@/lib/helpers/segment-creators';
 
 export async function POST(request: Request) {
   try {
@@ -20,9 +20,9 @@ export async function POST(request: Request) {
     }
     
     // Extraer parámetros directamente como están en la solicitud
-    const { siteId, userId, agent_id } = body;
+    const { siteId, userId, agent_id, segmentData = {} } = body;
     
-    console.log('🔍 Parámetros extraídos:', { siteId, userId, agent_id });
+    console.log('🔍 Parámetros extraídos:', { siteId, userId, agent_id, segmentData });
     
     // Validar siteId requerido
     if (!siteId) {
@@ -70,7 +70,7 @@ export async function POST(request: Request) {
       }
     }
     
-    // Find Growth Marketer agent for campaign planning
+    // Find Growth Marketer agent for segment analysis
     const growthMarketerAgent = await findGrowthMarketerAgent(siteId);
     
     if (!growthMarketerAgent) {
@@ -93,67 +93,72 @@ export async function POST(request: Request) {
       effectiveUserId = growthMarketerAgent.userId || 'system';
     }
     
-    // Crear contexto simple para el comando
-    const context = `Generate strategic marketing campaign ideas for Site ID: ${siteId}
+    // Crear contexto para el análisis de segmentos
+    const segmentCount = segmentData.segmentCount || 5;
+    const context = `Analyze audience segments for Site ID: ${siteId}
 
 INSTRUCTIONS:
-1. Create detailed and actionable marketing campaigns with clear objectives.
-2. Each campaign should include:
-   - A descriptive title that reflects the campaign's purpose
-   - A comprehensive description explaining the strategy and goals
-   - Appropriate type (inbound, outbound, branding, etc.)
-   - Realistic priority level based on business impact
-   - Reasonable budget and revenue projections
-   - Realistic due date for completion
-3. Focus on campaigns that drive measurable business growth and ROI
-4. Consider the target audience and market positioning
-5. Plan campaigns that work synergistically together
+1. Identify the most profitable audience segments for this website.
+2. Each segment should include:
+   - A descriptive name that clearly identifies the audience
+   - A comprehensive description of the segment characteristics
+   - Estimated audience size and value potential
+   - Target audience category that best fits the segment
+   - Language preference of the segment
+   - Profitability and confidence scores (0-1 scale)
+   - Detailed audience profile for advertising platforms
+   - Demographic, behavioral, and psychographic attributes
+   - Monetization opportunities and recommended actions
+3. Focus on segments with high commercial value and clear targeting potential
+4. Consider the website's business model and target market
+5. Generate ${segmentCount} segments ranked by profitability
 
-Your campaigns should be strategic, measurable, and aligned with business growth objectives.`;
+Your segments should be actionable for marketing campaigns and have clear value propositions.`;
     
-    // Execute Growth Marketer campaign planning command
-    console.log(`📊 INICIANDO: Ejecutando planificación de campañas con Growth Marketer...`);
+    // Execute Growth Marketer segment analysis command
+    console.log(`📊 INICIANDO: Ejecutando análisis de segmentos con Growth Marketer...`);
     
-    const { campaignPlanningResults, planningCommandUuid } = await executeGrowthMarketerCampaignPlanning(
+    const { segmentAnalysisResults, analysisCommandUuid } = await executeGrowthMarketerSegmentAnalysis(
       siteId,
       growthMarketerAgent.agentId,
       effectiveUserId,
-      context
+      context,
+      segmentCount
     );
 
-    if (!campaignPlanningResults || campaignPlanningResults.length === 0) {
-      console.log(`❌ FALLO: Growth Marketer campaign planning falló - enviando error response`);
+    if (!segmentAnalysisResults || segmentAnalysisResults.length === 0) {
+      console.log(`❌ FALLO: Growth Marketer segment analysis falló - enviando error response`);
       return NextResponse.json(
         { 
           success: false, 
           error: { 
-            code: 'CAMPAIGN_PLANNING_FAILED', 
-            message: 'No se pudo obtener la planificación de campañas del Growth Marketer' 
+            code: 'SEGMENT_ANALYSIS_FAILED', 
+            message: 'No se pudo obtener el análisis de segmentos del Growth Marketer' 
           } 
         },
         { status: 500 }
       );
     }
 
-    console.log(`✅ COMPLETADO: Planificación de campañas completada con ${campaignPlanningResults.length} campañas estratégicas`);
-    console.log(`🔑 Planning Command UUID: ${planningCommandUuid}`);
-    console.log(`💾 INICIANDO GUARDADO: Guardando campañas en base de datos...`);
+    console.log(`✅ COMPLETADO: Análisis de segmentos completado con ${segmentAnalysisResults.length} segmentos identificados`);
+    console.log(`🔑 Analysis Command UUID: ${analysisCommandUuid}`);
+    console.log(`💾 INICIANDO GUARDADO: Guardando segmentos en base de datos...`);
 
-    // Create campaigns from Growth Marketer results
-    const createdCampaigns = await createCampaignsFromResults(
-      campaignPlanningResults, 
+    // Create segments from Growth Marketer results
+    const createdSegments = await createSegmentsFromResults(
+      segmentAnalysisResults, 
       siteId, 
       effectiveUserId, 
-      planningCommandUuid
+      analysisCommandUuid
     );
     
-    if (createdCampaigns.length === 0) {
+    if (createdSegments.length === 0) {
       return NextResponse.json(
         { 
           success: false, 
           error: { 
-            code: 'NO_CAMPAIGNS_CREATED', 
-            message: 'No se pudieron crear campañas a partir de los resultados del Growth Marketer' 
+            code: 'NO_SEGMENTS_CREATED', 
+            message: 'No se pudieron crear segmentos a partir de los resultados del Growth Marketer' 
           } 
         },
         { status: 400 }
@@ -161,14 +166,20 @@ Your campaigns should be strategic, measurable, and aligned with business growth
     }
     
     console.log(`🎉 PROCESO COMPLETO: Enviando respuesta SUCCESS al cliente después de comando + guardado`);
-    console.log(`📊 Resumen final: ${createdCampaigns.length} campañas creadas`);
+    console.log(`📊 Resumen final: ${createdSegments.length} segmentos creados`);
     
-    // Devolver respuesta exitosa con las campañas creadas
+    // Devolver respuesta exitosa con los segmentos creados
     return NextResponse.json(
       { 
         success: true, 
         data: { 
-          campaigns: createdCampaigns
+          command_id: analysisCommandUuid,
+          site_id: siteId,
+          url: null, // Se podría obtener de la tabla sites si es necesario
+          segmentsAnalyzed: segmentAnalysisResults.length,
+          segmentsCreated: createdSegments.length,
+          segments: createdSegments,
+          saved_to_database: true
         } 
       },
       { status: 200 }
@@ -180,4 +191,4 @@ Your campaigns should be strategic, measurable, and aligned with business growth
       { status: 500 }
     );
   }
-}
+} 
