@@ -1,0 +1,90 @@
+---
+title: API Básica de Análisis
+description: Documentación para la ruta /api/analyze
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester'
+
+# API Básica de Análisis (`/api/analyze`)
+
+Esta API proporciona una forma sencilla de analizar un sitio web mediante una solicitud POST.
+
+## Características
+
+- Implementación simple y directa
+- Utiliza la función `analyzeSiteAction` para realizar el análisis
+- Enfocada en identificar secciones del sitio (hero, features, testimonials, etc.)
+- Manejo básico de errores con validación de esquema Zod
+
+## Prueba la API
+
+<UnifiedApiTester 
+  apiId="basic-analyze"
+  title="API Básica de Análisis"
+  description="Analiza un sitio web de forma simple y directa. Puedes solicitar el HTML completo activando la opción 'Include Raw HTML'."
+  defaultEndpoint="/api/analyze"
+/>
+
+## Endpoint
+
+```
+POST /api/analyze
+```
+
+## Parámetros de solicitud
+
+| Parámetro | Tipo   | Descripción                   | Requerido |
+|-----------|--------|-------------------------------|-----------|
+| url       | string | URL del sitio web a analizar  | Sí        |
+| includeRawHtml | boolean | Incluir el HTML crudo en la respuesta | No (por defecto: false) |
+
+## Ejemplo de solicitud
+
+```json
+{
+  "url": "https://ejemplo.com",
+  "includeRawHtml": false
+}
+```
+
+## Respuesta
+
+La respuesta incluye el resultado del análisis o un mensaje de error.
+
+### Respuesta exitosa
+
+```json
+{
+  "success": true,
+  "url": "https://ejemplo.com",
+  "analysis": {
+    // Datos del análisis del sitio
+    // Si includeRawHtml es true, incluirá:
+    "rawHtml": "<!DOCTYPE html><html>...</html>"
+  }
+}
+```
+
+### Respuesta de error
+
+```json
+{
+  "success": false,
+  "error": "Mensaje de error"
+}
+```
+
+## Notas importantes
+
+> **Nota:** Esta API es una implementación más simple comparada con la API avanzada `/api/site/analyze`. Si necesitas opciones más avanzadas de análisis, considera usar la API avanzada.
+
+## Diferencias con la API Avanzada
+
+Esta API (`/api/analyze`) difiere de la API avanzada (`/api/site/analyze`) en los siguientes aspectos:
+
+1. **Implementación**: Utiliza la función `analyzeSiteAction` en lugar de servicios especializados.
+2. **Opciones**: No permite configurar opciones avanzadas como tipo de análisis, profundidad, timeout, etc.
+3. **Respuesta**: Devuelve una estructura de respuesta más simple.
+4. **Manejo de errores**: Implementa un sistema de manejo de errores más básico.
+
+Para casos de uso más avanzados, se recomienda utilizar la API avanzada `/api/site/analyze`. 

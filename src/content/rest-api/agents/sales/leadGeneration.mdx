@@ -5,13 +5,13 @@ Creates a command object to generate qualified sales leads for your business bas
 ## Endpoint
 
 ```http
-POST /api/agents/sales/lead-generation
+POST /api/agents/sales/leadGeneration
 ```
 
 You can also use the standardized agent command format:
 
 ```http
-POST /api/agents/sales/command/lead-generation
+POST /api/agents/sales/command/leadGeneration
 ```
 
 ## Request Body
@@ -94,7 +94,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   apiId="sales" 
   title="Lead Generation API Tester" 
   description="Use this tester to generate qualified sales leads with different parameters and see the results." 
-  defaultEndpoint="/api/agents/sales/lead-generation"
+  defaultEndpoint="/api/agents/sales/leadGeneration"
 />
 
 You can test this API directly using our API Tester interface. The Sales API tester allows you to generate leads with different parameters and see the results.
@@ -292,7 +292,7 @@ The system generates a command object with the following structure to control th
 If you prefer to check the status of your lead generation command manually, you can use the status check endpoint:
 
 ```http
-GET /api/agents/sales/lead-generation/status/:command_id
+GET /api/agents/sales/leadGeneration/status/:command_id
 ```
 
 ### Status Response
@@ -322,7 +322,7 @@ GET /api/agents/sales/lead-generation/status/:command_id
 Once lead generation is complete, you can retrieve the leads using the following endpoint:
 
 ```http
-GET /api/agents/sales/lead-generation/leads/:command_id
+GET /api/agents/sales/leadGeneration/leads/:command_id
 ```
 
 ### Lead Retrieval Response

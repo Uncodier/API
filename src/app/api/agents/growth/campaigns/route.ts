@@ -4,6 +4,7 @@ import { isValidUUID } from '@/lib/helpers/command-utils';
 import { findGrowthMarketerAgent } from '@/lib/helpers/agent-finder';
 import { executeGrowthMarketerCampaignPlanning } from '@/lib/helpers/campaign-commands';
 import { createCampaignsFromResults } from '@/lib/helpers/campaign-creators';
+import { getSegmentsSummaryForCampaigns, formatSegmentsContextForCampaigns } from '@/lib/helpers/segment-context';
 
 export async function POST(request: Request) {
   try {
@@ -93,8 +94,15 @@ export async function POST(request: Request) {
       effectiveUserId = growthMarketerAgent.userId || 'system';
     }
     
-    // Crear contexto simple para el comando
+    // Obtener resumen de segmentos para incluir en el contexto
+    console.log(`📊 Obteniendo resumen de segmentos para el sitio ${siteId}...`);
+    const segmentsSummary = await getSegmentsSummaryForCampaigns(siteId);
+    const segmentsContext = formatSegmentsContextForCampaigns(segmentsSummary);
+    
+    // Crear contexto enriquecido con información de segmentos
     const context = `Generate strategic marketing campaign ideas for Site ID: ${siteId}
+
+${segmentsContext}
 
 INSTRUCTIONS:
 1. Create detailed and actionable marketing campaigns with clear objectives.
@@ -106,10 +114,20 @@ INSTRUCTIONS:
    - Reasonable budget and revenue projections
    - Realistic due date for completion
 3. Focus on campaigns that drive measurable business growth and ROI
-4. Consider the target audience and market positioning
+4. Consider the target audience and market positioning from the available segments
 5. Plan campaigns that work synergistically together
+6. Always consider founder generated content for tiktoks, instagram reels, etc.
+7. LEVERAGE THE SEGMENT DATA: Use the pain points, interests, and preferred channels identified in the segments to create more targeted and effective campaigns
+8. CREATE SEGMENT-SPECIFIC CAMPAIGNS: Consider creating campaigns specifically targeting individual segments when appropriate
 
-Your campaigns should be strategic, measurable, and aligned with business growth objectives.`;
+Your campaigns should be strategic, measurable, and aligned with business growth objectives. Use the audience segment insights to ensure maximum campaign relevance and effectiveness.
+
+IMPORTANT:
+- If the campaign is targeting a paid channel, assign a specific budget for the channel in a task, example: 
+  50 usd to design, copys, setup, etc., 100 usd to run the ads, total 150 usd for the campaign.
+- Consider the specific interests and pain points from each segment when designing campaigns
+- Use the preferred channels information to select the most effective distribution methods
+`;
     
     // Execute Growth Marketer campaign planning command
     console.log(`📊 INICIANDO: Ejecutando planificación de campañas con Growth Marketer...`);

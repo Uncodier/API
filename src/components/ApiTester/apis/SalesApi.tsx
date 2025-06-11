@@ -99,12 +99,12 @@ const SalesApi: BaseApiConfig = {
   id: 'sales',
   name: 'Sales API',
   description: 'API para gestionar operaciones de ventas como generación de leads',
-  defaultEndpoint: '/api/agents/sales/lead-generation',
+      defaultEndpoint: '/api/agents/sales/leadGeneration',
 
   getInitialState: (defaults: ApiDefaults) => {
     return {
       method: defaults.defaultMethod || 'POST',
-      endpoint: defaults.defaultEndpoint || '/api/agents/sales/lead-generation',
+      endpoint: defaults.defaultEndpoint || '/api/agents/sales/leadGeneration',
       siteId: '',
       websiteUrl: '',
       agent_id: '',

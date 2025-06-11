@@ -1,0 +1,123 @@
+# API de Inteligencia Artificial
+
+El endpoint `/api/ai` permite interactuar con modelos de IA para realizar análisis avanzados de sitios web.
+
+## Métodos disponibles
+
+### POST /api/ai
+
+Envía una consulta a la IA para analizar un sitio web o responder preguntas sobre el mismo.
+
+#### Parámetros de solicitud
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "Hola, ¿puedes ayudarme con mi sitio web?" }
+  ],
+  "modelType": "anthropic", // Tipo de modelo a utilizar (opcional, por defecto: anthropic)
+  "modelId": "claude-3-5-sonnet-20240620" // ID específico del modelo (opcional)
+}
+```
+
+#### Respuesta
+
+```json
+{
+  "id": "msg_01234567890",
+  "choices": [
+    {
+      "message": {
+        "role": "assistant",
+        "content": "¡Hola! Claro que puedo ayudarte con tu sitio web. ¿Qué tipo de ayuda necesitas? Puedo ofrecerte consejos sobre diseño, usabilidad, SEO, rendimiento, o cualquier otro aspecto que te interese mejorar."
+      }
+    }
+  ]
+}
+```
+
+## Modelos disponibles
+
+- **Anthropic**:
+  - `claude-3-5-sonnet-20240620`: Modelo más reciente con excelente rendimiento
+  - `claude-3-opus-20240229`: Modelo avanzado con capacidades superiores
+
+- **OpenAI**:
+  - `gpt-4o`: Modelo más reciente con capacidades multimodales
+  - `gpt-4-turbo`: Modelo avanzado con buen equilibrio entre rendimiento y costo
+
+- **Gemini**:
+  - `gemini-1.5-pro`: Modelo avanzado de Google con capacidades multimodales
+
+## Límites de uso
+
+- Máximo 10 solicitudes por minuto por IP
+- Máximo 100 solicitudes por día por IP
+- Longitud máxima de consulta: 4000 caracteres
+
+## Ejemplos de uso
+
+### Consulta general
+
+```javascript
+const response = await fetch('https://tudominio.com/api/ai', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    messages: [
+      { role: 'user', content: 'Explícame cómo mejorar el SEO de mi sitio web' }
+    ],
+    modelType: 'anthropic',
+    modelId: 'claude-3-5-sonnet-20240620'
+  })
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+### Conversación con contexto
+
+```javascript
+const response = await fetch('https://tudominio.com/api/ai', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    messages: [
+      { role: 'user', content: 'Hola, ¿cómo puedo mejorar la velocidad de carga de mi sitio?' },
+      { role: 'assistant', content: 'Para mejorar la velocidad de carga, puedes optimizar imágenes, utilizar caché, minimizar CSS y JavaScript, y utilizar una CDN. ¿Cuál de estas áreas te gustaría explorar primero?' },
+      { role: 'user', content: 'Cuéntame más sobre la optimización de imágenes' }
+    ],
+    modelType: 'anthropic',
+    modelId: 'claude-3-5-sonnet-20240620'
+  })
+});
+
+const data = await response.json();
+console.log(data.choices[0].message.content);
+```
+
+## Prueba el endpoint
+
+Puedes probar el endpoint directamente desde aquí:
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiType="ai"
+  defaultEndpoint="/api/ai"
+  title="Prueba el endpoint de IA"
+  description="Utiliza este formulario para probar el endpoint de IA con diferentes parámetros y ver la respuesta en tiempo real."
+  defaultQuery="Hola, ¿puedes ayudarme con mi sitio web?"
+  defaultModel="claude-3-5-sonnet-20240620"
+  defaultModelType="anthropic"
+  showModelOptions={true}
+  showScreenshotOption={false}
+  defaultUrl=""
+  showJsonOption={false}
+  showSiteUrlField={false}
+/> 

@@ -203,7 +203,7 @@ export class AgentInitializer {
     
     // Definir timeout y límite de intentos
     const timeout = 30000; // 30 segundos máximo
-    const maxAttempts = 60;
+    const maxAttempts = 100;
     const checkInterval = 500; // 500ms entre verificaciones
     
     return new Promise(async (resolve, reject) => {

@@ -42,7 +42,7 @@ function validateInput(body: any) {
 async function searchRegionBusinesses(region: string, businessType: string, keywords: string[], limit: number): Promise<{success: boolean, businesses?: Business[], error?: string}> {
   try {
     // Call the region search API
-    const searchResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/agents/sales/region-search`, {
+    const searchResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/agents/sales/regionSearch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

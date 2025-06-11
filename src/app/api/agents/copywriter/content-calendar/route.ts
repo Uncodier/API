@@ -3,6 +3,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getContentRequirementsContext } from '@/lib/helpers/content-requirements-helper';
 
 // Function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -118,7 +119,9 @@ async function saveContentItemsToDatabase(
         hasType: !!contentType,
         hasInstructions: !!item.instructions,
         textLength: item.text?.length || 0,
-        instructionsLength: item.instructions?.length || 0
+        instructionsLength: item.instructions?.length || 0,
+        campaignId: item.campaign_id || 'general-param',
+        hasCampaignId: !!item.campaign_id
       });
       
       // Debug: Log the full item structure for the first content piece
@@ -135,7 +138,7 @@ async function saveContentItemsToDatabase(
         status: 'draft',
         site_id: siteId,
         segment_id: segmentId || null,
-        campaign_id: campaignId || null,
+        campaign_id: item.campaign_id || campaignId || null, // Prioritize individual item campaign_id over general parameter
         command_id: commandId || null, // Add command_id to track the command that generated this content
         user_id: userId || 'system',
         estimated_reading_time: item.estimated_reading_time ? parseInt(item.estimated_reading_time, 10) : null,
@@ -237,7 +240,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
 }
 
 // Function to wait for command completion
-async function waitForCommandCompletion(commandId: string, maxAttempts = 60, delayMs = 1000) {
+async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;
@@ -384,35 +387,20 @@ async function getSiteInfo(siteId: string): Promise<any | null> {
 async function buildContext(siteId: string, segmentId?: string, campaignId?: string): Promise<string> {
   let contextParts = [];
   
-  // Get site information
-  const siteInfo = await getSiteInfo(siteId);
-  if (siteInfo) {
-    // Extract the most relevant site data and format it in a more structured way
-    const siteData = {
-      name: siteInfo.name || 'Unnamed Site',
-      description: siteInfo.description || 'No description available',
-      domain: siteInfo.domain || 'N/A',
-      primary_industry: siteInfo.industry || siteInfo.primary_industry || 'N/A',
-      language: siteInfo.language || 'en',
-      created_at: siteInfo.created_at || 'N/A'
-    };
-    
-    contextParts.push(`SITE INFORMATION:
-- Name: ${siteData.name}
-- Description: ${siteData.description}
-- Domain: ${siteData.domain}
-- Industry: ${siteData.primary_industry}
-- Language: ${siteData.language}
-- Created: ${siteData.created_at}
-    
-${siteInfo.business_description ? `Business Description: ${siteInfo.business_description}` : ''}
-${siteInfo.audience_description ? `Target Audience: ${siteInfo.audience_description}` : ''}
-${siteInfo.challenges ? `Main Challenges: ${siteInfo.challenges}` : ''}
-${siteInfo.competitors ? `Competitors: ${siteInfo.competitors}` : ''}
-${siteInfo.unique_selling_proposition ? `Unique Selling Proposition: ${siteInfo.unique_selling_proposition}` : ''}
-${siteInfo.brand_voice ? `Brand Voice: ${siteInfo.brand_voice}` : ''}`);
+  // Get content requirements context first (high priority)
+  console.log(`🔍 [buildContext] Obteniendo requirements para site: ${siteId} (todas las campañas activas)`);
+  const contentRequirementsContext = await getContentRequirementsContext(siteId);
+  console.log(`🔍 [buildContext] contentRequirementsContext resultado:`, {
+    length: contentRequirementsContext?.length || 0,
+    hasContent: !!contentRequirementsContext,
+    preview: contentRequirementsContext?.substring(0, 100) || 'EMPTY'
+  });
+  
+  if (contentRequirementsContext) {
+    contextParts.push(contentRequirementsContext);
+    console.log(`✅ [buildContext] Requirements context agregado a contextParts (${contentRequirementsContext.length} caracteres)`);
   } else {
-    contextParts.push(`SITE INFORMATION:\n- Site ID: ${siteId}\n- Note: No additional site information available`);
+    console.log(`⚠️ [buildContext] NO se agregó requirements context - está vacío`);
   }
   
   // Get segment information if available
@@ -489,11 +477,23 @@ async function executeGrowthMarketerPlanning(
   try {
     console.log(`📊 Ejecutando comando de planificación con Growth Marketer: ${agentId}`);
     
+    // Get content requirements context for growth marketer
+    console.log(`🔍 [executeGrowthMarketerPlanning] Obteniendo requirements para site: ${siteId} (todas las campañas activas)`);
+    const contentRequirementsContext = await getContentRequirementsContext(siteId);
+    console.log(`🔍 [executeGrowthMarketerPlanning] contentRequirementsContext resultado:`, {
+      length: contentRequirementsContext?.length || 0,
+      hasContent: !!contentRequirementsContext,
+      preview: contentRequirementsContext?.substring(0, 100) || 'EMPTY'
+    });
+    
     // Build context for growth marketer
     const growthMarketerPrompt = `Create a strategic content calendar plan focused on business growth and marketing objectives.
 
 ROLE: Growth Marketer - Focus on strategy, audience targeting, and business impact
 OBJECTIVE: Develop a comprehensive content planning strategy that maximizes ROI and supports business goals
+
+CAMPAIGN SCOPE:
+You are creating content for multiple active campaigns for this site. Each content piece should be aligned with specific campaign requirements when applicable. Include campaign IDs when content is specifically targeted to a campaign.
 
 PLANNING REQUIREMENTS:
 - Analyze target audience segments and create content that drives engagement
@@ -527,8 +527,9 @@ Provide a strategic content plan with the following structure for each content p
 - Distribution channels
 - Success metrics
 - Keywords and SEO considerations
+- Campaign ID reference (when content is for a specific campaign)
 
-${context}
+${contentRequirementsContext ? `${contentRequirementsContext}\n\n` : ''}${context}
 
 ${additionalContext.length > 0 ? `\nAdditional Parameters:\n${additionalContext.join('\n')}` : ''}`;
 
@@ -554,7 +555,8 @@ ${additionalContext.length > 0 ? `\nAdditional Parameters:\n${additionalContext.
             distribution_channels: "Recommended channels for distribution",
             success_metrics: "KPIs and metrics to track",
             seo_keywords: "Primary and secondary keywords for SEO",
-            instructions: "Instructions for the team on how to publish or deliver that content to the target audience"
+            instructions: "Instructions for the team on how to publish or deliver that content to the target audience",
+            campaign_id: "Campaign ID if content is for a specific campaign (optional)"
           }]
         }
       ],
@@ -772,13 +774,19 @@ IMPORTANT: Follow the Growth Marketer's strategic recommendations above as the f
 ROLE: Content Creator & Copywriter - Focus on creating compelling, high-quality content based on strategic direction
 OBJECTIVE: Create detailed, ready-to-publish content pieces that align with the Growth Marketer's strategic plan
 
+CAMPAIGN SCOPE:
+You are creating content for multiple active campaigns. When content is specifically for a campaign, include the campaign_id from the requirements section. Each content piece should align with the relevant campaign strategy when applicable.
+
 CONTENT CREATION REQUIREMENTS:
+- PRIORITIZE addressing active content requirements from ongoing campaigns (see requirements section below)
 - Follow the strategic guidance provided by the Growth Marketer
 - Create compelling, high-quality content that resonates with the target audience
 - Ensure each content piece aligns with the specified business goals and messaging
 - Develop content that supports the recommended distribution channels
 - Include proper SEO optimization based on the strategic keyword recommendations
 - Create content that can be measured against the specified success metrics
+- Reference requirement IDs in your instructions when content addresses specific requirements
+- When content is for a specific campaign, include the campaign_id in your content structure
 
 CONTENT TYPE OPTIONS (AUTHORIZED VALUES ONLY):
 Choose from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page
@@ -809,6 +817,7 @@ CONTENT STRUCTURE GUIDELINES:
    - Specific target audience segment (use Growth Marketer's targeting)
    - Business goal this content supports (align with strategic rationale)
    - Brief strategic notes on execution
+   - Campaign ID reference (when content is for a specific campaign)
 
 CONTENT OUTPUT FORMAT:
 Split your response into TWO SEPARATE FIELDS:
@@ -819,7 +828,7 @@ Split your response into TWO SEPARATE FIELDS:
    - NO strategic notes, NO distribution info, NO SEO keywords lists
    - ONLY the actual content that readers will see
 
-2. "instructions" field: ALL strategic and tactical information
+2. "instructions" field: ALL strategic and tactical information in markdown format
    - Distribution guidelines and channel recommendations
    - SEO keywords and optimization notes
    - Target audience segments and conversion goals
@@ -846,20 +855,25 @@ ${context}`;
       agentId: effectiveAgentId,
       // Add site_id as a basic property if it exists
       ...(siteId ? { site_id: siteId } : {}),
+      // Add campaign_id if it exists
+      ...(campaignId ? { campaign_id: campaignId } : {}),
       description: 'Generate a comprehensive content calendar with strategic content ideas aligned with marketing goals, focused on the target audience, and optimized for the specified keywords and timeframe.',
       // Set the target for content generation
       targets: [
         {
           deep_thinking: "Write a deep thinking reasoning about the content to be created",
         },
+        // Add campaign_id as target if available
+        ...(campaignId ? [{ campaign_id: campaignId }] : []),
         {
         content: [{
           type: "Type of content from ONLY these authorized values: blog_post, video, podcast, social_post, newsletter, case_study, whitepaper, infographic, webinar, ebook, ad, landing_page. Choose the most appropriate type for each content piece.",
           text: "Rich detailed copy with proper formatting and line breaks for readability",
           title: "Clear, compelling title for the content piece", 
           description: "Brief, descriptive summary of the content",
-          instructions: "Strategic instructions, notes, distribution guidelines, SEO considerations, and execution details for this content piece",
-          estimated_reading_time: "Reading time in seconds as integer (e.g., 60, 120, 240)"
+          instructions: "Strategic instructions, notes, distribution guidelines, SEO considerations, and execution details for this content piece in markdown format",
+          estimated_reading_time: "Reading time in seconds as integer (e.g., 60, 120, 240)",
+          campaign_id: "Campaign ID if content is for a specific campaign (optional)"
         }]
       }],
       // No tools for this command

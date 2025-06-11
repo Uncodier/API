@@ -1,0 +1,81 @@
+# List Available Tools
+
+Retrieve a list of all available tools that can be used by agents.
+
+## Endpoint
+
+```http
+GET /api/agents/tools
+```
+
+## Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `category` | string | No | Filter tools by category (e.g., "analysis", "automation", "integration") |
+| `status` | string | No | Filter tools by status ("active", "beta", "deprecated") |
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "tools": [
+      {
+        "id": "tool_123",
+        "name": "Website Analyzer",
+        "description": "Analyzes websites for performance, SEO, and accessibility",
+        "category": "analysis",
+        "status": "active",
+        "version": "1.0.0",
+        "parameters": [
+          {
+            "name": "url",
+            "type": "string",
+            "required": true,
+            "description": "The URL to analyze"
+          },
+          {
+            "name": "depth",
+            "type": "number",
+            "required": false,
+            "description": "Analysis depth level (1-5)"
+          }
+        ]
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "per_page": 10
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_FILTER",
+    "message": "Invalid filter parameters provided"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_FILTER` | The provided filter parameters are invalid |
+| `SERVER_ERROR` | An error occurred while retrieving the tools |
+
+## Notes
+
+- Tools are paginated with 10 items per page by default
+- Use the `category` parameter to filter tools by their primary function
+- Use the `status` parameter to filter tools by their current status
+- Each tool includes its required parameters and their types 

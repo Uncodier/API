@@ -174,7 +174,7 @@ async function processMessageWithAgent(
     
     // Wait for the command to complete (max 60 seconds)
     let attempts = 0;
-    const maxAttempts = 60;
+    const maxAttempts = 100;
     
     while (attempts < maxAttempts) {
       attempts++;

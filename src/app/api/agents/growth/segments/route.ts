@@ -5,7 +5,11 @@ import { findGrowthMarketerAgent } from '@/lib/helpers/agent-finder';
 import { executeGrowthMarketerSegmentAnalysis } from '@/lib/helpers/segment-commands';
 import { createSegmentsFromResults } from '@/lib/helpers/segment-creators';
 
+// Configurar tiempo máximo de ejecución a 2 minutos (120 segundos)
+export const maxDuration = 120;
+
 export async function POST(request: Request) {
+  const startTime = Date.now();
   try {
     let body;
     try {
@@ -143,6 +147,7 @@ Your segments should be actionable for marketing campaigns and have clear value 
     console.log(`✅ COMPLETADO: Análisis de segmentos completado con ${segmentAnalysisResults.length} segmentos identificados`);
     console.log(`🔑 Analysis Command UUID: ${analysisCommandUuid}`);
     console.log(`💾 INICIANDO GUARDADO: Guardando segmentos en base de datos...`);
+    console.log(`🔑 Usando Growth Marketer Command UUID como command_id: ${analysisCommandUuid}`);
 
     // Create segments from Growth Marketer results
     const createdSegments = await createSegmentsFromResults(
@@ -168,6 +173,10 @@ Your segments should be actionable for marketing campaigns and have clear value 
     console.log(`🎉 PROCESO COMPLETO: Enviando respuesta SUCCESS al cliente después de comando + guardado`);
     console.log(`📊 Resumen final: ${createdSegments.length} segmentos creados`);
     
+    // Extract segment IDs for easy access
+    const segmentIds = createdSegments.map(segment => segment.id);
+    console.log(`🔑 IDs de segmentos creados: ${segmentIds.join(', ')}`);
+    
     // Devolver respuesta exitosa con los segmentos creados
     return NextResponse.json(
       { 
@@ -178,8 +187,11 @@ Your segments should be actionable for marketing campaigns and have clear value 
           url: null, // Se podría obtener de la tabla sites si es necesario
           segmentsAnalyzed: segmentAnalysisResults.length,
           segmentsCreated: createdSegments.length,
+          segment_ids: segmentIds, // Array de IDs para fácil acceso
           segments: createdSegments,
-          saved_to_database: true
+          saved_to_database: true,
+          execution_time_ms: Date.now() - startTime,
+          timestamp: new Date().toISOString()
         } 
       },
       { status: 200 }

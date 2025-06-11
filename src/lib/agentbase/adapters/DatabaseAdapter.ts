@@ -36,13 +36,6 @@ export class DatabaseAdapter {
    * Crea un comando en la base de datos
    */
   static async createCommand(command: CreateCommandParams): Promise<DbCommand> {
-    console.log('📝 [DatabaseAdapter] Creando comando directamente sin convertir formato');
-    // Verificar si hay agent_background y registrarlo
-    if (command.agent_background) {
-      console.log(`✅ [DatabaseAdapter] Command tiene agent_background (${command.agent_background.length} caracteres)`);
-    } else {
-      console.log(`⚠️ [DatabaseAdapter] Command no tiene agent_background`);
-    }
     return CommandService.createCommand(command);
   }
   
@@ -50,24 +43,13 @@ export class DatabaseAdapter {
    * Obtiene un comando por ID
    */
   static async getCommandById(commandId: string): Promise<DbCommand | null> {
-    console.log(`🔍 [DatabaseAdapter] Obteniendo comando ${commandId} directamente sin convertir formato`);
-    const command = await CommandService.getCommandById(commandId);
-    
-    // Verificar si existe agent_background después de recuperar
-    if (command && command.agent_background) {
-      console.log(`✅ [DatabaseAdapter] Command recuperado tiene agent_background (${command.agent_background.length} caracteres)`);
-    } else if (command) {
-      console.log(`⚠️ [DatabaseAdapter] Command recuperado no tiene agent_background`);
-    }
-    
-    return command;
+    return CommandService.getCommandById(commandId);
   }
   
   /**
    * Actualiza el estado de un comando
    */
   static async updateCommandStatus(commandId: string, status: CommandStatus): Promise<boolean> {
-    console.log(`🔄 [DatabaseAdapter] Actualizando estado de ${commandId} a ${status} directamente`);
     return CommandService.updateCommandStatus(commandId, status);
   }
   
@@ -78,13 +60,6 @@ export class DatabaseAdapter {
     commandId: string,
     updates: Partial<Omit<DbCommand, 'id' | 'created_at' | 'updated_at'>>
   ): Promise<DbCommand> {
-    console.log(`🔄 [DatabaseAdapter] Actualizando comando ${commandId} directamente sin convertir formato`);
-    
-    // Verificar si hay agent_background en la actualización
-    if (updates.agent_background) {
-      console.log(`✅ [DatabaseAdapter] Updates contiene agent_background (${updates.agent_background.length} caracteres)`);
-    }
-    
     return CommandUpdateService.updateCommand(commandId, updates);
   }
 

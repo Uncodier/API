@@ -66,7 +66,7 @@ export async function getCommandDbUuid(internalId: string): Promise<string | nul
 }
 
 // Función para esperar a que un comando se complete
-export async function waitForCommandCompletion(commandId: string, maxAttempts = 60, delayMs = 1000) {
+export async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;

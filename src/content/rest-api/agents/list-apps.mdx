@@ -1,0 +1,74 @@
+---
+title: 'List Apps - API Tester'
+description: 'Test the List Apps API endpoint'
+route: '/agents/apps/list'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# List Apps API Tester
+
+The API endpoint is available at: `/api/agents/apps/list`
+
+> **Important Note:** Always include the `/api` prefix when making API calls. The full URL should be `/api/agents/apps/list`.
+
+Below is a live API tester for the List Apps endpoint. This tool allows you to interact with the API directly from this documentation.
+
+<UnifiedApiTester 
+  apiId="agents-apps"
+  title="List Apps API Tester"
+  description="Retrieve a list of all available apps that can be connected to agents."
+  defaultMethod="GET"
+  defaultEndpoint="/api/agents/apps/list"
+/>
+
+## Response Structure
+
+The API returns a structured response containing a list of apps with the following fields:
+
+```json
+{
+  "items": [
+    {
+      "appId": "550e8400-e29b-41d4-a716-446655440000",
+      "key": "salesforce-crm",
+      "name": "name",
+      "description": "description",
+      "logo": "logo",
+      "categories": "categories",
+      "enabled": true,
+      "createdAt": "createdAt",
+      "updatedAt": "updatedAt",
+      "tags": "tags",
+      "auth_schemes": {
+        "key": "value"
+      },
+      "testConnectors": {
+        "id": "id",
+        "name": "name",
+        "authScheme": "OAUTH2"
+      },
+      "no_auth": true
+    }
+  ],
+  "totalPages": 1
+}
+```
+
+## Query Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `category` | string | Optional. Filter apps by category (e.g., "analytics", "crm", "communication") |
+| `additionalFields` | string | Optional. Additional fields to include in the response |
+| `includeLocal` | enum | Optional. Filter to include locally developed/testing apps in the response. Defaults to false. Must be 'true' or 'false' |
+| `sortBy` | enum | Optional. Sort the apps by usage or alphabetically. Allowed values: 'alphabet', 'usage', 'no_sort' |
+| `status` | string | Optional. Filter apps by status ("active", "beta", "deprecated") |
+
+## Usage Notes
+
+- The API returns paginated results
+- Use category filter to narrow down apps by their function
+- Use includeLocal to see development and testing apps
+- Use sortBy to order results by name or usage frequency
+- Use status filter to find apps in a specific lifecycle stage 

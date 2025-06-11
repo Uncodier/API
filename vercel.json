@@ -1,0 +1,11 @@
+{
+  "functions": {
+    "src/app/api/agents/growth/segments/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/site/segments/route.ts": {
+      "maxDuration": 60
+    }
+  },
+  "regions": ["iad1"]
+} 

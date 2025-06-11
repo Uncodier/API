@@ -121,27 +121,53 @@ export async function POST(request: Request) {
     
     console.log(`✅ Se encontraron ${existingSegments.length} segmentos para análisis ICP`);
     
-    // Find Growth Marketer agent for ICP analysis
-    const growthMarketerAgent = await findGrowthMarketerAgent(siteId);
-    
-    if (!growthMarketerAgent) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'GROWTH_MARKETER_NOT_FOUND', 
-            message: 'No se encontró un agente con rol "Growth Marketer" para este sitio' 
-          } 
-        },
-        { status: 404 }
-      );
+    // Determine agent to use - prioritize provided agent_id, fallback to Growth Marketer
+    let selectedAgent = null;
+    if (agent_id && isValidUUID(agent_id)) {
+      // Verify the provided agent exists and belongs to the site
+      const { data: agentData, error: agentError } = await supabaseAdmin
+        .from('agents')
+        .select('id, user_id, role, status')
+        .eq('id', agent_id)
+        .eq('site_id', siteId)
+        .eq('status', 'active')
+        .single();
+      
+      if (!agentError && agentData) {
+        selectedAgent = {
+          agentId: agentData.id,
+          userId: agentData.user_id
+        };
+        console.log(`🎯 Usando agente proporcionado: ${selectedAgent.agentId} (rol: ${agentData.role})`);
+      } else {
+        console.log(`⚠️ Agente proporcionado ${agent_id} no válido, buscando Growth Marketer`);
+      }
     }
     
-    console.log(`🎯 Growth Marketer encontrado: ${growthMarketerAgent.agentId}`);
+    // If no valid agent provided, find Growth Marketer agent for ICP analysis
+    if (!selectedAgent) {
+      const growthMarketerAgent = await findGrowthMarketerAgent(siteId);
+      
+      if (!growthMarketerAgent) {
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'GROWTH_MARKETER_NOT_FOUND', 
+              message: 'No se encontró un agente con rol "Growth Marketer" para este sitio' 
+            } 
+          },
+          { status: 404 }
+        );
+      }
+      
+      selectedAgent = growthMarketerAgent;
+      console.log(`🎯 Growth Marketer encontrado: ${selectedAgent.agentId}`);
+    }
     
     // Set fallback userId if still not defined
     if (!effectiveUserId) {
-      effectiveUserId = growthMarketerAgent.userId || 'system';
+      effectiveUserId = selectedAgent.userId || 'system';
     }
     
     // Crear contexto para el análisis ICP
@@ -186,11 +212,11 @@ INSTRUCTIONS:
 Your ICP analysis should significantly enhance the targeting precision and marketing effectiveness for each segment.`;
     
     // Execute Growth Marketer ICP analysis command
-    console.log(`📊 INICIANDO: Ejecutando análisis ICP con Growth Marketer...`);
+    console.log(`📊 INICIANDO: Ejecutando análisis ICP con agente seleccionado...`);
     
     const { icpAnalysisResults, icpCommandUuid } = await executeGrowthMarketerIcpAnalysis(
       siteId,
-      growthMarketerAgent.agentId,
+      selectedAgent.agentId,
       effectiveUserId,
       context,
       existingSegments
@@ -215,13 +241,32 @@ Your ICP analysis should significantly enhance the targeting precision and marke
     console.log(`💾 INICIANDO GUARDADO: Actualizando segmentos con análisis ICP...`);
 
     // Update segments with ICP analysis results
-    const updatedSegments = await updateSegmentsWithIcpResults(
-      icpAnalysisResults, 
-      existingSegments,
-      icpCommandUuid
-    );
+    let updatedSegments;
+    try {
+      updatedSegments = await updateSegmentsWithIcpResults(
+        icpAnalysisResults, 
+        existingSegments,
+        icpCommandUuid
+      );
+      
+      console.log(`🔍 DEBUG: Segmentos actualizados resultado:`, updatedSegments.length);
+      
+    } catch (updateError: any) {
+      console.error('❌ Error durante la actualización de segmentos:', updateError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'SEGMENT_UPDATE_ERROR', 
+            message: `Error al actualizar segmentos: ${updateError?.message || 'Error desconocido'}` 
+          } 
+        },
+        { status: 500 }
+      );
+    }
     
-    if (updatedSegments.length === 0) {
+    if (!updatedSegments || updatedSegments.length === 0) {
+      console.log(`⚠️ ADVERTENCIA: No se actualizaron segmentos. Resultado:`, updatedSegments);
       return NextResponse.json(
         { 
           success: false, 

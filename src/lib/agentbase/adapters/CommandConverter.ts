@@ -114,19 +114,6 @@ export class CommandConverter {
    * Convierte un comando de base de datos a formato Agentbase
    */
   static toAgentbaseFormat(dbCommand: DbCommandModel): AgentbaseDbCommand {
-    console.log(`Convirtiendo comando de DB a formato Agentbase: ${JSON.stringify({
-      id: dbCommand.id,
-      task: dbCommand.task,
-      status: dbCommand.status,
-      agent_id: dbCommand.agent_id
-    })}`);
-    
-    // Check if agent_background exists and log
-    if ((dbCommand as any).agent_background) {
-      console.log(`🔍 Comando ${dbCommand.id} tiene agent_background de longitud: ${(dbCommand as any).agent_background.length}`);
-    } else {
-      console.log(`🔍 Comando ${dbCommand.id} NO TIENE agent_background`);
-    }
     
     // Extraer el agentId original del contexto si existe y no tiene un agent_id válido
     let originalAgentId = dbCommand.agent_id;
@@ -165,17 +152,6 @@ export class CommandConverter {
       site_id: dbCommand.site_id || undefined
     };
     
-    // Log de información de modelo para depuración
-    console.log(`🔍 [CommandConverter] Información de modelo en la conversión:
-      dbCommand.model: ${dbCommand.model || 'undefined'}
-      (dbCommand as any).model_id: ${(dbCommand as any).model_id || 'undefined'}
-      (dbCommand as any).model_type: ${(dbCommand as any).model_type || 'undefined'}
-      Resultado final:
-      model: ${agentbaseCommand.model || 'undefined'}
-      model_id: ${agentbaseCommand.model_id || 'undefined'}
-      model_type: ${agentbaseCommand.model_type || 'undefined'}
-    `);
-    
     // Si hay propiedades adicionales en dbCommand que no están en el tipo AgentbaseDbCommand, 
     // las manejamos por separado (por ejemplo, completion_date y duration)
     if (dbCommand.completion_date) {
@@ -184,13 +160,6 @@ export class CommandConverter {
     
     if (dbCommand.duration !== undefined && dbCommand.duration !== null) {
       (agentbaseCommand as any).duration = dbCommand.duration;
-    }
-    
-    // Verificar que el agent_background se haya transferido correctamente
-    if ((dbCommand as any).agent_background && !agentbaseCommand.agent_background) {
-      console.error(`❌ Error crítico: agent_background se perdió durante la conversión del comando ${dbCommand.id}`);
-    } else if ((dbCommand as any).agent_background && agentbaseCommand.agent_background) {
-      console.log(`✅ agent_background preservado durante la conversión (${agentbaseCommand.agent_background.length} caracteres)`);
     }
     
     return agentbaseCommand;

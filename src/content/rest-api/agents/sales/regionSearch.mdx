@@ -1,0 +1,146 @@
+# Region Business Search
+
+Searches for businesses in specific geographic regions based on business type and keywords, providing detailed business information for lead generation and market research.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/regionSearch
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website requesting the search |
+| `userId` | string | No | ID of the user requesting the search |
+| `region` | string | Yes | Geographic region to search for businesses |
+| `businessType` | string | No | Type of business to search for (e.g., "restaurant", "retail") |
+| `keywords` | array | No | Keywords to refine the business search |
+| `limit` | number | No | Maximum number of businesses to return (default: 10) |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456abc",
+  "userId": "user_123xyz",
+  "region": "Austin, TX",
+  "businessType": "restaurant",
+  "keywords": ["mexican food", "tacos"],
+  "limit": 15
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Region Search API Tester" 
+  description="Use this tester to search for businesses in specific geographic regions." 
+  defaultEndpoint="/api/agents/sales/regionSearch"
+/>
+
+You can test this API directly using our API Tester interface. The Region Search API tester allows you to search for businesses in specific geographic regions.
+
+Required fields:
+- **Site ID**: The ID of the website requesting the search
+- **Region**: Geographic region to search for businesses
+
+Optional fields:
+- **User ID**: The ID of the user requesting the search
+- **Business Type**: Type of business to search for
+- **Keywords**: Keywords to refine the business search
+- **Limit**: Maximum number of businesses to return
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "region": "Austin, TX",
+    "total_results": 15,
+    "businesses": [
+      {
+        "id": "business_123",
+        "name": "Tacos El Primo",
+        "address": "123 Main St, Austin, TX 78701",
+        "phone": "+1-512-555-0123",
+        "website": "https://tacoselprimoaustin.com",
+        "rating": "4.5",
+        "business_type": "restaurant",
+        "location": {
+          "lat": 30.2672,
+          "lng": -97.7431
+        },
+        "open_now": true
+      },
+      {
+        "id": "business_456",
+        "name": "Casa de Tacos",
+        "address": "456 Oak Ave, Austin, TX 78702",
+        "phone": "+1-512-555-0456",
+        "website": null,
+        "rating": "4.2",
+        "business_type": "restaurant",
+        "location": {
+          "lat": 30.2849,
+          "lng": -97.7341
+        },
+        "open_now": false
+      }
+    ],
+    "search_id": null
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "SEARCH_FAILED",
+    "message": "Failed to search businesses"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `SEARCH_FAILED` | Failed to search businesses in the specified region |
+| `SYSTEM_ERROR` | An internal system error occurred |
+
+## Response Fields
+
+### Business Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | string | Unique identifier for the business |
+| `name` | string | Name of the business |
+| `address` | string | Full address of the business |
+| `phone` | string | Phone number of the business |
+| `website` | string | Website URL (if available) |
+| `rating` | string | Average rating of the business |
+| `business_type` | string | Type/category of the business |
+| `location` | object | Geographic coordinates (lat, lng) |
+| `open_now` | boolean | Whether the business is currently open |
+
+## Notes
+
+- Search results are returned in real-time
+- Business data includes contact information when available
+- Geographic coordinates are provided for mapping purposes
+- Business hours and current status are included when available
+- Results are filtered based on business type and keywords when provided 

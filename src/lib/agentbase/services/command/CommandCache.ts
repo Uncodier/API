@@ -43,19 +43,14 @@ export class CommandCache {
       cacheTimestamps.set(command.metadata.dbUuid, Date.now());
     }
     
-    // Reducimos los logs para evitar spam, solo mostramos información esencial
-    const hasBackground = command.agent_background !== undefined && command.agent_background !== null;
-    const backgroundInfo = hasBackground && command.agent_background ? 
-      `${command.agent_background.length} chars` : 
-      'sin';
-    
-    // Log de información de modelo para depuración
-    const modelInfo = command.model_id 
-      ? `model_id: ${command.model_id}` 
-      : (command.model ? `model: ${command.model}` : 'sin modelo');
-    
-    // Log simple con menos detalles
-    console.log(`🧠 [CommandCache] Comando cacheado: ${commandId} (${backgroundInfo} agent_background, ${modelInfo})`);
+    // Solo log en debug mode
+    if (process.env.NODE_ENV === 'development' && process.env.DEBUG === 'true') {
+      const hasBackground = command.agent_background !== undefined && command.agent_background !== null;
+      const backgroundInfo = hasBackground && command.agent_background ? 
+        `${command.agent_background.length} chars` : 
+        'sin';
+      console.log(`🧠 [CommandCache] Comando cacheado: ${commandId} (${backgroundInfo} agent_background)`);
+    }
   }
 
   /**
@@ -83,11 +78,9 @@ export class CommandCache {
     if (command) {
       // Actualizar el timestamp para extender el TTL
       cacheTimestamps.set(commandId, Date.now());
-      console.log(`🧠 [CommandCache] Acierto de caché para comando: ${commandId}`);
       return command;
     }
     
-    console.log(`🧠 [CommandCache] Fallo de caché para comando: ${commandId}`);
     return null;
   }
 
@@ -98,7 +91,6 @@ export class CommandCache {
     const command = this.getCachedCommand(commandId);
     
     if (!command) {
-      console.log(`🧠 [CommandCache] No se puede actualizar, comando no encontrado: ${commandId}`);
       return null;
     }
     
@@ -112,14 +104,12 @@ export class CommandCache {
     // Mantener el agent_background si ya existía y no se proporciona en las actualizaciones
     if (command.agent_background && !updates.agent_background) {
       updatedCommand.agent_background = command.agent_background;
-      // Eliminamos log redundante
     }
     
     // Asegurar que el model_id se preserve y se actualice si se actualiza model
     if (updates.model && !updates.model_id) {
       // Si se actualiza el modelo pero no el model_id, usamos el model como model_id también
       updatedCommand.model_id = updates.model;
-      console.log(`🧠 [CommandCache] Actualización automática de model_id a partir de model: ${updates.model}`);
     } else if (command.model_id && !updates.model_id) {
       // Si no se actualiza el model_id, preservamos el existente
       updatedCommand.model_id = command.model_id;
@@ -132,7 +122,6 @@ export class CommandCache {
     } else if (updates.results) {
       // Si hay nuevos resultados, usar esos directamente en lugar de combinarlos
       updatedCommand.results = updates.results;
-      console.log(`🧠 [CommandCache] Actualización de resultados: ${updates.results.length} resultados en total`);
     }
     
     // Guardar el comando actualizado en ambos IDs si existe mapeo
@@ -162,8 +151,6 @@ export class CommandCache {
     // Mapeo bidireccional
     idMapping.set(tempId, dbId);
     idMapping.set(dbId, dbId); // El UUID siempre mapea a sí mismo
-    
-    console.log(`🧠 [CommandCache] Sincronización de IDs: ${tempId} ⟷ ${dbId}`);
     
     // Si el comando existe en la caché con el ID temporal, duplicarlo con el ID de BD
     const cachedCommand = commandCache.get(tempId);
@@ -211,10 +198,7 @@ export class CommandCache {
       if (mappedId && mappedId !== commandId) {
         commandCache.delete(mappedId);
         cacheTimestamps.delete(mappedId);
-        console.log(`🧠 [CommandCache] Comando eliminado también por ID mapeado: ${mappedId}`);
       }
-      
-      console.log(`🧠 [CommandCache] Comando eliminado de caché: ${commandId}`);
       
       // Emitir evento si hay eventEmitter
       if (eventEmitter) {
@@ -257,13 +241,9 @@ export class CommandCache {
         cacheTimestamps.set(mappedId, Date.now());
       }
       
-      // Log sencillo 
-      console.log(`🧠 [CommandCache] agent_background actualizado (${agentBackground.length} caracteres) para: ${commandId}`);
-      
       return true;
     } else {
       // Si el comando no existe, creamos uno básico con solo el agent_background
-      console.log(`🧠 [CommandCache] Creando entrada básica para comando no encontrado: ${commandId}`);
       
       const basicCommand: DbCommand = {
         id: commandId,
@@ -293,7 +273,6 @@ export class CommandCache {
    */
   static setEventEmitter(emitter: EventEmitter): void {
     eventEmitter = emitter;
-    console.log(`🧠 [CommandCache] EventEmitter configurado`);
   }
 
   /**

@@ -1,0 +1,128 @@
+# Region Leads Generation Command
+
+Creates a command object to generate qualified sales leads from businesses in specific geographic regions, helping sales teams target local markets effectively.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/regionLeads
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website requesting lead generation |
+| `userId` | string | No | ID of the user requesting region leads |
+| `region` | string | Yes | Geographic region to search for businesses |
+| `businessType` | string | No | Type of business to target (e.g., "restaurant", "retail") |
+| `keywords` | array | No | Keywords to refine the business search |
+| `maxLeads` | number | No | Maximum number of leads to generate (1-50, default: 10) |
+| `priority` | string | No | Priority of lead generation job ("high", "medium", "low") |
+| `productInfo` | object | No | Information about the product or service being offered |
+| `contactPreferences` | object | No | Preferred contact methods and timing |
+| `lead_id` | string | No | ID of existing lead if this is follow-up generation |
+| `conversation_id` | string | No | ID of conversation if generated from chat interaction |
+| `webhook` | string | No | Webhook URL for completion notifications |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456abc",
+  "userId": "user_123xyz",
+  "region": "San Francisco, CA",
+  "businessType": "restaurant",
+  "keywords": ["fine dining", "upscale"],
+  "maxLeads": 20,
+  "priority": "high",
+  "productInfo": {
+    "name": "Restaurant Management Software",
+    "description": "Complete POS and inventory management solution",
+    "targetMarket": "Mid to high-end restaurants"
+  },
+  "contactPreferences": {
+    "method": "phone",
+    "timeframe": "business_hours",
+    "language": "english"
+  }
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Region Leads API Tester" 
+  description="Use this tester to generate leads from businesses in specific geographic regions." 
+  defaultEndpoint="/api/agents/sales/regionLeads"
+/>
+
+You can test this API directly using our API Tester interface. The Region Leads API tester allows you to generate leads targeting specific geographic regions.
+
+Required fields:
+- **Site ID**: The ID of the website requesting lead generation
+- **Region**: Geographic region to search for businesses
+
+Optional fields:
+- **User ID**: The ID of the user requesting region leads
+- **Business Type**: Type of business to target
+- **Keywords**: Keywords to refine the business search
+- **Max Leads**: Maximum number of leads to generate (1-50)
+- **Priority**: Priority level for this job
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_region_123456",
+    "site_id": "site_456abc",
+    "region": "San Francisco, CA",
+    "status": "processing",
+    "estimated_completion_time": "2024-05-02T15:30:00Z",
+    "leads_requested": 20,
+    "job_priority": "high",
+    "search_parameters": {
+      "business_type": "restaurant",
+      "keywords": ["fine dining", "upscale"],
+      "region": "San Francisco, CA"
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `NOT_FOUND` | The specified region or business type was not found |
+| `COMMAND_FAILED` | Failed to generate the region leads command |
+| `SYSTEM_ERROR` | An internal system error occurred |
+
+## Notes
+
+- The `maxLeads` parameter must be between 1 and 50
+- Regional search results are cached for performance
+- Business data includes contact information when available
+- Generated leads are automatically scored based on relevance 

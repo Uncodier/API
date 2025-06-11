@@ -61,15 +61,39 @@ For each campaign, create multiple requirements that cover:
 6. Reporting and analysis
 7. Follow-up and nurturing activities
 
+REQUIREMENT TYPES:
+Assign one of these types to each requirement:
+- content: Content creation, copywriting, blog posts, social media content
+- design: Visual design, graphics, layouts, UI/UX work
+- research: Market research, competitor analysis, audience research
+- follow_up: Follow-up activities, nurturing sequences, customer outreach
+- task: General tasks and administrative work
+- develop: Development work, coding, technical implementation
+- analytics: Data analysis, reporting, metrics tracking
+- testing: A/B testing, quality assurance, performance testing
+- approval: Review processes, stakeholder approvals, compliance
+- coordination: Project coordination, team management, scheduling
+- strategy: Strategic planning, campaign strategy, decision making
+- optimization: Performance optimization, conversion optimization
+- automation: Setting up automated processes, workflows
+- integration: System integrations, third-party connections
+- planning: Project planning, timeline creation, resource allocation
+- payment: Budget deployment, ad spend allocation, payment processing, invoicing
+
 OUTPUT FORMAT:
 Provide detailed requirements with the following structure:
 - Clear requirement title and description
 - Detailed implementation instructions
 - Priority level and urgency
+- Type classification from the list above
 - Estimated budget (numeric value only, no currency symbols)
 - Dependencies and prerequisites
 - Success criteria and definition of done
 - Timeline and milestones
+
+IMPORTANT:
+- If the campaign is targeting a paid channel, assign a specific budget for the channel in a task, example: 
+  50 usd to design, copys, setup, etc., 100 usd to run the ads, total 150 usd for the campaign.
 
 ${campaignsContext}`;
 
@@ -99,7 +123,8 @@ ${campaignsContext}`;
               description: "Requirement description",
               instructions: "Detailed instructions to complete the requirement",
               priority: "Requirement priority (low, medium, high)",
-              budget: 100
+              type: "Requirement type (content, design, research, follow_up, task, develop, analytics, testing, approval, coordination, payment)",
+              budget: "Budget for the requirement"
             }]
           }))
         }
@@ -224,6 +249,7 @@ async function createRequirementsFromResults(
             instructions: reqData.instructions || '',
             budget: extractNumericBudget(reqData.budget),
             priority: reqData.priority || 'medium',
+            type: reqData.type || 'task',
             site_id: siteId,
             status: 'backlog',
             completion_status: 'pending',

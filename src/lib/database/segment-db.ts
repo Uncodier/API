@@ -14,6 +14,7 @@ interface DbSegment {
   is_active: boolean | null;
   analysis: any[] | null;
   topics: any[] | null;
+  icp: any | null; // ICP profile data
   site_id: string;
   user_id: string;
   created_at?: string;

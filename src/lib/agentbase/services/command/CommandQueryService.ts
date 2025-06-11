@@ -52,24 +52,13 @@ export class CommandQueryService {
           // Guardar en caché para futuras consultas en este flujo
           CommandCache.cacheCommand(commandId, resultCommand);
           
-          if (resultCommand.agent_background) {
-            console.log(`✅ [CommandQueryService] El comando recuperado de BD tiene agent_background (${resultCommand.agent_background.length} caracteres)`);
-          } else {
-            console.log(`⚠️ [CommandQueryService] El comando recuperado de BD NO tiene agent_background`);
-          }
+
           
           return resultCommand;
         }
         
         // Si tenemos un comando en caché, devolver ese
         if (cachedCommand) {
-          console.log(`✅ [CommandQueryService] Comando obtenido de caché: ${commandId}`);
-          
-          // Si encontramos el comando en caché y tiene agent_background, verificar
-          if (cachedCommand.agent_background) {
-            console.log(`✅ [CommandQueryService] El comando de caché tiene agent_background (${cachedCommand.agent_background.length} caracteres)`);
-          }
-          
           return cachedCommand;
         }
         
@@ -84,13 +73,6 @@ export class CommandQueryService {
         return null;
       } else {
         // Si el comando está en caché y no está en estado 'pending', podemos devolver la versión en caché
-        console.log(`✅ [CommandQueryService] Comando obtenido de caché: ${commandId}, estado: ${cachedCommand.status}`);
-        
-        // Si encontramos el comando en caché y tiene agent_background, verificar
-        if (cachedCommand.agent_background) {
-          console.log(`✅ [CommandQueryService] El comando de caché tiene agent_background (${cachedCommand.agent_background.length} caracteres)`);
-        }
-        
         return cachedCommand;
       }
     } catch (error: any) {

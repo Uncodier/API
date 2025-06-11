@@ -1304,6 +1304,247 @@ export class WorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para construir segmentos con análisis ICP
+   */
+  public async buildSegmentsICP(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para construir segmentos con ICP'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `build-segments-icp-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🎯 Iniciando workflow de construcción de segmentos ICP: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('buildSegmentsICPWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de segmentos ICP iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('buildSegmentsICPWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de construcción de segmentos ICP completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de construcción de segmentos ICP:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de construcción de segmentos ICP'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para seguimiento de leads
+   */
+  public async leadFollowUp(args: { site_id: string; lead_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para el seguimiento de lead'
+          }
+        };
+      }
+
+      if (!args.lead_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere lead_id para el seguimiento de lead'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `lead-follow-up-${args.site_id}-${args.lead_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📞 Iniciando workflow de seguimiento de lead: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`👤 Lead ID: ${args.lead_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('leadFollowUpWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de seguimiento de lead iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('leadFollowUpWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de seguimiento de lead completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de seguimiento de lead:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de seguimiento de lead'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para investigación de leads
+   */
+  public async leadResearch(args: { site_id: string; lead_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      // Validar argumentos requeridos
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para la investigación de lead'
+          }
+        };
+      }
+
+      if (!args.lead_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere lead_id para la investigación de lead'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `lead-research-${args.site_id}-${args.lead_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🔍 Iniciando workflow de investigación de lead: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`👤 Lead ID: ${args.lead_id}`);
+      console.log(`🔧 Task queue: ${taskQueue}`);
+
+      // Si es asíncrono, solo iniciar el workflow
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('leadResearchWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de investigación de lead iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        // Ejecutar workflow y esperar resultado
+        const result = await client.workflow.execute('leadResearchWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de investigación de lead completado: ${workflowId}`);
+        console.log(`📊 Resultado:`, result);
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de investigación de lead:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de investigación de lead'
+        }
+      };
+    }
+  }
 }
 
 export default WorkflowService;

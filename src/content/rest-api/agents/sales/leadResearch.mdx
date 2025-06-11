@@ -1,0 +1,267 @@
+# Lead Research Command
+
+Creates a command object to conduct comprehensive research on sales leads, providing valuable insights for sales teams to better understand prospects and develop targeted engagement strategies.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/leadResearch
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string | Yes | ID of the website where the lead originated |
+| `lead_id` | string | Yes | ID of the lead to research |
+| `userId` | string | No | ID of the user requesting the research |
+| `agent_id` | string | No | ID of the agent to handle the research process |
+| `researchDepth` | string | No | Depth of research: "basic", "standard", "comprehensive" (default: "standard") |
+| `researchAreas` | array | No | Specific areas to focus research on |
+| `includeSocialMedia` | boolean | No | Include social media analysis (default: false) |
+| `includeCompetitorAnalysis` | boolean | No | Include competitor analysis (default: false) |
+| `includeFinancialInfo` | boolean | No | Include financial information research (default: false) |
+
+### Example Request
+
+```json
+{
+  "site_id": "site_456",
+  "lead_id": "lead_789",
+  "userId": "user_123",
+  "agent_id": "agent_sales_123",
+  "researchDepth": "comprehensive",
+  "researchAreas": ["company_background", "decision_makers", "recent_news", "pain_points"],
+  "includeSocialMedia": true,
+  "includeCompetitorAnalysis": true,
+  "includeFinancialInfo": false
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Lead Research API Tester" 
+  description="Use this tester to conduct comprehensive lead research with different parameters and see the results." 
+  defaultEndpoint="/api/agents/sales/leadResearch"
+/>
+
+You can test this API directly using our API Tester interface. The Sales API tester allows you to generate lead research reports with different parameters and see the results.
+
+Required fields:
+- **Site ID**: The ID of the website where the lead originated
+- **Lead ID**: The ID of the lead to research
+
+Optional fields:
+- **User ID**: The ID of the user requesting the research
+- **Agent ID**: The ID of the agent to handle the research process
+- **Research Depth**: Level of detail for the research (basic, standard, comprehensive)
+- **Research Areas**: Specific areas to focus the research on
+- **Include Social Media**: Whether to include social media analysis
+- **Include Competitor Analysis**: Whether to include competitive landscape analysis
+- **Include Financial Info**: Whether to include financial information research
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control the lead research process:
+
+```json
+{
+  "targets": [
+    {
+      "title": "Company Background Research",
+      "message": "Comprehensive analysis of ABC Corp including industry positioning, business model, revenue streams, and key offerings. The company operates in the enterprise software sector with a focus on HR management solutions. Founded in 2015, they've grown to 200+ employees and serve mid-market companies across North America.",
+      "channel": "research",
+      "type": "company_analysis"
+    },
+    {
+      "title": "Key Personnel Analysis",
+      "message": "Decision maker profile: Jane Smith, Chief Technology Officer. 8+ years experience in HR tech, previously at TalentMax Solutions. Recently posted about challenges with employee data integration and scalability. Direct reports include VP of Engineering and VP of Product.",
+      "channel": "research",
+      "type": "personnel_analysis"
+    },
+    {
+      "title": "Recent Company News & Updates",
+      "message": "Recent developments: Series B funding round of $15M completed 3 months ago, led by TechVentures. New product launch announced for Q2 2024. Partnership with CloudCorp for infrastructure scaling. Company blog mentions expansion into Canadian market.",
+      "channel": "research",
+      "type": "news_analysis"
+    },
+    {
+      "title": "Pain Points & Challenges Identification",
+      "message": "Identified challenges: 1) Data integration issues across multiple HR systems, 2) Scalability concerns with current infrastructure, 3) Need for advanced analytics and reporting, 4) Integration with payroll systems, 5) Mobile accessibility for remote workforce.",
+      "channel": "research",
+      "type": "pain_point_analysis"
+    },
+    {
+      "title": "Competitive Landscape Analysis",
+      "message": "Primary competitors: BambooHR, Workday, Zenefits. Competitive positioning: Mid-market focus with strong customization capabilities. Differentiation: Advanced workflow automation and API-first architecture. Market opportunity: Growing demand for integrated HR solutions.",
+      "channel": "research",
+      "type": "competitive_analysis"
+    },
+    {
+      "title": "Engagement Recommendations",
+      "message": "Recommended approach: 1) Lead with data integration capabilities, 2) Emphasize scalability and performance, 3) Showcase analytics dashboard, 4) Offer technical demo focusing on API integrations, 5) Connect with CTO and VP of Engineering, 6) Timing: Best to reach out Tuesday-Thursday, 10-11 AM EST.",
+      "channel": "recommendations",
+      "type": "engagement_strategy"
+    }
+  ],
+  "context": "Lead research for enterprise software prospect showing interest in HR management solutions, with focus on technical decision makers and integration capabilities",
+  "supervisors": [
+    {
+      "agent_role": "sales_manager",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "research_analyst",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "conduct comprehensive lead research",
+  "description": "Conduct comprehensive research on a lead to gather valuable insights for sales and marketing strategies. Include company background, key personnel, recent news, competitive landscape, and potential pain points."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_123456",
+    "site_id": "site_456",
+    "lead_id": "lead_789",
+    "research_results": [
+      {
+        "id": "research_abc123",
+        "title": "Company Background Research",
+        "content": "Comprehensive analysis of ABC Corp including industry positioning...",
+        "category": "research",
+        "research_type": "comprehensive",
+        "status": "completed",
+        "generated_at": "2024-04-23T10:00:00Z",
+        "metadata": {
+          "include_social_media": true,
+          "include_competitor_analysis": true,
+          "include_financial_info": false,
+          "research_areas": ["company_background", "decision_makers"],
+          "confidence_score": 0.85
+        }
+      }
+    ],
+    "saved_to_database": true,
+    "research_configuration": {
+      "depth": "comprehensive",
+      "include_social_media": true,
+      "include_competitor_analysis": true,
+      "include_financial_info": false,
+      "research_areas": ["company_background", "decision_makers", "recent_news", "pain_points"]
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `LEAD_NOT_FOUND` | The specified lead does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `AGENT_NOT_FOUND` | The specified agent does not exist |
+| `RESEARCH_EXECUTION_FAILED` | The research command failed to execute properly |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Research Categories
+
+The system provides research insights across multiple categories:
+
+### Company Background Research
+- Industry analysis and market positioning
+- Business model and revenue streams
+- Company size, age, and growth trajectory
+- Key products and services offered
+- Geographic presence and target markets
+
+### Key Personnel Analysis
+- Decision maker identification and profiles
+- Organizational structure and reporting lines
+- Professional backgrounds and expertise
+- Recent activities and public statements
+- Contact preferences and best times to reach
+
+### Recent Company News & Updates
+- Latest news and press releases
+- Funding rounds and financial developments
+- Product launches and announcements
+- Partnerships and strategic alliances
+- Market expansion and growth initiatives
+
+### Pain Points & Challenges Identification
+- Business challenges and operational issues
+- Technology gaps and system limitations
+- Compliance and regulatory requirements
+- Scalability and performance concerns
+- Integration and workflow inefficiencies
+
+### Competitive Landscape Analysis
+- Primary and secondary competitors
+- Market positioning and differentiation
+- Competitive advantages and weaknesses
+- Market share and growth opportunities
+- Pricing and positioning strategies
+
+### Engagement Recommendations
+- Optimal approach strategies
+- Key messaging and value propositions
+- Best contact methods and timing
+- Relevant case studies and proof points
+- Next steps and follow-up recommendations
+
+## Notes
+
+- The research command executes asynchronously
+- Results are automatically saved to the database with structured metadata
+- Research depth affects the comprehensiveness and detail level of insights
+- Social media analysis includes LinkedIn, Twitter, and company blog content when available
+- Competitor analysis provides strategic context for positioning and messaging
+- Financial information includes publicly available data such as funding, revenue estimates, and growth metrics
+- All research findings include confidence scores and source attribution
+- The system respects data privacy and only uses publicly available information
+- Research results can be used to personalize sales outreach and marketing campaigns
+- Integration with CRM systems allows for automatic lead scoring and segmentation updates
+
+## Research Depth Levels
+
+| Level | Description | Typical Use Case |
+|-------|-------------|------------------|
+| `basic` | Essential company and contact information | Quick lead qualification |
+| `standard` | Comprehensive company profile with key personnel | Standard sales research |
+| `comprehensive` | Deep dive analysis with competitive and financial insights | Enterprise sales and strategic accounts |
+
+## Best Practices
+
+1. **Start with Standard Depth**: Begin with standard research for most leads, escalate to comprehensive for high-value prospects
+2. **Focus Research Areas**: Specify research areas to get more targeted and actionable insights
+3. **Regular Updates**: Re-run research for active leads every 30-60 days to capture new developments
+4. **Combine with Follow-up**: Use research insights to personalize follow-up sequences and messaging
+5. **Share with Team**: Research results can be shared with sales, marketing, and customer success teams for coordinated approach 

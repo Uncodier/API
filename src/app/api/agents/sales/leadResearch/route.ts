@@ -3,6 +3,11 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { 
+  getLeadInfo, 
+  getPreviousInteractions, 
+  buildEnrichedContext 
+} from '@/lib/helpers/lead-context-helper';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -69,7 +74,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
 }
 
 // Función para esperar a que un comando se complete
-async function waitForCommandCompletion(commandId: string, maxAttempts = 60, delayMs = 1000) {
+async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;
@@ -154,7 +159,7 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id
     
     console.log(`🔍 Obteniendo información del agente: ${agentId}`);
     
-    // Consultar el agente en la base de datos - Specify only the columns we need
+    // Consultar el agente en la base de datos
     const { data, error } = await supabaseAdmin
       .from('agents')
       .select('id, user_id, site_id, configuration')
@@ -197,104 +202,34 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id
   }
 }
 
-// Función para obtener la información del lead desde la base de datos
-async function getLeadInfo(leadId: string): Promise<any | null> {
-  try {
-    if (!isValidUUID(leadId)) {
-      console.error(`ID de lead no válido: ${leadId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Obteniendo información del lead: ${leadId}`);
-    
-    // Consultar el lead en la base de datos
-    const { data, error } = await supabaseAdmin
-      .from('leads')
-      .select('*')
-      .eq('id', leadId)
-      .single();
-    
-    if (error) {
-      console.error('Error al obtener información del lead:', error);
-      return null;
-    }
-    
-    if (!data) {
-      console.log(`⚠️ No se encontró el lead con ID: ${leadId}`);
-      return null;
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error al obtener información del lead:', error);
-    return null;
-  }
-}
-
-// Función para obtener las interacciones previas con un lead
-async function getPreviousInteractions(leadId: string, limit = 10): Promise<any[]> {
-  try {
-    if (!isValidUUID(leadId)) {
-      console.error(`ID de lead no válido: ${leadId}`);
-      return [];
-    }
-    
-    console.log(`🔍 Obteniendo interacciones previas con el lead: ${leadId}`);
-    
-    // Consultar las interacciones previas
-    const { data, error } = await supabaseAdmin
-      .from('lead_interactions')
-      .select('*')
-      .eq('lead_id', leadId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    
-    if (error) {
-      console.error('Error al obtener interacciones previas:', error);
-      return [];
-    }
-    
-    if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontraron interacciones previas para el lead: ${leadId}`);
-      return [];
-    }
-    
-    return data;
-  } catch (error) {
-    console.error('Error al obtener interacciones previas:', error);
-    return [];
-  }
-}
-
 export async function POST(request: Request) {
   try {
     const body = await request.json();
     
     // Extraer parámetros de la solicitud
     const { 
-      siteId, 
-      leadId, 
+      site_id, 
+      lead_id, 
       userId, 
       agent_id,
-      followUpType,
-      leadStage,
-      previousInteractions,
-      leadData,
-      productInterest,
-      followUpInterval
+      researchDepth = "standard",
+      researchAreas,
+      includeSocialMedia = false,
+      includeCompetitorAnalysis = false,
+      includeFinancialInfo = false
     } = body;
     
     // Validar parámetros requeridos
-    if (!siteId) {
+    if (!site_id) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'siteId is required' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required' } },
         { status: 400 }
       );
     }
     
-    if (!leadId) {
+    if (!lead_id) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'leadId is required' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'lead_id is required' } },
         { status: 400 }
       );
     }
@@ -327,228 +262,152 @@ export async function POST(request: Request) {
       );
     }
     
-    // Obtener información del lead desde la base de datos si no se proporcionó
-    let effectiveLeadData = leadData;
-    if (!effectiveLeadData || Object.keys(effectiveLeadData).length === 0) {
-      const leadInfo = await getLeadInfo(leadId);
-      if (leadInfo) {
-        effectiveLeadData = leadInfo;
-      }
+    // Obtener información del lead desde la base de datos
+    const leadInfo = await getLeadInfo(lead_id);
+    if (!leadInfo) {
+      return NextResponse.json(
+        { success: false, error: { code: 'LEAD_NOT_FOUND', message: 'The specified lead was not found' } },
+        { status: 404 }
+      );
     }
     
-    // Obtener interacciones previas si no se proporcionaron
-    let effectivePreviousInteractions = previousInteractions;
-    if (!effectivePreviousInteractions || !Array.isArray(effectivePreviousInteractions) || effectivePreviousInteractions.length === 0) {
-      const interactions = await getPreviousInteractions(leadId);
-      if (interactions && interactions.length > 0) {
-        effectivePreviousInteractions = interactions;
-      }
-    }
+    // Obtener interacciones previas
+    const previousInteractions = await getPreviousInteractions(lead_id);
     
     // Preparar el contexto para el comando
-    let contextMessage = `Lead ID: ${leadId}\nSite ID: ${siteId}`;
+    let contextMessage = `Lead Research Request\nLead ID: ${lead_id}\nSite ID: ${site_id}\n`;
     
     // Añadir información del lead al contexto
-    if (effectiveLeadData) {
-      contextMessage += `\n\nLead Information:`;
-      
-      if (effectiveLeadData.name) contextMessage += `\nName: ${effectiveLeadData.name}`;
-      if (effectiveLeadData.company) contextMessage += `\nCompany: ${effectiveLeadData.company}`;
-      if (effectiveLeadData.position) contextMessage += `\nPosition: ${effectiveLeadData.position}`;
-      if (effectiveLeadData.email) contextMessage += `\nEmail: ${effectiveLeadData.email}`;
-      if (effectiveLeadData.phone) contextMessage += `\nPhone: ${effectiveLeadData.phone}`;
-      
-      // Si hay campos personalizados o información adicional
-      if (effectiveLeadData.pain_points) {
-        if (Array.isArray(effectiveLeadData.pain_points)) {
-          contextMessage += `\nPain Points: ${effectiveLeadData.pain_points.join(', ')}`;
-        } else {
-          contextMessage += `\nPain Points: ${effectiveLeadData.pain_points}`;
-        }
+    contextMessage += `\nLead Information:`;
+    if (leadInfo.name) contextMessage += `\nName: ${leadInfo.name}`;
+    if (leadInfo.company) contextMessage += `\nCompany: ${leadInfo.company}`;
+    if (leadInfo.position) contextMessage += `\nPosition: ${leadInfo.position}`;
+    if (leadInfo.email) contextMessage += `\nEmail: ${leadInfo.email}`;
+    if (leadInfo.phone) contextMessage += `\nPhone: ${leadInfo.phone}`;
+    if (leadInfo.location) contextMessage += `\nLocation: ${leadInfo.location}`;
+    
+    // Si hay campos personalizados o información adicional
+    if (leadInfo.pain_points) {
+      if (Array.isArray(leadInfo.pain_points)) {
+        contextMessage += `\nPain Points: ${leadInfo.pain_points.join(', ')}`;
+      } else {
+        contextMessage += `\nPain Points: ${leadInfo.pain_points}`;
       }
-      
-      if (effectiveLeadData.budget_range) {
-        contextMessage += `\nBudget Range: ${effectiveLeadData.budget_range}`;
+    }
+    
+    if (leadInfo.budget_range) {
+      contextMessage += `\nBudget Range: ${leadInfo.budget_range}`;
+    }
+    
+    // Añadir información del sitio si está disponible
+    if (leadInfo.sites) {
+      contextMessage += `\nSite: ${leadInfo.sites.name} (${leadInfo.sites.url})`;
+    }
+    
+    // Añadir información del visitor si está disponible
+    if (leadInfo.visitors) {
+      if (leadInfo.visitors.user_agent) {
+        contextMessage += `\nUser Agent: ${leadInfo.visitors.user_agent}`;
+      }
+      if (leadInfo.visitors.location) {
+        contextMessage += `\nLocation: ${leadInfo.visitors.location}`;
       }
     }
     
     // Añadir información de interacciones previas al contexto
-    if (effectivePreviousInteractions && effectivePreviousInteractions.length > 0) {
+    if (previousInteractions && previousInteractions.length > 0) {
       contextMessage += `\n\nPrevious Interactions:`;
       
-      effectivePreviousInteractions.forEach((interaction: any, index: number) => {
+      previousInteractions.forEach((interaction: any, index: number) => {
         contextMessage += `\n${index + 1}. Date: ${interaction.date || interaction.created_at}`;
         contextMessage += `\n   Type: ${interaction.type || 'Unknown'}`;
         contextMessage += `\n   Summary: ${interaction.summary || interaction.content || 'No summary available'}`;
         
-        if (index < effectivePreviousInteractions.length - 1) {
+        if (index < previousInteractions.length - 1) {
           contextMessage += `\n`;
         }
       });
     }
     
-    // Añadir información de productos de interés
-    if (productInterest && Array.isArray(productInterest) && productInterest.length > 0) {
-      contextMessage += `\n\nProducts of Interest: ${productInterest.join(', ')}`;
+    // Añadir configuración de investigación
+    contextMessage += `\n\nResearch Configuration:`;
+    contextMessage += `\nDepth: ${researchDepth}`;
+    contextMessage += `\nInclude Social Media: ${includeSocialMedia ? 'Yes' : 'No'}`;
+    contextMessage += `\nInclude Competitor Analysis: ${includeCompetitorAnalysis ? 'Yes' : 'No'}`;
+    contextMessage += `\nInclude Financial Information: ${includeFinancialInfo ? 'Yes' : 'No'}`;
+    
+    // Añadir áreas específicas de investigación si se proporcionaron
+    if (researchAreas && Array.isArray(researchAreas) && researchAreas.length > 0) {
+      contextMessage += `\nSpecific Research Areas: ${researchAreas.join(', ')}`;
     }
     
-    // Añadir información de la etapa del lead
-    if (leadStage) {
-      contextMessage += `\n\nLead Stage: ${leadStage}`;
+    // Añadir contexto enriquecido con contenidos, tareas y conversaciones
+    console.log(`🔍 Construyendo contexto enriquecido para el comando...`);
+    const enrichedContext = await buildEnrichedContext(site_id, lead_id);
+    if (enrichedContext) {
+      contextMessage += `\n\n${enrichedContext}`;
+      console.log(`✅ Contexto enriquecido añadido (${enrichedContext.length} caracteres)`);
+    } else {
+      console.log(`⚠️ No se pudo obtener contexto enriquecido`);
     }
-    
-    // Añadir tipo de seguimiento solicitado
-    if (followUpType) {
-      contextMessage += `\n\nRequested Follow-up Type: ${followUpType}`;
-    }
-    
-    // Añadir intervalo de seguimiento solicitado
-    if (followUpInterval) {
-      contextMessage += `\n\nRequested Follow-up Interval: ${followUpInterval}`;
-    }
-    
-    // Definir herramientas predeterminadas para el agente de seguimiento de leads
-    const defaultTools: any[] = [
-      {
-        "type": "function",
-        "function": {
-          "name": "GET_LEAD_DETAILS",
-          "description": "Get details about a lead by providing name, email, company, or phone",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string",
-                "description": "The name of the lead."
-              },
-              "mail": {
-                "type": "string",
-                "description": "The email address of the lead."
-              },
-              "company": {
-                "type": "string",
-                "description": "The company name associated with the lead."
-              },
-              "phone": {
-                "type": "string",
-                "description": "The phone number of the lead."
-              }
-            },
-            "additionalProperties": false
-          },
-          "strict": true
-        }
-      },
-      {
-        "type": "function",
-        "function": {
-          "name": "SCHEDULE_FOLLOW_UP",
-          "description": "Schedule a follow-up action for a lead",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "type": {
-                "type": "string",
-                "description": "The type of follow-up (e.g., email, call, meeting)."
-              },
-              "subject": {
-                "type": "string",
-                "description": "The subject or title of the follow-up."
-              },
-              "content": {
-                "type": "string",
-                "description": "The content or script for the follow-up."
-              },
-              "scheduled_for": {
-                "type": "string",
-                "description": "The date and time for the follow-up in ISO format."
-              },
-              "next_steps": {
-                "type": "array",
-                "items": {
-                  "type": "string"
-                },
-                "description": "List of potential next steps after this follow-up."
-              }
-            },
-            "required": [
-              "type",
-              "scheduled_for"
-            ],
-            "additionalProperties": false
-          },
-          "strict": true
-        }
-      },
-      {
-        "type": "function",
-        "function": {
-          "name": "UPDATE_LEAD_STATUS",
-          "description": "Update the status of a lead in the CRM",
-          "parameters": {
-            "type": "object",
-            "properties": {
-              "status": {
-                "type": "string",
-                "description": "The new status of the lead (e.g., new, contacted, qualified, opportunity)."
-              },
-              "notes": {
-                "type": "string",
-                "description": "Additional notes about the status update."
-              }
-            },
-            "required": [
-              "status"
-            ],
-            "additionalProperties": false
-          },
-          "strict": true
-        }
-      }
-    ];
-    
-    // Usar las herramientas del agente si están disponibles, de lo contrario usar las predeterminadas
-    const tools = (agentInfo && agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0) 
-      ? agentInfo.tools 
-      : defaultTools;
     
     // Crear el comando usando CommandFactory
     const command = CommandFactory.createCommand({
-      task: 'create lead follow-up sequence',
+      task: 'conduct comprehensive lead research',
       userId: effectiveUserId,
       agentId: agent_id,
-      // Agregar site_id como propiedad básica
-      site_id: siteId,
-      description: 'Generate a personalized follow-up sequence for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints.',
-      // Establecer el target como un objeto de seguimiento
+      site_id: site_id,
+      description: 'Conduct comprehensive research on a lead to gather valuable insights for sales and marketing strategies. Include company background, key personnel, recent news, competitive landscape, and potential pain points.',
       targets: [
         {
-          follow_ups: []  // Se llenará por el agente
+          title: "Company Background Research",
+          message: "Detailed research on the lead's company including industry, size, revenue, business model, and key services/products",
+          channel: "research"
+        },
+        {
+          title: "Key Personnel Analysis",
+          message: "Information about key decision makers, their roles, background, and recent activities",
+          channel: "research"
+        },
+        {
+          title: "Recent Company News & Updates",
+          message: "Latest news, press releases, funding rounds, partnerships, or significant company changes",
+          channel: "research"
+        },
+        {
+          title: "Pain Points & Challenges Identification",
+          message: "Analysis of potential challenges, pain points, and business needs based on available information",
+          channel: "research"
+        },
+        {
+          title: "Competitive Landscape Analysis",
+          message: "Information about the company's competitors, market position, and differentiation factors",
+          channel: "research"
+        },
+        {
+          title: "Engagement Recommendations",
+          message: "Strategic recommendations for how to approach and engage with this lead based on research findings",
+          channel: "recommendations"
         }
       ],
-      // Usar herramientas del agente o herramientas predeterminadas
-      tools,
-      // Contexto incluye la información del lead y las interacciones previas
       context: contextMessage,
-      // Agregar supervisores
       supervisor: [
         {
           agent_role: 'sales_manager',
           status: 'not_initialized'
         },
         {
-          agent_role: 'customer_success',
+          agent_role: 'research_analyst',
           status: 'not_initialized'
         }
       ],
-      // Establecer modelo
       model: 'gpt-4.1',
       modelType: 'openai'
     });
     
     // Enviar el comando para procesamiento
     const internalCommandId = await commandService.submitCommand(command);
-    console.log(`📝 Comando de seguimiento de lead creado con ID interno: ${internalCommandId}`);
+    console.log(`📝 Comando de investigación de lead creado con ID interno: ${internalCommandId}`);
     
     // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
     let initialDbUuid = await getCommandDbUuid(internalCommandId);
@@ -567,90 +426,85 @@ export async function POST(request: Request) {
       console.warn(`⚠️ Comando ${internalCommandId} no completó exitosamente en el tiempo esperado`);
       
       if (!executedCommand || !executedCommand.results || executedCommand.results.length === 0) {
-        // Solo fallar si realmente no hay resultados utilizables
         return NextResponse.json(
           { 
             success: false, 
             error: { 
-              code: 'COMMAND_EXECUTION_FAILED', 
-              message: 'El comando no completó exitosamente y no se generaron resultados válidos' 
+              code: 'RESEARCH_EXECUTION_FAILED', 
+              message: 'El comando de investigación no completó exitosamente y no se generaron resultados válidos' 
             } 
           },
           { status: 500 }
         );
       } else {
-        // Si hay resultados a pesar del estado, continuamos con advertencia
         console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando`);
       }
     }
     
-    // Extraer los seguimientos generados de los resultados
-    let followUps: any[] = [];
+    // Extraer los resultados de investigación
+    let researchResults: any[] = [];
     
     if (executedCommand.results && Array.isArray(executedCommand.results) && executedCommand.results.length > 0) {
-      // Buscar resultados que contengan follow_ups
-      const followUpResults = executedCommand.results.find((r: any) => 
-        r.follow_ups || (r.content && r.content.follow_ups)
-      );
-      
-      if (followUpResults) {
-        if (Array.isArray(followUpResults.follow_ups)) {
-          followUps = followUpResults.follow_ups;
-        } else if (followUpResults.content && Array.isArray(followUpResults.content.follow_ups)) {
-          followUps = followUpResults.content.follow_ups;
+      // Buscar resultados que contengan la estructura de investigación
+      executedCommand.results.forEach((result: any) => {
+        if (result.title && result.message && result.channel) {
+          researchResults.push({
+            title: result.title,
+            content: result.message,
+            category: result.channel,
+            type: 'research_finding',
+            generated_at: new Date().toISOString()
+          });
+        } else if (result.content && result.content.title && result.content.message && result.content.channel) {
+          researchResults.push({
+            title: result.content.title,
+            content: result.content.message,
+            category: result.content.channel,
+            type: 'research_finding',
+            generated_at: new Date().toISOString()
+          });
         }
-      }
-      
-      // Si aún no tenemos follow ups, buscar en el primer resultado como último recurso
-      if (followUps.length === 0 && executedCommand.results.length > 0) {
-        const firstResult = executedCommand.results[0];
-        
-        if (firstResult && typeof firstResult === 'object') {
-          if (Array.isArray(firstResult)) {
-            followUps = firstResult;
-          } else if (firstResult.content) {
-            if (Array.isArray(firstResult.content)) {
-              followUps = firstResult.content;
-            } else if (firstResult.content.content && Array.isArray(firstResult.content.content)) {
-              followUps = firstResult.content.content;
-            }
-          }
-        }
-      }
+      });
     }
     
-    // Guardar los follow-ups en la base de datos
-    const savedFollowUps: any[] = [];
+    // Guardar los resultados de investigación en la base de datos
+    const savedResearch: any[] = [];
     
-    for (const followUp of followUps) {
+    for (const researchResult of researchResults) {
       try {
-        const followUpData = {
-          site_id: siteId,
-          lead_id: leadId,
+        const researchData = {
+          site_id: site_id,
+          lead_id: lead_id,
           user_id: effectiveUserId,
           agent_id: agent_id,
-          type: followUp.type,
-          subject: followUp.subject,
-          content: followUp.content,
-          scheduled_for: followUp.scheduled_for,
-          next_steps: Array.isArray(followUp.next_steps) ? followUp.next_steps : null,
-          status: 'scheduled',
-          command_id: effectiveDbUuid || internalCommandId
+          title: researchResult.title,
+          content: researchResult.content,
+          category: researchResult.category,
+          research_type: researchDepth,
+          status: 'completed',
+          command_id: effectiveDbUuid || internalCommandId,
+          metadata: {
+            include_social_media: includeSocialMedia,
+            include_competitor_analysis: includeCompetitorAnalysis,
+            include_financial_info: includeFinancialInfo,
+            research_areas: researchAreas || [],
+            generated_at: researchResult.generated_at
+          }
         };
         
         const { data, error } = await supabaseAdmin
-          .from('lead_follow_ups')
-          .insert([followUpData])
+          .from('lead_research')
+          .insert([researchData])
           .select()
           .single();
         
         if (error) {
-          console.error('Error al guardar follow-up:', error);
+          console.error('Error al guardar resultado de investigación:', error);
         } else if (data) {
-          savedFollowUps.push(data);
+          savedResearch.push(data);
         }
       } catch (saveError) {
-        console.error('Error al guardar follow-up:', saveError);
+        console.error('Error al guardar resultado de investigación:', saveError);
       }
     }
     
@@ -659,15 +513,22 @@ export async function POST(request: Request) {
       success: true,
       data: {
         command_id: effectiveDbUuid || internalCommandId,
-        siteId,
-        leadId,
-        follow_ups: savedFollowUps.length > 0 ? savedFollowUps : followUps,
-        saved_to_database: savedFollowUps.length > 0
+        site_id,
+        lead_id,
+        research_results: savedResearch.length > 0 ? savedResearch : researchResults,
+        saved_to_database: savedResearch.length > 0,
+        research_configuration: {
+          depth: researchDepth,
+          include_social_media: includeSocialMedia,
+          include_competitor_analysis: includeCompetitorAnalysis,
+          include_financial_info: includeFinancialInfo,
+          research_areas: researchAreas || []
+        }
       }
     });
     
   } catch (error) {
-    console.error('Error general en la ruta de follow-up de leads:', error);
+    console.error('Error general en la ruta de investigación de leads:', error);
     
     return NextResponse.json(
       { 
@@ -680,4 +541,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-} 
+}

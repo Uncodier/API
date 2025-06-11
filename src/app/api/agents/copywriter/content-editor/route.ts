@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { buildContentEditingContext, getContextSummary } from '@/lib/helpers/content-context-helper';
 import { v4 as uuidv4 } from 'uuid';
 
 // Función para validar UUIDs
@@ -109,7 +110,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
 }
 
 // Función para esperar a que un comando se complete
-async function waitForCommandCompletion(commandId: string, maxAttempts = 60, delayMs = 1000) {
+async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;
@@ -339,6 +340,13 @@ export async function POST(request: Request) {
       );
     }
     
+    // Use segment_id and campaign_id from original content if not provided in request
+    const effectiveSegmentId = segmentId || originalContent.segment_id;
+    const effectiveCampaignId = campaignId || originalContent.campaign_id;
+    
+    console.log(`🎯 IDs efectivos: segmentId=${effectiveSegmentId || 'N/A'}, campaignId=${effectiveCampaignId || 'N/A'}`);
+    console.log(`📊 Fuente: segmentId=${segmentId ? 'request' : (originalContent.segment_id ? 'original' : 'N/A')}, campaignId=${campaignId ? 'request' : (originalContent.campaign_id ? 'original' : 'N/A')}`);
+    
     // Determine the user ID from the request or agent
     let effectiveUserId = userId;
     let effectiveAgentId = agent_id;
@@ -401,6 +409,10 @@ export async function POST(request: Request) {
     console.log(`🎨 Controles de estilo: ${JSON.stringify(effectiveStyleControls)}`);
     console.log(`🚀 Acción rápida: ${effectiveQuickAction}`);
     
+    // Build additional context from segment and campaign information
+    console.log(`🔍 Construyendo contexto adicional: ${getContextSummary(effectiveSegmentId, effectiveCampaignId)}`);
+    const additionalContext = await buildContentEditingContext(effectiveSegmentId, effectiveCampaignId);
+    
     // Build context message with all relevant information
     let contextMessage = `Edit the following content based on the specified parameters:
 
@@ -439,9 +451,14 @@ Original content to edit:
       contextMessage += `\n`;
     }
     
+    // Add segment and campaign context if available
+    if (additionalContext) {
+      contextMessage += `${additionalContext}\n\n`;
+    }
+    
     // Add other context parameters
-    if (segmentId) contextMessage += `Segment ID: ${segmentId}\n`;
-    if (campaignId) contextMessage += `Campaign ID: ${campaignId}\n`;
+    if (effectiveSegmentId) contextMessage += `Segment ID: ${effectiveSegmentId}\n`;
+    if (effectiveCampaignId) contextMessage += `Campaign ID: ${effectiveCampaignId}\n`;
     contextMessage += `Site ID: ${siteId}\n`;
     
     // Add instructions for output format
@@ -638,8 +655,8 @@ Original content to edit:
           status: executedCommand.status,
           contentId,
           siteId,
-          segmentId,
-          campaignId,
+          segmentId: effectiveSegmentId,
+          campaignId: effectiveCampaignId,
           original_content: {
             title: originalContent.title,
             description: originalContent.description,

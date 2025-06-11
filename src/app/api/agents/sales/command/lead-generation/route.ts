@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { POST as LeadGenerationHandler } from '../../lead-generation/route';
+import { POST as LeadGenerationHandler } from '../../leadGeneration/route';
 
 /**
  * Standardized handler for lead generation following the /api/agents/{agent_type}/command/{command_name} pattern.
