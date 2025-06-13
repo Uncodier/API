@@ -11,7 +11,7 @@ Frequently asked questions about Uncodie's AI team communication and system even
 **Answer:** The API supports multiple AI team interactions including Claude 3.5 Sonnet (Anthropic), GPT-4 (OpenAI), and Gemini 1.5 (Google) agents. You can coordinate tasks, manage conversations, and handle multi-agent workflows programmatically.
 
 **Question:** What are the API usage limits?
-**Answer:** Limits vary by plan: Free (1000 requests/month), Pro (10000 requests/month), Enterprise (custom volume). The basic rate limit is up to 100 requests per minute for AI team operations.
+**Answer:** Limits vary by plan: Free (1000 requests/month), Startup (10000 requests/month), Enterprise (custom volume). The basic rate limit is up to 100 requests per minute for AI team operations.
 
 **Question:** Does the API support real-time team communication?
 **Answer:** Yes, the API supports WebSocket for real-time AI team communication and system event streaming through the `wss://api.uncodie.com/v1/team/stream` endpoint.
