@@ -53,7 +53,7 @@ const corsConfig = {
 };
 
 // Encabezados CORS permitidos
-const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With, Access-Control-Allow-Headers, Access-Control-Request-Headers, Access-Control-Request-Method';
+const ALLOWED_HEADERS = 'Content-Type, Authorization, X-SA-API-KEY, x-api-key, x-sa-api-key, x-api-secret, Accept, Origin, X-Requested-With, Access-Control-Allow-Headers, Access-Control-Request-Headers, Access-Control-Request-Method';
 
 /**
  * Obtiene la lista de orígenes permitidos según el entorno

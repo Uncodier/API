@@ -1,5 +1,5 @@
 import { NextRequest } from 'next/server';
-import { POST, GET } from '@/app/api/workflow/buildCampaign';
+import { POST, GET } from '@/app/api/workflow/buildCampaigns/route';
 
 // Mock del WorkflowService
 jest.mock('@/lib/services/workflow-service', () => ({

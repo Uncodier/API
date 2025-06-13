@@ -1,0 +1,220 @@
+# Lead Follow-up Command
+
+Creates a command object to generate and manage follow-up actions for sales leads, helping sales teams maintain engagement and move leads through the sales pipeline.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/lead-follow-up
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website where the lead originated |
+| `leadId` | string | Yes | ID of the lead to follow up with |
+| `userId` | string | No | ID of the sales representative responsible for the lead |
+| `agent_id` | string | No | ID of the agent to handle the follow-up sequence |
+| `followUpType` | string | No | Type of follow-up (e.g., "email", "call", "meeting") |
+| `leadStage` | string | No | Current stage of the lead in the sales pipeline |
+| `previousInteractions` | array | No | Array of previous interactions with the lead |
+| `leadData` | object | No | Additional data about the lead (e.g., interests, pain points) |
+| `productInterest` | array | No | Array of products or services the lead has shown interest in |
+| `followUpInterval` | string | No | Desired interval for follow-ups (e.g., "3 days", "1 week") |
+
+### Example Request
+
+```json
+{
+  "siteId": "site_456",
+  "leadId": "lead_789",
+  "userId": "user_123",
+  "agent_id": "agent_sales_123",
+  "followUpType": "email",
+  "leadStage": "qualified",
+  "previousInteractions": [
+    {
+      "date": "2024-04-15",
+      "type": "email",
+      "summary": "Initial contact with product information"
+    },
+    {
+      "date": "2024-04-20",
+      "type": "call",
+      "summary": "Discussed specific product features and pricing"
+    }
+  ],
+  "leadData": {
+    "name": "Jane Smith",
+    "company": "Acme Inc.",
+    "position": "Marketing Director",
+    "pain_points": ["time-consuming content creation", "measuring ROI"],
+    "budget_range": "$5000-$10000"
+  },
+  "productInterest": ["content automation", "analytics dashboard"],
+  "followUpInterval": "3 days"
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="sales" 
+  title="Lead Follow-up API Tester" 
+  description="Use this tester to generate lead follow-up sequences with different parameters and see the results." 
+  defaultEndpoint="/api/agents/sales/lead-follow-up"
+/>
+
+You can test this API directly using our API Tester interface. The Sales API tester allows you to generate lead follow-up sequences with different parameters and see the results.
+
+Required fields:
+- **Site ID**: The ID of the website where the lead originated
+- **Lead ID**: The ID of the lead to follow up with
+
+Optional fields:
+- **User ID**: The ID of the sales representative responsible for the lead
+- **Agent ID**: The ID of the agent to handle the follow-up sequence
+- **Follow-up Type**: Type of follow-up desired (email, call, meeting)
+- **Lead Stage**: Current stage of the lead in the sales pipeline
+- **Previous Interactions**: Array of previous interactions with the lead
+- **Lead Data**: Additional data about the lead
+- **Product Interest**: Array of products or services the lead has shown interest in
+- **Follow-up Interval**: Desired interval for follow-ups
+
+The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
+
+## Generated Command Structure
+
+The system generates a command object with the following structure to control the lead follow-up process:
+
+```json
+{
+  "targets": [
+    {
+      "follow_ups": [
+        {
+          "type": "email",
+          "subject": "Following up on our conversation about content automation",
+          "content": "Hello Jane,\n\nI hope this email finds you well. I wanted to follow up on our conversation last week about the content automation solutions we discussed. I remember you mentioned that your team is spending too much time on content creation, and I think our platform could help significantly reduce that time.\n\nWould you be available for a quick 15-minute demo this week to see how our solution specifically addresses your content creation challenges? I'd be happy to focus specifically on the time-saving aspects you were most interested in.\n\nBest regards,\nSales Representative",
+          "scheduled_for": "2024-04-23T10:00:00Z",
+          "next_steps": [
+            "If no response in 3 days, follow up with a phone call",
+            "If responded positively, schedule demo",
+            "If responded with concerns, address specific issues"
+          ]
+        },
+        {
+          "type": "call",
+          "script": "Hello Jane, this is [Sales Rep] from [Company]. I'm calling to follow up on the email I sent about our content automation solutions. I understand your team is looking for ways to streamline content creation and better measure ROI. Do you have a few minutes to discuss how our platform might help with these challenges?",
+          "scheduled_for": "2024-04-26T14:00:00Z",
+          "next_steps": [
+            "If call successful, send calendar invite for demo",
+            "If voicemail, leave message and follow up with another email",
+            "If requested more information, send case studies relevant to marketing directors"
+          ]
+        },
+        {
+          "type": "email",
+          "subject": "Resources for measuring content marketing ROI",
+          "content": "Hello Jane,\n\nBased on our conversations, I understand that measuring ROI is one of your key challenges. I've attached a case study that shows how companies similar to Acme Inc. have used our analytics dashboard to measure and improve their content marketing ROI.\n\nAdditionally, I've included a guide on how our platform can help with:\n\n1. Setting up custom KPIs specific to your marketing goals\n2. Tracking conversion paths from content to customer\n3. Generating automated reports for stakeholders\n\nWould you like to schedule a specific demo focused on our analytics capabilities?\n\nBest regards,\nSales Representative",
+          "scheduled_for": "2024-04-29T10:00:00Z",
+          "next_steps": [
+            "If interested in analytics, schedule specialized demo with product expert",
+            "If no response in 4 days, try reaching out on LinkedIn",
+            "If responded but not ready, add to nurture campaign"
+          ]
+        }
+      ]
+    }
+  ],
+  "context": "Lead came from website demo request form, showing interest in content automation and analytics tools",
+  "supervisors": [
+    {
+      "agent_role": "sales_manager",
+      "status": "not_initialized"
+    },
+    {
+      "agent_role": "customer_success",
+      "status": "not_initialized"
+    }
+  ],
+  "task": "create lead follow-up sequence",
+  "description": "Generate a personalized follow-up sequence for a qualified lead interested in content automation and analytics, focusing on addressing their pain points of time-consuming content creation and measuring ROI, with appropriate timing between touchpoints."
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "command_id": "cmd_123456",
+    "siteId": "site_456",
+    "leadId": "lead_789",
+    "follow_ups": [
+      {
+        "id": "followup_abc123",
+        "type": "email",
+        "subject": "Following up on our conversation about content automation",
+        "content": "Hello Jane,\n\nI hope this email finds you well...",
+        "scheduled_for": "2024-04-23T10:00:00Z",
+        "status": "scheduled",
+        "site_id": "site_456",
+        "lead_id": "lead_789",
+        "user_id": "user_123",
+        "metadata": {
+          "next_steps": ["If no response in 3 days, follow up with a phone call"],
+          "lead_stage": "qualified",
+          "sequence_position": 1,
+          "template_used": "qualified_lead_initial_followup"
+        }
+      }
+    ],
+    "saved_to_database": true
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "Invalid request parameters"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid |
+| `SITE_NOT_FOUND` | The specified site does not exist |
+| `LEAD_NOT_FOUND` | The specified lead does not exist |
+| `USER_NOT_FOUND` | The specified user does not exist |
+| `INVALID_FOLLOW_UP_TYPE` | The specified follow-up type is not supported |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## Notes
+
+- The command executes asynchronously
+- The system automatically integrates with your CRM if connected
+- The generated command controls the follow-up process with:
+  - `targets`: An array of objects defining expected follow-up actions with type, content, scheduling, and next steps
+  - `context`: Provides information about the lead's origin and interests
+  - `supervisors`: Defines which agent roles can provide additional input
+  - `task`: Specifies the high-level objective for the agent
+  - `description`: Contains the detailed prompt instructions for the agent
+- All generated follow-up items are automatically saved to the database and can be scheduled for execution
+- Follow-up types can include: email, call, meeting, LinkedIn message, video message, etc.
+- The system can automatically update your CRM with follow-up history and lead status changes
+- The follow-up sequence adapts based on lead responses and engagement
