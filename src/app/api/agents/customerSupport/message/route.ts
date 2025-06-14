@@ -15,44 +15,49 @@ function isValidUUID(uuid: string): boolean {
 }
 
 // Función para encontrar un agente de soporte al cliente activo para un sitio
-async function findActiveCustomerSupportAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+// Función genérica para encontrar agentes activos por role
+async function findActiveAgentByRole(siteId: string, role: string): Promise<{agentId: string, userId: string} | null> {
   try {
     if (!siteId || !isValidUUID(siteId)) {
       console.error(`❌ Invalid site_id for agent search: ${siteId}`);
       return null;
     }
     
-    console.log(`🔍 Buscando agente de soporte al cliente activo para el sitio: ${siteId}`);
+    console.log(`🔍 Buscando agente activo con role "${role}" para el sitio: ${siteId}`);
     
     // Solo buscamos por site_id, role y status
     const { data, error } = await supabaseAdmin
       .from('agents')
       .select('id, user_id')
       .eq('site_id', siteId)
-      .eq('role', 'Customer Support')
+      .eq('role', role)
       .eq('status', 'active')
       .order('created_at', { ascending: false })
       .limit(1);
     
     if (error) {
-      console.error('Error al buscar agente de soporte al cliente:', error);
+      console.error(`Error al buscar agente con role "${role}":`, error);
       return null;
     }
     
     if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontró ningún agente de soporte al cliente activo para el sitio: ${siteId}`);
+      console.log(`⚠️ No se encontró ningún agente activo con role "${role}" para el sitio: ${siteId}`);
       return null;
     }
     
-    console.log(`✅ Agente de soporte al cliente encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    console.log(`✅ Agente con role "${role}" encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
     return {
       agentId: data[0].id,
       userId: data[0].user_id
     };
   } catch (error) {
-    console.error('Error al buscar agente de soporte al cliente:', error);
+    console.error(`Error al buscar agente con role "${role}":`, error);
     return null;
   }
+}
+
+async function findActiveCustomerSupportAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  return await findActiveAgentByRole(siteId, 'Customer Support');
 }
 
 // Función para obtener información completa del agente

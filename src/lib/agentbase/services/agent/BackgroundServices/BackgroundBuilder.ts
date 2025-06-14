@@ -265,7 +265,35 @@ export class BackgroundBuilder {
       
       if (siteInfo.settings.social_media) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
-        siteSection += `\n## Social Media\n${JSON.stringify(siteInfo.settings.social_media)}\n`;
+        
+        // Filtrar claves con valores vacíos del objeto social_media
+        const socialMediaData = typeof siteInfo.settings.social_media === 'string'
+          ? JSON.parse(siteInfo.settings.social_media)
+          : siteInfo.settings.social_media;
+        
+        const filteredSocialMedia = Object.entries(socialMediaData)
+          .filter(([key, value]) => {
+            // Filtrar valores vacíos, null, undefined, strings vacíos, arrays vacíos
+            if (value === null || value === undefined || value === '') {
+              return false;
+            }
+            if (Array.isArray(value) && value.length === 0) {
+              return false;
+            }
+            if (typeof value === 'string' && value.trim() === '') {
+              return false;
+            }
+            return true;
+          })
+          .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
+        
+        // Solo añadir la sección si hay al menos una clave con valor válido
+        if (Object.keys(filteredSocialMedia).length > 0) {
+          siteSection += `\n## Social Media\n`;
+          Object.entries(filteredSocialMedia).forEach(([platform, handle]) => {
+            siteSection += `${platform}: ${handle}\n`;
+          });
+        }
       }
       
       // Agregar objetivos/metas si están disponibles

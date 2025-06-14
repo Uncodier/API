@@ -75,7 +75,282 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
 
 
 
+// Función genérica para encontrar un agente activo por role
+async function findActiveAgentByRole(siteId: string, role: string): Promise<{agentId: string, userId: string} | null> {
+  try {
+    if (!siteId || !isValidUUID(siteId)) {
+      console.error(`❌ Invalid site_id for agent search: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Buscando agente activo con role "${role}" para el sitio: ${siteId}`);
+    
+    // Solo buscamos por site_id, role y status
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id')
+      .eq('site_id', siteId)
+      .eq('role', role)
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.error(`Error al buscar agente con role "${role}":`, error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró ningún agente activo con role "${role}" para el sitio: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`✅ Agente con role "${role}" encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    return {
+      agentId: data[0].id,
+      userId: data[0].user_id
+    };
+  } catch (error) {
+    console.error(`Error al buscar agente con role "${role}":`, error);
+    return null;
+  }
+}
+
+// Función para encontrar un agente de ventas activo para un sitio
+async function findActiveSalesAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  return await findActiveAgentByRole(siteId, 'Sales/CRM Specialist');
+}
+
+// Función para encontrar un copywriter activo para un sitio
+async function findActiveCopywriter(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  return await findActiveAgentByRole(siteId, 'Content Creator & Copywriter');
+}
+
+// Función para esperar a que un comando se complete
+async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
+  let executedCommand = null;
+  let attempts = 0;
+  let dbUuid: string | null = null;
+  
+  console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
+  
+  // Crear una promesa que se resuelve cuando el comando se completa o se agota el tiempo
+  return new Promise<{command: any, dbUuid: string | null, completed: boolean}>((resolve) => {
+    const checkInterval = setInterval(async () => {
+      attempts++;
+      
+      try {
+        executedCommand = await commandService.getCommandById(commandId);
+        
+        if (!executedCommand) {
+          console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
+          clearInterval(checkInterval);
+          resolve({command: null, dbUuid: null, completed: false});
+          return;
+        }
+        
+        // Guardar el UUID de la base de datos si está disponible
+        if (executedCommand.metadata && executedCommand.metadata.dbUuid) {
+          dbUuid = executedCommand.metadata.dbUuid as string;
+          console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
+        }
+        
+        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
+          console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
+          
+          // Intentar obtener el UUID de la base de datos si aún no lo tenemos
+          if (!dbUuid || !isValidUUID(dbUuid)) {
+            dbUuid = await getCommandDbUuid(commandId);
+            console.log(`🔍 UUID obtenido después de completar: ${dbUuid || 'No encontrado'}`);
+          }
+          
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid, completed: executedCommand.status === 'completed'});
+          return;
+        }
+        
+        console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
+        
+        if (attempts >= maxAttempts) {
+          console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
+          
+          // Último intento de obtener el UUID
+          if (!dbUuid || !isValidUUID(dbUuid)) {
+            dbUuid = await getCommandDbUuid(commandId);
+            console.log(`🔍 UUID obtenido antes de timeout: ${dbUuid || 'No encontrado'}`);
+          }
+          
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid, completed: false});
+        }
+      } catch (error) {
+        console.error(`Error al verificar estado del comando ${commandId}:`, error);
+        clearInterval(checkInterval);
+        resolve({command: null, dbUuid: null, completed: false});
+      }
+    }, delayMs);
+  });
+}
+
 // Función para obtener la información del agente desde la base de datos
+async function executeCopywriterRefinement(
+  siteId: string,
+  agentId: string,
+  userId: string,
+  baseContext: string,
+  salesFollowUpContent: any[],
+  leadId: string
+): Promise<{ commandId: string; dbUuid: string | null; command: any } | null> {
+  try {
+    console.log(`📝 FASE 2: Ejecutando refinamiento de copywriter para agente: ${agentId}`);
+    
+    // Preparar contexto para la segunda fase incluyendo el resultado de la primera
+    console.log(`📝 FASE 2: Preparando contexto para copywriter...`);
+    let copywriterContext = baseContext;
+    
+    // Añadir resultado de la primera fase al contexto
+    if (salesFollowUpContent && salesFollowUpContent.length > 0) {
+      console.log(`📝 FASE 2: Añadiendo ${salesFollowUpContent.length} resultados de la fase 1 al contexto`);
+      copywriterContext += `\n\n--- SALES TEAM INPUT (Phase 1 Results) ---\n`;
+      copywriterContext += `The Sales/CRM Specialist has provided the following initial follow-up content that you need to refine:\n\n`;
+      
+      salesFollowUpContent.forEach((content: any, index: number) => {
+        copywriterContext += `CONTENT ITEM ${index + 1}:\n`;
+        copywriterContext += `├─ Channel: ${content.channel || 'Not specified'}\n`;
+        copywriterContext += `├─ Title: ${content.title || 'Not specified'}\n`;
+        copywriterContext += `├─ Strategy: ${content.strategy || 'Not specified'}\n`;
+        copywriterContext += `└─ Message: ${content.message || 'Not specified'}\n\n`;
+      });
+      
+      copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
+      copywriterContext += `Your task is to refine, improve, and enhance each piece of content above with your copywriting expertise.\n`;
+      copywriterContext += `For each content item, you must:\n`;
+      copywriterContext += `1. Maintain the original CHANNEL (email, whatsapp, notification, web)\n`;
+      copywriterContext += `2. Preserve the core STRATEGY intent\n`;
+      copywriterContext += `3. Improve the TITLE to be more compelling and engaging\n`;
+      copywriterContext += `4. Enhance the MESSAGE with better copy, tone, and persuasion techniques\n`;
+      copywriterContext += `5. Ensure the content resonates with the target audience while maintaining sales objectives\n`;
+      copywriterContext += `6. DO NOT use placeholders, tokens, or variables like [Name], {Company}, {{Variable}}, etc.\n`;
+      copywriterContext += `7. Use ONLY the actual information provided in the lead context above\n`;
+      copywriterContext += `8. Write final, ready-to-send content that can be used immediately without further editing\n\n`;
+      
+      console.log(`📝 FASE 2: Contexto estructurado preparado con ${copywriterContext.length} caracteres`);
+    } else {
+      console.log(`⚠️ FASE 2: No se encontró contenido de follow-up en los resultados de ventas`);
+    }
+    
+    // Crear comando para copywriter basándose en los canales disponibles de la fase 1
+    console.log(`🏗️ FASE 2: Creando comando para copywriter...`);
+    console.log(`🏗️ FASE 2: Parámetros - userId: ${userId}, agentId: ${agentId}, siteId: ${siteId}`);
+    
+    // Construir dinámicamente los canales de refinamiento basándose en el contenido de la fase 1
+    const refinementChannels: Array<{title: string, message: string, channel: string}> = [];
+    
+    if (salesFollowUpContent && salesFollowUpContent.length > 0) {
+      salesFollowUpContent.forEach((content: any) => {
+        const channel = content.channel;
+        let refinedChannelContent: {title: string, message: string, channel: string} = {
+          title: '',
+          message: '',
+          channel: channel
+        };
+        
+        switch (channel) {
+          case 'email':
+            refinedChannelContent.title = "Refined and compelling email subject line that increases open rates";
+            refinedChannelContent.message = "Enhanced email message with persuasive copy, clear value proposition, and strong call-to-action";
+            break;
+          case 'whatsapp':
+            refinedChannelContent.title = "Improved WhatsApp message with casual yet professional tone";
+            refinedChannelContent.message = "Refined WhatsApp content that feels personal, direct, and encourages immediate response";
+            break;
+          case 'notification':
+            refinedChannelContent.title = "Enhanced in-app notification that captures attention";
+            refinedChannelContent.message = "Optimized notification message that's concise, actionable, and drives user engagement";
+            break;
+          case 'web':
+            refinedChannelContent.title = "Polished web popup/banner headline that converts";
+            refinedChannelContent.message = "Compelling web message with persuasive copy that motivates visitors to take action";
+            break;
+          default:
+            refinedChannelContent.title = `Refined ${channel} headline with improved copy`;
+            refinedChannelContent.message = `Enhanced ${channel} message content with better persuasion and engagement`;
+        }
+        
+        refinementChannels.push(refinedChannelContent);
+      });
+    }
+    
+    console.log(`📋 FASE 2: Canales de refinamiento configurados: ${refinementChannels.map(c => c.channel).join(', ')}`);
+    
+    const copywriterCommand = CommandFactory.createCommand({
+      task: 'lead nurture copywriting',
+      userId: userId,
+      agentId: agentId,
+      site_id: siteId,
+      description: 'Refine and enhance the follow-up sequence created by the sales team. For each content item, improve the title and message copy while preserving the channel, strategy, and sales intent. Focus on delighting the lead and nurturing them for long term.',
+      targets: [
+        {
+          deep_thinking: "Analyze the sales team's follow-up content and create a strategic approach for copywriting enhancement"
+        },
+        {
+          refined_content: refinementChannels
+        }
+      ],
+      context: copywriterContext,
+      supervisor: [
+        {
+          agent_role: 'creative_director',
+          status: 'not_initialized'
+        },
+        {
+          agent_role: 'sales_manager',
+          status: 'not_initialized'
+        }
+      ]
+    });
+    
+    console.log(`🏗️ FASE 2: Comando creado, enviando para procesamiento...`);
+    
+    // Enviar comando de copywriter
+    const copywriterCommandId = await commandService.submitCommand(copywriterCommand);
+    console.log(`✅ FASE 2: Comando de copywriter creado exitosamente con ID interno: ${copywriterCommandId}`);
+    
+    // Esperar a que el comando de copywriter se complete
+    console.log(`⏳ FASE 2: Esperando completación del comando de copywriter...`);
+    const result = await waitForCommandCompletion(copywriterCommandId);
+    
+    if (result && result.completed && result.command) {
+      console.log(`✅ FASE 2: Comando de copywriter completado exitosamente`);
+      
+      // Extraer contenido refinado de los resultados
+      let refinedContent = [];
+      if (result.command.results && Array.isArray(result.command.results)) {
+        for (const commandResult of result.command.results) {
+          if (commandResult.refined_content && Array.isArray(commandResult.refined_content)) {
+            refinedContent = commandResult.refined_content;
+            break;
+          }
+        }
+      }
+      
+      console.log(`📊 FASE 2: Contenido refinado extraído:`, JSON.stringify(refinedContent, null, 2));
+      
+      return {
+        commandId: copywriterCommandId,
+        dbUuid: result.dbUuid,
+        command: result.command
+      };
+    } else {
+      console.error(`❌ FASE 2: El comando de copywriter no se completó correctamente`);
+      return null;
+    }
+  } catch (error: any) {
+    console.error(`❌ FASE 2: Error al crear/ejecutar comando de copywriter:`, error);
+    return null;
+  }
+}
+
 async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id?: string; tools?: any[]; activities?: any[] } | null> {
   try {
     if (!isValidUUID(agentId)) {
@@ -163,30 +438,41 @@ export async function POST(request: Request) {
       );
     }
     
-    // Obtener información del agente si se proporciona agent_id
+    // Buscar agente de ventas activo si no se proporciona un agent_id
+    let effectiveAgentId = agent_id;
     let agentInfo: any = null;
     let effectiveUserId = userId;
     
-    if (agent_id) {
-      agentInfo = await getAgentInfo(agent_id);
-      
-      if (!agentInfo) {
+    if (!effectiveAgentId) {
+      // Buscar un agente activo en la base de datos para el sitio
+      const foundAgent = await findActiveSalesAgent(siteId);
+      if (foundAgent) {
+        effectiveAgentId = foundAgent.agentId;
+        effectiveUserId = foundAgent.userId;
+        console.log(`🤖 Usando agente de ventas encontrado: ${effectiveAgentId} (user_id: ${effectiveUserId})`);
+      } else {
+        console.log(`⚠️ No se encontró un agente activo para el sitio: ${siteId}`);
+      }
+    } else if (isValidUUID(effectiveAgentId)) {
+      // Si ya tenemos un agentId válido, obtenemos su información completa
+      agentInfo = await getAgentInfo(effectiveAgentId);
+      if (agentInfo) {
+        // Si no se proporcionó un userId, usar el del agente
+        if (!effectiveUserId) {
+          effectiveUserId = agentInfo.user_id;
+        }
+      } else {
         return NextResponse.json(
           { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'The specified agent was not found' } },
           { status: 404 }
         );
-      }
-      
-      // Si no se proporcionó un userId, usar el del agente
-      if (!effectiveUserId) {
-        effectiveUserId = agentInfo.user_id;
       }
     }
     
     // Si aún no tenemos un userId, error
     if (!effectiveUserId) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required if agent_id is not provided' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required and no active agent found for the site' } },
         { status: 400 }
       );
     }
@@ -297,42 +583,69 @@ export async function POST(request: Request) {
     }
     
 
+    // Determinar qué canales de comunicación están disponibles
+    const hasEmail = effectiveLeadData && effectiveLeadData.email && effectiveLeadData.email.trim() !== '';
+    const hasPhone = effectiveLeadData && effectiveLeadData.phone && effectiveLeadData.phone.trim() !== '';
     
-    // Crear el comando usando CommandFactory
-    const command = CommandFactory.createCommand({
-      task: 'create lead follow-up sequence',
+    console.log(`📞 Canales disponibles - Email: ${hasEmail ? 'SÍ' : 'NO'}, Phone: ${hasPhone ? 'SÍ' : 'NO'}`);
+    
+    // Construir dinámicamente los canales de follow-up basándose en la información disponible
+    const followUpChannels = [];
+    
+    // Agregar email si está disponible
+    if (hasEmail) {
+      followUpChannels.push({
+        strategy: "comprehensive sale strategy",
+        title: "Email subject line for follow-up",
+        message: "Personalized email message content with professional tone",
+        channel: "email"
+      });
+    }
+    
+    // Agregar WhatsApp si hay teléfono disponible
+    if (hasPhone) {
+      followUpChannels.push({
+        strategy: "comprehensive sale strategy",
+        title: "WhatsApp follow-up message title",
+        message: "Casual and direct WhatsApp message content",
+        channel: "whatsapp"
+      });
+    }
+    
+    // Siempre agregar canales web y notification (no dependen de datos específicos del lead)
+    followUpChannels.push({
+      strategy: "comprehensive sale strategy",
+      title: "In-app notification title",
+      message: "Concise notification message for the dashboard",
+      channel: "notification"
+    });
+    
+    followUpChannels.push({
+      strategy: "comprehensive sale strategy",
+      title: "Web popup/banner title",
+      message: "Engaging web message content for site visitors",
+      channel: "web"
+    });
+    
+    console.log(`📋 Canales de follow-up configurados: ${followUpChannels.map(c => c.channel).join(', ')}`);
+
+    // FASE 1: Crear el comando para el Sales/CRM Specialist
+    console.log(`🚀 FASE 1: Creando comando para Sales/CRM Specialist`);
+    const salesCommand = CommandFactory.createCommand({
+      task: 'lead follow-up strategy',
       userId: effectiveUserId,
-      agentId: agent_id,
-      // Agregar site_id como propiedad básica
+      agentId: effectiveAgentId,
       site_id: siteId,
-      description: 'Generate a personalized follow-up sequence for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints.',
-      // Establecer los targets como objetos separados para cada canal
+      description: 'Generate a personalized follow-up sequence for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead.',
       targets: [
         {
-          title: "Email subject line for follow-up",
-          message: "Personalized email message content with professional tone",
-          channel: "email"
+          deep_thinking: "Analyze the lead information and create a strategic approach for personalized follow-up sequence"
         },
         {
-          title: "WhatsApp follow-up message title",
-          message: "Casual and direct WhatsApp message content",
-          channel: "whatsapp"
-        },
-        {
-          title: "In-app notification title",
-          message: "Concise notification message for the dashboard",
-          channel: "notification"
-        },
-        {
-          title: "Web popup/banner title",
-          message: "Engaging web message content for site visitors",
-          channel: "web"
+          follow_up_content: followUpChannels
         }
       ],
-
-      // Contexto incluye la información del lead y las interacciones previas
       context: contextMessage,
-      // Agregar supervisores
       supervisor: [
         {
           agent_role: 'sales_manager',
@@ -342,35 +655,175 @@ export async function POST(request: Request) {
           agent_role: 'customer_success',
           status: 'not_initialized'
         }
-      ],
-      // Establecer modelo
-      model: 'gpt-4.1',
-      modelType: 'openai'
+      ]
     });
     
     // Enviar el comando para procesamiento de forma asíncrona
-    const internalCommandId = await commandService.submitCommand(command);
-    console.log(`📝 Comando de seguimiento de lead creado con ID interno: ${internalCommandId}`);
+    const salesCommandId = await commandService.submitCommand(salesCommand);
+    console.log(`📝 FASE 1: Comando de ventas creado con ID interno: ${salesCommandId}`);
     
-    // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
-    let initialDbUuid = await getCommandDbUuid(internalCommandId);
-    if (initialDbUuid) {
-      console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
+    // Esperar a que el comando de ventas se complete
+    console.log(`⏳ FASE 1: Esperando completación del comando de ventas...`);
+    const { command: completedSalesCommand, dbUuid: salesDbUuid, completed: salesCompleted } = await waitForCommandCompletion(salesCommandId);
+    
+    if (!salesCompleted || !completedSalesCommand) {
+      console.error(`❌ FASE 1: El comando de ventas no se completó correctamente`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'SALES_COMMAND_FAILED', 
+            message: 'Sales command did not complete successfully' 
+          } 
+        },
+        { status: 500 }
+      );
     }
     
-    // Devolver respuesta inmediatamente indicando que el comando se está procesando
-    console.log(`🚀 Comando enviado para procesamiento asíncrono: ${internalCommandId}`);
+    console.log(`✅ FASE 1: Comando de ventas completado exitosamente`);
+    console.log(`📊 FASE 1: Resultados obtenidos:`, JSON.stringify(completedSalesCommand.results, null, 2));
     
-    // Preparar la respuesta inmediata
+    // Extraer contenido de follow-up de los resultados
+    let salesFollowUpContent = [];
+    if (completedSalesCommand.results && Array.isArray(completedSalesCommand.results)) {
+      console.log(`🔍 FASE 1: Estructura completa de resultados:`, JSON.stringify(completedSalesCommand.results, null, 2));
+      
+      for (const result of completedSalesCommand.results) {
+        console.log(`🔍 FASE 1: Analizando resultado:`, Object.keys(result));
+        
+        // Buscar follow_up_content
+        if (result.follow_up_content && Array.isArray(result.follow_up_content)) {
+          salesFollowUpContent = result.follow_up_content;
+          console.log(`✅ FASE 1: Encontrado follow_up_content con ${salesFollowUpContent.length} elementos`);
+          break;
+        }
+        
+        // Buscar otras posibles estructuras
+        if (result.content && Array.isArray(result.content)) {
+          salesFollowUpContent = result.content;
+          console.log(`✅ FASE 1: Encontrado content con ${salesFollowUpContent.length} elementos`);
+          break;
+        }
+        
+        // Buscar targets (fallback)
+        if (result.targets && Array.isArray(result.targets)) {
+          salesFollowUpContent = result.targets;
+          console.log(`✅ FASE 1: Encontrado targets con ${salesFollowUpContent.length} elementos`);
+          break;
+        }
+        
+        // Si el resultado es directamente un array
+        if (Array.isArray(result)) {
+          salesFollowUpContent = result;
+          console.log(`✅ FASE 1: Resultado es array directo con ${salesFollowUpContent.length} elementos`);
+          break;
+        }
+      }
+    }
+    
+    console.log(`📊 FASE 1: Contenido de follow-up extraído:`, JSON.stringify(salesFollowUpContent, null, 2));
+    
+    // Verificar si tenemos contenido válido
+    if (!salesFollowUpContent || salesFollowUpContent.length === 0) {
+      console.error(`❌ FASE 1: No se pudo extraer contenido de follow-up de los resultados`);
+      console.log(`🔍 FASE 1: Estructura de resultados disponible:`, JSON.stringify(completedSalesCommand.results, null, 2));
+    }
+    
+    // FASE 2: Buscar copywriter y crear segundo comando
+    console.log(`🚀 FASE 2: Iniciando búsqueda de copywriter para el sitio: ${siteId}`);
+    
+    // Buscar copywriter activo
+    const copywriterAgent = await findActiveCopywriter(siteId);
+    let copywriterAgentId: string | null = null;
+    let copywriterUserId = effectiveUserId; // Fallback al userId original
+    let shouldExecutePhase2 = false;
+    
+    if (copywriterAgent) {
+      copywriterAgentId = copywriterAgent.agentId;
+      copywriterUserId = copywriterAgent.userId;
+      shouldExecutePhase2 = true;
+      console.log(`🤖 FASE 2: Copywriter encontrado exitosamente: ${copywriterAgentId} (user_id: ${copywriterUserId})`);
+    } else {
+      console.log(`⚠️ FASE 2: No se encontró copywriter activo para el sitio: ${siteId}`);
+      console.log(`⚠️ FASE 2: Saltando segunda fase - solo ejecutaremos fase de ventas`);
+    }
+    
+    // Variables para la fase 2
+    let copywriterCommandId: string | null = null;
+    let copywriterDbUuid: string | null = null;
+    let completedCopywriterCommand: any = null;
+    let copywriterCompleted = false;
+    
+    // Solo ejecutar fase 2 si hay copywriter disponible Y contenido de ventas
+    if (shouldExecutePhase2 && copywriterAgentId && typeof copywriterAgentId === 'string' && salesFollowUpContent.length > 0) {
+      console.log(`🚀 FASE 2: Ejecutando fase de copywriter...`);
+      
+      // Ejecutar función helper para copywriter
+      const copywriterResult = await executeCopywriterRefinement(
+        siteId,
+        copywriterAgentId,
+        copywriterUserId,
+        contextMessage,
+        salesFollowUpContent, // Pasar el contenido extraído en lugar del comando completo
+        leadId
+      );
+      
+      if (copywriterResult) {
+        copywriterCommandId = copywriterResult.commandId;
+        copywriterDbUuid = copywriterResult.dbUuid;
+        completedCopywriterCommand = copywriterResult.command;
+        copywriterCompleted = true;
+        console.log(`✅ FASE 2: Comando de copywriter completado exitosamente`);
+      } else {
+        console.error(`❌ FASE 2: El comando de copywriter no se completó correctamente`);
+      }
+    } else {
+      if (!shouldExecutePhase2) {
+        console.log(`⏭️ FASE 2: Saltando fase de copywriter - no hay agente disponible`);
+      } else if (!copywriterAgentId) {
+        console.log(`⏭️ FASE 2: Saltando fase de copywriter - agentId es null`);
+      } else if (salesFollowUpContent.length === 0) {
+        console.log(`⏭️ FASE 2: Saltando fase de copywriter - no hay contenido de ventas para refinar`);
+      } else {
+        console.log(`⏭️ FASE 2: Saltando fase de copywriter - condición no cumplida`);
+      }
+    }
+    
+    // Preparar la respuesta final
+    const totalPhases = shouldExecutePhase2 ? 2 : 1;
+    const phasesCompleted = (salesCompleted ? 1 : 0) + (copywriterCompleted ? 1 : 0);
+    
+    let message = "";
+    if (!shouldExecutePhase2) {
+      message = "Lead follow-up sequence created (Sales phase only - no copywriter found)";
+    } else if (copywriterCompleted) {
+      message = "Lead follow-up sequence completed with 2 phases: Both phases successful";
+    } else {
+      message = "Lead follow-up sequence completed with 2 phases: Sales successful, copywriter failed";
+    }
+    
+    // Intentar obtener los UUIDs de la base de datos si no los tenemos
+    let salesInitialDbUuid = salesDbUuid || await getCommandDbUuid(salesCommandId);
+    let copywriterInitialDbUuid = copywriterDbUuid || (copywriterCommandId ? await getCommandDbUuid(copywriterCommandId) : null);
+    
+    console.log(`🚀 Secuencia completada - Sales: ${salesCompleted ? 'EXITOSO' : 'FALLIDO'}, Copywriter: ${copywriterCompleted ? 'EXITOSO' : 'FALLIDO'}`);
+    
     return NextResponse.json({
       success: true,
       data: {
-        command_id: initialDbUuid || internalCommandId,
-        siteId,
-        leadId,
-        status: 'processing',
-        message: 'Lead follow-up sequence is being generated. Check the status using the command_id.',
-        processing_started_at: new Date().toISOString()
+        phase_1_command_id: salesCommandId,
+        phase_1_db_uuid: salesInitialDbUuid,
+        phase_1_completed: salesCompleted,
+        phase_2_command_id: copywriterCommandId,
+        phase_2_db_uuid: copywriterInitialDbUuid,
+        phase_2_completed: copywriterCompleted,
+        message: message,
+        site_id: siteId,
+        lead_id: leadId,
+        phases_completed: phasesCompleted,
+        total_phases: totalPhases,
+        final_result: copywriterCompleted ? completedCopywriterCommand : completedSalesCommand,
+        processing_completed_at: new Date().toISOString()
       }
     });
     

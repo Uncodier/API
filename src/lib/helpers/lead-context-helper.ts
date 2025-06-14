@@ -16,14 +16,10 @@ export async function getLeadInfo(leadId: string): Promise<any | null> {
     
     console.log(`🔍 Obteniendo información completa del lead: ${leadId}`);
     
-    // Consultar el lead en la base de datos con información adicional
+    // Consultar el lead en la base de datos (simplificado para evitar problemas de JOIN)
     const { data, error } = await supabaseAdmin
       .from('leads')
-      .select(`
-        *,
-        sites:site_id(name, url),
-        visitors:visitor_id(*)
-      `)
+      .select('*')
       .eq('id', leadId)
       .single();
     
@@ -144,7 +140,7 @@ export async function getLeadConversations(leadId: string): Promise<any[]> {
   }
 }
 
-// Función para obtener las interacciones previas con un lead
+// Función para obtener las interacciones previas con un lead (usando conversations y tasks)
 export async function getPreviousInteractions(leadId: string, limit = 10): Promise<any[]> {
   try {
     if (!isValidUUID(leadId)) {
@@ -154,25 +150,70 @@ export async function getPreviousInteractions(leadId: string, limit = 10): Promi
     
     console.log(`🔍 Obteniendo interacciones previas con el lead: ${leadId}`);
     
-    // Consultar las interacciones previas
-    const { data, error } = await supabaseAdmin
-      .from('lead_interactions')
-      .select('*')
+    const interactions: any[] = [];
+    
+    // Obtener conversaciones recientes
+    const { data: conversations, error: convError } = await supabaseAdmin
+      .from('conversations')
+      .select('id, title, status, created_at, updated_at, last_message_at, custom_data')
       .eq('lead_id', leadId)
       .order('created_at', { ascending: false })
-      .limit(limit);
+      .limit(Math.ceil(limit / 2)); // Dividir el límite entre conversaciones y tareas
     
-    if (error) {
-      console.error('Error al obtener interacciones previas:', error);
-      return [];
+    if (!convError && conversations) {
+      conversations.forEach(conv => {
+        interactions.push({
+          id: conv.id,
+          type: 'conversation',
+          title: conv.title || 'Conversation',
+          status: conv.status,
+          created_at: conv.created_at,
+          updated_at: conv.updated_at,
+          channel: conv.custom_data?.channel || 'unknown',
+          last_activity: conv.last_message_at
+        });
+      });
     }
     
-    if (!data || data.length === 0) {
+    // Obtener tareas recientes
+    const { data: tasks, error: tasksError } = await supabaseAdmin
+      .from('tasks')
+      .select('id, title, type, status, created_at, updated_at, scheduled_date, stage, description')
+      .eq('lead_id', leadId)
+      .order('created_at', { ascending: false })
+      .limit(Math.ceil(limit / 2)); // Dividir el límite entre conversaciones y tareas
+    
+    if (!tasksError && tasks) {
+      tasks.forEach(task => {
+        interactions.push({
+          id: task.id,
+          type: 'task',
+          title: task.title,
+          task_type: task.type,
+          status: task.status,
+          stage: task.stage,
+          description: task.description,
+          created_at: task.created_at,
+          updated_at: task.updated_at,
+          scheduled_date: task.scheduled_date
+        });
+      });
+    }
+    
+    // Ordenar todas las interacciones por fecha de creación (más recientes primero)
+    interactions.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    
+    // Limitar al número solicitado
+    const limitedInteractions = interactions.slice(0, limit);
+    
+    if (limitedInteractions.length === 0) {
       console.log(`⚠️ No se encontraron interacciones previas para el lead: ${leadId}`);
       return [];
     }
     
-    return data;
+    console.log(`✅ Se encontraron ${limitedInteractions.length} interacciones para el lead: ${leadId}`);
+    return limitedInteractions;
+    
   } catch (error) {
     console.error('Error al obtener interacciones previas:', error);
     return [];

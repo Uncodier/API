@@ -17,8 +17,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     
-    // Extraer parámetros de la solicitud
-    const { conversation_id, agent_role } = body;
+    // Extraer parámetros de la solicitud (actualizamos para usar target en lugar de agent_role)
+    const { conversation, lead_id, target, summary } = body;
+    
+    // Para compatibilidad con versiones anteriores, usar conversation_id si no está conversation
+    const conversation_id = conversation || body.conversation_id;
+    // Para compatibilidad con versiones anteriores, usar agent_role si no está target
+    const agent_role = target || body.agent_role;
     
     // Validar parámetros requeridos
     if (!conversation_id) {
@@ -82,25 +87,38 @@ export async function POST(request: NextRequest) {
     }
     
     // Buscar el agente con el rol especificado en el sitio de la conversación
+    console.log(`🔍 Buscando agente con role "${agent_role}" para el sitio: ${conversationData.site_id}`);
+    
     const { data: agentData, error: agentError } = await supabaseAdmin
       .from('agents')
-      .select('id, name, role')
+      .select('id, name, role, user_id')
       .eq('role', agent_role)
       .eq('site_id', conversationData.site_id)
-      .single();
+      .eq('status', 'active')
+      .order('created_at', { ascending: false })
+      .limit(1);
     
-    if (agentError || !agentData) {
-      console.error('Error al encontrar el agente con el rol especificado:', agentError);
+    if (agentError || !agentData || agentData.length === 0) {
+      console.error(`Error al encontrar el agente con el rol "${agent_role}":`, agentError);
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'AGENT_NOT_FOUND', 
-            message: `No agent found with role '${agent_role}' in the conversation's site` 
+            message: `No active agent found with role '${agent_role}' in the conversation's site` 
           } 
         },
         { status: 404 }
       );
+    }
+    
+    // Tomar el primer agente encontrado
+    const selectedAgent = agentData[0];
+    console.log(`✅ Agente encontrado: ${selectedAgent.id} (${selectedAgent.name}) con role "${selectedAgent.role}"`);
+    
+    // Log del summary si está presente
+    if (summary) {
+      console.log(`📝 Resumen de la delegación: ${summary}`);
     }
     
     // Verificar si la conversación ya tiene un delegado
@@ -115,7 +133,7 @@ export async function POST(request: NextRequest) {
     let responseMessage = 'Conversation delegated successfully';
     
     if (!delegateError && existingDelegate && existingDelegate.delegate_id) {
-      if (existingDelegate.delegate_id === agentData.id) {
+      if (existingDelegate.delegate_id === selectedAgent.id) {
         // El delegado ya está asignado al mismo agente
         statusCode = 204;
         responseMessage = 'Agent already assigned as delegate';
@@ -134,7 +152,7 @@ export async function POST(request: NextRequest) {
     const { error: updateError } = await supabaseAdmin
       .from('conversations')
       .update({ 
-        delegate_id: agentData.id,
+        delegate_id: selectedAgent.id,
         updated_at: new Date().toISOString()
       })
       .eq('id', conversation_id);
@@ -156,9 +174,9 @@ export async function POST(request: NextRequest) {
     // Añadir un mensaje de sistema en la conversación indicando la delegación
     const systemMessageData = {
       conversation_id,
-      content: `La conversación ha sido delegada al agente con rol "${agent_role}" (${agentData.name}).`,
+      content: `La conversación ha sido delegada al agente con rol "${agent_role}" (${selectedAgent.name}).`,
       role: 'system',
-      agent_id: agentData.id,
+      agent_id: selectedAgent.id,
       user_id: conversationData.user_id,
       site_id: conversationData.site_id,
       lead_id: conversationData.lead_id,
@@ -166,8 +184,8 @@ export async function POST(request: NextRequest) {
       metadata: {
         delegation: {
           agent_role,
-          agent_id: agentData.id,
-          agent_name: agentData.name
+          agent_id: selectedAgent.id,
+          agent_name: selectedAgent.name
         }
       }
     };
@@ -187,7 +205,7 @@ export async function POST(request: NextRequest) {
       {
         success: true,
         conversation_id,
-        delegate_id: agentData.id,
+        delegate_id: selectedAgent.id,
         message: responseMessage
       },
       { status: statusCode }
