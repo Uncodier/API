@@ -148,7 +148,7 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, teamMemberId?: string, commandId?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, leadId?: string, visitorId?: string, conversationTitle?: string, agentId?: string, teamMemberId?: string, commandId?: string, channel?: string) {
   try {
     // Debug logs para verificar los parámetros recibidos
     console.log(`📥 saveMessages recibió: userId=${userId}, teamMemberId=${teamMemberId || 'undefined'}, commandId=${commandId || 'undefined'}`);
@@ -184,6 +184,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (agentId) conversationData.agent_id = agentId;
       // Añadir el título si está presente
       if (conversationTitle) conversationData.title = conversationTitle;
+      // Añadir el canal si está presente
+      if (channel) conversationData.channel = channel;
       
       console.log(`🗣️ Creando nueva conversación con datos: ${JSON.stringify(conversationData).substring(0, 100)}...`);
       
@@ -569,6 +571,10 @@ async function getTeamMemberInfo(teamMemberId: string): Promise<any | null> {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
+    
+    // Extract origin from request headers
+    const origin = request.headers.get('origin') || request.headers.get('referer');
+    const channel = origin ? origin : 'web';
     
     // Extract parameters from the request
     const { conversationId, message, agentId, lead_id, visitor_id, site_id, team_member_id } = body;
@@ -1044,7 +1050,8 @@ export async function POST(request: Request) {
           conversationTitle, 
           agentId, 
           team_member_id,  // Aseguramos que se pasa correctamente el team_member_id
-          effectiveDbUuid || internalCommandId  // Añadimos el command_id
+          effectiveDbUuid || internalCommandId,  // Añadimos el command_id
+          channel  // Añadimos el canal
         );
         
         // Esperar a que se complete el guardado con un timeout de seguridad

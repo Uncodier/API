@@ -223,16 +223,17 @@ async function executeCopywriterRefinement(
       });
       
       copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
-      copywriterContext += `Your task is to refine, improve, and enhance each piece of content above with your copywriting expertise.\n`;
-      copywriterContext += `For each content item, you must:\n`;
-      copywriterContext += `1. Maintain the original CHANNEL (email, whatsapp, notification, web)\n`;
-      copywriterContext += `2. Preserve the core STRATEGY intent\n`;
-      copywriterContext += `3. Improve the TITLE to be more compelling and engaging\n`;
-      copywriterContext += `4. Enhance the MESSAGE with better copy, tone, and persuasion techniques\n`;
-      copywriterContext += `5. Ensure the content resonates with the target audience while maintaining sales objectives\n`;
-      copywriterContext += `6. DO NOT use placeholders, tokens, or variables like [Name], {Company}, {{Variable}}, etc.\n`;
-      copywriterContext += `7. Use ONLY the actual information provided in the lead context above\n`;
-      copywriterContext += `8. Write final, ready-to-send content that can be used immediately without further editing\n\n`;
+      copywriterContext += `Your task is to refine, improve, and enhance the selected content above with your copywriting expertise.\n`;
+      copywriterContext += `IMPORTANTE: El equipo de ventas ya seleccionó el canal más efectivo (${salesFollowUpContent.length} canal${salesFollowUpContent.length === 1 ? '' : 'es'}) para no hostigar al lead.\n`;
+      copywriterContext += `Para el contenido seleccionado, debes:\n`;
+      copywriterContext += `1. Mantener el CANAL original (email, whatsapp, notification, web)\n`;
+      copywriterContext += `2. Preservar la ESTRATEGIA central\n`;
+      copywriterContext += `3. Mejorar el TÍTULO para que sea más atractivo y persuasivo\n`;
+      copywriterContext += `4. Perfeccionar el MENSAJE con mejores técnicas de copy y persuasión\n`;
+      copywriterContext += `5. Asegurar que el contenido resuene con la audiencia manteniendo objetivos de ventas\n`;
+      copywriterContext += `6. NO usar placeholders o variables como [Nombre], {Empresa}, {{Variable}}, etc.\n`;
+      copywriterContext += `7. Usar ÚNICAMENTE la información real proporcionada en el contexto del lead\n`;
+      copywriterContext += `8. Escribir contenido final listo para enviar sin edición adicional\n\n`;
       
       console.log(`📝 FASE 2: Contexto estructurado preparado con ${copywriterContext.length} caracteres`);
     } else {
@@ -288,10 +289,10 @@ async function executeCopywriterRefinement(
       userId: userId,
       agentId: agentId,
       site_id: siteId,
-      description: 'Refine and enhance the follow-up sequence created by the sales team. For each content item, improve the title and message copy while preserving the channel, strategy, and sales intent. Focus on delighting the lead and nurturing them for long term.',
+      description: 'Refine and enhance the carefully selected follow-up content created by the sales team. The sales team has already chosen the most effective channel to avoid overwhelming the lead. Improve the title and message copy while preserving the channel, strategy, and sales intent. Focus on delighting the lead and nurturing them for long term.',
       targets: [
         {
-          deep_thinking: "Analyze the sales team's follow-up content and create a strategic approach for copywriting enhancement"
+          deep_thinking: "Analyze the sales team's strategically selected follow-up content and create a refined approach for copywriting enhancement. Respect the channel selection made by the sales team."
         },
         {
           refined_content: refinementChannels
@@ -629,6 +630,18 @@ export async function POST(request: Request) {
     
     console.log(`📋 Canales de follow-up configurados: ${followUpChannels.map(c => c.channel).join(', ')}`);
 
+    // Agregar instrucciones específicas sobre selección de canal al contexto
+    contextMessage += `\n\n=== INSTRUCCIONES CRÍTICAS SOBRE SELECCIÓN DE CANAL ===\n`;
+    contextMessage += `ATENCIÓN: De los ${followUpChannels.length} canales disponibles (${followUpChannels.map(c => c.channel).join(', ')}), debes seleccionar ÚNICAMENTE EL MÁS EFECTIVO.\n`;
+    contextMessage += `\nCRITERIOS DE SELECCIÓN:\n`;
+    contextMessage += `1. Email: Ideal para leads profesionales, información detallada, documentos adjuntos\n`;
+    contextMessage += `2. WhatsApp: Perfecto para comunicación inmediata, leads que prefieren mensajería móvil\n`;
+    contextMessage += `3. Notification: Ideal para usuarios activos en la plataforma, mensajes cortos y directos\n`;
+    contextMessage += `4. Web: Efectivo para visitors que aún navegan el sitio web, ofertas y demos\n`;
+    contextMessage += `\nDEBES RETORNAR SOLO 1 CANAL en el follow_up_content para no hostigar al lead.\n`;
+    contextMessage += `Basa tu decisión en el historial, contexto y perfil del lead mostrado arriba.\n`;
+    contextMessage += `=== FIN DE INSTRUCCIONES ===\n\n`;
+
     // FASE 1: Crear el comando para el Sales/CRM Specialist
     console.log(`🚀 FASE 1: Creando comando para Sales/CRM Specialist`);
     const salesCommand = CommandFactory.createCommand({
@@ -636,10 +649,10 @@ export async function POST(request: Request) {
       userId: effectiveUserId,
       agentId: effectiveAgentId,
       site_id: siteId,
-      description: 'Generate a personalized follow-up sequence for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead.',
+      description: 'Generate a personalized follow-up sequence for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead. IMPORTANTE: Basándote en el historial del lead, su perfil y contexto, selecciona SOLO el canal más efectivo para no hostigar al usuario. Debes elegir únicamente 1 canal de los disponibles, el que tenga mayor probabilidad de éxito según el contexto del lead.',
       targets: [
         {
-          deep_thinking: "Analyze the lead information and create a strategic approach for personalized follow-up sequence"
+          deep_thinking: "Analyze the lead information, their interaction history, preferences, and profile to determine the single most effective communication channel. Consider factors like: lead's communication preferences, previous interactions, urgency level, lead stage, and professional context. Choose only ONE channel to avoid overwhelming the lead."
         },
         {
           follow_up_content: followUpChannels
@@ -789,41 +802,62 @@ export async function POST(request: Request) {
       }
     }
     
-    // Preparar la respuesta final
-    const totalPhases = shouldExecutePhase2 ? 2 : 1;
-    const phasesCompleted = (salesCompleted ? 1 : 0) + (copywriterCompleted ? 1 : 0);
+    // Extraer mensajes del resultado final (priorizar copywriter si existe)
+    const finalCommand = copywriterCompleted ? completedCopywriterCommand : completedSalesCommand;
+    let finalContent = [];
     
-    let message = "";
-    if (!shouldExecutePhase2) {
-      message = "Lead follow-up sequence created (Sales phase only - no copywriter found)";
-    } else if (copywriterCompleted) {
-      message = "Lead follow-up sequence completed with 2 phases: Both phases successful";
-    } else {
-      message = "Lead follow-up sequence completed with 2 phases: Sales successful, copywriter failed";
+    // Extraer contenido del comando final
+    if (finalCommand && finalCommand.results && Array.isArray(finalCommand.results)) {
+      for (const result of finalCommand.results) {
+        // Para copywriter, buscar refined_content
+        if (copywriterCompleted && result.refined_content && Array.isArray(result.refined_content)) {
+          finalContent = result.refined_content;
+          break;
+        }
+        // Para sales, buscar follow_up_content
+        else if (!copywriterCompleted && result.follow_up_content && Array.isArray(result.follow_up_content)) {
+          finalContent = result.follow_up_content;
+          break;
+        }
+        // Fallbacks
+        else if (result.content && Array.isArray(result.content)) {
+          finalContent = result.content;
+          break;
+        }
+        else if (Array.isArray(result)) {
+          finalContent = result;
+          break;
+        }
+      }
     }
     
-    // Intentar obtener los UUIDs de la base de datos si no los tenemos
-    let salesInitialDbUuid = salesDbUuid || await getCommandDbUuid(salesCommandId);
-    let copywriterInitialDbUuid = copywriterDbUuid || (copywriterCommandId ? await getCommandDbUuid(copywriterCommandId) : null);
+    // Organizar mensajes por canal
+    const messages: any = {};
+    
+    if (finalContent && Array.isArray(finalContent)) {
+      finalContent.forEach((item: any) => {
+        if (item.channel) {
+          messages[item.channel] = {
+            title: item.title || '',
+            message: item.message || '',
+            strategy: item.strategy || ''
+          };
+        }
+      });
+    }
     
     console.log(`🚀 Secuencia completada - Sales: ${salesCompleted ? 'EXITOSO' : 'FALLIDO'}, Copywriter: ${copywriterCompleted ? 'EXITOSO' : 'FALLIDO'}`);
+    console.log(`📦 Mensajes estructurados por canal:`, Object.keys(messages));
     
     return NextResponse.json({
       success: true,
       data: {
-        phase_1_command_id: salesCommandId,
-        phase_1_db_uuid: salesInitialDbUuid,
-        phase_1_completed: salesCompleted,
-        phase_2_command_id: copywriterCommandId,
-        phase_2_db_uuid: copywriterInitialDbUuid,
-        phase_2_completed: copywriterCompleted,
-        message: message,
-        site_id: siteId,
-        lead_id: leadId,
-        phases_completed: phasesCompleted,
-        total_phases: totalPhases,
-        final_result: copywriterCompleted ? completedCopywriterCommand : completedSalesCommand,
-        processing_completed_at: new Date().toISOString()
+        messages: messages,
+        lead: effectiveLeadData || {},
+        command_ids: {
+          sales: salesCommandId,
+          copywriter: copywriterCommandId
+        }
       }
     });
     

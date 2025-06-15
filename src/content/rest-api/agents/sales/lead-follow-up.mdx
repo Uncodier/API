@@ -1,11 +1,11 @@
 # Lead Follow-up Command
 
-Creates a command object to generate and manage follow-up actions for sales leads, helping sales teams maintain engagement and move leads through the sales pipeline.
+Creates a personalized follow-up sequence for sales leads using a two-phase process: first a Sales/CRM Specialist creates the content strategy, then a Content Creator & Copywriter refines the messaging for maximum impact.
 
 ## Endpoint
 
 ```http
-POST /api/agents/sales/lead-follow-up
+POST /api/agents/sales/leadFollowUp
 ```
 
 ## Request Body
@@ -48,6 +48,8 @@ POST /api/agents/sales/lead-follow-up
   "leadData": {
     "name": "Jane Smith",
     "company": "Acme Inc.",
+    "email": "jane@acme.com",
+    "phone": "+1234567890",
     "position": "Marketing Director",
     "pain_points": ["time-consuming content creation", "measuring ROI"],
     "budget_range": "$5000-$10000"
@@ -65,7 +67,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   apiId="sales" 
   title="Lead Follow-up API Tester" 
   description="Use this tester to generate lead follow-up sequences with different parameters and see the results." 
-  defaultEndpoint="/api/agents/sales/lead-follow-up"
+  defaultEndpoint="/api/agents/sales/leadFollowUp"
 />
 
 You can test this API directly using our API Tester interface. The Sales API tester allows you to generate lead follow-up sequences with different parameters and see the results.
@@ -80,73 +82,34 @@ Optional fields:
 - **Follow-up Type**: Type of follow-up desired (email, call, meeting)
 - **Lead Stage**: Current stage of the lead in the sales pipeline
 - **Previous Interactions**: Array of previous interactions with the lead
-- **Lead Data**: Additional data about the lead
+- **Lead Data**: Additional data about the lead including contact information
 - **Product Interest**: Array of products or services the lead has shown interest in
 - **Follow-up Interval**: Desired interval for follow-ups
 
 The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
 
-## Generated Command Structure
+## How It Works
 
-The system generates a command object with the following structure to control the lead follow-up process:
+The system uses a **two-phase process** to create high-quality follow-up content:
 
-```json
-{
-  "targets": [
-    {
-      "follow_ups": [
-        {
-          "type": "email",
-          "subject": "Following up on our conversation about content automation",
-          "content": "Hello Jane,\n\nI hope this email finds you well. I wanted to follow up on our conversation last week about the content automation solutions we discussed. I remember you mentioned that your team is spending too much time on content creation, and I think our platform could help significantly reduce that time.\n\nWould you be available for a quick 15-minute demo this week to see how our solution specifically addresses your content creation challenges? I'd be happy to focus specifically on the time-saving aspects you were most interested in.\n\nBest regards,\nSales Representative",
-          "scheduled_for": "2024-04-23T10:00:00Z",
-          "next_steps": [
-            "If no response in 3 days, follow up with a phone call",
-            "If responded positively, schedule demo",
-            "If responded with concerns, address specific issues"
-          ]
-        },
-        {
-          "type": "call",
-          "script": "Hello Jane, this is [Sales Rep] from [Company]. I'm calling to follow up on the email I sent about our content automation solutions. I understand your team is looking for ways to streamline content creation and better measure ROI. Do you have a few minutes to discuss how our platform might help with these challenges?",
-          "scheduled_for": "2024-04-26T14:00:00Z",
-          "next_steps": [
-            "If call successful, send calendar invite for demo",
-            "If voicemail, leave message and follow up with another email",
-            "If requested more information, send case studies relevant to marketing directors"
-          ]
-        },
-        {
-          "type": "email",
-          "subject": "Resources for measuring content marketing ROI",
-          "content": "Hello Jane,\n\nBased on our conversations, I understand that measuring ROI is one of your key challenges. I've attached a case study that shows how companies similar to Acme Inc. have used our analytics dashboard to measure and improve their content marketing ROI.\n\nAdditionally, I've included a guide on how our platform can help with:\n\n1. Setting up custom KPIs specific to your marketing goals\n2. Tracking conversion paths from content to customer\n3. Generating automated reports for stakeholders\n\nWould you like to schedule a specific demo focused on our analytics capabilities?\n\nBest regards,\nSales Representative",
-          "scheduled_for": "2024-04-29T10:00:00Z",
-          "next_steps": [
-            "If interested in analytics, schedule specialized demo with product expert",
-            "If no response in 4 days, try reaching out on LinkedIn",
-            "If responded but not ready, add to nurture campaign"
-          ]
-        }
-      ]
-    }
-  ],
-  "context": "Lead came from website demo request form, showing interest in content automation and analytics tools",
-  "supervisors": [
-    {
-      "agent_role": "sales_manager",
-      "status": "not_initialized"
-    },
-    {
-      "agent_role": "customer_success",
-      "status": "not_initialized"
-    }
-  ],
-  "task": "create lead follow-up sequence",
-  "description": "Generate a personalized follow-up sequence for a qualified lead interested in content automation and analytics, focusing on addressing their pain points of time-consuming content creation and measuring ROI, with appropriate timing between touchpoints."
-}
-```
+### Phase 1: Sales Strategy
+- **Sales/CRM Specialist Agent** analyzes the lead information
+- Creates initial follow-up content with sales strategy
+- Focuses on lead qualification and conversion objectives
 
-## Response
+### Phase 2: Content Refinement (Optional)
+- **Content Creator & Copywriter Agent** refines the messaging
+- Improves copy, tone, and persuasion techniques
+- Enhances engagement while maintaining sales objectives
+
+### Available Channels
+The system automatically generates content for available channels based on lead data:
+- **Email**: Generated if lead has email address
+- **WhatsApp**: Generated if lead has phone number
+- **Notification**: In-app notifications (always available)
+- **Web**: Website popups/banners (always available)
+
+## Response Structure
 
 ### Success Response
 
@@ -154,29 +117,45 @@ The system generates a command object with the following structure to control th
 {
   "success": true,
   "data": {
-    "command_id": "cmd_123456",
-    "siteId": "site_456",
-    "leadId": "lead_789",
-    "follow_ups": [
-      {
-        "id": "followup_abc123",
-        "type": "email",
-        "subject": "Following up on our conversation about content automation",
-        "content": "Hello Jane,\n\nI hope this email finds you well...",
-        "scheduled_for": "2024-04-23T10:00:00Z",
-        "status": "scheduled",
-        "site_id": "site_456",
-        "lead_id": "lead_789",
-        "user_id": "user_123",
-        "metadata": {
-          "next_steps": ["If no response in 3 days, follow up with a phone call"],
-          "lead_stage": "qualified",
-          "sequence_position": 1,
-          "template_used": "qualified_lead_initial_followup"
-        }
+    "messages": {
+      "email": {
+        "title": "Following up on your content automation interest",
+        "message": "Hi Jane,\n\nI hope this email finds you well. I wanted to follow up on your interest in content automation solutions...",
+        "strategy": "comprehensive sale strategy"
+      },
+      "whatsapp": {
+        "title": "Quick follow-up about Acme Inc's automation needs",
+        "message": "Hi Jane! Following up on our conversation about content automation. Are you available for a quick chat this week?",
+        "strategy": "comprehensive sale strategy"
+      },
+      "notification": {
+        "title": "New content automation insights for Acme Inc",
+        "message": "We've prepared a personalized demo showing how our platform can save your team 15+ hours per week on content creation.",
+        "strategy": "comprehensive sale strategy"
+      },
+      "web": {
+        "title": "Exclusive Demo for Marketing Directors",
+        "message": "See how companies like Acme Inc are automating their content workflows and measuring ROI more effectively.",
+        "strategy": "comprehensive sale strategy"
       }
-    ],
-    "saved_to_database": true
+    },
+    "lead": {
+      "name": "Jane Smith",
+      "company": "Acme Inc.",
+      "email": "jane@acme.com",
+      "phone": "+1234567890",
+      "position": "Marketing Director",
+      "pain_points": ["time-consuming content creation", "measuring ROI"],
+      "budget_range": "$5000-$10000",
+      "sites": {
+        "name": "Acme Website",
+        "url": "https://acme.com"
+      }
+    },
+    "command_ids": {
+      "sales": "cmd_sales_123456",
+      "copywriter": "cmd_copywriter_789012"
+    }
   }
 }
 ```
@@ -188,33 +167,43 @@ The system generates a command object with the following structure to control th
   "success": false,
   "error": {
     "code": "INVALID_REQUEST",
-    "message": "Invalid request parameters"
+    "message": "siteId is required"
   }
 }
 ```
+
+## Response Fields
+
+### Messages Object
+Each channel contains:
+- **`title`**: Subject line or headline for the message
+- **`message`**: The main content body
+- **`strategy`**: The sales strategy applied
+
+### Lead Object
+Contains all available lead information:
+- Basic info: `name`, `company`, `email`, `phone`, `position`
+- Sales data: `pain_points`, `budget_range`, `lead_stage`
+- Site information: `sites` object with website details
+- Interaction history and preferences
+
+### Command IDs Object
+- **`sales`**: ID of the Sales/CRM Specialist command
+- **`copywriter`**: ID of the Copywriter command (null if not executed)
 
 ## Error Codes
 
 | Code | Description |
 |------|-------------|
-| `INVALID_REQUEST` | The request parameters are invalid |
-| `SITE_NOT_FOUND` | The specified site does not exist |
-| `LEAD_NOT_FOUND` | The specified lead does not exist |
-| `USER_NOT_FOUND` | The specified user does not exist |
-| `INVALID_FOLLOW_UP_TYPE` | The specified follow-up type is not supported |
+| `INVALID_REQUEST` | Required parameters missing (siteId or leadId) |
+| `AGENT_NOT_FOUND` | Specified agent was not found |
+| `SALES_COMMAND_FAILED` | Sales command did not complete successfully |
 | `SYSTEM_ERROR` | Internal system error occurred |
 
 ## Notes
 
-- The command executes asynchronously
-- The system automatically integrates with your CRM if connected
-- The generated command controls the follow-up process with:
-  - `targets`: An array of objects defining expected follow-up actions with type, content, scheduling, and next steps
-  - `context`: Provides information about the lead's origin and interests
-  - `supervisors`: Defines which agent roles can provide additional input
-  - `task`: Specifies the high-level objective for the agent
-  - `description`: Contains the detailed prompt instructions for the agent
-- All generated follow-up items are automatically saved to the database and can be scheduled for execution
-- Follow-up types can include: email, call, meeting, LinkedIn message, video message, etc.
-- The system can automatically update your CRM with follow-up history and lead status changes
-- The follow-up sequence adapts based on lead responses and engagement
+- The system automatically finds active Sales/CRM Specialist and Content Creator & Copywriter agents for the site
+- If no copywriter is found, only the sales phase executes
+- Content is personalized based on lead data and previous interactions
+- Messages are ready-to-send without placeholders or variables
+- All content is generated with the actual lead information, not templates
