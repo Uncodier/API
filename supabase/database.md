@@ -1,333 +1,1382 @@
-Latesst consolidated version and scheme of the database
-
 [
   {
-    "diagram": "┌─ agent_assets (4 columns) ─┐",
-    "column_details": "│ Columns: agent_id (uuid), asset_id (uuid), created_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: asset_id -> assets.id, agent_id -> agents.id, command_id -> commands.id",
-    "bottom_border": "└────────────────────────────────┘",
-    "spacer": ""
+    "info_type": "SCHEMA_SUMMARY",
+    "object_type": "FUNCTIONS",
+    "count": 337
   },
   {
-    "diagram": "┌─ agent_memories (14 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), agent_id (uuid), user_id (uuid), type (text), key (text), data (jsonb), raw_data (text), metadata (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), access_count (integer), last_accessed (timestamp with time zone), command_id (uuid), chain_of_thoughts (text)",
-    "relationships": "│ Relations: command_id -> commands.id",
-    "bottom_border": "└──────────────────────────────────┘",
-    "spacer": ""
+    "info_type": "SCHEMA_SUMMARY",
+    "object_type": "TABLES",
+    "count": 83
   },
   {
-    "diagram": "┌─ agents (21 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), type (text), status (text), prompt (text), conversations (integer), success_rate (integer), configuration (jsonb), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), last_active (timestamp with time zone), role (text), tools (jsonb), activities (jsonb), integrations (jsonb), supervisor (uuid), backstory (text), command_id (uuid)",
-    "relationships": "│ Relations: supervisor -> agents.id, command_id -> commands.id, user_id -> users.id, site_id -> sites.id",
-    "bottom_border": "└──────────────────────────┘",
-    "spacer": ""
+    "info_type": "SCHEMA_SUMMARY",
+    "object_type": "TRIGGERS",
+    "count": 33
   },
   {
-    "diagram": "┌─ allowed_domains (5 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), domain (text), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: site_id -> sites.id",
-    "bottom_border": "└───────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ analysis (12 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), url_path (text), structure (jsonb), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), status (text), request_time (integer), provider (text), model_id (text), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, user_id -> users.id, site_id -> sites.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ api_keys (13 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (character varying), key_hash (text), prefix (character varying), user_id (uuid), site_id (uuid), status (USER-DEFINED), scopes (ARRAY), last_used_at (timestamp with time zone), expires_at (timestamp with time zone), created_at (timestamp with time zone), updated_at (timestamp with time zone), metadata (jsonb)",
-    "relationships": "│ Relations: user_id -> users.id, site_id -> sites.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ assets (13 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), file_path (text), file_type (text), file_size (integer), metadata (jsonb), is_public (boolean), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: site_id -> sites.id, command_id -> commands.id, user_id -> users.id",
-    "bottom_border": "└──────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ billing (26 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), plan (character varying), card_name (character varying), masked_card_number (character varying), card_expiry (character varying), stripe_customer_id (character varying), stripe_payment_method_id (character varying), card_address (character varying), card_city (character varying), card_postal_code (character varying), card_country (character varying), tax_id (character varying), billing_address (character varying), billing_city (character varying), billing_postal_code (character varying), billing_country (character varying), auto_renew (boolean), credits_available (integer), credits_used (integer), subscription_start_date (timestamp with time zone), subscription_end_date (timestamp with time zone), status (character varying), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, site_id -> sites.id",
-    "bottom_border": "└───────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ campaign_requirements (3 columns) ─┐",
-    "column_details": "│ Columns: campaign_id (uuid), requirement_id (uuid), command_id (uuid)",
-    "relationships": "│ Relations: requirement_id -> requirements.id, command_id -> commands.id, campaign_id -> campaigns.id",
-    "bottom_border": "└─────────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ campaign_segments (3 columns) ─┐",
-    "column_details": "│ Columns: campaign_id (uuid), segment_id (uuid), command_id (uuid)",
-    "relationships": "│ Relations: segment_id -> segments.id, campaign_id -> campaigns.id, command_id -> commands.id",
-    "bottom_border": "└─────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ campaign_subtasks (7 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), campaign_id (uuid), title (text), status (text), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, campaign_id -> campaigns.id",
-    "bottom_border": "└─────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ campaigns (16 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), title (text), description (text), priority (USER-DEFINED), status (USER-DEFINED), due_date (date), assignees (integer), issues (integer), revenue (jsonb), budget (jsonb), type (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, site_id -> sites.id, user_id -> users.id",
-    "bottom_border": "└─────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ categories (10 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), icon (text), color (text), is_active (boolean), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: user_id -> users.id, site_id -> sites.id",
-    "bottom_border": "└──────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ commands (22 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), task (text), status (USER-DEFINED), description (text), results (jsonb), targets (jsonb), tools (jsonb), context (text), supervisor (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), completion_date (timestamp with time zone), duration (integer), model (text), agent_id (uuid), user_id (uuid), output_tokens (numeric), input_tokens (numeric), site_id (uuid), agent_background (text), functions (jsonb), performance (integer)",
-    "relationships": "│ Relations: agent_id -> agents.id, site_id -> sites.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ content (21 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), title (text), description (text), type (text), status (text), segment_id (uuid), site_id (uuid), author_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), published_at (timestamp with time zone), tags (ARRAY), estimated_reading_time (integer), word_count (integer), seo_score (integer), user_id (uuid), text (text), campaign_id (uuid), performance_rating (smallint), metadata (jsonb), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, segment_id -> segments.id, author_id -> users.id, site_id -> sites.id, campaign_id -> campaigns.id, user_id -> users.id",
-    "bottom_border": "└───────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ conversations (16 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), visitor_id (uuid), agent_id (uuid), user_id (uuid), lead_id (uuid), site_id (uuid), status (text), title (text), custom_data (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), last_message_at (timestamp with time zone), is_archived (boolean), command_id (uuid), flag (integer), delegate_id (uuid)",
-    "relationships": "│ Relations: lead_id -> leads.id, site_id -> sites.id, agent_id -> agents.id, delegate_id -> agents.id, visitor_id -> visitors.id, visitor_id -> visitors.id, lead_id -> leads.id, lead_id -> leads.id, visitor_id -> visitors.id, visitor_id -> visitors.id, command_id -> commands.id, lead_id -> leads.id",
-    "bottom_border": "└─────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ cron_status (12 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), workflow_id (text), schedule_id (text), activity_name (text), status (text), last_run (timestamp with time zone), next_run (timestamp with time zone), error_message (text), retry_count (integer), site_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: site_id -> sites.id",
-    "bottom_border": "└─────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ debug_logs (7 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), operation (text), user_id (uuid), site_id (uuid), details (jsonb), created_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id",
-    "bottom_border": "└──────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ experiment_segments (5 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), experiment_id (uuid), segment_id (uuid), participants (integer), command_id (uuid)",
-    "relationships": "│ Relations: segment_id -> segments.id, command_id -> commands.id, experiment_id -> experiments.id",
-    "bottom_border": "└───────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ experiments (18 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), status (text), start_date (timestamp with time zone), end_date (timestamp with time zone), conversion (numeric), roi (numeric), preview_url (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), hypothesis (text), campaign_id (uuid), command_id (uuid), instructions (text), validations (text)",
-    "relationships": "│ Relations: site_id -> sites.id, campaign_id -> campaigns.id, command_id -> commands.id, user_id -> users.id",
-    "bottom_border": "└───────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ external_resources (9 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), key (text), url (text), description (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: user_id -> users.id, site_id -> sites.id, command_id -> commands.id",
-    "bottom_border": "└──────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ kpis (20 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), value (numeric), previous_value (numeric), unit (text), type (text), period_start (timestamp with time zone), period_end (timestamp with time zone), segment_id (uuid), is_highlighted (boolean), target_value (numeric), metadata (jsonb), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), trend (numeric), benchmark (numeric), command_id (uuid)",
-    "relationships": "│ Relations: site_id -> sites.id, command_id -> commands.id, segment_id -> segments.id, user_id -> users.id",
-    "bottom_border": "└────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ leads (22 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), email (text), position (text), segment_id (uuid), status (text), notes (text), last_contact (timestamp with time zone), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), phone (text), origin (text), social_networks (jsonb), address (jsonb), company (jsonb), subscription (jsonb), birthday (text), campaign_id (uuid), command_id (uuid), language (text)",
-    "relationships": "│ Relations: command_id -> commands.id, user_id -> users.id, campaign_id -> campaigns.id, segment_id -> segments.id, site_id -> sites.id",
-    "bottom_border": "└─────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ messages (21 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), conversation_id (uuid), visitor_id (uuid), topic (text), extension (text), agent_id (uuid), user_id (uuid), payload (jsonb), event (text), lead_id (uuid), content (text), private (boolean), updated_at (timestamp without time zone), role (text), inserted_at (timestamp without time zone), read_at (timestamp with time zone), custom_data (jsonb), id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: visitor_id -> visitors.id, visitor_id -> visitors.id, lead_id -> leads.id, lead_id -> leads.id, visitor_id -> visitors.id, conversation_id -> conversations.id, lead_id -> leads.id, command_id -> commands.id, lead_id -> leads.id, visitor_id -> visitors.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ notifications (15 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), title (text), message (text), type (text), is_read (boolean), action_url (text), related_entity_type (text), related_entity_id (uuid), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), event_type (text), severity (integer), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, site_id -> sites.id, user_id -> users.id",
-    "bottom_border": "└─────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ payments (14 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), transaction_id (character varying), transaction_type (character varying), amount (numeric), currency (character varying), status (character varying), payment_method (character varying), details (jsonb), credits (integer), invoice_url (character varying), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid)",
-    "relationships": "│ Relations: site_id -> sites.id, command_id -> commands.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ profiles (13 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), email (text), name (text), avatar_url (text), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), bio (text), role (text), language (text), timezone (text), notifications (jsonb), settings (jsonb)",
-    "relationships": "│ Relations: command_id -> commands.id, id -> users.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ referral_code_uses (4 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), referral_code_id (uuid), user_id (uuid), used_at (timestamp with time zone)",
-    "relationships": "│ Relations: user_id -> users.id, referral_code_id -> referral_codes.id",
-    "bottom_border": "└──────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ referral_codes (10 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), code (text), description (text), is_active (boolean), max_uses (integer), current_uses (integer), expires_at (timestamp with time zone), created_by (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: created_by -> users.id",
-    "bottom_border": "└──────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ requirement_segments (3 columns) ─┐",
-    "column_details": "│ Columns: requirement_id (uuid), segment_id (uuid), command_id (uuid)",
-    "relationships": "│ Relations: segment_id -> segments.id, requirement_id -> requirements.id, command_id -> commands.id",
-    "bottom_border": "└────────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ requirements (14 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), title (text), description (text), priority (text), status (text), completion_status (text), source (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), budget (numeric), instructions (text), command_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, site_id -> sites.id, user_id -> users.id",
-    "bottom_border": "└────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ sale_orders (14 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), sale_id (uuid), order_number (text), items (jsonb), subtotal (numeric), tax_total (numeric), discount_total (numeric), total (numeric), notes (text), status (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: sale_id -> sales.id, site_id -> sites.id",
-    "bottom_border": "└───────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ sales (29 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), lead_id (uuid), campaign_id (uuid), segment_id (uuid), amount (numeric), currency (text), status (text), title (text), description (text), sale_date (date), payment_method (text), payment_details (jsonb), invoice_number (text), product_name (text), product_type (text), product_details (jsonb), reference_code (text), external_id (text), notes (text), tags (ARRAY), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), channel (text), source (text), amount_due (numeric), payments (jsonb)",
-    "relationships": "│ Relations: lead_id -> leads.id, command_id -> commands.id, user_id -> users.id, site_id -> sites.id, segment_id -> segments.id, campaign_id -> campaigns.id",
-    "bottom_border": "└─────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ secure_tokens (8 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), token_type (text), encrypted_value (text), identifier (text), last_used (timestamp with time zone), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: site_id -> sites.id",
-    "bottom_border": "└─────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ segments (19 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), description (text), audience (USER-DEFINED), size (numeric), engagement (integer), is_active (boolean), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), language (USER-DEFINED), url (text), analysis (jsonb), topics (jsonb), icp (jsonb), estimated_value (numeric), command_id (uuid), rules (jsonb)",
-    "relationships": "│ Relations: site_id -> sites.id, command_id -> commands.id, user_id -> users.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ session_events (18 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), event_type (text), url (text), timestamp (bigint), data (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), site_id (text), visitor_id (uuid), referrer (text), user_agent (text), ip (text), event_name (text), properties (jsonb), session_id (uuid), activity (jsonb), command_id (uuid), segment_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, visitor_id -> visitors.id, session_id -> visitor_sessions.id, segment_id -> segments.id",
-    "bottom_border": "└──────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ settings (25 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), about (text), company_size (text), industry (text), products (jsonb), services (jsonb), swot (jsonb), locations (jsonb), marketing_budget (jsonb), marketing_channels (jsonb), social_media (jsonb), analytics_provider (text), analytics_id (text), team_members (jsonb), team_roles (jsonb), org_structure (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), competitors (jsonb), focus_mode (integer), goals (jsonb), channels (jsonb), business_hours (jsonb)",
-    "relationships": "│ Relations: command_id -> commands.id, site_id -> sites.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ site_members (11 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), site_id (uuid), user_id (uuid), role (text), added_by (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), email (text), name (text), position (text), status (text)",
-    "relationships": "│ Relations: site_id -> sites.id, user_id -> users.id, added_by -> users.id",
-    "bottom_border": "└────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ site_ownership (3 columns) ─┐",
-    "column_details": "│ Columns: site_id (uuid), user_id (uuid), created_at (timestamp with time zone)",
-    "relationships": "│ Relations: site_id -> sites.id, user_id -> users.id",
-    "bottom_border": "└──────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ sites (11 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), name (text), url (text), description (text), logo_url (text), resource_urls (jsonb), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), tracking (jsonb), command_id (uuid)",
-    "relationships": "│ Relations: user_id -> users.id, command_id -> commands.id",
-    "bottom_border": "└─────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ task_categories (2 columns) ─┐",
-    "column_details": "│ Columns: task_id (uuid), category_id (uuid)",
-    "relationships": "│ Relations: task_id -> tasks.id, category_id -> categories.id",
-    "bottom_border": "└───────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ task_comments (9 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), task_id (uuid), user_id (uuid), content (text), attachments (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), is_private (boolean), files (jsonb)",
-    "relationships": "│ Relations: task_id -> tasks.id, user_id -> users.id",
-    "bottom_border": "└─────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ tasks (20 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), lead_id (uuid), title (text), description (text), type (text), stage (text), status (text), scheduled_date (timestamp with time zone), completed_date (timestamp with time zone), amount (numeric), assignee (uuid), notes (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), serial_id (text), priority (integer), address (jsonb)",
-    "relationships": "│ Relations: user_id -> users.id, command_id -> commands.id, site_id -> sites.id, assignee -> users.id, lead_id -> leads.id",
-    "bottom_border": "└─────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ transactions (13 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), campaign_id (uuid), type (text), amount (numeric), description (text), date (date), currency (text), site_id (uuid), user_id (uuid), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), category (text)",
-    "relationships": "│ Relations: command_id -> commands.id, campaign_id -> campaigns.id, site_id -> sites.id, user_id -> users.id",
-    "bottom_border": "└────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ visitor_sessions (33 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), visitor_id (uuid), site_id (uuid), landing_url (text), current_url (text), referrer (text), utm_source (text), utm_medium (text), utm_campaign (text), utm_term (text), utm_content (text), started_at (bigint), last_activity_at (bigint), page_views (integer), device (jsonb), browser (jsonb), location (jsonb), previous_session_id (uuid), performance (jsonb), consent (jsonb), is_active (boolean), duration (bigint), active_time (bigint), idle_time (bigint), lead_id (uuid), exit_url (text), exit_type (text), custom_data (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone), command_id (uuid), identified_at (bigint), lead_data (jsonb)",
-    "relationships": "│ Relations: lead_id -> leads.id, visitor_id -> visitors.id, command_id -> commands.id",
-    "bottom_border": "└────────────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ visitors (24 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), first_seen_at (bigint), last_seen_at (bigint), total_sessions (integer), total_page_views (integer), total_time_spent (bigint), first_url (text), first_referrer (text), first_utm_source (text), first_utm_medium (text), first_utm_campaign (text), first_utm_term (text), first_utm_content (text), device (jsonb), browser (jsonb), location (jsonb), custom_data (jsonb), lead_id (uuid), is_identified (boolean), created_at (timestamp with time zone), updated_at (timestamp with time zone), fingerprint (text), command_id (uuid), segment_id (uuid)",
-    "relationships": "│ Relations: command_id -> commands.id, segment_id -> segments.id",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
-  },
-  {
-    "diagram": "┌─ waitlist (9 columns) ─┐",
-    "column_details": "│ Columns: id (uuid), email (text), name (text), referral_code_attempted (text), source (text), status (text), metadata (jsonb), created_at (timestamp with time zone), updated_at (timestamp with time zone)",
-    "relationships": "│ Relations: None",
-    "bottom_border": "└────────────────────────────┘",
-    "spacer": ""
+    "info_type": "SCHEMA_SUMMARY",
+    "object_type": "VIEWS",
+    "count": 11
   }
 ]
+
+-- WARNING: This schema is for context only and is not meant to be run.
+-- Table order and constraints may not be valid for execution.
+
+CREATE TABLE public.agent_assets (
+  agent_id uuid NOT NULL,
+  asset_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT agent_assets_pkey PRIMARY KEY (agent_id, asset_id),
+  CONSTRAINT agent_assets_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id),
+  CONSTRAINT agent_assets_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.assets(id),
+  CONSTRAINT fk_command_agent_assets FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.agent_memories (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  agent_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  type text NOT NULL,
+  key text NOT NULL,
+  data jsonb NOT NULL DEFAULT '{}'::jsonb,
+  raw_data text,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  access_count integer DEFAULT 0,
+  last_accessed timestamp with time zone DEFAULT now(),
+  command_id uuid,
+  chain_of_thoughts text,
+  CONSTRAINT agent_memories_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_agent_memories FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.agents (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  type text NOT NULL CHECK (type = ANY (ARRAY['sales'::text, 'support'::text, 'marketing'::text])),
+  status text NOT NULL CHECK (status = ANY (ARRAY['active'::text, 'inactive'::text, 'training'::text])),
+  prompt text NOT NULL,
+  conversations integer DEFAULT 0,
+  success_rate integer DEFAULT 0,
+  configuration jsonb DEFAULT '{}'::jsonb,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  last_active timestamp with time zone DEFAULT now(),
+  role text,
+  tools jsonb DEFAULT '{}'::jsonb,
+  activities jsonb DEFAULT '{}'::jsonb,
+  integrations jsonb DEFAULT '{}'::jsonb,
+  supervisor uuid,
+  backstory text,
+  command_id uuid,
+  CONSTRAINT agents_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_agents FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT agents_supervisor_fkey FOREIGN KEY (supervisor) REFERENCES public.agents(id),
+  CONSTRAINT agents_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT agents_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.allowed_domains (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  site_id uuid NOT NULL,
+  domain text NOT NULL CHECK (domain = 'localhost'::text OR domain ~* '^([a-zA-Z0-9-]+\.)*[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$'::text OR domain ~* '^(\d{1,3}\.){3}\d{1,3}$'::text OR domain ~* '^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$'::text),
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  updated_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT allowed_domains_pkey PRIMARY KEY (id),
+  CONSTRAINT allowed_domains_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.analysis (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  site_id uuid NOT NULL,
+  url_path text NOT NULL,
+  structure jsonb NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  status text DEFAULT 'completed'::text,
+  request_time integer,
+  provider text,
+  model_id text,
+  command_id uuid,
+  CONSTRAINT analysis_pkey PRIMARY KEY (id),
+  CONSTRAINT analysis_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_analysis FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT analysis_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.api_keys (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name character varying NOT NULL,
+  key_hash text NOT NULL,
+  prefix character varying NOT NULL CHECK (prefix::text ~* '^[a-zA-Z0-9_-]+$'::text),
+  user_id uuid NOT NULL,
+  site_id uuid NOT NULL,
+  status USER-DEFINED DEFAULT 'active'::key_status,
+  scopes ARRAY NOT NULL CHECK (array_length(scopes, 1) > 0),
+  last_used_at timestamp with time zone,
+  expires_at timestamp with time zone NOT NULL,
+  created_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  CONSTRAINT api_keys_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_site FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.assets (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  file_path text NOT NULL,
+  file_type text NOT NULL,
+  file_size integer,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  is_public boolean DEFAULT false,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT assets_pkey PRIMARY KEY (id),
+  CONSTRAINT assets_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_assets FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT assets_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.billing (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  site_id uuid NOT NULL,
+  plan character varying NOT NULL DEFAULT 'free'::character varying,
+  card_name character varying,
+  masked_card_number character varying,
+  card_expiry character varying,
+  stripe_customer_id character varying,
+  stripe_payment_method_id character varying,
+  card_address character varying,
+  card_city character varying,
+  card_postal_code character varying,
+  card_country character varying,
+  tax_id character varying,
+  billing_address character varying,
+  billing_city character varying,
+  billing_postal_code character varying,
+  billing_country character varying,
+  auto_renew boolean DEFAULT true,
+  credits_available integer DEFAULT 0,
+  credits_used integer DEFAULT 0,
+  subscription_start_date timestamp with time zone,
+  subscription_end_date timestamp with time zone,
+  status character varying DEFAULT 'active'::character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT billing_pkey PRIMARY KEY (id),
+  CONSTRAINT billing_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_billing FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.campaign_requirements (
+  campaign_id uuid NOT NULL,
+  requirement_id uuid NOT NULL,
+  command_id uuid,
+  CONSTRAINT campaign_requirements_pkey PRIMARY KEY (campaign_id, requirement_id),
+  CONSTRAINT fk_command_campaign_requirements FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT campaign_requirements_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT campaign_requirements_requirement_id_fkey FOREIGN KEY (requirement_id) REFERENCES public.requirements(id)
+);
+CREATE TABLE public.campaign_segments (
+  campaign_id uuid NOT NULL,
+  segment_id uuid NOT NULL,
+  command_id uuid,
+  CONSTRAINT campaign_segments_pkey PRIMARY KEY (campaign_id, segment_id),
+  CONSTRAINT campaign_segments_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT fk_command_campaign_segments FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT campaign_segments_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id)
+);
+CREATE TABLE public.campaign_subtasks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  campaign_id uuid NOT NULL,
+  title text NOT NULL,
+  status text NOT NULL CHECK (status = ANY (ARRAY['completed'::text, 'in-progress'::text, 'pending'::text])),
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT campaign_subtasks_pkey PRIMARY KEY (id),
+  CONSTRAINT campaign_subtasks_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT fk_command_campaign_subtasks FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.campaigns (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  priority USER-DEFINED NOT NULL DEFAULT 'medium'::campaign_priority,
+  status USER-DEFINED NOT NULL DEFAULT 'pending'::campaign_status,
+  due_date date,
+  assignees integer DEFAULT 0,
+  issues integer DEFAULT 0,
+  revenue jsonb DEFAULT '{"actual": 0, "currency": "USD", "estimated": 0, "projected": 0}'::jsonb,
+  budget jsonb DEFAULT '{"currency": "USD", "allocated": 0, "remaining": 0}'::jsonb,
+  type text NOT NULL,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT campaigns_pkey PRIMARY KEY (id),
+  CONSTRAINT campaigns_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_campaigns FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT campaigns_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.categories (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  icon text,
+  color text,
+  is_active boolean DEFAULT true,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT categories_pkey PRIMARY KEY (id),
+  CONSTRAINT categories_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT categories_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.commands (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  task text NOT NULL,
+  status USER-DEFINED NOT NULL DEFAULT 'pending'::command_status,
+  description text,
+  results jsonb DEFAULT '[]'::jsonb,
+  targets jsonb DEFAULT '[]'::jsonb,
+  tools jsonb DEFAULT '[]'::jsonb,
+  context text,
+  supervisor jsonb DEFAULT '[]'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  completion_date timestamp with time zone,
+  duration integer,
+  model text,
+  agent_id uuid,
+  user_id uuid NOT NULL,
+  output_tokens numeric DEFAULT '0'::numeric,
+  input_tokens numeric DEFAULT '0'::numeric,
+  site_id uuid,
+  agent_background text,
+  functions jsonb DEFAULT '[]'::jsonb,
+  performance integer DEFAULT 0,
+  CONSTRAINT commands_pkey PRIMARY KEY (id),
+  CONSTRAINT commands_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id),
+  CONSTRAINT commands_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.companies (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  website text,
+  industry text CHECK (industry = ANY (ARRAY['technology'::text, 'finance'::text, 'healthcare'::text, 'education'::text, 'retail'::text, 'manufacturing'::text, 'services'::text, 'hospitality'::text, 'media'::text, 'real_estate'::text, 'logistics'::text, 'nonprofit'::text, 'other'::text])),
+  size text CHECK (size = ANY (ARRAY['1-10'::text, '11-50'::text, '51-200'::text, '201-500'::text, '501-1000'::text, '1001-5000'::text, '5001-10000'::text, '10001+'::text])),
+  annual_revenue text CHECK (annual_revenue = ANY (ARRAY['<1M'::text, '1M-10M'::text, '10M-50M'::text, '50M-100M'::text, '100M-500M'::text, '500M-1B'::text, '>1B'::text])),
+  founded text,
+  description text,
+  address jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  legal_name text,
+  tax_id text,
+  tax_country text,
+  registration_number text,
+  vat_number text,
+  legal_structure text CHECK (legal_structure = ANY (ARRAY['sole_proprietorship'::text, 'partnership'::text, 'llc'::text, 'corporation'::text, 'nonprofit'::text, 'cooperative'::text, 's_corp'::text, 'c_corp'::text, 'lp'::text, 'llp'::text, 'sa'::text, 'srl'::text, 'gmbh'::text, 'ltd'::text, 'plc'::text, 'bv'::text, 'nv'::text, 'other'::text])),
+  phone text,
+  email text,
+  linkedin_url text,
+  employees_count integer,
+  is_public boolean DEFAULT false,
+  stock_symbol text,
+  parent_company_id uuid,
+  logo_url text,
+  cover_image_url text,
+  social_media jsonb DEFAULT '{}'::jsonb,
+  key_people jsonb DEFAULT '[]'::jsonb,
+  funding_info jsonb DEFAULT '{}'::jsonb,
+  certifications ARRAY DEFAULT ARRAY[]::text[],
+  awards ARRAY DEFAULT ARRAY[]::text[],
+  business_model text CHECK (business_model = ANY (ARRAY['b2b'::text, 'b2c'::text, 'b2b2c'::text, 'marketplace'::text, 'saas'::text, 'ecommerce'::text, 'other'::text])),
+  products_services jsonb DEFAULT '[]'::jsonb,
+  tech_stack ARRAY DEFAULT ARRAY[]::text[],
+  languages ARRAY DEFAULT ARRAY['en'::text],
+  business_hours jsonb DEFAULT '{}'::jsonb,
+  video_url text,
+  press_releases jsonb DEFAULT '[]'::jsonb,
+  partnerships jsonb DEFAULT '[]'::jsonb,
+  competitor_info jsonb DEFAULT '{}'::jsonb,
+  sustainability_score integer CHECK (sustainability_score >= 0 AND sustainability_score <= 100),
+  diversity_info jsonb DEFAULT '{}'::jsonb,
+  remote_policy text CHECK (remote_policy = ANY (ARRAY['remote_first'::text, 'hybrid'::text, 'office_only'::text, 'flexible'::text])),
+  office_locations jsonb DEFAULT '[]'::jsonb,
+  market_cap bigint,
+  last_funding_date date,
+  ipo_date date,
+  acquisition_date date,
+  acquired_by_id uuid,
+  CONSTRAINT companies_pkey PRIMARY KEY (id),
+  CONSTRAINT companies_parent_company_id_fkey FOREIGN KEY (parent_company_id) REFERENCES public.companies(id),
+  CONSTRAINT companies_acquired_by_id_fkey FOREIGN KEY (acquired_by_id) REFERENCES public.companies(id)
+);
+CREATE TABLE public.content (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  title text NOT NULL,
+  description text,
+  type text NOT NULL CHECK (type = ANY (ARRAY['blog_post'::text, 'video'::text, 'podcast'::text, 'social_post'::text, 'newsletter'::text, 'case_study'::text, 'whitepaper'::text, 'infographic'::text, 'webinar'::text, 'ebook'::text, 'ad'::text, 'landing_page'::text])),
+  status text NOT NULL CHECK (status = ANY (ARRAY['draft'::text, 'review'::text, 'approved'::text, 'published'::text, 'archived'::text])),
+  segment_id uuid,
+  site_id uuid NOT NULL,
+  author_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  published_at timestamp with time zone,
+  tags ARRAY,
+  estimated_reading_time integer,
+  word_count integer,
+  seo_score integer,
+  user_id uuid,
+  text text,
+  campaign_id uuid,
+  performance_rating smallint CHECK (performance_rating IS NULL OR performance_rating >= 1 AND performance_rating <= 5),
+  metadata jsonb DEFAULT '{}'::jsonb,
+  command_id uuid,
+  instructions text,
+  CONSTRAINT content_pkey PRIMARY KEY (id),
+  CONSTRAINT content_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT content_author_id_fkey FOREIGN KEY (author_id) REFERENCES auth.users(id),
+  CONSTRAINT content_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT content_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT content_command_id_fkey FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT content_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.conversations (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  visitor_id uuid,
+  agent_id uuid,
+  user_id uuid,
+  lead_id uuid,
+  site_id uuid,
+  status text DEFAULT 'active'::text,
+  title text,
+  custom_data jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  last_message_at timestamp with time zone,
+  is_archived boolean DEFAULT false,
+  command_id uuid,
+  flag integer DEFAULT 0,
+  delegate_id uuid,
+  channel text,
+  CONSTRAINT conversations_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_lead FOREIGN KEY (lead_id) REFERENCES public.leads(id),
+  CONSTRAINT conversations_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id),
+  CONSTRAINT conversations_delegate_id_fkey FOREIGN KEY (delegate_id) REFERENCES public.agents(id),
+  CONSTRAINT conversations_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_visitor FOREIGN KEY (visitor_id) REFERENCES public.visitors(id),
+  CONSTRAINT fk_command_conversations FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.cron_status (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  workflow_id text,
+  schedule_id text,
+  activity_name text,
+  status text NOT NULL DEFAULT 'pending'::text,
+  last_run timestamp with time zone,
+  next_run timestamp with time zone,
+  error_message text,
+  retry_count integer DEFAULT 0,
+  site_id uuid,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT cron_status_pkey PRIMARY KEY (id),
+  CONSTRAINT cron_status_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.debug_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  operation text,
+  user_id uuid,
+  site_id uuid,
+  details jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT debug_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_debug_logs FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.experiment_segments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  experiment_id uuid,
+  segment_id uuid,
+  participants integer DEFAULT 0,
+  command_id uuid,
+  CONSTRAINT experiment_segments_pkey PRIMARY KEY (id),
+  CONSTRAINT experiment_segments_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT experiment_segments_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.experiments(id),
+  CONSTRAINT fk_command_experiment_segments FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.experiments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  status text NOT NULL CHECK (status = ANY (ARRAY['active'::text, 'completed'::text, 'draft'::text])),
+  start_date timestamp with time zone,
+  end_date timestamp with time zone,
+  conversion numeric,
+  roi numeric,
+  preview_url text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  hypothesis text,
+  campaign_id uuid,
+  command_id uuid,
+  instructions text,
+  validations text,
+  CONSTRAINT experiments_pkey PRIMARY KEY (id),
+  CONSTRAINT experiments_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT fk_command_experiments FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT experiments_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT experiments_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.external_resources (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  key text NOT NULL,
+  url text NOT NULL,
+  description text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT external_resources_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_external_resources FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT external_resources_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT external_resources_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.kpis (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  value numeric NOT NULL,
+  previous_value numeric,
+  unit text NOT NULL,
+  type text NOT NULL CHECK (type IS NOT NULL),
+  period_start timestamp with time zone NOT NULL,
+  period_end timestamp with time zone NOT NULL,
+  segment_id uuid,
+  is_highlighted boolean DEFAULT false,
+  target_value numeric,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  trend numeric DEFAULT 0,
+  benchmark numeric,
+  command_id uuid,
+  CONSTRAINT kpis_pkey PRIMARY KEY (id),
+  CONSTRAINT kpis_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT kpis_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_kpis FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT kpis_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.leads (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  email text NOT NULL,
+  position text,
+  segment_id uuid,
+  status text NOT NULL CHECK (status = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'converted'::text, 'lost'::text])),
+  notes text,
+  last_contact timestamp with time zone,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  phone text,
+  origin text,
+  social_networks jsonb DEFAULT '{}'::jsonb,
+  address jsonb DEFAULT '{}'::jsonb,
+  company jsonb DEFAULT '{}'::jsonb,
+  subscription jsonb DEFAULT '{}'::jsonb,
+  birthday text,
+  campaign_id uuid,
+  command_id uuid,
+  language text,
+  company_id uuid,
+  attribution jsonb DEFAULT '{}'::jsonb,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  CONSTRAINT leads_pkey PRIMARY KEY (id),
+  CONSTRAINT leads_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
+  CONSTRAINT leads_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT leads_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT leads_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT leads_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_leads FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.messages (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL,
+  visitor_id uuid,
+  agent_id uuid,
+  user_id uuid,
+  lead_id uuid,
+  content text NOT NULL,
+  role text NOT NULL CHECK (role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text, 'function'::text, 'tool'::text, 'data'::text, 'team_member'::text])),
+  read_at timestamp with time zone,
+  custom_data jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT messages_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_lead FOREIGN KEY (lead_id) REFERENCES public.leads(id),
+  CONSTRAINT fk_conversation FOREIGN KEY (conversation_id) REFERENCES public.conversations(id),
+  CONSTRAINT fk_command_messages FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT fk_visitor FOREIGN KEY (visitor_id) REFERENCES public.visitors(id)
+);
+CREATE TABLE public.notifications (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  message text NOT NULL,
+  type text NOT NULL CHECK (type = ANY (ARRAY['info'::text, 'success'::text, 'warning'::text, 'error'::text])),
+  is_read boolean DEFAULT false,
+  action_url text,
+  related_entity_type text,
+  related_entity_id uuid,
+  site_id uuid,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  event_type text CHECK (event_type = ANY (ARRAY['lead_created'::text, 'kpi_alert'::text, 'experiment_result'::text])),
+  severity integer,
+  command_id uuid,
+  CONSTRAINT notifications_pkey PRIMARY KEY (id),
+  CONSTRAINT notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT notifications_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_notifications FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.payments (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  site_id uuid NOT NULL,
+  transaction_id character varying DEFAULT ('tx_'::text || substr(md5(((random())::text || (clock_timestamp())::text)), 1, 16)),
+  transaction_type character varying NOT NULL,
+  amount numeric NOT NULL,
+  currency character varying DEFAULT 'USD'::character varying,
+  status character varying NOT NULL,
+  payment_method character varying,
+  details jsonb DEFAULT '{}'::jsonb,
+  credits integer DEFAULT 0,
+  invoice_url character varying,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  command_id uuid,
+  CONSTRAINT payments_pkey PRIMARY KEY (id),
+  CONSTRAINT payments_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_payments FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  email text NOT NULL,
+  name text,
+  avatar_url text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  bio text,
+  role text CHECK (role = ANY (ARRAY['Product Manager'::text, 'Designer'::text, 'Developer'::text, 'Marketing'::text, 'Sales'::text, 'CEO'::text, 'Other'::text])),
+  language text DEFAULT 'es'::text CHECK (language = ANY (ARRAY['es'::text, 'en'::text, 'fr'::text, 'de'::text])),
+  timezone text DEFAULT 'America/Mexico_City'::text,
+  notifications jsonb DEFAULT '{"push": true, "email": true}'::jsonb CHECK (validate_notifications(notifications)),
+  settings jsonb DEFAULT '{}'::jsonb,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_profiles FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.referral_code_uses (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  referral_code_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  used_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT referral_code_uses_pkey PRIMARY KEY (id),
+  CONSTRAINT referral_code_uses_referral_code_id_fkey FOREIGN KEY (referral_code_id) REFERENCES public.referral_codes(id),
+  CONSTRAINT referral_code_uses_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.referral_codes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code text NOT NULL UNIQUE,
+  description text,
+  is_active boolean DEFAULT true,
+  max_uses integer CHECK (max_uses IS NULL OR max_uses > 0),
+  current_uses integer DEFAULT 0 CHECK (current_uses >= 0),
+  expires_at timestamp with time zone,
+  created_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT referral_codes_pkey PRIMARY KEY (id),
+  CONSTRAINT referral_codes_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id)
+);
+CREATE TABLE public.requirement_segments (
+  requirement_id uuid NOT NULL,
+  segment_id uuid NOT NULL,
+  command_id uuid,
+  CONSTRAINT requirement_segments_pkey PRIMARY KEY (requirement_id, segment_id),
+  CONSTRAINT fk_command_requirement_segments FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT requirement_segments_requirement_id_fkey FOREIGN KEY (requirement_id) REFERENCES public.requirements(id),
+  CONSTRAINT requirement_segments_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id)
+);
+CREATE TABLE public.requirements (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  priority text NOT NULL CHECK (priority = ANY (ARRAY['high'::text, 'medium'::text, 'low'::text])),
+  status text NOT NULL CHECK (status = ANY (ARRAY['validated'::text, 'in-progress'::text, 'on-review'::text, 'done'::text, 'backlog'::text, 'canceled'::text])),
+  completion_status text NOT NULL CHECK (completion_status = ANY (ARRAY['pending'::text, 'completed'::text, 'rejected'::text])),
+  source text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  budget numeric,
+  instructions text,
+  command_id uuid,
+  type USER-DEFINED DEFAULT 'task'::requirement_type,
+  CONSTRAINT requirements_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_requirements FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT requirements_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT requirements_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.sale_orders (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  sale_id uuid NOT NULL,
+  order_number text NOT NULL,
+  items jsonb NOT NULL DEFAULT '[]'::jsonb,
+  subtotal numeric NOT NULL DEFAULT 0,
+  tax_total numeric NOT NULL DEFAULT 0,
+  discount_total numeric NOT NULL DEFAULT 0,
+  total numeric NOT NULL DEFAULT 0,
+  notes text,
+  status text NOT NULL DEFAULT 'completed'::text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT sale_orders_pkey PRIMARY KEY (id),
+  CONSTRAINT sale_orders_sale_id_fkey FOREIGN KEY (sale_id) REFERENCES public.sales(id),
+  CONSTRAINT sale_orders_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.sales (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  lead_id uuid,
+  campaign_id uuid,
+  segment_id uuid,
+  amount numeric NOT NULL,
+  currency text DEFAULT 'USD'::text,
+  status text NOT NULL CHECK (status = ANY (ARRAY['pending'::text, 'completed'::text, 'cancelled'::text, 'refunded'::text])),
+  title text NOT NULL,
+  description text,
+  sale_date date NOT NULL,
+  payment_method text,
+  payment_details jsonb DEFAULT '{}'::jsonb,
+  invoice_number text,
+  product_name text,
+  product_type text,
+  product_details jsonb DEFAULT '{}'::jsonb,
+  reference_code text,
+  external_id text,
+  notes text,
+  tags ARRAY,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  channel text DEFAULT 'online'::text,
+  source text DEFAULT 'online'::text CHECK (source = ANY (ARRAY['retail'::text, 'online'::text])),
+  amount_due numeric DEFAULT '0'::numeric,
+  payments jsonb DEFAULT '[]'::jsonb,
+  CONSTRAINT sales_pkey PRIMARY KEY (id),
+  CONSTRAINT sales_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT sales_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.leads(id),
+  CONSTRAINT sales_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT sales_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT sales_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_sales FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.secure_tokens (
+  id uuid NOT NULL DEFAULT uuid_generate_v4(),
+  site_id uuid,
+  token_type text NOT NULL,
+  encrypted_value text NOT NULL,
+  identifier text NOT NULL,
+  last_used timestamp with time zone,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT secure_tokens_pkey PRIMARY KEY (id),
+  CONSTRAINT secure_tokens_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.segments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  audience USER-DEFINED CHECK (audience = ANY (ARRAY['enterprise'::segment_audience, 'smb'::segment_audience, 'startup'::segment_audience, 'b2b_saas'::segment_audience, 'e_commerce'::segment_audience, 'tech'::segment_audience, 'finance'::segment_audience, 'healthcare'::segment_audience, 'education'::segment_audience, 'manufacturing'::segment_audience, 'retail'::segment_audience, 'real_estate'::segment_audience, 'hospitality'::segment_audience, 'automotive'::segment_audience, 'media'::segment_audience, 'telecom'::segment_audience, 'energy'::segment_audience, 'agriculture'::segment_audience, 'construction'::segment_audience, 'logistics'::segment_audience, 'professional'::segment_audience, 'government'::segment_audience, 'nonprofit'::segment_audience, 'legal'::segment_audience, 'pharma'::segment_audience, 'insurance'::segment_audience, 'consulting'::segment_audience, 'research'::segment_audience, 'aerospace'::segment_audience, 'gaming'::segment_audience])),
+  size numeric,
+  engagement integer,
+  is_active boolean DEFAULT true,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  language USER-DEFINED NOT NULL DEFAULT 'en'::segment_language CHECK (language = ANY (ARRAY['en'::segment_language, 'zh'::segment_language, 'hi'::segment_language, 'es'::segment_language, 'ar'::segment_language, 'bn'::segment_language, 'pt'::segment_language, 'ru'::segment_language, 'ja'::segment_language, 'de'::segment_language, 'fr'::segment_language, 'ur'::segment_language, 'id'::segment_language, 'tr'::segment_language, 'it'::segment_language, 'th'::segment_language, 'vi'::segment_language, 'ko'::segment_language, 'fa'::segment_language, 'pl'::segment_language, 'uk'::segment_language, 'ro'::segment_language, 'nl'::segment_language, 'el'::segment_language, 'cs'::segment_language, 'sv'::segment_language, 'hu'::segment_language, 'da'::segment_language, 'fi'::segment_language, 'no'::segment_language])),
+  url text,
+  analysis jsonb,
+  topics jsonb,
+  icp jsonb,
+  estimated_value numeric,
+  command_id uuid,
+  rules jsonb DEFAULT '[]'::jsonb,
+  CONSTRAINT segments_pkey PRIMARY KEY (id),
+  CONSTRAINT segments_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT segments_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_command_segments FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.session_events (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  event_type text NOT NULL,
+  url text,
+  timestamp bigint NOT NULL,
+  data jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  site_id text NOT NULL,
+  visitor_id uuid,
+  referrer text,
+  user_agent text,
+  ip text,
+  event_name text,
+  properties jsonb DEFAULT '{}'::jsonb,
+  session_id uuid,
+  activity jsonb,
+  command_id uuid,
+  segment_id uuid,
+  CONSTRAINT session_events_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_visitor_session FOREIGN KEY (session_id) REFERENCES public.visitor_sessions(id),
+  CONSTRAINT session_events_visitor_id_fkey FOREIGN KEY (visitor_id) REFERENCES public.visitors(id),
+  CONSTRAINT session_events_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT fk_command_session_events FOREIGN KEY (command_id) REFERENCES public.commands(id)
+);
+CREATE TABLE public.settings (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  site_id uuid NOT NULL UNIQUE,
+  about text,
+  company_size text,
+  industry text,
+  products jsonb DEFAULT '[]'::jsonb,
+  services jsonb DEFAULT '[]'::jsonb,
+  swot jsonb DEFAULT '{"threats": "", "strengths": "", "weaknesses": "", "opportunities": ""}'::jsonb,
+  locations jsonb DEFAULT '[]'::jsonb,
+  marketing_budget jsonb DEFAULT '{"total": 0, "available": 0}'::jsonb,
+  marketing_channels jsonb DEFAULT '[]'::jsonb,
+  social_media jsonb DEFAULT '[]'::jsonb,
+  analytics_provider text,
+  analytics_id text,
+  team_members jsonb DEFAULT '[]'::jsonb,
+  team_roles jsonb DEFAULT '[]'::jsonb,
+  org_structure jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  competitors jsonb DEFAULT '[]'::jsonb,
+  focus_mode integer DEFAULT 50,
+  goals jsonb DEFAULT '[]'::jsonb,
+  channels jsonb DEFAULT '[]'::jsonb,
+  business_hours jsonb DEFAULT '[]'::jsonb,
+  CONSTRAINT settings_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_settings FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT settings_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.site_members (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  site_id uuid NOT NULL,
+  user_id uuid,
+  role text NOT NULL CHECK (role = ANY (ARRAY['owner'::text, 'admin'::text, 'marketing'::text, 'collaborator'::text])),
+  added_by uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  email text NOT NULL,
+  name text,
+  position text,
+  status text DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'active'::text, 'rejected'::text])),
+  CONSTRAINT site_members_pkey PRIMARY KEY (id),
+  CONSTRAINT site_members_added_by_fkey FOREIGN KEY (added_by) REFERENCES auth.users(id),
+  CONSTRAINT site_members_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT site_members_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.site_ownership (
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT site_ownership_pkey PRIMARY KEY (site_id),
+  CONSTRAINT site_ownership_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT site_ownership_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.sites (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  url text,
+  description text,
+  logo_url text,
+  resource_urls jsonb DEFAULT '[]'::jsonb,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  tracking jsonb DEFAULT '{"record_screen": false, "track_actions": false, "track_visitors": false}'::jsonb,
+  command_id uuid,
+  CONSTRAINT sites_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_sites FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT sites_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.task_categories (
+  task_id uuid NOT NULL,
+  category_id uuid NOT NULL,
+  CONSTRAINT task_categories_pkey PRIMARY KEY (task_id, category_id),
+  CONSTRAINT task_categories_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id),
+  CONSTRAINT task_categories_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id)
+);
+CREATE TABLE public.task_comments (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  task_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  content text NOT NULL,
+  attachments jsonb DEFAULT '[]'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  is_private boolean NOT NULL DEFAULT false,
+  files jsonb NOT NULL DEFAULT '[]'::jsonb,
+  CONSTRAINT task_comments_pkey PRIMARY KEY (id),
+  CONSTRAINT task_comments_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id),
+  CONSTRAINT task_comments_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.tasks (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  lead_id uuid NOT NULL,
+  title text NOT NULL,
+  description text,
+  type text NOT NULL,
+  stage text NOT NULL CHECK (stage = ANY (ARRAY['awareness'::text, 'consideration'::text, 'decision'::text, 'purchase'::text, 'retention'::text, 'referral'::text])),
+  status text NOT NULL CHECK (status = ANY (ARRAY['completed'::text, 'in_progress'::text, 'pending'::text, 'failed'::text])),
+  scheduled_date timestamp with time zone NOT NULL,
+  completed_date timestamp with time zone,
+  amount numeric,
+  assignee uuid,
+  notes text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  serial_id text NOT NULL,
+  priority integer NOT NULL DEFAULT 0,
+  address jsonb,
+  CONSTRAINT tasks_pkey PRIMARY KEY (id),
+  CONSTRAINT tasks_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.leads(id),
+  CONSTRAINT tasks_assignee_fkey FOREIGN KEY (assignee) REFERENCES auth.users(id),
+  CONSTRAINT tasks_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT fk_command_tasks FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT tasks_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+CREATE TABLE public.transactions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  campaign_id uuid,
+  type text NOT NULL CHECK (type = ANY (ARRAY['fixed'::text, 'variable'::text])),
+  amount numeric NOT NULL,
+  description text,
+  date date NOT NULL,
+  currency text DEFAULT 'USD'::text,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  command_id uuid,
+  category text,
+  CONSTRAINT transactions_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_transactions FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT transactions_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT transactions_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT transactions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
+);
+CREATE TABLE public.visitor_sessions (
+  id uuid NOT NULL,
+  visitor_id uuid NOT NULL,
+  site_id uuid NOT NULL,
+  landing_url text,
+  current_url text,
+  referrer text,
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  utm_term text,
+  utm_content text,
+  started_at bigint NOT NULL,
+  last_activity_at bigint NOT NULL,
+  page_views integer DEFAULT 1,
+  device jsonb,
+  browser jsonb,
+  location jsonb,
+  previous_session_id uuid,
+  performance jsonb,
+  consent jsonb,
+  is_active boolean DEFAULT true,
+  duration bigint,
+  active_time bigint,
+  idle_time bigint,
+  lead_id uuid,
+  exit_url text,
+  exit_type text,
+  custom_data jsonb,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone,
+  command_id uuid,
+  identified_at bigint,
+  lead_data jsonb,
+  CONSTRAINT visitor_sessions_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_visitor_sessions FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT visitor_sessions_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.leads(id),
+  CONSTRAINT visitor_sessions_visitor_id_fkey FOREIGN KEY (visitor_id) REFERENCES public.visitors(id)
+);
+CREATE TABLE public.visitors (
+  id uuid NOT NULL,
+  first_seen_at bigint NOT NULL,
+  last_seen_at bigint NOT NULL,
+  total_sessions integer DEFAULT 1,
+  total_page_views integer DEFAULT 0,
+  total_time_spent bigint DEFAULT 0,
+  first_url text,
+  first_referrer text,
+  first_utm_source text,
+  first_utm_medium text,
+  first_utm_campaign text,
+  first_utm_term text,
+  first_utm_content text,
+  device jsonb,
+  browser jsonb,
+  location jsonb,
+  custom_data jsonb,
+  lead_id uuid,
+  is_identified boolean DEFAULT false,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone,
+  fingerprint text,
+  command_id uuid,
+  segment_id uuid,
+  CONSTRAINT visitors_pkey PRIMARY KEY (id),
+  CONSTRAINT fk_command_visitors FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT visitors_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id)
+);
+CREATE TABLE public.waitlist (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  email text NOT NULL UNIQUE,
+  name text,
+  referral_code_attempted text,
+  source text DEFAULT 'signup'::text,
+  status text NOT NULL DEFAULT 'pending'::text CHECK (status = ANY (ARRAY['pending'::text, 'approved'::text, 'rejected'::text, 'converted'::text])),
+  metadata jsonb DEFAULT '{}'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT waitlist_pkey PRIMARY KEY (id)
+);
+
+| object_type | object_name                                      | table_name            |
+| ----------- | ------------------------------------------------ | --------------------- |
+| FUNCTION    | activate_pending_site_memberships                | PLPGSQL               |
+| FUNCTION    | add_to_waitlist                                  | PLPGSQL               |
+| FUNCTION    | calculate_kpis_from_events                       | PLPGSQL               |
+| FUNCTION    | check_referral_system_status                     | PLPGSQL               |
+| FUNCTION    | decrypt_token                                    | PLPGSQL               |
+| FUNCTION    | delete_command_cascade                           | PLPGSQL               |
+| FUNCTION    | delete_command_simple                            | PLPGSQL               |
+| FUNCTION    | delete_secure_token                              | PLPGSQL               |
+| FUNCTION    | delete_site_safely                               | PLPGSQL               |
+| FUNCTION    | encrypt_token                                    | PLPGSQL               |
+| FUNCTION    | expire_old_api_keys                              | PLPGSQL               |
+| FUNCTION    | generate_task_serial_id                          | PLPGSQL               |
+| FUNCTION    | get_auth_user_id                                 | PLPGSQL               |
+| FUNCTION    | get_performance_status                           | PLPGSQL               |
+| FUNCTION    | get_secure_token                                 | PLPGSQL               |
+| FUNCTION    | get_user_profile_complete                        | PLPGSQL               |
+| FUNCTION    | gin_extract_query_trgm                           | C                     |
+| FUNCTION    | gin_extract_value_trgm                           | C                     |
+| FUNCTION    | gin_trgm_consistent                              | C                     |
+| FUNCTION    | gin_trgm_triconsistent                           | C                     |
+| FUNCTION    | gtrgm_compress                                   | C                     |
+| FUNCTION    | gtrgm_consistent                                 | C                     |
+| FUNCTION    | gtrgm_decompress                                 | C                     |
+| FUNCTION    | gtrgm_distance                                   | C                     |
+| FUNCTION    | gtrgm_in                                         | C                     |
+| FUNCTION    | gtrgm_options                                    | C                     |
+| FUNCTION    | gtrgm_out                                        | C                     |
+| FUNCTION    | gtrgm_penalty                                    | C                     |
+| FUNCTION    | gtrgm_picksplit                                  | C                     |
+| FUNCTION    | gtrgm_same                                       | C                     |
+| FUNCTION    | gtrgm_union                                      | C                     |
+| FUNCTION    | handle_command_insert                            | PLPGSQL               |
+| FUNCTION    | handle_command_update                            | PLPGSQL               |
+| FUNCTION    | handle_event_insert                              | PLPGSQL               |
+| FUNCTION    | handle_new_user                                  | PLPGSQL               |
+| FUNCTION    | handle_new_user_debug                            | PLPGSQL               |
+| FUNCTION    | handle_new_user_simple                           | PLPGSQL               |
+| FUNCTION    | handle_session_active_state                      | PLPGSQL               |
+| FUNCTION    | handle_session_events_updated_at                 | PLPGSQL               |
+| FUNCTION    | handle_updated_at                                | PLPGSQL               |
+| FUNCTION    | increment_agent_conversations                    | PLPGSQL               |
+| FUNCTION    | increment_referral_code_usage                    | PLPGSQL               |
+| FUNCTION    | is_superadmin                                    | PLPGSQL               |
+| FUNCTION    | log_asset_insert                                 | PLPGSQL               |
+| FUNCTION    | log_debug                                        | PLPGSQL               |
+| FUNCTION    | manually_activate_user_memberships               | PLPGSQL               |
+| FUNCTION    | migrate_team_members_to_site_members             | PLPGSQL               |
+| FUNCTION    | prevent_last_admin_deletion                      | PLPGSQL               |
+| FUNCTION    | prevent_last_admin_role_change                   | PLPGSQL               |
+| FUNCTION    | process_referral_code_use                        | PLPGSQL               |
+| FUNCTION    | record_payment                                   | PLPGSQL               |
+| FUNCTION    | register_referral_code_use                       | PLPGSQL               |
+| FUNCTION    | reorder_task_priorities                          | PLPGSQL               |
+| FUNCTION    | set_current_timestamp_updated_at                 | PLPGSQL               |
+| FUNCTION    | set_dislike                                      | PLPGSQL               |
+| FUNCTION    | set_like                                         | PLPGSQL               |
+| FUNCTION    | set_limit                                        | C                     |
+| FUNCTION    | set_task_priority_from_serial                    | PLPGSQL               |
+| FUNCTION    | set_task_serial_id                               | PLPGSQL               |
+| FUNCTION    | show_limit                                       | C                     |
+| FUNCTION    | show_trgm                                        | C                     |
+| FUNCTION    | similarity                                       | C                     |
+| FUNCTION    | similarity_dist                                  | C                     |
+| FUNCTION    | similarity_op                                    | C                     |
+| FUNCTION    | simulate_user_creation                           | PLPGSQL               |
+| FUNCTION    | store_secure_token                               | PLPGSQL               |
+| FUNCTION    | strict_word_similarity                           | C                     |
+| FUNCTION    | strict_word_similarity_commutator_op             | C                     |
+| FUNCTION    | strict_word_similarity_dist_commutator_op        | C                     |
+| FUNCTION    | strict_word_similarity_dist_op                   | C                     |
+| FUNCTION    | strict_word_similarity_op                        | C                     |
+| FUNCTION    | sync_auth0_user                                  | PLPGSQL               |
+| FUNCTION    | sync_site_members_to_settings                    | PLPGSQL               |
+| FUNCTION    | sync_site_members_to_team_members                | PLPGSQL               |
+| FUNCTION    | sync_site_ownership                              | PLPGSQL               |
+| FUNCTION    | toggle_flag                                      | PLPGSQL               |
+| FUNCTION    | update_api_key_last_used                         | PLPGSQL               |
+| FUNCTION    | update_conversation_last_message_time            | PLPGSQL               |
+| FUNCTION    | update_cron_status_updated_at                    | PLPGSQL               |
+| FUNCTION    | update_sale_orders_updated_at                    | PLPGSQL               |
+| FUNCTION    | update_timestamp                                 | PLPGSQL               |
+| FUNCTION    | update_updated_at_column                         | PLPGSQL               |
+| FUNCTION    | user_has_access_to_site                          | PLPGSQL               |
+| FUNCTION    | validate_notifications                           | PLPGSQL               |
+| FUNCTION    | validate_performance_bitmask                     | PLPGSQL               |
+| FUNCTION    | validate_referral_code                           | PLPGSQL               |
+| FUNCTION    | word_similarity                                  | C                     |
+| FUNCTION    | word_similarity_commutator_op                    | C                     |
+| FUNCTION    | word_similarity_dist_commutator_op               | C                     |
+| FUNCTION    | word_similarity_dist_op                          | C                     |
+| FUNCTION    | word_similarity_op                               | C                     |
+| INDEX       | agent_assets_pkey                                | agent_assets          |
+| INDEX       | agent_memories_agent_id_user_id_key_key          | agent_memories        |
+| INDEX       | agent_memories_pkey                              | agent_memories        |
+| INDEX       | agents_pkey                                      | agents                |
+| INDEX       | allowed_domains_pkey                             | allowed_domains       |
+| INDEX       | analysis_created_at_idx                          | analysis              |
+| INDEX       | analysis_pkey                                    | analysis              |
+| INDEX       | analysis_site_id_idx                             | analysis              |
+| INDEX       | analysis_url_path_idx                            | analysis              |
+| INDEX       | analysis_user_id_idx                             | analysis              |
+| INDEX       | api_keys_pkey                                    | api_keys              |
+| INDEX       | assets_pkey                                      | assets                |
+| INDEX       | billing_pkey                                     | billing               |
+| INDEX       | campaign_requirements_pkey                       | campaign_requirements |
+| INDEX       | campaign_segments_pkey                           | campaign_segments     |
+| INDEX       | campaign_subtasks_pkey                           | campaign_subtasks     |
+| INDEX       | campaigns_pkey                                   | campaigns             |
+| INDEX       | categories_pkey                                  | categories            |
+| INDEX       | commands_pkey                                    | commands              |
+| INDEX       | companies_pkey                                   | companies             |
+| INDEX       | content_pkey                                     | content               |
+| INDEX       | conversations_pkey                               | conversations         |
+| INDEX       | cron_status_pkey                                 | cron_status           |
+| INDEX       | debug_logs_pkey                                  | debug_logs            |
+| INDEX       | experiment_segments_experiment_id_segment_id_key | experiment_segments   |
+| INDEX       | experiment_segments_pkey                         | experiment_segments   |
+| INDEX       | experiments_pkey                                 | experiments           |
+| INDEX       | external_resources_pkey                          | external_resources    |
+| INDEX       | idx_agent_assets_agent_id                        | agent_assets          |
+| INDEX       | idx_agent_assets_asset_id                        | agent_assets          |
+| INDEX       | idx_agent_assets_command_id                      | agent_assets          |
+| INDEX       | idx_agent_memories_command_id                    | agent_memories        |
+| INDEX       | idx_agents_command_id                            | agents                |
+| INDEX       | idx_agents_site_id                               | agents                |
+| INDEX       | idx_agents_status                                | agents                |
+| INDEX       | idx_agents_type                                  | agents                |
+| INDEX       | idx_analysis_command_id                          | analysis              |
+| INDEX       | idx_api_keys_key_hash                            | api_keys              |
+| INDEX       | idx_api_keys_prefix                              | api_keys              |
+| INDEX       | idx_api_keys_site_id                             | api_keys              |
+| INDEX       | idx_api_keys_status                              | api_keys              |
+| INDEX       | idx_api_keys_user_id                             | api_keys              |
+| INDEX       | idx_assets_command_id                            | assets                |
+| INDEX       | idx_assets_file_type                             | assets                |
+| INDEX       | idx_assets_name                                  | assets                |
+| INDEX       | idx_assets_site_id                               | assets                |
+| INDEX       | idx_assets_user_id                               | assets                |
+| INDEX       | idx_billing_command_id                           | billing               |
+| INDEX       | idx_billing_site_id                              | billing               |
+| INDEX       | idx_campaign_requirements_campaign_id            | campaign_requirements |
+| INDEX       | idx_campaign_requirements_command_id             | campaign_requirements |
+| INDEX       | idx_campaign_requirements_requirement_id         | campaign_requirements |
+| INDEX       | idx_campaign_segments_command_id                 | campaign_segments     |
+| INDEX       | idx_campaign_subtasks_campaign_id                | campaign_subtasks     |
+| INDEX       | idx_campaign_subtasks_command_id                 | campaign_subtasks     |
+| INDEX       | idx_campaign_subtasks_status                     | campaign_subtasks     |
+| INDEX       | idx_campaigns_command_id                         | campaigns             |
+| INDEX       | idx_campaigns_priority                           | campaigns             |
+| INDEX       | idx_campaigns_site_id                            | campaigns             |
+| INDEX       | idx_campaigns_status                             | campaigns             |
+| INDEX       | idx_campaigns_type                               | campaigns             |
+| INDEX       | idx_categories_is_active                         | categories            |
+| INDEX       | idx_categories_name                              | categories            |
+| INDEX       | idx_categories_site_id                           | categories            |
+| INDEX       | idx_categories_user_id                           | categories            |
+| INDEX       | idx_commands_agent_id                            | commands              |
+| INDEX       | idx_commands_created_at                          | commands              |
+| INDEX       | idx_commands_performance                         | commands              |
+| INDEX       | idx_commands_status                              | commands              |
+| INDEX       | idx_commands_user_id                             | commands              |
+| INDEX       | idx_companies_acquired_by_id                     | companies             |
+| INDEX       | idx_companies_business_model                     | companies             |
+| INDEX       | idx_companies_employees_count                    | companies             |
+| INDEX       | idx_companies_industry                           | companies             |
+| INDEX       | idx_companies_ipo_date                           | companies             |
+| INDEX       | idx_companies_is_public                          | companies             |
+| INDEX       | idx_companies_last_funding_date                  | companies             |
+| INDEX       | idx_companies_legal_structure                    | companies             |
+| INDEX       | idx_companies_name                               | companies             |
+| INDEX       | idx_companies_parent_company_id                  | companies             |
+| INDEX       | idx_companies_registration_number                | companies             |
+| INDEX       | idx_companies_remote_policy                      | companies             |
+| INDEX       | idx_companies_size                               | companies             |
+| INDEX       | idx_companies_tax_country                        | companies             |
+| INDEX       | idx_companies_tax_id                             | companies             |
+| INDEX       | idx_companies_vat_number                         | companies             |
+| INDEX       | idx_content_campaign_id                          | content               |
+| INDEX       | idx_content_command_id                           | content               |
+| INDEX       | idx_conversations_agent_id                       | conversations         |
+| INDEX       | idx_conversations_command_id                     | conversations         |
+| INDEX       | idx_conversations_last_message_at                | conversations         |
+| INDEX       | idx_conversations_lead_id                        | conversations         |
+| INDEX       | idx_conversations_site_id                        | conversations         |
+| INDEX       | idx_conversations_status                         | conversations         |
+| INDEX       | idx_conversations_user_id                        | conversations         |
+| INDEX       | idx_conversations_visitor_id                     | conversations         |
+| INDEX       | idx_cron_status_next_run                         | cron_status           |
+| INDEX       | idx_cron_status_schedule_id                      | cron_status           |
+| INDEX       | idx_cron_status_site_id                          | cron_status           |
+| INDEX       | idx_cron_status_status                           | cron_status           |
+| INDEX       | idx_cron_status_workflow_id                      | cron_status           |
+| INDEX       | idx_debug_logs_command_id                        | debug_logs            |
+| INDEX       | idx_experiment_segments_command_id               | experiment_segments   |
+| INDEX       | idx_experiments_campaign_id                      | experiments           |
+| INDEX       | idx_experiments_command_id                       | experiments           |
+| INDEX       | idx_experiments_site_id                          | experiments           |
+| INDEX       | idx_experiments_status                           | experiments           |
+| INDEX       | idx_external_resources_command_id                | external_resources    |
+| INDEX       | idx_external_resources_key                       | external_resources    |
+| INDEX       | idx_external_resources_site_id                   | external_resources    |
+| INDEX       | idx_external_resources_user_id                   | external_resources    |
+| INDEX       | idx_kpis_command_id                              | kpis                  |
+| INDEX       | idx_kpis_is_highlighted                          | kpis                  |
+| INDEX       | idx_kpis_name                                    | kpis                  |
+| INDEX       | idx_kpis_period_end                              | kpis                  |
+| INDEX       | idx_kpis_site_id                                 | kpis                  |
+| INDEX       | idx_kpis_type                                    | kpis                  |
+| INDEX       | idx_leads_address                                | leads                 |
+| INDEX       | idx_leads_command_id                             | leads                 |
+| INDEX       | idx_leads_company                                | leads                 |
+| INDEX       | idx_leads_company_id                             | leads                 |
+| INDEX       | idx_leads_email                                  | leads                 |
+| INDEX       | idx_leads_name                                   | leads                 |
+| INDEX       | idx_leads_segment_id                             | leads                 |
+| INDEX       | idx_leads_site_id                                | leads                 |
+| INDEX       | idx_leads_social_networks                        | leads                 |
+| INDEX       | idx_leads_status                                 | leads                 |
+| INDEX       | idx_leads_subscription                           | leads                 |
+| INDEX       | idx_memories_agent_id                            | agent_memories        |
+| INDEX       | idx_memories_key                                 | agent_memories        |
+| INDEX       | idx_memories_last_accessed                       | agent_memories        |
+| INDEX       | idx_memories_raw_data                            | agent_memories        |
+| INDEX       | idx_memories_type                                | agent_memories        |
+| INDEX       | idx_memories_user_id                             | agent_memories        |
+| INDEX       | idx_messages_agent_id                            | messages              |
+| INDEX       | idx_messages_command_id                          | messages              |
+| INDEX       | idx_messages_conversation_id                     | messages              |
+| INDEX       | idx_messages_created_at                          | messages              |
+| INDEX       | idx_messages_lead_id                             | messages              |
+| INDEX       | idx_messages_role                                | messages              |
+| INDEX       | idx_messages_user_id                             | messages              |
+| INDEX       | idx_messages_visitor_id                          | messages              |
+| INDEX       | idx_notifications_command_id                     | notifications         |
+| INDEX       | idx_notifications_created_at                     | notifications         |
+| INDEX       | idx_notifications_is_read                        | notifications         |
+| INDEX       | idx_notifications_type                           | notifications         |
+| INDEX       | idx_notifications_user_id                        | notifications         |
+| INDEX       | idx_payments_command_id                          | payments              |
+| INDEX       | idx_payments_created_at                          | payments              |
+| INDEX       | idx_payments_site_id                             | payments              |
+| INDEX       | idx_profiles_command_id                          | profiles              |
+| INDEX       | idx_profiles_language                            | profiles              |
+| INDEX       | idx_profiles_notifications                       | profiles              |
+| INDEX       | idx_profiles_role                                | profiles              |
+| INDEX       | idx_profiles_settings                            | profiles              |
+| INDEX       | idx_profiles_timezone                            | profiles              |
+| INDEX       | idx_referral_code_uses_code_id                   | referral_code_uses    |
+| INDEX       | idx_referral_code_uses_user_id                   | referral_code_uses    |
+| INDEX       | idx_referral_codes_code                          | referral_codes        |
+| INDEX       | idx_referral_codes_expires_at                    | referral_codes        |
+| INDEX       | idx_referral_codes_is_active                     | referral_codes        |
+| INDEX       | idx_requirement_segments_command_id              | requirement_segments  |
+| INDEX       | idx_requirements_command_id                      | requirements          |
+| INDEX       | idx_requirements_priority                        | requirements          |
+| INDEX       | idx_requirements_site_id                         | requirements          |
+| INDEX       | idx_requirements_status                          | requirements          |
+| INDEX       | idx_requirements_title                           | requirements          |
+| INDEX       | idx_requirements_type                            | requirements          |
+| INDEX       | idx_sale_orders_sale_id                          | sale_orders           |
+| INDEX       | idx_sale_orders_site_id                          | sale_orders           |
+| INDEX       | idx_sales_campaign_id                            | sales                 |
+| INDEX       | idx_sales_command_id                             | sales                 |
+| INDEX       | idx_sales_lead_id                                | sales                 |
+| INDEX       | idx_sales_sale_date                              | sales                 |
+| INDEX       | idx_sales_segment_id                             | sales                 |
+| INDEX       | idx_sales_site_id                                | sales                 |
+| INDEX       | idx_sales_status                                 | sales                 |
+| INDEX       | idx_segments_command_id                          | segments              |
+| INDEX       | idx_segments_name                                | segments              |
+| INDEX       | idx_segments_site_id                             | segments              |
+| INDEX       | idx_session_events_command_id                    | session_events        |
+| INDEX       | idx_session_events_event_type                    | session_events        |
+| INDEX       | idx_session_events_session_id                    | session_events        |
+| INDEX       | idx_session_events_site_id                       | session_events        |
+| INDEX       | idx_session_events_timestamp                     | session_events        |
+| INDEX       | idx_session_events_visitor_id                    | session_events        |
+| INDEX       | idx_settings_command_id                          | settings              |
+| INDEX       | idx_site_members_email                           | site_members          |
+| INDEX       | idx_site_members_role                            | site_members          |
+| INDEX       | idx_site_members_site_id                         | site_members          |
+| INDEX       | idx_site_members_user_id                         | site_members          |
+| INDEX       | idx_sites_command_id                             | sites                 |
+| INDEX       | idx_task_categories_category_id                  | task_categories       |
+| INDEX       | idx_task_categories_task_id                      | task_categories       |
+| INDEX       | idx_task_comments_created_at                     | task_comments         |
+| INDEX       | idx_task_comments_task_id                        | task_comments         |
+| INDEX       | idx_task_comments_user_id                        | task_comments         |
+| INDEX       | idx_tasks_address                                | tasks                 |
+| INDEX       | idx_tasks_command_id                             | tasks                 |
+| INDEX       | idx_tasks_lead_id                                | tasks                 |
+| INDEX       | idx_tasks_priority                               | tasks                 |
+| INDEX       | idx_tasks_serial_id                              | tasks                 |
+| INDEX       | idx_tasks_serial_id_site                         | tasks                 |
+| INDEX       | idx_tasks_site_id                                | tasks                 |
+| INDEX       | idx_tasks_site_status_priority                   | tasks                 |
+| INDEX       | idx_tasks_stage                                  | tasks                 |
+| INDEX       | idx_tasks_status                                 | tasks                 |
+| INDEX       | idx_transactions_campaign_id                     | transactions          |
+| INDEX       | idx_transactions_command_id                      | transactions          |
+| INDEX       | idx_transactions_site_id                         | transactions          |
+| INDEX       | idx_transactions_type                            | transactions          |
+| INDEX       | idx_visitor_sessions_command_id                  | visitor_sessions      |
+| INDEX       | idx_visitor_sessions_identified_at               | visitor_sessions      |
+| INDEX       | idx_visitor_sessions_is_active                   | visitor_sessions      |
+| INDEX       | idx_visitor_sessions_lead_id                     | visitor_sessions      |
+| INDEX       | idx_visitor_sessions_site_id                     | visitor_sessions      |
+| INDEX       | idx_visitor_sessions_visitor_id                  | visitor_sessions      |
+| INDEX       | idx_visitors_command_id                          | visitors              |
+| INDEX       | idx_visitors_device_id                           | visitors              |
+| INDEX       | idx_visitors_is_identified                       | visitors              |
+| INDEX       | idx_visitors_lead_id                             | visitors              |
+| INDEX       | idx_waitlist_created_at                          | waitlist              |
+| INDEX       | idx_waitlist_email                               | waitlist              |
+| INDEX       | idx_waitlist_status                              | waitlist              |
+| INDEX       | kpis_pkey                                        | kpis                  |
+| INDEX       | leads_pkey                                       | leads                 |
+| INDEX       | messages_pkey                                    | messages              |
+| INDEX       | notifications_pkey                               | notifications         |
+| INDEX       | payments_pkey                                    | payments              |
+| INDEX       | profiles_pkey                                    | profiles              |
+| INDEX       | referral_code_uses_pkey                          | referral_code_uses    |
+| INDEX       | referral_code_uses_referral_code_id_user_id_key  | referral_code_uses    |
+| INDEX       | referral_codes_code_key                          | referral_codes        |
+| INDEX       | referral_codes_pkey                              | referral_codes        |
+| INDEX       | requirement_segments_pkey                        | requirement_segments  |
+| INDEX       | requirements_pkey                                | requirements          |
+| INDEX       | sale_orders_pkey                                 | sale_orders           |
+| INDEX       | sales_pkey                                       | sales                 |
+| INDEX       | secure_tokens_pkey                               | secure_tokens         |
+| INDEX       | secure_tokens_site_id_token_type_identifier_key  | secure_tokens         |
+| INDEX       | segments_pkey                                    | segments              |
+| INDEX       | segments_url_idx                                 | segments              |
+| INDEX       | session_events_pkey                              | session_events        |
+| INDEX       | settings_pkey                                    | settings              |
+| INDEX       | settings_site_id_idx                             | settings              |
+| INDEX       | settings_site_id_key                             | settings              |
+| INDEX       | site_members_pkey                                | site_members          |
+| INDEX       | site_members_site_id_email_key                   | site_members          |
+| INDEX       | site_members_site_id_user_id_key                 | site_members          |
+| INDEX       | site_ownership_pkey                              | site_ownership        |
+| INDEX       | sites_pkey                                       | sites                 |
+| INDEX       | task_categories_pkey                             | task_categories       |
+| INDEX       | task_comments_pkey                               | task_comments         |
+| INDEX       | tasks_pkey                                       | tasks                 |
+| INDEX       | transactions_pkey                                | transactions          |
+| INDEX       | unique_domain_per_site                           | allowed_domains       |
+| INDEX       | visitor_sessions_pkey                            | visitor_sessions      |
+| INDEX       | visitors_pkey                                    | visitors              |
+| INDEX       | waitlist_email_key                               | waitlist              |
+| INDEX       | waitlist_pkey                                    | waitlist              |
+| TRIGGER     | activate_pending_memberships_trigger             | profiles              |
+| TRIGGER     | billing_timestamp_trigger                        | billing               |
+| TRIGGER     | check_expired_api_keys                           | api_keys              |
+| TRIGGER     | check_expired_api_keys                           | api_keys              |
+| TRIGGER     | log_asset_insert_trigger                         | assets                |
+| TRIGGER     | on_command_insert                                | commands              |
+| TRIGGER     | on_command_update                                | commands              |
+| TRIGGER     | on_event_insert                                  | session_events        |
+| TRIGGER     | on_message_insert                                | messages              |
+| TRIGGER     | payments_timestamp_trigger                       | payments              |
+| TRIGGER     | prevent_last_admin_deletion_trigger              | site_members          |
+| TRIGGER     | prevent_last_admin_role_change_trigger           | site_members          |
+| TRIGGER     | session_events_updated_at_trigger                | session_events        |
+| TRIGGER     | set_tasks_updated_at                             | tasks                 |
+| TRIGGER     | set_updated_at                                   | analysis              |
+| TRIGGER     | settings_updated_at                              | settings              |
+| TRIGGER     | sync_members_to_settings                         | site_members          |
+| TRIGGER     | sync_members_to_settings                         | site_members          |
+| TRIGGER     | sync_members_to_settings                         | site_members          |
+| TRIGGER     | sync_ownership_on_site_change                    | sites                 |
+| TRIGGER     | sync_ownership_on_site_change                    | sites                 |
+| TRIGGER     | sync_ownership_on_site_change                    | sites                 |
+| TRIGGER     | sync_site_members_trigger                        | site_members          |
+| TRIGGER     | sync_site_members_trigger                        | site_members          |
+| TRIGGER     | sync_site_members_trigger                        | site_members          |
+| TRIGGER     | trigger_set_task_priority                        | tasks                 |
+| TRIGGER     | trigger_set_task_serial_id                       | tasks                 |
+| TRIGGER     | trigger_update_cron_status_updated_at            | cron_status           |
+| TRIGGER     | trigger_update_sale_orders_updated_at            | sale_orders           |
+| TRIGGER     | update_api_key_usage                             | api_keys              |
+| TRIGGER     | update_api_keys_updated_at                       | api_keys              |
+| TRIGGER     | update_companies_updated_at                      | companies             |
+| TRIGGER     | update_referral_codes_updated_at                 | referral_codes        |
+| TRIGGER     | update_waitlist_updated_at                       | waitlist              |
+| TRIGGER     | validate_performance_bitmask_trigger             | commands              |
+| TRIGGER     | validate_performance_bitmask_trigger             | commands              |

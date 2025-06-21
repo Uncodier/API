@@ -266,32 +266,66 @@ export class BackgroundBuilder {
       if (siteInfo.settings.social_media) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
         
-        // Filtrar claves con valores vacíos del objeto social_media
+        // Parsear social_media si es string
         const socialMediaData = typeof siteInfo.settings.social_media === 'string'
           ? JSON.parse(siteInfo.settings.social_media)
           : siteInfo.settings.social_media;
         
-        const filteredSocialMedia = Object.entries(socialMediaData)
-          .filter(([key, value]) => {
-            // Filtrar valores vacíos, null, undefined, strings vacíos, arrays vacíos
-            if (value === null || value === undefined || value === '') {
-              return false;
-            }
-            if (Array.isArray(value) && value.length === 0) {
-              return false;
-            }
-            if (typeof value === 'string' && value.trim() === '') {
-              return false;
-            }
-            return true;
-          })
-          .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
+        // Verificar si es un array (estructura nueva) o un objeto (estructura antigua)
+        let filteredSocialMedia: Record<string, string> = {};
         
-        // Solo añadir la sección si hay al menos una clave con valor válido
+        if (Array.isArray(socialMediaData)) {
+          // Procesar array de objetos de social media
+          socialMediaData.forEach(item => {
+            if (item && item.platform) {
+              // Determinar qué información mostrar para cada plataforma
+              let displayInfo = '';
+              
+              // Priorizar URL si está disponible
+              if (item.url && item.url.trim() !== '') {
+                displayInfo = item.url.trim();
+              }
+              // Si no hay URL pero hay handle, usar handle
+              else if (item.handle && item.handle.trim() !== '') {
+                displayInfo = item.handle.trim();
+              }
+              // Si no hay URL ni handle pero hay phone, usar phone
+              else if (item.phone && item.phone.trim() !== '') {
+                displayInfo = item.phone.trim();
+              }
+              
+              // Solo añadir si hay información útil
+              if (displayInfo) {
+                filteredSocialMedia[item.platform] = displayInfo;
+              }
+            }
+          });
+        } else if (typeof socialMediaData === 'object' && socialMediaData !== null) {
+          // Procesar objeto tradicional (compatibilidad hacia atrás)
+          filteredSocialMedia = Object.entries(socialMediaData)
+            .filter(([key, value]) => {
+              // Filtrar valores vacíos, null, undefined, strings vacíos, arrays vacíos
+              if (value === null || value === undefined || value === '') {
+                return false;
+              }
+              if (Array.isArray(value) && value.length === 0) {
+                return false;
+              }
+              if (typeof value === 'string' && value.trim() === '') {
+                return false;
+              }
+              return true;
+            })
+            .reduce((obj, [key, value]) => ({ ...obj, [key]: value }), {});
+        }
+        
+        // Solo añadir la sección si hay al menos una plataforma con información válida
         if (Object.keys(filteredSocialMedia).length > 0) {
           siteSection += `\n## Social Media\n`;
-          Object.entries(filteredSocialMedia).forEach(([platform, handle]) => {
-            siteSection += `${platform}: ${handle}\n`;
+          Object.entries(filteredSocialMedia).forEach(([platform, info]) => {
+            // Capitalizar la primera letra de la plataforma para mejor presentación
+            const capitalizedPlatform = platform.charAt(0).toUpperCase() + platform.slice(1);
+            siteSection += `${capitalizedPlatform}: ${info}\n`;
           });
         }
       }
