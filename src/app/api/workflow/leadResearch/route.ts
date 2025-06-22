@@ -67,10 +67,10 @@ export async function POST(request: NextRequest) {
       lead_id
     };
 
-    // Opciones de ejecución del workflow
+    // Opciones de ejecución del workflow (asíncrono para retornar inmediatamente)
     const workflowOptions: WorkflowExecutionOptions = {
       priority: 'medium',
-      async: false, // Esperamos el resultado
+      async: true, // Retorna tan pronto como el workflow es aceptado
       retryAttempts: 3,
       taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
       workflowId: `lead-research-${site_id}-${lead_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -98,21 +98,21 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log('✅ Workflow de investigación de lead ejecutado exitosamente');
-    console.log('📊 Resultado del workflow de investigación de lead:', result);
+    console.log('✅ Workflow de investigación de lead iniciado exitosamente');
+    console.log('📊 Información del workflow iniciado:', result);
 
-    // Respuesta exitosa
+    // Respuesta exitosa - workflow aceptado y en ejecución
     return NextResponse.json(
       { 
         success: true, 
+        message: 'Workflow de investigación de lead iniciado correctamente',
         data: {
           site_id,
           lead_id,
           workflowId: result.workflowId,
           executionId: result.executionId,
           runId: result.runId,
-          status: result.status,
-          result: result.data
+          status: result.status || 'running'
         }
       },
       { status: 200 }
@@ -149,6 +149,7 @@ export async function GET() {
     example: {
       site_id: 'site_12345',
       lead_id: 'lead_67890'
-    }
+    },
+    note: 'Retorna 200 tan pronto como el workflow es aceptado por Temporal, no espera a que termine'
   });
 } 
