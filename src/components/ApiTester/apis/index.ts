@@ -23,6 +23,8 @@ import InterventionApi from './InterventionApi';
 import SalesApi from './SalesApi';
 import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
 import EmailAnalysisApi from './EmailAnalysisApi';
+import DataAnalystAnalysisApi from './DataAnalystAnalysisApi';
+import DataAnalystLeadSegmentationApi from './DataAnalystLeadSegmentationApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -49,5 +51,7 @@ apiRegistry.register(InterventionApi);
 apiRegistry.register(SalesApi);
 apiRegistry.register(CmoStakeholderCoordinationApi);
 apiRegistry.register(EmailAnalysisApi);
+apiRegistry.register(DataAnalystAnalysisApi);
+apiRegistry.register(DataAnalystLeadSegmentationApi);
 
 export default apiRegistry; 

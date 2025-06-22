@@ -1,0 +1,267 @@
+# Data Analyst Analysis
+
+Performs comprehensive analysis of research data collected by search memories or provided data. The API consolidates search results, generates insights, and provides structured analysis using AI-powered data analysis.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+POST /api/agents/dataAnalyst/analysis
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string | Yes | ID of the site for which the analysis is performed |
+| `agent_id` | string | No | ID of the specific Data Analyst agent. If not provided, finds the first active Data Analyst for the site |
+| `command_id` | string | No | ID of the command to filter search memories. Can be UUID or original_command_id |
+| `data` | string/object | No | Additional data to include in the analysis |
+| `analysis_type` | string | No | Type of analysis to perform (default: 'comprehensive') |
+| `time_range` | object | No | Time range filter for search memories |
+| `time_range.from` | string | No | Start date for memory filtering (ISO string) |
+| `time_range.to` | string | No | End date for memory filtering (ISO string) |
+| `memory_limit` | number | No | Maximum number of memories to analyze (default: 50) |
+| `include_raw_data` | boolean | No | Whether to include raw data in response (default: false) |
+| `deliverables` | object | No | Specific deliverables structure for the analysis |
+
+### Example Request
+
+```json
+{
+  "site_id": "123e4567-e89b-12d3-a456-426614174000",
+  "command_id": "cmd_1750530623609_sngguxr",
+  "analysis_type": "comprehensive",
+  "time_range": {
+    "from": "2024-01-01T00:00:00Z",
+    "to": "2024-12-31T23:59:59Z"
+  },
+  "memory_limit": 100,
+  "include_raw_data": true,
+  "data": "Additional context for the analysis",
+  "deliverables": {
+    "market_analysis": "object",
+    "competitor_insights": "array",
+    "business_opportunities": "array"
+  }
+}
+```
+
+## Response
+
+### Success Response (Processing)
+
+```json
+{
+  "success": true,
+  "data": {
+    "commandId": "d3097700-4c2a-49bc-9e98-3816280f292b",
+    "status": "processing",
+    "message": "Research analysis started",
+    "agent_id": "ead7952e-96dc-44a7-99e1-cadbb19c6b65",
+    "analysis_type": "comprehensive",
+    "filtered_by_command_id": "cmd_1750530623609_sngguxr",
+    "has_memories": true,
+    "has_additional_data": true,
+    "timestamp": "2024-06-21T18:30:25.257Z",
+    "data_summary": {
+      "total_memories_analyzed": 8,
+      "unique_search_queries": 5,
+      "total_results_processed": 45,
+      "unique_sources": 23,
+      "search_timeframe": {
+        "from": "2024-06-21T18:25:00.000Z",
+        "to": "2024-06-21T18:30:00.000Z"
+      }
+    },
+    "consolidated_search_data": {
+      "search_queries": [
+        "Sebastian Henao CEO GlobalWork",
+        "Colombian entrepreneurs technology",
+        "Latin America startup ecosystem"
+      ],
+      "sources": [
+        "https://example.com/article1",
+        "https://linkedin.com/in/sebastian-henao"
+      ],
+      "answers": [
+        "Analysis of market trends...",
+        "Key insights from research..."
+      ],
+      "total_findings": 45
+    }
+  }
+}
+```
+
+### Success Response (Completed)
+
+```json
+{
+  "success": true,
+  "data": {
+    "commandId": "d3097700-4c2a-49bc-9e98-3816280f292b",
+    "status": "completed",
+    "message": "Research analysis completed",
+    "agent_id": "ead7952e-96dc-44a7-99e1-cadbb19c6b65",
+    "research_analysis": {
+      "executive_summary": "Comprehensive analysis of Sebastian Henao reveals a multifaceted Colombian entrepreneur...",
+      "key_findings": [
+        "CEO and co-founder of GlobalWork",
+        "Strong presence in Colombian tech ecosystem",
+        "Focus on remote work solutions"
+      ],
+      "data_insights": [
+        {
+          "category": "Professional Background",
+          "insight": "Established track record in technology leadership",
+          "evidence": ["CEO position at GlobalWork", "Co-founder status"]
+        }
+      ],
+      "trend_analysis": {
+        "market_position": "Strong leadership in remote work sector",
+        "growth_trajectory": "Expanding influence in Latin America",
+        "competitive_landscape": "Well-positioned against competitors"
+      },
+      "recommendations": [
+        "Leverage expertise in remote work solutions",
+        "Expand network in Colombian tech ecosystem",
+        "Focus on B2B partnerships"
+      ],
+      "methodology": {
+        "data_sources": 8,
+        "analysis_techniques": ["Content analysis", "Pattern recognition", "Trend identification"],
+        "validation_methods": ["Cross-referencing", "Source verification"]
+      },
+      "limitations": [
+        "Limited to publicly available information",
+        "Time-bound analysis based on current data"
+      ],
+      "conclusions": "Sebastian Henao represents a valuable strategic contact with significant influence in the Colombian tech ecosystem..."
+    },
+    "deliverables": {
+      "market_analysis": {
+        "size": "Growing remote work market in Latin America",
+        "trends": ["Increased remote adoption", "Digital transformation"]
+      }
+    }
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "DATA_ANALYST_NOT_FOUND",
+    "message": "No se encontró un agente con role \"Data Analyst\" para este sitio"
+  }
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | Invalid request parameters or malformed site_id |
+| `DATA_ANALYST_NOT_FOUND` | No Data Analyst agent found for the specified site |
+| `MEMORIES_FETCH_FAILED` | Failed to fetch agent search memories |
+| `NO_DATA_PROVIDED` | No search memories found and no additional data provided |
+| `SYSTEM_ERROR` | Internal system error occurred |
+
+## How It Works
+
+The API performs the following operations:
+
+1. **Agent Discovery**: Finds an active Data Analyst agent for the specified site
+2. **Memory Retrieval**: Fetches search memories based on command_id and time filters
+3. **Data Consolidation**: Combines search results, queries, and findings into structured data
+4. **Analysis Generation**: Creates a comprehensive analysis command with structured targets
+5. **Processing**: Executes AI-powered analysis using the consolidated data
+6. **Results Delivery**: Returns structured insights, recommendations, and conclusions
+
+## Generated Command Structure
+
+The system creates a command for the Data Analyst with the following structure:
+
+```json
+{
+  "task": "analyze the research data",
+  "description": "Analyze consolidated research data from X searches and additional data",
+  "targets": [
+    {
+      "research_analysis": {
+        "executive_summary": "string",
+        "key_findings": "array",
+        "data_insights": "array", 
+        "trend_analysis": "object",
+        "recommendations": "array",
+        "methodology": "object",
+        "limitations": "array",
+        "conclusions": "string",
+        "deliverables": "object"
+      }
+    }
+  ],
+  "supervisor": [
+    {
+      "agent_role": "research_manager",
+      "status": "not_initialized"
+    }
+  ]
+}
+```
+
+## Analysis Components
+
+### Executive Summary
+High-level overview of the findings and key insights from the analysis.
+
+### Key Findings
+Array of the most important discoveries from the research data.
+
+### Data Insights
+Structured insights with categories, evidence, and supporting data.
+
+### Trend Analysis
+Analysis of patterns, market position, and competitive landscape.
+
+### Recommendations
+Actionable recommendations based on the analysis findings.
+
+### Methodology
+Description of analysis techniques, data sources, and validation methods used.
+
+### Limitations
+Known constraints and limitations of the analysis.
+
+### Conclusions
+Final comprehensive assessment and strategic implications.
+
+## Use Cases
+
+- **Lead Research Analysis**: Analyze research data about potential leads
+- **Market Research Consolidation**: Combine multiple search results into insights
+- **Competitive Analysis**: Analyze competitor data and market positioning
+- **Strategic Planning**: Generate insights for business decision-making
+- **Content Analysis**: Analyze and summarize large amounts of research content
+
+## Try It
+
+Test the Data Analyst Analysis API using our interactive API tester. Provide research data or command IDs to get comprehensive AI-powered analysis.
+
+Required fields:
+- **Site ID**: The ID of the site for analysis
+
+Optional fields:
+- **Agent ID**: Specific Data Analyst agent ID
+- **Command ID**: Filter memories by specific command
+- **Analysis Type**: Type of analysis to perform
+- **Additional Data**: Extra context for analysis
+- **Time Range**: Filter memories by date range
+- **Deliverables**: Custom structure for specific outputs
+
+<UnifiedApiTester apiId="data-analyst-analysis" /> 

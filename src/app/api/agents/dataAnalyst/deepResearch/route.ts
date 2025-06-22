@@ -44,8 +44,8 @@ export async function POST(request: Request) {
     let enhancedContext = context || '';
     if (deliverables) {
       const deliverablesContext = typeof deliverables === 'object' 
-        ? `\n\nDeliverables requeridos:\n${JSON.stringify(deliverables, null, 2)}`
-        : `\n\nDeliverables requeridos:\n${deliverables}`;
+        ? `\n\nRequiered deliverables:\n${JSON.stringify(deliverables, null, 2)}`
+        : `\n\nRequiered deliverables:\n${deliverables}`;
       
       enhancedContext += deliverablesContext;
     }

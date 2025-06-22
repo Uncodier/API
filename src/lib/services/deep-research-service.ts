@@ -260,6 +260,9 @@ export class DeepResearchService {
 
       // Construir el contexto del comando sin deliverables
       let commandContext = `Research Topic: ${researchTopic}\nDepth: ${researchDepth}`;
+      commandContext += `\nMAKE A RESEARCH PLAN FOR THE TOPIC, BE SURE TU INCLUDE A SEARCH QUERY FOR EACH DELIVERABLE, OR A SEARCH OPERATION FOR EACH DELIVERABLE WHEN REQUIERED
+      \nEXAMPLE: A DELIVERABLE IS A COMPLEX TOPIC THAT WILL REQUIERE SEVERAL CONSULTS AND A SPECIFIC PLAN TO GET RELEVANT INFORMATION, THEN YOU WILL BUILD A SPECIFIC SEARCH OPERATION FOR THAT DELIVERABLE OR INFO.
+      `;
       if (context) {
         commandContext += `\nAdditional Context: ${context}`;
       }

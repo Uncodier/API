@@ -23,6 +23,10 @@
     "title": "Copywriter",
     "type": "page"
   },
+  "data-analyst": {
+    "title": "Data Analyst",
+    "type": "page"
+  },
   "*": {
     "theme": {
       "collapsed": false

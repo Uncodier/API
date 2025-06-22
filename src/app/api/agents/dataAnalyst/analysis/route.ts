@@ -3,6 +3,10 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 
+// Configurar timeout máximo a 5 minutos (300 segundos)
+// Máximo para plan Pro de Vercel
+export const maxDuration = 300;
+
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -350,7 +354,7 @@ export async function POST(request: Request) {
     }
 
     
-    analysisContext += `\n\nPlease analyze all the available data and provide comprehensive insights.`;
+    analysisContext += `\n\nPlease analyze all the available data and provide comprehensive insights and the deliverables requested.`;
     
     // Crear estructura de research_analysis dinámicamente
     const researchAnalysisStructure: any = {
@@ -372,7 +376,7 @@ export async function POST(request: Request) {
     const commandData = CommandFactory.createCommand({
       task: 'analyze the research data',
       userId: dataAnalystAgent.userId,
-      description: `Analyze ${consolidatedData ? `consolidated research data from ${consolidatedData.total_searches} searches` : 'provided data'}${data ? ' and additional data' : ''}`,
+      description: `Analyze consolidated research data from ${consolidatedData ? consolidatedData.total_searches : 0} searches${data ? ' and additional data' : ''}`,
       agentId: dataAnalystAgent.agentId,
       site_id: site_id,
       context: analysisContext.trim(),
@@ -425,32 +429,89 @@ export async function POST(request: Request) {
     console.log(`🔧 Creando comando de análisis de investigación`);
     
     // Enviar comando para ejecución
-    const commandId = await commandService.submitCommand(commandData);
+    const internalCommandId = await commandService.submitCommand(commandData);
     
-    console.log(`📝 Comando de análisis creado: ${commandId}`);
+    console.log(`📝 Comando de análisis creado: ${internalCommandId}`);
     
-    // Intentar obtener el comando completado si ya existe
-    let completedCommand = null;
+    // Obtener el UUID real del comando buscando en la base de datos
+    let realCommandId = null;
     try {
-      // Buscar comando en base de datos por ID
-      const { data: commandData, error } = await supabaseAdmin
+      // Buscar el comando más reciente para este agente con la misma descripción
+      const { data: recentCommands, error } = await supabaseAdmin
         .from('commands')
-        .select('*')
-        .eq('id', commandId)
-        .single();
+        .select('id')
+        .eq('agent_id', dataAnalystAgent.agentId)
+        .eq('description', `Analyze consolidated research data from ${consolidatedData ? consolidatedData.total_searches : 0} searches${data ? ' and additional data' : ''}`)
+        .order('created_at', { ascending: false })
+        .limit(1);
       
-      if (!error && commandData && commandData.status === 'completed') {
-        completedCommand = commandData;
+      if (!error && recentCommands && recentCommands.length > 0) {
+        realCommandId = recentCommands[0].id;
+        console.log(`🔍 UUID real del comando encontrado: ${realCommandId}`);
       }
     } catch (error) {
-      console.log('Comando aún no completado, retornando estado de procesamiento');
+      console.log('No se pudo obtener el UUID del comando desde BD, usando ID interno');
+    }
+    
+    // Si no tenemos el UUID real, usar el ID interno
+    const commandIdToSearch = realCommandId || internalCommandId;
+    
+    // Esperar a que el comando se complete
+    let completedCommand = null;
+    const maxRetries = 580; // 580 intentos = 290 segundos máximo (~4.8 minutos)
+    const retryDelay = 500; // 500ms entre intentos
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        // Buscar comando en base de datos por ID
+        const { data: commandData, error } = await supabaseAdmin
+          .from('commands')
+          .select('*')
+          .eq('id', commandIdToSearch)
+          .single();
+        
+        if (!error && commandData) {
+          if (commandData.status === 'completed') {
+            completedCommand = commandData;
+            console.log(`✅ Comando completado después de ${attempt + 1} intentos`);
+            break;
+          } else if (commandData.status === 'failed') {
+            console.error(`❌ Comando falló después de ${attempt + 1} intentos`);
+            return NextResponse.json(
+              { 
+                success: false, 
+                error: { 
+                  code: 'COMMAND_EXECUTION_FAILED', 
+                  message: 'Research analysis command failed to execute',
+                  commandId: commandIdToSearch
+                } 
+              },
+              { status: 500 }
+            );
+          }
+        }
+        
+        // Si no está completado, esperar antes del siguiente intento
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      } catch (error) {
+        console.log(`Intento ${attempt + 1}/${maxRetries}: Comando aún procesándose...`);
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, retryDelay));
+        }
+      }
+    }
+    
+    if (!completedCommand) {
+      console.log('⚠️ Comando no completado después del tiempo máximo de espera');
     }
     
     // Preparar respuesta con datos consolidados
     const responseData: any = {
-      commandId,
-      status: completedCommand ? 'completed' : 'processing',
-      message: completedCommand ? 'Research analysis completed' : 'Research analysis started',
+      commandId: commandIdToSearch,
+      status: completedCommand ? 'completed' : 'timeout',
+      message: completedCommand ? 'Research analysis completed' : 'Research analysis timed out - command may still be processing',
       agent_id: dataAnalystAgent.agentId,
       analysis_type: analysis_type,
       filtered_by_command_id: command_id || null,

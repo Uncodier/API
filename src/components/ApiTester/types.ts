@@ -47,7 +47,9 @@ export type ApiType =
   | 'chat'
   | 'create-task'
   | 'get-task'
-  | 'update-task';
+  | 'update-task'
+  | 'data-analyst-analysis'
+  | 'data-analyst-lead-segmentation';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {
