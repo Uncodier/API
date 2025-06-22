@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -986,21 +987,73 @@ export async function POST(request: Request) {
     
     console.log(`🏷️ Origen final del lead: ${leadOrigin}`);
     
-    // Gestionar lead_id utilizando el nuevo servicio
-    const leadManagementResult = await manageLeadCreation({
-      leadId: lead_id,
-      name,
-      email,
-      phone,
-      siteId: effectiveSiteId,
-      visitorId: visitor_id,
-      origin: leadOrigin,
-      createTask: website_chat_origin === true
-    });
+    // Variables para gestión de lead y conversación
+    let effectiveLeadId: string | null = null;
+    let isNewLead = false;
+    let taskId: string | null = null;
+    let effectiveConversationId = conversationId;
     
-    const effectiveLeadId = leadManagementResult.leadId;
-    const isNewLead = leadManagementResult.isNewLead;
-    const taskId = leadManagementResult.taskId;
+    // Manejo especial para WhatsApp
+    if (leadOrigin === 'whatsapp' && phone && effectiveSiteId) {
+      console.log(`📱 Detectado origen WhatsApp - usando WhatsAppLeadService`);
+      
+      try {
+        const whatsappResult = await WhatsAppLeadService.findOrCreateLeadAndConversation({
+          phoneNumber: phone,
+          senderName: name,
+          siteId: effectiveSiteId,
+          userId: userId,
+          businessAccountId: body.businessAccountId // Usar businessAccountId si está disponible
+        });
+        
+        effectiveLeadId = whatsappResult.leadId;
+        isNewLead = whatsappResult.isNewLead;
+        
+        // Si encontramos una conversación de WhatsApp reciente, usarla
+        if (whatsappResult.conversationId && !conversationId) {
+          effectiveConversationId = whatsappResult.conversationId;
+          console.log(`💬 Usando conversación de WhatsApp existente: ${effectiveConversationId}`);
+        }
+        
+        // Para WhatsApp no creamos tareas automáticamente como en website_chat
+        console.log(`📱 WhatsApp lead management completed - Lead: ${effectiveLeadId}, Conversation: ${effectiveConversationId || 'nueva'}`);
+        
+      } catch (error) {
+        console.error(`❌ Error en WhatsAppLeadService:`, error);
+        // Fallback al servicio estándar
+        console.log(`🔄 Usando servicio estándar como fallback`);
+        const leadManagementResult = await manageLeadCreation({
+          leadId: lead_id,
+          name,
+          email,
+          phone,
+          siteId: effectiveSiteId,
+          visitorId: visitor_id,
+          origin: leadOrigin,
+          createTask: false
+        });
+        
+        effectiveLeadId = leadManagementResult.leadId;
+        isNewLead = leadManagementResult.isNewLead;
+        taskId = leadManagementResult.taskId;
+      }
+    } else {
+      // Gestionar lead_id utilizando el servicio estándar para otros orígenes
+      const leadManagementResult = await manageLeadCreation({
+        leadId: lead_id,
+        name,
+        email,
+        phone,
+        siteId: effectiveSiteId,
+        visitorId: visitor_id,
+        origin: leadOrigin,
+        createTask: website_chat_origin === true
+      });
+      
+      effectiveLeadId = leadManagementResult.leadId;
+      isNewLead = leadManagementResult.isNewLead;
+      taskId = leadManagementResult.taskId;
+    }
     
     // Verificar si tenemos un lead_id efectivo después de la gestión
     if (effectiveLeadId) {
@@ -1164,9 +1217,9 @@ export async function POST(request: Request) {
       if (phone) contextMessage += `\nPhone: ${phone}`;
     }
     
-    if (conversationId && isValidUUID(conversationId)) {
-      console.log(`🔄 Recuperando historial para la conversación: ${conversationId}`);
-      const historyMessages = await getConversationHistory(conversationId);
+    if (effectiveConversationId && isValidUUID(effectiveConversationId)) {
+      console.log(`🔄 Recuperando historial para la conversación: ${effectiveConversationId}`);
+      const historyMessages = await getConversationHistory(effectiveConversationId);
       
       if (historyMessages && historyMessages.length > 0) {
         // Filter out any messages that might be duplicates of the current message
@@ -1182,14 +1235,14 @@ export async function POST(request: Request) {
         
         if (filteredMessages.length > 0) {
           const conversationHistory = formatConversationHistoryForContext(filteredMessages);
-          contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${conversationId}`;
+          contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${effectiveConversationId}`;
           console.log(`📜 Historial de conversación recuperado con ${filteredMessages.length} mensajes`);
         } else {
-          contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
+          contextMessage = `${contextMessage}\nConversation ID: ${effectiveConversationId}`;
         }
       } else {
-        contextMessage = `${contextMessage}\nConversation ID: ${conversationId}`;
-        console.log(`⚠️ No se encontró historial para la conversación: ${conversationId}`);
+        contextMessage = `${contextMessage}\nConversation ID: ${effectiveConversationId}`;
+        console.log(`⚠️ No se encontró historial para la conversación: ${effectiveConversationId}`);
       }
     }
     
@@ -1691,7 +1744,7 @@ export async function POST(request: Request) {
         effectiveUserId, 
         message, 
         assistantMessage, 
-        conversationId, 
+        effectiveConversationId, 
         conversationTitle, 
         effectiveLeadId || undefined, 
         visitor_id, 
@@ -1837,7 +1890,7 @@ export async function POST(request: Request) {
       effectiveUserId, 
       message, 
       assistantMessage, 
-      conversationId, 
+      effectiveConversationId, 
       conversationTitle, 
       effectiveLeadId || undefined,
       visitor_id, 

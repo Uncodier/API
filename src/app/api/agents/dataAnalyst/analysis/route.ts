@@ -350,14 +350,31 @@ export async function POST(request: Request) {
     
     // Agregar data si está disponible
     if (data) {
-      analysisContext += `\n\nAdditional Data Provided:\n${typeof data === 'string' ? data : JSON.stringify(data, null, 2)}`;
+      try {
+        const dataStr = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+        // Truncar datos muy largos para evitar problemas de JSON
+        const truncatedData = dataStr.length > 10000 ? dataStr.substring(0, 10000) + '... [truncated]' : dataStr;
+        analysisContext += `\n\nAdditional Data Provided:\n${truncatedData}`;
+      } catch (error) {
+        analysisContext += `\n\nAdditional Data Provided: [Data structure too complex to serialize]`;
+      }
     }
 
     
+    // Agregar información sobre deliverables al contexto si están presentes
+    if (deliverables) {
+      try {
+        const deliverablesStr = JSON.stringify(deliverables);
+        analysisContext += `\n\nDeliverables requested: ${deliverablesStr}`;
+      } catch (error) {
+        analysisContext += `\n\nDeliverables requested: [Complex structure provided]`;
+      }
+    }
+    
     analysisContext += `\n\nPlease analyze all the available data and provide comprehensive insights and the deliverables requested.`;
     
-    // Crear estructura de research_analysis dinámicamente
-    const researchAnalysisStructure: any = {
+    // Crear estructura de research_analysis simple y estática
+    const researchAnalysisStructure = {
       executive_summary: 'string',
       key_findings: 'array',
       data_insights: 'array',
@@ -365,12 +382,45 @@ export async function POST(request: Request) {
       recommendations: 'array',
       methodology: 'object',
       limitations: 'array',
-      conclusions: 'string'
+      conclusions: 'string',
+      // Si hay deliverables, los incluimos como string para que el agente los procese
+      deliverables: deliverables ? 'object' : null
     };
 
-    // Solo incluir deliverables si se proporciona en la request
-    if (deliverables) {
-      researchAnalysisStructure.deliverables = deliverables;
+    // Truncar contexto si es muy largo para evitar problemas
+    const maxContextLength = 50000;
+    const finalContext = analysisContext.length > maxContextLength 
+      ? analysisContext.substring(0, maxContextLength) + '... [context truncated due to size]'
+      : analysisContext.trim();
+    
+    // Validar que los objetos son serializables antes de crear el comando
+    console.log('🔍 Validando estructura del comando antes de crear...');
+    
+    try {
+      // Test serialization
+      JSON.stringify({
+        context: finalContext,
+        targets: [{
+          research_analysis: researchAnalysisStructure
+        }],
+        supervisor: [{
+          agent_role: 'research_manager',
+          status: 'not_initialized'
+        }]
+      });
+      console.log('✅ Validación de JSON exitosa');
+    } catch (error) {
+      console.error('❌ Error en validación de JSON:', error);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'JSON_SERIALIZATION_ERROR', 
+            message: 'Command data structure cannot be serialized to JSON' 
+          } 
+        },
+        { status: 400 }
+      );
     }
 
     const commandData = CommandFactory.createCommand({
@@ -379,45 +429,13 @@ export async function POST(request: Request) {
       description: `Analyze consolidated research data from ${consolidatedData ? consolidatedData.total_searches : 0} searches${data ? ' and additional data' : ''}`,
       agentId: dataAnalystAgent.agentId,
       site_id: site_id,
-      context: analysisContext.trim(),
+      context: finalContext,
       targets: [
         {
           research_analysis: researchAnalysisStructure
         }
       ],
-      tools: [
-        // {
-        //   name: 'data_consolidation',
-        //   description: 'Consolidate and structure research findings',
-        //   status: 'not_initialized',
-        //   type: 'synchronous',
-        //   parameters: {
-        //     total_searches: consolidatedData.total_searches,
-        //     findings_count: consolidatedData.consolidated_findings.length,
-        //     analysis_type: analysis_type
-        //   }
-        // },
-        // {
-        //   name: 'pattern_analysis',
-        //   description: 'Identify patterns and trends in the research data',
-        //   status: 'not_initialized',
-        //   type: 'synchronous',
-        //   parameters: {
-        //     queries: consolidatedData.search_queries,
-        //     timeframe: consolidatedData.search_timeframe
-        //   }
-        // },
-        // {
-        //   name: 'insight_generation',
-        //   description: 'Generate actionable insights from the consolidated data',
-        //   status: 'not_initialized',
-        //   type: 'synchronous',
-        //   parameters: {
-        //     source_count: consolidatedData.sources.length,
-        //     analysis_depth: analysis_type
-        //   }
-        // }
-      ],
+      tools: [],
       supervisor: [
         {
           agent_role: 'research_manager',
