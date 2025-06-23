@@ -1,4 +1,4 @@
- # Database JSONb Sub-Structures Documentation
+# Database JSONb Sub-Structures Documentation
 
 This document explains the JSONb field structures used in the Market Fit application database. These fields store complex nested data in JSON format within PostgreSQL.
 
@@ -16,6 +16,7 @@ This document explains the JSONb field structures used in the Market Fit applica
 - [Commands JSONb Fields](#commands-jsonb-fields)
 - [Profiles JSONb Fields](#profiles-jsonb-fields)
 - [Sites JSONb Fields](#sites-jsonb-fields)
+- [Task Comments JSONb Fields](#task-comments-jsonb-fields)
 - [Other JSONb Fields](#other-jsonb-fields)
 
 ---
@@ -1571,6 +1572,111 @@ Site tracking and analytics configuration.
   }
 }
 ```
+
+---
+
+## Task Comments JSONb Fields
+
+### `attachments` (jsonb)
+Legacy attachment data for task comments.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "name": "document.pdf",
+    "url": "https://storage.example.com/files/document.pdf",
+    "size": 1024000,
+    "type": "application/pdf",
+    "uploaded_at": "2024-01-15T10:30:00Z"
+  }
+]
+```
+
+### `files` (jsonb)
+File attachments with metadata for task comments.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "name": "screenshot.png",
+    "url": "https://storage.supabase.co/object/public/task_files/task-id/timestamp.png",
+    "size": 245760,
+    "type": "image/png"
+  },
+  {
+    "name": "report.pdf",
+    "url": "https://storage.supabase.co/object/public/task_files/task-id/timestamp.pdf",
+    "size": 1024000,
+    "type": "application/pdf"
+  }
+]
+```
+
+**Properties:**
+- `name`: Original filename
+- `url`: Public URL to the stored file
+- `size`: File size in bytes
+- `type`: MIME type of the file
+
+### `cta` (jsonb)
+Call-to-Action button data for task comments.
+
+**Default:** `null`
+
+**Structure:**
+```json
+{
+  "primary_action": {
+    "title": "View Details",
+    "url": "https://example.com/task-details"
+  }
+}
+```
+
+**Properties:**
+- `primary_action.title`: Button text displayed to users (e.g., "Download File", "View Demo")
+- `primary_action.url`: Target URL that opens in a new tab
+
+**Usage Examples:**
+```json
+{
+  "primary_action": {
+    "title": "Download Report",
+    "url": "https://storage.example.com/reports/monthly-report.pdf"
+  }
+}
+```
+```json
+{
+  "primary_action": {
+    "title": "View Demo",
+    "url": "https://demo.example.com/feature-walkthrough"
+  }
+}
+```
+
+**Validation Rules:**
+- Both `title` and `url` must be provided for the CTA to be displayed
+- If either field is empty or missing, the CTA will be `null`
+- URLs should be properly formatted and accessible
+- Button text should be concise and actionable (recommended: 1-3 words)
+
+**Frontend Implementation:**
+- CTA buttons appear below comment content and file attachments
+- Buttons open links in new tabs with security attributes (`target="_blank" rel="noopener noreferrer"`)
+- Styled as primary buttons with external link icon
+- Only displayed when both title and url are present
+- **Automatic URL Detection**: URLs in comment text are automatically detected and suggested as CTA
+  - Supports `https://`, `http://`, and `www.` URLs
+  - Auto-generates meaningful button text from URL path or domain
+  - Shows "Auto-detected" badge when URL is found automatically
+  - User can edit the suggested title and URL before saving
 
 ---
 

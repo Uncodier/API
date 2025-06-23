@@ -12,8 +12,6 @@ import {
   PersonalizationOptions,
   PersonalizationModification,
   PersonalizationImplementation,
-  PerformanceImpact,
-  DiffSummary,
   PersonalizationResponse,
   personalizeHtmlForSegment
 } from './html-personalization';
@@ -23,8 +21,6 @@ export type {
   PersonalizationOptions,
   PersonalizationModification,
   PersonalizationImplementation,
-  PerformanceImpact,
-  DiffSummary,
   PersonalizationResponse
 };
 

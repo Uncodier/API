@@ -835,7 +835,7 @@ ${context}`;
     }
     
     // Extract improved content from results
-    let improvedContentItems = [];
+    let improvedContentItems: any[] = [];
     
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
       const contentResult = executedCommand.results.find((r: any) => 

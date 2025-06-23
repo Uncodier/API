@@ -15,8 +15,6 @@ import {
   PersonalizationOptions,
   PersonalizationModification,
   PersonalizationImplementation,
-  PerformanceImpact,
-  DiffSummary,
   PersonalizationResponse
 } from './types';
 
@@ -26,7 +24,6 @@ import {
 
 import {
   ensurePersonalizations,
-  parsePerformanceImpact,
   enrichPersonalizationsWithOriginalHtml,
   processPersonalizations,
   createAnalysisMetadata,
@@ -39,8 +36,6 @@ export type {
   PersonalizationOptions,
   PersonalizationModification,
   PersonalizationImplementation,
-  PerformanceImpact,
-  DiffSummary,
   PersonalizationResponse
 };
 

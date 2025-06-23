@@ -245,7 +245,10 @@ export function normalizeAnalysisData(data: any): AnalysisData {
       return block;
     });
 
-    // Actualizar contadores en overview
+    // Asegurar que overview existe y actualizar contadores
+    if (!normalizedData.overview) {
+      normalizedData.overview = { total_blocks: 0, primary_content_blocks: 0, navigation_blocks: 0, interactive_elements: 0 };
+    }
     normalizedData.overview.total_blocks = normalizedData.blocks.length;
     normalizedData.overview.primary_content_blocks = normalizedData.blocks.filter(
       (b: BlockInfo) => b.type === 'main' || b.type === 'content' || b.section_type === 'content'

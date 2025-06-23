@@ -3,30 +3,39 @@
  * Run this with: npx ts-node src/lib/agentbase/test/AgentPromptValidation.ts
  */
 
-import { ProcessorInitializer } from '../services/AgentInitializer';
+import { AgentInitializer } from '../services/agent/AgentInitializer';
 import { Base } from '../agents/Base';
+import { DbCommand, CommandExecutionResult, ToolExecutionResult } from '../models/types';
 
 // Mock Base agent for testing
-class MockAgent implements Base {
-  private id: string;
-  private name: string;
-  private capabilities: string[];
+class MockAgent extends Base {
   public prompt: string;
   
   constructor(id: string, name: string, capabilities: string[], prompt: string) {
-    this.id = id;
-    this.name = name;
-    this.capabilities = capabilities;
+    super(id, name, capabilities);
     this.prompt = prompt;
   }
   
-  getId(): string { return this.id; }
-  getName(): string { return this.name; }
-  getCapabilities(): string[] { return this.capabilities; }
+  // Implementation of the abstract executeCommand method
+  async executeCommand(command: DbCommand): Promise<CommandExecutionResult> {
+    return { 
+      status: 'completed',
+      results: [{ status: 'mock execution completed' }]
+    };
+  }
   
-  // Empty implementation for executeCommand required by Base interface
-  async executeCommand(): Promise<any> {
-    return { status: 'mock' };
+  // Override getBackstory to return custom prompt if needed
+  getBackstory(): string | undefined {
+    return this.prompt;
+  }
+  
+  // Override executeTools for testing purposes
+  protected async executeTools(tools: any[]): Promise<ToolExecutionResult[]> {
+    return tools.map(tool => ({
+      tool: tool.name || 'mock-tool',
+      status: 'completed' as const,
+      result: { mock: true }
+    }));
   }
 }
 
@@ -35,8 +44,8 @@ async function runTests() {
   console.log('=== AGENT PROMPT VALIDATION TESTS ===\n');
   
   try {
-    // Get the ProcessorInitializer instance
-    const initializer = ProcessorInitializer.getInstance();
+    // Get the AgentInitializer instance
+    const initializer = AgentInitializer.getInstance();
     initializer.initialize();
     
     // Create a test agent with custom prompt
@@ -90,7 +99,7 @@ async function runTests() {
         // Find where the prompt should be
         const sections = agentBackground.split(/\n\n#+\s/);
         console.log('\nBackground sections:');
-        sections.forEach((section, i) => {
+        sections.forEach((section: string, i: number) => {
           console.log(`${i+1}. ${section.substring(0, 50)}...`);
         });
       }

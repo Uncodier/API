@@ -78,8 +78,9 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔄 Iniciando workflow de investigación profunda con ID: ${workflowOptions.workflowId}`);
 
-    // Ejecutar el workflow específico para investigación profunda
-    const result = await workflowService.deepResearch(
+    // Ejecutar el workflow específico para investigación profunda usando el método genérico
+    const result = await workflowService.executeWorkflow(
+      'deepResearchWorkflow',
       workflowArgs,
       workflowOptions
     );

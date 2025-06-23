@@ -1,0 +1,131 @@
+---
+title: 'contact-human'
+description: 'Solicita intervención humana en una conversación'
+---
+
+# contact-human
+
+Este tool permite solicitar la intervención de un humano en una conversación, proporcionando un mensaje, detalles de contacto y un resumen opcional del contexto.
+
+## Descripción
+
+Notifica a los administradores del sitio para que intervengan en una conversación activa, enviando notificaciones en la plataforma y/o correos electrónicos con la información proporcionada.
+
+## Parámetros
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| conversation_id | string   | Sí        | ID único de la conversación que requiere intervención      |
+| message         | string   | Sí        | Mensaje explicativo para el humano que intervendrá         |
+| agent_id        | string   | No        | ID del agente que realiza la solicitud (si aplica)         |
+| priority        | string   | No        | Prioridad de la solicitud: "low", "normal", "high", "urgent". Por defecto: "normal" |
+| summary         | string   | No        | Resumen de la conversación o contexto adicional           |
+| name            | string   | No        | Nombre de la persona de contacto                           |
+| email           | string   | No        | Correo electrónico de la persona de contacto               |
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "intervention_id": "f87bdc7f-0efe-4aa5-b499-49d85be4b154",
+  "conversation_id": "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+  "agent_id": "a6c4e791-8c6d-4a04-b912-9fd71bf4d9c3",
+  "status": "pending",
+  "message": {
+    "content": "El cliente tiene problemas con la integración y requiere ayuda técnica especializada.",
+    "priority": "high"
+  },
+  "summary": "Cliente de nivel Enterprise con problemas en la API de pagos.",
+  "contact_name": "Juan Pérez",
+  "contact_email": "juan.perez@empresa.com",
+  "requested_at": "2023-11-15T14:30:42.123Z"
+}
+```
+
+| Campo            | Tipo    | Descripción                                               |
+|------------------|---------|-----------------------------------------------------------|
+| success          | boolean | Indica si la solicitud fue exitosa                        |
+| intervention_id  | string  | ID único de la solicitud de intervención                  |
+| conversation_id  | string  | ID de la conversación que requiere intervención           |
+| agent_id         | string  | ID del agente que realizó la solicitud (null si no aplica) |
+| status           | string  | Estado de la solicitud, inicialmente "pending"            |
+| message          | object  | Objeto con el contenido del mensaje y su prioridad        |
+| summary          | string  | Resumen proporcionado de la conversación (si se incluye)  |
+| contact_name     | string  | Nombre de la persona de contacto (si se incluye)          |
+| contact_email    | string  | Email de la persona de contacto (si se incluye)           |
+| requested_at     | string  | Marca de tiempo de la solicitud                           |
+
+## Códigos de respuesta
+
+| Código | Estado          | Descripción                                                  |
+|--------|-----------------|--------------------------------------------------------------|
+| 201    | Created         | La solicitud de intervención humana fue creada exitosamente  |
+| 400    | Bad Request     | Parámetros inválidos o faltantes                             |
+| 404    | Not Found       | Conversación o agente no encontrado                          |
+| 500    | Server Error    | Error del servidor al procesar la solicitud                  |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "contact-human",
+    input: {
+      conversation_id: "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      message: "Cliente con problemas técnicos en la integración de la API. Ha intentado las soluciones básicas sin éxito y necesita ayuda especializada.",
+      priority: "high",
+      summary: "Cliente Premium con 3 tickets previos sobre el mismo tema. Ha expresado frustración con el soporte.",
+      name: "María González",
+      email: "maria.gonzalez@empresa.com"
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Solicitud de intervención creada. ID: ${result.intervention_id}. Estado: ${result.status}`);
+}
+```
+
+## Consulta del estado de intervención
+
+También es posible consultar el estado de una intervención mediante el endpoint GET.
+
+### Parámetros de consulta
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| intervention_id | string   | No*       | ID único de la intervención a consultar                    |
+| conversation_id | string   | No*       | ID de la conversación                                     |
+
+*Al menos uno de estos parámetros debe ser proporcionado.
+
+### Ejemplo de respuesta de consulta
+
+```json
+{
+  "success": true,
+  "interventions": [
+    {
+      "id": "f87bdc7f-0efe-4aa5-b499-49d85be4b154",
+      "conversation_id": "89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      "agent_id": "a6c4e791-8c6d-4a04-b912-9fd71bf4d9c3",
+      "message": "El cliente tiene problemas con la integración y requiere ayuda técnica especializada.",
+      "priority": "high",
+      "status": "pending",
+      "requested_at": "2023-11-15T14:30:42.123Z",
+      "resolved_at": null,
+      "resolved_by": null,
+      "summary": "Cliente Premium con 3 tickets previos sobre el mismo tema.",
+      "contact_name": "María González",
+      "contact_email": "maria.gonzalez@empresa.com"
+    }
+  ]
+}
+```
+
+## Notas adicionales
+
+- Al crear una solicitud de intervención, se genera automáticamente un mensaje en la conversación indicando que se ha solicitado intervención humana.
+- Se envían notificaciones por correo electrónico a los administradores del sitio si hay direcciones de correo configuradas.
+- Si se proporciona información de contacto (nombre y email), esta se incluirá en las notificaciones.

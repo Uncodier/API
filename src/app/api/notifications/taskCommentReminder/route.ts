@@ -8,15 +8,15 @@ import { z } from 'zod';
 // Configurar timeout máximo a 2 minutos
 export const maxDuration = 120;
 
-// Schema de validación para la request
-const TaskStatusSchema = z.object({
+// Schema de validación para la request (mismo que taskStatus)
+const TaskCommentReminderSchema = z.object({
   site_id: z.string().uuid('site_id debe ser un UUID válido'),
   lead_id: z.string().uuid('lead_id debe ser un UUID válido'),
   message: z.string().min(1, 'message es requerido'),
   task_id: z.string().uuid('task_id debe ser un UUID válido').optional(),
   status: z.enum(['pending', 'in_progress', 'completed', 'failed', 'cancelled']).optional(),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
-  notification_type: z.enum(['task_update', 'task_completed', 'task_failed', 'task_cancelled']).default('task_update'),
+  notification_type: z.enum(['task_reminder', 'cta_reminder', 'follow_up_reminder', 'action_required']).default('task_reminder'),
   include_team: z.boolean().default(true),
   include_lead: z.boolean().default(true),
   additional_data: z.record(z.any()).optional()
@@ -70,7 +70,7 @@ async function getSiteInfo(siteId: string): Promise<any | null> {
   }
 }
 
-// Función para obtener información de la tarea (si se proporciona task_id)
+// Función para obtener información de la tarea
 async function getTaskInfo(taskId: string): Promise<any | null> {
   try {
     const { data, error } = await supabaseAdmin
@@ -99,7 +99,7 @@ async function getTaskInfo(taskId: string): Promise<any | null> {
       return null;
     }
     
-    console.log(`📋 [TaskStatus] Información de tarea obtenida: ${data?.title || 'Sin título'}`);
+    console.log(`📋 [TaskReminder] Información de tarea obtenida: ${data?.title || 'Sin título'}`);
     return data;
   } catch (error) {
     console.error('Error al obtener información de la tarea:', error);
@@ -107,8 +107,8 @@ async function getTaskInfo(taskId: string): Promise<any | null> {
   }
 }
 
-// Función para obtener el último comentario de la tarea con CTA
-async function getLastTaskComment(taskId: string): Promise<any | null> {
+// Función para obtener el último comentario con CTA
+async function getLastTaskCommentWithCTA(taskId: string): Promise<any | null> {
   try {
     const { data, error } = await supabaseAdmin
       .from('task_comments')
@@ -123,36 +123,25 @@ async function getLastTaskComment(taskId: string): Promise<any | null> {
       `)
       .eq('task_id', taskId)
       .eq('is_private', false)
+      .not('cta', 'is', null)
       .order('created_at', { ascending: false })
       .limit(1)
       .single();
     
     if (error) {
-      console.log(`ℹ️ [TaskStatus] No se encontraron comentarios para la tarea: ${taskId}`);
+      console.log(`ℹ️ [TaskReminder] No se encontraron comentarios con CTA para la tarea: ${taskId}`);
       return null;
     }
     
-    console.log(`💬 [TaskStatus] Último comentario obtenido para tarea: ${taskId}`);
-    
-    // Buscar CTA directamente en la nueva columna cta
-    let ctaData = null;
-    
-    if (data.cta && data.cta.primary_action) {
-      ctaData = data.cta;
-      console.log(`🎯 [TaskStatus] CTA encontrado en comentario`);
-    }
-    
-    return {
-      ...data,
-      cta: ctaData
-    };
+    console.log(`💬 [TaskReminder] Comentario con CTA obtenido para tarea: ${taskId}`);
+    return data;
   } catch (error) {
-    console.error('Error al obtener último comentario de la tarea:', error);
+    console.error('Error al obtener comentario con CTA de la tarea:', error);
     return null;
   }
 }
 
-// Funciones de branding consistentes
+// Funciones de branding
 function getBrandingText(): string {
   return process.env.UNCODIE_BRANDING_TEXT || 'Uncodie, your AI Sales Team';
 }
@@ -161,8 +150,8 @@ function getCompanyName(): string {
   return process.env.UNCODIE_COMPANY_NAME || 'Uncodie';
 }
 
-// Función para generar HTML del email para el lead
-function generateLeadNotificationHtml(data: {
+// Función para generar HTML del reminder para el lead
+function generateLeadReminderHtml(data: {
   leadName: string;
   message: string;
   siteName: string;
@@ -172,20 +161,20 @@ function generateLeadNotificationHtml(data: {
   priority: string;
   siteUrl?: string;
   logoUrl?: string;
-  primaryCta?: {
+  primaryCta: {
     title: string;
     url: string;
   };
+  reminderContext?: string;
 }): string {
-  const statusBadgeColor = {
-    pending: { bg: '#fef3c7', color: '#92400e' },
-    in_progress: { bg: '#dbeafe', color: '#1e40af' },
-    completed: { bg: '#d1fae5', color: '#065f46' },
-    failed: { bg: '#fee2e2', color: '#991b1b' },
-    cancelled: { bg: '#f3f4f6', color: '#374151' }
+  const priorityBadgeColor = {
+    low: { bg: '#f3f4f6', color: '#374151' },
+    normal: { bg: '#dbeafe', color: '#1e40af' },
+    high: { bg: '#fed7aa', color: '#c2410c' },
+    urgent: { bg: '#fee2e2', color: '#991b1b' }
   };
   
-  const statusColor = data.status ? statusBadgeColor[data.status as keyof typeof statusBadgeColor] : statusBadgeColor.pending;
+  const priorityColor = priorityBadgeColor[data.priority as keyof typeof priorityBadgeColor] || priorityBadgeColor.normal;
   
   return `
     <!DOCTYPE html>
@@ -193,7 +182,7 @@ function generateLeadNotificationHtml(data: {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Status Update - ${data.siteName}</title>
+      <title>Friendly Reminder - ${data.siteName}</title>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
       
@@ -201,7 +190,7 @@ function generateLeadNotificationHtml(data: {
       <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
         
         <!-- Header -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px 40px; text-align: center;">
+        <div style="background: linear-gradient(135deg, #10b981 0%, #059669 100%); padding: 32px 40px; text-align: center;">
           ${data.logoUrl ? `
           <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
             <img src="${data.logoUrl}" alt="${data.siteName} Logo" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
@@ -213,8 +202,8 @@ function generateLeadNotificationHtml(data: {
             </div>
           </div>
           `}
-          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">Status Update</h1>
-          <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; font-weight: 400;">We have an update for you</p>
+          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">⏰ Friendly Reminder</h1>
+          <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; font-weight: 400;">You have a pending action</p>
         </div>
         
         <!-- Content -->
@@ -223,76 +212,76 @@ function generateLeadNotificationHtml(data: {
           <!-- Greeting -->
           <div style="margin-bottom: 32px;">
             <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b; font-weight: 600;">
-              Hello ${data.leadName}
+              Hello ${data.leadName} 👋
             </h2>
             <p style="margin: 0; font-size: 16px; color: #475569; line-height: 1.7;">
-              We're writing from ${data.siteName} to inform you about an important update.
+              We hope you're doing well! This is a friendly reminder from ${data.siteName}.
             </p>
           </div>
           
-          <!-- Status Badge -->
-          ${data.status ? `
-          <div style="margin-bottom: 32px; text-align: center;">
-            <div style="display: inline-block; background-color: ${statusColor.bg}; color: ${statusColor.color}; padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
-              ${data.status.replace('_', ' ')}
-            </div>
-          </div>
-          ` : ''}
+          
           
           <!-- Task Information -->
           ${data.taskTitle ? `
           <div style="margin-bottom: 32px;">
-            <div style="background-color: #f8fafc; padding: 20px 24px; border-radius: 8px; border-left: 4px solid #667eea;">
-              <h3 style="margin: 0 0 8px; font-size: 16px; color: #1e293b; font-weight: 600;">${data.taskTitle}</h3>
+            <div style="background-color: #f0fdfa; padding: 20px 24px; border-radius: 8px; border-left: 4px solid #10b981;">
+              <h3 style="margin: 0 0 8px; font-size: 16px; color: #1e293b; font-weight: 600;">📋 ${data.taskTitle}</h3>
               ${data.taskDescription ? `<p style="margin: 0; color: #475569; font-size: 15px; line-height: 1.6;">${data.taskDescription}</p>` : ''}
             </div>
           </div>
           ` : ''}
           
-          <!-- Message -->
+          <!-- Reminder Message -->
           <div style="margin-bottom: 32px;">
-            <div style="background-color: #eff6ff; padding: 24px; border-radius: 8px; border: 1px solid #bfdbfe;">
-              <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e40af; font-weight: 600;">Message</h3>
+            <div style="background-color: #fef3c7; padding: 24px; border-radius: 8px; border: 1px solid #fde047;">
+              <h3 style="margin: 0 0 16px; font-size: 18px; color: #92400e; font-weight: 600;">📢 Reminder</h3>
               <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
                 ${data.message}
               </div>
             </div>
           </div>
           
-          <!-- Action Buttons -->
-          ${data.primaryCta || data.siteUrl ? `
+          <!-- Call-to-Action -->
           <div style="text-align: center; margin: 40px 0 32px;">
-            ${data.primaryCta ? `
             <a href="${data.primaryCta.url}" 
-               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
-              ${data.primaryCta.title} →
+               style="display: inline-block; background: linear-gradient(135deg, #10b981 0%, #059669 100%); color: #ffffff; padding: 18px 36px; text-decoration: none; border-radius: 10px; font-weight: 700; font-size: 18px; letter-spacing: -0.025em; box-shadow: 0 8px 16px -4px rgba(16, 185, 129, 0.3); transition: transform 0.2s, box-shadow 0.2s; text-transform: uppercase;">
+              🎯 ${data.primaryCta.title}
             </a>
-            ` : ''}
-            ${data.siteUrl ? `
+          </div>
+          
+          <!-- Secondary Action -->
+          ${data.siteUrl ? `
+          <div style="text-align: center; margin-bottom: 32px;">
             <a href="${data.siteUrl}" 
-               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
-              Visit Site →
+               style="color: #10b981; text-decoration: none; font-size: 14px; font-weight: 500;">
+              or visit our website →
             </a>
-            ` : ''}
+          </div>
+          ` : ''}
+          
+          <!-- Context Note -->
+          ${data.reminderContext ? `
+          <div style="margin-top: 32px; padding: 16px; background-color: #f8fafc; border-radius: 6px; border-left: 3px solid #10b981;">
+            <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+              <strong style="color: #475569;">Context:</strong> ${data.reminderContext}
+            </p>
           </div>
           ` : ''}
           
           <!-- Explanation -->
-          ${data.taskTitle ? `
           <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
             <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
-              You receive this as an update to <strong style="color: #475569;">${data.taskTitle}</strong>
+              This is a friendly reminder about your pending action. We're here to help if you have any questions!
             </p>
           </div>
-          ` : ''}
           
         </div>
         
         <!-- Footer -->
         <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
           <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-            This email was automatically generated by ${getCompanyName()}.<br>
-            If you have any questions, you can reply to this message.
+            This reminder was sent by ${getCompanyName()}.<br>
+            If you have any questions, feel free to reply to this message.
           </p>
         </div>
         
@@ -301,7 +290,7 @@ function generateLeadNotificationHtml(data: {
       <!-- Powered by -->
       <div style="text-align: center; margin: 24px 0;">
         <p style="margin: 0; color: #94a3b8; font-size: 12px;">
-          Powered by <strong style="color: #667eea;">${getBrandingText()}</strong>
+          Powered by <strong style="color: #10b981;">${getBrandingText()}</strong>
         </p>
       </div>
       
@@ -310,8 +299,8 @@ function generateLeadNotificationHtml(data: {
   `;
 }
 
-// Función para generar HTML del email para el equipo
-function generateTeamNotificationHtml(data: {
+// Función para generar HTML del reminder para el equipo
+function generateTeamReminderHtml(data: {
   leadName: string;
   leadEmail: string;
   message: string;
@@ -323,20 +312,20 @@ function generateTeamNotificationHtml(data: {
   taskUrl?: string;
   additionalData?: any;
   logoUrl?: string;
-  primaryCta?: {
+  primaryCta: {
     title: string;
     url: string;
   };
+  reminderContext?: string;
 }): string {
-  const statusBadgeColor = {
-    pending: { bg: '#fef3c7', color: '#92400e' },
-    in_progress: { bg: '#dbeafe', color: '#1e40af' },
-    completed: { bg: '#d1fae5', color: '#065f46' },
-    failed: { bg: '#fee2e2', color: '#991b1b' },
-    cancelled: { bg: '#f3f4f6', color: '#374151' }
+  const priorityBadgeColor = {
+    low: { bg: '#f3f4f6', color: '#374151' },
+    normal: { bg: '#dbeafe', color: '#1e40af' },
+    high: { bg: '#fed7aa', color: '#c2410c' },
+    urgent: { bg: '#fee2e2', color: '#991b1b' }
   };
   
-  const statusColor = data.status ? statusBadgeColor[data.status as keyof typeof statusBadgeColor] : statusBadgeColor.pending;
+  const priorityColor = priorityBadgeColor[data.priority as keyof typeof priorityBadgeColor] || priorityBadgeColor.normal;
   
   return `
     <!DOCTYPE html>
@@ -344,7 +333,7 @@ function generateTeamNotificationHtml(data: {
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>Task Status Update - ${data.siteName}</title>
+      <title>Task Reminder - ${data.siteName}</title>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
       
@@ -352,7 +341,7 @@ function generateTeamNotificationHtml(data: {
       <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
         
         <!-- Header -->
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 32px 40px; text-align: center;">
+        <div style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); padding: 32px 40px; text-align: center;">
           ${data.logoUrl ? `
           <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
             <img src="${data.logoUrl}" alt="${data.siteName} Logo" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
@@ -364,25 +353,18 @@ function generateTeamNotificationHtml(data: {
             </div>
           </div>
           `}
-          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">Task Status Update</h1>
-          <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; font-weight: 400;">New status update to review</p>
+          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">⏰ Task Reminder</h1>
+          <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; font-weight: 400;">Lead needs follow-up action</p>
         </div>
         
         <!-- Content -->
         <div style="padding: 40px;">
           
-          <!-- Status Badge -->
-          ${data.status ? `
-          <div style="margin-bottom: 32px; text-align: center;">
-            <div style="display: inline-block; background-color: ${statusColor.bg}; color: ${statusColor.color}; padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">
-              ${data.status.replace('_', ' ')}
-            </div>
-          </div>
-          ` : ''}
+          
           
           <!-- Lead Information -->
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Lead Information</h3>
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">👤 Lead Information</h3>
             <div style="background-color: #eff6ff; padding: 20px 24px; border-radius: 8px; border: 1px solid #bfdbfe;">
               <div style="margin-bottom: 12px;">
                 <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Name:</span>
@@ -400,20 +382,37 @@ function generateTeamNotificationHtml(data: {
           <!-- Task Information -->
           ${data.taskTitle ? `
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Task Information</h3>
-            <div style="background-color: #f8fafc; padding: 20px 24px; border-radius: 8px; border-left: 4px solid #667eea;">
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📋 Task Information</h3>
+            <div style="background-color: #fefce8; padding: 20px 24px; border-radius: 8px; border-left: 4px solid #f59e0b;">
               <h4 style="margin: 0 0 8px; color: #1e293b; font-size: 15px; font-weight: 600;">${data.taskTitle}</h4>
               ${data.taskDescription ? `<p style="margin: 0; color: #475569; font-size: 14px; line-height: 1.6;">${data.taskDescription}</p>` : ''}
             </div>
           </div>
           ` : ''}
           
-          <!-- Message -->
+          <!-- Reminder Message -->
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Update Message</h3>
-            <div style="background-color: #f1f5f9; padding: 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📢 Reminder</h3>
+            <div style="background-color: #fef3c7; padding: 24px; border-radius: 8px; border: 1px solid #fde047;">
               <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
                 ${data.message}
+              </div>
+            </div>
+          </div>
+          
+          <!-- CTA Information -->
+          <div style="margin-bottom: 32px;">
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">🎯 Action Required</h3>
+            <div style="background-color: #f0fdf4; padding: 20px 24px; border-radius: 8px; border: 1px solid #bbf7d0;">
+              <div style="margin-bottom: 16px;">
+                <span style="display: inline-block; font-weight: 600; color: #16a34a; min-width: 80px;">Action:</span>
+                <span style="color: #1e293b; font-size: 15px;">${data.primaryCta.title}</span>
+              </div>
+              <div>
+                <span style="display: inline-block; font-weight: 600; color: #16a34a; min-width: 80px;">URL:</span>
+                <a href="${data.primaryCta.url}" style="color: #16a34a; text-decoration: none; font-size: 14px; word-break: break-all;">
+                  ${data.primaryCta.url}
+                </a>
               </div>
             </div>
           </div>
@@ -421,11 +420,11 @@ function generateTeamNotificationHtml(data: {
           <!-- Additional Data -->
           ${data.additionalData && Object.keys(data.additionalData).length > 0 ? `
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Additional Information</h3>
-            <div style="background-color: #fefce8; padding: 20px 24px; border-radius: 8px; border: 1px solid #fde047;">
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📊 Additional Information</h3>
+            <div style="background-color: #f8fafc; padding: 20px 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
               ${Object.entries(data.additionalData).map(([key, value]) => `
                 <div style="margin-bottom: 8px;">
-                  <span style="display: inline-block; font-weight: 600; color: #a16207; min-width: 100px; text-transform: capitalize;">${key.replace('_', ' ')}:</span>
+                  <span style="display: inline-block; font-weight: 600; color: #475569; min-width: 100px; text-transform: capitalize;">${key.replace('_', ' ')}:</span>
                   <span style="color: #1e293b; font-size: 14px;">${typeof value === 'object' ? JSON.stringify(value) : value}</span>
                 </div>
               `).join('')}
@@ -433,39 +432,45 @@ function generateTeamNotificationHtml(data: {
           </div>
           ` : ''}
           
+          <!-- Context Note -->
+          ${data.reminderContext ? `
+          <div style="margin-bottom: 32px;">
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📝 Context</h3>
+            <div style="background-color: #f1f5f9; padding: 20px 24px; border-radius: 8px; border-left: 3px solid #64748b;">
+              <p style="margin: 0; color: #475569; font-size: 14px; line-height: 1.6;">
+                ${data.reminderContext}
+              </p>
+            </div>
+          </div>
+          ` : ''}
+          
           <!-- Action Buttons -->
-          ${data.primaryCta || data.taskUrl ? `
           <div style="text-align: center; margin: 40px 0 32px;">
-            ${data.primaryCta ? `
             <a href="${data.primaryCta.url}" 
-               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
+               style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
               ${data.primaryCta.title} →
             </a>
-            ` : ''}
             ${data.taskUrl ? `
             <a href="${data.taskUrl}" 
-               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
+               style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
               View Task →
             </a>
             ` : ''}
           </div>
-          ` : ''}
           
           <!-- Explanation -->
-          ${data.taskTitle ? `
           <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
             <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
-              This notification is an update to <strong style="color: #475569;">${data.taskTitle}</strong>
+              This is an automated reminder about a pending task action for <strong style="color: #475569;">${data.leadName}</strong>
             </p>
           </div>
-          ` : ''}
           
         </div>
         
         <!-- Footer -->
         <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
           <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-            This notification was automatically generated by ${getCompanyName()}.<br>
+            This reminder was automatically generated by ${getCompanyName()}.<br>
             Manage your notification preferences in your account settings.
           </p>
         </div>
@@ -475,7 +480,7 @@ function generateTeamNotificationHtml(data: {
       <!-- Powered by -->
       <div style="text-align: center; margin: 24px 0;">
         <p style="margin: 0; color: #94a3b8; font-size: 12px;">
-          Powered by <strong style="color: #667eea;">${getBrandingText()}</strong>
+          Powered by <strong style="color: #f59e0b;">${getBrandingText()}</strong>
         </p>
       </div>
       
@@ -486,15 +491,15 @@ function generateTeamNotificationHtml(data: {
 
 export async function POST(request: NextRequest) {
   try {
-    console.log('📧 [TaskStatus] Iniciando notificación de estado de tarea');
+    console.log('⏰ [TaskReminder] Iniciando recordatorio de comentario de tarea');
     
     const body = await request.json();
     
     // Validar el cuerpo de la request
-    const validationResult = TaskStatusSchema.safeParse(body);
+    const validationResult = TaskCommentReminderSchema.safeParse(body);
     
     if (!validationResult.success) {
-      console.error('❌ [TaskStatus] Error de validación:', validationResult.error.errors);
+      console.error('❌ [TaskReminder] Error de validación:', validationResult.error.errors);
       return NextResponse.json(
         {
           success: false,
@@ -521,7 +526,7 @@ export async function POST(request: NextRequest) {
       additional_data
     } = validationResult.data;
     
-    console.log(`📋 [TaskStatus] Procesando notificación para sitio: ${site_id}, lead: ${lead_id}`);
+    console.log(`📋 [TaskReminder] Procesando recordatorio para sitio: ${site_id}, lead: ${lead_id}`);
     
     // Obtener información del lead
     const leadInfo = await getLeadInfo(lead_id);
@@ -555,16 +560,40 @@ export async function POST(request: NextRequest) {
     
     // Obtener información de la tarea si se proporciona task_id
     let taskInfo = null;
-    let lastComment = null;
+    let lastCommentWithCTA = null;
     if (task_id) {
-      console.log(`🔍 [TaskStatus] Obteniendo información de tarea: ${task_id}`);
+      console.log(`🔍 [TaskReminder] Obteniendo información de tarea: ${task_id}`);
       taskInfo = await getTaskInfo(task_id);
       
-      // Obtener el último comentario para buscar CTA
-      console.log(`💬 [TaskStatus] Obteniendo último comentario de tarea: ${task_id}`);
-      lastComment = await getLastTaskComment(task_id);
+      // Obtener el último comentario con CTA (requerido para reminders)
+      console.log(`💬 [TaskReminder] Obteniendo último comentario con CTA de tarea: ${task_id}`);
+      lastCommentWithCTA = await getLastTaskCommentWithCTA(task_id);
+      
+      if (!lastCommentWithCTA || !lastCommentWithCTA.cta?.primary_action) {
+        console.error(`❌ [TaskReminder] No se encontró comentario con CTA para la tarea: ${task_id}`);
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'CTA_NOT_FOUND',
+              message: 'No CTA found in task comments. Reminders require a task with CTA.'
+            }
+          },
+          { status: 400 }
+        );
+      }
     } else {
-      console.log(`ℹ️ [TaskStatus] No se proporcionó task_id, notificación sin tarea específica`);
+      console.error(`❌ [TaskReminder] task_id es requerido para recordatorios`);
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'TASK_ID_REQUIRED',
+            message: 'task_id is required for task comment reminders'
+          }
+        },
+        { status: 400 }
+      );
     }
     
     const results = {
@@ -582,42 +611,40 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const taskUrl = task_id ? `${baseUrl}/sites/${site_id}/tasks/${task_id}` : undefined;
-    // Usar la URL real del sitio si está disponible, sino usar la URL de la aplicación
+    const taskUrl = `${baseUrl}/sites/${site_id}/tasks/${task_id}`;
     const siteUrl = siteInfo.url || `${baseUrl}/sites/${site_id}`;
+    
+    // Preparar datos del CTA primario
+    const primaryCta = {
+      title: lastCommentWithCTA.cta.primary_action.title || lastCommentWithCTA.cta.primary_action.text || 'Take Action',
+      url: lastCommentWithCTA.cta.primary_action.url || lastCommentWithCTA.cta.primary_action.link
+    };
+    
+    console.log(`🎯 [TaskReminder] CTA encontrado: ${primaryCta.title} → ${primaryCta.url}`);
     
     // Mapear el tipo de notificación
     const notificationTypeMap = {
-      task_update: NotificationType.INFO,
-      task_completed: NotificationType.SUCCESS,
-      task_failed: NotificationType.ERROR,
-      task_cancelled: NotificationType.WARNING
+      task_reminder: NotificationType.INFO,
+      cta_reminder: NotificationType.WARNING,
+      follow_up_reminder: NotificationType.INFO,
+      action_required: NotificationType.WARNING
     };
     
-    const notificationType = notificationTypeMap[notification_type] || NotificationType.INFO;
+    const notificationType = notificationTypeMap[notification_type] || NotificationType.WARNING;
+    
+    // Contexto del recordatorio
+    const reminderContext = `This is a reminder about "${taskInfo?.title || 'your pending task'}" - please take the required action when convenient.`;
     
     // 1. Notificar al equipo si está habilitado
     if (include_team) {
-      console.log('📢 [TaskStatus] Notificando al equipo...');
+      console.log('📢 [TaskReminder] Enviando recordatorio al equipo...');
       
       try {
-        // Preparar datos del CTA primario si existe
-        const primaryCta = lastComment?.cta?.primary_action ? {
-          title: lastComment.cta.primary_action.title || lastComment.cta.primary_action.text || 'Ver más',
-          url: lastComment.cta.primary_action.url || lastComment.cta.primary_action.link
-        } : undefined;
-        
-        if (primaryCta) {
-          console.log(`🎯 [TaskStatus] Usando CTA primario para notificación del equipo`);
-        }
-
         const teamNotificationResult = await TeamNotificationService.notifyTeam({
           siteId: site_id,
-          title: taskInfo?.title 
-            ? `Task Update: ${taskInfo.title}`
-            : `Task Status Update for ${leadInfo.name || 'Lead'}`,
-          message: `Task status update for lead ${leadInfo.name}: ${message}`,
-          htmlContent: generateTeamNotificationHtml({
+          title: `Task Reminder: ${taskInfo?.title || 'Pending Action'}`,
+          message: `Reminder: Lead ${leadInfo.name} has a pending action for task "${taskInfo?.title}". ${message}`,
+          htmlContent: generateTeamReminderHtml({
             leadName: leadInfo.name || 'Unknown Lead',
             leadEmail: leadInfo.email || 'No email',
             message,
@@ -629,57 +656,47 @@ export async function POST(request: NextRequest) {
             taskUrl,
             additionalData: additional_data,
             logoUrl: siteInfo.logo_url,
-            primaryCta
+            primaryCta,
+            reminderContext
           }),
           priority: priority as any,
           type: notificationType,
-          categories: ['task-notification', 'task-status-update'],
+          categories: ['task-reminder', 'cta-reminder'],
           customArgs: {
-            taskId: task_id || '',
+            taskId: task_id,
             leadId: lead_id,
-            notificationType: notification_type
+            notificationType: notification_type,
+            ctaUrl: primaryCta.url
           },
           relatedEntityType: 'task',
-          relatedEntityId: task_id || lead_id
+          relatedEntityId: task_id
         });
         
         if (teamNotificationResult.success) {
           results.notifications_sent.team = teamNotificationResult.notificationsSent;
           results.emails_sent.team = teamNotificationResult.emailsSent;
-          console.log(`✅ [TaskStatus] Equipo notificado: ${teamNotificationResult.notificationsSent} notificaciones, ${teamNotificationResult.emailsSent} emails`);
+          console.log(`✅ [TaskReminder] Equipo notificado: ${teamNotificationResult.notificationsSent} notificaciones, ${teamNotificationResult.emailsSent} emails`);
         } else {
           const errorMsg = `Failed to notify team: ${teamNotificationResult.errors?.join(', ') || 'Unknown error'}`;
           results.errors.push(errorMsg);
-          console.error(`❌ [TaskStatus] ${errorMsg}`);
+          console.error(`❌ [TaskReminder] ${errorMsg}`);
         }
       } catch (error) {
         const errorMsg = `Error notifying team: ${error instanceof Error ? error.message : 'Unknown error'}`;
         results.errors.push(errorMsg);
-        console.error(`❌ [TaskStatus] ${errorMsg}`, error);
+        console.error(`❌ [TaskReminder] ${errorMsg}`, error);
       }
     }
     
-    // 2. Notificar al lead si está habilitado y tiene email
+    // 2. Enviar recordatorio al lead si está habilitado y tiene email
     if (include_lead && leadInfo.email) {
-      console.log(`📧 [TaskStatus] Notificando al lead: ${leadInfo.email}`);
+      console.log(`📧 [TaskReminder] Enviando recordatorio al lead: ${leadInfo.email}`);
       
       try {
-        // Reutilizar la misma lógica de CTA para notificación del lead
-        const primaryCtaForLead = lastComment?.cta?.primary_action ? {
-          title: lastComment.cta.primary_action.title || lastComment.cta.primary_action.text || 'Ver más',
-          url: lastComment.cta.primary_action.url || lastComment.cta.primary_action.link
-        } : undefined;
-        
-        if (primaryCtaForLead) {
-          console.log(`🎯 [TaskStatus] Usando CTA primario para notificación del lead`);
-        }
-
         const leadEmailResult = await sendGridService.sendEmail({
           to: leadInfo.email,
-          subject: taskInfo?.title 
-            ? `${taskInfo.title} - Status Update from ${siteInfo.name || 'Our Team'}`
-            : `Status Update - ${siteInfo.name || 'Notification'}`,
-          html: generateLeadNotificationHtml({
+          subject: `⏰ Friendly Reminder: ${taskInfo?.title || 'Action Required'} - ${siteInfo.name || 'Notification'}`,
+          html: generateLeadReminderHtml({
             leadName: leadInfo.name || 'Dear Customer',
             message,
             siteName: siteInfo.name || 'Our Team',
@@ -689,34 +706,36 @@ export async function POST(request: NextRequest) {
             priority,
             siteUrl,
             logoUrl: siteInfo.logo_url,
-            primaryCta: primaryCtaForLead
+            primaryCta,
+            reminderContext
           }),
-          categories: ['task-notification', 'lead-notification', 'transactional'],
+          categories: ['task-reminder', 'cta-reminder', 'lead-notification', 'transactional'],
           customArgs: {
             siteId: site_id,
             leadId: lead_id,
-            taskId: task_id || '',
-            notificationType: notification_type
+            taskId: task_id,
+            notificationType: notification_type,
+            ctaUrl: primaryCta.url
           }
         });
         
         if (leadEmailResult.success) {
           results.emails_sent.lead = 1;
-          console.log(`✅ [TaskStatus] Lead notificado exitosamente: ${leadInfo.email}`);
+          console.log(`✅ [TaskReminder] Lead notificado exitosamente: ${leadInfo.email}`);
         } else {
           const errorMsg = `Failed to notify lead: ${leadEmailResult.error}`;
           results.errors.push(errorMsg);
-          console.error(`❌ [TaskStatus] ${errorMsg}`);
+          console.error(`❌ [TaskReminder] ${errorMsg}`);
         }
       } catch (error) {
         const errorMsg = `Error notifying lead: ${error instanceof Error ? error.message : 'Unknown error'}`;
         results.errors.push(errorMsg);
-        console.error(`❌ [TaskStatus] ${errorMsg}`, error);
+        console.error(`❌ [TaskReminder] ${errorMsg}`, error);
       }
     } else if (include_lead && !leadInfo.email) {
-      const errorMsg = 'Lead notification requested but lead has no email';
+      const errorMsg = 'Lead reminder requested but lead has no email';
       results.errors.push(errorMsg);
-      console.warn(`⚠️ [TaskStatus] ${errorMsg}`);
+      console.warn(`⚠️ [TaskReminder] ${errorMsg}`);
     }
     
     // Determinar el éxito general
@@ -726,12 +745,14 @@ export async function POST(request: NextRequest) {
     
     results.success = hasNotifications && results.errors.length === 0;
     
-    console.log(`📊 [TaskStatus] Resumen de notificaciones:`, {
+    console.log(`📊 [TaskReminder] Resumen de recordatorios:`, {
       success: results.success,
       team_notifications: results.notifications_sent.team,
       team_emails: results.emails_sent.team,
       lead_emails: results.emails_sent.lead,
-      errors: results.errors.length
+      errors: results.errors.length,
+      cta_title: primaryCta.title,
+      cta_url: primaryCta.url
     });
     
     return NextResponse.json({
@@ -748,7 +769,7 @@ export async function POST(request: NextRequest) {
         site_info: {
           name: siteInfo.name
         },
-        task_info: taskInfo ? {
+        task_info: {
           id: taskInfo.id,
           title: taskInfo.title,
           description: taskInfo.description,
@@ -756,7 +777,12 @@ export async function POST(request: NextRequest) {
           status: taskInfo.status,
           stage: taskInfo.stage,
           priority: taskInfo.priority
-        } : null,
+        },
+        cta_info: {
+          title: primaryCta.title,
+          url: primaryCta.url,
+          comment_id: lastCommentWithCTA.id
+        },
         notifications_sent: results.notifications_sent,
         emails_sent: results.emails_sent,
         total_recipients: {
@@ -771,7 +797,7 @@ export async function POST(request: NextRequest) {
     });
     
   } catch (error) {
-    console.error('❌ [TaskStatus] Error general:', error);
+    console.error('❌ [TaskReminder] Error general:', error);
     return NextResponse.json(
       {
         success: false,

@@ -1,0 +1,98 @@
+---
+title: 'schedule-date'
+description: 'Programa una cita o fecha para un evento específico'
+---
+
+# schedule-date
+
+Este tool permite programar citas o fechas para eventos futuros, facilitando la coordinación temporal entre usuarios y agentes.
+
+## Descripción
+
+Crea una nueva cita o evento en un calendario compartido, asignando fecha, hora, duración y metadatos relevantes. El sistema verifica la disponibilidad del horario solicitado y confirma o sugiere alternativas según corresponda.
+
+## Parámetros
+
+| Nombre          | Tipo     | Requerido | Descripción                                                |
+|-----------------|----------|-----------|-----------------------------------------------------------|
+| title           | string   | Sí        | Título descriptivo de la cita o evento                     |
+| start_datetime  | string   | Sí        | Fecha y hora de inicio (formato ISO 8601)                  |
+| duration        | number   | Sí        | Duración en minutos                                        |
+| timezone        | string   | Sí        | Zona horaria (formato IANA, ej: 'America/Mexico_City')     |
+| context_id      | string   | Sí        | ID de contexto (conversación, ticket, etc.)                |
+| participants    | array    | No        | Lista de IDs de participantes                              |
+| location        | string   | No        | Ubicación física o virtual (URL) de la cita                |
+| description     | string   | No        | Descripción detallada del propósito de la cita             |
+| reminder        | number   | No        | Tiempo de recordatorio en minutos antes del evento         |
+
+## Respuesta
+
+```json
+{
+  "success": true,
+  "appointment_id": "7d892e54-f109-42c3-b7ae-89a21ce3df78",
+  "title": "Revisión de propuesta comercial",
+  "start_datetime": "2025-05-15T14:30:00-05:00",
+  "end_datetime": "2025-05-15T15:00:00-05:00",
+  "timezone": "America/Mexico_City",
+  "status": "confirmed",
+  "calendar_link": "https://cal.example.com/event/7d892e54-f109-42c3-b7ae-89a21ce3df78"
+}
+```
+
+| Campo          | Tipo     | Descripción                                              |
+|----------------|----------|----------------------------------------------------------|
+| success        | boolean  | Indica si la programación fue exitosa                    |
+| appointment_id | string   | ID único de la cita programada                           |
+| title          | string   | Título de la cita                                        |
+| start_datetime | string   | Fecha y hora de inicio confirmada                        |
+| end_datetime   | string   | Fecha y hora de finalización calculada                   |
+| timezone       | string   | Zona horaria aplicada                                    |
+| status         | string   | Estado de la cita (confirmed, pending, suggested)        |
+| calendar_link  | string   | Enlace para acceder directamente al evento en calendario |
+
+## Códigos de respuesta
+
+| Código | Estado          | Descripción                                                  |
+|--------|-----------------|--------------------------------------------------------------|
+| 200    | OK              | La cita se programó exitosamente                            |
+| 201    | Created         | Se creó una nueva cita                                       |
+| 400    | Bad Request     | Parámetros inválidos o faltantes                             |
+| 409    | Conflict        | Conflicto de horario, horario no disponible                  |
+| 422    | Unprocessable   | Fecha pasada o formato incorrecto                           |
+| 429    | Too Many        | Límite de solicitudes excedido                               |
+| 500    | Server Error    | Error del servidor al procesar la solicitud                  |
+
+## Ejemplo de uso
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "schedule-date",
+    input: {
+      title: "Revisión de propuesta comercial",
+      start_datetime: "2025-05-15T14:30:00-05:00",
+      duration: 30,
+      timezone: "America/Mexico_City",
+      context_id: "conv_89a9e1f8-d23f-499d-ab42-606e9bb2c71b",
+      participants: ["user_478d3106-7391", "agent_8466202b45a9"],
+      location: "https://meet.example.com/abc123",
+      description: "Revisión de términos y condiciones de la propuesta enviada",
+      reminder: 15
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Cita programada exitosamente para: ${result.start_datetime}`);
+  console.log(`Enlace al calendario: ${result.calendar_link}`);
+}
+```
+
+## Notas
+
+- Las fechas deben estar en formato ISO 8601 (YYYY-MM-DDTHH:MM:SS±HH:MM)
+- Si el horario solicitado no está disponible, el sistema puede retornar sugerencias alternativas
+- La duración mínima de una cita es de 5 minutos
+- El tool verifica automáticamente la disponibilidad de los participantes
+- Las citas pueden sincronizarse con sistemas de calendario externos (Google Calendar, Outlook, etc.)

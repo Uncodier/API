@@ -126,7 +126,11 @@ export function extractJson(input: string): any | null {
  * Filters out sensitive or large fields from options
  */
 export function filterOptions(options: any): any {
-  const { htmlContent, ...filteredOptions } = { ...options };
+  if (!options) {
+    return {};
+  }
+  const filteredOptions = { ...options };
+  delete filteredOptions.htmlContent;
   return filteredOptions;
 }
 
