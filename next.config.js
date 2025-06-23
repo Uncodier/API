@@ -1,8 +1,18 @@
 import path from 'path';
 import { fileURLToPath } from 'url';
+import nextra from 'nextra';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+const withNextra = nextra({
+  contentDirBasePath: '/src/content',
+  mdxOptions: {
+    rehypePlugins: [],
+    remarkPlugins: []
+  },
+  defaultShowCopyCode: true
+});
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -31,4 +41,4 @@ const nextConfig = {
   },
 };
 
-export default nextConfig; 
+export default withNextra(nextConfig); 
