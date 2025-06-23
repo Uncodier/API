@@ -12,7 +12,7 @@
   {
     "info_type": "SCHEMA_SUMMARY",
     "object_type": "TRIGGERS",
-    "count": 33
+    "count": 34
   },
   {
     "info_type": "SCHEMA_SUMMARY",
@@ -1351,6 +1351,7 @@ CREATE TABLE public.waitlist (
 | INDEX       | waitlist_pkey                                    | waitlist              |
 | TRIGGER     | activate_pending_memberships_trigger             | profiles              |
 | TRIGGER     | billing_timestamp_trigger                        | billing               |
+| TRIGGER     | campaign_cascade_delete_trigger                  | campaigns             |
 | TRIGGER     | check_expired_api_keys                           | api_keys              |
 | TRIGGER     | check_expired_api_keys                           | api_keys              |
 | TRIGGER     | log_asset_insert_trigger                         | assets                |

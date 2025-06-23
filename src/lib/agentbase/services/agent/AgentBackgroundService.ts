@@ -105,6 +105,16 @@ export class AgentBackgroundService {
           console.log(`🔍 [AgentBackgroundService] Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
         }
         
+        // Obtener campañas activas si hay información del sitio
+        let activeCampaigns: Array<{ title: string; description?: string }> = [];
+        if (siteInfo?.site?.id) {
+          try {
+            activeCampaigns = await DataFetcher.getActiveCampaigns(siteInfo.site.id);
+          } catch (error) {
+            console.error(`❌ [AgentBackgroundService] Error al obtener campañas activas:`, error);
+          }
+        }
+
         // Construir el background con toda la información
         // Nota: Pasamos la información del sitio directamente a BackgroundBuilder
         // quien se encargará de formatearla correctamente
@@ -116,7 +126,8 @@ export class AgentBackgroundService {
           agentData.backstory,
           agentData.systemPrompt,
           agentData.agentPrompt,
-          siteInfo
+          siteInfo,
+          activeCampaigns
         );
         
         // Añadir archivos al background si están disponibles
@@ -198,6 +209,16 @@ export class AgentBackgroundService {
         }
       }
       
+      // Obtener campañas activas si hay información del sitio
+      let activeCampaigns: Array<{ title: string; description?: string }> = [];
+      if (siteInfo?.site?.id) {
+        try {
+          activeCampaigns = await DataFetcher.getActiveCampaigns(siteInfo.site.id);
+        } catch (error) {
+          console.error(`❌ [AgentBackgroundService] Error al obtener campañas activas:`, error);
+        }
+      }
+
       // Construir el background final
       console.log(`🧩 [AgentBackgroundService] Construyendo agentPrompt final para ${id}`);
       const finalBackground = BackgroundBuilder.buildAgentPrompt(
@@ -208,7 +229,8 @@ export class AgentBackgroundService {
         processorData.backstory,
         processorData.systemPrompt,
         processorData.agentPrompt,
-        siteInfo
+        siteInfo,
+        activeCampaigns
       );
       
       // Registrar para debugging
@@ -265,6 +287,14 @@ export class AgentBackgroundService {
               }
             }
             
+            // Obtener campañas activas
+            let activeCampaigns: Array<{ title: string; description?: string }> = [];
+            try {
+              activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
+            } catch (error) {
+              console.error(`❌ [AgentBackgroundService] Error al obtener campañas activas:`, error);
+            }
+
             // Construir el background con toda la información
             let background = BackgroundBuilder.buildAgentPrompt(
               agentId,
@@ -274,7 +304,8 @@ export class AgentBackgroundService {
               enhancedAgentData.formattedData.backstory,
               enhancedAgentData.formattedData.systemPrompt,
               enhancedAgentData.formattedData.agentPrompt,
-              enhancedAgentData.siteInfo
+              enhancedAgentData.siteInfo,
+              activeCampaigns
             );
             
             // Añadir archivos al background si están disponibles
@@ -308,6 +339,14 @@ export class AgentBackgroundService {
         }
       }
       
+      // Obtener campañas activas
+      let activeCampaigns: Array<{ title: string; description?: string }> = [];
+      try {
+        activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
+      } catch (error) {
+        console.error(`❌ [AgentBackgroundService] Error al obtener campañas activas:`, error);
+      }
+
       // Construir el background con la información del processor y el sitio
       const background = BackgroundBuilder.buildAgentPrompt(
         processor.getId() || 'generic',
@@ -317,7 +356,8 @@ export class AgentBackgroundService {
         processorData.backstory,
         processorData.systemPrompt,
         processorData.agentPrompt,
-        siteInfo
+        siteInfo,
+        activeCampaigns
       );
       
       console.log(`✅ [AgentBackgroundService] Background generado desde processor con sitio: ${siteId} (${background.length} caracteres)`);

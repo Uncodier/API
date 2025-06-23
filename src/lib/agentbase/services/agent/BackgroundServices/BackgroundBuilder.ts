@@ -18,7 +18,11 @@ export class BackgroundBuilder {
     siteInfo?: {
       site: any | null;
       settings: any | null;
-    }
+    },
+    activeCampaigns?: Array<{
+      title: string;
+      description?: string;
+    }>
   ): string {
     console.log(`🧩 [BackgroundBuilder] Construyendo prompt para ${name} (${id})`);
     console.log(`🧩 [BackgroundBuilder] AgentPrompt disponible: ${agentPrompt ? 'SÍ' : 'NO'} - Longitud: ${agentPrompt ? agentPrompt.length : 0}`);
@@ -48,7 +52,9 @@ export class BackgroundBuilder {
       this.createSystemSection(systemPrompt),
       this.createCustomInstructionsSection(agentPrompt),
       // No incluimos siteInfo si es null o los dos campos son null
-      (!siteInfo || (!siteInfo.site && !siteInfo.settings)) ? '' : this.createSiteInfoSection(siteInfo)
+      (!siteInfo || (!siteInfo.site && !siteInfo.settings)) ? '' : this.createSiteInfoSection(siteInfo),
+      // Incluir campañas activas si están disponibles
+      (!activeCampaigns || activeCampaigns.length === 0) ? '' : this.createActiveCampaignsSection(activeCampaigns)
     ];
     
     // Unir todas las secciones, filtrando las vacías
@@ -394,6 +400,32 @@ export class BackgroundBuilder {
     
     console.log(`🔍 [BackgroundBuilder] Sección de sitio creada (${siteSection.length} caracteres)`);
     return siteSection;
+  }
+
+  /**
+   * Crea la sección de campañas activas si están disponibles
+   */
+  private static createActiveCampaignsSection(activeCampaigns: Array<{
+    title: string;
+    description?: string;
+  }>): string {
+    if (!activeCampaigns || activeCampaigns.length === 0) return '';
+    
+    console.log(`🔍 [BackgroundBuilder] Añadiendo ${activeCampaigns.length} campañas activas al background`);
+    
+    let campaignsSection = '# Active Campaigns\n';
+    campaignsSection += 'The following campaigns are currently active for this site:\n\n';
+    
+    activeCampaigns.forEach((campaign, index) => {
+      campaignsSection += `## Campaign ${index + 1}: ${campaign.title}\n`;
+      if (campaign.description) {
+        campaignsSection += `Description: ${campaign.description}\n`;
+      }
+      campaignsSection += '\n';
+    });
+    
+    console.log(`🔍 [BackgroundBuilder] Sección de campañas activas creada (${campaignsSection.length} caracteres)`);
+    return campaignsSection;
   }
   
   /**

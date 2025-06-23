@@ -123,6 +123,7 @@ INSTRUCTIONS:
 Your campaigns should be strategic, measurable, and aligned with business growth objectives. Use the audience segment insights to ensure maximum campaign relevance and effectiveness.
 
 IMPORTANT:
+- If the project does not have a explicit budget, assume there is not, and create only 0 cost campaigns and strategies.
 - If the campaign is targeting a paid channel, assign a specific budget for the channel in a task, example: 
   50 usd to design, copys, setup, etc., 100 usd to run the ads, total 150 usd for the campaign.
 - Consider the specific interests and pain points from each segment when designing campaigns

@@ -10,7 +10,7 @@ export const metadata = {
   // For more information on metadata API, see: https://nextjs.org/docs/app/building-your-application/optimizing/metadata
 }
 
-const banner = <Banner storageKey="some-key">Uncodie Site Analyzer está disponible 🎉</Banner>
+const banner = <Banner storageKey="some-key">Uncodie Market Fit está disponible 🎉</Banner>
 const navbar = (
   <Navbar
     logo={<b>Uncodie</b>}
