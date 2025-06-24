@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
+import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 // Import the packages without TypeScript type checking
 const Imap = require('imap');
 const nodemailer = require('nodemailer');
 
-// Create schema for request validation
+// Create schema for request validation (aligned with parent route)
 const EmailCheckRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required").optional(),
-  host: z.string().optional(),
-  port: z.number().or(z.string()).optional(),
-  user: z.string().optional(),
-  email: z.string().optional(),
+  email: z.string().email().optional(),
   password: z.string().optional(),
+  use_saved_credentials: z.boolean().default(true).optional(),
+  incoming_server: z.string().optional(),
+  incoming_port: z.number().or(z.string()).optional(),
+  outgoing_server: z.string().optional(),
+  outgoing_port: z.number().or(z.string()).optional(),
   tls: z.boolean().default(true).optional(),
   skip_smtp: z.boolean().default(false).optional()
 });
@@ -19,11 +23,8 @@ const EmailCheckRequestSchema = z.object({
 // Error codes
 const ERROR_CODES = {
   INVALID_REQUEST: 'INVALID_REQUEST',
-  UNAUTHORIZED: 'UNAUTHORIZED',
-  NOT_FOUND: 'NOT_FOUND',
-  CREDENTIALS_ERROR: 'CREDENTIALS_ERROR',
-  IMAP_CONNECTION_ERROR: 'IMAP_CONNECTION_ERROR',
-  SMTP_CONNECTION_ERROR: 'SMTP_CONNECTION_ERROR',
+  EMAIL_CONFIG_NOT_FOUND: 'EMAIL_CONFIG_NOT_FOUND',
+  EMAIL_FETCH_ERROR: 'EMAIL_FETCH_ERROR',
   SYSTEM_ERROR: 'SYSTEM_ERROR'
 };
 
@@ -33,7 +34,9 @@ async function checkIMAPConnection(config: {
   email?: string;
   password: string;
   host?: string;
+  imapHost?: string;
   port?: number | string;
+  imapPort?: number | string;
   tls?: boolean;
 }): Promise<{
   success: boolean;
@@ -53,15 +56,16 @@ async function checkIMAPConnection(config: {
 
       // Parse ports to ensure they are numbers
       let imapPort = 993;
-      if (config.port) {
-        imapPort = typeof config.port === 'number' ? config.port : parseInt(config.port, 10);
+      if (config.port || config.imapPort) {
+        const portValue = config.imapPort || config.port;
+        imapPort = typeof portValue === 'number' ? portValue : parseInt(String(portValue), 10);
       }
       
       // Create IMAP connection
       const imapConfig = {
         user: config.user || config.email,
         password: config.password,
-        host: config.host || 'imap.gmail.com',
+        host: config.imapHost || config.host || 'imap.gmail.com',
         port: imapPort,
         tls: config.tls !== false,
         tlsOptions: { rejectUnauthorized: false },
@@ -146,7 +150,7 @@ async function checkSMTPConnection(config: {
     // Parse ports to ensure they are numbers
     let smtpPort = 587;
     if (config.smtpPort) {
-      smtpPort = typeof config.smtpPort === 'number' ? config.smtpPort : parseInt(config.smtpPort, 10);
+      smtpPort = typeof config.smtpPort === 'number' ? config.smtpPort : parseInt(String(config.smtpPort), 10);
     }
     
     // Create transporter
@@ -191,18 +195,20 @@ export async function POST(request: NextRequest) {
   try {
     // Get request body
     const requestData = await request.json();
+    console.log('[EMAIL_CHECK] Request data received:', JSON.stringify(requestData, null, 2));
     
-    // Log request (without sensitive data)
-    console.log(`[EMAIL_CHECK] Procesando solicitud:`, {
-      ...requestData,
-      password: requestData.password ? '[REDACTED]' : undefined
-    });
+    // Normalizar datos del request para aceptar tanto camelCase como snake_case (igual que la ruta principal)
+    const normalizedData = CaseConverterService.normalizeRequestData(requestData, 'snake');
+    console.log('[EMAIL_CHECK] Normalized data:', JSON.stringify(normalizedData, null, 2));
     
-    // Validate request data
-    const validationResult = EmailCheckRequestSchema.safeParse(requestData);
+    const validationResult = EmailCheckRequestSchema.safeParse(normalizedData);
     
     if (!validationResult.success) {
-      console.error("[EMAIL_CHECK] Error de validación:", validationResult.error);
+      console.error("[EMAIL_CHECK] Validation error details:", JSON.stringify({
+        error: validationResult.error.format(),
+        issues: validationResult.error.issues,
+      }, null, 2));
+      
       return NextResponse.json(
         {
           success: false,
@@ -216,115 +222,80 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const {
-      site_id,
-      host = 'imap.gmail.com',
-      port = 993,
-      user,
-      email,
-      password,
-      tls = true,
-      skip_smtp = false
-    } = validationResult.data;
+    console.log('[EMAIL_CHECK] Validation successful, parsed data:', JSON.stringify(validationResult.data, null, 2));
     
-    // If site_id is provided, try to get credentials from token service
-    let emailConfig: any = {
-      host,
-      port,
-      user: user || email,
-      email: email || user,
-      password,
-      tls
-    };
+    // Extraer parámetros usando getFlexibleProperty para máxima compatibilidad (igual que la ruta principal)
+    const siteId = getFlexibleProperty(requestData, 'site_id') || getFlexibleProperty(requestData, 'siteId') || validationResult.data.site_id;
+    const emailAddress = getFlexibleProperty(requestData, 'email') || validationResult.data.email;
+    const password = getFlexibleProperty(requestData, 'password') || validationResult.data.password;
+    const useSavedCredentials = getFlexibleProperty(requestData, 'use_saved_credentials') || getFlexibleProperty(requestData, 'useSavedCredentials') || validationResult.data.use_saved_credentials;
+    const incomingServer = getFlexibleProperty(requestData, 'incoming_server') || getFlexibleProperty(requestData, 'incomingServer') || validationResult.data.incoming_server;
+    const incomingPort = getFlexibleProperty(requestData, 'incoming_port') || getFlexibleProperty(requestData, 'incomingPort') || validationResult.data.incoming_port;
+    const outgoingServer = getFlexibleProperty(requestData, 'outgoing_server') || getFlexibleProperty(requestData, 'outgoingServer') || validationResult.data.outgoing_server;
+    const outgoingPort = getFlexibleProperty(requestData, 'outgoing_port') || getFlexibleProperty(requestData, 'outgoingPort') || validationResult.data.outgoing_port;
+    const tls = getFlexibleProperty(requestData, 'tls') !== undefined ? getFlexibleProperty(requestData, 'tls') : validationResult.data.tls;
+    const skipSmtp = getFlexibleProperty(requestData, 'skip_smtp') || getFlexibleProperty(requestData, 'skipSmtp') || validationResult.data.skip_smtp;
     
-    if (site_id && (!password || !emailConfig.user)) {
-      console.log(`[EMAIL_CHECK] Obteniendo credenciales desde servicio de tokens para sitio ${site_id}...`);
+    console.log('[EMAIL_CHECK] Extracted parameters:', {
+      siteId, emailAddress, useSavedCredentials, incomingServer, incomingPort, outgoingServer, outgoingPort, tls, skipSmtp,
+      hasPassword: !!password
+    });
+    
+    let emailConfig: any;
+    
+    // Usar la misma lógica que la ruta padre para obtener configuración
+    if (siteId && useSavedCredentials !== false) {
+      console.log(`[EMAIL_CHECK] Obteniendo credenciales guardadas para sitio ${siteId}...`);
       
       try {
-        // Define URL for the decryption service
-        const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-        const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
+        // Usar EmailConfigService exactamente igual que la ruta principal
+        emailConfig = await EmailConfigService.getEmailConfig(siteId);
+        console.log(`[EMAIL_CHECK] Credenciales obtenidas desde EmailConfigService`);
         
-        // Request decryption from the service
-        const response = await fetch(decryptUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            site_id,
-            token_type: 'email'
-          })
-        });
+        // Override with manual values if provided (mantener la flexibilidad)
+        if (incomingServer) emailConfig.host = emailConfig.imapHost = incomingServer;
+        if (incomingPort) emailConfig.port = emailConfig.imapPort = typeof incomingPort === 'number' ? incomingPort : parseInt(incomingPort, 10);
+        if (outgoingServer) emailConfig.smtpHost = outgoingServer;
+        if (outgoingPort) emailConfig.smtpPort = typeof outgoingPort === 'number' ? outgoingPort : parseInt(outgoingPort, 10);
+        if (emailAddress) emailConfig.email = emailConfig.user = emailAddress;
+        if (password) emailConfig.password = password;
+        if (tls !== undefined) emailConfig.tls = tls;
         
-        // Parse the response
-        const result = await response.json();
+      } catch (error: unknown) {
+        console.error(`[EMAIL_CHECK] Error al obtener credenciales guardadas:`, error);
         
-        if (!response.ok || !result.success) {
-          console.error(`[EMAIL_CHECK] Error al obtener credenciales de token:`, result.error);
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: ERROR_CODES.CREDENTIALS_ERROR,
-                message: `Failed to get email credentials: ${result.error?.message || 'Unknown error'}`
-              }
-            },
-            { status: 500 }
-          );
-        }
+        // Usar los mismos códigos de error que la ruta principal
+        const isConfigError = error instanceof Error && (
+          error.message.includes('settings') || 
+          error.message.includes('token')
+        );
         
-        if (!result.data || !result.data.tokenValue) {
-          console.error(`[EMAIL_CHECK] No se encontraron credenciales en el token`);
-          return NextResponse.json(
-            {
-              success: false,
-              error: {
-                code: ERROR_CODES.CREDENTIALS_ERROR,
-                message: `No credentials found in token for site ${site_id}`
-              }
-            },
-            { status: 404 }
-          );
-        }
-        
-        // Get credentials from token
-        const tokenValue = result.data.tokenValue;
-        console.log(`[EMAIL_CHECK] Credenciales obtenidas desde token`);
-        
-        // If token value is an object
-        if (typeof tokenValue === 'object') {
-          emailConfig = {
-            ...emailConfig,
-            ...tokenValue
-          };
-        } 
-        // If token value is a string, try to parse as JSON
-        else if (typeof tokenValue === 'string') {
-          try {
-            const parsedValue = JSON.parse(tokenValue);
-            emailConfig = {
-              ...emailConfig,
-              ...parsedValue
-            };
-          } catch (parseError) {
-            // If not JSON, assume it's just the password
-            emailConfig.password = tokenValue;
-          }
-        }
-      } catch (tokenError: any) {
-        console.error(`[EMAIL_CHECK] Error al obtener credenciales desde token:`, tokenError);
         return NextResponse.json(
           {
             success: false,
             error: {
-              code: ERROR_CODES.SYSTEM_ERROR,
-              message: `Error fetching credentials: ${tokenError.message}`
+              code: isConfigError ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR,
+              message: error instanceof Error ? error.message : "Error obteniendo credenciales guardadas"
             }
           },
-          { status: 500 }
+          { status: isConfigError ? 404 : 500 }
         );
       }
+    } else {
+      // Usar credenciales manuales
+      console.log(`[EMAIL_CHECK] Usando credenciales manuales`);
+      emailConfig = {
+        user: emailAddress,
+        email: emailAddress,
+        password: password,
+        host: incomingServer || 'imap.gmail.com',
+        imapHost: incomingServer || 'imap.gmail.com',
+        port: typeof incomingPort === 'number' ? incomingPort : (incomingPort ? parseInt(incomingPort, 10) : 993),
+        imapPort: typeof incomingPort === 'number' ? incomingPort : (incomingPort ? parseInt(incomingPort, 10) : 993),
+        smtpHost: outgoingServer || 'smtp.gmail.com',
+        smtpPort: typeof outgoingPort === 'number' ? outgoingPort : (outgoingPort ? parseInt(outgoingPort, 10) : 587),
+        tls: tls !== false
+      };
     }
     
     // Validate that we have the minimum required fields
@@ -333,7 +304,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: {
-            code: ERROR_CODES.CREDENTIALS_ERROR,
+            code: ERROR_CODES.EMAIL_CONFIG_NOT_FOUND,
             message: "Password is required"
           }
         },
@@ -346,7 +317,7 @@ export async function POST(request: NextRequest) {
         {
           success: false,
           error: {
-            code: ERROR_CODES.CREDENTIALS_ERROR,
+            code: ERROR_CODES.EMAIL_CONFIG_NOT_FOUND,
             message: "User or email is required"
           }
         },
@@ -381,10 +352,10 @@ export async function POST(request: NextRequest) {
       skipped: boolean;
       error?: string;
     } = { 
-      success: skip_smtp, 
-      skipped: skip_smtp 
+      success: skipSmtp, 
+      skipped: skipSmtp 
     };
-    if (imapResult.success && !skip_smtp) {
+    if (imapResult.success && !skipSmtp) {
       try {
         smtpResult = await checkSMTPConnection(emailConfig);
       } catch (smtpError: any) {
@@ -399,7 +370,7 @@ export async function POST(request: NextRequest) {
     
     // Prepare the response
     const response = {
-      success: imapResult.success && (smtpResult.success || skip_smtp),
+      success: imapResult.success && (smtpResult.success || skipSmtp),
       imap: imapResult,
       smtp: smtpResult,
       config: {
@@ -407,20 +378,20 @@ export async function POST(request: NextRequest) {
         port: emailConfig.port,
         user: emailConfig.user || emailConfig.email,
         tls: emailConfig.tls,
-        // Don't return the password
+        // Don't return the password for security
       }
     };
     
     return NextResponse.json(response);
     
-  } catch (error: any) {
+  } catch (error: unknown) {
     console.error(`[EMAIL_CHECK] Error en procesamiento:`, error);
     return NextResponse.json(
       {
         success: false,
         error: {
           code: ERROR_CODES.SYSTEM_ERROR,
-          message: error.message || "System error"
+          message: error instanceof Error ? error.message : "System error"
         }
       },
       { status: 500 }

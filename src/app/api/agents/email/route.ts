@@ -48,6 +48,64 @@ function isValidUUID(uuid: string): boolean {
 }
 
 /**
+ * Función para filtrar emails según aliases configurados
+ */
+function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
+  if (!aliases || aliases.length === 0) {
+    console.log('[EMAIL_API] 📧 No se especificaron aliases, procesando todos los emails');
+    return emails;
+  }
+
+  console.log(`[EMAIL_API] 🔍 Filtrando emails según aliases configurados: ${aliases.join(', ')}`);
+  
+  const filteredEmails = emails.filter(email => {
+    const emailTo = (email.to || '').toLowerCase().trim();
+    
+    // Verificar si algún alias coincide con el campo "to" del email
+    const isValidEmail = aliases.some(alias => {
+      const normalizedAlias = alias.toLowerCase().trim();
+      
+      // Verificar coincidencia exacta
+      if (emailTo === normalizedAlias) {
+        return true;
+      }
+      
+      // Verificar si el alias está incluido en el campo "to"
+      if (emailTo.includes(normalizedAlias)) {
+        return true;
+      }
+      
+      // Verificar coincidencia en formato "Name <email@domain.com>" o similar
+      const emailMatches = emailTo.match(/<([^>]+)>/g);
+      if (emailMatches) {
+        return emailMatches.some((match: string) => {
+          const extractedEmail = match.replace(/[<>]/g, '').trim();
+          return extractedEmail === normalizedAlias;
+        });
+      }
+      
+      // Verificar si hay múltiples emails separados por coma
+      const emailList = emailTo.split(',').map((e: string) => e.trim());
+      return emailList.some((singleEmail: string) => {
+        const cleanEmail = singleEmail.replace(/.*<([^>]+)>.*/, '$1').trim();
+        return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
+      });
+    });
+
+    if (isValidEmail) {
+      console.log(`[EMAIL_API] ✅ Email incluido - To: ${email.to} (coincide con aliases)`);
+    } else {
+      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to} (no coincide con aliases: ${aliases.join(', ')})`);
+    }
+
+    return isValidEmail;
+  });
+
+  console.log(`[EMAIL_API] 📊 Filtrado completado: ${filteredEmails.length}/${emails.length} emails incluidos`);
+  return filteredEmails;
+}
+
+/**
  * Busca el agente de soporte para un sitio
  */
 async function findSupportAgent(siteId: string): Promise<string> {
@@ -347,7 +405,15 @@ export async function POST(request: NextRequest) {
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       
       // Fetch emails
-      const emails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      
+      // Filter emails by aliases if configured
+      const emails = filterEmailsByAliases(allEmails, emailConfig.aliases || []);
+      
+      console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
+      console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
+      console.log(`[EMAIL_API] - Emails después del filtrado: ${emails.length}`);
+      console.log(`[EMAIL_API] - Aliases configurados: ${emailConfig.aliases ? emailConfig.aliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
       // Si no se proporciona agentId, buscar el agente de soporte
       const effectiveAgentId = agentId || await findSupportAgent(siteId);
@@ -439,7 +505,10 @@ export async function POST(request: NextRequest) {
         status: executedCommand?.status || 'completed',
         message: "Análisis de emails completado exitosamente",
         emailCount: emails.length,
+        originalEmailCount: allEmails.length,
         analysisCount: emailsForResponse.length,
+        aliasesConfigured: emailConfig.aliases || [],
+        filteredByAliases: emailConfig.aliases && emailConfig.aliases.length > 0,
         emails: emailsForResponse
       });
       

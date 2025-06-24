@@ -496,6 +496,7 @@ Communication channel configurations.
     "enabled": true,
     "email": "support@company.com",
     "password": "encrypted_password",
+    "aliases": "noreply@company.com, hello@company.com, info@company.com",
     "incomingServer": "imap.company.com",
     "incomingPort": "993",
     "outgoingServer": "smtp.company.com",

@@ -13,6 +13,7 @@ export interface EmailConfig {
   smtpHost?: string;
   smtpPort?: number;
   tls?: boolean;
+  aliases?: string[]; // Lista de aliases de email permitidos
 }
 
 export class EmailConfigService {
@@ -43,6 +44,9 @@ export class EmailConfigService {
         throw new Error(`No se encontró token de email para el sitio ${siteId}. Por favor almacena un token de email usando el endpoint /api/secure-tokens`);
       }
 
+      // Obtener aliases de la configuración del canal de email
+      const aliases = settings.channels?.email?.aliases || null;
+
       try {
         // Intentar parsear como JSON
         const parsedValue = JSON.parse(tokenValue);
@@ -57,7 +61,8 @@ export class EmailConfigService {
             imapPort: parsedValue.imapPort || parsedValue.port || settings.channels?.email?.incomingPort || 993,
             smtpHost: parsedValue.smtpHost || parsedValue.host || settings.channels?.email?.outgoingServer || 'smtp.gmail.com',
             smtpPort: parsedValue.smtpPort || settings.channels?.email?.outgoingPort || 587,
-            tls: true
+            tls: true,
+            aliases: aliases
           };
         }
       } catch (jsonError) {
@@ -71,7 +76,8 @@ export class EmailConfigService {
           imapPort: settings.channels?.email?.incomingPort || 993,
           smtpHost: settings.channels?.email?.outgoingServer || 'smtp.gmail.com',
           smtpPort: settings.channels?.email?.outgoingPort || 587,
-          tls: true
+          tls: true,
+          aliases: aliases
         };
       }
       

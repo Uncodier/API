@@ -94,10 +94,8 @@ export class TargetProcessor extends Base {
         console.log(`[TargetProcessor] No targets to process`);
         return {
           status: 'completed',
-          results: [{
-            type: 'text',
-            content: 'No targets specified for processing'
-          }]
+          results: [],
+          error: 'No targets specified for processing'
         };
       }
       
@@ -170,20 +168,44 @@ export class TargetProcessor extends Base {
               results = JSON.parse(responseContent);
               console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON: ${results.length} elementos`);
             } catch (e) {
-              // Si falla el parsing, usar como texto simple
-              results = [{
-                type: command.targets[0].type || 'text',
-                content: responseContent
-              }];
-              console.log(`[TargetProcessor] Respuesta procesada como texto simple`);
+              // Si falla el parsing de array y tenemos targets, usar su estructura preservando el contenido
+              console.log(`[TargetProcessor] Error parsing array JSON, preservando estructura de targets`);
+              results = command.targets.map((target, index) => {
+                // Preservar la estructura exacta del target pero con contenido de respuesta
+                const targetCopy = JSON.parse(JSON.stringify(target));
+                // Rellenar con el contenido de respuesta manteniendo la estructura
+                return this.fillTargetWithContent(targetCopy, responseContent);
+              });
+              console.log(`[TargetProcessor] Estructura de targets preservada con contenido de respuesta`);
             }
           } else {
-            // Si no tiene formato de arreglo JSON, usar como texto simple
-            results = [{
-              type: command.targets[0].type || 'text',
-              content: responseContent
-            }];
-            console.log(`[TargetProcessor] Respuesta procesada como texto simple`);
+            // Intentar parsear como JSON simple (objeto o array) antes de usar como texto
+            try {
+              const parsedContent = JSON.parse(responseContent);
+              // Si se parsea correctamente, usar la estructura original
+              if (Array.isArray(parsedContent)) {
+                results = parsedContent;
+                console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON válido: ${results.length} elementos`);
+              } else if (typeof parsedContent === 'object' && parsedContent !== null) {
+                results = [parsedContent];
+                console.log(`[TargetProcessor] Respuesta parseada como objeto JSON válido y envuelta en array`);
+              } else {
+                // Si es un valor primitivo parseado, usar estructura de targets con este contenido
+                results = command.targets.map((target, index) => {
+                  const targetCopy = JSON.parse(JSON.stringify(target));
+                  return this.fillTargetWithContent(targetCopy, parsedContent);
+                });
+                console.log(`[TargetProcessor] Valor primitivo aplicado a estructura de targets`);
+              }
+            } catch (parseError) {
+              // Si no se puede parsear como JSON, usar estructura de targets con contenido de string
+              console.log(`[TargetProcessor] No es JSON válido, preservando estructura de targets con contenido de string`);
+              results = command.targets.map((target, index) => {
+                const targetCopy = JSON.parse(JSON.stringify(target));
+                return this.fillTargetWithContent(targetCopy, responseContent);
+              });
+              console.log(`[TargetProcessor] Estructura de targets preservada con contenido de string`);
+            }
           }
         } else if (Array.isArray(responseContent)) {
           // Si ya es un arreglo, usarlo directamente
@@ -194,12 +216,13 @@ export class TargetProcessor extends Base {
           results = [responseContent];
           console.log(`[TargetProcessor] Respuesta envuelta en arreglo: objeto simple`);
         } else {
-          // Caso por defecto
-          results = [{
-            type: command.targets[0].type || 'text',
-            content: String(responseContent)
-          }];
-          console.log(`[TargetProcessor] Respuesta convertida a texto: ${String(responseContent).substring(0, 30)}...`);
+          // Como último recurso, usar estructura de targets con el contenido convertido a string
+          console.log(`[TargetProcessor] Fallback: preservando estructura de targets con contenido convertido`);
+          results = command.targets.map((target, index) => {
+            const targetCopy = JSON.parse(JSON.stringify(target));
+            return this.fillTargetWithContent(targetCopy, String(responseContent));
+          });
+          console.log(`[TargetProcessor] Estructura de targets preservada con fallback`);
         }
         
         // Log para verificar estructura de resultados
@@ -209,10 +232,12 @@ export class TargetProcessor extends Base {
         
       } catch (error) {
         console.error(`[TargetProcessor] Error procesando respuesta:`, error);
-        results = [{
-          type: 'text',
-          content: typeof responseContent === 'string' ? responseContent : JSON.stringify(responseContent)
-        }];
+        // En caso de error crítico, preservar estructura de targets con mensaje de error
+        results = command.targets.map((target, index) => {
+          const targetCopy = JSON.parse(JSON.stringify(target));
+          const errorContent = typeof responseContent === 'string' ? responseContent : JSON.stringify(responseContent);
+          return this.fillTargetWithContent(targetCopy, errorContent);
+        });
       }
       
       // Validar los resultados usando el servicio validateResults
@@ -274,20 +299,24 @@ export class TargetProcessor extends Base {
       
       // Asegurar que los resultados no estén vacíos antes de retornarlos
       if (resultsCopy.length === 0) {
-        console.error(`[TargetProcessor] ALERTA CRÍTICA: No hay resultados a retornar. Creando un resultado mínimo.`);
-        const defaultResult = {
-          type: command.targets[0]?.type || 'text',
-          content: typeof responseContent === 'string' ? responseContent : 'Procesamiento completado sin resultados específicos'
-        };
-        resultsCopy.push(defaultResult);
+        console.error(`[TargetProcessor] ALERTA CRÍTICA: No hay resultados a retornar. Creando resultados basados en estructura de targets.`);
         
-        // Actualizar también el comando con este resultado mínimo
+        // Crear resultados usando la estructura de targets con contenido por defecto
+        const defaultResults = command.targets.map((target, index) => {
+          const targetCopy = JSON.parse(JSON.stringify(target));
+          const defaultContent = typeof responseContent === 'string' ? responseContent : 'Procesamiento completado sin resultados específicos';
+          return this.fillTargetWithContent(targetCopy, defaultContent);
+        });
+        
+        resultsCopy.push(...defaultResults);
+        
+        // Actualizar también el comando con estos resultados mínimos
         if (!updatedCommand.results) {
-          updatedCommand.results = [defaultResult];
+          updatedCommand.results = [...defaultResults];
         } else {
-          updatedCommand.results.push(defaultResult);
+          updatedCommand.results.push(...defaultResults);
         }
-        console.log(`[TargetProcessor] Resultado mínimo creado: ${JSON.stringify(defaultResult).substring(0, 100)}...`);
+        console.log(`[TargetProcessor] ${defaultResults.length} resultados mínimos creados preservando estructura de targets`);
       }
       
       // Return result
@@ -305,5 +334,54 @@ export class TargetProcessor extends Base {
         error: `Target processing failed: ${error.message}`
       };
     }
+  }
+  
+  /**
+   * Rellena un target con contenido preservando su estructura original
+   * @param target El target original a llenar
+   * @param content El contenido a insertar
+   * @returns El target con contenido aplicado
+   */
+  private fillTargetWithContent(target: any, content: any): any {
+    if (!target || typeof target !== 'object') {
+      return target;
+    }
+    
+    const result = { ...target };
+    
+    // Buscar propiedades que puedan contener el contenido
+    const possibleContentFields = ['content', 'contents', 'text', 'message', 'description', 'value'];
+    
+    for (const field of possibleContentFields) {
+      if (field in result) {
+        // Si encontramos un campo de contenido, llenarlo con el contenido proporcionado
+        if (typeof result[field] === 'string') {
+          result[field] = typeof content === 'string' ? content : JSON.stringify(content);
+        } else if (Array.isArray(result[field])) {
+          // Si es un array, mantener la estructura pero con nuevo contenido
+          result[field] = Array.isArray(content) ? content : [content];
+        } else if (typeof result[field] === 'object' && result[field] !== null) {
+          // Si es un objeto, intentar rellenarlo recursivamente
+          result[field] = this.fillTargetWithContent(result[field], content);
+        }
+        break;
+      }
+    }
+    
+    // Si no encontramos campos de contenido obvios, buscar el primer campo string o objeto
+    if (!possibleContentFields.some(field => field in result)) {
+      const keys = Object.keys(result);
+      for (const key of keys) {
+        if (typeof result[key] === 'string' && result[key].trim() === '') {
+          result[key] = typeof content === 'string' ? content : JSON.stringify(content);
+          break;
+        } else if (typeof result[key] === 'object' && result[key] !== null) {
+          result[key] = this.fillTargetWithContent(result[key], content);
+          break;
+        }
+      }
+    }
+    
+    return result;
   }
 } 

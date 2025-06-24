@@ -293,7 +293,7 @@ export class DeepResearchService {
       const commandData = CommandFactory.createCommand({
         task: 'generarte research plan',
         userId: dataAnalystAgent.userId,
-        description: `Generate a comprehensive research plan for topic: ${researchTopic}, by separating different deliverables into different operations`,
+        description: `Generate a comprehensive research plan for topic: ${researchTopic}, by separating different deliverables into search different operations`,
         agentId: dataAnalystAgent.agentId,
         site_id: siteId,
         context: commandContext,

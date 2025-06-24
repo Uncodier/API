@@ -8,6 +8,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { WhatsAppLeadService } from '@/lib/services/whatsapp/WhatsAppLeadService';
+import { ConversationService } from '@/lib/services/conversation-service';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -502,108 +503,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
   }
 }
 
-// Función para obtener el historial de una conversación
-async function getConversationHistory(conversationId: string): Promise<Array<{role: string, content: string}> | null> {
-  try {
-    if (!isValidUUID(conversationId)) {
-      console.error(`ID de conversación no válido: ${conversationId}`);
-      return null;
-    }
-    
-    console.log(`🔍 Obteniendo historial de conversación: ${conversationId}`);
-    
-    // Consultar todos los mensajes de la conversación ordenados por fecha de creación
-    const { data, error } = await supabaseAdmin
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true });
-    
-    if (error) {
-      console.error('Error al obtener mensajes de la conversación:', error);
-      return null;
-    }
-    
-    if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontraron mensajes para la conversación: ${conversationId}`);
-      return [];
-    }
-    
-    console.log(`✅ Se encontraron ${data.length} mensajes en la conversación`);
-    
-    // Log de roles encontrados para depuración
-    const rolesFound = data.map(msg => msg.role || msg.sender_type || 'undefined').join(', ');
-    console.log(`🔍 Roles encontrados en los mensajes: ${rolesFound}`);
-    
-    // Formatear los mensajes para el contexto del comando
-    const formattedMessages = data.map(msg => {
-      // Determinar el rol según los campos disponibles
-      let role = 'user';
-      
-      if (msg.role) {
-        // Si el campo role existe, usarlo directamente
-        role = msg.role;
-      } else if (msg.sender_type) {
-        // Si existe sender_type, usarlo directamente también
-        role = msg.sender_type;
-      } else if (msg.visitor_id) {
-        // Si hay visitor_id pero no role ni sender_type, asignar 'visitor'
-        role = 'visitor';
-      } else if (!msg.user_id) {
-        // Si no hay user_id, asumimos que es asistente
-        role = 'assistant';
-      }
-      
-      // Log detallado para depuración
-      console.log(`📝 Mensaje ${msg.id}: role=${role}, visitor_id=${msg.visitor_id || 'N/A'}, user_id=${msg.user_id || 'N/A'}`);
-      
-      return {
-        role,
-        content: msg.content
-      };
-    });
-    
-    return formattedMessages;
-  } catch (error) {
-    console.error('Error al obtener historial de conversación:', error);
-    return null;
-  }
-}
 
-// Función para formatear el historial de conversación como texto para el contexto
-function formatConversationHistoryForContext(messages: Array<{role: string, content: string}>): string {
-  if (!messages || messages.length === 0) {
-    return '';
-  }
-  
-  let formattedHistory = '```conversation\n';
-  
-  messages.forEach((msg, index) => {
-    // Mejorado para soportar múltiples tipos de roles
-    let roleDisplay = 'ASSISTANT';
-    
-    // Mapear diferentes roles a su visualización adecuada
-    if (msg.role === 'user' || msg.role === 'visitor') {
-      roleDisplay = 'USER';
-    } else if (msg.role === 'team_member') {
-      roleDisplay = 'TEAM';
-    } else if (msg.role === 'assistant' || msg.role === 'agent') {
-      roleDisplay = 'ASSISTANT';
-    } else if (msg.role === 'system') {
-      roleDisplay = 'SYSTEM';
-    }
-    
-    formattedHistory += `[${index + 1}] ${roleDisplay}: ${msg.content.trim()}\n`;
-    
-    // Add a separator between messages for better readability
-    if (index < messages.length - 1) {
-      formattedHistory += '---\n';
-    }
-  });
-  
-  formattedHistory += '```';
-  return formattedHistory;
-}
 
 // Función para buscar un lead por email, teléfono o nombre
 async function findLeadByInfo(email?: string, phone?: string, name?: string, siteId?: string): Promise<string | null> {
@@ -730,6 +630,8 @@ async function createTaskForLead(leadId: string, siteId?: string, userId?: strin
     return null;
   }
 }
+
+
 
 // Función para crear un nuevo lead
 async function createLead(name: string, email?: string, phone?: string, siteId?: string, visitorId?: string, origin?: string): Promise<string | null> {
@@ -1071,6 +973,27 @@ export async function POST(request: Request) {
         console.log(`   - Error al crear/buscar el lead en la base de datos (ver errores anteriores)`);
       }
     }
+
+    // Buscar conversación existente si no se proporcionó una y no es WhatsApp (que ya se maneja arriba)
+    if (!effectiveConversationId && leadOrigin !== 'whatsapp') {
+      console.log(`🔍 Buscando conversación existente para origen "${effectiveOrigin || leadOrigin}"`);
+      
+      const existingConversationId = await ConversationService.findExistingConversation(
+        effectiveLeadId || undefined,
+        visitor_id,
+        effectiveSiteId,
+        effectiveOrigin || leadOrigin,
+        phone,
+        email
+      );
+      
+      if (existingConversationId) {
+        effectiveConversationId = existingConversationId;
+        console.log(`✅ Usando conversación existente encontrada: ${effectiveConversationId}`);
+      } else {
+        console.log(`📝 No se encontró conversación existente, se creará una nueva`);
+      }
+    }
     
     // Buscar agente de soporte al cliente activo si no se proporciona un agent_id
     let effectiveAgentId = agentId;
@@ -1219,12 +1142,12 @@ export async function POST(request: Request) {
     
     if (effectiveConversationId && isValidUUID(effectiveConversationId)) {
       console.log(`🔄 Recuperando historial para la conversación: ${effectiveConversationId}`);
-      const historyMessages = await getConversationHistory(effectiveConversationId);
+      const historyMessages = await ConversationService.getConversationHistory(effectiveConversationId);
       
       if (historyMessages && historyMessages.length > 0) {
         // Filter out any messages that might be duplicates of the current message
         // This prevents the current message from appearing twice in the context
-        const filteredMessages = historyMessages.filter(msg => {
+        const filteredMessages = historyMessages.filter((msg: {role: string, content: string}) => {
           // No filtrar mensajes de asistente o team_member
           if (msg.role === 'assistant' || msg.role === 'team_member' || msg.role === 'system') {
             return true;
@@ -1234,7 +1157,7 @@ export async function POST(request: Request) {
         });
         
         if (filteredMessages.length > 0) {
-          const conversationHistory = formatConversationHistoryForContext(filteredMessages);
+          const conversationHistory = ConversationService.formatConversationHistoryForContext(filteredMessages);
           contextMessage = `${contextMessage}\n\nConversation History:\n${conversationHistory}\n\nConversation ID: ${effectiveConversationId}`;
           console.log(`📜 Historial de conversación recuperado con ${filteredMessages.length} mensajes`);
         } else {

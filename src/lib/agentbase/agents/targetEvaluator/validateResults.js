@@ -36,21 +36,10 @@ export function validateResults(results, targets) {
     };
   }
 
-  // La cantidad de resultados debería ser al menos 1
-  // No validamos coincidencia exacta para dar flexibilidad: a veces un resultado 
-  // puede satisfacer múltiples targets, o varios resultados pueden servir para un target
-  if (results.length < 1) {
-    console.error(`[validateResults] Se esperaba al menos un resultado, se recibieron 0`);
-    return { 
-      isValid: false, 
-      error: 'Se esperaba al menos un resultado' 
-    };
-  }
-
   console.log(`[validateResults] Verificando ${results.length} resultados contra ${targets.length} targets`);
   
   // Verificamos que los resultados tengan alguna estructura válida
-  // (no validamos contra targets específicos, solo verificamos que sea algo utilizable)
+  // Validación simplificada: solo verificar que sean objetos no vacíos
   let validResultsCount = 0;
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
@@ -68,34 +57,23 @@ export function validateResults(results, targets) {
       continue;
     }
     
-    // Detección de valores placeholder copiados directamente
-    // Buscamos valores de texto que sean placeholders en el resultado
-    let hasPlaceholder = false;
-    for (const key of resultKeys) {
-      const value = result[key];
-      if (typeof value === 'string' && isPlaceholderValue(value)) {
-        console.warn(`[validateResults] El resultado ${i} contiene un valor placeholder sin procesar: "${value.substring(0, 30)}..."`);
-        hasPlaceholder = true;
-        break;
-      } else if (typeof value === 'object' && value !== null) {
-        // Si el valor es un objeto o array, buscar recursivamente
-        const placeholderFound = containsPlaceholderInObject(value);
-        if (placeholderFound) {
-          console.warn(`[validateResults] El resultado ${i} contiene un valor placeholder sin procesar en una estructura anidada`);
-          hasPlaceholder = true;
-          break;
-        }
+    // Validación específica: evitar resultados genéricos type: 'text' cuando no corresponde
+    if (result.type === 'text' && result.content) {
+      // Revisar si algún target tiene realmente la estructura type/content
+      const hasTextTarget = targets.some(target => 
+        (target.type === 'text') || 
+        (target.type && target.content !== undefined)
+      );
+      
+      if (!hasTextTarget) {
+        console.warn(`[validateResults] El resultado ${i} tiene estructura type: 'text' pero no hay targets que la requieran`);
+        continue; // Rechazar este resultado
       }
     }
     
-    // Si tiene tipo y contenido, lo consideramos válido
-    if (!hasPlaceholder && (result.type || result.content)) {
-      validResultsCount++;
-    }
-    // Si tiene al menos una propiedad y no es un placeholder, también es válido
-    else if (!hasPlaceholder) {
-      validResultsCount++;
-    }
+    // Si llegamos aquí, el resultado es válido
+    validResultsCount++;
+    console.log(`[validateResults] Resultado ${i} es válido - tiene ${resultKeys.length} propiedades: ${resultKeys.join(', ')}`);
   }
   
   // Permitimos resultados si hay al menos uno válido
@@ -111,78 +89,4 @@ export function validateResults(results, targets) {
   };
 }
 
-/**
- * Busca recursivamente valores de placeholder en un objeto o array
- * @param {Object|Array} obj El objeto o array a verificar
- * @returns {boolean} true si se encuentra un placeholder
- */
-function containsPlaceholderInObject(obj) {
-  if (typeof obj !== 'object' || obj === null) {
-    return false;
-  }
-  
-  if (Array.isArray(obj)) {
-    // Si es un array, verifica cada elemento
-    for (const item of obj) {
-      if (typeof item === 'string' && isPlaceholderValue(item)) {
-        return true;
-      } else if (typeof item === 'object' && item !== null) {
-        if (containsPlaceholderInObject(item)) {
-          return true;
-        }
-      }
-    }
-  } else {
-    // Si es un objeto, verifica cada valor
-    for (const key of Object.keys(obj)) {
-      const value = obj[key];
-      if (typeof value === 'string' && isPlaceholderValue(value)) {
-        return true;
-      } else if (typeof value === 'object' && value !== null) {
-        if (containsPlaceholderInObject(value)) {
-          return true;
-        }
-      }
-    }
-  }
-  
-  return false;
-}
-
-/**
- * Verifica si un valor es un placeholder genérico
- * @param {*} value El valor a verificar
- * @returns {boolean} true si es un placeholder
- */
-function isPlaceholderValue(value) {
-  if (typeof value !== 'string') return false;
-  
-  // Valores que claramente son placeholders exactos (no substring matching)
-  const exactPlaceholders = [
-    "markdown detailed copy", 
-    "title of the content", 
-    "summary of the content",
-    "placeholder",
-    "sample content",
-    "example content"
-  ];
-  
-  const lowerValue = value.toLowerCase().trim();
-  
-  // Solo considerar placeholder si es exactamente uno de estos valores
-  if (exactPlaceholders.includes(lowerValue)) {
-    return true;
-  }
-  
-  // También considerar placeholder si es muy corto y genérico
-  if (lowerValue.length < 10 && (lowerValue === "example" || lowerValue === "sample")) {
-    return true;
-  }
-  
-  // Si tiene contenido real (más de 20 caracteres y no es solo el placeholder), es válido
-  if (value.length > 20) {
-    return false;
-  }
-  
-  return false;
-} 
+// Removemos las funciones de detección de placeholders ya que pueden ser demasiado estrictas

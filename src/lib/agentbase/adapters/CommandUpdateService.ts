@@ -317,34 +317,25 @@ export class CommandUpdateService {
               if (!allValid) {
                 console.error(`[CommandUpdateService] Hay resultados con estructura inválida, no se realizará el segundo intento`);
               } else {
-                // Hacer una actualización específica solo para resultados con estructura simplificada
-                const simplifiedResults = updates.results.map((r: any) => {
+                // CORRECCIÓN: Preservar la estructura original de los resultados
+                // No simplificar ni transformar - mantener exactamente como el asistente los generó
+                const preservedResults = updates.results.map((r: any) => {
                   try {
-                    // Mantener solo los campos esenciales para reducir complejidad
-                    const simplifiedResult = {
-                      type: r.type || 'text',
-                      content: r.content
-                    };
-                    
-                    // Si content no es un string, convertirlo a string
-                    if (simplifiedResult.content && typeof simplifiedResult.content !== 'string') {
-                      simplifiedResult.content = JSON.stringify(simplifiedResult.content);
-                    }
-                    
-                    return simplifiedResult;
+                    // Preservar la estructura original completa sin modificaciones
+                    return r;
                   } catch (err) {
-                    console.error(`[CommandUpdateService] Error simplificando resultado:`, err);
-                    return { type: 'text', content: 'Error al procesar resultado' };
+                    console.error(`[CommandUpdateService] Error preservando resultado:`, err);
+                    return r; // Devolver el original incluso si hay error
                   }
                 });
                 
-                console.log(`[CommandUpdateService] Intentando actualizar con resultados simplificados: [${simplifiedResults.length} elementos]`);
+                console.log(`[CommandUpdateService] Intentando actualizar con resultados preservados: [${preservedResults.length} elementos]`);
                 
                 // Intentar primero con Supabase directamente para diagnóstico
                 console.log(`[CommandUpdateService] Actualizando resultados directamente con Supabase...`);
                 const { data, error } = await supabaseAdmin
                   .from('commands')
-                  .update({ results: simplifiedResults })
+                  .update({ results: preservedResults })
                   .eq('id', commandId)
                   .select();
                 
@@ -352,7 +343,7 @@ export class CommandUpdateService {
                   console.error(`[CommandUpdateService] Error con Supabase:`, error);
                   
                   // Intentar con la función regular de actualización
-                  const retryUpdate = await dbUpdateCommand(commandId, { results: simplifiedResults });
+                  const retryUpdate = await dbUpdateCommand(commandId, { results: preservedResults });
                   console.log(`[CommandUpdateService] Segunda actualización completada con función normal, resultados: ${retryUpdate.results?.length || 0}`);
                   
                   // Convertir y guardar en caché
