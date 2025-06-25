@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { createSupabaseClient } from '@/lib/database/supabase-server'
+import { supabaseAdmin } from '@/lib/database/supabase-server'
 import { headers } from 'next/headers'
 
 const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY)
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
 async function handleCheckoutSessionCompleted(session: any, request: NextRequest) {
   console.log('💰 Processing checkout.session.completed:', session.id)
 
-  const supabase = createSupabaseClient(request)
+  const supabase = supabaseAdmin
   
   // Extract metadata from session
   const {
@@ -147,7 +147,7 @@ async function handleCheckoutSessionCompleted(session: any, request: NextRequest
 async function handlePaymentIntentSucceeded(paymentIntent: any, request: NextRequest) {
   console.log('💰 Processing payment_intent.succeeded:', paymentIntent.id)
 
-  const supabase = createSupabaseClient(request)
+  const supabase = supabaseAdmin
   
   // Extract metadata from payment intent
   const {
