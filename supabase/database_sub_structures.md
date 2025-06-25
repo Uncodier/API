@@ -848,6 +848,110 @@ Campaign budget allocation and tracking.
 }
 ```
 
+### `metadata` (jsonb)
+Campaign metadata including payment status and additional information.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "payment_status": {
+    "status": "pending",
+    "amount_paid": 0.00,
+    "amount_due": 5000.00,
+    "currency": "USD",
+    "payment_method": null,
+    "stripe_payment_intent_id": null,
+    "payment_date": null,
+    "invoice_number": null,
+    "outsourced": false,
+    "outsource_provider": null,
+    "outsource_contact": null
+  },
+  "performance_tracking": {
+    "clicks": 0,
+    "impressions": 0,
+    "conversions": 0,
+    "conversion_rate": 0.0,
+    "cost_per_acquisition": 0.0
+  },
+  "timeline": {
+    "planned_start": "2024-01-01",
+    "actual_start": null,
+    "planned_end": "2024-03-31",
+    "actual_end": null,
+    "milestones": []
+  },
+  "custom_fields": {},
+  "tags": [],
+  "external_references": {
+    "project_management_url": null,
+    "design_files": [],
+    "documentation": []
+  }
+}
+```
+
+---
+
+## Requirements JSONb Fields
+
+### `metadata` (jsonb)
+Requirement metadata including payment status and additional information.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "payment_status": {
+    "status": "pending",
+    "amount_paid": 0.00,
+    "amount_due": 199.00,
+    "currency": "USD",
+    "payment_method": null,
+    "stripe_payment_intent_id": null,
+    "payment_date": null,
+    "invoice_number": null,
+    "outsourced": false,
+    "outsource_provider": null,
+    "outsource_contact": null,
+    "outsource_instructions": null
+  },
+  "progress_tracking": {
+    "completion_percentage": 0,
+    "hours_estimated": 0,
+    "hours_actual": 0,
+    "start_date": null,
+    "end_date": null,
+    "blocked": false,
+    "blocked_reason": null
+  },
+  "quality_assurance": {
+    "reviewed": false,
+    "reviewer": null,
+    "review_date": null,
+    "review_notes": null,
+    "approved": false,
+    "approval_date": null
+  },
+  "dependencies": {
+    "blocks": [],
+    "blocked_by": [],
+    "related_requirements": []
+  },
+  "external_references": {
+    "design_files": [],
+    "documentation": [],
+    "code_repositories": [],
+    "test_cases": []
+  },
+  "custom_fields": {},
+  "tags": []
+}
+```
+
 ---
 
 ## Companies JSONb Fields
