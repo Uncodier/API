@@ -364,23 +364,3 @@ export async function PUT(req: Request) {
   }
 }
 
-// Para frameworks que requieren exportar un handler por defecto
-export default async function handler(req: Request) {
-  const method = req.method;
-
-  switch (method) {
-    case 'POST':
-      return POST(req);
-    case 'GET':
-      return GET(req);
-    case 'PUT':
-      return PUT(req);
-    default:
-      return new Response(JSON.stringify({
-        error: `Method ${method} not allowed`
-      }), {
-        status: 405,
-        headers: { 'Content-Type': 'application/json' }
-      });
-  }
-}
