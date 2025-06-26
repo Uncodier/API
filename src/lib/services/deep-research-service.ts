@@ -419,7 +419,7 @@ export class DeepResearchService {
       const executionTime = `${((endTime - startTime) / 1000).toFixed(2)}s`;
 
       return {
-        success: errors.length === 0,
+        success: completed && operations.length > 0, // Success si el comando principal se completó y se generaron operaciones
         siteId,
         researchTopic,
         siteName: siteInfo?.name || 'Unknown',

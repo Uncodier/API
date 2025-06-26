@@ -25,6 +25,7 @@ import CmoStakeholderCoordinationApi from './CmoStakeholderCoordinationApi';
 import EmailAnalysisApi from './EmailAnalysisApi';
 import DataAnalystAnalysisApi from './DataAnalystAnalysisApi';
 import DataAnalystLeadSegmentationApi from './DataAnalystLeadSegmentationApi';
+import CmoDailyStandupSystemApi from './CmoDailyStandupSystemApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -53,5 +54,6 @@ apiRegistry.register(CmoStakeholderCoordinationApi);
 apiRegistry.register(EmailAnalysisApi);
 apiRegistry.register(DataAnalystAnalysisApi);
 apiRegistry.register(DataAnalystLeadSegmentationApi);
+apiRegistry.register(CmoDailyStandupSystemApi);
 
 export default apiRegistry; 

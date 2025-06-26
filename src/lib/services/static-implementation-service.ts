@@ -114,7 +114,7 @@ function generateHtmlImplementation(
   personalizations.forEach((p, index) => {
     // Use p.after_html directly without any modification
     const htmlContent = p.operation_type === 'remove' ? '<!-- Element will be removed -->' : (p.after_html || '<!-- No content -->');
-    code += `<!-- Personalization #${index + 1}: ${p.operation_type} on ${p.selector} -->
+    code += `<!-- Personalization #${index + 1}: ${p.modification_type} (${p.operation_type}) - ${p.element_type} -->
 <div data-personalization-id="${p.id}" 
      data-selector="${p.selector.replace(/"/g, '&quot;')}"
      data-operation="${p.operation_type}">
@@ -143,7 +143,7 @@ function generateHybridImplementation(
       const safeSelector = sanitizeStringForJS(p.selector);
       // Preserve HTML content but with safe attribute values
       const htmlContent = p.operation_type === 'remove' ? '' : (p.after_html || '');
-      return `<div data-personalization-id="${p.id}" data-selector="${safeSelector}" data-operation="${p.operation_type}" data-type="${p.operation_type}">${htmlContent}</div>`;
+      return `<div data-personalization-id="${p.id}" data-selector="${safeSelector}" data-operation="${p.operation_type}" data-type="${p.modification_type}">${htmlContent}</div>`;
     }).join('');
     
     // Create minified JavaScript with improved handling of operation types
@@ -179,7 +179,7 @@ ${personalizations.map((p, index) => {
     data-personalization-id="${p.id}" 
     data-selector="${p.selector.replace(/"/g, '&quot;')}"
     data-operation="${p.operation_type}"
-    data-type="${p.operation_type}">
+    data-type="${p.modification_type}">
     ${htmlContent}
   </div>`;
   }).join('\n')}
