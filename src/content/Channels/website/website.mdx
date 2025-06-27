@@ -332,6 +332,255 @@ window.MarketFit.setChatWelcomeMessage(
 
 ---
 
+### `init()`
+
+Inicializa el sistema completo de MarketFit con todas las configuraciones necesarias.
+
+#### Sintaxis
+```javascript
+window.MarketFit.init(config)
+```
+
+#### Parámetros
+- **config** `object` (requerido): Configuración completa del sistema
+
+#### Ejemplo
+```javascript
+window.MarketFit.init({
+  siteId: 'tu-site-id',
+  apiEndpoint: 'https://api.tu-dominio.com',
+  chat: {
+    enabled: true,
+    agentName: 'Soporte',
+    welcomeMessage: '¡Hola! ¿En qué puedo ayudarte?',
+    title: 'Chat con nosotros'
+  }
+});
+```
+
+---
+
+### `hideWidget()`
+
+Oculta el widget de chat de la interfaz sin eliminarlo completamente.
+
+#### Sintaxis
+```javascript
+window.MarketFit.hideWidget()
+```
+
+#### Ejemplo
+```javascript
+// Ocultar widget temporalmente
+window.MarketFit.hideWidget();
+```
+
+---
+
+### `showWidget()`
+
+Muestra el widget de chat si estaba oculto previamente.
+
+#### Sintaxis
+```javascript
+window.MarketFit.showWidget()
+```
+
+#### Ejemplo
+```javascript
+// Mostrar widget nuevamente
+window.MarketFit.showWidget();
+```
+
+---
+
+### `reset()`
+
+Reinicia completamente el widget, limpiando todas las conversaciones y configuraciones.
+
+#### Sintaxis
+```javascript
+window.MarketFit.reset()
+```
+
+#### Ejemplo
+```javascript
+// Reiniciar widget después de logout
+function onUserLogout() {
+  window.MarketFit.reset();
+}
+```
+
+---
+
+### `setConsent()`
+
+Establece el consentimiento del usuario para el seguimiento y uso de cookies.
+
+#### Sintaxis
+```javascript
+window.MarketFit.setConsent(consentType, granted)
+```
+
+#### Parámetros
+- **consentType** `string` (requerido): Tipo de consentimiento ('analytics', 'marketing', 'functional')
+- **granted** `boolean` (requerido): Si el consentimiento fue otorgado
+
+#### Ejemplo
+```javascript
+// Otorgar consentimiento para analytics
+window.MarketFit.setConsent('analytics', true);
+
+// Revocar consentimiento para marketing
+window.MarketFit.setConsent('marketing', false);
+```
+
+---
+
+### `trackEvent()`
+
+Registra eventos personalizados para análisis y seguimiento.
+
+#### Sintaxis
+```javascript
+window.MarketFit.trackEvent(eventName, properties)
+```
+
+#### Parámetros
+- **eventName** `string` (requerido): Nombre del evento a registrar
+- **properties** `object` (opcional): Propiedades adicionales del evento
+
+#### Ejemplo
+```javascript
+// Registrar evento de interacción
+window.MarketFit.trackEvent('button_click', {
+  button_name: 'pricing_cta',
+  page: '/pricing',
+  user_type: 'visitor'
+});
+
+// Registrar evento de conversión
+window.MarketFit.trackEvent('conversion', {
+  type: 'lead_generation',
+  value: 100,
+  campaign: 'summer_promo'
+});
+```
+
+---
+
+### `trackPageView()`
+
+Registra una vista de página para el seguimiento de navegación.
+
+#### Sintaxis
+```javascript
+window.MarketFit.trackPageView(pageData)
+```
+
+#### Parámetros
+- **pageData** `object` (opcional): Datos adicionales de la página
+
+#### Ejemplo
+```javascript
+// Registrar vista de página básica
+window.MarketFit.trackPageView();
+
+// Con datos adicionales
+window.MarketFit.trackPageView({
+  page_title: 'Página de Precios',
+  page_category: 'comercial',
+  user_segment: 'enterprise'
+});
+```
+
+---
+
+## Propiedades Accesibles
+
+### `chat`
+
+Objeto principal del chat que contiene el estado, métodos y configuración.
+
+#### Propiedades
+```javascript
+const chat = window.MarketFit.chat;
+
+// Propiedades disponibles
+chat.initialized      // boolean: si está inicializado
+chat.conversationId   // string|null: ID de conversación actual
+chat.conversations    // Array: lista de conversaciones
+chat.widget          // ChatWidget: instancia del widget
+```
+
+#### Ejemplo
+```javascript
+// Verificar estado del chat
+console.log('Chat inicializado:', window.MarketFit.chat.initialized);
+console.log('Conversaciones:', window.MarketFit.chat.conversations.length);
+```
+
+---
+
+### `chatTitle`
+
+Título actual del widget de chat.
+
+#### Tipo
+`string`
+
+#### Ejemplo
+```javascript
+// Obtener título actual
+console.log('Título del chat:', window.MarketFit.chatTitle);
+
+// Cambiar título dinámicamente
+window.MarketFit.chatTitle = 'Soporte 24/7';
+```
+
+---
+
+### `welcomeMessage`
+
+Mensaje de bienvenida por defecto del chat.
+
+#### Tipo
+`string`
+
+#### Ejemplo
+```javascript
+// Obtener mensaje actual
+console.log('Mensaje de bienvenida:', window.MarketFit.welcomeMessage);
+
+// Cambiar mensaje
+window.MarketFit.welcomeMessage = '¡Hola! ¿Cómo podemos ayudarte hoy?';
+```
+
+---
+
+### `consent`
+
+Objeto que maneja el consentimiento del usuario para cookies y seguimiento.
+
+#### Propiedades
+```javascript
+const consent = window.MarketFit.consent;
+
+// Propiedades disponibles
+consent.consentGranted  // boolean: consentimiento general
+consent.categories      // object: categorías de consentimiento
+consent.forceShow       // boolean: forzar mostrar banner
+```
+
+#### Ejemplo
+```javascript
+// Verificar estado de consentimiento
+console.log('Consentimiento otorgado:', window.MarketFit.consent.consentGranted);
+console.log('Categorías:', window.MarketFit.consent.categories);
+```
+
+---
+
 ## Funciones de Gestión
 
 ### Gestión de Conversaciones
@@ -706,6 +955,85 @@ window.MarketFit.chat.remove();
 ```
 
 </div>
+
+---
+
+## Referencia Rápida de Métodos
+
+### Métodos Principales
+```javascript
+// Inicialización y configuración
+window.MarketFit.init(config)
+
+// Control del widget
+window.MarketFit.toggleChat()
+window.MarketFit.hideWidget()
+window.MarketFit.showWidget()
+window.MarketFit.reset()
+
+// Funciones de chat
+window.MarketFit.openChatWithWelcomeMessage(message, options)
+window.MarketFit.openChatWithTask(options)
+window.MarketFit.sendChatMessage(content)
+window.MarketFit.setChatWelcomeMessage(message)
+
+// Identificación de usuarios
+window.MarketFit.identify(leadInfo)
+
+// Consentimiento y seguimiento
+window.MarketFit.setConsent(consentType, granted)
+window.MarketFit.trackEvent(eventName, properties)
+window.MarketFit.trackPageView(pageData)
+```
+
+### Propiedades Accesibles
+```javascript
+// Objetos principales
+window.MarketFit.chat           // Objeto del chat
+window.MarketFit.consent        // Objeto de consentimiento
+
+// Propiedades de configuración
+window.MarketFit.chatTitle      // Título del chat
+window.MarketFit.welcomeMessage // Mensaje de bienvenida
+```
+
+### Métodos del Objeto Chat
+```javascript
+// Estado y conversaciones
+window.MarketFit.chat.isEnabled()
+window.MarketFit.chat.getState()
+window.MarketFit.chat.getConfig()
+window.MarketFit.chat.hasConversations()
+window.MarketFit.chat.getConversations()
+
+// Control de estado
+window.MarketFit.chat.minimize()
+window.MarketFit.chat.maximize()
+window.MarketFit.chat.remove()
+
+// Información del usuario
+window.MarketFit.getCurrentUser()
+window.MarketFit.hasIdentifiedUser()
+window.MarketFit.clearUserIdentity()
+```
+
+### Lista Completa de Métodos del Widget
+
+| Método | Descripción | Parámetros |
+|--------|-------------|------------|
+| `init()` | Inicializa el sistema | `config: object` |
+| `identify()` | Identifica al usuario | `leadInfo: object` |
+| `openChatWithWelcomeMessage()` | Abre chat con mensaje | `message: string, options?: object` |
+| `openChatWithTask()` | Abre chat con tarea | `options: object` |
+| `toggleChat()` | Abre/cierra el chat | - |
+| `sendChatMessage()` | Envía mensaje | `content: string` |
+| `setChatWelcomeMessage()` | Cambia mensaje por defecto | `message: string` |
+| `hideWidget()` | Oculta el widget | - |
+| `showWidget()` | Muestra el widget | - |
+| `reset()` | Reinicia el widget | - |
+| `setConsent()` | Establece consentimiento | `type: string, granted: boolean` |
+| `trackEvent()` | Registra evento | `name: string, properties?: object` |
+| `trackPageView()` | Registra vista de página | `pageData?: object` |
 
 ---
 

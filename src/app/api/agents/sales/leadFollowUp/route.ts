@@ -101,7 +101,7 @@ async function findActiveAgentByRole(siteId: string, role: string): Promise<{age
     }
     
     if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontró ningún agente activo con role "${role}" para el sitio: ${siteId}`);
+      console.log(`⚠️ No active agent found with role "${role}" for site: ${siteId}`);
       return null;
     }
     
@@ -210,7 +210,7 @@ async function executeCopywriterRefinement(
     
     // Añadir resultado de la primera fase al contexto
     if (salesFollowUpContent && salesFollowUpContent.length > 0) {
-      console.log(`📝 FASE 2: Añadiendo ${salesFollowUpContent.length} resultados de la fase 1 al contexto`);
+      console.log(`📝 PHASE 2: Adding ${salesFollowUpContent.length} phase 1 results to context`);
       copywriterContext += `\n\n--- SALES TEAM INPUT (Phase 1 Results) ---\n`;
       copywriterContext += `The Sales/CRM Specialist has provided the following initial follow-up content that you need to refine:\n\n`;
       
@@ -224,26 +224,26 @@ async function executeCopywriterRefinement(
       
       copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
       copywriterContext += `Your task is to refine, improve, and enhance the selected content above with your copywriting expertise.\n`;
-      copywriterContext += `IMPORTANTE: El equipo de ventas ya seleccionó el canal más efectivo (${salesFollowUpContent.length} canal${salesFollowUpContent.length === 1 ? '' : 'es'}) para no hostigar al lead.\n`;
-      copywriterContext += `Para el contenido seleccionado, debes:\n`;
-      copywriterContext += `1. Mantener el CANAL original (email, whatsapp, notification, web)\n`;
-      copywriterContext += `2. Preservar la ESTRATEGIA central\n`;
-      copywriterContext += `3. Mejorar el TÍTULO para que sea más atractivo y persuasivo\n`;
-      copywriterContext += `4. Perfeccionar el MENSAJE con mejores técnicas de copy y persuasión\n`;
-      copywriterContext += `5. Asegurar que el contenido resuene con la audiencia manteniendo objetivos de ventas\n`;
-      copywriterContext += `6. NO usar placeholders o variables como [Nombre], {Empresa}, {{Variable}}, etc.\n`;
-      copywriterContext += `7. Usar ÚNICAMENTE la información real proporcionada en el contexto del lead\n`;
-      copywriterContext += `8. Escribir contenido final listo para enviar sin edición adicional\n\n`;
-      copywriterContext += `9. Firma a nombre del equipo\n\n`;
+      copywriterContext += `IMPORTANT: The sales team has already selected the most effective channel${salesFollowUpContent.length > 1 ? 's' : ''} (${salesFollowUpContent.length} channel${salesFollowUpContent.length === 1 ? '' : 's'}) to avoid overwhelming the lead.\n`;
+      copywriterContext += `For the selected content, you must:\n`;
+      copywriterContext += `1. Maintain the original CHANNEL (email, whatsapp, notification, web)\n`;
+      copywriterContext += `2. Preserve the core STRATEGY\n`;
+      copywriterContext += `3. Improve the TITLE to make it more attractive and persuasive\n`;
+      copywriterContext += `4. Perfect the MESSAGE with better copywriting and persuasion techniques\n`;
+      copywriterContext += `5. Ensure the content resonates with the audience while maintaining sales objectives\n`;
+      copywriterContext += `6. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
+      copywriterContext += `7. Use ONLY the real information provided in the lead context\n`;
+      copywriterContext += `8. Write final content ready to send without additional editing\n\n`;
+      copywriterContext += `9. Sign on behalf of the team (when relevant and the context merits adding a signature)\n\n`;
       
       console.log(`📝 FASE 2: Contexto estructurado preparado con ${copywriterContext.length} caracteres`);
     } else {
-      console.log(`⚠️ FASE 2: No se encontró contenido de follow-up en los resultados de ventas`);
+      console.log(`⚠️ PHASE 2: No follow-up content found in sales results`);
     }
     
     // Crear comando para copywriter basándose en los canales disponibles de la fase 1
-    console.log(`🏗️ FASE 2: Creando comando para copywriter...`);
-    console.log(`🏗️ FASE 2: Parámetros - userId: ${userId}, agentId: ${agentId}, siteId: ${siteId}`);
+    console.log(`🏗️ PHASE 2: Creating command for copywriter...`);
+    console.log(`🏗️ PHASE 2: Parameters - userId: ${userId}, agentId: ${agentId}, siteId: ${siteId}`);
     
     // Construir dinámicamente los canales de refinamiento basándose en el contenido de la fase 1
     const refinementChannels: Array<{title: string, message: string, channel: string}> = [];
@@ -283,7 +283,7 @@ async function executeCopywriterRefinement(
       });
     }
     
-    console.log(`📋 FASE 2: Canales de refinamiento configurados: ${refinementChannels.map(c => c.channel).join(', ')}`);
+          console.log(`📋 PHASE 2: Refinement channels configured: ${refinementChannels.map(c => c.channel).join(', ')}`);
     
     const copywriterCommand = CommandFactory.createCommand({
       task: 'lead nurture copywriting',
@@ -312,18 +312,18 @@ async function executeCopywriterRefinement(
       ]
     });
     
-    console.log(`🏗️ FASE 2: Comando creado, enviando para procesamiento...`);
+    console.log(`🏗️ PHASE 2: Command created, sending for processing...`);
     
     // Enviar comando de copywriter
     const copywriterCommandId = await commandService.submitCommand(copywriterCommand);
-    console.log(`✅ FASE 2: Comando de copywriter creado exitosamente con ID interno: ${copywriterCommandId}`);
+    console.log(`✅ PHASE 2: Copywriter command created successfully with internal ID: ${copywriterCommandId}`);
     
     // Esperar a que el comando de copywriter se complete
-    console.log(`⏳ FASE 2: Esperando completación del comando de copywriter...`);
+    console.log(`⏳ PHASE 2: Waiting for copywriter command completion...`);
     const result = await waitForCommandCompletion(copywriterCommandId);
     
     if (result && result.completed && result.command) {
-      console.log(`✅ FASE 2: Comando de copywriter completado exitosamente`);
+      console.log(`✅ PHASE 2: Copywriter command completed successfully`);
       
       // Extraer contenido refinado de los resultados
       let refinedContent = [];
@@ -336,7 +336,7 @@ async function executeCopywriterRefinement(
         }
       }
       
-      console.log(`📊 FASE 2: Contenido refinado extraído:`, JSON.stringify(refinedContent, null, 2));
+      console.log(`📊 PHASE 2: Refined content extracted:`, JSON.stringify(refinedContent, null, 2));
       
       return {
         commandId: copywriterCommandId,
@@ -344,11 +344,11 @@ async function executeCopywriterRefinement(
         command: result.command
       };
     } else {
-      console.error(`❌ FASE 2: El comando de copywriter no se completó correctamente`);
+      console.error(`❌ PHASE 2: Copywriter command did not complete correctly`);
       return null;
     }
   } catch (error: any) {
-    console.error(`❌ FASE 2: Error al crear/ejecutar comando de copywriter:`, error);
+    console.error(`❌ PHASE 2: Error creating/executing copywriter command:`, error);
     return null;
   }
 }
@@ -677,7 +677,7 @@ export async function POST(request: Request) {
     console.log(`📝 FASE 1: Comando de ventas creado con ID interno: ${salesCommandId}`);
     
     // Esperar a que el comando de ventas se complete
-    console.log(`⏳ FASE 1: Esperando completación del comando de ventas...`);
+    console.log(`⏳ PHASE 1: Waiting for sales command completion...`);
     const { command: completedSalesCommand, dbUuid: salesDbUuid, completed: salesCompleted } = await waitForCommandCompletion(salesCommandId);
     
     if (!salesCompleted || !completedSalesCommand) {
@@ -735,7 +735,7 @@ export async function POST(request: Request) {
       }
     }
     
-    console.log(`📊 FASE 1: Contenido de follow-up extraído:`, JSON.stringify(salesFollowUpContent, null, 2));
+          console.log(`📊 PHASE 1: Follow-up content extracted:`, JSON.stringify(salesFollowUpContent, null, 2));
     
     // Verificar si tenemos contenido válido
     if (!salesFollowUpContent || salesFollowUpContent.length === 0) {
@@ -744,7 +744,7 @@ export async function POST(request: Request) {
     }
     
     // FASE 2: Buscar copywriter y crear segundo comando
-    console.log(`🚀 FASE 2: Iniciando búsqueda de copywriter para el sitio: ${siteId}`);
+            console.log(`🚀 PHASE 2: Starting copywriter search for site: ${siteId}`);
     
     // Buscar copywriter activo
     const copywriterAgent = await findActiveCopywriter(siteId);
@@ -758,7 +758,7 @@ export async function POST(request: Request) {
       shouldExecutePhase2 = true;
       console.log(`🤖 FASE 2: Copywriter encontrado exitosamente: ${copywriterAgentId} (user_id: ${copywriterUserId})`);
     } else {
-      console.log(`⚠️ FASE 2: No se encontró copywriter activo para el sitio: ${siteId}`);
+              console.log(`⚠️ PHASE 2: No active copywriter found for site: ${siteId}`);
       console.log(`⚠️ FASE 2: Saltando segunda fase - solo ejecutaremos fase de ventas`);
     }
     
@@ -799,7 +799,7 @@ export async function POST(request: Request) {
       } else if (salesFollowUpContent.length === 0) {
         console.log(`⏭️ FASE 2: Saltando fase de copywriter - no hay contenido de ventas para refinar`);
       } else {
-        console.log(`⏭️ FASE 2: Saltando fase de copywriter - condición no cumplida`);
+        console.log(`⏭️ PHASE 2: Skipping copywriter phase - condition not met`);
       }
     }
     
