@@ -14,6 +14,12 @@ export interface EmailConfig {
   smtpPort?: number;
   tls?: boolean;
   aliases?: string[]; // Lista de aliases de email permitidos
+  // OAuth2 support
+  accessToken?: string;
+  useOAuth?: boolean;
+  refreshToken?: string;
+  clientId?: string;
+  clientSecret?: string;
 }
 
 export class EmailConfigService {

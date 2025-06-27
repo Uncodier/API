@@ -401,6 +401,9 @@ REQUIRED ANALYSIS & RECOMMENDATIONS:
 
 Please provide your analysis in a conversational, strategic format as if you're briefing the executive team. Focus on business impact, user experience, and growth opportunities rather than technical details.
 
+IMPORTANT:
+- The summary should be in the language of the company.
+
 Raw System Data:
 ${JSON.stringify({
   siteConfig: systemData.siteConfig,

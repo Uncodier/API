@@ -238,6 +238,17 @@ Please consolidate all the departmental analyses into a comprehensive daily stan
 5. **Risk Assessment**: Potential issues and bottlenecks identified across departments
 6. **Growth Opportunities**: Identified opportunities for optimization and expansion
 7. **Next Steps**: Concrete action plan for the next 24 hours
+8. **Key actions for the human team to take**: based on the analysis and recommendations of the rest te ai team, that would make the best results for the company
+
+IMPORTANT:
+- Consider the team size, of the company, the swot, focus in account setup or campaign requirments, things the user can accomplish thorugh the day.
+- Avoid complex tasks, that would make the user to do a lot of work, and not be able to do it. (you can mention it, but not make it as a priority)
+- Avoid referening as human, use the team member or role when required.
+- The summary should be in the language of the company.
+- Make list of priorities for the day.
+- Be concise and to the point. Try to generate tasks, not general recommendations.
+- Avoid obvious things like, attend clients, be consice in which client, what task, what content or campaign.
+- Be short, if only one task may be acomplished, just mention that one task that could make the rest easier or more effective.
 
 The summary should be executive-level, actionable, and provide clear visibility into the current state of operations across all business functions.`;
     
@@ -267,7 +278,9 @@ The summary should be executive-level, actionable, and provide clear visibility 
                 growthMemories.length > 0 ? 'growth' : null
               ].filter(Boolean)
             }
-          }
+          },
+          subject: "key task or focus for the day (taken from your analysis)",
+          message: "message with the kay actions for the team to take based on the analysis and recommendations of the rest te ai team, that would make the best results for the company"
         }
       ],
       tools: [
@@ -302,23 +315,43 @@ The summary should be executive-level, actionable, and provide clear visibility 
       );
     }
     
-    // Extraer el resumen del análisis
+    // Extraer todos los resultados del análisis
     let summary = "Executive summary completed";
+    let subject = "";
+    let message = "";
+    let executiveSummaryData = null;
+    let allResults = [];
     
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
+      allResults = executedCommand.results;
+      
       const analysisResults = executedCommand.results.find((r: any) => 
         r.executive_summary || r.consolidated_data || r.content || r.summary
       );
       
       if (analysisResults) {
-        if (analysisResults.executive_summary && analysisResults.executive_summary.summary) {
-          summary = analysisResults.executive_summary.summary;
+        // Extraer executive_summary completo si existe
+        if (analysisResults.executive_summary) {
+          executiveSummaryData = analysisResults.executive_summary;
+          
+          // Extraer summary del executive_summary
+          if (analysisResults.executive_summary.summary) {
+            summary = analysisResults.executive_summary.summary;
+          }
         } else if (analysisResults.consolidated_data && analysisResults.consolidated_data.summary) {
           summary = analysisResults.consolidated_data.summary;
         } else if (analysisResults.content) {
           summary = analysisResults.content;
         } else if (analysisResults.summary) {
           summary = analysisResults.summary;
+        }
+        
+        // Buscar subject y message por separado en el nivel raíz de los resultados
+        if (analysisResults.subject) {
+          subject = analysisResults.subject;
+        }
+        if (analysisResults.message) {
+          message = analysisResults.message;
         }
       }
     }
@@ -344,11 +377,15 @@ The summary should be executive-level, actionable, and provide clear visibility 
     
     return NextResponse.json(
       { 
-        success: true, 
+        success: true,
         data: { 
           command_id: executedCommand.id,
           summary: summary,
+          subject: subject,
+          message: message,
           analysis_type: "executive_wrapup",
+          executive_summary: executiveSummaryData,
+          results: allResults,
           consolidated_data: {
             memories_analyzed: memoriesData.memoriesCount,
             commands_reviewed: memoriesData.commandsCount,

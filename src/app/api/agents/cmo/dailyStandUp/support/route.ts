@@ -176,7 +176,7 @@ async function getSupportData(siteId: string) {
       .from('agents')
       .select('id, user_id, status')
       .eq('site_id', siteId)
-      .eq('role', 'customer_support')
+      .eq('role', 'Customer Support')
       .eq('status', 'active')
       .order('created_at', { ascending: false })
       .limit(1);

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 // Import the packages without TypeScript type checking
-const Imap = require('imap');
+import { ImapFlow } from 'imapflow';
 const nodemailer = require('nodemailer');
 
 // Create schema for request validation (aligned with parent route)
@@ -28,7 +28,7 @@ const ERROR_CODES = {
   SYSTEM_ERROR: 'SYSTEM_ERROR'
 };
 
-// Validate IMAP connection
+// Validate IMAP connection using ImapFlow
 async function checkIMAPConnection(config: {
   user?: string;
   email?: string;
@@ -38,6 +38,9 @@ async function checkIMAPConnection(config: {
   port?: number | string;
   imapPort?: number | string;
   tls?: boolean;
+  // OAuth2 support
+  accessToken?: string;
+  useOAuth?: boolean;
 }): Promise<{
   success: boolean;
   messages?: {
@@ -47,83 +50,102 @@ async function checkIMAPConnection(config: {
   };
   error?: string;
 }> {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log(`[EMAIL_CHECK] Probando conexión IMAP con configuración:`, {
-        ...config,
-        password: config.password ? '******' : 'NO_PASSWORD'
-      });
+  let client: ImapFlow | undefined;
+  
+  try {
+    console.log(`[EMAIL_CHECK] Probando conexión IMAP con configuración:`, {
+      ...config,
+      password: config.password ? '******' : 'NO_PASSWORD',
+      accessToken: config.accessToken ? '******' : undefined
+    });
 
-      // Parse ports to ensure they are numbers
-      let imapPort = 993;
-      if (config.port || config.imapPort) {
-        const portValue = config.imapPort || config.port;
-        imapPort = typeof portValue === 'number' ? portValue : parseInt(String(portValue), 10);
+    // Parse ports to ensure they are numbers
+    let imapPort = 993;
+    if (config.port || config.imapPort) {
+      const portValue = config.imapPort || config.port;
+      imapPort = typeof portValue === 'number' ? portValue : parseInt(String(portValue), 10);
+    }
+    
+    // Create ImapFlow connection configuration
+    const imapConfig: any = {
+      host: config.imapHost || config.host || 'imap.gmail.com',
+      port: imapPort,
+      secure: config.tls !== false,
+      logger: false, // Disable logging for production
+      tls: {
+        rejectUnauthorized: false
       }
-      
-      // Create IMAP connection
-      const imapConfig = {
+    };
+
+    // Configure authentication
+    if (config.useOAuth && config.accessToken) {
+      // OAuth2 authentication
+      imapConfig.auth = {
         user: config.user || config.email,
-        password: config.password,
-        host: config.imapHost || config.host || 'imap.gmail.com',
-        port: imapPort,
-        tls: config.tls !== false,
-        tlsOptions: { rejectUnauthorized: false },
-        debug: console.log
+        accessToken: config.accessToken
+      };
+    } else {
+      // Traditional password authentication
+      imapConfig.auth = {
+        user: config.user || config.email,
+        pass: config.password
+      };
+    }
+    
+    // Create ImapFlow client
+    client = new ImapFlow(imapConfig);
+    
+    // Connect to the server
+    await client.connect();
+    console.log(`[EMAIL_CHECK] Conexión IMAP establecida correctamente`);
+    
+    // Get mailbox lock for INBOX to verify permissions
+    const lock = await client.getMailboxLock('INBOX');
+    
+    try {
+      const mailboxInfo = client.mailbox;
+      
+      // Type guard to check if mailboxInfo is a MailboxObject
+      const isMailboxObject = typeof mailboxInfo === 'object' && mailboxInfo !== null;
+      
+      console.log(`[EMAIL_CHECK] Información del buzón:`, {
+        exists: isMailboxObject ? (mailboxInfo as any).exists : 0,
+        recent: isMailboxObject ? (mailboxInfo as any).recent : 0,
+        unseen: isMailboxObject ? (mailboxInfo as any).unseen : 0
+      });
+      
+      return {
+        success: true,
+        messages: {
+          total: isMailboxObject ? (mailboxInfo as any).exists || 0 : 0,
+          recent: isMailboxObject ? (mailboxInfo as any).recent || 0 : 0,
+          unseen: isMailboxObject ? (mailboxInfo as any).unseen || 0 : 0
+        }
       };
       
-      const imap = new Imap(imapConfig);
-      
-      imap.once('ready', () => {
-        console.log(`[EMAIL_CHECK] Conexión IMAP establecida correctamente`);
-        
-        // Try to open inbox to verify permissions
-        imap.openBox('INBOX', false, (err: Error | null, box: any) => {
-          imap.end();
-          if (err) {
-            console.error(`[EMAIL_CHECK] Error al abrir bandeja de entrada:`, err);
-            reject({
-              success: false,
-              error: `Failed to open INBOX: ${err.message}`
-            });
-          } else {
-            const totalMessages = box.messages.total;
-            resolve({
-              success: true,
-              messages: {
-                total: totalMessages,
-                recent: box.messages.recent,
-                unseen: box.messages.unseen
-              }
-            });
-          }
-        });
-      });
-      
-      imap.once('error', (err: Error) => {
-        console.error(`[EMAIL_CHECK] Error de conexión IMAP:`, err);
-        reject({
-          success: false,
-          error: `IMAP connection error: ${err.message}`
-        });
-      });
-      
-      imap.once('end', () => {
-        console.log(`[EMAIL_CHECK] Conexión IMAP finalizada`);
-      });
-      
-      // Connect to the server
-      imap.connect();
-      
-    } catch (error: unknown) {
-      console.error(`[EMAIL_CHECK] Error al establecer conexión IMAP:`, error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      reject({
-        success: false,
-        error: `Failed to establish IMAP connection: ${errorMessage}`
-      });
+    } finally {
+      // Always release the lock
+      lock.release();
     }
-  });
+    
+  } catch (error: unknown) {
+    console.error(`[EMAIL_CHECK] Error de conexión IMAP:`, error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return {
+      success: false,
+      error: `IMAP connection error: ${errorMessage}`
+    };
+  } finally {
+    // Clean up connection
+    if (client) {
+      try {
+        await client.logout();
+        console.log(`[EMAIL_CHECK] Conexión IMAP finalizada`);
+      } catch (logoutError) {
+        console.warn('[EMAIL_CHECK] Error during IMAP logout:', logoutError);
+      }
+    }
+  }
 }
 
 // Validate SMTP connection

@@ -56,26 +56,66 @@ export class TeamNotificationService {
     try {
       console.log(`🔍 Obteniendo miembros del equipo para el sitio: ${siteId}`);
       
-      // Obtener todos los miembros del sitio (site_members)
-      const { data: siteUsers, error: siteUsersError } = await supabaseAdmin
+      // Obtener propietarios del sitio (site_ownership)
+      const { data: siteOwners, error: siteOwnersError } = await supabaseAdmin
+        .from('site_ownership')
+        .select('user_id')
+        .eq('site_id', siteId);
+      
+      if (siteOwnersError) {
+        console.error('Error al obtener site_owners:', siteOwnersError);
+        throw new Error(`Error al obtener propietarios del sitio: ${siteOwnersError.message}`);
+      }
+      
+      // Obtener miembros del sitio (site_members)
+      const { data: siteMembers, error: siteMembersError } = await supabaseAdmin
         .from('site_members')
         .select('user_id, role')
         .eq('site_id', siteId);
       
-      if (siteUsersError) {
-        console.error('Error al obtener site_members:', siteUsersError);
-        throw new Error(`Error al obtener miembros del sitio: ${siteUsersError.message}`);
+      if (siteMembersError) {
+        console.error('Error al obtener site_members:', siteMembersError);
+        throw new Error(`Error al obtener miembros del sitio: ${siteMembersError.message}`);
       }
       
-      if (!siteUsers || siteUsers.length === 0) {
-        console.warn(`No se encontraron miembros para el sitio: ${siteId}`);
+      // Combinar propietarios y miembros, evitando duplicados
+      const allUsers = new Map<string, { user_id: string; role: string }>();
+      
+      // Agregar propietarios con rol 'owner'
+      if (siteOwners) {
+        siteOwners.forEach(owner => {
+          allUsers.set(owner.user_id, {
+            user_id: owner.user_id,
+            role: 'owner'
+          });
+        });
+        console.log(`🔑 Encontrados ${siteOwners.length} propietarios en site_ownership`);
+      }
+      
+      // Agregar miembros (si ya existe como propietario, no sobrescribir)
+      if (siteMembers) {
+        siteMembers.forEach(member => {
+          if (!allUsers.has(member.user_id)) {
+            allUsers.set(member.user_id, {
+              user_id: member.user_id,
+              role: member.role
+            });
+          }
+        });
+        console.log(`👥 Encontrados ${siteMembers.length} miembros en site_members`);
+      }
+      
+      const totalUniqueUsers = Array.from(allUsers.values());
+      
+      if (totalUniqueUsers.length === 0) {
+        console.warn(`No se encontraron miembros ni propietarios para el sitio: ${siteId}`);
         return [];
       }
       
-      console.log(`📋 Encontrados ${siteUsers.length} miembros en site_members`);
+      console.log(`📋 Total de usuarios únicos: ${totalUniqueUsers.length} (${siteOwners?.length || 0} propietarios + ${siteMembers?.length || 0} miembros)`);
       
       // Obtener los IDs de usuario únicos
-      const userIds = Array.from(new Set(siteUsers.map(su => su.user_id)));
+      const userIds = Array.from(allUsers.keys());
       
       // Obtener información de los usuarios de auth.users
       const { data: authUsers, error: authUsersError } = await supabaseAdmin.auth.admin.listUsers();
@@ -104,12 +144,12 @@ export class TeamNotificationService {
       // Combinar la información y filtrar por notificaciones de email habilitadas
       const teamMembers: TeamMember[] = [];
       
-      for (const siteUser of siteUsers) {
-        const authUser = relevantAuthUsers.find(user => user.id === siteUser.user_id);
-        const profile = profiles?.find(p => p.id === siteUser.user_id);
+      for (const userInfo of totalUniqueUsers) {
+        const authUser = relevantAuthUsers.find(user => user.id === userInfo.user_id);
+        const profile = profiles?.find(p => p.id === userInfo.user_id);
         
         if (!authUser || !authUser.email) {
-          console.warn(`Usuario sin email encontrado: ${siteUser.user_id}`);
+          console.warn(`Usuario sin email encontrado: ${userInfo.user_id}`);
           continue;
         }
         
@@ -117,20 +157,20 @@ export class TeamNotificationService {
         const notifications = profile?.notifications || {};
         const emailNotificationsEnabled = notifications.email === true;
         
-        // Si no hay configuración de notificaciones, asumir que están habilitadas para admins
+        // Si no hay configuración de notificaciones, asumir que están habilitadas para owners y admins
         const shouldInclude = emailNotificationsEnabled || 
-                             (!profile?.notifications && siteUser.role === 'admin');
+                             (!profile?.notifications && (userInfo.role === 'admin' || userInfo.role === 'owner'));
         
         if (shouldInclude) {
           teamMembers.push({
-            user_id: siteUser.user_id,
+            user_id: userInfo.user_id,
             email: authUser.email,
             name: profile?.name || authUser.user_metadata?.name || authUser.email,
-            role: siteUser.role,
+            role: userInfo.role,
             notifications: notifications
           });
         } else {
-          console.log(`🔇 Usuario ${authUser.email} tiene notificaciones por email deshabilitadas`);
+          console.log(`🔇 Usuario ${authUser.email} (${userInfo.role}) tiene notificaciones por email deshabilitadas`);
         }
       }
       

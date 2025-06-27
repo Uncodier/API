@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import * as nodemailer from 'nodemailer';
-const Imap = require('imap');
+import { ImapFlow } from 'imapflow';
 
 export interface EmailMessage {
   id: string;
@@ -23,11 +23,14 @@ export interface EmailConfig {
   smtpHost?: string;
   smtpPort?: number;
   tls?: boolean;
+  // OAuth2 support
+  accessToken?: string;
+  useOAuth?: boolean;
 }
 
 export class EmailService {
   /**
-   * Obtiene emails desde un servidor IMAP
+   * Obtiene emails desde un servidor IMAP usando ImapFlow
    * @param emailConfig Configuración del servidor de email
    * @param limit Número máximo de emails a obtener
    * @param sinceDate Fecha ISO string desde la cual obtener emails
@@ -37,134 +40,150 @@ export class EmailService {
     limit: number = 10,
     sinceDate?: string
   ): Promise<EmailMessage[]> {
-    return new Promise((resolve, reject) => {
-      try {
-        // Parse ports to ensure they are numbers
-        let imapPort = emailConfig.imapPort || 993;
-        if (typeof imapPort === 'string') {
-          imapPort = parseInt(imapPort, 10);
+    let client: ImapFlow | undefined;
+    
+    try {
+      // Parse ports to ensure they are numbers
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') {
+        imapPort = parseInt(imapPort, 10);
+      }
+      
+      // Create ImapFlow connection configuration
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false, // Disable logging for production
+        tls: {
+          rejectUnauthorized: false
         }
-        
-        // Create IMAP connection configuration
-        const imapConfig = {
+      };
+
+      // Configure authentication
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        // OAuth2 authentication
+        imapConfig.auth = {
           user: emailConfig.user || emailConfig.email,
-          password: emailConfig.password,
-          host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
-          port: imapPort,
-          tls: emailConfig.tls !== false,
-          tlsOptions: { rejectUnauthorized: false }
+          accessToken: emailConfig.accessToken
         };
-        
-        const imap = new Imap(imapConfig);
+      } else {
+        // Traditional password authentication
+        imapConfig.auth = {
+          user: emailConfig.user || emailConfig.email,
+          pass: emailConfig.password
+        };
+      }
+      
+      // Create ImapFlow client
+      client = new ImapFlow(imapConfig);
+      
+      // Connect to the server
+      await client.connect();
+      
+      // Open INBOX
+      const lock = await client.getMailboxLock('INBOX');
+      
+      try {
         const emails: EmailMessage[] = [];
         
-        imap.once('ready', () => {
-          imap.openBox('INBOX', false, (err: any, box: any) => {
-            if (err) {
-              imap.end();
-              return reject(new Error(`Error opening inbox: ${err.message}`));
+        // Create search criteria
+        let searchQuery: any = {};
+        if (sinceDate) {
+          searchQuery.since = new Date(sinceDate);
+        }
+        
+        // Search for emails
+        const messages = [];
+        for await (const message of client.fetch(searchQuery, {
+          envelope: true,
+          bodyParts: ['HEADER', 'TEXT'],
+          bodyStructure: true
+        })) {
+          messages.push(message);
+          
+          // Limit results
+          if (messages.length >= limit) {
+            break;
+          }
+        }
+        
+        // Process messages
+        for (const message of messages) {
+          const email: EmailMessage = {
+            id: message.uid.toString(),
+            subject: message.envelope?.subject || 'No Subject',
+            from: message.envelope?.from?.[0]?.address || 'Unknown',
+            to: message.envelope?.to?.[0]?.address || 'Unknown',
+            date: message.envelope?.date?.toISOString() || new Date().toISOString(),
+            body: null,
+            headers: null
+          };
+          
+          // Get text body if available
+          try {
+            const textPart = message.bodyParts?.get('TEXT');
+            if (textPart) {
+              email.body = textPart.toString('utf8');
             }
-
-            // Crear criterios de búsqueda si hay fecha
-            const searchCriteria = sinceDate 
-              ? [['SINCE', new Date(sinceDate)]]
-              : [['ALL']];
-
-            imap.search(searchCriteria, (searchErr: any, results: number[]) => {
-              if (searchErr) {
-                imap.end();
-                return reject(new Error(`Search error: ${searchErr.message}`));
-              }
-
-              if (results.length === 0) {
-                imap.end();
-                return resolve([]);
-              }
-
-              // Ordenar resultados de más reciente a más antiguo y limitar
-              results.sort((a, b) => b - a);
-              const messagesToFetch = results.slice(0, limit);
+          } catch (bodyError) {
+            console.warn('Error reading email body:', bodyError);
+            email.body = null;
+          }
+          
+          // Get headers if available
+          try {
+            const headerPart = message.bodyParts?.get('HEADER');
+            if (headerPart) {
+              const headerStr = headerPart.toString('utf8');
+              const headers: any = {};
+              const headerLines = headerStr.split('\r\n');
+              let currentHeader = '';
               
-              const f = imap.fetch(messagesToFetch, {
-                bodies: ['HEADER.FIELDS (FROM TO SUBJECT DATE)', 'TEXT'],
-                struct: true
-              });
-            
-              f.on('message', (msg: any, seqno: number) => {
-                const email: EmailMessage = {
-                  id: `${seqno}`,
-                  headers: null,
-                  body: null
-                };
+              for (const line of headerLines) {
+                if (!line.trim()) continue;
                 
-                msg.on('body', (stream: any, info: any) => {
-                  let buffer = '';
-                  
-                  stream.on('data', (chunk: Buffer) => {
-                    buffer += chunk.toString('utf8');
-                  });
-                  
-                  stream.once('end', () => {
-                    if (info.which.includes('HEADER')) {
-                      const headerLines = buffer.split('\r\n');
-                      const headers: any = {};
-                      let currentHeader = '';
-                      
-                      for (const line of headerLines) {
-                        if (!line.trim()) continue;
-                        
-                        if (line.match(/^\s/)) {
-                          if (currentHeader) {
-                            headers[currentHeader] += ' ' + line.trim();
-                          }
-                        } else {
-                          const match = line.match(/^([^:]+):\s*(.*)$/);
-                          if (match) {
-                            currentHeader = match[1].toLowerCase();
-                            headers[currentHeader] = match[2];
-                          }
-                        }
-                      }
-                      
-                      email.subject = headers.subject || 'No Subject';
-                      email.from = headers.from || 'Unknown';
-                      email.to = headers.to || 'Unknown';
-                      email.date = headers.date || new Date().toISOString();
-                    } else {
-                      email.body = buffer;
-                    }
-                  });
-                });
-                
-                msg.once('end', () => {
-                  emails.push(email);
-                });
-              });
-              
-              f.once('error', (err: any) => {
-                imap.end();
-                reject(new Error(`Fetch error: ${err.message}`));
-              });
-              
-              f.once('end', () => {
-                imap.end();
-              });
-            });
-          });
-        });
+                if (line.match(/^\s/)) {
+                  if (currentHeader) {
+                    headers[currentHeader] += ' ' + line.trim();
+                  }
+                } else {
+                  const match = line.match(/^([^:]+):\s*(.*)$/);
+                  if (match) {
+                    currentHeader = match[1].toLowerCase();
+                    headers[currentHeader] = match[2];
+                  }
+                }
+              }
+              email.headers = headers;
+            }
+          } catch (headerError) {
+            console.warn('Error reading email headers:', headerError);
+            email.headers = null;
+          }
+          
+          emails.push(email);
+        }
         
-        imap.once('error', (err: any) => {
-          reject(new Error(`IMAP connection error: ${err.message}`));
-        });
+        return emails;
         
-        imap.once('end', () => {
-          resolve(emails);
-        });
-        
-        imap.connect();
-      } catch (error) {
-        reject(error);
+      } finally {
+        // Always release the lock
+        lock.release();
       }
-    });
+      
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      throw new Error(`Email fetch error: ${errorMessage}`);
+    } finally {
+      // Clean up connection
+      if (client) {
+        try {
+          await client.logout();
+        } catch (logoutError) {
+          console.warn('Error during IMAP logout:', logoutError);
+        }
+      }
+    }
   }
 } 
