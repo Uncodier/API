@@ -63,6 +63,34 @@ interface WhatsAppMessageWorkflowArgs {
   leadId?: string;
 }
 
+interface CustomerSupportMessageWorkflowArgs {
+  conversationId?: string;
+  userId?: string;
+  message: string;
+  agentId?: string;
+  site_id?: string;
+  lead_id?: string;
+  visitor_id?: string;
+  name?: string;
+  email?: string;
+  phone?: string;
+  website_chat_origin?: boolean;
+  lead_notification?: string;
+  origin?: string;
+}
+
+interface AgentMessageWorkflowArgs {
+  conversationId?: string;
+  message: string;
+  agentId: string;
+  lead_id?: string;
+  visitor_id?: string;
+  site_id: string;
+  team_member_id?: string;
+  userId?: string;
+  origin?: string;
+}
+
 export class BusinessWorkflowService extends BaseWorkflowService {
   private static instance: BusinessWorkflowService;
 
@@ -295,6 +323,120 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para procesar mensajes de customer support
+   */
+  public async customerSupportMessage(args: CustomerSupportMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.message) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere message para procesar el mensaje de customer support'
+          }
+        };
+      }
+
+      // Validar que al menos un identificador esté presente
+      if (!args.visitor_id && !args.lead_id && !args.userId && !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Al menos un parámetro de identificación (visitor_id, lead_id, userId, o site_id) es requerido'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `customer-support-message-${args.site_id || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`💬 Iniciando workflow de mensaje customer support: ${workflowId}`);
+      console.log(`📝 Mensaje: ${args.message.substring(0, 50)}...`);
+      console.log(`🏢 Site ID: ${args.site_id || 'N/A'}`);
+
+      const result = await client.workflow.execute('customerSupportMessageWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de mensaje customer support completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de mensaje customer support:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de mensaje customer support'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para procesar mensajes de agente
+   */
+  public async agentMessage(args: AgentMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.message || !args.agentId || !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren message, agentId y site_id para procesar el mensaje del agente'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `agent-message-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🤖 Iniciando workflow de mensaje de agente: ${workflowId}`);
+      console.log(`📝 Mensaje: ${args.message.substring(0, 50)}...`);
+      console.log(`👤 Agent ID: ${args.agentId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+
+      const result = await client.workflow.execute('agentMessageWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de mensaje de agente completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de mensaje de agente:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de mensaje de agente'
+        }
+      };
+    }
+  }
 }
 
 // Exportar interfaces para uso externo
@@ -302,5 +444,7 @@ export type {
   AnalysisData, 
   ScheduleCustomerSupportParams, 
   WhatsAppMessageWorkflowArgs, 
-  EmailWorkflowArgs 
+  EmailWorkflowArgs,
+  CustomerSupportMessageWorkflowArgs,
+  AgentMessageWorkflowArgs
 }; 

@@ -979,9 +979,11 @@ CREATE TABLE public.visitors (
   fingerprint text,
   command_id uuid,
   segment_id uuid,
+  campaign_id uuid,
   CONSTRAINT visitors_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_visitors FOREIGN KEY (command_id) REFERENCES public.commands(id),
-  CONSTRAINT visitors_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id)
+  CONSTRAINT visitors_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
+  CONSTRAINT visitors_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id)
 );
 CREATE TABLE public.waitlist (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

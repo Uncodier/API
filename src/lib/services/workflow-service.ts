@@ -9,7 +9,9 @@ import type {
   AnalysisData, 
   ScheduleCustomerSupportParams, 
   WhatsAppMessageWorkflowArgs, 
-  EmailWorkflowArgs 
+  EmailWorkflowArgs,
+  CustomerSupportMessageWorkflowArgs,
+  AgentMessageWorkflowArgs
 } from './workflow/business-workflow-service';
 
 /**
@@ -49,6 +51,14 @@ export class WorkflowService extends BaseWorkflowService {
 
   public async dailyStandUp(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.businessService.dailyStandUp(args, options);
+  }
+
+  public async customerSupportMessage(args: CustomerSupportMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.businessService.customerSupportMessage(args, options);
+  }
+
+  public async agentMessage(args: AgentMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.businessService.agentMessage(args, options);
   }
 
   // Métodos delegados al DataWorkflowService
@@ -205,5 +215,7 @@ export type {
   WhatsAppMessageWorkflowArgs, 
   WorkflowExecutionResponse, 
   WorkflowExecutionOptions,
-  EmailWorkflowArgs
+  EmailWorkflowArgs,
+  CustomerSupportMessageWorkflowArgs,
+  AgentMessageWorkflowArgs
 }; 

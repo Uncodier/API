@@ -234,6 +234,7 @@ async function executeCopywriterRefinement(
       copywriterContext += `6. NO usar placeholders o variables como [Nombre], {Empresa}, {{Variable}}, etc.\n`;
       copywriterContext += `7. Usar ÚNICAMENTE la información real proporcionada en el contexto del lead\n`;
       copywriterContext += `8. Escribir contenido final listo para enviar sin edición adicional\n\n`;
+      copywriterContext += `9. Firma a nombre del equipo\n\n`;
       
       console.log(`📝 FASE 2: Contexto estructurado preparado con ${copywriterContext.length} caracteres`);
     } else {

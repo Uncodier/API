@@ -3,10 +3,15 @@ import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 
 /**
- * API DE SEGMENTACIÓN DE VISITANTES
+ * API DE SEGMENTACIÓN DE VISITANTES Y CAMPAÑAS
  * 
  * Esta API permite gestionar la segmentación de visitantes y asignar automáticamente
- * segmentos basados en la URL y reglas definidas.
+ * segmentos y campañas basados en la URL y reglas definidas.
+ * 
+ * Funcionalidades:
+ * - Asignar segmentos a visitantes y leads
+ * - Asignar campañas a visitantes y leads (usando c, campaign o campaign_id)
+ * - Validar que las campañas pertenezcan al sitio especificado
  * 
  * Documentación completa: /docs/api/visitors/segment
  */
@@ -17,7 +22,11 @@ const segmentSchema = z.object({
   site_id: z.string(),
   url: z.string().url(),
   visitor_id: z.string(),
-  lead_id: z.string().optional()
+  lead_id: z.string().optional(),
+  // Parámetros de campaña - puede ser c, campaign o campaign_id
+  c: z.string().optional(),
+  campaign: z.string().optional(),
+  campaign_id: z.string().optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -81,8 +90,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Determinar el campaign_id desde los parámetros
+    const campaignId = validatedData.campaign_id || validatedData.campaign || validatedData.c;
+    
     let segment = null;
     let segmentError = null;
+    let campaign = null;
+    let campaignError = null;
 
     // Only check segment if segment_id is provided
     if (validatedData.segment_id) {
@@ -118,18 +132,64 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update visitor with segment (if provided)
-    console.log("[POST /api/visitors/segment] Updating visitor with segment:", {
+    // Only check campaign if campaign_id is provided
+    if (campaignId) {
+      console.log("[POST /api/visitors/segment] Checking campaign:", campaignId);
+      const campaignResult = await supabaseAdmin
+        .from('campaigns')
+        .select('*')
+        .eq('id', campaignId)
+        .eq('site_id', validatedData.site_id) // Asegurar que la campaña pertenece al sitio
+        .single();
+
+      campaign = campaignResult.data;
+      campaignError = campaignResult.error;
+
+      console.log("[POST /api/visitors/segment] Campaign check result:", {
+        campaign,
+        error: campaignError,
+        query: `SELECT * FROM campaigns WHERE id = '${campaignId}' AND site_id = '${validatedData.site_id}'`
+      });
+
+      if (campaignError || !campaign) {
+        console.log("[POST /api/visitors/segment] Campaign not found or error:", { campaignError });
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'campaign_not_found',
+              message: `Campaign with ID ${campaignId} not found for this site`,
+              details: campaignError
+            }
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Update visitor with segment and campaign (if provided)
+    console.log("[POST /api/visitors/segment] Updating visitor with segment and campaign:", {
       visitor_id: validatedData.visitor_id,
-      segment_id: validatedData.segment_id
+      segment_id: validatedData.segment_id,
+      campaign_id: campaignId
     });
+
+    // Preparar los datos para actualizar
+    const updateData: any = {
+      updated_at: new Date().toISOString()
+    };
+    
+    if (validatedData.segment_id) {
+      updateData.segment_id = validatedData.segment_id;
+    }
+    
+    if (campaignId) {
+      updateData.campaign_id = campaignId;
+    }
 
     const { data: updatedVisitor, error: updateError } = await supabaseAdmin
       .from('visitors')
-      .update({
-        segment_id: validatedData.segment_id,
-        updated_at: new Date().toISOString()
-      })
+      .update(updateData)
       .eq('id', validatedData.visitor_id)
       .select()
       .single();
@@ -161,17 +221,28 @@ export async function POST(request: NextRequest) {
     // If lead_id is provided, also update lead
     let updatedLead = null;
     if (validatedData.lead_id) {
-      console.log("[POST /api/visitors/segment] Updating lead with segment:", {
+      console.log("[POST /api/visitors/segment] Updating lead with segment and campaign:", {
         lead_id: validatedData.lead_id,
-        segment_id: validatedData.segment_id
+        segment_id: validatedData.segment_id,
+        campaign_id: campaignId
       });
+
+      // Preparar los datos para actualizar el lead
+      const leadUpdateData: any = {
+        updated_at: new Date().toISOString()
+      };
+      
+      if (validatedData.segment_id) {
+        leadUpdateData.segment_id = validatedData.segment_id;
+      }
+      
+      if (campaignId) {
+        leadUpdateData.campaign_id = campaignId;
+      }
 
       const { data: leadData, error: leadError } = await supabaseAdmin
         .from('leads')
-        .update({
-          segment_id: validatedData.segment_id,
-          updated_at: new Date().toISOString()
-        })
+        .update(leadUpdateData)
         .eq('id', validatedData.lead_id)
         .select()
         .single();
@@ -192,7 +263,9 @@ export async function POST(request: NextRequest) {
     const response = {
       success: true,
       segment_id: validatedData.segment_id,
-      name: segment?.name,
+      segment_name: segment?.name,
+      campaign_id: campaignId,
+      campaign_title: campaign?.title,
       visitor_id: validatedData.visitor_id,
       lead_id: validatedData.lead_id,
       updated_at: new Date().toISOString()
