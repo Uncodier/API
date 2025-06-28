@@ -51,18 +51,27 @@ function isValidUUID(uuid: string): boolean {
  * Función para filtrar emails según aliases configurados
  */
 function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
-  if (!aliases || aliases.length === 0) {
-    console.log('[EMAIL_API] 📧 No se especificaron aliases, procesando todos los emails');
+  // Validar que aliases sea un array válido
+  if (!Array.isArray(aliases) || aliases.length === 0) {
+    console.log('[EMAIL_API] 📧 No se especificaron aliases válidos, procesando todos los emails');
     return emails;
   }
 
-  console.log(`[EMAIL_API] 🔍 Filtrando emails según aliases configurados: ${aliases.join(', ')}`);
+  // Filtrar aliases válidos (solo strings no vacíos)
+  const validAliases = aliases.filter(alias => typeof alias === 'string' && alias.trim().length > 0);
+  
+  if (validAliases.length === 0) {
+    console.log('[EMAIL_API] 📧 No se encontraron aliases válidos, procesando todos los emails');
+    return emails;
+  }
+
+  console.log(`[EMAIL_API] 🔍 Filtrando emails según aliases configurados: ${validAliases.join(', ')}`);
   
   const filteredEmails = emails.filter(email => {
     const emailTo = (email.to || '').toLowerCase().trim();
     
     // Verificar si algún alias coincide con el campo "to" del email
-    const isValidEmail = aliases.some(alias => {
+    const isValidEmail = validAliases.some(alias => {
       const normalizedAlias = alias.toLowerCase().trim();
       
       // Verificar coincidencia exacta
@@ -95,7 +104,7 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
     if (isValidEmail) {
       console.log(`[EMAIL_API] ✅ Email incluido - To: ${email.to} (coincide con aliases)`);
     } else {
-      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to} (no coincide con aliases: ${aliases.join(', ')})`);
+      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to} (no coincide con aliases: ${validAliases.join(', ')})`);
     }
 
     return isValidEmail;
@@ -408,12 +417,30 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       
       // Filter emails by aliases if configured
-      const emails = filterEmailsByAliases(allEmails, emailConfig.aliases || []);
+      // Los aliases pueden venir como string separado por comas o como array
+      let normalizedAliases: string[] = [];
+      
+      if (emailConfig.aliases) {
+        if (Array.isArray(emailConfig.aliases)) {
+          normalizedAliases = emailConfig.aliases;
+        } else {
+          // Asumir que es un string separado por comas
+          const aliasesStr = String(emailConfig.aliases);
+          if (aliasesStr.trim().length > 0) {
+            normalizedAliases = aliasesStr
+              .split(',')
+              .map((alias: string) => alias.trim())
+              .filter((alias: string) => alias.length > 0);
+          }
+        }
+      }
+      
+      const emails = filterEmailsByAliases(allEmails, normalizedAliases);
       
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
       console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtrado: ${emails.length}`);
-      console.log(`[EMAIL_API] - Aliases configurados: ${emailConfig.aliases ? emailConfig.aliases.join(', ') : 'Ninguno (procesar todos)'}`);
+      console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
       // Si no se proporciona agentId, buscar el agente de soporte
       const effectiveAgentId = agentId || await findSupportAgent(siteId);
@@ -507,8 +534,8 @@ export async function POST(request: NextRequest) {
         emailCount: emails.length,
         originalEmailCount: allEmails.length,
         analysisCount: emailsForResponse.length,
-        aliasesConfigured: emailConfig.aliases || [],
-        filteredByAliases: emailConfig.aliases && emailConfig.aliases.length > 0,
+        aliasesConfigured: normalizedAliases,
+        filteredByAliases: normalizedAliases.length > 0,
         emails: emailsForResponse
       });
       
