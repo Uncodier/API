@@ -297,7 +297,7 @@ async function sendAgentResponse(conversationId, visitor_id, userMessage) {
     const agentMessageData = {
       conversation_id: conversationId,
       content: responseContent,
-      sender_type: 'agent',
+      role: 'assistant',
       visitor_id: null // El mensaje es del agente, no del visitante
     };
     
@@ -630,7 +630,7 @@ wss.on('connection', async (ws, req, params) => {
               .insert([{
                 conversation_id: payload.conversation_id,
                 content: payload.content,
-                sender_type: 'visitor',
+                role: 'visitor',
                 visitor_id: visitor_id,
                 client_message_id: payload.id || null // Guardar el ID del cliente si está disponible
               }])
@@ -772,7 +772,7 @@ wss.on('connection', async (ws, req, params) => {
             id: mockMessageId,
             conversation_id: conversation_id,
             content: `Este es un mensaje de prueba automático (${new Date().toLocaleTimeString()})`,
-            sender_type: 'agent',
+            role: 'assistant',
             created_at: new Date().toISOString()
           };
           

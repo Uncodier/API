@@ -174,48 +174,59 @@ export async function POST(request: NextRequest) {
       campaign_id: campaignId
     });
 
-    // Preparar los datos para actualizar
-    const updateData: any = {
-      updated_at: new Date().toISOString()
-    };
+    let updatedVisitor = visitor; // Use existing visitor data as default
+
+    // Only update visitor if there are actual changes to make
+    const hasVisitorUpdates = validatedData.segment_id || campaignId;
     
-    if (validatedData.segment_id) {
-      updateData.segment_id = validatedData.segment_id;
-    }
-    
-    if (campaignId) {
-      updateData.campaign_id = campaignId;
-    }
+    if (hasVisitorUpdates) {
+      // Preparar los datos para actualizar
+      const updateData: any = {
+        updated_at: new Date().toISOString()
+      };
+      
+      if (validatedData.segment_id) {
+        updateData.segment_id = validatedData.segment_id;
+      }
+      
+      if (campaignId) {
+        updateData.campaign_id = campaignId;
+      }
 
-    const { data: updatedVisitor, error: updateError } = await supabaseAdmin
-      .from('visitors')
-      .update(updateData)
-      .eq('id', validatedData.visitor_id)
-      .select()
-      .single();
+      const { data: visitorData, error: updateError } = await supabaseAdmin
+        .from('visitors')
+        .update(updateData)
+        .eq('id', validatedData.visitor_id)
+        .select()
+        .single();
 
-    console.log("[POST /api/visitors/segment] Visitor update result:", {
-      visitor: updatedVisitor,
-      error: updateError
-    });
-
-    if (updateError) {
-      console.error("[POST /api/visitors/segment] Error updating visitor:", {
-        error: updateError,
-        visitor_id: validatedData.visitor_id,
-        segment_id: validatedData.segment_id
+      console.log("[POST /api/visitors/segment] Visitor update result:", {
+        visitor: visitorData,
+        error: updateError
       });
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'visitor_update_error',
-            message: 'Error updating visitor with segment',
-            details: updateError
-          }
-        },
-        { status: 500 }
-      );
+
+      if (updateError) {
+        console.error("[POST /api/visitors/segment] Error updating visitor:", {
+          error: updateError,
+          visitor_id: validatedData.visitor_id,
+          segment_id: validatedData.segment_id
+        });
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'visitor_update_error',
+              message: 'Error updating visitor with segment',
+              details: updateError
+            }
+          },
+          { status: 500 }
+        );
+      }
+      
+      updatedVisitor = visitorData;
+    } else {
+      console.log("[POST /api/visitors/segment] No visitor updates needed - segment_id and campaign_id are both undefined");
     }
 
     // If lead_id is provided, also update lead
@@ -227,35 +238,61 @@ export async function POST(request: NextRequest) {
         campaign_id: campaignId
       });
 
-      // Preparar los datos para actualizar el lead
-      const leadUpdateData: any = {
-        updated_at: new Date().toISOString()
-      };
+      // Only update lead if there are actual changes to make
+      const hasLeadUpdates = validatedData.segment_id || campaignId;
       
-      if (validatedData.segment_id) {
-        leadUpdateData.segment_id = validatedData.segment_id;
-      }
-      
-      if (campaignId) {
-        leadUpdateData.campaign_id = campaignId;
-      }
+      if (hasLeadUpdates) {
+        // First check if lead exists
+        console.log("[POST /api/visitors/segment] Checking if lead exists:", validatedData.lead_id);
+        const { data: existingLead, error: leadCheckError } = await supabaseAdmin
+          .from('leads')
+          .select('id')
+          .eq('id', validatedData.lead_id)
+          .maybeSingle();
 
-      const { data: leadData, error: leadError } = await supabaseAdmin
-        .from('leads')
-        .update(leadUpdateData)
-        .eq('id', validatedData.lead_id)
-        .select()
-        .single();
+        console.log("[POST /api/visitors/segment] Lead existence check result:", {
+          exists: !!existingLead,
+          error: leadCheckError
+        });
 
-      console.log("[POST /api/visitors/segment] Lead update result:", {
-        lead: leadData,
-        error: leadError
-      });
+        if (leadCheckError) {
+          console.error("[POST /api/visitors/segment] Error checking lead existence:", leadCheckError);
+        } else if (existingLead) {
+          // Lead exists, proceed with update
+          const leadUpdateData: any = {
+            updated_at: new Date().toISOString()
+          };
+          
+          if (validatedData.segment_id) {
+            leadUpdateData.segment_id = validatedData.segment_id;
+          }
+          
+          if (campaignId) {
+            leadUpdateData.campaign_id = campaignId;
+          }
 
-      if (!leadError) {
-        updatedLead = leadData;
+          const { data: leadData, error: leadError } = await supabaseAdmin
+            .from('leads')
+            .update(leadUpdateData)
+            .eq('id', validatedData.lead_id)
+            .select()
+            .single();
+
+          console.log("[POST /api/visitors/segment] Lead update result:", {
+            lead: leadData,
+            error: leadError
+          });
+
+          if (!leadError) {
+            updatedLead = leadData;
+          } else {
+            console.warn("[POST /api/visitors/segment] Error updating lead:", leadError);
+          }
+        } else {
+          console.warn("[POST /api/visitors/segment] Lead not found, skipping update:", validatedData.lead_id);
+        }
       } else {
-        console.warn("[POST /api/visitors/segment] Error updating lead:", leadError);
+        console.log("[POST /api/visitors/segment] No lead updates needed - segment_id and campaign_id are both undefined");
       }
     }
 

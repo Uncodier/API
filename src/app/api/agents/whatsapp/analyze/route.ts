@@ -77,7 +77,7 @@ export async function POST(request: NextRequest) {
     // Verify messages exist
     const { data: messages, error: messagesError } = await supabaseAdmin
       .from('messages')
-      .select('id, content, created_at, sender_type, visitor_id, custom_data')
+              .select('id, content, created_at, role, visitor_id, custom_data')
       .in('id', messageIds);
     
     if (messagesError) {

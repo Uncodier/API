@@ -158,7 +158,7 @@ async function saveWhatsAppMessage(
           conversation_id: convId,
           visitor_id: visitorId,
           content: content,
-          sender_type: 'visitor',
+          role: 'visitor',
           custom_data: {
             source: 'whatsapp',
             whatsapp_message_id: waMessageId,

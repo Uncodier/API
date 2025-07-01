@@ -247,7 +247,7 @@ async function saveAndSendAgentResponse(
         {
           conversation_id: conversationId,
           content: agentResponse,
-          sender_type: 'assistant',
+          role: 'assistant',
           custom_data: {
             source: 'whatsapp',
             whatsapp_phone: phoneNumber

@@ -148,7 +148,7 @@ export async function POST(request: NextRequest) {
               {
                 conversation_id: conversation_id,
                 content: message,
-                sender_type: 'assistant', // or 'agent' depending on your schema
+                role: 'assistant', // or 'agent' depending on your schema
                 custom_data: {
                   source: 'whatsapp',
                   whatsapp_message_id: result.messageId,

@@ -257,13 +257,13 @@ async function getOrCreateConversation(visitor_id: string, site_id: string, agen
 }
 
 // Función para guardar un mensaje en la base de datos
-async function saveMessage(conversationId: string, content: string, sender_type: 'user' | 'agent' | 'system', visitor_id?: string) {
+async function saveMessage(conversationId: string, content: string, role: 'user' | 'assistant' | 'system', visitor_id?: string) {
   try {
     console.log(`💬 [saveMessage] Iniciando guardado de mensaje...`);
     console.log(`💬 [saveMessage] Parámetros:`, {
       conversationId,
       content: content?.substring(0, 100) + (content?.length > 100 ? '...' : ''),
-      sender_type,
+      role,
       visitor_id: visitor_id || 'NO_PROPORCIONADO'
     });
     
@@ -290,9 +290,8 @@ async function saveMessage(conversationId: string, content: string, sender_type:
     const messageData = {
       conversation_id: conversationId,
       content,
-      sender_type,
-      visitor_id: sender_type === 'user' ? visitor_id : null,
-      role: sender_type === 'user' ? 'user' : sender_type === 'agent' ? 'assistant' : 'team_member'
+      role,
+      visitor_id: role === 'user' ? visitor_id : null
     };
     
     console.log(`📝 [saveMessage] Datos del mensaje a insertar:`, {
@@ -774,7 +773,7 @@ export async function POST(req: NextRequest) {
       console.log(`💬 [POST] Guardando mensaje de ${user_type}:`, {
         conversationId,
         messageContent: messageContent.substring(0, 100) + (messageContent.length > 100 ? '...' : ''),
-        sender_type: 'user',
+        role: 'user',
         user_id,
         user_type
       });

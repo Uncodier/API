@@ -107,24 +107,28 @@ COMMENT ON COLUMN messages.created_at IS 'Record creation timestamp';
 COMMENT ON COLUMN messages.updated_at IS 'Record last update timestamp';
 
 -- Create function to update conversation last_message_at when new message is added
-CREATE OR REPLACE FUNCTION update_conversation_last_message_time()
-RETURNS TRIGGER AS $$
+CREATE OR REPLACE FUNCTION public.update_conversation_last_message_time()
+RETURNS TRIGGER 
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
 BEGIN
-    UPDATE conversations
+    UPDATE public.conversations
     SET last_message_at = NEW.created_at,
         updated_at = NOW()
     WHERE id = NEW.conversation_id;
     
     RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Create trigger for conversation update on message insert
-DROP TRIGGER IF EXISTS on_message_insert ON messages;
+DROP TRIGGER IF EXISTS on_message_insert ON public.messages;
 CREATE TRIGGER on_message_insert
-    AFTER INSERT ON messages
+    AFTER INSERT ON public.messages
     FOR EACH ROW
-    EXECUTE FUNCTION update_conversation_last_message_time();
+    EXECUTE FUNCTION public.update_conversation_last_message_time();
 
 -- Add RLS policies
 ALTER TABLE conversations ENABLE ROW LEVEL SECURITY;
