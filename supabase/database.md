@@ -506,6 +506,7 @@ CREATE TABLE public.leads (
   subscription jsonb DEFAULT '{}'::jsonb,
   birthday text,
   campaign_id uuid,
+  experiment_id uuid,
   command_id uuid,
   language text,
   company_id uuid,
@@ -514,6 +515,7 @@ CREATE TABLE public.leads (
   CONSTRAINT leads_pkey PRIMARY KEY (id),
   CONSTRAINT leads_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
   CONSTRAINT leads_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT leads_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.experiments(id),
   CONSTRAINT leads_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
   CONSTRAINT leads_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
   CONSTRAINT leads_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
@@ -980,10 +982,12 @@ CREATE TABLE public.visitors (
   command_id uuid,
   segment_id uuid,
   campaign_id uuid,
+  experiment_id uuid,
   CONSTRAINT visitors_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_visitors FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT visitors_segment_id_fkey FOREIGN KEY (segment_id) REFERENCES public.segments(id),
-  CONSTRAINT visitors_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id)
+  CONSTRAINT visitors_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
+  CONSTRAINT visitors_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.experiments(id)
 );
 CREATE TABLE public.waitlist (
   id uuid NOT NULL DEFAULT gen_random_uuid(),

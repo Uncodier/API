@@ -21,7 +21,7 @@ export default withNextra({
   reactStrictMode: true,
   experimental: {
     serverActions: {
-      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', 'localhost:3456']
+      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
     }
   },
   typescript: {

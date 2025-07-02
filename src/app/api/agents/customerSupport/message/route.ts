@@ -974,8 +974,8 @@ export async function POST(request: Request) {
       }
     }
 
-    // Buscar conversación existente si no se proporcionó una y no es WhatsApp (que ya se maneja arriba)
-    if (!effectiveConversationId && leadOrigin !== 'whatsapp') {
+    // Buscar conversación existente si no se proporcionó una y no es WhatsApp ni website_chat
+    if (!effectiveConversationId && leadOrigin !== 'whatsapp' && leadOrigin !== 'website_chat') {
       console.log(`🔍 Buscando conversación existente para origen "${effectiveOrigin || leadOrigin}"`);
       
       const existingConversationId = await ConversationService.findExistingConversation(
@@ -993,6 +993,8 @@ export async function POST(request: Request) {
       } else {
         console.log(`📝 No se encontró conversación existente, se creará una nueva`);
       }
+    } else if (!effectiveConversationId && leadOrigin === 'website_chat') {
+      console.log(`🌐 Para website_chat sin conversation_id, siempre se creará una nueva conversación`);
     }
     
     // Buscar agente de soporte al cliente activo si no se proporciona un agent_id

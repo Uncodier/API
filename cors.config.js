@@ -44,6 +44,13 @@ const corsConfig = {
       'http://192.168.87.64:3456',
       'http://192.168.87.79:3000',
       'http://192.168.87.79:3456',
+      'http://192.168.0.61:3000',
+      'http://192.168.0.61:3456',
+      'http://192.168.0.61:3001',
+      'http://192.168.0.62:3000',
+      'http://192.168.0.62:3456',
+      'http://192.168.0.62:3001',
+      'http://192.168.0.62:7233',
       // Dominios de Twilio para desarrollo y testing
       'https://twilio.com',
       'https://www.twilio.com',

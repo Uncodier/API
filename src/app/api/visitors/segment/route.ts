@@ -26,7 +26,11 @@ const segmentSchema = z.object({
   // Parámetros de campaña - puede ser c, campaign o campaign_id
   c: z.string().optional(),
   campaign: z.string().optional(),
-  campaign_id: z.string().optional()
+  campaign_id: z.string().optional(),
+  // Parámetros de experimento - puede ser e, experiment o experiment_id
+  e: z.string().optional(),
+  experiment: z.string().optional(),
+  experiment_id: z.string().optional()
 });
 
 export async function POST(request: NextRequest) {
@@ -93,10 +97,15 @@ export async function POST(request: NextRequest) {
     // Determinar el campaign_id desde los parámetros
     const campaignId = validatedData.campaign_id || validatedData.campaign || validatedData.c;
     
+    // Determinar el experiment_id desde los parámetros
+    const experimentId = validatedData.experiment_id || validatedData.experiment || validatedData.e;
+    
     let segment = null;
     let segmentError = null;
     let campaign = null;
     let campaignError = null;
+    let experiment = null;
+    let experimentError = null;
 
     // Only check segment if segment_id is provided
     if (validatedData.segment_id) {
@@ -167,17 +176,53 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Update visitor with segment and campaign (if provided)
-    console.log("[POST /api/visitors/segment] Updating visitor with segment and campaign:", {
+    // Only check experiment if experiment_id is provided
+    if (experimentId) {
+      console.log("[POST /api/visitors/segment] Checking experiment:", experimentId);
+      const experimentResult = await supabaseAdmin
+        .from('experiments')
+        .select('*')
+        .eq('id', experimentId)
+        .eq('site_id', validatedData.site_id) // Asegurar que el experimento pertenece al sitio
+        .single();
+
+      experiment = experimentResult.data;
+      experimentError = experimentResult.error;
+
+      console.log("[POST /api/visitors/segment] Experiment check result:", {
+        experiment,
+        error: experimentError,
+        query: `SELECT * FROM experiments WHERE id = '${experimentId}' AND site_id = '${validatedData.site_id}'`
+      });
+
+      if (experimentError || !experiment) {
+        console.log("[POST /api/visitors/segment] Experiment not found or error:", { experimentError });
+        return NextResponse.json(
+          {
+            success: false,
+            error: {
+              code: 'experiment_not_found',
+              message: `Experiment with ID ${experimentId} not found for this site`,
+              details: experimentError
+            }
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Update visitor with segment, campaign and experiment (if provided)
+    console.log("[POST /api/visitors/segment] Updating visitor with segment, campaign and experiment:", {
       visitor_id: validatedData.visitor_id,
       segment_id: validatedData.segment_id,
-      campaign_id: campaignId
+      campaign_id: campaignId,
+      experiment_id: experimentId
     });
 
     let updatedVisitor = visitor; // Use existing visitor data as default
 
     // Only update visitor if there are actual changes to make
-    const hasVisitorUpdates = validatedData.segment_id || campaignId;
+    const hasVisitorUpdates = validatedData.segment_id || campaignId || experimentId;
     
     if (hasVisitorUpdates) {
       // Preparar los datos para actualizar
@@ -191,6 +236,10 @@ export async function POST(request: NextRequest) {
       
       if (campaignId) {
         updateData.campaign_id = campaignId;
+      }
+      
+      if (experimentId) {
+        updateData.experiment_id = experimentId;
       }
 
       const { data: visitorData, error: updateError } = await supabaseAdmin
@@ -225,21 +274,22 @@ export async function POST(request: NextRequest) {
       }
       
       updatedVisitor = visitorData;
-    } else {
-      console.log("[POST /api/visitors/segment] No visitor updates needed - segment_id and campaign_id are both undefined");
-    }
+          } else {
+        console.log("[POST /api/visitors/segment] No visitor updates needed - segment_id, campaign_id and experiment_id are all undefined");
+      }
 
     // If lead_id is provided, also update lead
     let updatedLead = null;
     if (validatedData.lead_id) {
-      console.log("[POST /api/visitors/segment] Updating lead with segment and campaign:", {
+      console.log("[POST /api/visitors/segment] Updating lead with segment, campaign and experiment:", {
         lead_id: validatedData.lead_id,
         segment_id: validatedData.segment_id,
-        campaign_id: campaignId
+        campaign_id: campaignId,
+        experiment_id: experimentId
       });
 
       // Only update lead if there are actual changes to make
-      const hasLeadUpdates = validatedData.segment_id || campaignId;
+      const hasLeadUpdates = validatedData.segment_id || campaignId || experimentId;
       
       if (hasLeadUpdates) {
         // First check if lead exists
@@ -270,6 +320,10 @@ export async function POST(request: NextRequest) {
           if (campaignId) {
             leadUpdateData.campaign_id = campaignId;
           }
+          
+          if (experimentId) {
+            leadUpdateData.experiment_id = experimentId;
+          }
 
           const { data: leadData, error: leadError } = await supabaseAdmin
             .from('leads')
@@ -292,7 +346,7 @@ export async function POST(request: NextRequest) {
           console.warn("[POST /api/visitors/segment] Lead not found, skipping update:", validatedData.lead_id);
         }
       } else {
-        console.log("[POST /api/visitors/segment] No lead updates needed - segment_id and campaign_id are both undefined");
+        console.log("[POST /api/visitors/segment] No lead updates needed - segment_id, campaign_id and experiment_id are all undefined");
       }
     }
 
@@ -303,6 +357,8 @@ export async function POST(request: NextRequest) {
       segment_name: segment?.name,
       campaign_id: campaignId,
       campaign_title: campaign?.title,
+      experiment_id: experimentId,
+      experiment_name: experiment?.name,
       visitor_id: validatedData.visitor_id,
       lead_id: validatedData.lead_id,
       updated_at: new Date().toISOString()
