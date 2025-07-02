@@ -268,6 +268,9 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
     
+    // Log del body completo para debugging
+    console.log('📋 Body completo recibido:', JSON.stringify(body, null, 2));
+    
     // Extraer parámetros de la solicitud (mismos que leadFollowUp)
     const { 
       siteId, 
@@ -283,6 +286,11 @@ export async function POST(request: Request) {
       messages, // Datos de los mensajes generados
       command_ids // IDs de los comandos ejecutados
     } = body;
+    
+    // Log específico para messages
+    console.log('💬 Messages recibidos:', messages);
+    console.log('💬 Tipo de messages:', typeof messages);
+    console.log('💬 Keys de messages:', messages ? Object.keys(messages) : 'null/undefined');
     
     // Validar parámetros requeridos
     if (!siteId) {
@@ -338,7 +346,15 @@ export async function POST(request: Request) {
     let channelConversations: Record<string, string> = {};
     let channelMessages: Record<string, string> = {};
     
+    console.log('🔄 Verificando si crear conversaciones...');
+    console.log('🔄 Condiciones:', {
+      hasMessages: !!messages,
+      isObject: typeof messages === 'object',
+      hasKeys: messages ? Object.keys(messages).length > 0 : false
+    });
+    
     if (messages && typeof messages === 'object' && Object.keys(messages).length > 0) {
+      console.log('✅ Creando conversaciones y mensajes para canales:', Object.keys(messages));
       const result = await createChannelConversationsAndMessages(
         messages,
         effectiveLeadData,
@@ -350,6 +366,12 @@ export async function POST(request: Request) {
       );
       channelConversations = result.conversations;
       channelMessages = result.messages;
+      console.log('🎯 Resultado creación conversaciones:', { 
+        conversations: channelConversations, 
+        messages: channelMessages 
+      });
+    } else {
+      console.log('❌ No se crearán conversaciones - messages no válido o vacío');
     }
 
     // Paso 2: Crear tarea de awareness si es necesario
