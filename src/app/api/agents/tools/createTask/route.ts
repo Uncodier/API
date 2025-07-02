@@ -19,6 +19,12 @@ function transformToISO8601(dateInput: any): string | null {
       return isNaN(date.getTime()) ? null : dateInput; // Retornar el original si es válido
     }
     
+    // Si es ISO 8601 con milisegundos y timezone, también preservarlo
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput;
+    }
+    
     // Si es ISO 8601 con 'Z' al final, también preservarlo
     if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/)) {
       const date = new Date(dateInput);
@@ -183,7 +189,18 @@ const CreateTaskSchema = z.object({
   lead_id: z.string().uuid('Lead ID debe ser un UUID válido'),
   user_id: z.string().uuid('User ID debe ser un UUID válido').optional(),
   site_id: z.string().uuid('Site ID debe ser un UUID válido').optional(),
-  scheduled_date: z.string().datetime('Fecha debe ser ISO 8601').optional(),
+  scheduled_date: z.string()
+    .refine((val) => {
+      if (!val) return true; // opcional
+      // Verificar que sea una fecha válida ISO 8601 (con o sin timezone)
+      const iso8601Regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})?$/;
+      if (!iso8601Regex.test(val)) return false;
+      
+      // Verificar que la fecha sea válida
+      const date = new Date(val);
+      return !isNaN(date.getTime());
+    }, 'Fecha debe ser ISO 8601 válida (con o sin timezone)')
+    .optional(),
   amount: z.number().optional(),
   assignee: z.string().uuid('Assignee debe ser un UUID válido').optional(),
   notes: z.string().optional(),

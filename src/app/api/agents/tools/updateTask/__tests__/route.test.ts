@@ -91,7 +91,7 @@ describe('/api/agents/tools/updateTask', () => {
   describe('PUT', () => {
     it('debería actualizar una tarea con datos válidos', async () => {
       const updateTaskData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         title: 'Updated Test Task',
         status: 'in_progress',
         stage: 'consideration',
@@ -123,7 +123,7 @@ describe('/api/agents/tools/updateTask', () => {
 
     it('debería actualizar una tarea con datos mínimos (solo task_id y un campo)', async () => {
       const minimalUpdateData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         status: 'completed'
       };
 
@@ -138,7 +138,7 @@ describe('/api/agents/tools/updateTask', () => {
 
     it('debería marcar una tarea como completada con fecha de completado', async () => {
       const completionData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         status: 'completed',
         stage: 'completed',
         completed_date: '2024-01-20T16:30:00Z',
@@ -156,7 +156,7 @@ describe('/api/agents/tools/updateTask', () => {
 
     it('debería actualizar la asignación de una tarea', async () => {
       const reassignmentData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         assignee: '87654321-4321-4321-4321-210987654321',
         notes: 'Reassigned to senior team member'
       };
@@ -207,7 +207,7 @@ describe('/api/agents/tools/updateTask', () => {
       getTaskById.mockResolvedValueOnce(null);
 
       const updateTaskData = {
-        task_id: 'nonexistent-task-id',
+        task_id: '99999999-9999-9999-9999-999999999999',
         status: 'in_progress'
       };
 
@@ -222,7 +222,7 @@ describe('/api/agents/tools/updateTask', () => {
 
     it('debería fallar con fecha inválida', async () => {
       const invalidTaskData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         scheduled_date: 'invalid-date'
       };
 
@@ -237,7 +237,7 @@ describe('/api/agents/tools/updateTask', () => {
 
     it('debería fallar con assignee inválido (no UUID)', async () => {
       const invalidTaskData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         assignee: 'invalid-assignee-id'
       };
 
@@ -256,7 +256,7 @@ describe('/api/agents/tools/updateTask', () => {
       updateTask.mockRejectedValueOnce(new Error('Database connection error'));
 
       const updateTaskData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         status: 'in_progress'
       };
 
@@ -273,7 +273,7 @@ describe('/api/agents/tools/updateTask', () => {
   describe('POST', () => {
     it('debería funcionar como alias de PUT', async () => {
       const updateTaskData = {
-        task_id: 'task-123',
+        task_id: '12345678-1234-1234-1234-123456789012',
         status: 'in_progress'
       };
 
@@ -305,6 +305,101 @@ describe('/api/agents/tools/updateTask', () => {
       expect(responseData.example_request).toBeDefined();
       expect(responseData.example_response).toBeDefined();
       expect(responseData.common_patterns).toBeDefined();
+    });
+  });
+
+  describe('Validación de fechas con timezone offset', () => {
+    it('debería aceptar scheduled_date con timezone offset', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        scheduled_date: '2025-07-03T16:00:00-06:00'
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(responseData.success).toBe(true);
+      expect(responseData.task.id).toBe('task-123');
+    });
+
+    it('debería aceptar completed_date con timezone offset', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        completed_date: '2025-07-03T16:00:00-06:00'
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(responseData.success).toBe(true);
+      expect(responseData.task.id).toBe('task-123');
+    });
+
+    it('debería aceptar fechas con timezone offset positivo', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        scheduled_date: '2025-07-03T16:00:00+05:30',
+        completed_date: '2025-07-03T18:00:00+05:30'
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(responseData.success).toBe(true);
+      expect(responseData.task.id).toBe('task-123');
+    });
+
+    it('debería aceptar fechas con milisegundos y timezone offset', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        scheduled_date: '2025-07-03T16:00:00.123-06:00',
+        completed_date: '2025-07-03T18:00:00.456+05:30'
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(responseData.success).toBe(true);
+      expect(responseData.task.id).toBe('task-123');
+    });
+
+    it('debería aceptar fechas UTC (con Z)', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        scheduled_date: '2025-07-03T16:00:00.000Z',
+        completed_date: '2025-07-03T18:00:00Z'
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(200);
+      expect(responseData.success).toBe(true);
+      expect(responseData.task.id).toBe('task-123');
+    });
+
+    it('debería rechazar fechas con formato inválido', async () => {
+      const updateTaskData = {
+        task_id: '12345678-1234-1234-1234-123456789012',
+        scheduled_date: '2025-07-03 16:00:00' // Formato inválido
+      };
+
+      const request = createMockRequest(updateTaskData);
+      const response = await PUT(request);
+      const responseData = await response.json();
+
+      expect(response.status).toBe(400);
+      expect(responseData.success).toBe(false);
+      expect(responseData.error).toBe('Datos de entrada inválidos');
     });
   });
 }); 

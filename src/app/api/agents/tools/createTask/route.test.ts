@@ -7,8 +7,26 @@ function transformToISO8601(dateInput: any): string | null {
   if (!dateInput) return null;
   
   try {
-    // Si ya es un string que parece ISO 8601, validarlo
-    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/)) {
+    // Si ya es un string que parece ISO 8601 con timezone, preservarlo tal como está
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput; // Retornar el original si es válido
+    }
+    
+    // Si es ISO 8601 con milisegundos y timezone, también preservarlo
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput;
+    }
+    
+    // Si es ISO 8601 con 'Z' al final, también preservarlo
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/)) {
+      const date = new Date(dateInput);
+      return isNaN(date.getTime()) ? null : dateInput;
+    }
+    
+    // Si es ISO 8601 sin timezone, convertir a UTC
+    if (typeof dateInput === 'string' && dateInput.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$/)) {
       const date = new Date(dateInput);
       return isNaN(date.getTime()) ? null : date.toISOString();
     }
@@ -152,7 +170,7 @@ describe('Transformación de fechas - CreateTask API', () => {
     expect(result).toBe('2023-12-15T14:00:00.000Z');
   });
 
-  test('mantiene fecha ISO 8601 válida', () => {
+  test('mantiene fecha ISO 8601 válida con Z', () => {
     const isoDate = '2023-12-15T14:00:00.000Z';
     const result = transformToISO8601(isoDate);
     expect(result).toBe(isoDate);
@@ -204,6 +222,55 @@ describe('Transformación de fechas - CreateTask API', () => {
     // Usar un timestamp que sabemos que es correcto: 1 Jan 2024 00:00:00 UTC
     const result = transformToISO8601(1704067200); // 1 Jan 2024 00:00:00 UTC
     expect(result).toBe('2024-01-01T00:00:00.000Z');
+  });
+
+  test('preserva fechas ISO 8601 con timezone offset', () => {
+    const result = transformToISO8601('2025-07-03T16:00:00-06:00');
+    expect(result).toBe('2025-07-03T16:00:00-06:00');
+  });
+
+  test('preserva fechas ISO 8601 con timezone offset positivo', () => {
+    const result = transformToISO8601('2025-07-03T16:00:00+05:30');
+    expect(result).toBe('2025-07-03T16:00:00+05:30');
+  });
+
+  test('maneja fechas ISO 8601 con milisegundos y timezone', () => {
+    const dateWithMs = '2025-07-03T16:00:00.123-06:00';
+    const result = transformToISO8601(dateWithMs);
+    expect(result).toBe(dateWithMs);
+  });
+
+  // Test adicional para verificar que el schema de Zod acepta la fecha problemática
+  test('schema acepta fecha con timezone offset que causaba el error', () => {
+    const problematicDate = '2025-07-03T16:00:00-06:00';
+    
+    // Primero verificar que nuestra función de transformación la maneja correctamente
+    const transformedDate = transformToISO8601(problematicDate);
+    expect(transformedDate).toBe(problematicDate);
+    
+    // Importar z para poder probar el schema
+    const { z } = require('zod');
+    
+    // Recrear el schema de validación (simplificado para test)
+    const testSchema = z.object({
+      scheduled_date: z.string()
+        .refine((val: string) => {
+          if (!val) return true; // opcional
+          // Verificar que sea una fecha válida ISO 8601 (con o sin timezone)
+          const iso8601Regex = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?(Z|[+-]\d{2}:\d{2})?$/;
+          if (!iso8601Regex.test(val)) return false;
+          
+          // Verificar que la fecha sea válida
+          const date = new Date(val);
+          return !isNaN(date.getTime());
+        }, 'Fecha debe ser ISO 8601 válida (con o sin timezone)')
+        .optional(),
+    });
+    
+    // Verificar que el schema acepta la fecha problemática
+    const result = testSchema.safeParse({ scheduled_date: problematicDate });
+    expect(result.success).toBe(true);
+    expect(result.data?.scheduled_date).toBe(problematicDate);
   });
 
 }); 

@@ -90,7 +90,8 @@ export class ToolEvaluator extends Base {
             type: 'tool_evaluation',
             content: {
               message: "No tools to evaluate",
-              updated_tools: []
+              updated_tools: [],
+              deep_thinking: "No tools available for evaluation. The agent can respond directly without tool assistance."
             }
           }],
           updatedCommand: {
@@ -160,6 +161,9 @@ export class ToolEvaluator extends Base {
           : JSON.stringify(content).substring(0, 200);
         console.log(`[ToolEvaluator] Content sample: ${contentSample}...`);
         
+        // Variables para capturar deep_thinking y tools
+        let deepThinking: string = '';
+        
         // Intentar analizar la respuesta como JSON
         try {
           // Verificar si es un string JSON o un objeto
@@ -176,27 +180,52 @@ export class ToolEvaluator extends Base {
           
           // Intentar analizar el JSON
           try {
-            functions = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
-            console.log(`[ToolEvaluator] Successfully parsed JSON response of type: ${typeof functions}`);
+            const parsedResponse = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
+            console.log(`[ToolEvaluator] Successfully parsed JSON response of type: ${typeof parsedResponse}`);
             
-            // Verificar que functions sea un array
-            if (!Array.isArray(functions)) {
-              console.log(`[ToolEvaluator] Functions is not an array, converting to array`);
-              // Si no es un array, intentar convertirlo o inicializarlo como array vacío
-              if (functions && typeof functions === 'object') {
-                // Verificar si hay propiedades que sugieran un array embebido
-                const functionsObj = functions as Record<string, any>;
-                if (functionsObj.items && Array.isArray(functionsObj.items)) {
-                  functions = functionsObj.items;
-                } else if (functionsObj.functions && Array.isArray(functionsObj.functions)) {
-                  functions = functionsObj.functions;
+            // Verificar si la respuesta tiene el nuevo formato con deep_thinking y tools
+            if (parsedResponse && typeof parsedResponse === 'object' && 'tools' in parsedResponse) {
+              console.log(`[ToolEvaluator] New format detected with deep_thinking and tools fields`);
+              
+              // Extraer deep_thinking si está presente
+              if (parsedResponse.deep_thinking) {
+                deepThinking = String(parsedResponse.deep_thinking);
+                console.log(`[ToolEvaluator] Deep thinking captured: ${deepThinking.substring(0, 100)}...`);
+              }
+              
+              // Extraer el array tools
+              functions = parsedResponse.tools || [];
+              
+              // Verificar que tools sea un array
+              if (!Array.isArray(functions)) {
+                console.log(`[ToolEvaluator] Tools field is not an array, converting to array`);
+                functions = Array.isArray(functions) ? functions : (functions ? [functions] : []);
+              }
+            } else {
+              // Formato legacy: parsedResponse debería ser directamente el array
+              functions = parsedResponse;
+              
+              // Verificar que functions sea un array
+              if (!Array.isArray(functions)) {
+                console.log(`[ToolEvaluator] Legacy format - Functions is not an array, converting to array`);
+                // Si no es un array, intentar convertirlo o inicializarlo como array vacío
+                if (functions && typeof functions === 'object') {
+                  // Verificar si hay propiedades que sugieran un array embebido
+                  const functionsObj = functions as Record<string, any>;
+                  if (functionsObj.items && Array.isArray(functionsObj.items)) {
+                    functions = functionsObj.items;
+                  } else if (functionsObj.functions && Array.isArray(functionsObj.functions)) {
+                    functions = functionsObj.functions;
+                  } else if (functionsObj.tools && Array.isArray(functionsObj.tools)) {
+                    functions = functionsObj.tools;
+                  } else {
+                    // Si es un objeto pero no contiene un array, convertirlo a un array con ese objeto
+                    functions = [functions];
+                  }
                 } else {
-                  // Si es un objeto pero no contiene un array, convertirlo a un array con ese objeto
-                  functions = [functions];
+                  // Si no es un objeto válido, inicializarlo como array vacío
+                  functions = [];
                 }
-              } else {
-                // Si no es un objeto válido, inicializarlo como array vacío
-                functions = [];
               }
             }
           } catch (jsonError) {
@@ -210,12 +239,20 @@ export class ToolEvaluator extends Base {
                 .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":') // Asegurar que los nombres de propiedades tienen comillas
                 .replace(/\\/g, '\\\\');      // Escapar barras invertidas
               
-              functions = JSON.parse(cleanedJson);
+              const cleanedResponse = JSON.parse(cleanedJson);
+              
+              // Aplicar la misma lógica de extracción para la respuesta limpiada
+              if (cleanedResponse && typeof cleanedResponse === 'object' && 'tools' in cleanedResponse) {
+                deepThinking = cleanedResponse.deep_thinking || '';
+                functions = cleanedResponse.tools || [];
+              } else {
+                functions = cleanedResponse;
+              }
               
               // Asegurar que functions es un array
               if (!Array.isArray(functions)) {
-                console.log(`[ToolEvaluator] Parsed functions is not an array, converting to array`);
-                functions = [functions];
+                console.log(`[ToolEvaluator] Cleaned functions is not an array, converting to array`);
+                functions = Array.isArray(functions) ? functions : (functions ? [functions] : []);
               }
             } else {
               throw new Error('El contenido de la respuesta no es un formato JSON válido');
@@ -272,11 +309,18 @@ export class ToolEvaluator extends Base {
           // Add required_arguments for possible_match status
           const requiredArgs = func.required_arguments || [];
           
+          // Corregir inconsistencia: si status es possible_match pero no hay argumentos requeridos faltantes, cambiar a required
+          let correctedStatus = func.status || 'required';
+          if (correctedStatus === 'possible_match' && requiredArgs.length === 0) {
+            console.log(`[ToolEvaluator] Corrigiendo inconsistencia en función ${func.name}: possible_match con required_arguments vacío -> cambiando a required`);
+            correctedStatus = 'required';
+          }
+          
           // Estructura completamente plana, sin nodos anidados
           return {
             id: funcId,
             type: "function",
-            status: func.status || 'required',
+            status: correctedStatus,
             name: func.name || `function_${index}`,
             arguments: args,
             critical: func.critical || false,
@@ -353,7 +397,8 @@ export class ToolEvaluator extends Base {
             content: {
               message: "Tool evaluation completed",
               updated_tools: command.tools, // Return original tools instead of modifying them
-              possible_match_functions: possibleMatchCalls.length > 0 ? possibleMatchCalls : undefined
+              possible_match_functions: possibleMatchCalls.length > 0 ? possibleMatchCalls : undefined,
+              deep_thinking: deepThinking || undefined // Include deep thinking analysis if available
             }
           }],
           updatedCommand: updatedCommand,
