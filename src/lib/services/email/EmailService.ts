@@ -43,10 +43,32 @@ export class EmailService {
     let client: ImapFlow | undefined;
     
     try {
+      console.log(`[EmailService] 🔧 Iniciando fetch de emails con configuración:`, {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: emailConfig.imapPort || 993,
+        user: emailConfig.user || emailConfig.email,
+        useOAuth: emailConfig.useOAuth || false,
+        limit,
+        sinceDate
+      });
+
+      // Validar configuración básica
+      if (!emailConfig.password && !emailConfig.accessToken) {
+        throw new Error('No se proporcionó contraseña ni token de acceso OAuth2');
+      }
+
+      if (!emailConfig.user && !emailConfig.email) {
+        throw new Error('No se proporcionó usuario o email');
+      }
+
       // Parse ports to ensure they are numbers
       let imapPort = emailConfig.imapPort || 993;
       if (typeof imapPort === 'string') {
         imapPort = parseInt(imapPort, 10);
+      }
+
+      if (isNaN(imapPort) || imapPort <= 0) {
+        throw new Error(`Puerto IMAP inválido: ${imapPort}`);
       }
       
       // Create ImapFlow connection configuration
@@ -63,125 +85,196 @@ export class EmailService {
       // Configure authentication
       if (emailConfig.useOAuth && emailConfig.accessToken) {
         // OAuth2 authentication
+        console.log(`[EmailService] 🔐 Usando autenticación OAuth2`);
         imapConfig.auth = {
           user: emailConfig.user || emailConfig.email,
           accessToken: emailConfig.accessToken
         };
       } else {
         // Traditional password authentication
+        console.log(`[EmailService] 🔐 Usando autenticación con contraseña`);
         imapConfig.auth = {
           user: emailConfig.user || emailConfig.email,
           pass: emailConfig.password
         };
       }
+
+      console.log(`[EmailService] 📡 Conectando a servidor IMAP: ${imapConfig.host}:${imapConfig.port}`);
       
       // Create ImapFlow client
       client = new ImapFlow(imapConfig);
       
-      // Connect to the server
-      await client.connect();
+      // Connect to the server with timeout
+      const connectionPromise = client.connect();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout de conexión IMAP (30s)')), 30000);
+      });
+
+      await Promise.race([connectionPromise, timeoutPromise]);
+      console.log(`[EmailService] ✅ Conexión IMAP establecida exitosamente`);
       
-      // Open INBOX
+      // Open INBOX with error handling
+      console.log(`[EmailService] 📂 Abriendo bandeja de entrada...`);
       const lock = await client.getMailboxLock('INBOX');
       
       try {
+        // Obtener información de la bandeja
+        const mailboxInfo = await client.mailboxOpen('INBOX');
+        console.log(`[EmailService] 📊 Información de bandeja:`, {
+          exists: mailboxInfo.exists,
+          uidNext: mailboxInfo.uidNext,
+          uidValidity: mailboxInfo.uidValidity
+        });
+
         const emails: EmailMessage[] = [];
         
         // Create search criteria
         let searchQuery: any = {};
         if (sinceDate) {
-          searchQuery.since = new Date(sinceDate);
-        }
-        
-        // Search for emails
-        const messages = [];
-        for await (const message of client.fetch(searchQuery, {
-          envelope: true,
-          bodyParts: ['HEADER', 'TEXT'],
-          bodyStructure: true
-        })) {
-          messages.push(message);
-          
-          // Limit results
-          if (messages.length >= limit) {
-            break;
+          try {
+            const sinceDateTime = new Date(sinceDate);
+            if (isNaN(sinceDateTime.getTime())) {
+              throw new Error(`Fecha inválida: ${sinceDate}`);
+            }
+            searchQuery.since = sinceDateTime;
+            console.log(`[EmailService] 📅 Buscando emails desde: ${sinceDateTime.toISOString()}`);
+          } catch (dateError) {
+            console.warn(`[EmailService] ⚠️ Fecha inválida, ignorando filtro: ${sinceDate}`);
           }
+        }
+
+        // Si no hay criterios de búsqueda, buscar todos
+        if (Object.keys(searchQuery).length === 0) {
+          searchQuery = { all: true };
+        }
+
+        console.log(`[EmailService] 🔍 Buscando emails con criterios:`, searchQuery);
+        
+        // Search for emails with better error handling
+        const messages = [];
+        try {
+          for await (const message of client.fetch(searchQuery, {
+            envelope: true,
+            bodyParts: ['HEADER', 'TEXT'],
+            bodyStructure: true
+          })) {
+            messages.push(message);
+            
+            // Limit results
+            if (messages.length >= limit) {
+              break;
+            }
+          }
+          
+          console.log(`[EmailService] 📨 Encontrados ${messages.length} emails para procesar`);
+        } catch (fetchError) {
+          console.error(`[EmailService] ❌ Error durante fetch de emails:`, fetchError);
+          throw new Error(`Error al buscar emails: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
         }
         
         // Process messages
         for (const message of messages) {
-          const email: EmailMessage = {
-            id: message.uid.toString(),
-            subject: message.envelope?.subject || 'No Subject',
-            from: message.envelope?.from?.[0]?.address || 'Unknown',
-            to: message.envelope?.to?.[0]?.address || 'Unknown',
-            date: message.envelope?.date?.toISOString() || new Date().toISOString(),
-            body: null,
-            headers: null
-          };
-          
-          // Get text body if available
           try {
-            const textPart = message.bodyParts?.get('TEXT');
-            if (textPart) {
-              email.body = textPart.toString('utf8');
+            const email: EmailMessage = {
+              id: message.uid.toString(),
+              subject: message.envelope?.subject || 'No Subject',
+              from: message.envelope?.from?.[0]?.address || 'Unknown',
+              to: message.envelope?.to?.[0]?.address || 'Unknown',
+              date: message.envelope?.date?.toISOString() || new Date().toISOString(),
+              body: null,
+              headers: null
+            };
+            
+            // Get text body if available
+            try {
+              const textPart = message.bodyParts?.get('TEXT');
+              if (textPart) {
+                email.body = textPart.toString('utf8');
+              }
+            } catch (bodyError) {
+              console.warn(`[EmailService] ⚠️ Error reading email body for ID ${email.id}:`, bodyError);
+              email.body = null;
             }
-          } catch (bodyError) {
-            console.warn('Error reading email body:', bodyError);
-            email.body = null;
-          }
-          
-          // Get headers if available
-          try {
-            const headerPart = message.bodyParts?.get('HEADER');
-            if (headerPart) {
-              const headerStr = headerPart.toString('utf8');
-              const headers: any = {};
-              const headerLines = headerStr.split('\r\n');
-              let currentHeader = '';
-              
-              for (const line of headerLines) {
-                if (!line.trim()) continue;
+            
+            // Get headers if available
+            try {
+              const headerPart = message.bodyParts?.get('HEADER');
+              if (headerPart) {
+                const headerStr = headerPart.toString('utf8');
+                const headers: any = {};
+                const headerLines = headerStr.split('\r\n');
+                let currentHeader = '';
                 
-                if (line.match(/^\s/)) {
-                  if (currentHeader) {
-                    headers[currentHeader] += ' ' + line.trim();
-                  }
-                } else {
-                  const match = line.match(/^([^:]+):\s*(.*)$/);
-                  if (match) {
-                    currentHeader = match[1].toLowerCase();
-                    headers[currentHeader] = match[2];
+                for (const line of headerLines) {
+                  if (!line.trim()) continue;
+                  
+                  if (line.match(/^\s/)) {
+                    if (currentHeader) {
+                      headers[currentHeader] += ' ' + line.trim();
+                    }
+                  } else {
+                    const match = line.match(/^([^:]+):\s*(.*)$/);
+                    if (match) {
+                      currentHeader = match[1].toLowerCase();
+                      headers[currentHeader] = match[2];
+                    }
                   }
                 }
+                email.headers = headers;
               }
-              email.headers = headers;
+            } catch (headerError) {
+              console.warn(`[EmailService] ⚠️ Error reading email headers for ID ${email.id}:`, headerError);
+              email.headers = null;
             }
-          } catch (headerError) {
-            console.warn('Error reading email headers:', headerError);
-            email.headers = null;
+            
+            emails.push(email);
+          } catch (messageError) {
+            console.error(`[EmailService] ❌ Error procesando mensaje:`, messageError);
+            // Continuar con el siguiente mensaje
           }
-          
-          emails.push(email);
         }
         
+        console.log(`[EmailService] ✅ Procesamiento completado: ${emails.length} emails obtenidos`);
         return emails;
         
       } finally {
         // Always release the lock
-        lock.release();
+        try {
+          lock.release();
+          console.log(`[EmailService] 🔓 Lock de bandeja liberado`);
+        } catch (lockError) {
+          console.warn(`[EmailService] ⚠️ Error liberando lock:`, lockError);
+        }
       }
       
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`[EmailService] 💥 Error crítico en fetchEmails:`, error);
+      console.error(`[EmailService] 📋 Stack trace:`, error instanceof Error ? error.stack : 'No stack trace');
+      
+      // Provide more specific error messages
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
+        errorMessage = `No se pudo conectar al servidor IMAP: ${emailConfig.imapHost || emailConfig.host || 'imap.gmail.com'}. Verifica la configuración del host.`;
+      } else if (errorMessage.includes('ECONNREFUSED')) {
+        errorMessage = `Conexión rechazada por el servidor IMAP en puerto ${emailConfig.imapPort || 993}. Verifica el puerto y las configuraciones de firewall.`;
+      } else if (errorMessage.includes('authentication') || errorMessage.includes('login') || errorMessage.includes('credentials')) {
+        errorMessage = `Error de autenticación: credenciales inválidas o problema con el acceso al servidor IMAP.`;
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+        errorMessage = `Timeout de conexión al servidor IMAP. El servidor puede estar lento o no responder.`;
+      } else if (errorMessage.includes('TLS') || errorMessage.includes('SSL')) {
+        errorMessage = `Error de certificado TLS/SSL al conectar con el servidor IMAP.`;
+      }
+      
       throw new Error(`Email fetch error: ${errorMessage}`);
     } finally {
       // Clean up connection
       if (client) {
         try {
           await client.logout();
+          console.log(`[EmailService] 👋 Desconectado del servidor IMAP`);
         } catch (logoutError) {
-          console.warn('Error during IMAP logout:', logoutError);
+          console.warn(`[EmailService] ⚠️ Error durante logout IMAP:`, logoutError);
         }
       }
     }
