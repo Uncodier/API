@@ -411,13 +411,18 @@ export async function POST(request: NextRequest) {
     
     try {
       // Get email configuration
+      console.log(`[EMAIL_API] 🔧 Obteniendo configuración de email para sitio: ${siteId}`);
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
+      console.log(`[EMAIL_API] ✅ Configuración de email obtenida exitosamente`);
       
       // Fetch emails
+      console.log(`[EMAIL_API] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
       // Filter emails by aliases if configured
       // Los aliases pueden venir como string separado por comas o como array
+      console.log(`[EMAIL_API] 🔍 Procesando aliases de configuración...`);
       let normalizedAliases: string[] = [];
       
       if (emailConfig.aliases) {
@@ -435,6 +440,7 @@ export async function POST(request: NextRequest) {
         }
       }
       
+      console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases...`);
       const emails = filterEmailsByAliases(allEmails, normalizedAliases);
       
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
@@ -443,10 +449,14 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
       // Si no se proporciona agentId, buscar el agente de soporte
+      console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
       const effectiveAgentId = agentId || await findSupportAgent(siteId);
+      console.log(`[EMAIL_API] ✅ Agente ID efectivo: ${effectiveAgentId}`);
       
       // Create and submit command
+      console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails...`);
       const command = createEmailCommand(effectiveAgentId, siteId, emails, emailConfig, analysisType, leadId, teamMemberId, userId);
+      console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
       const internalCommandId = await commandService.submitCommand(command);
       
       console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
@@ -540,6 +550,13 @@ export async function POST(request: NextRequest) {
       });
       
     } catch (error: unknown) {
+      console.error(`[EMAIL_API] 💥 Error en el flujo principal:`, error);
+      console.error(`[EMAIL_API] 📋 Detalles del error:`, {
+        name: error instanceof Error ? error.name : 'Unknown',
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : 'No stack trace'
+      });
+      
       const isConfigError = error instanceof Error && (
         error.message.includes('settings') || 
         error.message.includes('token')
@@ -548,14 +565,20 @@ export async function POST(request: NextRequest) {
       const isAgentError = error instanceof Error && 
         error.message.includes('agente de soporte');
         
+      const errorCode = isConfigError ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : 
+                       isAgentError ? ERROR_CODES.AGENT_NOT_FOUND :
+                       ERROR_CODES.EMAIL_FETCH_ERROR;
+      
+      const errorMessage = error instanceof Error ? error.message : "Error procesando emails";
+      
+      console.error(`[EMAIL_API] 🚨 Retornando error: ${errorCode} - ${errorMessage}`);
+      
       return NextResponse.json(
         {
           success: false,
           error: {
-            code: isConfigError ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : 
-                  isAgentError ? ERROR_CODES.AGENT_NOT_FOUND :
-                  ERROR_CODES.EMAIL_FETCH_ERROR,
-            message: error instanceof Error ? error.message : "Error procesando emails",
+            code: errorCode,
+            message: errorMessage,
           },
         },
         { status: isConfigError || isAgentError ? 404 : 500 }

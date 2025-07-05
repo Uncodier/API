@@ -121,40 +121,22 @@ export class DeepResearchService {
         };
       }
 
-      // Preparar el payload para el endpoint de search
-      const searchPayload = {
-        site_id: siteId,
-        search_queries: operation.search_queries,
-        search_options: operation.search_options || {},
-        agent_id: agentId
-      };
-
       console.log(`🔍 Ejecutando operación de búsqueda con ${operation.search_queries.length} consultas`);
 
-      // Hacer la llamada HTTP al endpoint de search
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001'}/api/agents/dataAnalyst/search`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.SERVICE_API_KEY || ''
-        },
-        body: JSON.stringify(searchPayload)
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return {
-          success: false,
-          error: `API call failed: ${response.status} ${response.statusText}. ${errorText}`
-        };
-      }
-
-      const searchResult = await response.json();
+      // Usar función directa en lugar de llamada HTTP
+      const { executeMultipleSearches } = await import('@/lib/services/search/data-analyst-search');
+      
+      const searchResult = await executeMultipleSearches(
+        siteId,
+        operation.search_queries,
+        operation.search_options || {},
+        agentId
+      );
       
       if (!searchResult.success) {
         return {
           success: false,
-          error: searchResult.error?.message || 'Search operation failed'
+          error: searchResult.error || 'Search operation failed'
         };
       }
 
@@ -176,40 +158,30 @@ export class DeepResearchService {
   // Función privada para ejecutar análisis de los resultados de búsqueda
   private async executeAnalysis(
     siteId: string, 
-    agentId?: string
+    agentId?: string,
+    commandId?: string
   ): Promise<{success: boolean, data?: any, error?: string}> {
     try {
       console.log(`📊 Ejecutando análisis de los resultados de búsqueda`);
 
-      // Hacer la llamada HTTP al endpoint de analysis
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/agents/dataAnalyst/analysis`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': process.env.SERVICE_API_KEY || ''
-        },
-        body: JSON.stringify({
-          site_id: siteId,
-          agent_id: agentId,
-          analysis_type: 'comprehensive',
-          include_raw_data: false
-        })
-      });
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        return {
-          success: false,
-          error: `Analysis API call failed: ${response.status} ${response.statusText}. ${errorText}`
-        };
-      }
-
-      const analysisResult = await response.json();
+      // Usar función directa en lugar de llamada HTTP
+      const { executeDataAnalysis } = await import('@/lib/services/analysis/data-analyst-analysis');
+      
+      const analysisResult = await executeDataAnalysis(
+        siteId,
+        'comprehensive',
+        agentId,
+        commandId,
+        undefined, // data
+        undefined, // timeRange
+        50, // memoryLimit
+        false // includeRawData
+      );
       
       if (!analysisResult.success) {
         return {
           success: false,
-          error: analysisResult.error?.message || 'Analysis operation failed'
+          error: analysisResult.error || 'Analysis operation failed'
         };
       }
 
@@ -405,7 +377,7 @@ export class DeepResearchService {
       
       // Ejecutar análisis de los resultados
       let analysis: any = null;
-      const analysisResult = await this.executeAnalysis(siteId, dataAnalystAgent.agentId);
+      const analysisResult = await this.executeAnalysis(siteId, dataAnalystAgent.agentId, finalCommandId);
       
       if (analysisResult.success) {
         analysis = analysisResult.data;

@@ -1,6 +1,6 @@
-# Region Business Search
+# Region Business Type Research
 
-Searches for businesses in specific geographic regions based on business type and keywords, providing detailed business information for lead generation and market research.
+Researches and generates business types for specific geographic regions based on business context and keywords, providing intelligent business type suggestions for lead generation campaigns.
 
 ## Endpoint
 
@@ -12,12 +12,15 @@ POST /api/agents/sales/regionSearch
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `siteId` | string | Yes | ID of the website requesting the search |
-| `userId` | string | No | ID of the user requesting the search |
-| `region` | string | Yes | Geographic region to search for businesses |
-| `businessType` | string | No | Type of business to search for (e.g., "restaurant", "retail") |
-| `keywords` | array | No | Keywords to refine the business search |
-| `limit` | number | No | Maximum number of businesses to return (default: 10) |
+| `siteId` or `site_id` | string | Yes | ID of the website requesting the search |
+| `userId` | string | No | ID of the user requesting the search (auto-assigned if agent found) |
+| `agent_id` | string | No | ID of the agent to use (auto-searches for sales agent if not provided) |
+| `region` | string | No | Geographic region to focus on (agent will determine if not provided) |
+| `businessType` | string | No | Base business type to expand upon |
+| `keywords` | array | No | Keywords to consider in business type generation |
+| `maxBusinessTypes` | number | No | Maximum number of business types to generate (default: 3) |
+| `priority` | string | No | Priority level for the research (default: "medium") |
+| `webhook` | object | No | Webhook configuration for notifications |
 
 ### Example Request
 
@@ -25,10 +28,12 @@ POST /api/agents/sales/regionSearch
 {
   "siteId": "site_456abc",
   "userId": "user_123xyz",
-  "region": "Austin, TX",
-  "businessType": "restaurant",
-  "keywords": ["mexican food", "tacos"],
-  "limit": 15
+  "agent_id": "agent_789def",
+  "region": "Madrid",
+  "businessType": "consulting",
+  "keywords": ["digital marketing", "small business"],
+  "maxBusinessTypes": 5,
+  "priority": "high"
 }
 ```
 
@@ -38,22 +43,23 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 
 <UnifiedApiTester 
   apiId="sales" 
-  title="Region Search API Tester" 
-  description="Use this tester to search for businesses in specific geographic regions." 
+  title="Region Business Type Research API Tester" 
+  description="Use this tester to research and generate business types for specific geographic regions." 
   defaultEndpoint="/api/agents/sales/regionSearch"
 />
 
-You can test this API directly using our API Tester interface. The Region Search API tester allows you to search for businesses in specific geographic regions.
+You can test this API directly using our API Tester interface. The Region Business Type Research API tester allows you to generate intelligent business type suggestions for lead generation.
 
 Required fields:
 - **Site ID**: The ID of the website requesting the search
-- **Region**: Geographic region to search for businesses
 
 Optional fields:
 - **User ID**: The ID of the user requesting the search
-- **Business Type**: Type of business to search for
-- **Keywords**: Keywords to refine the business search
-- **Limit**: Maximum number of businesses to return
+- **Agent ID**: ID of the agent to use (system will find sales agent if not provided)
+- **Region**: Geographic region to focus on (agent will determine optimal region if not provided)
+- **Business Type**: Base business type to expand upon
+- **Keywords**: Keywords to consider in business type generation
+- **Max Business Types**: Maximum number of business types to generate (default: 3)
 
 The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
 
@@ -65,39 +71,67 @@ The API Tester makes it easy to see example requests in various programming lang
 {
   "success": true,
   "data": {
-    "region": "Austin, TX",
-    "total_results": 15,
-    "businesses": [
+    "command_id": "cmd_123abc",
+    "site_id": "site_456abc",
+    "agent_id": "agent_789def",
+    "agent_auto_assigned": false,
+    "status": "completed",
+    "completed_at": "2024-01-15T10:30:00Z",
+    "target_city": "Madrid",
+    "target_region": "Madrid",
+    "initial_region_input": "Madrid",
+    "business_types_requested": 5,
+    "business_research_topic": "consulting businesses and similar service providers in Madrid with focus on technology, finance, consulting sectors",
+    "business_types": [
       {
-        "id": "business_123",
-        "name": "Tacos El Primo",
-        "address": "123 Main St, Austin, TX 78701",
-        "phone": "+1-512-555-0123",
-        "website": "https://tacoselprimoaustin.com",
-        "rating": "4.5",
-        "business_type": "restaurant",
-        "location": {
-          "lat": 30.2672,
-          "lng": -97.7431
-        },
-        "open_now": true
+        "name": "Digital Marketing Consulting",
+        "description": "Specialized consulting services for digital marketing strategies, SEO, and online presence",
+        "relevance": "High demand in Madrid's tech ecosystem",
+        "market_potential": "Growing market with increasing digital adoption"
       },
       {
-        "id": "business_456",
-        "name": "Casa de Tacos",
-        "address": "456 Oak Ave, Austin, TX 78702",
-        "phone": "+1-512-555-0456",
-        "website": null,
-        "rating": "4.2",
-        "business_type": "restaurant",
-        "location": {
-          "lat": 30.2849,
-          "lng": -97.7341
-        },
-        "open_now": false
+        "name": "Business Strategy Consulting",
+        "description": "Strategic consulting for business development, market entry, and operational improvement",
+        "relevance": "Strong corporate presence in Madrid creates opportunities",
+        "market_potential": "Established market with consistent demand"
+      },
+      {
+        "name": "Technology Implementation Consulting",
+        "description": "Consulting services for technology adoption, digital transformation, and IT strategy",
+        "relevance": "Madrid's position as a tech hub drives demand",
+        "market_potential": "High growth potential with digital transformation trends"
       }
     ],
-    "search_id": null
+    "region_insights": {
+      "popularIndustries": ["Technology", "Finance", "Consulting", "Marketing", "Real Estate"],
+      "growingBusinessTypes": ["FinTech", "PropTech", "E-commerce", "Digital Marketing", "Coworking"],
+      "marketTrends": ["Digital transformation", "Remote work solutions", "Sustainability"],
+      "economicData": {
+        "population": 6700000,
+        "avgIncome": 35000,
+        "businessDensity": 8.5
+      },
+      "competitorAnalysis": {
+        "dominantTypes": ["Corporate services", "Tech startups", "Financial services"],
+        "gaps": ["Niche consulting", "Specialized services", "Local artisans"]
+      }
+    },
+    "search_context": {
+      "initial_business_type": "consulting",
+      "keywords_provided": ["digital marketing", "small business"],
+      "region_provided": "Madrid",
+      "region_determined": "Madrid"
+    },
+    "location_strategy": {
+      "method": "agent_determined_from_background",
+      "determined_location": "Madrid, Madrid",
+      "previously_searched_cities": ["Barcelona", "Valencia"],
+      "note": "Location determined by agent based on business background/context or market analysis"
+    },
+    "process_info": {
+      "stage": "completed",
+      "progress_percentage": 100
+    }
   }
 }
 ```
@@ -108,8 +142,8 @@ The API Tester makes it easy to see example requests in various programming lang
 {
   "success": false,
   "error": {
-    "code": "SEARCH_FAILED",
-    "message": "Failed to search businesses"
+    "code": "COMMAND_EXECUTION_FAILED",
+    "message": "El comando no completó exitosamente y no se generaron resultados válidos"
   }
 }
 ```
@@ -118,29 +152,44 @@ The API Tester makes it easy to see example requests in various programming lang
 
 | Code | Description |
 |------|-------------|
-| `SEARCH_FAILED` | Failed to search businesses in the specified region |
+| `INVALID_REQUEST` | Missing required parameters (siteId/site_id) |
+| `AGENT_NOT_FOUND` | The specified agent was not found |
+| `COMMAND_EXECUTION_FAILED` | Command execution failed or timed out |
 | `SYSTEM_ERROR` | An internal system error occurred |
 
 ## Response Fields
 
-### Business Object
+### Business Type Object
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | string | Unique identifier for the business |
-| `name` | string | Name of the business |
-| `address` | string | Full address of the business |
-| `phone` | string | Phone number of the business |
-| `website` | string | Website URL (if available) |
-| `rating` | string | Average rating of the business |
-| `business_type` | string | Type/category of the business |
-| `location` | object | Geographic coordinates (lat, lng) |
-| `open_now` | boolean | Whether the business is currently open |
+| `name` | string | Name of the business type |
+| `description` | string | Detailed description of the business type |
+| `relevance` | string | Why this business type is relevant to the region |
+| `market_potential` | string | Assessment of market potential and opportunities |
+
+### Location Strategy Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `method` | string | How the location was determined |
+| `determined_location` | string | The final location determined by the agent |
+| `previously_searched_cities` | array | Cities that have been searched before |
+| `note` | string | Additional notes about location strategy |
+
+## Key Features
+
+- **Intelligent Region Selection**: Agent automatically determines optimal target region based on business context
+- **Business Type Generation**: Creates relevant business types based on market analysis and regional insights
+- **Agent Auto-Assignment**: Automatically finds and assigns sales agents if not specified
+- **Regional Market Analysis**: Provides comprehensive insights about the target region's business landscape
+- **Contextual Recommendations**: Considers business background, keywords, and market trends
+- **Duplicate Prevention**: Tracks previously searched cities to avoid redundant searches
 
 ## Notes
 
-- Search results are returned in real-time
-- Business data includes contact information when available
-- Geographic coordinates are provided for mapping purposes
-- Business hours and current status are included when available
-- Results are filtered based on business type and keywords when provided 
+- The agent will analyze business background/context to determine the most appropriate target region
+- Business types are generated based on regional market analysis and business potential
+- Regional insights include economic data, market trends, and competitive analysis
+- The system maintains memory of previously searched locations to optimize future searches
+- Response includes detailed process information for transparency and debugging 
