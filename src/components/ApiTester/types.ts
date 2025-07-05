@@ -36,6 +36,7 @@ export type ApiType =
   | 'agents-apps'
   | 'customer-support-conversation-messages'
   | 'sales'
+  | 'sales-venues'
   | 'intervention'
   | 'growth'
   | 'cmo-stakeholder-coordination'

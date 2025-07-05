@@ -1,0 +1,43 @@
+{
+  "lead-generation": {
+    "title": "Lead Generation",
+    "type": "page"
+  },
+  "regionLeads": {
+    "title": "Region Leads",
+    "type": "page"
+  },
+  "regionVenues": {
+    "title": "Region Venues",
+    "type": "page"
+  },
+  "regionSearch": {
+    "title": "Region Search",
+    "type": "page"
+  },
+  "leadGeneration": {
+    "title": "Lead Generation (Legacy)",
+    "type": "page"
+  },
+  "leadResearch": {
+    "title": "Lead Research",
+    "type": "page"
+  },
+  "leadFollowUp": {
+    "title": "Lead Follow Up",
+    "type": "page"
+  },
+  "lead-follow-up": {
+    "title": "Lead Follow Up (Alt)",
+    "type": "page"
+  },
+  "message": {
+    "title": "Message",
+    "type": "page"
+  },
+  "*": {
+    "theme": {
+      "collapsed": false
+    }
+  }
+} 

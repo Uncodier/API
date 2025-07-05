@@ -1,0 +1,261 @@
+---
+title: "Region Venues Search"
+description: "Search for venues in specific geographic regions using OpenStreetMap data"
+---
+
+# Region Venues Search
+
+Search for venues in specific geographic regions using OpenStreetMap data. This API helps find restaurants, hotels, event spaces, and other venues for sales outreach, event planning, or market research.
+
+## Endpoints
+
+### Direct Search (GET)
+```http
+GET /api/agents/sales/regionVenues
+```
+
+### Asynchronous Command (POST)
+```http
+POST /api/agents/sales/regionVenues
+```
+
+## Request Parameters
+
+### GET Request Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website requesting venue search |
+| `searchTerm` | string | Yes | Term to search for (e.g., "restaurant", "hotel", "gym") |
+| `city` | string | Yes | City name to search in |
+| `region` | string | Yes | Region/state/country (e.g., "Madrid, Spain") |
+| `maxVenues` | number | No | Maximum number of venues to return (1-50, default: 10) |
+
+### POST Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | ID of the website requesting venue search |
+| `userId` | string | No | ID of the user requesting venue search |
+| `searchTerm` | string | Yes | Term to search for (e.g., "restaurant", "hotel", "gym") |
+| `city` | string | Yes | City name to search in |
+| `region` | string | Yes | Region/state/country (e.g., "Madrid, Spain") |
+| `maxVenues` | number | No | Maximum number of venues to return (1-50, default: 10) |
+| `priority` | string | No | Priority of search job ("high", "medium", "low") |
+| `targetAudience` | object | No | Information about the target audience |
+| `eventInfo` | object | No | Information about the event if applicable |
+| `contactPreferences` | object | No | Preferred contact methods and timing |
+| `venue_search_id` | string | No | ID of existing search if this is a follow-up |
+| `conversation_id` | string | No | ID of conversation if generated from chat interaction |
+| `webhook` | object | No | Webhook configuration for completion notifications |
+
+### Example GET Request
+
+```http
+GET /api/agents/sales/regionVenues?siteId=site_456abc&searchTerm=restaurant&city=Madrid&region=Madrid,Spain&maxVenues=5
+```
+
+### Example POST Request
+
+```json
+{
+  "siteId": "site_456abc",
+  "userId": "user_123xyz",
+  "searchTerm": "restaurant",
+  "city": "Madrid",
+  "region": "Madrid, Spain",
+  "maxVenues": 15,
+  "priority": "high",
+  "targetAudience": {
+    "demographics": "Business professionals",
+    "interests": ["fine dining", "corporate events"],
+    "budget": "premium"
+  },
+  "eventInfo": {
+    "eventType": "corporate dinner",
+    "expectedAttendees": 25,
+    "date": "2024-06-15",
+    "requirements": ["private dining room", "audiovisual equipment"]
+  },
+  "contactPreferences": {
+    "contactMethod": "email",
+    "bestTimeToContact": "business_hours",
+    "contactPerson": "event_manager"
+  },
+  "webhook": {
+    "url": "https://your-domain.com/webhooks/venue-search",
+    "secret": "your_webhook_secret"
+  }
+}
+```
+
+## Try It
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+<UnifiedApiTester 
+  apiId="sales-venues" 
+  title="Region Venues API Tester" 
+  description="Use this tester to search for venues in specific geographic regions using OpenStreetMap data." 
+  defaultEndpoint="/api/agents/sales/regionVenues"
+/>
+
+You can test this API directly using our API Tester interface. The Region Venues API tester allows you to search for venues in specific cities and regions.
+
+Required fields:
+- **Site ID**: The ID of the website requesting venue search
+- **Search Term**: The type of venue to search for (restaurant, hotel, gym, etc.)
+- **City**: The city name to search in
+- **Region**: The region/state/country
+
+Optional fields:
+- **Max Venues**: Maximum number of venues to return (1-50)
+- **User ID**: The ID of the user requesting venue search (for POST requests)
+- **Priority**: Priority level for asynchronous jobs
+- **Target Audience**: Information about your target audience
+- **Event Info**: Details about the event if applicable
+
+The API Tester makes it easy to see example requests in various programming languages and test both GET and POST endpoints directly.
+
+## Response
+
+### GET Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "searchTerm": "restaurant",
+    "city": "Madrid",
+    "region": "Madrid, Spain",
+    "venueCount": 5,
+    "venues": [
+      {
+        "id": "osm_node_12345",
+        "name": "Casa Botín",
+        "address": "Calle Cuchilleros, 17, Madrid",
+        "phone": "+34 913 66 42 17",
+        "website": "https://www.botin.es",
+        "rating": "0",
+        "types": ["restaurant"],
+        "location": {
+          "lat": 40.4154,
+          "lng": -3.7077
+        },
+        "opening_hours": {
+          "open_now": true
+        },
+        "amenities": ["wifi", "outdoor_seating"],
+        "description": "Historic restaurant in Madrid"
+      }
+    ],
+    "timestamp": "2024-05-02T14:30:00Z"
+  }
+}
+```
+
+### POST Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "searchTerm": "restaurant",
+    "city": "Madrid",
+    "region": "Madrid, Spain",
+    "venueCount": 15,
+    "venues": [
+      {
+        "id": "osm_node_12345",
+        "name": "Casa Botín",
+        "address": "Calle Cuchilleros, 17, Madrid",
+        "phone": "+34 913 66 42 17",
+        "website": "https://www.botin.es",
+        "rating": "0",
+        "types": ["restaurant"],
+        "location": {
+          "lat": 40.4154,
+          "lng": -3.7077
+        },
+        "opening_hours": {
+          "open_now": true
+        },
+        "amenities": ["wifi", "outdoor_seating"],
+        "description": "Historic restaurant in Madrid"
+      }
+    ],
+    "targetAudience": {
+      "demographics": "Business professionals",
+      "interests": ["fine dining", "corporate events"],
+      "budget": "premium"
+    },
+    "eventInfo": {
+      "eventType": "corporate dinner",
+      "expectedAttendees": 25,
+      "date": "2024-06-15",
+      "requirements": ["private dining room", "audiovisual equipment"]
+    },
+    "contactPreferences": {
+      "contactMethod": "email",
+      "bestTimeToContact": "business_hours",
+      "contactPerson": "event_manager"
+    },
+    "timestamp": "2024-05-02T14:30:00Z"
+  }
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "searchTerm parameter is required"
+  }
+}
+```
+
+## Response Format
+
+Both GET and POST endpoints return results immediately. POST requests support additional metadata but don't use asynchronous processing.
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | The request parameters are invalid or missing |
+| `NOT_FOUND` | The specified location was not found |
+| `SEARCH_FAILED` | Failed to search venues using OpenStreetMap |
+| `COMMAND_FAILED` | Failed to generate the venue search command |
+| `SYSTEM_ERROR` | An internal system error occurred |
+
+## Data Sources
+
+This API uses **OpenStreetMap** data through two complementary services:
+
+- **Overpass API**: For advanced searches by venue categories (amenity, tourism, shop, leisure)
+- **Nominatim API**: For location geocoding and simple venue searches
+
+## Venue Types
+
+The API can search for various types of venues based on OpenStreetMap categories:
+
+- **Restaurants & Food**: restaurant, cafe, bar, pub, fast_food
+- **Accommodation**: hotel, hostel, guesthouse, motel
+- **Entertainment**: cinema, theatre, nightclub, casino
+- **Recreation**: gym, sports_centre, swimming_pool, park
+- **Shopping**: shop, mall, market, boutique
+- **Services**: bank, pharmacy, hospital, gas_station
+- **Events**: conference_centre, event_venue, exhibition_centre
+
+## Notes
+
+- The `maxVenues` parameter must be between 1 and 50
+- Search results are based on OpenStreetMap data and may vary in completeness
+- Venue data includes contact information when available in OSM
+- The API uses a 10km radius search around the specified city center
+- Results are enriched with amenities information (wifi, parking, accessibility, etc.)
+- Both synchronous (GET) and asynchronous (POST) search options are available
+- OpenStreetMap data is community-maintained and continuously updated 
