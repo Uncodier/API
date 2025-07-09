@@ -149,7 +149,7 @@ async function getSalesData(siteId: string, salesAgent?: any) {
       .select('*')
       .eq('site_id', siteId)
       .in('task', ['lead generation', 'lead follow up', 'lead research'])
-      .in('status', ['pending', 'in_progress'])
+      .in('status', ['pending', 'running'])
       .order('created_at', { ascending: false })
       .limit(20);
     

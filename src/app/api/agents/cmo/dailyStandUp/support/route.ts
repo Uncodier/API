@@ -9,6 +9,24 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+// Función para validar valores de estado de la base de datos
+function validateDatabaseEnumValues() {
+  return {
+    tasks: {
+      validStatuses: ['completed', 'in_progress', 'pending', 'failed'],
+      isValidStatus: (status: string) => ['completed', 'in_progress', 'pending', 'failed'].includes(status)
+    },
+    commands: {
+      validStatuses: ['pending', 'running', 'completed', 'failed', 'cancelled'],
+      isValidStatus: (status: string) => ['pending', 'running', 'completed', 'failed', 'cancelled'].includes(status)
+    },
+    requirements: {
+      validStatuses: ['validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'],
+      isValidStatus: (status: string) => ['validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'].includes(status)
+    }
+  };
+}
+
 // Función para guardar en agent_memories
 async function saveToAgentMemory(agentId: string, userId: string, commandId: string, analysisData: any, siteId: string): Promise<{success: boolean, memoryId?: string, error?: string}> {
   try {
@@ -124,6 +142,10 @@ async function findActiveCmoAgent(siteId: string): Promise<{agentId: string, use
 }
 
 // Función para obtener datos de soporte
+// Valid enum values for database tables:
+// - tasks.status: 'completed', 'in_progress', 'pending', 'failed'
+// - commands.status: 'pending', 'running', 'completed', 'failed', 'cancelled'
+// - requirements.status: 'validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'
 async function getSupportData(siteId: string) {
   try {
     console.log(`🎧 Obteniendo datos de soporte para site_id: ${siteId}`);
@@ -135,12 +157,17 @@ async function getSupportData(siteId: string) {
       .from('tasks')
       .select('*')
       .eq('site_id', siteId)
-      .in('status', ['open', 'in_progress', 'pending'])
+      .in('status', ['in_progress', 'pending'])
       .order('created_at', { ascending: false })
       .limit(50);
     
     if (tasksError) {
       console.error('Error al obtener tareas:', tasksError);
+      // Return early if there's a critical database error
+      if (tasksError.code === '22P02') {
+        console.error('❌ Database enum error in tasks query:', tasksError.message);
+        return null;
+      }
     }
     
     // Obtener conversaciones de soporte recientes
@@ -163,12 +190,17 @@ async function getSupportData(siteId: string) {
       .select('*')
       .eq('site_id', siteId)
       .in('task', ['customer support', 'ticket analysis', 'user assistance'])
-      .in('status', ['pending', 'in_progress'])
+      .in('status', ['pending', 'running'])
       .order('created_at', { ascending: false })
       .limit(20);
     
     if (commandsError) {
       console.error('Error al obtener comandos de soporte:', commandsError);
+      // Return early if there's a critical database error
+      if (commandsError.code === '22P02') {
+        console.error('❌ Database enum error in commands query:', commandsError.message);
+        return null;
+      }
     }
     
     // Obtener agente de soporte activo
@@ -190,12 +222,17 @@ async function getSupportData(siteId: string) {
       .from('requirements')
       .select('*')
       .eq('site_id', siteId)
-      .in('status', ['pending', 'in_progress'])
+      .in('status', ['validated', 'in-progress'])
       .order('created_at', { ascending: false })
       .limit(30);
     
     if (requirementsError) {
       console.error('Error al obtener requerimientos:', requirementsError);
+      // Return early if there's a critical database error
+      if (requirementsError.code === '22P02') {
+        console.error('❌ Database enum error in requirements query:', requirementsError.message);
+        return null;
+      }
     }
     
     return {

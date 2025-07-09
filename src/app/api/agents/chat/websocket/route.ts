@@ -1,3 +1,10 @@
+// Configuración de timeout para Vercel
+export const maxDuration = 800; // 13.33 minutos (máximo para Pro plan)
+
+// Timeout preventivo: cerrar 1 segundo antes del límite de Vercel
+const VERCEL_TIMEOUT_LIMIT = 800; // 800 segundos (13.33 minutos)
+const PREVENTIVE_TIMEOUT = (VERCEL_TIMEOUT_LIMIT - 1) * 1000; // 799 segundos en milisegundos
+
 import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
@@ -376,6 +383,7 @@ export async function GET(req: NextRequest) {
     const encoder = new TextEncoder();
     let isClosed = false;
     let supabaseChannel: any = null;
+    let preventiveTimeoutId: NodeJS.Timeout | null = null;
     
     const stream = new ReadableStream({
       start(controller) {
@@ -393,14 +401,68 @@ export async function GET(req: NextRequest) {
           }
         };
 
+        // Función para cerrar la conexión limpiamente
+        const closeConnection = async (reason: string) => {
+          if (isClosed) return;
+          
+          const connection = activeConnections.get(connectionId);
+          const connectionDuration = connection ? Date.now() - connection.connectionStartTime : 0;
+          const durationMinutes = Math.floor(connectionDuration / 60000);
+          const durationSeconds = Math.floor((connectionDuration % 60000) / 1000);
+          
+          console.log(`🔌 Cerrando conexión SSE para visitor_id=${visitor_id}, razón: ${reason}, duración: ${durationMinutes}m ${durationSeconds}s`);
+          isClosed = true;
+          
+          // Enviar mensaje de cierre al cliente
+          try {
+            sendData({
+              type: 'connection_closing',
+              payload: { reason, timestamp: Date.now() }
+            });
+          } catch (error) {
+            console.error('Error al enviar mensaje de cierre:', error);
+          }
+          
+          // Limpiar recursos
+          if (supabaseChannel) {
+            await supabaseChannel.unsubscribe();
+          }
+          
+          if (preventiveTimeoutId) {
+            clearTimeout(preventiveTimeoutId);
+            preventiveTimeoutId = null;
+          }
+          
+          activeConnections.delete(connectionId);
+          
+          // Actualizar estado de sesión del visitante a inactivo
+          await updateVisitorSessionStatus(visitor_id, 'inactive');
+          
+          // Cerrar el controller
+          try {
+            controller.close();
+          } catch (error) {
+            console.error('Error al cerrar controller:', error);
+          }
+        };
+
+        // Configurar timeout preventivo
+        preventiveTimeoutId = setTimeout(() => {
+          closeConnection('preventive_timeout');
+        }, PREVENTIVE_TIMEOUT);
+
+        console.log(`⏰ Timeout preventivo configurado para ${PREVENTIVE_TIMEOUT / 1000} segundos (${Math.floor(PREVENTIVE_TIMEOUT / 60000)} minutos y ${Math.floor((PREVENTIVE_TIMEOUT % 60000) / 1000)} segundos)`);
+
         // Registrar la conexión activa
         activeConnections.set(connectionId, {
           visitor_id,
           conversationId,
           site_id,
           lastActivity: Date.now(),
+          connectionStartTime: Date.now(),
           sendData,
-          supabaseChannel: null
+          supabaseChannel: null,
+          closeConnection
         });
 
         console.log(`✅ SSE aceptado para visitor_id=${visitor_id}, conversation_id=${conversationId}`);
@@ -478,18 +540,8 @@ export async function GET(req: NextRequest) {
             // Cleanup cuando se cierra la conexión
             const cleanup = async () => {
               console.log(`🔌 SSE cerrado para visitor_id=${visitor_id}`);
-              isClosed = true;
-              
-              // Limpiar recursos
-              if (supabaseChannel) {
-                await supabaseChannel.unsubscribe();
-              }
-              
-              activeConnections.delete(connectionId);
               clearInterval(heartbeatInterval);
-              
-              // Actualizar estado de sesión del visitante a inactivo
-              await updateVisitorSessionStatus(visitor_id, 'inactive');
+              await closeConnection('client_disconnect');
             };
 
             // Configurar limpieza cuando el cliente cierre la conexión
@@ -510,7 +562,7 @@ export async function GET(req: NextRequest) {
       
       cancel() {
         console.log('🔌 SSE stream cancelado');
-        isClosed = true;
+        // La función closeConnection se llamará automáticamente a través del cleanup o timeout
       }
     });
     

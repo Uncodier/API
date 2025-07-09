@@ -641,8 +641,40 @@ export class BackgroundBuilder {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Business Hours pero no se encontró en el prompt final`);
       }
       
-      if (siteInfo.settings.social_media && !finalPrompt.includes('## Social Media')) {
-        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Social Media pero no se encontró en el prompt final`);
+      // Verificar social media solo si hay datos válidos después del filtrado
+      if (siteInfo.settings.social_media) {
+        try {
+          const socialMediaData = typeof siteInfo.settings.social_media === 'string'
+            ? JSON.parse(siteInfo.settings.social_media)
+            : siteInfo.settings.social_media;
+          
+          let hasValidSocialMedia = false;
+          
+          if (Array.isArray(socialMediaData)) {
+            // Verificar si hay al menos una plataforma con información válida
+            hasValidSocialMedia = socialMediaData.some(item => {
+              if (!item || !item.platform) return false;
+              
+              return (item.url && item.url.trim() !== '') ||
+                     (item.handle && item.handle.trim() !== '') ||
+                     (item.phone && item.phone.trim() !== '');
+            });
+          } else if (typeof socialMediaData === 'object' && socialMediaData !== null) {
+            // Verificar si hay al menos una entrada válida en el objeto
+            hasValidSocialMedia = Object.values(socialMediaData).some(value => {
+              if (value === null || value === undefined || value === '') return false;
+              if (Array.isArray(value) && value.length === 0) return false;
+              if (typeof value === 'string' && value.trim() === '') return false;
+              return true;
+            });
+          }
+          
+          if (hasValidSocialMedia && !finalPrompt.includes('## Social Media')) {
+            console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Social Media pero no se encontró en el prompt final`);
+          }
+        } catch (error) {
+          console.error(`⚠️ [BackgroundBuilder] Error al verificar social media en verifyPromptSections:`, error);
+        }
       }
       
       if (siteInfo.settings.branding && !finalPrompt.includes('## Brand Identity')) {

@@ -161,7 +161,7 @@ async function getGrowthData(siteId: string) {
       .from('campaigns')
       .select('*')
       .eq('site_id', siteId)
-      .in('status', ['active', 'running', 'pending'])
+      .in('status', ['active', 'pending'])
       .order('created_at', { ascending: false })
       .limit(10);
     
@@ -175,7 +175,7 @@ async function getGrowthData(siteId: string) {
       .select('*')
       .eq('site_id', siteId)
       .in('task', ['content generation', 'campaign analysis', 'growth strategy'])
-      .in('status', ['pending', 'in_progress'])
+      .in('status', ['pending', 'running'])
       .order('created_at', { ascending: false })
       .limit(20);
     
@@ -185,7 +185,7 @@ async function getGrowthData(siteId: string) {
     
     // Obtener análisis de sitio recientes
     const { data: siteAnalysis, error: analysisError } = await supabaseAdmin
-      .from('site_analysis')
+      .from('analysis')
       .select('*')
       .eq('site_id', siteId)
       .gte('created_at', yesterday)

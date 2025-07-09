@@ -5,6 +5,9 @@
     },
     "src/app/api/site/segments/route.ts": {
       "maxDuration": 60
+    },
+    "src/app/api/agents/chat/websocket/route.ts": {
+      "maxDuration": 800
     }
   },
   "regions": ["iad1"]
