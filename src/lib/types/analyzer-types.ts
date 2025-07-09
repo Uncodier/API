@@ -129,6 +129,95 @@ export interface StructuredAnalysisResponse {
     model_used: string;
     status: 'success' | 'error' | 'pending';
   };
+  // Nuevos campos para deliverables
+  branding_analysis?: {
+    brand_pyramid: {
+      brand_essence: string;
+      brand_personality: string;
+      brand_benefits: string;
+      brand_attributes: string;
+      brand_values: string;
+      brand_promise: string;
+    };
+    brand_archetype: string;
+    color_palette: {
+      primary_color: string;
+      secondary_color: string;
+      accent_color: string;
+      neutral_colors: string[];
+    };
+    typography: {
+      primary_font: string;
+      secondary_font: string;
+      font_hierarchy: string;
+      font_sizes: string;
+    };
+    voice_and_tone: {
+      brand_voice: string;
+      communication_style: string;
+      personality_traits: string[];
+      do_and_dont: {
+        do: string[];
+        dont: string[];
+      };
+    };
+    brand_guidelines: {
+      logo_usage: string;
+      color_usage: string;
+      typography_usage: string;
+      imagery_style: string;
+      messaging_guidelines: string;
+    };
+    brand_assets: {
+      logo_variations: string[];
+      color_swatches: string[];
+      font_files: string[];
+      templates: string[];
+    };
+  };
+  ux_assessment?: {
+    overall_score: number;
+    usability_score: number;
+    accessibility_score: number;
+    visual_design_score: number;
+    performance_score: number;
+    branding_consistency_score: number;
+    user_experience_details: {
+      navigation_clarity: number;
+      content_organization: number;
+      visual_hierarchy: number;
+      responsive_design: number;
+      load_time: number;
+      error_handling: number;
+    };
+  };
+  recommendations?: Array<{
+    category: string;
+    priority: 'alta' | 'media' | 'baja';
+    effort: 'alto' | 'medio' | 'bajo';
+    title: string;
+    description: string;
+    impact: string;
+    implementation_steps: string[];
+  }>;
+  problems?: Array<{
+    category: string;
+    severity: 'crítico' | 'alto' | 'medio' | 'bajo';
+    title: string;
+    description: string;
+    user_impact: string;
+    business_impact: string;
+    suggested_solutions: string[];
+  }>;
+  opportunities?: Array<{
+    category: string;
+    potential: 'alto' | 'medio' | 'bajo';
+    complexity: 'alta' | 'media' | 'baja';
+    title: string;
+    description: string;
+    expected_outcomes: string[];
+    implementation_timeline: string;
+  }>;
 }
 
 // Interface para la respuesta de análisis

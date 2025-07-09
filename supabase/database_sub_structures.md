@@ -306,7 +306,10 @@ Business locations and office information.
   {
     "id": "location_1",
     "name": "Headquarters",
-    "address": "123 Business Ave, City, State 12345",
+    "address": "123 Business Ave",
+    "city": "New York",
+    "state": "NY",
+    "zip": "10001",
     "country": "USA",
     "type": "office",
     "coordinates": {
@@ -533,6 +536,71 @@ Company business hours.
     "friday": {"open": "09:00", "close": "17:00"},
     "saturday": {"closed": true},
     "sunday": {"closed": true}
+  }
+}
+```
+
+### `branding` (jsonb)
+Brand identity and design system information.
+
+**Default:** `NULL`
+
+**Structure:**
+```json
+{
+  "brand_pyramid": {
+    "brand_essence": "Core brand essence - who we are",
+    "brand_personality": "Confident, innovative, and approachable",
+    "brand_benefits": "Peace of mind, increased efficiency, better results",
+    "brand_attributes": "24/7 support, advanced analytics, user-friendly interface",
+    "brand_values": "Innovation, transparency, customer-centricity",
+    "brand_promise": "We promise to deliver exceptional value and results"
+  },
+  "brand_archetype": "hero",
+  "color_palette": {
+    "primary_color": "#000000",
+    "secondary_color": "#666666",
+    "accent_color": "#e0ff17",
+    "success_color": "#22c55e",
+    "warning_color": "#f59e0b",
+    "error_color": "#ef4444",
+    "background_color": "#ffffff",
+    "surface_color": "#f8fafc"
+  },
+  "typography": {
+    "primary_font": "Inter, sans-serif",
+    "secondary_font": "Georgia, serif",
+    "font_size_scale": "medium"
+  },
+  "voice_and_tone": {
+    "communication_style": "friendly",
+    "personality_traits": ["innovative", "trustworthy", "approachable"],
+    "forbidden_words": ["cheap", "basic", "simple"],
+    "preferred_phrases": ["premium quality", "customer-focused", "cutting-edge"]
+  },
+  "brand_guidelines": {
+    "do_list": ["Always be transparent", "Focus on customer benefits", "Use clear language"],
+    "dont_list": ["Never compromise on quality", "Don't use jargon", "Avoid being pushy"],
+    "emotions_to_evoke": ["trust", "excitement", "confidence"]
+  },
+  "brand_assets": {
+    "logo_variations": [
+      {
+        "name": "Primary Logo",
+        "url": "https://example.com/logo-primary.png",
+        "usage": "Main brand applications and light backgrounds"
+      },
+      {
+        "name": "Dark Logo",
+        "url": "https://example.com/logo-dark.png",
+        "usage": "Dark backgrounds and high contrast applications"
+      },
+      {
+        "name": "Icon",
+        "url": "https://example.com/logo-icon.png",
+        "usage": "Social media profiles and small applications"
+      }
+    ]
   }
 }
 ```

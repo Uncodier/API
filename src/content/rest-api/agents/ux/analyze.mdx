@@ -1,0 +1,381 @@
+---
+title: "API de Análisis UX y Branding"
+description: "Realiza análisis integral de UX y completa automáticamente el objeto settings.branding"
+---
+
+import UxAnalysisTester from '@/components/ApiTester/UxAnalysisTester'
+
+# API de Análisis UX y Branding 🎨
+
+Esta API realiza un análisis específico de UX y branding utilizando únicamente el `site_id` para obtener la información del sitio desde la base de datos, completar automáticamente el objeto `settings.branding` y generar recomendaciones, problemas y oportunidades de experiencia de usuario.
+
+## 🚀 Funcionalidades
+
+- **Obtención automática** de información del sitio desde la base de datos usando `site_id`
+- **Análisis estructurado** del sitio web
+- **Completado automático** del objeto `settings.branding`
+- **Generación de recomendaciones** UX categorizadas
+- **Identificación de problemas** y oportunidades
+- **Cálculo de scores** de UX y usabilidad
+- **Guardado automático** en base de datos
+
+## 🧪 Prueba la API
+
+<UxAnalysisTester />
+
+## 📋 Endpoints Disponibles
+
+### POST `/api/agents/ux/analyze`
+
+Realiza un análisis completo de UX y branding del sitio web.
+
+### GET `/api/agents/ux/analyze`
+
+Obtiene información sobre el servicio y sus capacidades.
+
+## 🔧 Parámetros de Solicitud
+
+### Parámetros Obligatorios
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `site_id` | string | UUID del sitio en la base de datos (único parámetro obligatorio) |
+
+### Parámetros Opcionales
+
+| Parámetro | Tipo | Descripción | Defecto |
+|-----------|------|-------------|---------|
+| `user_id` | string | UUID del usuario (se obtiene automáticamente del sitio) | auto |
+| `options.timeout` | number | Tiempo límite en ms (5000-60000) | 30000 |
+| `options.includeScreenshot` | boolean | Incluir captura de pantalla | true |
+| `options.provider` | string | Proveedor de IA (anthropic/openai/gemini) | anthropic |
+| `options.modelId` | string | ID del modelo específico a usar | claude-3-5-sonnet-20240620 |
+| `options.updateBranding` | boolean | Actualizar branding en BD | true |
+| `options.language` | string | Idioma del análisis (en/es) | es |
+
+## 📊 Estructura de Respuesta
+
+```json
+{
+  "success": true,
+  "data": {
+    "url": "https://ejemplo.com",
+    "site_id": "uuid-del-sitio",
+    "user_id": "uuid-del-usuario",
+    "analysis_id": "uuid-del-análisis",
+    "branding": {
+      "brand_pyramid": {
+        "brand_essence": "Esencia de la marca",
+        "brand_personality": "Personalidad de la marca",
+        "brand_benefits": "Beneficios principales",
+        "brand_attributes": "Atributos clave",
+        "brand_values": "Valores fundamentales",
+        "brand_promise": "Promesa de marca"
+      },
+      "brand_archetype": "hero",
+      "color_palette": {
+        "primary_color": "#000000",
+        "secondary_color": "#666666",
+        "accent_color": "#e0ff17"
+      },
+      "typography": {
+        "primary_font": "Arial, sans-serif",
+        "secondary_font": "Times, serif",
+        "font_size_scale": "medium"
+      },
+      "voice_and_tone": {
+        "communication_style": "profesional",
+        "personality_traits": ["innovador", "confiable", "profesional"],
+        "forbidden_words": ["cheap", "basic"],
+        "preferred_phrases": ["premium quality", "customer-focused"]
+      },
+      "brand_guidelines": {
+        "do_list": ["Mantener consistencia visual"],
+        "dont_list": ["Usar jerga técnica innecesaria"],
+        "emotions_to_evoke": ["confianza", "profesionalismo"]
+      }
+    },
+    "ux_assessment": {
+      "overall_score": 70,
+      "usability_score": 75,
+      "accessibility_score": 60,
+      "visual_design_score": 80,
+      "performance_score": 70,
+      "branding_consistency_score": 65
+    },
+    "recommendations": [
+      {
+        "category": "usability",
+        "priority": "alta",
+        "issue": "No se detectaron elementos de navegación claros",
+        "recommendation": "Implementar una navegación principal visible",
+        "impact": "Mejora significativa en la experiencia del usuario",
+        "effort": "medio"
+      }
+    ],
+    "problems": [
+      {
+        "category": "accessibility",
+        "severity": "medio",
+        "description": "Posibles problemas de accesibilidad en imágenes",
+        "location": "Elementos de imagen en el sitio",
+        "userImpact": "Usuarios con discapacidades visuales pueden tener dificultades",
+        "businessImpact": "Reducción en alcance y cumplimiento legal"
+      }
+    ],
+    "opportunities": [
+      {
+        "category": "branding",
+        "potential": "alto",
+        "description": "Desarrollar una identidad de marca más sólida",
+        "expectedBenefit": "Mejor reconocimiento y lealtad de marca",
+        "implementationComplexity": "media"
+      }
+    ],
+    "timestamp": "2024-01-15T10:30:00Z",
+    "processingTime": 15000
+  },
+  "message": "Análisis UX completado exitosamente"
+}
+```
+
+## 🎯 Categorías de Análisis
+
+### Recomendaciones UX
+
+Las recomendaciones se clasifican en:
+
+- **design**: Aspectos visuales y estéticos
+- **usability**: Facilidad de uso y navegación
+- **accessibility**: Accesibilidad para usuarios con discapacidades
+- **performance**: Rendimiento y velocidad
+- **branding**: Consistencia de marca
+- **content**: Calidad y estructura del contenido
+
+### Prioridades
+
+- **alta**: Impacto significativo, debe implementarse pronto
+- **media**: Mejora importante, implementar en medio plazo
+- **baja**: Mejora menor, implementar cuando sea posible
+
+### Esfuerzo de Implementación
+
+- **alto**: Requiere cambios significativos
+- **medio**: Requiere modificaciones moderadas
+- **bajo**: Cambios menores o rápidos
+
+## 💡 Ejemplos de Uso
+
+### Análisis Básico
+
+```javascript
+const response = await fetch('/api/agents/ux/analyze', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    site_id: 'uuid-del-sitio'
+  })
+});
+
+const result = await response.json();
+console.log('Análisis completado:', result.data);
+```
+
+### Análisis con Opciones Personalizadas
+
+```javascript
+const response = await fetch('/api/agents/ux/analyze', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    site_id: 'uuid-del-sitio',
+    options: {
+      timeout: 45000,
+      includeScreenshot: false,
+      provider: 'openai',
+      modelId: 'gpt-4-turbo',
+      updateBranding: false,
+      language: 'en'
+    }
+  })
+});
+
+const result = await response.json();
+```
+
+### Procesamiento de Resultados
+
+```javascript
+const { branding, ux_assessment, recommendations, problems, opportunities } = result.data;
+
+// Analizar branding
+console.log('Personalidad de marca:', branding.brand_pyramid.brand_personality);
+console.log('Colores principales:', branding.color_palette);
+
+// Revisar scores
+console.log('Score UX general:', ux_assessment.overall_score);
+console.log('Score de accesibilidad:', ux_assessment.accessibility_score);
+
+// Filtrar recomendaciones críticas
+const criticalRecommendations = recommendations.filter(r => r.priority === 'alta');
+console.log('Recomendaciones críticas:', criticalRecommendations);
+
+// Identificar problemas severos
+const severeProblems = problems.filter(p => p.severity === 'crítico');
+console.log('Problemas severos:', severeProblems);
+```
+
+## 🔄 Integración con Base de Datos
+
+### Actualización Automática del Branding
+
+El endpoint actualiza automáticamente el objeto `branding` en la tabla `settings`:
+
+```sql
+UPDATE settings 
+SET branding = $1, updated_at = NOW()
+WHERE site_id = $2;
+```
+
+### Guardado del Análisis
+
+El análisis completo se guarda en la tabla `analysis`:
+
+```sql
+INSERT INTO analysis (
+  site_id, url_path, structure, user_id, status, 
+  request_time, provider, model_id
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8);
+```
+
+## 📈 Métricas y Puntuación
+
+### Scores de UX
+
+| Métrica | Rango | Descripción |
+|---------|-------|-------------|
+| **Overall Score** | 0-100 | Puntuación general de UX |
+| **Usability Score** | 0-100 | Facilidad de uso |
+| **Accessibility Score** | 0-100 | Accesibilidad web |
+| **Visual Design Score** | 0-100 | Calidad del diseño visual |
+| **Performance Score** | 0-100 | Rendimiento percibido |
+| **Branding Consistency** | 0-100 | Consistencia de marca |
+
+### Factores de Puntuación
+
+- **Problemas críticos**: -20 puntos cada uno
+- **Problemas altos**: -10 puntos cada uno
+- **Recomendaciones alta prioridad**: -5 puntos cada una
+- **Problemas por categoría**: Penalizaciones específicas
+
+## 🎨 Objeto Branding Completado
+
+El endpoint extrae y estructura información de branding:
+
+### Brand Pyramid
+
+- **Brand Essence**: Esencia fundamental de la marca
+- **Brand Personality**: Personalidad y carácter
+- **Brand Benefits**: Beneficios principales ofrecidos
+- **Brand Attributes**: Atributos diferenciadores
+- **Brand Values**: Valores fundamentales
+- **Brand Promise**: Promesa de valor
+
+### Elementos Visuales
+
+- **Color Palette**: Colores primarios, secundarios y de acento
+- **Typography**: Fuentes principales y secundarias
+- **Brand Assets**: Variaciones de logo y uso
+
+### Voz y Tono
+
+- **Communication Style**: Estilo de comunicación
+- **Personality Traits**: Rasgos de personalidad
+- **Forbidden Words**: Palabras a evitar
+- **Preferred Phrases**: Frases preferidas
+
+## 🔍 Casos de Uso
+
+### Auditoría UX Completa
+
+Ideal para realizar auditorías integrales de experiencia de usuario:
+
+```javascript
+// Análisis completo con actualización de branding
+const audit = await analyzeUX({
+  url: 'https://cliente.com',
+  site_id: siteId,
+  user_id: userId,
+  options: { 
+    updateBranding: true,
+    language: 'es' 
+  }
+});
+
+// Generar reporte de recomendaciones
+const report = generateUXReport(audit.data);
+```
+
+### Benchmarking Competitivo
+
+Comparar múltiples sitios web:
+
+```javascript
+const competitors = ['site1.com', 'site2.com', 'site3.com'];
+const results = await Promise.all(
+  competitors.map(url => analyzeUX({ url, site_id, user_id }))
+);
+
+// Comparar scores
+const comparison = results.map(r => ({
+  url: r.data.url,
+  overall_score: r.data.ux_assessment.overall_score,
+  usability_score: r.data.ux_assessment.usability_score
+}));
+```
+
+### Seguimiento de Mejoras
+
+Evaluar el impacto de cambios implementados:
+
+```javascript
+// Análisis antes de los cambios
+const beforeAnalysis = await analyzeUX(params);
+
+// ... implementar cambios ...
+
+// Análisis después de los cambios
+const afterAnalysis = await analyzeUX(params);
+
+// Comparar mejoras
+const improvement = {
+  overall: afterAnalysis.ux_assessment.overall_score - beforeAnalysis.ux_assessment.overall_score,
+  usability: afterAnalysis.ux_assessment.usability_score - beforeAnalysis.ux_assessment.usability_score
+};
+```
+
+## 🚨 Manejo de Errores
+
+### Errores Comunes
+
+| Error | Descripción | Solución |
+|-------|-------------|----------|
+| `VALIDATION_ERROR` | Parámetros inválidos | Verificar formato de URL y UUIDs |
+| `ANALYSIS_ERROR` | Error en el análisis | Revisar conectividad y timeout |
+| `DATABASE_ERROR` | Error en base de datos | Verificar permisos y conexión |
+
+### Códigos de Estado
+
+- **200**: Análisis completado exitosamente
+- **400**: Parámetros inválidos
+- **500**: Error interno del servidor
+
+## 📚 Documentación Relacionada
+
+- [Análisis Estructurado](/rest-api/analysis/sites/site-structure)
+- [Configuración de Branding](/rest-api/settings/branding)
+- [Agentes de IA](/rest-api/agents) 

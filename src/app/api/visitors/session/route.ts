@@ -369,18 +369,39 @@ export async function POST(request: NextRequest) {
       } else {
         console.log(`[POST /api/visitors/session] Visitante ya existe, actualizando datos...`);
         
-        // Actualizar visitante existente
+        // Actualizar visitante existente incrementando total_sessions
         const { error: visitorUpdateError } = await supabaseAdmin
-          .from('visitors')
-          .update({
-            last_seen_at: startTime,
-            total_sessions: supabaseAdmin.rpc('increment', { value: 1 })
-          })
-          .eq('id', visitorId);
+          .rpc('increment_visitor_sessions', {
+            visitor_id: visitorId,
+            last_seen_timestamp: startTime
+          });
         
         if (visitorUpdateError) {
           console.error(`[POST /api/visitors/session] Error al actualizar visitante:`, visitorUpdateError);
-          // No devolver error, continuar con la creación de sesión
+          
+          // Fallback: usar actualización directa con valor calculado
+          console.log(`[POST /api/visitors/session] Intentando actualización con fallback...`);
+          
+          // Obtener el valor actual y incrementarlo
+          const { data: currentVisitor, error: fetchError } = await supabaseAdmin
+            .from('visitors')
+            .select('total_sessions')
+            .eq('id', visitorId)
+            .single();
+          
+          if (!fetchError && currentVisitor) {
+            const { error: fallbackUpdateError } = await supabaseAdmin
+              .from('visitors')
+              .update({
+                last_seen_at: startTime,
+                total_sessions: (currentVisitor.total_sessions || 0) + 1
+              })
+              .eq('id', visitorId);
+            
+            if (fallbackUpdateError) {
+              console.error(`[POST /api/visitors/session] Error en actualización fallback:`, fallbackUpdateError);
+            }
+          }
         }
       }
       

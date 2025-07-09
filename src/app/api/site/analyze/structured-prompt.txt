@@ -1,7 +1,7 @@
 Analiza la estructura del siguiente sitio web:
 URL: {url}
 
-Proporciona un análisis estructurado detallado del sitio web, identificando los bloques principales, su jerarquía, y su propósito. Devuelve tu análisis en formato JSON con la siguiente estructura:
+Proporciona un análisis estructurado detallado del sitio web, identificando los bloques principales, su jerarquía, y su propósito. Devuelve tu análisis en formato JSON con la siguiente estructura BASE:
 
 ```json
 {
@@ -80,4 +80,8 @@ Proporciona un análisis estructurado detallado del sitio web, identificando los
 }
 ```
 
-Asegúrate de que tu respuesta sea un JSON válido y estructurado exactamente como se muestra arriba. Identifica al menos 5-7 bloques principales del sitio y proporciona un análisis detallado de la estructura general. 
+IMPORTANTE: 
+- Asegúrate de que tu respuesta sea un JSON válido que incluya la estructura BASE mostrada arriba
+- Identifica al menos 5-7 bloques principales del sitio y proporciona un análisis detallado de la estructura general
+- Si se solicitan deliverables específicos adicionales, AGRÉGALOS al JSON base como objetos adicionales
+- Puedes incluir objetos adicionales en el JSON raíz según las instrucciones específicas que se proporcionen 

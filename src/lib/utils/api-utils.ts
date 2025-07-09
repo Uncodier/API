@@ -527,11 +527,11 @@ function getDefaultModelId(modelType: 'anthropic' | 'openai' | 'gemini'): string
     case 'anthropic':
       return 'claude-3-opus-20240229';
     case 'openai':
-      return 'gpt-4-turbo';
+      return 'gpt-4.1';
     case 'gemini':
       return 'gemini-pro';
     default:
-      return 'claude-3-opus-20240229';
+      return 'gpt-4.1';
   }
 }
 

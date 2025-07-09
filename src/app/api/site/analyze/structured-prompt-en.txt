@@ -1,7 +1,7 @@
 Analyze the structure of the following website:
 URL: {url}
 
-Provide a detailed structured analysis of the website, identifying the main blocks, their hierarchy, and their purpose. Return your analysis in JSON format with the following structure:
+Provide a detailed structured analysis of the website, identifying the main blocks, their hierarchy, and their purpose. Return your analysis in JSON format with the following BASE structure:
 
 ```json
 {
@@ -80,4 +80,8 @@ Provide a detailed structured analysis of the website, identifying the main bloc
 }
 ```
 
-Make sure your response is valid JSON and structured exactly as shown above. Identify at least 5-7 main blocks of the site and provide a detailed analysis of the overall structure. 
+IMPORTANT: 
+- Make sure your response is valid JSON that includes the BASE structure shown above
+- Identify at least 5-7 main blocks of the site and provide a detailed analysis of the overall structure
+- If specific additional deliverables are requested, ADD THEM to the base JSON as additional objects
+- You can include additional objects in the JSON root according to specific instructions provided 

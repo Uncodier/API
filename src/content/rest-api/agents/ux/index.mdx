@@ -1,0 +1,165 @@
+---
+title: "Agente UX & Branding"
+description: "Análisis integral de experiencia de usuario y branding automático"
+---
+
+# Agente UX & Branding 🎨
+
+El agente UX & Branding proporciona análisis integrales de experiencia de usuario y completa automáticamente la información de branding de tu sitio web.
+
+## 🚀 Características Principales
+
+### Análisis Integral de UX
+- **Evaluación de usabilidad** completa
+- **Análisis de accesibilidad** web
+- **Puntuación de rendimiento** visual
+- **Identificación de problemas** críticos
+- **Generación de recomendaciones** específicas
+
+### Branding Automático
+- **Extracción de elementos** visuales
+- **Análisis de paleta de colores** 
+- **Identificación tipográfica**
+- **Determinación de personalidad** de marca
+- **Completado del objeto** `settings.branding`
+
+### Inteligencia Artificial
+- **Múltiples proveedores** de IA (Anthropic, OpenAI, Gemini)
+- **Análisis contextual** avanzado
+- **Recomendaciones personalizadas**
+- **Detección automática** de patrones UX
+
+## 📊 Métricas y Evaluación
+
+### Scores UX
+El agente genera puntuaciones detalladas en:
+
+| Métrica | Descripción |
+|---------|-------------|
+| **Overall Score** | Puntuación general de UX (0-100) |
+| **Usability Score** | Facilidad de uso y navegación |
+| **Accessibility Score** | Cumplimiento de estándares de accesibilidad |
+| **Visual Design Score** | Calidad del diseño visual |
+| **Performance Score** | Rendimiento percibido |
+| **Branding Consistency** | Consistencia de elementos de marca |
+
+### Categorización de Problemas
+- **Críticos**: Requieren atención inmediata
+- **Altos**: Impacto significativo en UX
+- **Medios**: Mejoras recomendadas
+- **Bajos**: Optimizaciones menores
+
+## 🎯 Casos de Uso
+
+### Auditorías UX Completas
+Ideal para evaluaciones integrales de experiencia de usuario:
+- Análisis de sitios web existentes
+- Evaluación de rediseños
+- Benchmarking competitivo
+- Seguimiento de mejoras
+
+### Completado de Branding
+Automatiza la extracción de información de marca:
+- Identificación de colores corporativos
+- Análisis de tipografía utilizada
+- Determinación de personalidad de marca
+- Creación de brand guidelines básicas
+
+### Generación de Recomendaciones
+Proporciona insights accionables:
+- Problemas de usabilidad específicos
+- Oportunidades de mejora
+- Sugerencias de optimización
+- Priorización de cambios
+
+## 🔧 Integración
+
+### Base de Datos
+- **Guardado automático** en tabla `analysis`
+- **Actualización de branding** en tabla `settings`
+- **Historial de análisis** para seguimiento
+- **Métricas de rendimiento** integradas
+
+### API REST
+- **Endpoint principal**: `/api/agents/ux/analyze`
+- **Parámetros configurables**
+- **Respuestas estructuradas**
+- **Manejo de errores** robusto
+
+## 🌟 Beneficios
+
+### Para Desarrolladores
+- **Automatización** de auditorías UX
+- **Datos estructurados** para dashboards
+- **Integración sencilla** con sistemas existentes
+- **Escalabilidad** para múltiples sitios
+
+### Para Diseñadores
+- **Insights objetivos** sobre UX
+- **Identificación de patrones** problemáticos
+- **Recomendaciones específicas**
+- **Métricas cuantificables**
+
+### Para Empresas
+- **Mejora de conversiones**
+- **Reducción de tasa de rebote**
+- **Mejor experiencia del usuario**
+- **Optimización de recursos**
+
+## 📈 Roadmap
+
+### Funcionalidades Actuales
+- ✅ Análisis estructurado de sitios web
+- ✅ Completado automático de branding
+- ✅ Generación de recomendaciones UX
+- ✅ Cálculo de scores de usabilidad
+- ✅ Integración con base de datos
+
+### Próximas Mejoras
+- 🔄 Análisis de flujos de usuario
+- 🔄 Detección de patrones de navegación
+- 🔄 Comparación con mejores prácticas
+- 🔄 Análisis de contenido y copy
+- 🔄 Recomendaciones de A/B testing
+
+## 🛠️ Configuración
+
+Para usar el agente UX & Branding:
+
+1. **Configurar variables de entorno**
+   ```bash
+   ANTHROPIC_API_KEY=tu_clave_anthropic
+   OPENAI_API_KEY=tu_clave_openai
+   ```
+
+2. **Verificar base de datos**
+   - Tabla `analysis` configurada
+   - Tabla `settings` con campo `branding`
+   - Permisos de escritura
+
+3. **Realizar primera prueba**
+   ```javascript
+   const result = await fetch('/api/agents/ux/analyze', {
+     method: 'POST',
+     headers: { 'Content-Type': 'application/json' },
+     body: JSON.stringify({
+       url: 'https://ejemplo.com',
+       site_id: 'uuid-del-sitio',
+       user_id: 'uuid-del-usuario'
+     })
+   });
+   ```
+
+## 📚 Documentación
+
+- [**Análisis UX**](./analyze) - Documentación completa del endpoint
+- [Configuración de Branding](/rest-api/settings/branding) - Estructura del objeto branding
+- [Análisis de Sitios](/rest-api/analysis/sites) - Otros tipos de análisis disponibles
+
+## 🤝 Soporte
+
+Para soporte técnico o consultas:
+- Revisar la documentación detallada
+- Consultar ejemplos de uso
+- Verificar códigos de error comunes
+- Contactar al equipo de desarrollo 

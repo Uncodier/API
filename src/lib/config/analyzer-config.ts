@@ -11,6 +11,7 @@ export const AVAILABLE_MODELS = {
     { id: 'claude-instant-1.2', name: 'Claude Instant' }
   ],
   openai: [
+    { id: 'gpt-4.1', name: 'GPT-4.1' },
     { id: 'gpt-4o', name: 'GPT-4o' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
@@ -92,23 +93,23 @@ CRITICAL - DO NOT INCLUDE ORIGINAL HTML:
 Always respond with a complete, well-structured JSON object following exactly the format requested in the user's prompt. The blocks array should contain major functional blocks with both their structural information and their text content organized as described above.`;
 
 // Obtener opciones de solicitud según el proveedor y modelo
-export function getRequestOptions(provider = 'anthropic', modelId?: string) {
+export function getRequestOptions(provider = 'openai', modelId?: string) {
   // Opciones para Anthropic
   const anthropicOptions = {
     model: modelId || 'claude-3-5-sonnet-20240620',
-    max_tokens: 4096
+    max_tokens: 200000 // Aumentado para aprovechar capacidades completas
   };
   
-  // Opciones para OpenAI
+  // Opciones para OpenAI (Azure OpenAI)
   const openaiOptions = {
-    model: modelId || 'gpt-4o',
-    max_tokens: 4096
+    model: modelId || 'gpt-4.1',
+    max_tokens: 32768 // Límite máximo de Azure OpenAI
   };
   
   // Opciones para Gemini
   const geminiOptions = {
     model: modelId || 'gemini-1.5-pro',
-    max_tokens: 4096
+    max_tokens: 200000 // Aumentado para aprovechar capacidades completas
   };
   
   return {

@@ -90,6 +90,10 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.leadGeneration(args, options);
   }
 
+  public async analyzeSite(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.analyzeSite(args, options);
+  }
+
   // Métodos de configuración y reporte (heredados de BaseWorkflowService)
   public getConfigurationReport(): {
     deploymentType: 'local' | 'cloud' | 'custom';

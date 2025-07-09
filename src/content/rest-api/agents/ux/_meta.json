@@ -1,0 +1,15 @@
+{
+  "index": {
+    "title": "Introducción",
+    "type": "page"
+  },
+  "analyze": {
+    "title": "Análisis UX",
+    "type": "page"
+  },
+  "*": {
+    "theme": {
+      "collapsed": false
+    }
+  }
+} 

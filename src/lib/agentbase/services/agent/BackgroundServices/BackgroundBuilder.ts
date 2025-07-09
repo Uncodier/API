@@ -41,6 +41,13 @@ export class BackgroundBuilder {
     }
     console.log(`🧩 [BackgroundBuilder] Capabilities recibidas (${capabilities.length}): ${capabilities.join(', ')}`);
     
+    // Log específico para branding
+    if (siteInfo && siteInfo.settings && siteInfo.settings.branding) {
+      console.log(`🧩 [BackgroundBuilder] Branding disponible: SÍ`);
+    } else {
+      console.log(`🧩 [BackgroundBuilder] Branding disponible: NO`);
+    }
+    
     // Construir el prompt de forma estructurada por bloques
     const sections = [
       this.createServerDateSection(),
@@ -256,6 +263,113 @@ export class BackgroundBuilder {
       if (siteInfo.settings.services) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo services`);
         siteSection += `\n## Services\n${JSON.stringify(siteInfo.settings.services)}\n`;
+      }
+      
+      // Branding (información de identidad de marca)
+      if (siteInfo.settings.branding) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo branding`);
+        siteSection += `\n## Brand Identity\n`;
+        try {
+          const brandingData = typeof siteInfo.settings.branding === 'string'
+            ? JSON.parse(siteInfo.settings.branding)
+            : siteInfo.settings.branding;
+          
+          // Brand Pyramid
+          if (brandingData.brand_pyramid) {
+            siteSection += `### Brand Pyramid\n`;
+            if (brandingData.brand_pyramid.brand_essence) {
+              siteSection += `Brand Essence: ${brandingData.brand_pyramid.brand_essence}\n`;
+            }
+            if (brandingData.brand_pyramid.brand_personality) {
+              siteSection += `Brand Personality: ${brandingData.brand_pyramid.brand_personality}\n`;
+            }
+            if (brandingData.brand_pyramid.brand_benefits) {
+              siteSection += `Brand Benefits: ${brandingData.brand_pyramid.brand_benefits}\n`;
+            }
+            if (brandingData.brand_pyramid.brand_attributes) {
+              siteSection += `Brand Attributes: ${brandingData.brand_pyramid.brand_attributes}\n`;
+            }
+            if (brandingData.brand_pyramid.brand_values) {
+              siteSection += `Brand Values: ${brandingData.brand_pyramid.brand_values}\n`;
+            }
+            if (brandingData.brand_pyramid.brand_promise) {
+              siteSection += `Brand Promise: ${brandingData.brand_pyramid.brand_promise}\n`;
+            }
+            siteSection += `\n`;
+          }
+          
+          // Brand Archetype
+          if (brandingData.brand_archetype) {
+            siteSection += `### Brand Archetype\n${brandingData.brand_archetype}\n\n`;
+          }
+          
+          // Voice and Tone
+          if (brandingData.voice_and_tone) {
+            siteSection += `### Voice and Tone\n`;
+            if (brandingData.voice_and_tone.communication_style) {
+              siteSection += `Communication Style: ${brandingData.voice_and_tone.communication_style}\n`;
+            }
+            if (brandingData.voice_and_tone.personality_traits && Array.isArray(brandingData.voice_and_tone.personality_traits)) {
+              siteSection += `Personality Traits: ${brandingData.voice_and_tone.personality_traits.join(', ')}\n`;
+            }
+            if (brandingData.voice_and_tone.forbidden_words && Array.isArray(brandingData.voice_and_tone.forbidden_words)) {
+              siteSection += `Forbidden Words: ${brandingData.voice_and_tone.forbidden_words.join(', ')}\n`;
+            }
+            if (brandingData.voice_and_tone.preferred_phrases && Array.isArray(brandingData.voice_and_tone.preferred_phrases)) {
+              siteSection += `Preferred Phrases: ${brandingData.voice_and_tone.preferred_phrases.join(', ')}\n`;
+            }
+            siteSection += `\n`;
+          }
+          
+          // Brand Guidelines
+          if (brandingData.brand_guidelines) {
+            siteSection += `### Brand Guidelines\n`;
+            if (brandingData.brand_guidelines.do_list && Array.isArray(brandingData.brand_guidelines.do_list)) {
+              siteSection += `Do: ${brandingData.brand_guidelines.do_list.join(', ')}\n`;
+            }
+            if (brandingData.brand_guidelines.dont_list && Array.isArray(brandingData.brand_guidelines.dont_list)) {
+              siteSection += `Don't: ${brandingData.brand_guidelines.dont_list.join(', ')}\n`;
+            }
+            if (brandingData.brand_guidelines.emotions_to_evoke && Array.isArray(brandingData.brand_guidelines.emotions_to_evoke)) {
+              siteSection += `Emotions to Evoke: ${brandingData.brand_guidelines.emotions_to_evoke.join(', ')}\n`;
+            }
+            siteSection += `\n`;
+          }
+          
+          // Color Palette
+          if (brandingData.color_palette) {
+            siteSection += `### Color Palette\n`;
+            if (brandingData.color_palette.primary_color) {
+              siteSection += `Primary Color: ${brandingData.color_palette.primary_color}\n`;
+            }
+            if (brandingData.color_palette.secondary_color) {
+              siteSection += `Secondary Color: ${brandingData.color_palette.secondary_color}\n`;
+            }
+            if (brandingData.color_palette.accent_color) {
+              siteSection += `Accent Color: ${brandingData.color_palette.accent_color}\n`;
+            }
+            siteSection += `\n`;
+          }
+          
+          // Typography
+          if (brandingData.typography) {
+            siteSection += `### Typography\n`;
+            if (brandingData.typography.primary_font) {
+              siteSection += `Primary Font: ${brandingData.typography.primary_font}\n`;
+            }
+            if (brandingData.typography.secondary_font) {
+              siteSection += `Secondary Font: ${brandingData.typography.secondary_font}\n`;
+            }
+            if (brandingData.typography.font_size_scale) {
+              siteSection += `Font Size Scale: ${brandingData.typography.font_size_scale}\n`;
+            }
+            siteSection += `\n`;
+          }
+          
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando branding:`, error);
+          siteSection += `Brand Identity: ${JSON.stringify(siteInfo.settings.branding)}\n`;
+        }
       }
       
       // Ubicaciones
@@ -525,6 +639,14 @@ export class BackgroundBuilder {
       
       if ((hasBusinessHoursInSite || hasBusinessHoursInSettings) && !finalPrompt.includes('## Business Hours')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Business Hours pero no se encontró en el prompt final`);
+      }
+      
+      if (siteInfo.settings.social_media && !finalPrompt.includes('## Social Media')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Social Media pero no se encontró en el prompt final`);
+      }
+      
+      if (siteInfo.settings.branding && !finalPrompt.includes('## Brand Identity')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Brand Identity pero no se encontró en el prompt final`);
       }
     }
   }

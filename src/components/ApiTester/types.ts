@@ -51,7 +51,8 @@ export type ApiType =
   | 'update-task'
   | 'data-analyst-analysis'
   | 'data-analyst-lead-segmentation'
-  | 'cmo-daily-standup-system';
+  | 'cmo-daily-standup-system'
+  | 'ux-analysis';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {

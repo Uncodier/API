@@ -15,6 +15,10 @@
     "title": "Email",
     "type": "page"
   },
+  "ux": {
+    "title": "UX & Branding",
+    "type": "page"
+  },
   "customer-support": {
     "title": "Customer Support",
     "type": "page"
