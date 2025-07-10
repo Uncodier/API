@@ -152,7 +152,7 @@ async function getSystemData(siteId: string) {
     
     // Obtener información de billing
     const { data: billingData, error: billingError } = await supabaseAdmin
-      .from('subscriptions')
+      .from('billing')
       .select('*')
       .eq('site_id', siteId)
       .order('created_at', { ascending: false })

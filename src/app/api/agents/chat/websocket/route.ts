@@ -76,10 +76,13 @@ async function updateVisitorSessionStatus(visitor_id: string, status: 'active' |
       const { data: newSession, error: createError } = await supabaseAdmin
         .from('visitor_sessions')
         .insert([{
+          id: uuidv4(),
           visitor_id,
           site_id,
           is_active: true,
-          session_data: {}, // Objeto vacío por defecto
+          started_at: Date.now(),
+          last_activity_at: Date.now(),
+          page_views: 1
         }])
         .select()
         .single();
