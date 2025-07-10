@@ -17,7 +17,43 @@ const DailyStandUpSchema = z.object({
     command_id: z.string(),
     strategic_analysis: z.object({
       business_assessment: z.string(),
-      focus_areas: z.array(z.string()).optional()
+      focus_areas: z.union([
+        z.array(z.string()),
+        z.record(z.string()),
+        z.object({}).passthrough()
+      ]).optional().transform((value) => {
+        if (!value) return undefined;
+        
+        // Si ya es un array, devolverlo tal como está
+        if (Array.isArray(value)) {
+          return value;
+        }
+        
+        // Si es un objeto, intentar convertirlo a array
+        if (typeof value === 'object' && value !== null) {
+          // Caso 1: Objeto con propiedades numéricas {0: "value1", 1: "value2"}
+          const keys = Object.keys(value);
+          const numericKeys = keys.filter(key => !isNaN(parseInt(key))).sort((a, b) => parseInt(a) - parseInt(b));
+          
+          if (numericKeys.length > 0) {
+            return numericKeys.map(key => String(value[key]));
+          }
+          
+          // Caso 2: Objeto con valores como array
+          const values = Object.values(value);
+          if (values.length > 0) {
+            return values.map(val => String(val));
+          }
+          
+          // Caso 3: Objeto complejo, extraer strings
+          return Object.entries(value)
+            .filter(([_, val]) => typeof val === 'string' && val.trim().length > 0)
+            .map(([_, val]) => String(val));
+        }
+        
+        // Si no se puede convertir, devolver array vacío
+        return [];
+      })
     }).optional(),
     analysis_type: z.string(),
     system_data: z.any().optional()
@@ -273,6 +309,14 @@ export async function POST(request: NextRequest) {
     
     const body = await request.json();
     
+    // Debug: Log the structure of systemAnalysis if it exists
+    if (body.systemAnalysis?.strategic_analysis?.focus_areas) {
+      const focusAreas = body.systemAnalysis.strategic_analysis.focus_areas;
+      console.log('🔍 [DailyStandUp] Debug - focus_areas type:', typeof focusAreas);
+      console.log('🔍 [DailyStandUp] Debug - focus_areas isArray:', Array.isArray(focusAreas));
+      console.log('🔍 [DailyStandUp] Debug - focus_areas value:', JSON.stringify(focusAreas));
+    }
+    
     // Validar el cuerpo de la request
     const validationResult = DailyStandUpSchema.safeParse(body);
     
@@ -289,6 +333,11 @@ export async function POST(request: NextRequest) {
         },
         { status: 400 }
       );
+    }
+    
+    // Debug: Log the transformed focus_areas after validation
+    if (validationResult.data.systemAnalysis?.strategic_analysis?.focus_areas) {
+      console.log('✅ [DailyStandUp] Debug - transformed focus_areas:', JSON.stringify(validationResult.data.systemAnalysis.strategic_analysis.focus_areas));
     }
     
     const { site_id, subject, message, systemAnalysis } = validationResult.data;
