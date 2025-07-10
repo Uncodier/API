@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { v4 as uuidv4 } from 'uuid'
-import { extractRequestInfo, detectScreenSize } from '@/lib/utils/request-info-extractor'
+import { extractRequestInfo, extractRequestInfoWithLocation, detectScreenSize } from '@/lib/utils/request-info-extractor'
 
 
 /**
@@ -22,7 +22,7 @@ import { extractRequestInfo, detectScreenSize } from '@/lib/utils/request-info-e
  */
 
 // Función para validar y preparar datos para la base de datos
-function validateAndPrepareSessionData(sessionData: any, sessionId: string, visitorId: string, startTime: number, request: NextRequest) {
+async function validateAndPrepareSessionData(sessionData: any, sessionId: string, visitorId: string, startTime: number, request: NextRequest) {
   try {
     // Verificar campos obligatorios para la tabla visitor_sessions
     const requiredFields = ['site_id'];
@@ -47,8 +47,8 @@ function validateAndPrepareSessionData(sessionData: any, sessionId: string, visi
       };
     }
 
-    // Extraer información automáticamente de la petición cuando no se proporcione
-    const requestInfo = extractRequestInfo(request);
+    // Extraer información automáticamente de la petición cuando no se proporcione (incluyendo geolocalización)
+    const requestInfo = await extractRequestInfoWithLocation(request);
     console.log(`[validateAndPrepareSessionData] Información extraída de la petición:`, requestInfo);
 
     // Completar información del dispositivo
@@ -85,17 +85,26 @@ function validateAndPrepareSessionData(sessionData: any, sessionId: string, visi
       if (!browserInfo.language) browserInfo.language = requestInfo.browser.language;
     }
 
-    // Completar información de ubicación (básica, se puede expandir con servicios de geolocalización)
+    // Completar información de ubicación usando geolocalización por IP
     let locationInfo = sessionData.location;
     if (!locationInfo || Object.keys(locationInfo).length === 0) {
-      console.log(`[validateAndPrepareSessionData] Inicializando información de ubicación`);
+      console.log(`[validateAndPrepareSessionData] Completando información de ubicación desde IP: ${requestInfo.ip}`);
       locationInfo = {
-        // Por ahora, dejar vacío para que se complete desde el cliente
-        // TODO: Implementar geolocalización por IP
-        country: undefined,
-        region: undefined,
-        city: undefined
+        country: requestInfo.location.country,
+        region: requestInfo.location.region,
+        city: requestInfo.location.city
       };
+    } else {
+      // Completar campos faltantes de ubicación
+      if (!locationInfo.country && requestInfo.location.country) {
+        locationInfo.country = requestInfo.location.country;
+      }
+      if (!locationInfo.region && requestInfo.location.region) {
+        locationInfo.region = requestInfo.location.region;
+      }
+      if (!locationInfo.city && requestInfo.location.city) {
+        locationInfo.city = requestInfo.location.city;
+      }
     }
 
     // Preparar datos para la inserción, manejando correctamente tipos de datos
@@ -114,12 +123,12 @@ function validateAndPrepareSessionData(sessionData: any, sessionId: string, visi
       started_at: startTime,
       last_activity_at: startTime,
       page_views: 1,
-      device: deviceInfo ? JSON.stringify(deviceInfo) : null,
-      browser: browserInfo ? JSON.stringify(browserInfo) : null,
-      location: locationInfo ? JSON.stringify(locationInfo) : null,
+      device: deviceInfo || null,
+      browser: browserInfo || null,
+      location: locationInfo || null,
       previous_session_id: sessionData.previous_session_id || null,
-      performance: sessionData.performance ? JSON.stringify(sessionData.performance) : null,
-      consent: sessionData.consent ? JSON.stringify(sessionData.consent) : null,
+      performance: sessionData.performance || null,
+      consent: sessionData.consent || null,
       is_active: true,
     };
 
@@ -370,7 +379,7 @@ export async function POST(request: NextRequest) {
     console.log(`[POST /api/visitors/session] Generados sessionId: ${sessionId}, visitorId: ${visitorId}`);
     
     // Validar y preparar datos para la base de datos
-    const validation = validateAndPrepareSessionData(sessionData, sessionId, visitorId, startTime, request);
+    const validation = await validateAndPrepareSessionData(sessionData, sessionId, visitorId, startTime, request);
     if (!validation.valid) {
       console.error(`[POST /api/visitors/session] Error de validación de datos para DB:`, validation.error);
       return errorResponse(`Error al preparar datos: ${validation.error}`);
@@ -391,32 +400,11 @@ export async function POST(request: NextRequest) {
       if (!existingVisitor || visitorCheckError) {
         console.log(`[POST /api/visitors/session] Visitante no existe, creando nuevo visitante con ID: ${visitorId}`);
         
-        // Extraer información de la petición para completar datos del visitante
-        const requestInfo = extractRequestInfo(request);
+        // Extraer información de la petición para completar datos del visitante (incluyendo geolocalización)
+        const requestInfo = await extractRequestInfoWithLocation(request);
         
-        // Completar información del dispositivo para el visitante
-        let visitorDeviceInfo = sessionData.device;
-        if (!visitorDeviceInfo || Object.keys(visitorDeviceInfo).length === 0) {
-          visitorDeviceInfo = {
-            type: requestInfo.device.type,
-            screen_size: detectScreenSize(requestInfo.userAgent),
-            os: requestInfo.device.os,
-            touch_support: requestInfo.device.touch_support
-          };
-        }
-
-        // Completar información del navegador para el visitante
-        let visitorBrowserInfo = sessionData.browser;
-        if (!visitorBrowserInfo || Object.keys(visitorBrowserInfo).length === 0) {
-          visitorBrowserInfo = {
-            name: requestInfo.browser.name,
-            version: requestInfo.browser.version,
-            language: requestInfo.browser.language
-          };
-        }
-
-        // Completar información de ubicación para el visitante
-        let visitorLocationInfo = sessionData.location || {};
+        // Nota: La información de dispositivo, navegador y ubicación se guarda solo en visitor_sessions
+        // ya que un visitante puede tener múltiples sesiones desde diferentes dispositivos/ubicaciones
 
         // Crear nuevo registro de visitante
         const newVisitor = {
@@ -434,9 +422,6 @@ export async function POST(request: NextRequest) {
           first_utm_campaign: sessionData.utm_campaign || null,
           first_utm_term: sessionData.utm_term || null,
           first_utm_content: sessionData.utm_content || null,
-          device: visitorDeviceInfo ? JSON.stringify(visitorDeviceInfo) : null,
-          browser: visitorBrowserInfo ? JSON.stringify(visitorBrowserInfo) : null,
-          location: visitorLocationInfo ? JSON.stringify(visitorLocationInfo) : null,
           is_identified: false
         };
         
@@ -452,11 +437,7 @@ export async function POST(request: NextRequest) {
         }
         
         console.log(`[POST /api/visitors/session] Visitante creado con éxito`);
-        console.log(`[POST /api/visitors/session] Información del visitante:`, {
-          device: visitorDeviceInfo,
-          browser: visitorBrowserInfo,
-          location: visitorLocationInfo
-        });
+        console.log(`[POST /api/visitors/session] Información del visitante guardada (device, browser, location se guardan solo en visitor_sessions)`);
       } else {
         console.log(`[POST /api/visitors/session] Visitante ya existe, actualizando datos...`);
         

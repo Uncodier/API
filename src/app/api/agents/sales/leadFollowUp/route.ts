@@ -533,9 +533,8 @@ export async function POST(request: Request) {
         if (effectiveLeadData.visitors.user_agent) {
           contextMessage += `\nUser Agent: ${effectiveLeadData.visitors.user_agent}`;
         }
-        if (effectiveLeadData.visitors.location) {
-          contextMessage += `\nLocation: ${effectiveLeadData.visitors.location}`;
-        }
+        // Nota: La información de location ahora se guarda solo en visitor_sessions
+        // contextMessage += `\nLocation: ${effectiveLeadData.visitors.location}`;
       }
     }
     

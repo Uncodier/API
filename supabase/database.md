@@ -24,6 +24,11 @@
 -- WARNING: This schema is for context only and is not meant to be run.
 -- Table order and constraints may not be valid for execution.
 
+-- ⚠️ CAMBIO ESTRUCTURAL IMPORTANTE (2024-12-19):
+-- Los campos device, browser y location han sido REMOVIDOS de la tabla 'visitors'
+-- y se mantienen únicamente en la tabla 'visitor_sessions'.
+-- Esto permite rastrear múltiples dispositivos/ubicaciones por visitante a través de sus sesiones.
+
 CREATE TABLE public.agent_assets (
   agent_id uuid NOT NULL,
   asset_id uuid NOT NULL,
@@ -972,9 +977,7 @@ CREATE TABLE public.visitors (
   first_utm_campaign text,
   first_utm_term text,
   first_utm_content text,
-  device jsonb,
-  browser jsonb,
-  location jsonb,
+  -- device, browser, location campos removidos - ahora solo en visitor_sessions
   custom_data jsonb,
   lead_id uuid,
   is_identified boolean DEFAULT false,

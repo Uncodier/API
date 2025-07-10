@@ -309,9 +309,8 @@ export async function POST(request: Request) {
       if (leadInfo.visitors.user_agent) {
         contextMessage += `\nUser Agent: ${leadInfo.visitors.user_agent}`;
       }
-      if (leadInfo.visitors.location) {
-        contextMessage += `\nLocation: ${leadInfo.visitors.location}`;
-      }
+      // Nota: La información de location ahora se guarda solo en visitor_sessions
+      // contextMessage += `\nLocation: ${leadInfo.visitors.location}`;
     }
     
     // Añadir información de interacciones previas al contexto

@@ -156,6 +156,47 @@ export function extractLanguage(acceptLanguage: string): string {
 }
 
 /**
+ * Obtiene información de geolocalización basada en IP usando ipapi.co
+ */
+export async function getLocationFromIP(ip: string): Promise<LocationInfo> {
+  try {
+    // No hacer geolocalización para IPs locales
+    if (ip === '127.0.0.1' || ip === '::1' || ip.startsWith('192.168.') || ip.startsWith('10.') || ip.startsWith('172.')) {
+      return {};
+    }
+
+    const response = await fetch(`https://ipapi.co/${ip}/json/`, {
+      headers: {
+        'User-Agent': 'Uncodie-API/1.0'
+      },
+      // Timeout de 3 segundos para no bloquear la respuesta
+      signal: AbortSignal.timeout(3000)
+    });
+
+    if (!response.ok) {
+      console.warn(`[getLocationFromIP] Error HTTP ${response.status} para IP: ${ip}`);
+      return {};
+    }
+
+    const data = await response.json();
+    
+    if (data.error) {
+      console.warn(`[getLocationFromIP] Error del servicio: ${data.error} para IP: ${ip}`);
+      return {};
+    }
+
+    return {
+      country: data.country_name || undefined,
+      region: data.region || undefined,
+      city: data.city || undefined
+    };
+  } catch (error) {
+    console.warn(`[getLocationFromIP] Error al obtener ubicación para IP ${ip}:`, error);
+    return {};
+  }
+}
+
+/**
  * Función principal para extraer toda la información de la petición
  */
 export function extractRequestInfo(request: NextRequest): RequestInfo {
@@ -168,11 +209,8 @@ export function extractRequestInfo(request: NextRequest): RequestInfo {
   // Añadir idioma al navegador si no está
   browser.language = extractLanguage(acceptLanguage);
   
-  // Información de ubicación básica (se puede expandir con servicios de geolocalización)
-  const location: LocationInfo = {
-    // TODO: Implementar geolocalización por IP usando un servicio externo
-    // Por ahora, dejar vacío y permitir que se llene desde el cliente
-  };
+  // Información de ubicación básica (se llenará de forma asíncrona)
+  const location: LocationInfo = {};
   
   return {
     ip,
@@ -182,6 +220,19 @@ export function extractRequestInfo(request: NextRequest): RequestInfo {
     browser,
     location
   };
+}
+
+/**
+ * Función asíncrona para extraer información completa incluyendo geolocalización
+ */
+export async function extractRequestInfoWithLocation(request: NextRequest): Promise<RequestInfo> {
+  const info = extractRequestInfo(request);
+  
+  // Intentar obtener ubicación por IP
+  const locationFromIP = await getLocationFromIP(info.ip);
+  info.location = locationFromIP;
+  
+  return info;
 }
 
 /**

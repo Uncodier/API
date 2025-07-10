@@ -2,6 +2,35 @@
 
 This document explains the JSONb field structures used in the Market Fit application database. These fields store complex nested data in JSON format within PostgreSQL.
 
+## ⚠️ Cambios Estructurales Importantes
+
+### Migración de Campos de Tracking: `visitors` → `visitor_sessions`
+
+**Fecha de cambio:** 2024-12-19
+
+Los campos `device`, `browser` y `location` han sido **removidos de la tabla `visitors`** y se mantienen únicamente en la tabla `visitor_sessions`. 
+
+**Razón del cambio:**
+- Un visitante puede tener múltiples sesiones desde diferentes dispositivos
+- Permite rastrear cambios de ubicación (viajes, VPN)
+- Reduce duplicación de datos y mejora la granularidad del tracking
+
+**Migración de datos:**
+- Los datos existentes en `visitors.device/browser/location` deben consultarse desde `visitor_sessions`
+- Para obtener el dispositivo/ubicación "principal" de un visitante, usar la sesión más reciente o la primera sesión
+
+**Impacto en consultas:**
+```sql
+-- ❌ ANTERIOR (Ya no funciona)
+SELECT device FROM visitors WHERE id = 'visitor_id';
+
+-- ✅ NUEVO (Usar visitor_sessions)
+SELECT device FROM visitor_sessions 
+WHERE visitor_id = 'visitor_id' 
+ORDER BY started_at DESC 
+LIMIT 1;
+```
+
 ## Table of Contents
 - [Leads JSONb Fields](#leads-jsonb-fields)
 - [Segments JSONb Fields](#segments-jsonb-fields)
@@ -1322,56 +1351,85 @@ Payment installments and history.
 
 ## Visitor Sessions JSONb Fields
 
-### `device` (jsonb)
-Device information for the visitor session.
+> **Nota importante:** Los campos `device`, `browser` y `location` se almacenan únicamente en la tabla `visitor_sessions`, no en la tabla `visitors`. Esto permite rastrear cambios de dispositivo, navegador y ubicación a lo largo de múltiples sesiones del mismo visitante.
 
-**Structure:**
+### `device` (jsonb)
+**Tabla:** `visitor_sessions` únicamente
+**Descripción:** Información del dispositivo para la sesión específica del visitante. Se detecta automáticamente desde el User-Agent y se enriquece con datos del cliente.
+
+**Detección automática desde IP:** No aplicable
+**Detección automática desde User-Agent:** ✅ Sí
+
+**Estructura:**
 ```json
 {
-  "type": "desktop",
-  "brand": "Apple",
-  "model": "MacBook Pro",
-  "os": "macOS",
-  "os_version": "14.0",
-  "screen_resolution": "1920x1080",
-  "color_depth": 24,
-  "pixel_ratio": 2.0
+  "type": "desktop|mobile|tablet",
+  "screen_size": "1920x1080",
+  "os": {
+    "name": "macOS|Windows|Linux|Android|iOS",
+    "version": "14.0"
+  },
+  "touch_support": false
 }
 ```
+
+**Campos obligatorios:**
+- `type`: Tipo de dispositivo detectado automáticamente
+
+**Campos opcionales:**
+- `screen_size`: Resolución de pantalla si está disponible
+- `os`: Sistema operativo y versión
+- `touch_support`: Soporte táctil (inferido del tipo de dispositivo)
 
 ### `browser` (jsonb)
-Browser information for the visitor session.
+**Tabla:** `visitor_sessions` únicamente
+**Descripción:** Información del navegador para la sesión específica. Se detecta automáticamente desde el User-Agent y headers HTTP.
 
-**Structure:**
+**Detección automática desde User-Agent:** ✅ Sí
+**Detección automática desde Headers:** ✅ Sí (idioma)
+
+**Estructura:**
 ```json
 {
-  "name": "Chrome",
-  "version": "91.0.4472.124",
-  "engine": "Blink",
-  "language": "en-US",
-  "timezone": "America/New_York",
-  "plugins": ["PDF Viewer", "Chrome PDF Plugin"],
-  "cookies_enabled": true,
-  "javascript_enabled": true
+  "name": "Chrome|Firefox|Safari|Edge|Opera",
+  "version": "119.0.6045.105",
+  "language": "es-ES"
 }
 ```
+
+**Campos obligatorios:**
+- `name`: Nombre del navegador detectado automáticamente
+
+**Campos opcionales:**
+- `version`: Versión del navegador
+- `language`: Idioma preferido extraído de Accept-Language
 
 ### `location` (jsonb)
-Geographic location information.
+**Tabla:** `visitor_sessions` únicamente
+**Descripción:** Información de geolocalización basada en la IP del visitante. Se obtiene automáticamente usando el servicio ipapi.co.
 
-**Structure:**
+**Detección automática desde IP:** ✅ Sí (usando ipapi.co)
+**Timeout:** 3 segundos máximo
+**IPs excluidas:** Locales (127.0.0.1, 192.168.x.x, 10.x.x.x, 172.x.x.x)
+
+**Estructura:**
 ```json
 {
-  "country": "United States",
-  "country_code": "US",
-  "region": "California",
-  "city": "San Francisco",
-  "latitude": 37.7749,
-  "longitude": -122.4194,
-  "timezone": "America/Los_Angeles",
-  "isp": "Comcast Cable"
+  "country": "Spain",
+  "region": "Madrid",
+  "city": "Madrid"
 }
 ```
+
+**Campos opcionales:**
+- `country`: País detectado por IP
+- `region`: Región/Estado detectado por IP  
+- `city`: Ciudad detectada por IP
+
+**Notas técnicas:**
+- Si la IP es local o el servicio falla, los campos quedan vacíos
+- No bloquea la respuesta gracias al timeout de 3s
+- Se actualiza en cada nueva sesión, permitiendo rastrear movimiento geográfico
 
 ### `performance` (jsonb)
 Performance and loading metrics.
