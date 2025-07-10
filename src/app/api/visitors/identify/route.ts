@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
+import { extractRequestInfo, detectScreenSize } from '@/lib/utils/request-info-extractor'
 
 /**
  * API DE IDENTIFICACIÓN DE VISITANTES
@@ -379,15 +380,113 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Update visitor with lead information
+    // Extraer información automáticamente de la petición si no está presente en el visitante
+    const requestInfo = extractRequestInfo(request);
+    console.log(`[POST /api/visitors/identify] Información extraída de la petición:`, requestInfo);
+
+    // Preparar datos de actualización del visitante
+    const visitorUpdateData: any = {
+      lead_id: lead.id,
+      segment_id: validatedData.segment_id,
+      is_identified: true,
+      updated_at: new Date().toISOString()
+    };
+
+    // Completar información del dispositivo si no existe o está vacía
+    let shouldUpdateDevice = false;
+    let deviceInfo = null;
+    try {
+      deviceInfo = visitor.device ? JSON.parse(visitor.device) : null;
+    } catch (e) {
+      deviceInfo = null;
+    }
+
+    if (!deviceInfo || Object.keys(deviceInfo).length === 0) {
+      console.log(`[POST /api/visitors/identify] Completando información del dispositivo automáticamente`);
+      deviceInfo = {
+        type: requestInfo.device.type,
+        screen_size: detectScreenSize(requestInfo.userAgent),
+        os: requestInfo.device.os,
+        touch_support: requestInfo.device.touch_support
+      };
+      shouldUpdateDevice = true;
+    } else {
+      // Completar campos faltantes del dispositivo
+      if (!deviceInfo.type && requestInfo.device.type !== 'unknown') {
+        deviceInfo.type = requestInfo.device.type;
+        shouldUpdateDevice = true;
+      }
+      if (!deviceInfo.screen_size) {
+        const screenSize = detectScreenSize(requestInfo.userAgent);
+        if (screenSize) {
+          deviceInfo.screen_size = screenSize;
+          shouldUpdateDevice = true;
+        }
+      }
+      if (!deviceInfo.os && requestInfo.device.os?.name !== 'unknown') {
+        deviceInfo.os = requestInfo.device.os;
+        shouldUpdateDevice = true;
+      }
+      if (deviceInfo.touch_support === undefined) {
+        deviceInfo.touch_support = requestInfo.device.touch_support;
+        shouldUpdateDevice = true;
+      }
+    }
+
+    if (shouldUpdateDevice) {
+      visitorUpdateData.device = JSON.stringify(deviceInfo);
+    }
+
+    // Completar información del navegador si no existe o está vacía
+    let shouldUpdateBrowser = false;
+    let browserInfo = null;
+    try {
+      browserInfo = visitor.browser ? JSON.parse(visitor.browser) : null;
+    } catch (e) {
+      browserInfo = null;
+    }
+
+    if (!browserInfo || Object.keys(browserInfo).length === 0) {
+      console.log(`[POST /api/visitors/identify] Completando información del navegador automáticamente`);
+      browserInfo = {
+        name: requestInfo.browser.name,
+        version: requestInfo.browser.version,
+        language: requestInfo.browser.language
+      };
+      shouldUpdateBrowser = true;
+    } else {
+      // Completar campos faltantes del navegador
+      if (!browserInfo.name && requestInfo.browser.name !== 'unknown') {
+        browserInfo.name = requestInfo.browser.name;
+        shouldUpdateBrowser = true;
+      }
+      if (!browserInfo.version && requestInfo.browser.version) {
+        browserInfo.version = requestInfo.browser.version;
+        shouldUpdateBrowser = true;
+      }
+      if (!browserInfo.language && requestInfo.browser.language) {
+        browserInfo.language = requestInfo.browser.language;
+        shouldUpdateBrowser = true;
+      }
+    }
+
+    if (shouldUpdateBrowser) {
+      visitorUpdateData.browser = JSON.stringify(browserInfo);
+    }
+
+    // La información de ubicación se puede mantener como está por ahora
+    // ya que requeriría un servicio de geolocalización por IP
+
+    console.log(`[POST /api/visitors/identify] Datos de actualización del visitante:`, {
+      ...visitorUpdateData,
+      device: deviceInfo,
+      browser: browserInfo
+    });
+
+    // Update visitor with lead information and enhanced data
     const { data: updatedVisitor, error: updateError } = await supabaseAdmin
       .from('visitors')
-      .update({
-        lead_id: lead.id,
-        segment_id: validatedData.segment_id,
-        is_identified: true,
-        updated_at: new Date().toISOString()
-      })
+      .update(visitorUpdateData)
       .eq('id', validatedData.id)
       .select()
       .single();
