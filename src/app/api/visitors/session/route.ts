@@ -295,6 +295,7 @@ export async function POST(request: NextRequest) {
     const sessionId = uuidv4();
     let visitorId = sessionData.id || uuidv4();
     const startTime = Date.now();
+    let previousSessionFromFingerprint = null;
     
     // Si se proporciona un fingerprint, buscar primero una sesión activa con este fingerprint
     if (sessionData.fingerprint) {
@@ -322,54 +323,43 @@ export async function POST(request: NextRequest) {
           .limit(1)
           .single();
         
-        // Si encontramos una sesión activa, la devolvemos en lugar de crear una nueva
+        // Si encontramos una sesión activa, la cerraremos y crearemos una nueva
         if (activeSession && !activeSessionError) {
-          console.log(`[POST /api/visitors/session] Sesión activa encontrada, retornando sesión existente: ${activeSession.id}`);
+          console.log(`[POST /api/visitors/session] Sesión activa encontrada, cerrando para crear nueva: ${activeSession.id}`);
           
-          const ttl = 1800; // 30 minutos en segundos
-          const expiresAt = Date.now() + (ttl * 1000);
+          // Guardar la sesión activa como previous_session_id
+          previousSessionFromFingerprint = activeSession.id;
           
-          // Actualizar la marca de última actividad
-          const { error: updateError } = await supabaseAdmin
+          // Calcular idle_time para la sesión anterior
+          const sessionDuration = startTime - activeSession.started_at;
+          const idleTime = activeSession.active_time 
+            ? sessionDuration - activeSession.active_time
+            : sessionDuration;
+          
+          console.log(`[POST /api/visitors/session] Calculando idle_time para sesión ${activeSession.id}: duration=${sessionDuration}, active_time=${activeSession.active_time}, idle_time=${idleTime}`);
+          
+          // Cerrar la sesión activa encontrada
+          const { error: closeError } = await supabaseAdmin
             .from('visitor_sessions')
             .update({
-              last_activity_at: Date.now(),
-              is_active: true,
+              is_active: false,
+              ended_at: startTime,
+              duration: sessionDuration,
+              idle_time: idleTime,
+              exit_type: 'new_session',
               updated_at: new Date().toISOString()
             })
             .eq('id', activeSession.id);
           
-          if (updateError) {
-            console.log(`[POST /api/visitors/session] Error al actualizar la última actividad: ${updateError.message}`);
+          if (closeError) {
+            console.error(`[POST /api/visitors/session] Error al cerrar sesión encontrada por fingerprint:`, closeError);
+          } else {
+            console.log(`[POST /api/visitors/session] Sesión encontrada por fingerprint cerrada exitosamente`);
           }
           
-          // Devolver la sesión existente
-          const apiResponse = {
-            success: true,
-            data: {
-              session_id: activeSession.id,
-              visitor_id: visitorId,
-              fingerprint: sessionData.fingerprint,
-              id: visitorId,
-              lead_id: activeSession.lead_id || null,
-              created_at: activeSession.started_at,
-              last_activity_at: Date.now(),
-              expires_at: expiresAt,
-              ttl: ttl,
-              session_url: `/api/visitors/session?session_id=${activeSession.id}&site_id=${sessionData.site_id}`,
-              is_new_session: false
-            },
-            meta: {
-              api_version: '1.0',
-              server_time: Date.now(),
-              processing_time: Date.now() - startTime
-            }
-          };
-          
-          console.log(`[POST /api/visitors/session] Respuesta enviada (sesión existente):`, apiResponse);
-          return NextResponse.json(apiResponse, { 
-            status: 200
-          });
+          // Continuar con la creación de una nueva sesión con previous_session_id establecido
+          // No retornamos aquí, dejamos que continúe el flujo normal
+          console.log(`[POST /api/visitors/session] Continuando con creación de nueva sesión...`);
         }
       } else {
         console.log(`[POST /api/visitors/session] No se encontró visitante con fingerprint: ${sessionData.fingerprint}`);
@@ -380,7 +370,7 @@ export async function POST(request: NextRequest) {
     
     // Validar y preparar datos para la base de datos
     const validation = await validateAndPrepareSessionData(sessionData, sessionId, visitorId, startTime, request);
-    if (!validation.valid) {
+    if (!validation.valid || !validation.data) {
       console.error(`[POST /api/visitors/session] Error de validación de datos para DB:`, validation.error);
       return errorResponse(`Error al preparar datos: ${validation.error}`);
     }
@@ -388,13 +378,104 @@ export async function POST(request: NextRequest) {
     const newSession = validation.data;
     
     try {
-      // Primero, verificar si el visitante ya existe
+      // Primero, verificar si el visitante ya existe y buscar su última sesión
       console.log(`[POST /api/visitors/session] Verificando si el visitante existe en la base de datos...`);
       const { data: existingVisitor, error: visitorCheckError } = await supabaseAdmin
         .from('visitors')
         .select('id')
         .eq('id', visitorId)
         .single();
+
+      let previousSessionId = null;
+      
+      // Si el visitante ya existe, buscar su última sesión para cerrarla y establecer previous_session_id
+      if (existingVisitor && !visitorCheckError) {
+        console.log(`[POST /api/visitors/session] Visitante existe, buscando última sesión activa...`);
+        
+        // Buscar la última sesión del visitante (activa o no)
+        const { data: lastSession, error: lastSessionError } = await supabaseAdmin
+          .from('visitor_sessions')
+          .select('id, is_active')
+          .eq('visitor_id', visitorId)
+          .eq('site_id', sessionData.site_id)
+          .order('started_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (lastSession && !lastSessionError) {
+          console.log(`[POST /api/visitors/session] Última sesión encontrada: ${lastSession.id}, activa: ${lastSession.is_active}`);
+          previousSessionId = lastSession.id;
+          
+          // Si la sesión anterior está activa, cerrarla
+          if (lastSession.is_active) {
+            console.log(`[POST /api/visitors/session] Cerrando sesión anterior: ${lastSession.id}`);
+            
+            // Primero obtener los datos completos de la sesión para calcular idle_time
+            const { data: fullLastSession, error: fullSessionError } = await supabaseAdmin
+              .from('visitor_sessions')
+              .select('started_at, active_time')
+              .eq('id', lastSession.id)
+              .single();
+            
+            if (fullLastSession && !fullSessionError) {
+              // Calcular idle_time para la sesión anterior
+              const sessionDuration = startTime - fullLastSession.started_at;
+              const idleTime = fullLastSession.active_time 
+                ? sessionDuration - fullLastSession.active_time
+                : sessionDuration;
+              
+              console.log(`[POST /api/visitors/session] Calculando idle_time para sesión anterior ${lastSession.id}: duration=${sessionDuration}, active_time=${fullLastSession.active_time}, idle_time=${idleTime}`);
+              
+              const { error: closeSessionError } = await supabaseAdmin
+                .from('visitor_sessions')
+                .update({
+                  is_active: false,
+                  ended_at: startTime,
+                  duration: sessionDuration,
+                  idle_time: idleTime,
+                  exit_type: 'new_session',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', lastSession.id);
+              
+              if (closeSessionError) {
+                console.error(`[POST /api/visitors/session] Error al cerrar sesión anterior:`, closeSessionError);
+              } else {
+                console.log(`[POST /api/visitors/session] Sesión anterior cerrada exitosamente con idle_time calculado`);
+              }
+            } else {
+              console.error(`[POST /api/visitors/session] Error al obtener datos completos de la sesión anterior:`, fullSessionError);
+              
+              // Fallback: cerrar sin calcular idle_time
+              const { error: closeSessionError } = await supabaseAdmin
+                .from('visitor_sessions')
+                .update({
+                  is_active: false,
+                  ended_at: startTime,
+                  exit_type: 'new_session',
+                  updated_at: new Date().toISOString()
+                })
+                .eq('id', lastSession.id);
+              
+              if (closeSessionError) {
+                console.error(`[POST /api/visitors/session] Error al cerrar sesión anterior (fallback):`, closeSessionError);
+              } else {
+                console.log(`[POST /api/visitors/session] Sesión anterior cerrada exitosamente (fallback sin idle_time)`);
+                             }
+             }
+           }
+        } else {
+          console.log(`[POST /api/visitors/session] No se encontró sesión anterior para el visitante`);
+        }
+      }
+      
+      // Establecer el previous_session_id en los datos de la nueva sesión
+      // Priorizar la sesión encontrada por fingerprint sobre la última sesión del visitante
+      const finalPreviousSessionId = previousSessionFromFingerprint || previousSessionId;
+      if (finalPreviousSessionId) {
+        newSession.previous_session_id = finalPreviousSessionId;
+        console.log(`[POST /api/visitors/session] Estableciendo previous_session_id: ${finalPreviousSessionId} (fuente: ${previousSessionFromFingerprint ? 'fingerprint' : 'última sesión'})`);
+      }
       
       // Si el visitante no existe, crearlo primero
       if (!existingVisitor || visitorCheckError) {
