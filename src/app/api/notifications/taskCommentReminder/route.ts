@@ -70,6 +70,44 @@ async function getSiteInfo(siteId: string): Promise<any | null> {
   }
 }
 
+// Función para obtener la configuración de email del sitio
+async function getSiteEmailConfig(siteId: string): Promise<{email: string | null, aliases: string[]}> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', siteId)
+      .single();
+    
+    if (error || !data?.channels?.email) {
+      return { email: null, aliases: [] };
+    }
+    
+    const emailConfig = data.channels.email;
+    let aliases: string[] = [];
+    
+    // Procesar aliases
+    if (emailConfig.aliases) {
+      if (Array.isArray(emailConfig.aliases)) {
+        aliases = emailConfig.aliases;
+      } else if (typeof emailConfig.aliases === 'string') {
+        aliases = emailConfig.aliases
+          .split(',')
+          .map((alias: string) => alias.trim())
+          .filter((alias: string) => alias.length > 0);
+      }
+    }
+    
+    return {
+      email: emailConfig.email || null,
+      aliases
+    };
+  } catch (error) {
+    console.error('Error al obtener configuración de email del sitio:', error);
+    return { email: null, aliases: [] };
+  }
+}
+
 // Función para obtener información de la tarea
 async function getTaskInfo(taskId: string): Promise<any | null> {
   try {
@@ -166,6 +204,7 @@ function generateLeadReminderHtml(data: {
     url: string;
   };
   reminderContext?: string;
+  replyEmail?: string;
 }): string {
   const priorityBadgeColor = {
     low: { bg: '#f3f4f6', color: '#374151' },
@@ -250,7 +289,14 @@ function generateLeadReminderHtml(data: {
           </div>
           
           <!-- Secondary Action -->
-          ${data.siteUrl ? `
+          ${data.replyEmail ? `
+          <div style="text-align: center; margin-bottom: 32px;">
+            <a href="mailto:${data.replyEmail}" 
+               style="color: #10b981; text-decoration: none; font-size: 14px; font-weight: 500;">
+              or reply to this email →
+            </a>
+          </div>
+          ` : data.siteUrl ? `
           <div style="text-align: center; margin-bottom: 32px;">
             <a href="${data.siteUrl}" 
                style="color: #10b981; text-decoration: none; font-size: 14px; font-weight: 500;">
@@ -317,6 +363,7 @@ function generateTeamReminderHtml(data: {
     url: string;
   };
   reminderContext?: string;
+  replyEmail?: string;
 }): string {
   const priorityBadgeColor = {
     low: { bg: '#f3f4f6', color: '#374151' },
@@ -447,12 +494,18 @@ function generateTeamReminderHtml(data: {
           <!-- Action Buttons -->
           <div style="text-align: center; margin: 40px 0 32px;">
             <a href="${data.primaryCta.url}" 
-               style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
+               style="display: inline-block; background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin: 0 6px 12px; vertical-align: top;">
               ${data.primaryCta.title} →
             </a>
+            ${data.replyEmail ? `
+            <a href="mailto:${data.replyEmail}" 
+               style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
+              Reply →
+            </a>
+            ` : ''}
             ${data.taskUrl ? `
             <a href="${data.taskUrl}" 
-               style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
+               style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
               View Task →
             </a>
             ` : ''}
@@ -557,6 +610,16 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    // Obtener configuración de email del sitio
+    const siteEmailConfig = await getSiteEmailConfig(site_id);
+    const replyEmail = siteEmailConfig.aliases.length > 0 ? siteEmailConfig.aliases[0] : siteEmailConfig.email;
+    
+    console.log(`📧 [TaskReminder] Configuración de email del sitio:`, {
+      email: siteEmailConfig.email,
+      aliases: siteEmailConfig.aliases,
+      replyEmail
+    });
     
     // Obtener información de la tarea si se proporciona task_id
     let taskInfo = null;
@@ -657,7 +720,8 @@ export async function POST(request: NextRequest) {
             additionalData: additional_data,
             logoUrl: siteInfo.logo_url,
             primaryCta,
-            reminderContext
+            reminderContext,
+            replyEmail: replyEmail || undefined
           }),
           priority: priority as any,
           type: notificationType,
@@ -707,7 +771,8 @@ export async function POST(request: NextRequest) {
             siteUrl,
             logoUrl: siteInfo.logo_url,
             primaryCta,
-            reminderContext
+            reminderContext,
+            replyEmail: replyEmail || undefined
           }),
           categories: ['task-reminder', 'cta-reminder', 'lead-notification', 'transactional'],
           customArgs: {

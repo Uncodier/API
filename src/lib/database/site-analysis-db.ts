@@ -236,3 +236,65 @@ export async function updateSiteAnalysisStatus(
     throw new Error(`Error updating site analysis status: ${error.message}`);
   }
 } 
+
+/**
+ * Upserts a site analysis (creates if doesn't exist, updates if exists)
+ * Only one analysis per site is maintained
+ * 
+ * @param analysisData Analysis data to upsert
+ * @returns The upserted analysis
+ */
+export async function upsertSiteAnalysis(analysisData: CreateSiteAnalysisParams): Promise<DbSiteAnalysis> {
+  try {
+    // First check if the table exists
+    const tableExists = await checkSiteAnalysisTableExists();
+    
+    if (!tableExists) {
+      console.error('analysis table does not exist in the database');
+      throw new Error('analysis table does not exist in the database. Please check your database setup.');
+    }
+
+    // Check if an analysis already exists for this site
+    const existingAnalyses = await getSiteAnalysesBySite(analysisData.site_id, analysisData.user_id);
+    
+    if (existingAnalyses.length > 0) {
+      // Update existing analysis
+      const existingAnalysis = existingAnalyses[0]; // Get the most recent one
+      console.log(`🔄 [Site Analysis] Updating existing analysis for site: ${analysisData.site_id}`);
+      
+      const updateSuccess = await updateSiteAnalysis(existingAnalysis.id, {
+        url_path: analysisData.url_path,
+        structure: analysisData.structure,
+        status: analysisData.status,
+        request_time: analysisData.request_time,
+        provider: analysisData.provider,
+        model_id: analysisData.model_id
+      });
+      
+      if (!updateSuccess) {
+        throw new Error('Failed to update existing analysis');
+      }
+      
+      // Return the updated analysis
+      const updatedAnalysis = await getSiteAnalysisById(existingAnalysis.id);
+      if (!updatedAnalysis) {
+        throw new Error('Failed to retrieve updated analysis');
+      }
+      
+      return updatedAnalysis;
+    } else {
+      // Create new analysis
+      console.log(`✨ [Site Analysis] Creating new analysis for site: ${analysisData.site_id}`);
+      const newAnalysis = await createSiteAnalysis(analysisData);
+      
+      if (!newAnalysis) {
+        throw new Error('Failed to create new analysis');
+      }
+      
+      return newAnalysis;
+    }
+  } catch (error: any) {
+    console.error('Error in upsertSiteAnalysis:', error);
+    throw new Error(`Error upserting site analysis: ${error.message}`);
+  }
+} 

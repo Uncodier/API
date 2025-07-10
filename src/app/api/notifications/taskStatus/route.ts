@@ -70,6 +70,44 @@ async function getSiteInfo(siteId: string): Promise<any | null> {
   }
 }
 
+// Función para obtener la configuración de email del sitio
+async function getSiteEmailConfig(siteId: string): Promise<{email: string | null, aliases: string[]}> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', siteId)
+      .single();
+    
+    if (error || !data?.channels?.email) {
+      return { email: null, aliases: [] };
+    }
+    
+    const emailConfig = data.channels.email;
+    let aliases: string[] = [];
+    
+    // Procesar aliases
+    if (emailConfig.aliases) {
+      if (Array.isArray(emailConfig.aliases)) {
+        aliases = emailConfig.aliases;
+      } else if (typeof emailConfig.aliases === 'string') {
+        aliases = emailConfig.aliases
+          .split(',')
+          .map((alias: string) => alias.trim())
+          .filter((alias: string) => alias.length > 0);
+      }
+    }
+    
+    return {
+      email: emailConfig.email || null,
+      aliases
+    };
+  } catch (error) {
+    console.error('Error al obtener configuración de email del sitio:', error);
+    return { email: null, aliases: [] };
+  }
+}
+
 // Función para obtener información de la tarea (si se proporciona task_id)
 async function getTaskInfo(taskId: string): Promise<any | null> {
   try {
@@ -176,6 +214,7 @@ function generateLeadNotificationHtml(data: {
     title: string;
     url: string;
   };
+  replyEmail?: string;
 }): string {
   const statusBadgeColor = {
     pending: { bg: '#fef3c7', color: '#92400e' },
@@ -260,17 +299,22 @@ function generateLeadNotificationHtml(data: {
           </div>
           
           <!-- Action Buttons -->
-          ${data.primaryCta || data.siteUrl ? `
+          ${data.primaryCta || data.replyEmail || data.siteUrl ? `
           <div style="text-align: center; margin: 40px 0 32px;">
             ${data.primaryCta ? `
             <a href="${data.primaryCta.url}" 
-               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
+               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin: 0 6px 12px; vertical-align: top;">
               ${data.primaryCta.title} →
             </a>
             ` : ''}
-            ${data.siteUrl ? `
+            ${data.replyEmail ? `
+            <a href="mailto:${data.replyEmail}" 
+               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
+              Reply →
+            </a>
+            ` : data.siteUrl ? `
             <a href="${data.siteUrl}" 
-               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
+               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
               Visit Site →
             </a>
             ` : ''}
@@ -327,6 +371,7 @@ function generateTeamNotificationHtml(data: {
     title: string;
     url: string;
   };
+  replyEmail?: string;
 }): string {
   const statusBadgeColor = {
     pending: { bg: '#fef3c7', color: '#92400e' },
@@ -434,17 +479,23 @@ function generateTeamNotificationHtml(data: {
           ` : ''}
           
           <!-- Action Buttons -->
-          ${data.primaryCta || data.taskUrl ? `
+          ${data.primaryCta || data.replyEmail || data.taskUrl ? `
           <div style="text-align: center; margin: 40px 0 32px;">
             ${data.primaryCta ? `
             <a href="${data.primaryCta.url}" 
-               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin-right: 12px;">
+               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s; margin: 0 6px 12px; vertical-align: top;">
               ${data.primaryCta.title} →
+            </a>
+            ` : ''}
+            ${data.replyEmail ? `
+            <a href="mailto:${data.replyEmail}" 
+               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
+              Reply →
             </a>
             ` : ''}
             ${data.taskUrl ? `
             <a href="${data.taskUrl}" 
-               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s;">
+               style="display: inline-block; background: #ffffff; color: #667eea; border: 2px solid #667eea; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
               View Task →
             </a>
             ` : ''}
@@ -552,6 +603,16 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+
+    // Obtener configuración de email del sitio
+    const siteEmailConfig = await getSiteEmailConfig(site_id);
+    const replyEmail = siteEmailConfig.aliases.length > 0 ? siteEmailConfig.aliases[0] : siteEmailConfig.email;
+    
+    console.log(`📧 [TaskStatus] Configuración de email del sitio:`, {
+      email: siteEmailConfig.email,
+      aliases: siteEmailConfig.aliases,
+      replyEmail
+    });
     
     // Obtener información de la tarea si se proporciona task_id
     let taskInfo = null;
@@ -629,7 +690,8 @@ export async function POST(request: NextRequest) {
             taskUrl,
             additionalData: additional_data,
             logoUrl: siteInfo.logo_url,
-            primaryCta
+            primaryCta,
+            replyEmail: replyEmail || undefined
           }),
           priority: priority as any,
           type: notificationType,
@@ -689,7 +751,8 @@ export async function POST(request: NextRequest) {
             priority,
             siteUrl,
             logoUrl: siteInfo.logo_url,
-            primaryCta: primaryCtaForLead
+            primaryCta: primaryCtaForLead,
+            replyEmail: replyEmail || undefined
           }),
           categories: ['task-notification', 'lead-notification', 'transactional'],
           customArgs: {
