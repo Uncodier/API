@@ -343,7 +343,6 @@ export async function POST(request: NextRequest) {
             .from('visitor_sessions')
             .update({
               is_active: false,
-              ended_at: startTime,
               duration: sessionDuration,
               idle_time: idleTime,
               exit_type: 'new_session',
@@ -430,7 +429,6 @@ export async function POST(request: NextRequest) {
                 .from('visitor_sessions')
                 .update({
                   is_active: false,
-                  ended_at: startTime,
                   duration: sessionDuration,
                   idle_time: idleTime,
                   exit_type: 'new_session',
@@ -451,7 +449,6 @@ export async function POST(request: NextRequest) {
                 .from('visitor_sessions')
                 .update({
                   is_active: false,
-                  ended_at: startTime,
                   exit_type: 'new_session',
                   updated_at: new Date().toISOString()
                 })
