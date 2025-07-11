@@ -3,6 +3,59 @@ import axios from 'axios';
 import * as cheerio from 'cheerio';
 import puppeteer from 'puppeteer';
 
+// Detectar si estamos en entorno serverless
+function isServerlessEnvironment(): boolean {
+  return !!(
+    process.env.VERCEL || 
+    process.env.NETLIFY || 
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.FUNCTION_NAME ||
+    process.env.SERVERLESS
+  );
+}
+
+// Función alternativa para obtener HTML en entornos serverless
+async function fetchHtmlServerless(url: string, timeout: number): Promise<string> {
+  console.log(`[fetchHtmlServerless] Obteniendo HTML para ${url} con timeout ${timeout}ms`);
+  
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,es;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0'
+      },
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const html = await response.text();
+    console.log(`[fetchHtmlServerless] HTML obtenido: ${html.length} bytes`);
+    
+    return html;
+  } catch (error) {
+    console.error(`[fetchHtmlServerless] Error obteniendo HTML: ${error}`);
+    throw error;
+  }
+}
+
 /**
  * Obtiene el HTML de una URL
  */
@@ -15,32 +68,21 @@ export async function fetchHtml(url: string, options?: { timeout?: number }): Pr
     throw new Error(`URL inválida: ${url}`);
   }
   
-  // Primero intentamos con Puppeteer para sitios con JavaScript
+  // Detectar entorno serverless
+  if (isServerlessEnvironment()) {
+    console.log(`[fetchHtml] Entorno serverless detectado, usando fetch directo...`);
+    return await fetchHtmlServerless(url, timeout);
+  }
+  
+  // Primero intentamos con Puppeteer para sitios con JavaScript (solo en entornos locales)
   try {
     console.log(`[fetchHtml] Intentando obtener HTML con Puppeteer...`);
     return await fetchHtmlWithPuppeteer(url, timeout);
   } catch (puppeteerError) {
-    console.warn(`[fetchHtml] Error con Puppeteer, intentando con Axios: ${puppeteerError}`);
+    console.warn(`[fetchHtml] Error con Puppeteer, intentando con fetch directo: ${puppeteerError}`);
     
-    // Si falla Puppeteer, intentamos con Axios como fallback
-    try {
-      const response = await axios.get(url, {
-        timeout: timeout,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-          'Accept-Language': 'es-ES,es;q=0.8,en-US;q=0.5,en;q=0.3',
-          'Cache-Control': 'no-cache',
-          'Pragma': 'no-cache'
-        }
-      });
-      
-      console.log(`[fetchHtml] HTML obtenido con Axios (${response.data.length} bytes)`);
-      return response.data;
-    } catch (axiosError) {
-      console.error(`[fetchHtml] Error al obtener HTML con Axios: ${axiosError}`);
-      throw new Error(`Error al obtener HTML: ${axiosError}`);
-    }
+    // Si falla Puppeteer, intentamos con fetch directo como fallback
+    return await fetchHtmlServerless(url, timeout);
   }
 }
 

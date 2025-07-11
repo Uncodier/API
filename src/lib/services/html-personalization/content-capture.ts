@@ -2,8 +2,9 @@
  * Módulo para capturar contenido HTML y capturas de pantalla de páginas web
  */
 
-import puppeteer from 'puppeteer';
 import { logInfo } from '@/lib/utils/api-response-utils';
+import { fetchHtml } from '@/lib/utils/html-utils';
+import { captureScreenshot as captureScreenshotUtil } from '@/lib/utils/image-utils';
 
 /**
  * Captura el contenido HTML y una captura de pantalla de una página web
@@ -18,53 +19,27 @@ export async function capturePageContent(
 ): Promise<{ html: string, screenshot: string }> {
   logInfo('Content Capture', `Capturando contenido de la página: ${url}`);
   
-  const browser = await puppeteer.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-accelerated-2d-canvas',
-      '--disable-gpu',
-      '--window-size=1280,800'
-    ]
-  });
-  
   try {
-    const page = await browser.newPage();
+    // Capturar HTML usando la función fetchHtml que ya detecta entornos serverless
+    const html = await fetchHtml(url, { timeout });
+    logInfo('Content Capture', `HTML capturado: ${html.length} bytes`);
     
-    // Establecer viewport
-    await page.setViewport({ width: 1280, height: 800 });
+    // Capturar screenshot usando la función captureScreenshot que ya detecta entornos serverless
+    const screenshot = await captureScreenshotUtil(url, { timeout });
     
-    // Establecer timeout
-    await page.setDefaultNavigationTimeout(timeout);
+    if (screenshot) {
+      logInfo('Content Capture', `Screenshot capturado correctamente`);
+    } else {
+      logInfo('Content Capture', `Screenshot no disponible - usando placeholder`);
+    }
     
-    // Navegar a la URL
-    await page.goto(url, { waitUntil: 'networkidle2' });
-    
-    // Hacer scroll para asegurar que se carga todo el contenido
-    await page.evaluate(() => {
-      window.scrollTo(0, document.body.scrollHeight);
-      return new Promise(resolve => setTimeout(resolve, 1000));
-    });
-    
-    // Volver arriba
-    await page.evaluate(() => {
-      window.scrollTo(0, 0);
-      return new Promise(resolve => setTimeout(resolve, 500));
-    });
-    
-    // Capturar HTML
-    const html = await page.content();
-    
-    // Usar una imagen placeholder para evitar problemas con puppeteer
-    const screenshotBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-    
-    logInfo('Content Capture', `Contenido capturado: ${html.length} bytes`);
-    
-    return { html, screenshot: screenshotBase64 };
-  } finally {
-    await browser.close();
+    return { 
+      html, 
+      screenshot: screenshot || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    };
+  } catch (error) {
+    logInfo('Content Capture', `Error capturando contenido: ${error}`);
+    throw error;
   }
 }
 

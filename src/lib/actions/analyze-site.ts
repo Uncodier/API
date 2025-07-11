@@ -890,24 +890,166 @@ async function captureCompleteHTML(url: string, options?: { timeout?: number; us
   }
 }
 
-// Modificar la función getSiteHtml para usar la nueva implementación
+// Crear una función alternativa para entornos serverless como Vercel
+async function captureHTMLServerless(url: string, options?: { timeout?: number; userAgent?: string }): Promise<{html: string, screenshot: string}> {
+  console.log(`Capturando HTML (serverless) para: ${url}`);
+  const startTime = Date.now();
+  
+  const timeout = options?.timeout || 30000;
+  const userAgent = options?.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
+  
+  try {
+    // Obtener HTML usando fetch
+    console.log('Obteniendo HTML usando fetch...');
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent': userAgent,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9,es;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+        'Sec-Fetch-User': '?1',
+        'Cache-Control': 'max-age=0'
+      },
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const html = await response.text();
+    console.log(`HTML obtenido: ${html.length} bytes`);
+    
+    // Generar screenshot usando API externa o placeholder
+    let screenshot = '';
+    
+    try {
+      // Usar API de screenshot externa (ejemplo: htmlcsstoimage, screenshotapi, etc.)
+      screenshot = await generateScreenshotExternal(url);
+    } catch (screenshotError) {
+      console.warn('Error generando screenshot:', screenshotError);
+      // Usar un placeholder o imagen por defecto
+      screenshot = generatePlaceholderImage(url);
+    }
+    
+    const endTime = Date.now();
+    console.log(`Tiempo total de captura (serverless): ${((endTime - startTime) / 1000).toFixed(2)} segundos`);
+    
+    return {
+      html,
+      screenshot
+    };
+  } catch (error) {
+    console.error(`Error en captura serverless: ${error}`);
+    throw error;
+  }
+}
+
+// Función para generar screenshot usando API externa
+async function generateScreenshotExternal(url: string): Promise<string> {
+  // Opción 1: Usar API gratuita de screenshot
+  try {
+    const apiUrl = `https://image.thum.io/get/allowJPG/wait/20/width/1200/crop/800/${encodeURIComponent(url)}`;
+    const response = await fetch(apiUrl);
+    
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (error) {
+    console.warn('Error con thum.io:', error);
+  }
+  
+  // Opción 2: Usar otra API como fallback
+  try {
+    const apiUrl = `https://api.screenshotmachine.com/?key=demo&url=${encodeURIComponent(url)}&dimension=1200x800`;
+    const response = await fetch(apiUrl);
+    
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (error) {
+    console.warn('Error con screenshotmachine:', error);
+  }
+  
+  // Si todo falla, usar placeholder
+  return generatePlaceholderImage(url);
+}
+
+// Función para generar imagen placeholder
+function generatePlaceholderImage(url: string): string {
+  // Generar un SVG simple como placeholder
+  const domain = new URL(url).hostname;
+  const svg = `
+    <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="800" fill="#f8f9fa"/>
+      <rect x="50" y="50" width="1100" height="100" fill="#e9ecef" rx="5"/>
+      <rect x="50" y="200" width="300" height="400" fill="#e9ecef" rx="5"/>
+      <rect x="400" y="200" width="750" height="150" fill="#e9ecef" rx="5"/>
+      <rect x="400" y="400" width="750" height="200" fill="#e9ecef" rx="5"/>
+      <text x="600" y="400" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
+        ${domain}
+      </text>
+      <text x="600" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
+        Screenshot placeholder
+      </text>
+    </svg>
+  `;
+  
+  const base64 = Buffer.from(svg).toString('base64');
+  return `data:image/svg+xml;base64,${base64}`;
+}
+
+// Detectar si estamos en entorno serverless
+function isServerlessEnvironment(): boolean {
+  return !!(
+    process.env.VERCEL || 
+    process.env.NETLIFY || 
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.FUNCTION_NAME ||
+    process.env.SERVERLESS
+  );
+}
+
+// Modificar la función getSiteHtml para usar la versión serverless cuando sea necesario
 export async function getSiteHtml(url: string, options?: { depth?: number; timeout?: number; userAgent?: string }) {
   try {
     console.log(`Fetching HTML for: ${url}`);
     
-    // Usar la nueva función de captura completa
+    // Detectar si estamos en entorno serverless
+    if (isServerlessEnvironment()) {
+      console.log('Entorno serverless detectado, usando captura sin Puppeteer...');
+      const { html, screenshot } = await captureHTMLServerless(url, {
+        timeout: options?.timeout || 30000,
+        userAgent: options?.userAgent
+      });
+      
+      return {
+        html,
+        screenshot
+      };
+    }
+    
+    // Usar la implementación original con Puppeteer solo en entornos locales
+    console.log('Entorno local detectado, usando Puppeteer...');
     const { html, screenshot } = await captureCompleteHTML(url, {
       timeout: options?.timeout || 30000,
       userAgent: options?.userAgent
     });
-    
-    // Verificar que se haya capturado un screenshot
-    if (screenshot) {
-      console.log(`Screenshot obtenido correctamente de tipo data URI`);
-      console.log(`Longitud del screenshot: ${screenshot.length} caracteres`);
-    } else {
-      console.warn('No se obtuvo screenshot en la captura.');
-    }
     
     return {
       html,
@@ -915,6 +1057,25 @@ export async function getSiteHtml(url: string, options?: { depth?: number; timeo
     };
   } catch (error) {
     console.error(`Failed to get HTML: ${error}`);
+    
+    // Fallback: intentar método serverless incluso si detectamos entorno local
+    if (!isServerlessEnvironment()) {
+      console.log('Puppeteer falló, intentando método serverless como fallback...');
+      try {
+        const { html, screenshot } = await captureHTMLServerless(url, {
+          timeout: options?.timeout || 30000,
+          userAgent: options?.userAgent
+        });
+        
+        return {
+          html,
+          screenshot
+        };
+      } catch (fallbackError) {
+        console.error(`También falló el método serverless: ${fallbackError}`);
+      }
+    }
+    
     throw error;
   }
 }

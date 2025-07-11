@@ -193,6 +193,96 @@ export function validateImageForVision(imageData: string | undefined): boolean {
   }
 }
 
+// Función alternativa para capturar screenshots en entornos serverless
+async function captureScreenshotServerless(url: string, options?: { timeout?: number }): Promise<string | undefined> {
+  console.log(`[captureScreenshotServerless] Capturando screenshot para: ${url}`);
+  
+  try {
+    // Usar API externa para screenshots
+    const screenshot = await generateScreenshotExternal(url);
+    return screenshot;
+  } catch (error) {
+    console.error(`[captureScreenshotServerless] Error capturando screenshot: ${error}`);
+    return generatePlaceholderImage(url);
+  }
+}
+
+// Función para generar screenshot usando API externa
+async function generateScreenshotExternal(url: string): Promise<string> {
+  // Opción 1: Usar API gratuita de screenshot
+  try {
+    const apiUrl = `https://image.thum.io/get/allowJPG/wait/20/width/1200/crop/800/${encodeURIComponent(url)}`;
+    const response = await fetch(apiUrl);
+    
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (error) {
+    console.warn('Error con thum.io:', error);
+  }
+  
+  // Opción 2: Usar otra API como fallback
+  try {
+    const apiUrl = `https://api.screenshotmachine.com/?key=demo&url=${encodeURIComponent(url)}&dimension=1200x800`;
+    const response = await fetch(apiUrl);
+    
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      const base64 = Buffer.from(buffer).toString('base64');
+      return `data:image/jpeg;base64,${base64}`;
+    }
+  } catch (error) {
+    console.warn('Error con screenshotmachine:', error);
+  }
+  
+  // Si todo falla, usar placeholder
+  return generatePlaceholderImage(url);
+}
+
+// Función para generar imagen placeholder
+function generatePlaceholderImage(url: string): string {
+  // Generar un SVG simple como placeholder
+  try {
+    const domain = new URL(url).hostname;
+    const svg = `
+      <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1200" height="800" fill="#f8f9fa"/>
+        <rect x="50" y="50" width="1100" height="100" fill="#e9ecef" rx="5"/>
+        <rect x="50" y="200" width="300" height="400" fill="#e9ecef" rx="5"/>
+        <rect x="400" y="200" width="750" height="150" fill="#e9ecef" rx="5"/>
+        <rect x="400" y="400" width="750" height="200" fill="#e9ecef" rx="5"/>
+        <text x="600" y="400" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
+          ${domain}
+        </text>
+        <text x="600" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
+          Screenshot placeholder
+        </text>
+      </svg>
+    `;
+    
+    const base64 = Buffer.from(svg).toString('base64');
+    return `data:image/svg+xml;base64,${base64}`;
+  } catch (error) {
+    console.error('Error generando placeholder:', error);
+    // Fallback ultra simple
+    const simpleBase64 = 'PHN2ZyB3aWR0aD0iMTIwMCIgaGVpZ2h0PSI4MDAiIHZpZXdCb3g9IjAgMCAxMjAwIDgwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4gPHJlY3Qgd2lkdGg9IjEyMDAiIGhlaWdodD0iODAwIiBmaWxsPSIjZjhmOWZhIi8+IDx0ZXh0IHg9IjYwMCIgeT0iNDAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2Yzc1N2QiPlNjcmVlbnNob3QgcGxhY2Vob2xkZXI8L3RleHQ+IDwvc3ZnPg==';
+    return `data:image/svg+xml;base64,${simpleBase64}`;
+  }
+}
+
+// Detectar si estamos en entorno serverless
+function isServerlessEnvironment(): boolean {
+  return !!(
+    process.env.VERCEL || 
+    process.env.NETLIFY || 
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.FUNCTION_NAME ||
+    process.env.SERVERLESS
+  );
+}
+
 /**
  * Captura una screenshot de la URL proporcionada utilizando Puppeteer
  */
@@ -206,6 +296,14 @@ export async function captureScreenshot(url: string, options?: { timeout?: numbe
     return undefined;
   }
   
+  // Detectar si estamos en entorno serverless
+  if (isServerlessEnvironment()) {
+    console.log('[captureScreenshot] Entorno serverless detectado, usando captura sin Puppeteer...');
+    return await captureScreenshotServerless(url, options);
+  }
+  
+  // Usar Puppeteer solo en entornos locales
+  console.log('[captureScreenshot] Entorno local detectado, usando Puppeteer...');
   let browser;
   try {
     // Configurar el navegador
@@ -263,8 +361,10 @@ export async function captureScreenshot(url: string, options?: { timeout?: numbe
     
     return `data:image/png;base64,${base64Image}`;
   } catch (error) {
-    console.error(`[captureScreenshot] Error al capturar screenshot: ${error}`);
-    return undefined;
+    console.error(`[captureScreenshot] Error al capturar screenshot con Puppeteer: ${error}`);
+    // Fallback al método serverless
+    console.log('[captureScreenshot] Intentando método serverless como fallback...');
+    return await captureScreenshotServerless(url, options);
   } finally {
     // Cerrar el navegador
     if (browser) {
