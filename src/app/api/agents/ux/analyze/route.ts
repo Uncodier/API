@@ -143,6 +143,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`🎨 [UX Analysis] Iniciando análisis UX para sitio: ${site_id}`)
     console.log(`🎯 [UX Analysis] Deliverables solicitados:`, deliverables)
+    console.log(`🔧 [UX Analysis] Opciones:`, options)
 
     // Obtener información del sitio desde la base de datos
     const siteInfo = await DataFetcher.getSiteInfo(site_id)
@@ -190,6 +191,7 @@ export async function POST(request: NextRequest) {
     const startTime = Date.now()
     
     console.log(`🔍 [UX Analysis] Analizando sitio: ${siteInfo.site.url}`)
+    console.log(`⚙️ [UX Analysis] Configuración del análisis:`, analysisOptions)
 
     // Extraer HTML y screenshot del sitio web
     console.log(`🌐 [UX Analysis] Extrayendo HTML y screenshot del sitio...`)
@@ -230,9 +232,12 @@ export async function POST(request: NextRequest) {
       ...deliverables
     }
 
-    console.log(`🎯 [UX Analysis] Deliverables finales a enviar a GPT-4.1:`, finalDeliverables)
+    console.log(`🎯 [UX Analysis] Deliverables finales a enviar a análisis:`, finalDeliverables)
 
     // Realizar análisis estructurado del sitio con HTML y screenshot
+    console.log(`🚀 [UX Analysis] Iniciando análisis estructurado con prompt simplificado...`)
+    console.log(`📊 [UX Analysis] Proveedor: ${analysisOptions.provider}, Modelo: ${analysisOptions.modelId}`)
+    
     const structuredAnalysis = await performStructuredAnalysis(siteInfo.site.url, {
       ...analysisOptions,
       htmlContent,
@@ -244,8 +249,20 @@ export async function POST(request: NextRequest) {
       throw new Error('Error en análisis estructurado: No se pudo obtener resultado del análisis')
     }
 
+    console.log(`🎉 [UX Analysis] Análisis estructurado completado exitosamente`)
+    console.log(`📈 [UX Analysis] Estructura del análisis:`, {
+      site_info: structuredAnalysis.site_info ? 'Presente' : 'Ausente',
+      blocks: structuredAnalysis.blocks ? `${structuredAnalysis.blocks.length} bloques` : 'Ausente',
+      structure_analysis: structuredAnalysis.structure_analysis ? 'Presente' : 'Ausente',
+      branding_analysis: structuredAnalysis.branding_analysis ? 'Presente' : 'Ausente',
+      ux_assessment: structuredAnalysis.ux_assessment ? 'Presente' : 'Ausente',
+      recommendations: structuredAnalysis.recommendations ? `${structuredAnalysis.recommendations.length} recomendaciones` : 'Ausente',
+      problems: structuredAnalysis.problems ? `${structuredAnalysis.problems.length} problemas` : 'Ausente',
+      opportunities: structuredAnalysis.opportunities ? `${structuredAnalysis.opportunities.length} oportunidades` : 'Ausente'
+    })
+
     // Debugging: Ver qué deliverables se generaron realmente
-    console.log(`🔍 [UX Analysis] Deliverables generados por GPT-4.1:`)
+    console.log(`🔍 [UX Analysis] Deliverables generados:`)
     console.log(`   - branding_analysis: ${structuredAnalysis.branding_analysis ? 'SÍ' : 'NO'}`)
     console.log(`   - ux_assessment: ${structuredAnalysis.ux_assessment ? 'SÍ' : 'NO'}`)
     console.log(`   - recommendations: ${structuredAnalysis.recommendations ? 'SÍ' : 'NO'}`)
@@ -376,12 +393,19 @@ export async function POST(request: NextRequest) {
     let errorType = 'ANALYSIS_ERROR'
     let status = 500
     
+    // Mejores detalles del error para debugging
     if (error instanceof z.ZodError) {
       errorMessage = error.errors[0].message
       errorType = 'VALIDATION_ERROR'
       status = 400
+      console.error('❌ [UX Analysis] Error de validación:', error.errors)
     } else if (error instanceof Error) {
       errorMessage = error.message
+      console.error('❌ [UX Analysis] Error detallado:', {
+        name: error.name,
+        message: error.message,
+        stack: error.stack?.split('\n').slice(0, 5).join('\n') // Primeras 5 líneas del stack
+      })
     }
     
     return NextResponse.json({

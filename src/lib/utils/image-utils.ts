@@ -212,19 +212,37 @@ async function generateScreenshotExternal(url: string): Promise<string> {
   // Opción 1: Usar ScreenshotMachine si está configurado
   if (process.env.SCREENSHOTMACHINE_API_KEY) {
     try {
-      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200x800&format=jpg&device=desktop&delay=2000&cacheLimit=1`;
+      // Intentar primero con full-page screenshot para capturar todo el sitio
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200xfull&format=jpg&device=desktop&delay=3000&cacheLimit=1`;
       const response = await fetch(apiUrl);
       
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         const base64 = Buffer.from(buffer).toString('base64');
-        console.log('✅ Screenshot generado con ScreenshotMachine');
+        console.log('✅ Screenshot full-page generado con ScreenshotMachine');
         return `data:image/jpeg;base64,${base64}`;
       } else {
-        console.warn(`Error con ScreenshotMachine: ${response.status} ${response.statusText}`);
+        console.warn(`Error con ScreenshotMachine full-page: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.warn('Error con ScreenshotMachine:', error);
+      console.warn('Error con ScreenshotMachine full-page:', error);
+    }
+    
+    // Fallback: usar dimensiones fijas largas (1:2 ratio)
+    try {
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200x2400&format=jpg&device=desktop&delay=3000&cacheLimit=1`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot 1:2 generado con ScreenshotMachine');
+        return `data:image/jpeg;base64,${base64}`;
+      } else {
+        console.warn(`Error con ScreenshotMachine 1:2: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotMachine 1:2:', error);
     }
   }
   
@@ -289,23 +307,33 @@ async function generateScreenshotExternal(url: string): Promise<string> {
   return generatePlaceholderImage(url);
 }
 
-// Función para generar imagen placeholder
+// Función para generar imagen placeholder con proporción 1:2
 function generatePlaceholderImage(url: string): string {
-  // Generar un SVG simple como placeholder
+  // Generar un SVG simple como placeholder con proporción 1:2 (1200x2400)
   try {
     const domain = new URL(url).hostname;
     const svg = `
-      <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
-        <rect width="1200" height="800" fill="#f8f9fa"/>
+      <svg width="1200" height="2400" xmlns="http://www.w3.org/2000/svg">
+        <rect width="1200" height="2400" fill="#f8f9fa"/>
+        <!-- Header mockup -->
         <rect x="50" y="50" width="1100" height="100" fill="#e9ecef" rx="5"/>
-        <rect x="50" y="200" width="300" height="400" fill="#e9ecef" rx="5"/>
-        <rect x="400" y="200" width="750" height="150" fill="#e9ecef" rx="5"/>
-        <rect x="400" y="400" width="750" height="200" fill="#e9ecef" rx="5"/>
-        <text x="600" y="400" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
+        <!-- Hero section -->
+        <rect x="50" y="200" width="1100" height="400" fill="#e9ecef" rx="5"/>
+        <!-- Content sections -->
+        <rect x="50" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+        <rect x="425" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+        <rect x="800" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+        <!-- More content -->
+        <rect x="50" y="1000" width="1100" height="200" fill="#e9ecef" rx="5"/>
+        <rect x="50" y="1250" width="1100" height="300" fill="#e9ecef" rx="5"/>
+        <!-- Footer mockup -->
+        <rect x="50" y="1600" width="1100" height="150" fill="#e9ecef" rx="5"/>
+        <!-- Text overlay -->
+        <text x="600" y="1200" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
           ${domain}
         </text>
-        <text x="600" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
-          Screenshot placeholder
+        <text x="600" y="1230" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
+          Screenshot placeholder (1:2 ratio)
         </text>
       </svg>
     `;
@@ -314,8 +342,8 @@ function generatePlaceholderImage(url: string): string {
     return `data:image/svg+xml;base64,${base64}`;
   } catch (error) {
     console.error('Error generando placeholder:', error);
-    // Fallback ultra simple
-    const simpleBase64 = 'PHN2ZyB3aWR0aD0iMTIwMCIgaGVpZ2h0PSI4MDAiIHZpZXdCb3g9IjAgMCAxMjAwIDgwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4gPHJlY3Qgd2lkdGg9IjEyMDAiIGhlaWdodD0iODAwIiBmaWxsPSIjZjhmOWZhIi8+IDx0ZXh0IHg9IjYwMCIgeT0iNDAwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmb250LWZhbWlseT0iQXJpYWwsIHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iMjQiIGZpbGw9IiM2Yzc1N2QiPlNjcmVlbnNob3QgcGxhY2Vob2xkZXI8L3RleHQ+IDwvc3ZnPg==';
+    // Fallback ultra simple con proporción 1:2
+    const simpleBase64 = 'PHN2ZyB3aWR0aD0iMTIwMCIgaGVpZ2h0PSIyNDAwIiB2aWV3Qm94PSIwIDAgMTIwMCAyNDAwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPiA8cmVjdCB3aWR0aD0iMTIwMCIgaGVpZ2h0PSIyNDAwIiBmaWxsPSIjZjhmOWZhIi8+IDx0ZXh0IHg9IjYwMCIgeT0iMTIwMCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZm9udC1mYW1pbHk9IkFyaWFsLCBzYW5zLXNlcmlmIiBmb250LXNpemU9IjI0IiBmaWxsPSIjNmM3NTdkIj5TY3JlZW5zaG90IHBsYWNlaG9sZGVyICgxOjIpPC90ZXh0PiA8L3N2Zz4=';
     return `data:image/svg+xml;base64,${simpleBase64}`;
   }
 }

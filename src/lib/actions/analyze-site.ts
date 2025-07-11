@@ -864,8 +864,8 @@ async function captureCompleteHTML(url: string, options?: { timeout?: number; us
       console.error('⚠️ El HTML todavía contiene marcadores de ofuscación - hay un problema de captura');
     }
     
-    // Capturar screenshot de la página completa
-    console.log('Capturando screenshot de la página completa...');
+    // Capturar screenshot de la página completa usando Puppeteer
+    console.log('Capturando screenshot de la página completa con Puppeteer...');
     const screenshot = await page.screenshot({
       fullPage: true,
       type: 'jpeg',
@@ -874,7 +874,7 @@ async function captureCompleteHTML(url: string, options?: { timeout?: number; us
     
     // Convertir la imagen a base64
     const screenshotBase64 = `data:image/jpeg;base64,${screenshot.toString('base64')}`;
-    console.log(`Screenshot capturado: ${(screenshotBase64.length / 1024 / 1024).toFixed(2)} MB`);
+    console.log(`Screenshot capturado con Puppeteer: ${(screenshotBase64.length / 1024 / 1024).toFixed(2)} MB`);
     
     // Tiempo total de captura
     const endTime = Date.now();
@@ -935,8 +935,8 @@ async function captureHTMLServerless(url: string, options?: { timeout?: number; 
     let screenshot = '';
     
     try {
-      // Usar API de screenshot externa (ejemplo: htmlcsstoimage, screenshotapi, etc.)
-      screenshot = await generateScreenshotExternal(url);
+      // Usar función híbrida que calcula formato óptimo
+      screenshot = await generateScreenshotWithOptimalFormat(url);
     } catch (screenshotError) {
       console.warn('Error generando screenshot:', screenshotError);
       // Usar un placeholder o imagen por defecto
@@ -956,24 +956,169 @@ async function captureHTMLServerless(url: string, options?: { timeout?: number; 
   }
 }
 
-// Función para generar screenshot usando API externa
-async function generateScreenshotExternal(url: string): Promise<string> {
-  // Opción 1: Usar ScreenshotMachine si está configurado
+// Función inteligente para determinar formato óptimo (compatible con Vercel/Serverless)
+async function generateScreenshotWithOptimalFormat(url: string): Promise<string> {
+  console.log(`🎯 Generando screenshot con formato óptimo para: ${url}`);
+  
+  // Estrategia para Vercel: usar análisis heurístico del HTML + ScreenshotMachine
+  let optimalFormat = '1200xfull'; // Por defecto: full-page
+  let fallbackFormat = '1200x2400'; // Por defecto: 1:2
+  let detectedContentType = 'general';
+  
+  // 1. Análisis rápido del HTML para detectar tipo de sitio (sin Puppeteer)
+  try {
+    console.log('🔍 Analizando HTML para detectar tipo de contenido...');
+    
+    // Obtener HTML básico con fetch (rápido)
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000); // Timeout corto
+    
+    const response = await fetch(url, {
+      method: 'HEAD', // Solo headers para ser más rápido
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; Screenshot-Bot/1.0)'
+      }
+    });
+    
+    clearTimeout(timeoutId);
+    
+    // Analizar content-type y otros headers
+    const contentType = response.headers.get('content-type') || '';
+    const contentLength = response.headers.get('content-length') || '0';
+    const server = response.headers.get('server') || '';
+    
+    console.log(`📄 Content-Type: ${contentType}, Length: ${contentLength}, Server: ${server}`);
+    
+    // Heurística basada en URL y headers
+    const urlLower = url.toLowerCase();
+    const domain = new URL(url).hostname.toLowerCase();
+    
+    // Detectar tipo de sitio por URL/dominio
+    if (domain.includes('shop') || domain.includes('store') || domain.includes('ecommerce') || 
+        urlLower.includes('product') || urlLower.includes('cart')) {
+      detectedContentType = 'ecommerce';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x3000';
+      console.log('🛒 Detectado: E-commerce - usar full-page');
+    } else if (domain.includes('blog') || urlLower.includes('article') || urlLower.includes('post')) {
+      detectedContentType = 'blog';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x2800';
+      console.log('📝 Detectado: Blog/Artículo - usar full-page');
+    } else if (urlLower.includes('landing') || urlLower.includes('home') || url === domain || url === `https://${domain}`) {
+      detectedContentType = 'landing';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x2400';
+      console.log('🎯 Detectado: Landing page - usar full-page');
+    } else if (server.includes('wordpress') || contentType.includes('wordpress')) {
+      detectedContentType = 'wordpress';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x2600';
+      console.log('📰 Detectado: WordPress - usar full-page');
+    } else if (parseInt(contentLength) > 50000) {
+      detectedContentType = 'content-heavy';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x2800';
+      console.log('📚 Detectado: Contenido extenso - usar full-page');
+    } else {
+      detectedContentType = 'standard';
+      optimalFormat = '1200xfull';
+      fallbackFormat = '1200x2400';
+      console.log('📄 Detectado: Sitio estándar - usar full-page');
+    }
+    
+  } catch (analysisError) {
+    console.warn('⚠️ Error en análisis heurístico:', analysisError);
+    // Usar valores por defecto
+    optimalFormat = '1200xfull';
+    fallbackFormat = '1200x2400';
+    console.log('📄 Usando configuración por defecto - full-page');
+  }
+  
+  // 2. Usar ScreenshotMachine con formato determinado
   if (process.env.SCREENSHOTMACHINE_API_KEY) {
+    // Intento 1: Formato óptimo determinado por heurística
     try {
-      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200x800&format=jpg&device=desktop&delay=2000&cacheLimit=1`;
+      const delay = detectedContentType === 'ecommerce' || detectedContentType === 'content-heavy' ? 5000 : 3000;
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=${optimalFormat}&format=jpg&device=desktop&delay=${delay}&cacheLimit=1`;
+      
+      console.log(`🎯 Intento 1: ${detectedContentType} - ${optimalFormat} (delay: ${delay}ms)`);
       const response = await fetch(apiUrl);
       
       if (response.ok) {
         const buffer = await response.arrayBuffer();
         const base64 = Buffer.from(buffer).toString('base64');
-        console.log('✅ Screenshot generado con ScreenshotMachine');
+        console.log(`✅ Screenshot óptimo generado: ${optimalFormat} para ${detectedContentType}`);
         return `data:image/jpeg;base64,${base64}`;
       } else {
-        console.warn(`Error con ScreenshotMachine: ${response.status} ${response.statusText}`);
+        console.warn(`❌ Error con formato óptimo: ${response.status} ${response.statusText}`);
       }
     } catch (error) {
-      console.warn('Error con ScreenshotMachine:', error);
+      console.warn('❌ Error con formato óptimo:', error);
+    }
+    
+    // Intento 2: Formato fallback específico por tipo
+    try {
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=${fallbackFormat}&format=jpg&device=desktop&delay=3000&cacheLimit=1`;
+      
+      console.log(`🔄 Intento 2: Fallback ${detectedContentType} - ${fallbackFormat}`);
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log(`✅ Screenshot fallback generado: ${fallbackFormat} para ${detectedContentType}`);
+        return `data:image/jpeg;base64,${base64}`;
+      } else {
+        console.warn(`❌ Error con formato fallback: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.warn('❌ Error con formato fallback:', error);
+    }
+  }
+  
+  // 3. Fallback a función original
+  console.log('🔄 Usando función original de screenshot...');
+  return await generateScreenshotExternal(url);
+}
+
+// Función para generar screenshot usando API externa
+async function generateScreenshotExternal(url: string): Promise<string> {
+  // Opción 1: Usar ScreenshotMachine si está configurado
+  if (process.env.SCREENSHOTMACHINE_API_KEY) {
+    try {
+      // Intentar primero con full-page screenshot para capturar todo el sitio
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200xfull&format=jpg&device=desktop&delay=3000&cacheLimit=1`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot full-page generado con ScreenshotMachine');
+        return `data:image/jpeg;base64,${base64}`;
+      } else {
+        console.warn(`Error con ScreenshotMachine full-page: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotMachine full-page:', error);
+    }
+    
+    // Fallback: usar dimensiones fijas largas (1:2 ratio)
+    try {
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200x2400&format=jpg&device=desktop&delay=3000&cacheLimit=1`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot 1:2 generado con ScreenshotMachine');
+        return `data:image/jpeg;base64,${base64}`;
+      } else {
+        console.warn(`Error con ScreenshotMachine 1:2: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotMachine 1:2:', error);
     }
   }
   
@@ -1038,22 +1183,32 @@ async function generateScreenshotExternal(url: string): Promise<string> {
   return generatePlaceholderImage(url);
 }
 
-// Función para generar imagen placeholder
+// Función para generar imagen placeholder con proporción 1:2
 function generatePlaceholderImage(url: string): string {
-  // Generar un SVG simple como placeholder
+  // Generar un SVG simple como placeholder con proporción 1:2 (1200x2400)
   const domain = new URL(url).hostname;
   const svg = `
-    <svg width="1200" height="800" xmlns="http://www.w3.org/2000/svg">
-      <rect width="1200" height="800" fill="#f8f9fa"/>
+    <svg width="1200" height="2400" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="2400" fill="#f8f9fa"/>
+      <!-- Header mockup -->
       <rect x="50" y="50" width="1100" height="100" fill="#e9ecef" rx="5"/>
-      <rect x="50" y="200" width="300" height="400" fill="#e9ecef" rx="5"/>
-      <rect x="400" y="200" width="750" height="150" fill="#e9ecef" rx="5"/>
-      <rect x="400" y="400" width="750" height="200" fill="#e9ecef" rx="5"/>
-      <text x="600" y="400" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
+      <!-- Hero section -->
+      <rect x="50" y="200" width="1100" height="400" fill="#e9ecef" rx="5"/>
+      <!-- Content sections -->
+      <rect x="50" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+      <rect x="425" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+      <rect x="800" y="650" width="350" height="300" fill="#e9ecef" rx="5"/>
+      <!-- More content -->
+      <rect x="50" y="1000" width="1100" height="200" fill="#e9ecef" rx="5"/>
+      <rect x="50" y="1250" width="1100" height="300" fill="#e9ecef" rx="5"/>
+      <!-- Footer mockup -->
+      <rect x="50" y="1600" width="1100" height="150" fill="#e9ecef" rx="5"/>
+      <!-- Text overlay -->
+      <text x="600" y="1200" text-anchor="middle" font-family="Arial, sans-serif" font-size="24" fill="#6c757d">
         ${domain}
       </text>
-      <text x="600" y="430" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
-        Screenshot placeholder
+      <text x="600" y="1230" text-anchor="middle" font-family="Arial, sans-serif" font-size="16" fill="#adb5bd">
+        Screenshot placeholder (1:2 ratio)
       </text>
     </svg>
   `;
@@ -1245,4 +1400,4 @@ export async function analyzeSite(url: string, options?: { depth?: number; timeo
       url
     };
   }
-} 
+}

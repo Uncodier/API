@@ -260,6 +260,198 @@ async function sanitizeJsonWithAgent(jsonString: string, provider: 'anthropic' |
 }
 
 /**
+ * Función mejorada para reparar JSON malformado
+ */
+function repairJsonString(jsonString: string): string {
+  console.log(`[repairJsonString] Iniciando reparación de JSON`);
+  
+  let repairedJson = jsonString;
+  
+  // 1. Escapar caracteres especiales mal escapados
+  repairedJson = repairedJson.replace(/\\/g, '\\\\'); // Escapar barras invertidas
+  repairedJson = repairedJson.replace(/\\\\"/g, '\\"'); // Corregir comillas ya escapadas
+  repairedJson = repairedJson.replace(/\\\\n/g, '\\n'); // Corregir saltos de línea ya escapados
+  repairedJson = repairedJson.replace(/\\\\t/g, '\\t'); // Corregir tabs ya escapados
+  repairedJson = repairedJson.replace(/\\\\r/g, '\\r'); // Corregir retornos de carro ya escapados
+  
+  // 2. Reparar comillas no escapadas dentro de strings
+  repairedJson = repairedJson.replace(/:\s*"([^"]*)"([^",}\]]*)"([^"]*)"(\s*[,}\]])/g, (match, p1, p2, p3, p4) => {
+    return `: "${p1}\\"${p2}\\"${p3}"${p4}`;
+  });
+  
+  // 3. Reparar comas sobrantes antes de } o ]
+  repairedJson = repairedJson.replace(/,(\s*[}\]])/g, '$1');
+  
+  // 4. Reparar arrays mal cerrados
+  repairedJson = repairedJson.replace(/\[\s*([^,\]]+)\s*,\s*\]/g, '[$1]');
+  
+  // 5. Reparar objetos mal cerrados
+  repairedJson = repairedJson.replace(/{\s*([^,}]+)\s*,\s*}/g, '{$1}');
+  
+  // 6. Asegurar que todos los strings estén entre comillas
+  repairedJson = repairedJson.replace(/:\s*([^",{\[\]}\s][^,}\]]*[^",{\[\]}\s])(\s*[,}])/g, (match, value, ending) => {
+    // Si no es un número, boolean o null, agregarlo entre comillas
+    if (!/^(true|false|null|\d+\.?\d*|\[.*\]|\{.*\})$/.test(value.trim())) {
+      return `: "${value.trim()}"${ending}`;
+    }
+    return match;
+  });
+  
+  // 7. Reparar strings que terminan con caracteres especiales
+  repairedJson = repairedJson.replace(/:\s*"([^"]*)"([^",}\]]*)"(\s*[,}\]])/g, ': "$1$2"$3');
+  
+  // 8. Limpiar espacios en blanco duplicados
+  repairedJson = repairedJson.replace(/\s+/g, ' ');
+  
+  console.log(`[repairJsonString] Reparación completada`);
+  return repairedJson;
+}
+
+/**
+ * Función para crear un prompt simplificado que reduce errores de JSON
+ */
+function createSimplifiedPrompt(url: string, deliverables: any, language: string = 'es'): string {
+  console.log(`[createSimplifiedPrompt] Creando prompt simplificado para ${url}`);
+  
+  const basePrompt = language === 'en' ? 
+    `Analyze the website structure for: ${url}
+
+Provide a structured analysis in JSON format. Keep the JSON simple and valid.
+
+Required base structure:
+{
+  "site_info": {
+    "url": "${url}",
+    "title": "Site title",
+    "description": "Brief description",
+    "language": "en",
+    "main_purpose": "Main purpose"
+  },
+  "blocks": [
+    {
+      "id": "unique-id",
+      "type": "header|content|footer|sidebar|cta|form",
+      "description": "Block description",
+      "relevance": {"score": 85, "reason": "Relevance reason"}
+    }
+  ],
+  "structure_analysis": {
+    "overall_structure_score": 85,
+    "strengths": ["Strength 1"],
+    "weaknesses": ["Weakness 1"],
+    "recommendations": [{"issue": "Issue", "recommendation": "Fix", "priority": "high"}]
+  }
+}` :
+    `Analiza la estructura del sitio web: ${url}
+
+Proporciona un análisis estructurado en formato JSON. Mantén el JSON simple y válido.
+
+Estructura base requerida:
+{
+  "site_info": {
+    "url": "${url}",
+    "title": "Título del sitio",
+    "description": "Descripción breve",
+    "language": "es",
+    "main_purpose": "Propósito principal"
+  },
+  "blocks": [
+    {
+      "id": "id-unico",
+      "type": "header|content|footer|sidebar|cta|form",
+      "description": "Descripción del bloque",
+      "relevance": {"score": 85, "reason": "Razón de relevancia"}
+    }
+  ],
+  "structure_analysis": {
+    "overall_structure_score": 85,
+    "strengths": ["Fortaleza 1"],
+    "weaknesses": ["Debilidad 1"],
+    "recommendations": [{"issue": "Problema", "recommendation": "Solución", "priority": "alta"}]
+  }
+}`;
+
+  let additionalInstructions = '';
+  
+  // Agregar deliverables específicos de forma simplificada
+  if (deliverables?.branding_analysis) {
+    additionalInstructions += `\n\nAdd "branding_analysis" object with simplified structure:
+{
+  "branding_analysis": {
+    "brand_archetype": "sage|hero|caregiver|explorer|creator",
+    "primary_color": "#hexcolor",
+    "secondary_color": "#hexcolor",
+    "brand_voice": "Brand voice description",
+    "communication_style": "friendly|professional|casual"
+  }
+}`;
+  }
+  
+  if (deliverables?.ux_assessment) {
+    additionalInstructions += `\n\nAdd "ux_assessment" object:
+{
+  "ux_assessment": {
+    "overall_score": 85,
+    "usability_score": 80,
+    "accessibility_score": 75,
+    "visual_design_score": 90
+  }
+}`;
+  }
+  
+  if (deliverables?.recommendations) {
+    additionalInstructions += `\n\nAdd "recommendations" array:
+{
+  "recommendations": [
+    {
+      "category": "UX",
+      "priority": "alta",
+      "title": "Recommendation title",
+      "description": "Description"
+    }
+  ]
+}`;
+  }
+  
+  if (deliverables?.problems) {
+    additionalInstructions += `\n\nAdd "problems" array:
+{
+  "problems": [
+    {
+      "category": "UX",
+      "severity": "alto",
+      "title": "Problem title",
+      "description": "Description"
+    }
+  ]
+}`;
+  }
+  
+  if (deliverables?.opportunities) {
+    additionalInstructions += `\n\nAdd "opportunities" array:
+{
+  "opportunities": [
+    {
+      "category": "UX",
+      "potential": "alto",
+      "title": "Opportunity title",
+      "description": "Description"
+    }
+  ]
+}`;
+  }
+  
+  const finalPrompt = basePrompt + additionalInstructions + `\n\nIMPORTANT: 
+- Return ONLY valid JSON without markdown formatting
+- Use simple string values, avoid complex nested objects
+- Escape special characters properly
+- Keep descriptions concise`;
+  
+  console.log(`[createSimplifiedPrompt] Prompt simplificado creado, longitud: ${finalPrompt.length}`);
+  return finalPrompt;
+}
+
+/**
  * Realiza un análisis estructurado de un sitio web
  */
 export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): Promise<StructuredAnalysisResponse> {
@@ -285,624 +477,247 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
       console.log(`[structuredAnalyzerAgent] Ni la solicitud ni prepareAnalysisData proporcionaron HTML`);
     }
     
-    // Determinar qué prompt usar basado en el idioma preferido (si está disponible)
-    let promptTemplate;
-    const promptPath = path.join(process.cwd(), 'src', 'app', 'api', 'site', 'analyze', 'structured-prompt.txt');
-    const promptEnPath = path.join(process.cwd(), 'src', 'app', 'api', 'site', 'analyze', 'structured-prompt-en.txt');
+    // Usar el prompt simplificado en lugar del complejo
+    const language = request.options?.language || 'es';
+    const userMessage = createSimplifiedPrompt(request.url, request.deliverables, language);
     
-    try {
-      // Intentar cargar el prompt en el idioma preferido o el predeterminado
-      if (request.options?.language === 'en' && fs.existsSync(promptEnPath)) {
-        promptTemplate = fs.readFileSync(promptEnPath, 'utf8');
-      } else if (fs.existsSync(promptPath)) {
-        promptTemplate = fs.readFileSync(promptPath, 'utf8');
-      } else {
-        // Fallback al prompt hardcodeado si no se pueden cargar los archivos
-        promptTemplate = `
-        Analiza la estructura del siguiente sitio web:
-        URL: {url}
-        
-        Proporciona un análisis estructurado detallado del sitio web, identificando los bloques principales, su jerarquía, y su propósito. Devuelve tu análisis en formato JSON con la siguiente estructura BASE:
-        
-        \`\`\`json
-        {
-          "site_info": {
-            "url": "URL del sitio",
-            "title": "Título del sitio",
-            "description": "Descripción breve del sitio",
-            "language": "Idioma principal del sitio (código ISO)",
-            "main_purpose": "Propósito principal del sitio"
-          },
-          "blocks": [
-            {
-              "id": "identificador-único-del-bloque",
-              "type": "header|content|footer|sidebar|cta|form|gallery|testimonial|etc",
-              "section_type": "navigation|content|form|media|etc",
-              "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este bloque. Incluye múltiples atributos para asegurar unicidad.",
-              "classes": ["clase1", "clase2"],
-              "content_type": "text|image|video|mixed",
-              "description": "Descripción del bloque y su función",
-              "business_objective": "Objetivo de negocio que cumple este bloque",
-              "user_need": "Necesidad del usuario que satisface",
-              "ux_role": "Rol en la experiencia de usuario",
-              "dynamic": true|false,
-              "relevance": {
-                "score": 0-100,
-                "reason": "Razón de la puntuación de relevancia"
-              },
-              "children": 0,
-              "text_length": 0,
-              "location": {
-                "position": "top|middle|bottom|left|right",
-                "coordinates": {
-                  "top": 0,
-                  "left": 0
-                }
-              },
-              "content_list": ["Elemento 1", "Elemento 2"],
-              "sub_blocks": [],
-              "content_blocks": [
-                {
-                  "description": "Texto o descripción del contenido del elemento",
-                  "selector": "Selector CSS preciso y único (preferentemente con ID) que identifica exactamente este elemento de contenido. Incluye múltiples atributos para asegurar unicidad.",
-                  "dynamic": true|false
-                },
-                {
-                  "description": "URL o texto del enlace",
-                  "selector": "#elemento-identificador, .clase[atributo='valor']:nth-child(n)",
-                  "dynamic": false
-                }
-              ]
-            }
-          ],
-          "structure_analysis": {
-            "hierarchy_score": 0-100,
-            "clarity_score": 0-100,
-            "consistency_score": 0-100,
-            "navigation_score": 0-100,
-            "overall_structure_score": 0-100,
-            "strengths": [
-              "Fortaleza 1 de la estructura",
-              "Fortaleza 2 de la estructura"
-            ],
-            "weaknesses": [
-              "Debilidad 1 de la estructura",
-              "Debilidad 2 de la estructura"
-            ],
-            "recommendations": [
-              {
-                "issue": "Problema identificado",
-                "recommendation": "Recomendación para mejorar",
-                "impact": "Impacto esperado",
-                "priority": "alta|media|baja"
-              }
-            ]
-          }
-        }
-        \`\`\`
-        
-        IMPORTANTE: 
-        - Asegúrate de que tu respuesta sea un JSON válido que incluya la estructura BASE mostrada arriba
-        - Identifica al menos 5-7 bloques principales del sitio y proporciona un análisis detallado de la estructura general
-        - Si se solicitan deliverables específicos adicionales, AGRÉGALOS al JSON base como objetos adicionales
-        - Puedes incluir objetos adicionales en el JSON raíz según las instrucciones específicas que se proporcionen
-        `;
-      }
+    console.log(`[structuredAnalyzerAgent] Usando prompt simplificado para ${request.url}`);
+    console.log(`[structuredAnalyzerAgent] Longitud del prompt: ${userMessage.length} caracteres`);
+    
+    // Agregar HTML al mensaje si está disponible, pero de forma más controlada
+    let enhancedUserMessage = userMessage;
+    if (htmlContent && htmlContent.length > 0) {
+      // Limitar el HTML a los primeros 10000 caracteres para evitar prompts demasiado largos
+      const htmlLimit = 10000;
+      const truncatedHtml = htmlContent.length > htmlLimit ? 
+        htmlContent.substring(0, htmlLimit) + '...[HTML truncated]' : 
+        htmlContent;
       
-      // Reemplazar placeholders en el prompt
-      const userMessage = promptTemplate.replace('{url}', request.url);
-      console.log(`[structuredAnalyzerAgent] Prompt base preparado para ${request.url}`);
-      
-      // Modificación: Agregar HTML al mensaje de usuario si está disponible
-      let enhancedUserMessage = userMessage;
-      if (htmlContent) {
-        console.log(`[structuredAnalyzerAgent] Agregando HTML al mensaje para el análisis (${htmlContent.length} bytes)`);
-        console.log(`[structuredAnalyzerAgent] Primeros 100 caracteres del HTML: ${htmlContent.substring(0, 100).replace(/\n/g, '\\n')}...`);
-        // Agregar el HTML preprocesado al mensaje
-        enhancedUserMessage = `${userMessage}\n\nAquí está el HTML del sitio para tu análisis:\n\n${htmlContent}`;
-        console.log(`[structuredAnalyzerAgent] Mensaje mejorado con HTML (longitud total: ${enhancedUserMessage.length} bytes)`);
-      } else {
-        console.log(`[structuredAnalyzerAgent] No hay HTML disponible para incluir en el análisis`);
-        console.log(`[structuredAnalyzerAgent] Contenido de request.htmlContent: ${request.htmlContent ? request.htmlContent.substring(0, 100) + '...' : 'undefined'}`);
-      }
-      
-      // Agregar información sobre deliverables específicos al prompt
-      if (request.deliverables) {
-        console.log(`[structuredAnalyzerAgent] Agregando deliverables específicos al prompt`);
-        console.log(`[structuredAnalyzerAgent] Deliverables a procesar:`, JSON.stringify(request.deliverables));
-        let deliverablesInstructions = '\n\n=== DELIVERABLES ESPECÍFICOS SOLICITADOS ===\n';
-        deliverablesInstructions += 'IMPORTANTE: Incluye en tu respuesta JSON los siguientes objetos ÚNICAMENTE si se solicitan:\n';
-        
-        if (request.deliverables.branding_analysis) {
-          console.log(`[structuredAnalyzerAgent] ✅ Agregando instrucciones para branding_analysis`);
-          deliverablesInstructions += `
-✅ BRANDING ANALYSIS: Agrega un objeto "branding_analysis" con esta estructura exacta:
-{
-  "branding_analysis": {
-    "brand_pyramid": {
-      "brand_essence": "Esencia fundamental de la marca extraída del contenido",
-      "brand_personality": "Personalidad de marca inferida del tono y estilo",
-      "brand_benefits": "Beneficios clave que ofrece la marca",
-      "brand_attributes": "Atributos distintivos de la marca",
-      "brand_values": "Valores que transmite la marca",
-      "brand_promise": "Promesa de valor principal"
-    },
-    "brand_archetype": "Arquetipo de marca (ej: El Sabio, El Héroe, El Cuidador, etc.)",
-    "color_palette": {
-      "primary_color": "#código_hex_color_primario",
-      "secondary_color": "#código_hex_color_secundario", 
-      "accent_color": "#código_hex_color_acento",
-      "neutral_colors": ["#color1", "#color2", "#color3"]
-    },
-    "typography": {
-      "primary_font": "Fuente principal detectada",
-      "secondary_font": "Fuente secundaria detectada",
-      "font_hierarchy": "Descripción de la jerarquía tipográfica",
-      "font_sizes": "Escala de tamaños utilizada"
-    },
-    "voice_and_tone": {
-      "brand_voice": "Voz de marca identificada",
-      "communication_style": "Estilo de comunicación",
-      "personality_traits": ["rasgo1", "rasgo2", "rasgo3"],
-      "do_and_dont": {
-        "do": ["Lo que SÍ debe hacer la marca", "Práctica recomendada"],
-        "dont": ["Lo que NO debe hacer la marca", "Práctica a evitar"]
-      }
-    },
-    "brand_guidelines": {
-      "logo_usage": "Guías de uso del logo",
-      "color_usage": "Guías de uso de colores",
-      "typography_usage": "Guías de uso tipográfico",
-      "imagery_style": "Estilo de imágenes",
-      "messaging_guidelines": "Guías de mensajería"
-    },
-    "brand_assets": {
-      "logo_variations": ["URL_o_descripción_logo"],
-      "color_swatches": ["#color1", "#color2"],
-      "font_files": ["fuente1", "fuente2"],
-      "templates": ["plantilla1", "plantilla2"]
+      console.log(`[structuredAnalyzerAgent] Agregando HTML truncado al mensaje (${truncatedHtml.length} bytes)`);
+      enhancedUserMessage = `${userMessage}\n\nHTML content:\n${truncatedHtml}`;
     }
-  }
-}
-`;
-        } else {
-          console.log(`[structuredAnalyzerAgent] ❌ branding_analysis = false, no se agregará al prompt`);
-        }
-        
-        if (request.deliverables.ux_assessment) {
-          console.log(`[structuredAnalyzerAgent] ✅ Agregando instrucciones para ux_assessment`);
-          deliverablesInstructions += `
-✅ UX ASSESSMENT: Agrega un objeto "ux_assessment" con scores del 1-100:
-{
-  "ux_assessment": {
-    "overall_score": 85,
-    "usability_score": 80,
-    "accessibility_score": 75,
-    "visual_design_score": 90,
-    "performance_score": 70,
-    "branding_consistency_score": 85,
-    "user_experience_details": {
-      "navigation_clarity": 80,
-      "content_organization": 85,
-      "visual_hierarchy": 90,
-      "responsive_design": 75,
-      "load_time": 70,
-      "error_handling": 60
+    
+    console.log(`[structuredAnalyzerAgent] Mensaje final preparado, longitud: ${enhancedUserMessage.length} caracteres`);
+    
+         // Preparar el mensaje para la API
+     const provider = request.options?.provider || 'openai';
+     const modelId = request.options?.modelId || (provider === 'openai' ? 'gpt-4.1' : 'claude-3-sonnet-20240229');
+     const systemPrompt = STRUCTURED_ANALYZER_SYSTEM_PROMPT;
+     
+     const apiMessage = prepareApiMessage(enhancedUserMessage, processedImage, systemPrompt, provider);
+     console.log(`[structuredAnalyzerAgent] Mensaje preparado con ${apiMessage.length} elementos`);
+     
+     console.log(`[structuredAnalyzerAgent] Realizando llamada a la API...`);
+     console.log(`[structuredAnalyzerAgent] Configuración: provider=${provider}, modelId=${modelId}`);
+     
+     // Realizar la llamada a la API
+     const response = await callApiWithMessage(apiMessage, provider, modelId);
+    
+    if (!response || !response.choices || response.choices.length === 0) {
+      console.error('[structuredAnalyzerAgent] No se recibió respuesta válida de la API');
+      throw new Error('No se recibió respuesta válida de la API');
     }
-  }
-}
-`;
-        } else {
-          console.log(`[structuredAnalyzerAgent] ❌ ux_assessment = false, no se agregará al prompt`);
-        }
+    
+    console.log(`[structuredAnalyzerAgent] Respuesta de la API recibida`);
+    
+    // Extraer el contenido de la respuesta
+    const responseContent = response.choices[0]?.message?.content || '';
+    
+    if (typeof responseContent === 'string') {
+      try {
+        // Intentar extraer el JSON de la respuesta
+        const jsonMatch = responseContent.match(/```json\s*([\s\S]*?)\s*```/) || 
+                         responseContent.match(/```\s*([\s\S]*?)\s*```/) ||
+                         responseContent.match(/\{[\s\S]*\}/) ||
+                         [null, responseContent];
         
-        if (request.deliverables.recommendations) {
-          console.log(`[structuredAnalyzerAgent] ✅ Agregando instrucciones para recommendations`);
-          deliverablesInstructions += `
-✅ RECOMMENDATIONS: Agrega un array "recommendations":
-{
-  "recommendations": [
-    {
-      "category": "UX|Branding|Performance|Accessibility",
-      "priority": "alta|media|baja",
-      "effort": "alto|medio|bajo",
-      "title": "Título de la recomendación",
-      "description": "Descripción detallada",
-      "impact": "Impacto esperado",
-      "implementation_steps": ["Paso 1", "Paso 2", "Paso 3"]
-    }
-  ]
-}
-`;
-        } else {
-          console.log(`[structuredAnalyzerAgent] ❌ recommendations = false, no se agregará al prompt`);
-        }
+        let jsonContent = jsonMatch[1] || jsonMatch[0] || responseContent;
+        jsonContent = jsonContent.trim();
         
-        if (request.deliverables.problems) {
-          console.log(`[structuredAnalyzerAgent] ✅ Agregando instrucciones para problems`);
-          deliverablesInstructions += `
-✅ PROBLEMS: Agrega un array "problems":
-{
-  "problems": [
-    {
-      "category": "UX|Branding|Performance|Accessibility",
-      "severity": "crítico|alto|medio|bajo",
-      "title": "Título del problema",
-      "description": "Descripción del problema",
-      "user_impact": "Impacto en el usuario",
-      "business_impact": "Impacto en el negocio",
-      "suggested_solutions": ["Solución 1", "Solución 2"]
-    }
-  ]
-}
-`;
-        } else {
-          console.log(`[structuredAnalyzerAgent] ❌ problems = false, no se agregará al prompt`);
-        }
+        console.log(`[structuredAnalyzerAgent] JSON extraído, longitud: ${jsonContent.length} caracteres`);
         
-        if (request.deliverables.opportunities) {
-          console.log(`[structuredAnalyzerAgent] ✅ Agregando instrucciones para opportunities`);
-          deliverablesInstructions += `
-✅ OPPORTUNITIES: Agrega un array "opportunities":
-{
-  "opportunities": [
-    {
-      "category": "UX|Branding|Performance|Growth",
-      "potential": "alto|medio|bajo",
-      "complexity": "alta|media|baja",
-      "title": "Título de la oportunidad",
-      "description": "Descripción de la oportunidad",
-      "expected_outcomes": ["Resultado 1", "Resultado 2"],
-      "implementation_timeline": "2-3 semanas|1-2 meses|3-6 meses"
-    }
-  ]
-}
-`;
-        } else {
-          console.log(`[structuredAnalyzerAgent] ❌ opportunities = false, no se agregará al prompt`);
-        }
+        // Intentar parsear el JSON
+        let structuredAnalysis: StructuredAnalysisResponse;
         
-        deliverablesInstructions += '\n⚠️ SOLO incluye en tu JSON los deliverables marcados con ✅ arriba.\n';
-        deliverablesInstructions += '⚠️ Si no se solicita un deliverable específico, NO lo incluyas en la respuesta.\n';
-        deliverablesInstructions += '\n📋 EJEMPLO DE JSON FINAL CON DELIVERABLES:\n';
-        deliverablesInstructions += 'Si se solicita branding_analysis y ux_assessment, tu JSON debe verse así:\n';
-        deliverablesInstructions += '```json\n';
-        deliverablesInstructions += '{\n';
-        deliverablesInstructions += '  "site_info": {\n';
-        deliverablesInstructions += '    "url": "https://ejemplo.com",\n';
-        deliverablesInstructions += '    "title": "Título del sitio",\n';
-        deliverablesInstructions += '    "description": "Descripción del sitio",\n';
-        deliverablesInstructions += '    "language": "es",\n';
-        deliverablesInstructions += '    "main_purpose": "Propósito principal"\n';
-        deliverablesInstructions += '  },\n';
-        deliverablesInstructions += '  "blocks": [\n';
-        deliverablesInstructions += '    {\n';
-        deliverablesInstructions += '      "id": "header-block",\n';
-        deliverablesInstructions += '      "type": "header",\n';
-        deliverablesInstructions += '      "description": "Encabezado principal"\n';
-        deliverablesInstructions += '    }\n';
-        deliverablesInstructions += '  ],\n';
-        deliverablesInstructions += '  "structure_analysis": {\n';
-        deliverablesInstructions += '    "hierarchy_score": 85,\n';
-        deliverablesInstructions += '    "clarity_score": 90,\n';
-        deliverablesInstructions += '    "strengths": ["Fortaleza 1"],\n';
-        deliverablesInstructions += '    "weaknesses": ["Debilidad 1"],\n';
-        deliverablesInstructions += '    "recommendations": []\n';
-        deliverablesInstructions += '  }';
-        
-        // Agregar deliverables específicos solicitados
-        if (request.deliverables.branding_analysis) {
-          deliverablesInstructions += ',\n';
-          deliverablesInstructions += '  "branding_analysis": {\n';
-          deliverablesInstructions += '    "brand_pyramid": {\n';
-          deliverablesInstructions += '      "brand_essence": "Esencia de la marca",\n';
-          deliverablesInstructions += '      "brand_personality": "Personalidad de la marca"\n';
-          deliverablesInstructions += '    },\n';
-          deliverablesInstructions += '    "brand_archetype": "sage",\n';
-          deliverablesInstructions += '    "color_palette": {\n';
-          deliverablesInstructions += '      "primary_color": "#2563eb",\n';
-          deliverablesInstructions += '      "secondary_color": "#1e293b"\n';
-          deliverablesInstructions += '    }\n';
-          deliverablesInstructions += '  }';
-        }
-        
-        if (request.deliverables.ux_assessment) {
-          deliverablesInstructions += ',\n';
-          deliverablesInstructions += '  "ux_assessment": {\n';
-          deliverablesInstructions += '    "overall_score": 85,\n';
-          deliverablesInstructions += '    "usability_score": 80,\n';
-          deliverablesInstructions += '    "accessibility_score": 75\n';
-          deliverablesInstructions += '  }';
-        }
-        
-        if (request.deliverables.recommendations) {
-          deliverablesInstructions += ',\n';
-          deliverablesInstructions += '  "recommendations": [\n';
-          deliverablesInstructions += '    {\n';
-          deliverablesInstructions += '      "category": "UX",\n';
-          deliverablesInstructions += '      "priority": "alta",\n';
-          deliverablesInstructions += '      "title": "Mejora del diseño"\n';
-          deliverablesInstructions += '    }\n';
-          deliverablesInstructions += '  ]';
-        }
-        
-        if (request.deliverables.problems) {
-          deliverablesInstructions += ',\n';
-          deliverablesInstructions += '  "problems": [\n';
-          deliverablesInstructions += '    {\n';
-          deliverablesInstructions += '      "category": "UX",\n';
-          deliverablesInstructions += '      "severity": "alto",\n';
-          deliverablesInstructions += '      "title": "Problema identificado"\n';
-          deliverablesInstructions += '    }\n';
-          deliverablesInstructions += '  ]';
-        }
-        
-        if (request.deliverables.opportunities) {
-          deliverablesInstructions += ',\n';
-          deliverablesInstructions += '  "opportunities": [\n';
-          deliverablesInstructions += '    {\n';
-          deliverablesInstructions += '      "category": "UX",\n';
-          deliverablesInstructions += '      "potential": "alto",\n';
-          deliverablesInstructions += '      "title": "Oportunidad de mejora"\n';
-          deliverablesInstructions += '    }\n';
-          deliverablesInstructions += '  ]';
-        }
-        
-        deliverablesInstructions += '\n}\n';
-        deliverablesInstructions += '```\n';
-        deliverablesInstructions += '\n🔥 IMPORTANTE: \n';
-        deliverablesInstructions += '- TODOS los deliverables deben ir AL MISMO NIVEL que "site_info", "blocks" y "structure_analysis"\n';
-        deliverablesInstructions += '- NO anides los deliverables dentro de otros objetos\n';
-        deliverablesInstructions += '- SIEMPRE usa comas correctamente entre objetos del JSON\n';
-        deliverablesInstructions += '- ASEGÚRATE que todos los arrays estén bien cerrados con corchetes []\n';
-        deliverablesInstructions += '- VERIFICA que no haya comas sobrantes al final de objetos o arrays\n';
-        
-        enhancedUserMessage += deliverablesInstructions;
-        console.log(`[structuredAnalyzerAgent] Prompt con deliverables específicos agregado (${deliverablesInstructions.length} caracteres)`);
-      } else {
-        console.log(`[structuredAnalyzerAgent] ❌ NO hay deliverables en el request - no se agregará nada al prompt`);
-      }
-      
-      // Preparar el mensaje para la API con el mensaje mejorado que incluye HTML
-      console.log(`[structuredAnalyzerAgent] Preparando mensaje para la API...`);
-      console.log(`[structuredAnalyzerAgent] Prompt final tiene ${enhancedUserMessage.length} caracteres`);
-      console.log(`[structuredAnalyzerAgent] Últimos 500 caracteres del prompt:`, enhancedUserMessage.slice(-500));
-      
-      const messages = prepareApiMessage(
-        enhancedUserMessage,
-        processedImage,
-        STRUCTURED_ANALYZER_SYSTEM_PROMPT,
-        request.options?.provider
-      );
-      console.log(`[structuredAnalyzerAgent] Mensaje preparado con ${messages.length} elementos`);
-      
-      // Realizar la llamada a la API
-      console.log(`[structuredAnalyzerAgent] Realizando llamada a la API...`);
-      const response = await callApiWithMessage(
-        messages,
-        request.options?.provider as 'anthropic' | 'openai' | 'gemini' || 'anthropic',
-        request.options?.modelId
-      );
-      
-      // Procesar la respuesta
-      const responseContent = response.choices[0]?.message?.content || '';
-      
-      if (typeof responseContent === 'string') {
         try {
-          // Intentar extraer el JSON de la respuesta
-          const jsonMatch = responseContent.match(/```json\s*([\s\S]*?)\s*```/) || 
-                           responseContent.match(/```\s*([\s\S]*?)\s*```/) ||
-                           [null, responseContent];
+          structuredAnalysis = JSON.parse(jsonContent);
+          console.log(`[structuredAnalyzerAgent] JSON parseado correctamente sin necesidad de correcciones`);
+        } catch (jsonError) {
+          console.error(`[structuredAnalyzerAgent] Error al parsear JSON: ${jsonError}`);
+          console.log(`[structuredAnalyzerAgent] JSON problemático (primeros 500 caracteres):`, jsonContent.substring(0, 500));
           
-          const jsonContent = jsonMatch[1].trim();
-          
-          // Intentar parsear el JSON
-          let structuredAnalysis: StructuredAnalysisResponse;
+          // Intentar reparar el JSON con la función mejorada
+          console.log(`[structuredAnalyzerAgent] Intentando reparar JSON con función mejorada...`);
+          const repairedJson = repairJsonString(jsonContent);
           
           try {
-            structuredAnalysis = JSON.parse(jsonContent);
-            console.log(`[structuredAnalyzerAgent] JSON parseado correctamente sin necesidad de correcciones`);
-          } catch (jsonError) {
-            console.error(`[structuredAnalyzerAgent] Error al parsear JSON: ${jsonError}`);
-            console.log(`[structuredAnalyzerAgent] JSON problemático (primeros 1000 caracteres):`, jsonContent.substring(0, 1000));
-            
-            // Intentar reparar errores comunes de JSON antes de sanitizar
-            let repairedJson = jsonContent;
-            
-            // Reparar comas sobrantes antes de } o ]
-            repairedJson = repairedJson.replace(/,(\s*[}\]])/g, '$1');
-            
-            // Reparar arrays mal cerrados
-            repairedJson = repairedJson.replace(/\[\s*([^,\]]+)\s*,\s*\]/g, '[$1]');
-            
-            // Reparar objetos mal cerrados
-            repairedJson = repairedJson.replace(/{\s*([^,}]+)\s*,\s*}/g, '{$1}');
-            
-            // Asegurar que todos los strings estén entre comillas
-            repairedJson = repairedJson.replace(/:\s*([^",{\[\]}\s]+)(\s*[,}])/g, (match, value, ending) => {
-              // Si no es un número, boolean o null, agregarlo entre comillas
-              if (!/^(true|false|null|\d+\.?\d*)$/.test(value.trim())) {
-                return `: "${value.trim()}"${ending}`;
-              }
-              return match;
-            });
-            
-            console.log(`[structuredAnalyzerAgent] Intentando parsear JSON reparado...`);
+            structuredAnalysis = JSON.parse(repairedJson);
+            console.log(`[structuredAnalyzerAgent] JSON reparado automáticamente y parseado correctamente`);
+          } catch (repairError) {
+            console.log(`[structuredAnalyzerAgent] Reparación automática falló, intentando sanitizar con agente...`);
             
             try {
-              structuredAnalysis = JSON.parse(repairedJson);
-              console.log(`[structuredAnalyzerAgent] JSON reparado automáticamente y parseado correctamente`);
-            } catch (repairError) {
-              console.log(`[structuredAnalyzerAgent] Reparación automática falló, intentando sanitizar con agente...`);
+              const sanitizedJson = await sanitizeJsonWithAgent(jsonContent, request.options?.provider, request.options?.modelId);
+              structuredAnalysis = JSON.parse(sanitizedJson);
+              console.log(`[structuredAnalyzerAgent] JSON sanitizado y parseado correctamente`);
+            } catch (sanitizeError) {
+              console.error(`[structuredAnalyzerAgent] Error al sanitizar JSON: ${sanitizeError}`);
               
-              try {
-                const sanitizedJson = await sanitizeJsonWithAgent(jsonContent, request.options?.provider, request.options?.modelId);
-                structuredAnalysis = JSON.parse(sanitizedJson);
-                console.log(`[structuredAnalyzerAgent] JSON sanitizado y parseado correctamente`);
-              } catch (sanitizeError) {
-                console.error(`[structuredAnalyzerAgent] Error al sanitizar JSON: ${sanitizeError}`);
-                
-                // Último intento: crear un objeto básico con la información que podamos extraer
-                console.log(`[structuredAnalyzerAgent] Creando estructura básica de fallback...`);
-                
-                                 structuredAnalysis = {
-                   site_info: {
-                     url: request.url,
-                     title: 'Error procesando análisis',
-                     description: 'Ocurrió un error al procesar el análisis estructurado',
-                     language: 'es',
-                     main_purpose: 'Error en análisis'
-                   },
-                   blocks: [],
-                   structure_analysis: {
-                     hierarchy_score: 0,
-                     clarity_score: 0,
-                     consistency_score: 0,
-                     navigation_score: 0,
-                     overall_structure_score: 0,
-                     strengths: [],
-                     weaknesses: ['Error en el análisis estructurado'],
-                     recommendations: [{
-                       issue: 'Error de procesamiento',
-                       recommendation: 'Reintentar el análisis',
-                       impact: 'Análisis incompleto',
-                       priority: 'alta'
-                     }]
-                   },
-                   hierarchy: {
-                     main_sections: [],
-                     navigation_structure: [],
-                     user_flow: {
-                       primary_path: []
-                     }
-                   },
-                   ux_analysis: {
-                     cta_elements: [],
-                     navigation_elements: [],
-                     forms: []
-                   },
-                                        overview: {
-                       total_blocks: 0,
-                       primary_content_blocks: 0,
-                       navigation_blocks: 0,
-                       interactive_elements: 0,
-                       key_ux_patterns: [],
-                       design_system_characteristics: []
-                     },
-                     metadata: {
-                       analyzed_by: request.options?.provider || 'unknown',
-                       timestamp: new Date().toISOString(),
-                       model_used: request.options?.modelId || 'unknown',
-                       status: 'error' as const
-                     }
-                   };
-                
-                console.log(`[structuredAnalyzerAgent] Estructura básica de fallback creada`);
-              }
-            }
-          }
-          
-          // Validaciones mínimas esenciales (solo si faltan campos críticos)
-          if (!structuredAnalysis.site_info) {
-            console.warn('[structuredAnalyzerAgent] Agregando site_info faltante');
-            structuredAnalysis.site_info = {
-              url: request.url,
-              title: 'No title provided',
-              description: 'No description provided',
-              language: 'en'
-            };
-          }
-          
-          if (!structuredAnalysis.blocks || !Array.isArray(structuredAnalysis.blocks)) {
-            console.warn('[structuredAnalyzerAgent] Agregando estructura de blocks faltante');
-            structuredAnalysis.blocks = [];
-          }
-          
-          if (!structuredAnalysis.structure_analysis) {
-            console.warn('[structuredAnalyzerAgent] Agregando structure_analysis faltante');
-            structuredAnalysis.structure_analysis = {
-              hierarchy_score: 50,
-              clarity_score: 50,
-              consistency_score: 50,
-              navigation_score: 50,
-              overall_structure_score: 50,
-              strengths: [],
-              weaknesses: [],
-              recommendations: []
-            };
-          }
-          
-          // Solo normalizar IDs si hay duplicados reales
-          const usedIds = new Set<string>();
-          let hasDuplicates = false;
-          
-          structuredAnalysis.blocks.forEach(block => {
-            if (block.id && usedIds.has(block.id)) {
-              hasDuplicates = true;
-            } else if (block.id) {
-              usedIds.add(block.id);
-            }
-          });
-          
-          if (hasDuplicates) {
-            console.log('[structuredAnalyzerAgent] Corrigiendo IDs duplicados en blocks');
-            const newUsedIds = new Set<string>();
-            structuredAnalysis.blocks = structuredAnalysis.blocks.map((block, index) => {
-              if (!block.id || newUsedIds.has(block.id)) {
-                block.id = `block-${index + 1}`;
-              }
-              newUsedIds.add(block.id);
-              return block;
-            });
-          }
-          
-          // NO normalizar prioridades - mantener el formato original del modelo
-          // (Comentado para evitar cambios innecesarios)
-          /*
-          if (structuredAnalysis.structure_analysis?.recommendations) {
-            structuredAnalysis.structure_analysis.recommendations = 
-              structuredAnalysis.structure_analysis.recommendations.map((rec: { 
-                issue: string; 
-                recommendation: string; 
-                impact: string; 
-                priority: string;
-              }) => {
-                // Normalizar prioridad
-                if (rec.priority) {
-                  const priority = rec.priority.toLowerCase();
-                  if (priority === 'alta' || priority === 'high') {
-                    rec.priority = 'high';
-                  } else if (priority === 'baja' || priority === 'low') {
-                    rec.priority = 'low';
-                  } else {
-                    rec.priority = 'medium';
+              // Último intento: crear un objeto básico con la información que podamos extraer
+              console.log(`[structuredAnalyzerAgent] Creando estructura básica de fallback...`);
+              
+              structuredAnalysis = {
+                site_info: {
+                  url: request.url,
+                  title: 'Error procesando análisis',
+                  description: 'Ocurrió un error al procesar el análisis estructurado',
+                  language: 'es',
+                  main_purpose: 'Error en análisis'
+                },
+                blocks: [],
+                structure_analysis: {
+                  hierarchy_score: 0,
+                  clarity_score: 0,
+                  consistency_score: 0,
+                  navigation_score: 0,
+                  overall_structure_score: 0,
+                  strengths: [],
+                  weaknesses: ['Error en el análisis estructurado'],
+                  recommendations: [{
+                    issue: 'Error de procesamiento',
+                    recommendation: 'Reintentar el análisis con un prompt más simple',
+                    impact: 'Análisis incompleto',
+                    priority: 'alta'
+                  }]
+                },
+                hierarchy: {
+                  main_sections: [],
+                  navigation_structure: [],
+                  user_flow: {
+                    primary_path: []
                   }
+                },
+                ux_analysis: {
+                  cta_elements: [],
+                  navigation_elements: [],
+                  forms: []
+                },
+                overview: {
+                  total_blocks: 0,
+                  primary_content_blocks: 0,
+                  navigation_blocks: 0,
+                  interactive_elements: 0,
+                  key_ux_patterns: [],
+                  design_system_characteristics: []
+                },
+                metadata: {
+                  analyzed_by: request.options?.provider || 'unknown',
+                  timestamp: new Date().toISOString(),
+                  model_used: request.options?.modelId || 'unknown',
+                  status: 'error' as const
+                }
+              };
+              
+              console.log(`[structuredAnalyzerAgent] Estructura básica de fallback creada`);
+            }
+          }
+        }
+        
+        // Validaciones mínimas esenciales (solo si faltan campos críticos)
+        if (!structuredAnalysis.site_info) {
+          console.warn('[structuredAnalyzerAgent] Agregando site_info faltante');
+          structuredAnalysis.site_info = {
+            url: request.url,
+            title: 'No title provided',
+            description: 'No description provided',
+            language: 'en'
+          };
+        }
+        
+        if (!structuredAnalysis.blocks || !Array.isArray(structuredAnalysis.blocks)) {
+          console.warn('[structuredAnalyzerAgent] Agregando estructura de blocks faltante');
+          structuredAnalysis.blocks = [];
+        }
+        
+        if (!structuredAnalysis.structure_analysis) {
+          console.warn('[structuredAnalyzerAgent] Agregando structure_analysis faltante');
+          structuredAnalysis.structure_analysis = {
+            hierarchy_score: 50,
+            clarity_score: 50,
+            consistency_score: 50,
+            navigation_score: 50,
+            overall_structure_score: 50,
+            strengths: [],
+            weaknesses: [],
+            recommendations: []
+          };
+        }
+        
+        // Solo normalizar IDs si hay duplicados reales
+        const usedIds = new Set<string>();
+        let hasDuplicates = false;
+        
+        structuredAnalysis.blocks.forEach(block => {
+          if (block.id && usedIds.has(block.id)) {
+            hasDuplicates = true;
+          } else if (block.id) {
+            usedIds.add(block.id);
+          }
+        });
+        
+        if (hasDuplicates) {
+          console.log('[structuredAnalyzerAgent] Corrigiendo IDs duplicados en blocks');
+          const newUsedIds = new Set<string>();
+          structuredAnalysis.blocks = structuredAnalysis.blocks.map((block, index) => {
+            if (!block.id || newUsedIds.has(block.id)) {
+              block.id = `block-${index + 1}`;
+            }
+            newUsedIds.add(block.id);
+            return block;
+          });
+        }
+        
+        // NO normalizar prioridades - mantener el formato original del modelo
+        // (Comentado para evitar cambios innecesarios)
+        /*
+        if (structuredAnalysis.structure_analysis?.recommendations) {
+          structuredAnalysis.structure_analysis.recommendations = 
+            structuredAnalysis.structure_analysis.recommendations.map((rec: { 
+              issue: string; 
+              recommendation: string; 
+              impact: string; 
+              priority: string;
+            }) => {
+              // Normalizar prioridad
+              if (rec.priority) {
+                const priority = rec.priority.toLowerCase();
+                if (priority === 'alta' || priority === 'high') {
+                  rec.priority = 'high';
+                } else if (priority === 'baja' || priority === 'low') {
+                  rec.priority = 'low';
                 } else {
                   rec.priority = 'medium';
                 }
-                return rec;
-              });
-          }
-          */
-          
-          console.log(`[structuredAnalyzerAgent] Análisis estructurado completado con éxito`);
-          return structuredAnalysis;
-        } catch (error) {
-          console.error(`[structuredAnalyzerAgent] Error al procesar la respuesta: ${error}`);
-          throw error;
+              } else {
+                rec.priority = 'medium';
+              }
+              return rec;
+            });
         }
-      } else {
-        throw new Error('La respuesta de la API no tiene el formato esperado');
+        */
+        
+        console.log(`[structuredAnalyzerAgent] Análisis estructurado completado con éxito`);
+        return structuredAnalysis;
+      } catch (error) {
+        console.error(`[structuredAnalyzerAgent] Error al procesar la respuesta: ${error}`);
+        throw error;
       }
-    } catch (promptError) {
-      console.error(`[structuredAnalyzerAgent] Error al cargar el prompt: ${promptError}`);
-      throw promptError;
+    } else {
+      throw new Error('La respuesta de la API no tiene el formato esperado');
     }
-  } catch (error) {
-    console.error(`[structuredAnalyzerAgent] Error en el análisis estructurado: ${error}`);
-    
-    // Si falla, que falle - sin fallback dummy
-    throw error;
+  } catch (promptError) {
+    console.error(`[structuredAnalyzerAgent] Error al cargar el prompt: ${promptError}`);
+    throw promptError;
   }
 }
 

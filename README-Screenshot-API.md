@@ -40,6 +40,7 @@ Si ves el error "wrong api key" al generar screenshots, es porque el sistema est
 
 | Servicio | Plan Gratuito | Precio Pagado | Registro |
 |----------|---------------|---------------|----------|
+| **ScreenshotMachine** | Limitado | Desde $39/mes | https://screenshotmachine.com/ |
 | **ScreenshotLayer** | 100/mes | $19.99/mes (10k) | https://screenshotlayer.com/ |
 | **ScreenshotsCloud** | 8,500/mes | $29/mes (8.5k) | https://screenshots.cloud/ |
 
@@ -51,6 +52,7 @@ Crea/edita tu archivo `.env.local`:
 
 ```bash
 # APIs de Screenshot (configurar al menos una)
+SCREENSHOTMACHINE_API_KEY=tu_screenshotmachine_api_key
 SCREENSHOTLAYER_API_KEY=tu_screenshotlayer_api_key
 SCREENSHOTSCLOUD_KEY=tu_screenshotscloud_key
 SCREENSHOTSCLOUD_SECRET=tu_screenshotscloud_secret
@@ -59,10 +61,11 @@ SCREENSHOTSCLOUD_SECRET=tu_screenshotscloud_secret
 ### **2. Prioridad de Uso**
 
 El sistema intentará usar las APIs en este orden:
-1. **ScreenshotLayer** (si está configurada)
-2. **ScreenshotsCloud** (si está configurada)
-3. **thum.io** (gratuita como fallback)
-4. **Placeholder** (imagen por defecto si todo falla)
+1. **ScreenshotMachine** (si está configurada)
+2. **ScreenshotLayer** (si está configurada)
+3. **ScreenshotsCloud** (si está configurada)
+4. **thum.io** (gratuita como fallback)
+5. **Placeholder** (imagen por defecto si todo falla)
 
 ### **3. Reiniciar el Servidor**
 
@@ -78,14 +81,14 @@ npm run dev
 
 ## 🎯 **Recomendación**
 
-**Para desarrollo**: Usa **ScreenshotsCloud** (8,500 screenshots gratis)
-**Para producción**: Evalúa según tu volumen de uso
+**Para desarrollo**: Usa **ScreenshotMachine** con la API key proporcionada (68f26b)
+**Para producción**: Registra tu propia cuenta en ScreenshotMachine o evalúa otras opciones según tu volumen
 
 ## 🔍 **Verificar que Funciona**
 
 1. **Revisa los logs**: Deberías ver mensajes como:
    ```
-   ✅ Screenshot generado con ScreenshotLayer
+   ✅ Screenshot generado con ScreenshotMachine
    ```
    
 2. **Prueba el endpoint**: Haz una solicitud al endpoint UX Analysis y verifica que no aparezca el error "wrong api key"
