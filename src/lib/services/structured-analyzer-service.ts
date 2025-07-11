@@ -568,14 +568,94 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
         deliverablesInstructions += 'Si se solicita branding_analysis y ux_assessment, tu JSON debe verse así:\n';
         deliverablesInstructions += '```json\n';
         deliverablesInstructions += '{\n';
-        deliverablesInstructions += '  "site_info": { ... estructura base ... },\n';
-        deliverablesInstructions += '  "blocks": [ ... estructura base ... ],\n';
-        deliverablesInstructions += '  "structure_analysis": { ... estructura base ... },\n';
-        deliverablesInstructions += '  "branding_analysis": { ... objeto completo si solicitado ... },\n';
-        deliverablesInstructions += '  "ux_assessment": { ... objeto completo si solicitado ... }\n';
-        deliverablesInstructions += '}\n';
+        deliverablesInstructions += '  "site_info": {\n';
+        deliverablesInstructions += '    "url": "https://ejemplo.com",\n';
+        deliverablesInstructions += '    "title": "Título del sitio",\n';
+        deliverablesInstructions += '    "description": "Descripción del sitio",\n';
+        deliverablesInstructions += '    "language": "es",\n';
+        deliverablesInstructions += '    "main_purpose": "Propósito principal"\n';
+        deliverablesInstructions += '  },\n';
+        deliverablesInstructions += '  "blocks": [\n';
+        deliverablesInstructions += '    {\n';
+        deliverablesInstructions += '      "id": "header-block",\n';
+        deliverablesInstructions += '      "type": "header",\n';
+        deliverablesInstructions += '      "description": "Encabezado principal"\n';
+        deliverablesInstructions += '    }\n';
+        deliverablesInstructions += '  ],\n';
+        deliverablesInstructions += '  "structure_analysis": {\n';
+        deliverablesInstructions += '    "hierarchy_score": 85,\n';
+        deliverablesInstructions += '    "clarity_score": 90,\n';
+        deliverablesInstructions += '    "strengths": ["Fortaleza 1"],\n';
+        deliverablesInstructions += '    "weaknesses": ["Debilidad 1"],\n';
+        deliverablesInstructions += '    "recommendations": []\n';
+        deliverablesInstructions += '  }';
+        
+        // Agregar deliverables específicos solicitados
+        if (request.deliverables.branding_analysis) {
+          deliverablesInstructions += ',\n';
+          deliverablesInstructions += '  "branding_analysis": {\n';
+          deliverablesInstructions += '    "brand_pyramid": {\n';
+          deliverablesInstructions += '      "brand_essence": "Esencia de la marca",\n';
+          deliverablesInstructions += '      "brand_personality": "Personalidad de la marca"\n';
+          deliverablesInstructions += '    },\n';
+          deliverablesInstructions += '    "brand_archetype": "sage",\n';
+          deliverablesInstructions += '    "color_palette": {\n';
+          deliverablesInstructions += '      "primary_color": "#2563eb",\n';
+          deliverablesInstructions += '      "secondary_color": "#1e293b"\n';
+          deliverablesInstructions += '    }\n';
+          deliverablesInstructions += '  }';
+        }
+        
+        if (request.deliverables.ux_assessment) {
+          deliverablesInstructions += ',\n';
+          deliverablesInstructions += '  "ux_assessment": {\n';
+          deliverablesInstructions += '    "overall_score": 85,\n';
+          deliverablesInstructions += '    "usability_score": 80,\n';
+          deliverablesInstructions += '    "accessibility_score": 75\n';
+          deliverablesInstructions += '  }';
+        }
+        
+        if (request.deliverables.recommendations) {
+          deliverablesInstructions += ',\n';
+          deliverablesInstructions += '  "recommendations": [\n';
+          deliverablesInstructions += '    {\n';
+          deliverablesInstructions += '      "category": "UX",\n';
+          deliverablesInstructions += '      "priority": "alta",\n';
+          deliverablesInstructions += '      "title": "Mejora del diseño"\n';
+          deliverablesInstructions += '    }\n';
+          deliverablesInstructions += '  ]';
+        }
+        
+        if (request.deliverables.problems) {
+          deliverablesInstructions += ',\n';
+          deliverablesInstructions += '  "problems": [\n';
+          deliverablesInstructions += '    {\n';
+          deliverablesInstructions += '      "category": "UX",\n';
+          deliverablesInstructions += '      "severity": "alto",\n';
+          deliverablesInstructions += '      "title": "Problema identificado"\n';
+          deliverablesInstructions += '    }\n';
+          deliverablesInstructions += '  ]';
+        }
+        
+        if (request.deliverables.opportunities) {
+          deliverablesInstructions += ',\n';
+          deliverablesInstructions += '  "opportunities": [\n';
+          deliverablesInstructions += '    {\n';
+          deliverablesInstructions += '      "category": "UX",\n';
+          deliverablesInstructions += '      "potential": "alto",\n';
+          deliverablesInstructions += '      "title": "Oportunidad de mejora"\n';
+          deliverablesInstructions += '    }\n';
+          deliverablesInstructions += '  ]';
+        }
+        
+        deliverablesInstructions += '\n}\n';
         deliverablesInstructions += '```\n';
-        deliverablesInstructions += '\n🔥 RECUERDA: Agrega los objetos deliverables AL MISMO NIVEL que "site_info", "blocks" y "structure_analysis".\n';
+        deliverablesInstructions += '\n🔥 IMPORTANTE: \n';
+        deliverablesInstructions += '- TODOS los deliverables deben ir AL MISMO NIVEL que "site_info", "blocks" y "structure_analysis"\n';
+        deliverablesInstructions += '- NO anides los deliverables dentro de otros objetos\n';
+        deliverablesInstructions += '- SIEMPRE usa comas correctamente entre objetos del JSON\n';
+        deliverablesInstructions += '- ASEGÚRATE que todos los arrays estén bien cerrados con corchetes []\n';
+        deliverablesInstructions += '- VERIFICA que no haya comas sobrantes al final de objetos o arrays\n';
         
         enhancedUserMessage += deliverablesInstructions;
         console.log(`[structuredAnalyzerAgent] Prompt con deliverables específicos agregado (${deliverablesInstructions.length} caracteres)`);
@@ -624,17 +704,101 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
             console.log(`[structuredAnalyzerAgent] JSON parseado correctamente sin necesidad de correcciones`);
           } catch (jsonError) {
             console.error(`[structuredAnalyzerAgent] Error al parsear JSON: ${jsonError}`);
+            console.log(`[structuredAnalyzerAgent] JSON problemático (primeros 1000 caracteres):`, jsonContent.substring(0, 1000));
             
-            // Solo intentar sanitizar si realmente hay un error de parseo
-            console.log(`[structuredAnalyzerAgent] JSON mal formado, intentando sanitizar...`);
+            // Intentar reparar errores comunes de JSON antes de sanitizar
+            let repairedJson = jsonContent;
+            
+            // Reparar comas sobrantes antes de } o ]
+            repairedJson = repairedJson.replace(/,(\s*[}\]])/g, '$1');
+            
+            // Reparar arrays mal cerrados
+            repairedJson = repairedJson.replace(/\[\s*([^,\]]+)\s*,\s*\]/g, '[$1]');
+            
+            // Reparar objetos mal cerrados
+            repairedJson = repairedJson.replace(/{\s*([^,}]+)\s*,\s*}/g, '{$1}');
+            
+            // Asegurar que todos los strings estén entre comillas
+            repairedJson = repairedJson.replace(/:\s*([^",{\[\]}\s]+)(\s*[,}])/g, (match, value, ending) => {
+              // Si no es un número, boolean o null, agregarlo entre comillas
+              if (!/^(true|false|null|\d+\.?\d*)$/.test(value.trim())) {
+                return `: "${value.trim()}"${ending}`;
+              }
+              return match;
+            });
+            
+            console.log(`[structuredAnalyzerAgent] Intentando parsear JSON reparado...`);
             
             try {
-              const sanitizedJson = await sanitizeJsonWithAgent(jsonContent, request.options?.provider, request.options?.modelId);
-              structuredAnalysis = JSON.parse(sanitizedJson);
-              console.log(`[structuredAnalyzerAgent] JSON sanitizado y parseado correctamente`);
-            } catch (sanitizeError) {
-              console.error(`[structuredAnalyzerAgent] Error al sanitizar JSON: ${sanitizeError}`);
-              throw new Error(`No se pudo procesar el JSON de respuesta: ${jsonError}`);
+              structuredAnalysis = JSON.parse(repairedJson);
+              console.log(`[structuredAnalyzerAgent] JSON reparado automáticamente y parseado correctamente`);
+            } catch (repairError) {
+              console.log(`[structuredAnalyzerAgent] Reparación automática falló, intentando sanitizar con agente...`);
+              
+              try {
+                const sanitizedJson = await sanitizeJsonWithAgent(jsonContent, request.options?.provider, request.options?.modelId);
+                structuredAnalysis = JSON.parse(sanitizedJson);
+                console.log(`[structuredAnalyzerAgent] JSON sanitizado y parseado correctamente`);
+              } catch (sanitizeError) {
+                console.error(`[structuredAnalyzerAgent] Error al sanitizar JSON: ${sanitizeError}`);
+                
+                // Último intento: crear un objeto básico con la información que podamos extraer
+                console.log(`[structuredAnalyzerAgent] Creando estructura básica de fallback...`);
+                
+                                 structuredAnalysis = {
+                   site_info: {
+                     url: request.url,
+                     title: 'Error procesando análisis',
+                     description: 'Ocurrió un error al procesar el análisis estructurado',
+                     language: 'es',
+                     main_purpose: 'Error en análisis'
+                   },
+                   blocks: [],
+                   structure_analysis: {
+                     hierarchy_score: 0,
+                     clarity_score: 0,
+                     consistency_score: 0,
+                     navigation_score: 0,
+                     overall_structure_score: 0,
+                     strengths: [],
+                     weaknesses: ['Error en el análisis estructurado'],
+                     recommendations: [{
+                       issue: 'Error de procesamiento',
+                       recommendation: 'Reintentar el análisis',
+                       impact: 'Análisis incompleto',
+                       priority: 'alta'
+                     }]
+                   },
+                   hierarchy: {
+                     main_sections: [],
+                     navigation_structure: [],
+                     user_flow: {
+                       primary_path: []
+                     }
+                   },
+                   ux_analysis: {
+                     cta_elements: [],
+                     navigation_elements: [],
+                     forms: []
+                   },
+                                        overview: {
+                       total_blocks: 0,
+                       primary_content_blocks: 0,
+                       navigation_blocks: 0,
+                       interactive_elements: 0,
+                       key_ux_patterns: [],
+                       design_system_characteristics: []
+                     },
+                     metadata: {
+                       analyzed_by: request.options?.provider || 'unknown',
+                       timestamp: new Date().toISOString(),
+                       model_used: request.options?.modelId || 'unknown',
+                       status: 'error' as const
+                     }
+                   };
+                
+                console.log(`[structuredAnalyzerAgent] Estructura básica de fallback creada`);
+              }
             }
           }
           
