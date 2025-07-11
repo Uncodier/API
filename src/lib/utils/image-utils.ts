@@ -209,7 +209,67 @@ async function captureScreenshotServerless(url: string, options?: { timeout?: nu
 
 // Función para generar screenshot usando API externa
 async function generateScreenshotExternal(url: string): Promise<string> {
-  // Opción 1: Usar API gratuita de screenshot
+  // Opción 1: Usar ScreenshotMachine si está configurado
+  if (process.env.SCREENSHOTMACHINE_API_KEY) {
+    try {
+      const apiUrl = `https://api.screenshotmachine.com/?key=${process.env.SCREENSHOTMACHINE_API_KEY}&url=${encodeURIComponent(url)}&dimension=1200x800&format=jpg&device=desktop&delay=2000&cacheLimit=1`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot generado con ScreenshotMachine');
+        return `data:image/jpeg;base64,${base64}`;
+      } else {
+        console.warn(`Error con ScreenshotMachine: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotMachine:', error);
+    }
+  }
+  
+  // Opción 2: Usar ScreenshotLayer si está configurado
+  if (process.env.SCREENSHOTLAYER_API_KEY) {
+    try {
+      const apiUrl = `https://api.screenshotlayer.com/api/capture?access_key=${process.env.SCREENSHOTLAYER_API_KEY}&url=${encodeURIComponent(url)}&viewport=1200x800&width=1200&format=JPG`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot generado con ScreenshotLayer');
+        return `data:image/jpeg;base64,${base64}`;
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotLayer:', error);
+    }
+  }
+  
+  // Opción 3: Usar ScreenshotsCloud si está configurado
+  if (process.env.SCREENSHOTSCLOUD_KEY && process.env.SCREENSHOTSCLOUD_SECRET) {
+    try {
+      // Implementar lógica de ScreenshotsCloud con autenticación HMAC
+      const crypto = require('crypto');
+      const timestamp = Math.floor(Date.now() / 1000);
+      const signature = crypto.createHmac('sha1', process.env.SCREENSHOTSCLOUD_SECRET)
+        .update(`${process.env.SCREENSHOTSCLOUD_KEY}${timestamp}${url}`)
+        .digest('hex');
+      
+      const apiUrl = `https://api.screenshots.cloud/v1/screenshot?key=${process.env.SCREENSHOTSCLOUD_KEY}&url=${encodeURIComponent(url)}&width=1200&timestamp=${timestamp}&signature=${signature}`;
+      const response = await fetch(apiUrl);
+      
+      if (response.ok) {
+        const buffer = await response.arrayBuffer();
+        const base64 = Buffer.from(buffer).toString('base64');
+        console.log('✅ Screenshot generado con ScreenshotsCloud');
+        return `data:image/jpeg;base64,${base64}`;
+      }
+    } catch (error) {
+      console.warn('Error con ScreenshotsCloud:', error);
+    }
+  }
+  
+  // Opción 4: Usar thum.io como fallback (API gratuita)
   try {
     const apiUrl = `https://image.thum.io/get/allowJPG/wait/20/width/1200/crop/800/${encodeURIComponent(url)}`;
     const response = await fetch(apiUrl);
@@ -217,27 +277,15 @@ async function generateScreenshotExternal(url: string): Promise<string> {
     if (response.ok) {
       const buffer = await response.arrayBuffer();
       const base64 = Buffer.from(buffer).toString('base64');
+      console.log('✅ Screenshot generado con thum.io');
       return `data:image/jpeg;base64,${base64}`;
     }
   } catch (error) {
     console.warn('Error con thum.io:', error);
   }
   
-  // Opción 2: Usar otra API como fallback
-  try {
-    const apiUrl = `https://api.screenshotmachine.com/?key=demo&url=${encodeURIComponent(url)}&dimension=1200x800`;
-    const response = await fetch(apiUrl);
-    
-    if (response.ok) {
-      const buffer = await response.arrayBuffer();
-      const base64 = Buffer.from(buffer).toString('base64');
-      return `data:image/jpeg;base64,${base64}`;
-    }
-  } catch (error) {
-    console.warn('Error con screenshotmachine:', error);
-  }
-  
   // Si todo falla, usar placeholder
+  console.warn('⚠️ No se pudo generar screenshot, usando placeholder');
   return generatePlaceholderImage(url);
 }
 
