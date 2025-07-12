@@ -28,6 +28,7 @@ import DataAnalystAnalysisApi from './DataAnalystAnalysisApi';
 import DataAnalystLeadSegmentationApi from './DataAnalystLeadSegmentationApi';
 import CmoDailyStandupSystemApi from './CmoDailyStandupSystemApi';
 import UxAnalysisApi from './UxAnalysisApi';
+import LeadAttentionApi from './LeadAttentionApi';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -59,5 +60,6 @@ apiRegistry.register(DataAnalystAnalysisApi);
 apiRegistry.register(DataAnalystLeadSegmentationApi);
 apiRegistry.register(CmoDailyStandupSystemApi);
 apiRegistry.register(UxAnalysisApi);
+apiRegistry.register(LeadAttentionApi);
 
 export default apiRegistry; 
