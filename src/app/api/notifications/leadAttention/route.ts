@@ -9,7 +9,8 @@ export const maxDuration = 120;
 // Schema de validación para la request
 const LeadAttentionSchema = z.object({
   lead_id: z.string().uuid('lead_id debe ser un UUID válido'),
-  message: z.string().optional(),
+  user_message: z.string().optional(),
+  system_message: z.string().optional(),
   channel: z.enum(['email', 'whatsapp', 'phone', 'chat', 'form', 'other']).default('other'),
   priority: z.enum(['low', 'normal', 'high', 'urgent']).default('normal'),
   contact_info: z.object({
@@ -47,26 +48,27 @@ async function getLeadInfo(leadId: string): Promise<any | null> {
   }
 }
 
-// Función para obtener información del team member desde auth.users
+// Función para obtener información del team member desde auth
 async function getTeamMemberInfo(userId: string): Promise<any | null> {
   try {
-    const { data, error } = await supabaseAdmin
-      .from('auth.users')
-      .select('id, email, raw_user_meta_data')
-      .eq('id', userId)
-      .single();
+    const { data, error } = await supabaseAdmin.auth.admin.getUserById(userId);
     
     if (error) {
       console.error('Error al obtener información del team member:', error);
       return null;
     }
     
+    if (!data.user) {
+      console.error('Team member no encontrado');
+      return null;
+    }
+    
     // Extraer información del metadata
-    const metadata = data.raw_user_meta_data || {};
+    const metadata = data.user.user_metadata || {};
     
     const teamMemberInfo = {
-      id: data.id,
-      email: data.email,
+      id: data.user.id,
+      email: data.user.email,
       name: metadata.name || metadata.full_name || 'Team Member',
       role: metadata.role || 'team_member',
       avatar_url: metadata.avatar_url || null,
@@ -154,7 +156,8 @@ function generateTeamMemberNotificationHtml(data: {
   teamMemberName: string;
   leadName: string;
   leadEmail: string;
-  message: string;
+  userMessage?: string;
+  systemMessage?: string;
   siteName: string;
   channel: string;
   priority: string;
@@ -166,7 +169,7 @@ function generateTeamMemberNotificationHtml(data: {
   additionalData?: any;
   logoUrl?: string;
   leadUrl?: string;
-  siteUrl?: string;
+  chatUrl?: string;
   replyEmail?: string;
 }): string {
   const channelIcons = {
@@ -283,15 +286,32 @@ function generateTeamMemberNotificationHtml(data: {
             </div>
           </div>
           
-          <!-- Message -->
+          <!-- Messages -->
+          ${data.userMessage || data.systemMessage ? `
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Message</h3>
-            <div style="background-color: #f1f5f9; padding: 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
-              <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
-                ${data.message}
+            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Messages</h3>
+            ${data.userMessage ? `
+            <div style="margin-bottom: 16px;">
+              <h4 style="margin: 0 0 8px; font-size: 16px; color: #3b82f6; font-weight: 600;">User Message</h4>
+              <div style="background-color: #f1f5f9; padding: 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
+                <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
+                  ${data.userMessage}
+                </div>
               </div>
             </div>
+            ` : ''}
+            ${data.systemMessage ? `
+            <div style="margin-bottom: 16px;">
+              <h4 style="margin: 0 0 8px; font-size: 16px; color: #f59e0b; font-weight: 600;">System Message</h4>
+              <div style="background-color: #fff7ed; padding: 24px; border-radius: 8px; border: 1px solid #fed7aa;">
+                <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
+                  ${data.systemMessage}
+                </div>
+              </div>
+            </div>
+            ` : ''}
           </div>
+          ` : ''}
           
           <!-- Additional Data -->
           ${data.additionalData && Object.keys(data.additionalData).length > 0 ? `
@@ -316,14 +336,10 @@ function generateTeamMemberNotificationHtml(data: {
               View Lead →
             </a>
             ` : ''}
-            <a href="mailto:${data.leadEmail}" 
+            ${data.chatUrl ? `
+            <a href="${data.chatUrl}" 
                style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
               Reply to Lead →
-            </a>
-            ${data.siteUrl ? `
-            <a href="${data.siteUrl}" 
-               style="display: inline-block; background: #ffffff; color: #f59e0b; border: 2px solid #f59e0b; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; transition: background-color 0.2s, color 0.2s; margin: 0 6px 12px; vertical-align: top;">
-              Visit Site →
             </a>
             ` : ''}
           </div>
@@ -395,7 +411,8 @@ export async function POST(request: NextRequest) {
     
     const {
       lead_id,
-      message,
+      user_message,
+      system_message,
       channel,
       priority,
       contact_info,
@@ -527,7 +544,8 @@ export async function POST(request: NextRequest) {
           teamMemberName: teamMemberInfo.name || 'Team Member',
           leadName: leadInfo.name || 'Unknown Lead',
           leadEmail: leadInfo.email || 'No email',
-          message: message || `This lead has contacted you via ${channel} and requires your attention.`,
+          userMessage: user_message,
+          systemMessage: system_message,
           siteName: siteInfo.name || 'Unknown Site',
           channel,
           priority,
@@ -535,7 +553,7 @@ export async function POST(request: NextRequest) {
           additionalData: additional_data,
           logoUrl: siteInfo.logo_url,
           leadUrl,
-          siteUrl,
+          chatUrl: `${baseUrl}/sites/${siteId}/chat`,
           replyEmail: replyEmail || undefined
         }),
         categories: ['lead-attention', 'team-notification', 'priority-' + priority],
