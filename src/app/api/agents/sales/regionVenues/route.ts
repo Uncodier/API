@@ -12,7 +12,9 @@ export async function GET(request: Request) {
     const searchTerm = url.searchParams.get('searchTerm');
     const city = url.searchParams.get('city');
     const region = url.searchParams.get('region');
-    const maxVenues = parseInt(url.searchParams.get('maxVenues') || '10');
+    const maxVenuesParam = url.searchParams.get('maxVenues');
+    const maxVenues = parseInt(maxVenuesParam || '1');
+    
     
     console.log('🔍 Region Venues API - GET request:', {
       siteId,
@@ -59,6 +61,7 @@ export async function GET(request: Request) {
     
     // Buscar venues en la región
     console.log('🚀 Starting venue search with Google Maps API...');
+    
     const searchResult = await regionVenuesService.searchRegionVenues({
       siteId,
       searchTerm,
@@ -87,6 +90,9 @@ export async function GET(request: Request) {
       );
     }
     
+    // Limitar venues a la cantidad solicitada (verificación adicional)
+    const limitedVenues = searchResult.venues?.slice(0, maxVenues) || [];
+    
     // Devolver resultados directamente
     const response = {
       success: true,
@@ -94,8 +100,8 @@ export async function GET(request: Request) {
         searchTerm,
         city,
         region,
-        venueCount: searchResult.venues?.length || 0,
-        venues: searchResult.venues || [],
+        venueCount: limitedVenues.length,
+        venues: limitedVenues,
         timestamp: new Date().toISOString()
       }
     };
@@ -139,7 +145,7 @@ export async function POST(request: Request) {
     }
     
     // Validar maxVenues
-    const maxVenues = params.maxVenues || 10;
+    const maxVenues = params.maxVenues || 1;
     if (maxVenues < 1 || maxVenues > 50) {
       return NextResponse.json(
         { 
@@ -176,6 +182,9 @@ export async function POST(request: Request) {
       );
     }
     
+    // Limitar venues a la cantidad solicitada (verificación adicional)
+    const limitedVenues = searchResult.venues?.slice(0, maxVenues) || [];
+    
     // Devolver resultados directamente (igual que GET pero con más datos opcionales)
     return NextResponse.json({
       success: true,
@@ -183,8 +192,8 @@ export async function POST(request: Request) {
         searchTerm: params.searchTerm,
         city: params.city,
         region: params.region,
-        venueCount: searchResult.venues?.length || 0,
-        venues: searchResult.venues || [],
+        venueCount: limitedVenues.length,
+        venues: limitedVenues,
         // Incluir datos adicionales si se proporcionaron
         ...(params.targetAudience && { targetAudience: params.targetAudience }),
         ...(params.eventInfo && { eventInfo: params.eventInfo }),

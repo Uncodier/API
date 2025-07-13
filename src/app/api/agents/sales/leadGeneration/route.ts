@@ -95,7 +95,7 @@ export async function POST(request: Request) {
       maxLeads = 10,
       priority = "medium",
       webhook,
-      business // Nuevo parámetro para contexto de negocio
+      company // Cambio de business a company para contexto de negocio
     } = body;
     
     // Support both siteId and site_id formats
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
       usedRegions,
       maxLeads,
       webhook,
-      business // Agregar contexto de negocio
+      company // Cambio de business a company
     );
     
     // 5. Herramientas por defecto para lead generation

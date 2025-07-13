@@ -169,7 +169,7 @@ export class RegionVenuesService {
     searchTerm: string,
     city: string,
     region: string,
-    limit: number = 10
+    limit: number = 1
   ): Promise<VenueSearchResult> {
     try {
       console.log(`🔍 Starting Places API search for: "${searchTerm}" in ${city}, ${region}`);
@@ -450,7 +450,7 @@ export class RegionVenuesService {
     searchTerm: string,
     city: string,
     region: string,
-    limit: number = 10
+    limit: number = 1
   ): Promise<VenueSearchResult> {
     try {
       console.log(`Searching venues: "${searchTerm}" in ${city}, ${region}`);
@@ -566,12 +566,14 @@ export class RegionVenuesService {
         };
       }
 
+      const finalLimit = params.limit || 1;
+
       // Buscar venues
       const searchResult = await this.searchVenues(
         params.searchTerm,
         params.city,
         params.region,
-        params.limit || 10
+        finalLimit
       );
 
       if (!searchResult.success) {

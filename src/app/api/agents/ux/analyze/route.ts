@@ -22,6 +22,70 @@ import { getSiteHtml } from '@/lib/actions/analyze-site'
  * - Actualización automática de branding en settings (preserva datos existentes)
  */
 
+// Esquema de validación para campos de branding
+const BrandingSchema = z.object({
+  // Brand pyramid fields
+  brand_essence: z.string().min(10, 'Brand essence debe tener al menos 10 caracteres').max(500, 'Brand essence no puede exceder 500 caracteres').optional(),
+  brand_personality: z.string().min(10, 'Brand personality debe tener al menos 10 caracteres').max(300, 'Brand personality no puede exceder 300 caracteres').optional(),
+  brand_benefits: z.string().min(10, 'Brand benefits debe tener al menos 10 caracteres').max(500, 'Brand benefits no puede exceder 500 caracteres').optional(),
+  brand_attributes: z.string().min(10, 'Brand attributes debe tener al menos 10 caracteres').max(500, 'Brand attributes no puede exceder 500 caracteres').optional(),
+  brand_values: z.string().min(10, 'Brand values debe tener al menos 10 caracteres').max(300, 'Brand values no puede exceder 300 caracteres').optional(),
+  brand_promise: z.string().min(10, 'Brand promise debe tener al menos 10 caracteres').max(500, 'Brand promise no puede exceder 500 caracteres').optional(),
+  
+  // Brand archetype - valores permitidos
+  brand_archetype: z.enum([
+    'sage', 'magician', 'hero', 'caregiver', 'explorer', 'rebel', 
+    'lover', 'creator', 'innocent', 'jester', 'citizen', 'ruler'
+  ], { errorMap: () => ({ message: 'Brand archetype debe ser uno de los arquetipos válidos' }) }).optional(),
+  
+  // Color palette - validación de colores hex
+  primary_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Primary color debe ser un código hex válido (#RRGGBB)').optional(),
+  secondary_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Secondary color debe ser un código hex válido (#RRGGBB)').optional(),
+  accent_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Accent color debe ser un código hex válido (#RRGGBB)').optional(),
+  success_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Success color debe ser un código hex válido (#RRGGBB)').optional(),
+  warning_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Warning color debe ser un código hex válido (#RRGGBB)').optional(),
+  error_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Error color debe ser un código hex válido (#RRGGBB)').optional(),
+  background_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Background color debe ser un código hex válido (#RRGGBB)').optional(),
+  surface_color: z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Surface color debe ser un código hex válido (#RRGGBB)').optional(),
+  
+  // Typography
+  primary_font: z.string().min(3, 'Primary font debe tener al menos 3 caracteres').max(100, 'Primary font no puede exceder 100 caracteres').optional(),
+  secondary_font: z.string().min(3, 'Secondary font debe tener al menos 3 caracteres').max(100, 'Secondary font no puede exceder 100 caracteres').optional(),
+  font_size_scale: z.enum(['small', 'medium', 'large'], { errorMap: () => ({ message: 'Font size scale debe ser small, medium o large' }) }).optional(),
+  font_hierarchy: z.string().min(10, 'Font hierarchy debe tener al menos 10 caracteres').max(300, 'Font hierarchy no puede exceder 300 caracteres').optional(),
+  font_sizes: z.string().min(10, 'Font sizes debe tener al menos 10 caracteres').max(200, 'Font sizes no puede exceder 200 caracteres').optional(),
+  
+  // Voice and tone
+  communication_style: z.enum(['friendly', 'professional', 'casual', 'formal', 'authoritative', 'conversational'], { 
+    errorMap: () => ({ message: 'Communication style debe ser uno de los estilos válidos' }) 
+  }).optional(),
+  personality_traits: z.array(z.string().min(2, 'Cada personality trait debe tener al menos 2 caracteres')).max(10, 'Máximo 10 personality traits').optional(),
+  brand_voice: z.string().min(10, 'Brand voice debe tener al menos 10 caracteres').max(300, 'Brand voice no puede exceder 300 caracteres').optional(),
+  
+  // Brand guidelines
+  do_list: z.array(z.string().min(5, 'Cada elemento de do_list debe tener al menos 5 caracteres')).max(20, 'Máximo 20 elementos en do_list').optional(),
+  dont_list: z.array(z.string().min(5, 'Cada elemento de dont_list debe tener al menos 5 caracteres')).max(20, 'Máximo 20 elementos en dont_list').optional(),
+  forbidden_words: z.array(z.string().min(1, 'Cada forbidden word debe tener al menos 1 caracter')).max(50, 'Máximo 50 forbidden words').optional(),
+  preferred_phrases: z.array(z.string().min(2, 'Cada preferred phrase debe tener al menos 2 caracteres')).max(50, 'Máximo 50 preferred phrases').optional(),
+  emotions_to_evoke: z.array(z.string().min(2, 'Cada emotion debe tener al menos 2 caracteres')).max(15, 'Máximo 15 emotions').optional(),
+  
+  // Brand guidelines additional
+  logo_usage: z.string().min(10, 'Logo usage debe tener al menos 10 caracteres').max(500, 'Logo usage no puede exceder 500 caracteres').optional(),
+  color_usage: z.string().min(10, 'Color usage debe tener al menos 10 caracteres').max(500, 'Color usage no puede exceder 500 caracteres').optional(),
+  imagery_style: z.string().min(10, 'Imagery style debe tener al menos 10 caracteres').max(500, 'Imagery style no puede exceder 500 caracteres').optional(),
+  typography_usage: z.string().min(10, 'Typography usage debe tener al menos 10 caracteres').max(500, 'Typography usage no puede exceder 500 caracteres').optional(),
+  messaging_guidelines: z.string().min(10, 'Messaging guidelines debe tener al menos 10 caracteres').max(500, 'Messaging guidelines no puede exceder 500 caracteres').optional(),
+  
+  // Brand assets
+  logo_variations: z.array(z.string().min(3, 'Cada logo variation debe tener al menos 3 caracteres')).max(10, 'Máximo 10 logo variations').optional(),
+  templates: z.array(z.string().min(3, 'Cada template debe tener al menos 3 caracteres')).max(20, 'Máximo 20 templates').optional(),
+  font_files: z.array(z.string().min(3, 'Cada font file debe tener al menos 3 caracteres')).max(20, 'Máximo 20 font files').optional(),
+  color_swatches: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Cada color swatch debe ser un código hex válido')).max(20, 'Máximo 20 color swatches').optional(),
+  
+  // Neutral colors
+  neutral_colors: z.array(z.string().regex(/^#[0-9a-fA-F]{6}$/, 'Cada neutral color debe ser un código hex válido')).max(10, 'Máximo 10 neutral colors').optional()
+}).strict()
+
 // Esquema de validación para los parámetros de entrada
 const RequestSchema = z.object({
   site_id: z.string().uuid('site_id debe ser un UUID válido'),
@@ -777,6 +841,70 @@ async function detectOpportunities(analysis: any, uxAssessment: any, siteInfo: a
   return opportunities
 }
 
+// Función para validar campos de branding
+function validateBrandingFields(brandingData: any): { 
+  isValid: boolean; 
+  validatedData: any; 
+  errors: string[]; 
+  validFields: number 
+} {
+  const errors: string[] = []
+  const validatedData: any = {}
+  
+  try {
+    // Validar todo el objeto con el esquema completo
+    const result = BrandingSchema.safeParse(brandingData)
+    
+    if (result.success) {
+      // Si toda la validación es exitosa, usar los datos validados
+      return {
+        isValid: true,
+        validatedData: result.data,
+        errors: [],
+        validFields: Object.keys(result.data).length
+      }
+    } else {
+      // Si hay errores, procesar campo por campo para obtener los válidos
+      const fieldErrors = result.error.errors.map(e => `${e.path.join('.')}: ${e.message}`)
+      errors.push(...fieldErrors)
+      
+      // Extraer campos válidos individualmente
+      for (const [key, value] of Object.entries(brandingData)) {
+        if (value === null || value === undefined || value === '') {
+          continue
+        }
+        
+        try {
+          // Crear un objeto temporal solo con este campo para validar
+          const tempObject = { [key]: value }
+          const fieldResult = BrandingSchema.safeParse(tempObject)
+          
+          if (fieldResult.success && fieldResult.data[key as keyof typeof fieldResult.data]) {
+            validatedData[key] = fieldResult.data[key as keyof typeof fieldResult.data]
+          }
+        } catch (fieldError) {
+          // Error individual del campo ya capturado en el error general
+          continue
+        }
+      }
+      
+      return {
+        isValid: false,
+        validatedData,
+        errors,
+        validFields: Object.keys(validatedData).length
+      }
+    }
+  } catch (error) {
+    return {
+      isValid: false,
+      validatedData: {},
+      errors: ['Error de validación general: ' + (error instanceof Error ? error.message : 'Error desconocido')],
+      validFields: 0
+    }
+  }
+}
+
 // Función para actualizar branding en settings
 async function updateSiteBranding(siteId: string, newBrandingData: any, existingBranding: any = {}) {
   console.log(`🔄 [UX Analysis] Actualizando branding en settings para sitio: ${siteId}`)
@@ -791,6 +919,17 @@ async function updateSiteBranding(siteId: string, newBrandingData: any, existing
   
   try {
     const { supabaseAdmin } = await import('@/lib/database/supabase-client')
+    
+    // Validar campos de branding antes de procesar
+    console.log(`🔍 [UX Analysis] Validando campos de branding...`)
+    const validationResult = validateBrandingFields(newBrandingData)
+    
+    if (!validationResult.isValid) {
+      console.error('❌ [UX Analysis] Errores de validación en branding:', validationResult.errors)
+      throw new Error(`Errores de validación en branding: ${validationResult.errors.join(', ')}`)
+    }
+    
+    console.log(`✅ [UX Analysis] Validación de branding exitosa. Campos válidos: ${validationResult.validFields}`)
     
     // Función simple para combinar objetos solo con campos faltantes (estructura plana)
     const fillMissingFields = (existing: any, newData: any): any => {
@@ -809,12 +948,12 @@ async function updateSiteBranding(siteId: string, newBrandingData: any, existing
     }
     
     // Combinar branding existente con nuevos datos solo donde falten campos
-    const mergedBranding = fillMissingFields(existingBranding, newBrandingData)
+    const mergedBranding = fillMissingFields(existingBranding, validationResult.validatedData)
     
     // Contar campos que se van a actualizar
-    const fieldsToUpdate = countFieldsToUpdate(existingBranding, newBrandingData)
+    const fieldsToUpdate = countFieldsToUpdate(existingBranding, validationResult.validatedData)
     console.log(`🔄 [UX Analysis] Actualizando ${fieldsToUpdate} campos de branding faltantes`)
-    console.log(`🔍 [UX Analysis] Campos nuevos de branding:`, Object.keys(newBrandingData))
+    console.log(`🔍 [UX Analysis] Campos validados y nuevos de branding:`, Object.keys(validationResult.validatedData))
     
     // Verificar que el sitio existe en settings
     const { data: existingSite, error: queryError } = await supabaseAdmin
@@ -849,7 +988,8 @@ async function updateSiteBranding(siteId: string, newBrandingData: any, existing
     console.log(`✅ [UX Analysis] Branding actualizado correctamente (${fieldsToUpdate} campos faltantes)`)
     console.log(`🎯 [UX Analysis] Estructura final del branding:`, {
       total_fields: Object.keys(mergedBranding).length,
-      sample_fields: Object.keys(mergedBranding).slice(0, 5)
+      sample_fields: Object.keys(mergedBranding).slice(0, 5),
+      validation_errors_filtered: validationResult.errors.length
     })
   } catch (error) {
     console.error('❌ [UX Analysis] Error actualizando branding:', error)
