@@ -15,13 +15,27 @@ export async function GET(request: Request) {
     const maxVenuesParam = url.searchParams.get('maxVenues');
     const maxVenues = parseInt(maxVenuesParam || '1');
     
+    // Parámetros de exclusión
+    const excludePlaceIds = url.searchParams.get('excludePlaceIds');
+    const excludeNames = url.searchParams.get('excludeNames');
+    
+    // Procesar parámetros de exclusión
+    const excludeVenues = {
+      placeIds: excludePlaceIds ? excludePlaceIds.split(',').map(id => id.trim()).filter(id => id) : undefined,
+      names: excludeNames ? excludeNames.split(',').map(name => name.trim()).filter(name => name) : undefined
+    };
+    
     
     console.log('🔍 Region Venues API - GET request:', {
       siteId,
       searchTerm,
       city,
       region,
-      maxVenues
+      maxVenues,
+      excludeVenues: {
+        placeIds: excludeVenues.placeIds?.length || 0,
+        names: excludeVenues.names?.length || 0
+      }
     });
     
     // Validar parámetros requeridos
@@ -67,7 +81,8 @@ export async function GET(request: Request) {
       searchTerm,
       city,
       region,
-      limit: maxVenues
+      limit: maxVenues,
+      excludeVenues: (excludeVenues.placeIds || excludeVenues.names) ? excludeVenues : undefined
     });
     
     console.log('📊 Search result:', {
@@ -159,6 +174,9 @@ export async function POST(request: Request) {
       );
     }
     
+    // Procesar parámetros de exclusión del body
+    const excludeVenues = params.excludeVenues || {};
+    
     // Buscar venues en la región
     const searchResult = await regionVenuesService.searchRegionVenues({
       siteId: params.siteId,
@@ -166,7 +184,8 @@ export async function POST(request: Request) {
       searchTerm: params.searchTerm,
       city: params.city,
       region: params.region,
-      limit: maxVenues
+      limit: maxVenues,
+      excludeVenues: (excludeVenues.placeIds || excludeVenues.names) ? excludeVenues : undefined
     });
     
     if (!searchResult.success) {

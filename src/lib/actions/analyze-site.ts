@@ -898,17 +898,22 @@ async function captureHTMLServerless(url: string, options?: { timeout?: number; 
   const timeout = options?.timeout || 30000;
   const userAgent = options?.userAgent || 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36';
   
-  try {
-    // Obtener HTML usando fetch
-    console.log('Obteniendo HTML usando fetch...');
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
-    const response = await fetch(url, {
-      method: 'GET',
+  // Pool de User-Agents realistas para rotar
+  const userAgents = [
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2.1 Safari/605.1.15',
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'
+  ];
+  
+  // Estrategias de solicitud (de menos a más agresiva)
+  const strategies: Array<{name: string; headers: Record<string, string>}> = [
+    {
+      name: 'browser-like',
       headers: {
         'User-Agent': userAgent,
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
         'Accept-Language': 'en-US,en;q=0.9,es;q=0.8',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
@@ -917,43 +922,115 @@ async function captureHTMLServerless(url: string, options?: { timeout?: number; 
         'Sec-Fetch-Mode': 'navigate',
         'Sec-Fetch-Site': 'none',
         'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0'
-      },
-      signal: controller.signal
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        'Cache-Control': 'max-age=0',
+        'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
+        'sec-ch-ua-mobile': '?0',
+        'sec-ch-ua-platform': '"macOS"'
+      }
+    },
+    {
+      name: 'simple-browser',
+      headers: {
+        'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1'
+      }
+    },
+    {
+      name: 'minimal',
+      headers: {
+        'User-Agent': userAgents[Math.floor(Math.random() * userAgents.length)],
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    },
+    {
+      name: 'curl-like',
+      headers: {
+        'User-Agent': 'curl/7.68.0',
+        'Accept': '*/*'
+      }
     }
-    
-    const html = await response.text();
-    console.log(`HTML obtenido: ${html.length} bytes`);
-    
-    // Generar screenshot usando API externa o placeholder
-    let screenshot = '';
+  ];
+  
+  let lastError: Error | null = null;
+  
+  // Intentar diferentes estrategias
+  for (const strategy of strategies) {
+    console.log(`Intentando estrategia: ${strategy.name}`);
     
     try {
-      // Usar función híbrida que calcula formato óptimo
-      screenshot = await generateScreenshotWithOptimalFormat(url);
-    } catch (screenshotError) {
-      console.warn('Error generando screenshot:', screenshotError);
-      // Usar un placeholder o imagen por defecto
-      screenshot = generatePlaceholderImage(url);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: strategy.headers,
+        signal: controller.signal,
+        // Agregar configuraciones adicionales para evitar bloqueos
+        redirect: 'follow',
+        referrer: 'no-referrer'
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}: ${response.statusText}`);
+        console.warn(`Estrategia ${strategy.name} falló: ${error.message}`);
+        lastError = error;
+        
+        // Si es 403, 429, o 503, esperar un poco antes de la siguiente estrategia
+        if ([403, 429, 503].includes(response.status)) {
+          await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 2000));
+        }
+        
+        continue;
+      }
+      
+      const html = await response.text();
+      console.log(`HTML obtenido exitosamente con estrategia ${strategy.name}: ${html.length} bytes`);
+      
+      // Validar que el HTML sea válido (no una página de error)
+      if (html.length < 200 || html.includes('403 Forbidden') || html.includes('Access Denied')) {
+        console.warn(`HTML obtenido parece ser una página de error, intentando siguiente estrategia`);
+        continue;
+      }
+      
+      // Generar screenshot usando API externa o placeholder
+      let screenshot = '';
+      
+      try {
+        // Usar función híbrida que calcula formato óptimo
+        screenshot = await generateScreenshotWithOptimalFormat(url);
+      } catch (screenshotError) {
+        console.warn(`Error en captura serverless: ${screenshotError}`);
+        // Continuar sin screenshot si es necesario
+        screenshot = generatePlaceholderImage(url);
+      }
+      
+      const processingTime = Date.now() - startTime;
+      console.log(`Captura serverless completada en ${processingTime}ms con estrategia ${strategy.name}`);
+      
+      return {
+        html,
+        screenshot
+      };
+      
+    } catch (error) {
+      console.error(`Error en estrategia ${strategy.name}:`, error);
+      lastError = error as Error;
+      
+      // Esperar un poco antes de intentar la siguiente estrategia
+      await new Promise(resolve => setTimeout(resolve, 500 + Math.random() * 1000));
     }
-    
-    const endTime = Date.now();
-    console.log(`Tiempo total de captura (serverless): ${((endTime - startTime) / 1000).toFixed(2)} segundos`);
-    
-    return {
-      html,
-      screenshot
-    };
-  } catch (error) {
-    console.error(`Error en captura serverless: ${error}`);
-    throw error;
   }
+  
+  // Si todas las estrategias fallaron, lanzar el último error
+  console.error(`Todas las estrategias de captura fallaron para: ${url}`);
+  throw lastError || new Error('Error desconocido en captura serverless');
 }
 
 // Función inteligente para determinar formato óptimo (compatible con Vercel/Serverless)

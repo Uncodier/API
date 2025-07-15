@@ -371,7 +371,13 @@ export async function POST(request: Request) {
       }
     }
     
-    analysisContext += `\n\nPlease analyze all the available data and provide comprehensive insights and the deliverables requested.`;
+    analysisContext += `\n\nIMPORTANT ANALYSIS INSTRUCTIONS:
+1. Please analyze all the available data and provide comprehensive insights and the deliverables requested.
+2. CRITICAL: Carefully examine all provided data for inconsistencies, contradictions, or conflicting information.
+3. If you identify any data inconsistencies, clearly document them in your analysis and explain how they might impact the reliability of your findings.
+4. Cross-reference information from different sources to validate findings and identify potential discrepancies.
+5. When inconsistencies are found, provide recommendations on how to resolve them or additional data that might be needed.
+6. Ensure all deliverables are based on verified, consistent data to maintain quality and accuracy.`;
     
     // Crear estructura de research_analysis simple y estática
     const researchAnalysisStructure = {
@@ -382,6 +388,7 @@ export async function POST(request: Request) {
       recommendations: 'array',
       methodology: 'object',
       limitations: 'array',
+      data_inconsistencies: 'array', // Nuevo campo para reportar inconsistencias encontradas
       conclusions: 'string',
       // Si hay deliverables, los incluimos como string para que el agente los procese
       deliverables: deliverables ? 'object' : null

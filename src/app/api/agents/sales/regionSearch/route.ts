@@ -8,7 +8,10 @@ import {
   getOrCreateLeadGenMemory, 
   findActiveSalesAgent, 
   getAgentInfo,
-  getRegionBusinessInsights
+  getRegionBusinessInsights,
+  getAvailableSegments,
+  updateLeadGenMemoryWithSegment,
+  updateLeadGenMemoryWithLocation
 } from '@/lib/services/lead-generation/database-service';
 import { 
   createBusinessTypeResearchCommand, 
@@ -193,8 +196,11 @@ export async function POST(request: Request) {
       );
     }
     
-    // 1. Obtener memoria del agente para historial de búsquedas
-    const { usedCities, usedRegions } = await getOrCreateLeadGenMemory(effectiveAgentId || 'default', effectiveUserId);
+    // 1. Obtener memoria del agente para historial de búsquedas (solo historial, no ciudades por defecto)
+    const { usedCities, usedRegions, usedSegments, usedSegmentsByRegion } = await getOrCreateLeadGenMemory(effectiveAgentId || 'default', effectiveUserId);
+    
+    // 1.1 Obtener segmentos disponibles para el sitio
+    const availableSegments = await getAvailableSegments(effectiveSiteId, effectiveUserId);
     
     // 2. Obtener insights de negocios de la región (o usar datos generales si no hay región específica)
     const regionInsights = region ? await getRegionBusinessInsights(region) : {
@@ -224,6 +230,9 @@ export async function POST(request: Request) {
       usedCities,
       usedRegions,
       maxBusinessTypes,
+      availableSegments,
+      usedSegments,
+      usedSegmentsByRegion,
       webhook
     );
     
@@ -293,7 +302,7 @@ export async function POST(request: Request) {
       console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando con procesamiento`);
     }
     
-    const { businessTypes, determinedTopic, determinedCity, determinedRegion } = extractBusinessTypeResults(executedCommand, businessResearchTopic);
+    const { businessTypes, determinedTopic, determinedCity, determinedRegion, determinedSegmentId } = extractBusinessTypeResults(executedCommand, businessResearchTopic);
     
     // Verificar que se extrajeron business types válidos
     if (!businessTypes || businessTypes.length === 0) {
@@ -310,6 +319,7 @@ export async function POST(request: Request) {
           completed_at: new Date().toISOString(),
           target_city: determinedCity,
           target_region: determinedRegion,
+          target_segment_id: determinedSegmentId,
           initial_region_input: region || null,
           business_types_requested: maxBusinessTypes,
           business_research_topic: determinedTopic,
@@ -319,13 +329,24 @@ export async function POST(request: Request) {
             initial_business_type: businessType,
             keywords_provided: keywords,
             region_provided: region || null,
-            region_determined: determinedRegion
+            region_determined: determinedRegion,
+            segments_available: availableSegments.length,
+            segments_previously_used: usedSegments.length
           },
           location_strategy: {
             method: "agent_determined_from_background",
             determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}` : determinedRegion,
             previously_searched_cities: usedCities,
             note: "Location determined by agent based on business background/context or market analysis"
+          },
+          segment_strategy: {
+            method: "agent_determined_from_available_segments",
+            determined_segment_id: determinedSegmentId,
+            available_segments: availableSegments.map(s => ({ id: s.id, name: s.name })),
+            previously_used_segments: usedSegments,
+            previously_used_segments_by_region: usedSegmentsByRegion,
+            segments_used_in_target_region: determinedRegion ? (usedSegmentsByRegion[determinedRegion] || []) : [],
+            note: "Segment determined by agent based on available segments and business context, prioritizing segments not used in target region"
           },
           process_info: {
             stage: "completed_with_warnings",
@@ -336,9 +357,32 @@ export async function POST(request: Request) {
       });
     }
     
-    // 9. Retornar respuesta con tipos de negocios determinados por el agente
+    // 9. Actualizar memoria con ubicación determinada por el agente
+    if (determinedCity || determinedRegion) {
+      console.log(`🧠 Actualizando memoria con ubicación determinada por agente: ${determinedCity}, ${determinedRegion}`);
+      await updateLeadGenMemoryWithLocation(
+        effectiveAgentId || 'default', 
+        effectiveUserId, 
+        determinedCity,
+        determinedRegion
+      );
+    }
+    
+    // 10. Actualizar memoria con el segmento utilizado (si se determinó uno)
+    if (determinedSegmentId) {
+      console.log(`🧠 Actualizando memoria con segmento utilizado: ${determinedSegmentId} para región: ${determinedRegion}`);
+      await updateLeadGenMemoryWithSegment(
+        effectiveAgentId || 'default', 
+        effectiveUserId, 
+        determinedSegmentId,
+        determinedRegion || undefined
+      );
+    }
+    
+    // 11. Retornar respuesta con tipos de negocios determinados por el agente
     console.log(`✅ Proceso completado exitosamente. Enviando respuesta con ${businessTypes.length} tipos de negocios`);
     console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}`);
+    console.log(`🎯 Segmento utilizado: ${determinedSegmentId}`);
     return NextResponse.json({
       success: true,
       data: {
@@ -350,6 +394,7 @@ export async function POST(request: Request) {
         completed_at: new Date().toISOString(),
         target_city: determinedCity,
         target_region: determinedRegion,
+        target_segment_id: determinedSegmentId,
         initial_region_input: region || null,
         business_types_requested: maxBusinessTypes,
         business_research_topic: determinedTopic,
@@ -359,13 +404,24 @@ export async function POST(request: Request) {
           initial_business_type: businessType,
           keywords_provided: keywords,
           region_provided: region || null,
-          region_determined: determinedRegion
+          region_determined: determinedRegion,
+          segments_available: availableSegments.length,
+          segments_previously_used: usedSegments.length
         },
         location_strategy: {
           method: "agent_determined_from_background",
           determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}` : determinedRegion,
           previously_searched_cities: usedCities,
           note: "Location determined by agent based on business background/context or market analysis"
+        },
+        segment_strategy: {
+          method: "agent_determined_from_available_segments",
+          determined_segment_id: determinedSegmentId,
+          available_segments: availableSegments.map(s => ({ id: s.id, name: s.name })),
+          previously_used_segments: usedSegments,
+          previously_used_segments_by_region: usedSegmentsByRegion,
+          segments_used_in_target_region: determinedRegion ? (usedSegmentsByRegion[determinedRegion] || []) : [],
+          note: "Segment determined by agent based on available segments and business context, prioritizing segments not used in target region"
         },
         process_info: {
           stage: "completed",

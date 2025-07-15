@@ -1,0 +1,214 @@
+# Assign Leads
+
+Assigns unassigned leads to team members based on segment performance and availability. This endpoint processes leads that haven't been assigned to anyone and don't have any interactions or tasks.
+
+## Endpoint
+
+```http
+POST /api/agents/cmo/assignLeads
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string | Yes | UUID of the site for lead assignment |
+| `user_id` | string | No | UUID of the requesting user (optional) |
+| `max_leads_per_segment` | number | No | Maximum leads per segment to process (default: 5, min: 1, max: 10) |
+| `priority` | string | No | Priority level: 'low', 'normal', 'high', 'urgent' (default: 'normal') |
+| `include_attribution_context` | boolean | No | Include attribution data in results (default: true) |
+
+### Example Request
+
+```json
+{
+  "site_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "user_id": "12345678-90ab-cdef-1234-567890abcdef",
+  "max_leads_per_segment": 5,
+  "priority": "high",
+  "include_attribution_context": true
+}
+```
+
+## Response Structure
+
+### Success Response (200 OK)
+
+```json
+{
+  "success": true,
+  "data": {
+    "assignments": [
+      {
+        "lead_id": "lead_123",
+        "assignee_id": "user_789",
+        "brief": "**Lead Assignment: John Smith**\n\nCompany: TechCorp...",
+        "intro_message": "Hi John,\n\nI hope this message finds you well...",
+        "segment_info": {
+          "segment_id": "segment_456",
+          "segment_name": "Enterprise SaaS",
+          "attribution_data": {
+            "conversions": 0
+          }
+        },
+        "lead_info": {
+          "name": "John Smith",
+          "email": "john@techcorp.com",
+          "company": {
+            "name": "TechCorp",
+            "industry": "Technology"
+          },
+          "phone": "+1234567890",
+          "origin": "website",
+          "created_at": "2023-12-01T10:00:00Z"
+        }
+      }
+    ],
+    "total_leads_processed": 10,
+    "total_assignments_made": 8,
+    "segments_processed": 3,
+    "summary": {
+      "leads_by_segment": [
+        {
+          "segment_id": "segment_456",
+          "segment_name": "Enterprise SaaS",
+          "leads_assigned": 3,
+          "assignees": ["user_789", "user_101"]
+        }
+      ],
+      "attribution_strategy": "performance_based",
+      "priority_level": "high"
+    }
+  }
+}
+```
+
+### No Leads Found (200 OK)
+
+```json
+{
+  "success": true,
+  "data": {
+    "assignments": [],
+    "total_leads_processed": 0,
+    "total_assignments_made": 0,
+    "segments_processed": 0,
+    "message": "No leads found without interactions or tasks"
+  }
+}
+```
+
+### Error Response (400 Bad Request)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request data",
+    "details": [
+      {
+        "code": "invalid_string",
+        "expected": "string",
+        "received": "undefined",
+        "path": ["site_id"],
+        "message": "Required"
+      }
+    ]
+  }
+}
+```
+
+### No Team Members Error (400 Bad Request)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NO_TEAM_MEMBERS_AVAILABLE",
+    "message": "No team members available for lead assignment"
+  }
+}
+```
+
+### Internal Server Error (500)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INTERNAL_SERVER_ERROR",
+    "message": "An error occurred while processing lead assignments"
+  }
+}
+```
+
+## Business Logic
+
+### Lead Selection Criteria
+
+The system selects leads that meet ALL of the following criteria:
+- Not assigned to any team member (`assignee_id` is null)
+- Have no conversations
+- Have no tasks
+- Status is not 'converted'
+- Are associated with a valid segment
+
+### Assignment Strategy
+
+1. **Performance-based Assignment**: Team members are assigned based on their historical performance with specific segments (conversion rates)
+2. **Fallback Assignment**: If no performance data is available, uses availability-based assignment
+3. **Segment Distribution**: Limits the number of leads per segment to prevent overwhelming team members
+
+### Generated Content
+
+For each assignment, the system generates:
+- **Brief**: Comprehensive lead information including company details, segment context, and recommended actions
+- **Intro Message**: Personalized introduction template for the first contact
+
+## Use Cases
+
+### Marketing Team Lead Distribution
+```json
+{
+  "site_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "max_leads_per_segment": 3,
+  "priority": "normal"
+}
+```
+
+### High Priority Campaign Assignment
+```json
+{
+  "site_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "max_leads_per_segment": 10,
+  "priority": "urgent",
+  "include_attribution_context": true
+}
+```
+
+### Specific User Assignment Check
+```json
+{
+  "site_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "user_id": "12345678-90ab-cdef-1234-567890abcdef",
+  "max_leads_per_segment": 5
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `VALIDATION_ERROR` | Invalid request data format or missing required fields |
+| `NO_TEAM_MEMBERS_AVAILABLE` | No team members found for the site |
+| `INTERNAL_SERVER_ERROR` | Server-side error during processing |
+
+## Notes
+
+- The system processes leads in batches to avoid overwhelming team members
+- Performance data is calculated based on historical conversion rates
+- Segments without performance data use round-robin assignment
+- The API is designed to be idempotent - running it multiple times won't create duplicate assignments
+- All times are in ISO 8601 format
+- UUIDs must be valid v4 format 

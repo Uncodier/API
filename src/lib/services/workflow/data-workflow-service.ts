@@ -517,4 +517,67 @@ export class DataWorkflowService extends BaseWorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para asignación de leads
+   */
+  public async assignLeads(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para la asignación de leads'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `assign-leads-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📋 Iniciando workflow de asignación de leads: ${workflowId}`);
+
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('assignLeadsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        const result = await client.workflow.execute('assignLeadsWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de asignación de leads:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de asignación de leads'
+        }
+      };
+    }
+  }
 } 

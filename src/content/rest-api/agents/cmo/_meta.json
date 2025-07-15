@@ -5,5 +5,9 @@
   "daily-standup-system": {
     "title": "Daily StandUp System Analysis",
     "type": "page"
+  },
+  "assign-leads": {
+    "title": "Assign Leads",
+    "type": "page"
   }
 } 

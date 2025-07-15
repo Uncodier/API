@@ -132,6 +132,9 @@ export function generateBusinessTypeContextMessage(
   usedCities: string[],
   usedRegions: { [key: string]: string[] },
   maxBusinessTypes: number,
+  availableSegments: any[],
+  usedSegments: string[],
+  usedSegmentsByRegion: { [key: string]: string[] },
   webhook?: { url: string }
 ): string {
   let contextMessage = `BUSINESS TYPE RESEARCH ANALYSIS\n\n`;
@@ -154,6 +157,40 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `4. Only use other regions if no business location is specified in the background\n`;
     contextMessage += `5. Stay within reasonable proximity to the business location when mentioned\n`;
     contextMessage += `IMPORTANT: Analyze the business background thoroughly to find location references before determining target region.\n\n`;
+    
+    contextMessage += `🏙️ REGION SPECIFICATION REQUIREMENTS:\n`;
+    contextMessage += `CRITICAL: When determining target_region, use SPECIFIC CITY SUBSECTIONS, not broad commercial regions.\n`;
+    contextMessage += `CORRECT REGION TYPES (City Subsections):\n`;
+    contextMessage += `✅ "Zona Centro" (city center area)\n`;
+    contextMessage += `✅ "Colonia Roma" (specific neighborhood/colony)\n`;
+    contextMessage += `✅ "Distrito Financiero" (specific district)\n`;
+    contextMessage += `✅ "Barrio Gótico" (specific neighborhood)\n`;
+    contextMessage += `✅ "Zona Industrial" (specific industrial area)\n`;
+    contextMessage += `✅ "Centro Histórico" (historic city center)\n`;
+    contextMessage += `✅ "Zona Comercial Norte" (specific commercial area within city)\n`;
+    contextMessage += `✅ "Polígono Industrial Sur" (specific industrial polygon)\n\n`;
+    
+    contextMessage += `INCORRECT REGION TYPES (Broad Commercial Regions - DO NOT USE):\n`;
+    contextMessage += `❌ "Bajío" (too broad, commercial region)\n`;
+    contextMessage += `❌ "Norte" (too vague, directional region)\n`;
+    contextMessage += `❌ "Sur" (too vague, directional region)\n`;
+    contextMessage += `❌ "Región Metropolitana" (too broad)\n`;
+    contextMessage += `❌ "Área Metropolitana" (too broad)\n`;
+    contextMessage += `❌ "Zona Económica" (too broad)\n\n`;
+    
+    contextMessage += `🎯 REGION SELECTION EXAMPLES:\n`;
+    contextMessage += `• Madrid → "Zona Centro", "Distrito Salamanca", "Barrio Malasaña"\n`;
+    contextMessage += `• Barcelona → "Zona Eixample", "Barrio Gótico", "Distrito 22@"\n`;
+    contextMessage += `• México DF → "Colonia Roma", "Zona Rosa", "Centro Histórico"\n`;
+    contextMessage += `• Guadalajara → "Zona Centro", "Colonia Americana", "Distrito Puerta de Hierro"\n`;
+    contextMessage += `• Monterrey → "Zona Centro", "Colonia del Valle", "Distrito Tecnológico"\n\n`;
+    
+    contextMessage += `📍 REGION DETERMINATION STRATEGY:\n`;
+    contextMessage += `1. For LARGE CITIES (>500k population): Always specify a city subsection\n`;
+    contextMessage += `2. For MEDIUM CITIES (100k-500k): Use specific areas when relevant\n`;
+    contextMessage += `3. For SMALL CITIES (<100k): City name alone may be sufficient\n`;
+    contextMessage += `4. ALWAYS prefer specific neighborhoods, districts, or zones within the city\n`;
+    contextMessage += `5. Use local naming conventions (Colonia in Mexico, Barrio in Spain, etc.)\n\n`;
   } else {
     contextMessage += `TARGET REGION: ${region}\n\n`;
   }
@@ -167,6 +204,48 @@ export function generateBusinessTypeContextMessage(
   }
   
   contextMessage += `BUSINESS TYPES REQUESTED: ${maxBusinessTypes}\n\n`;
+  
+  // Información de segmentos disponibles
+  if (availableSegments && availableSegments.length > 0) {
+    contextMessage += `AVAILABLE SEGMENTS FOR TARGETING:\n`;
+    availableSegments.forEach((segment, index) => {
+      contextMessage += `${index + 1}. ${segment.name}\n`;
+      if (segment.description) contextMessage += `   Description: ${segment.description}\n`;
+      if (segment.audience) contextMessage += `   Audience: ${segment.audience}\n`;
+      if (segment.size) contextMessage += `   Size: ${segment.size}\n`;
+      contextMessage += `   Segment ID: ${segment.id}\n`;
+    });
+    contextMessage += `\n`;
+    
+    // Información sobre segmentos previamente utilizados
+    if (usedSegments && usedSegments.length > 0) {
+      contextMessage += `PREVIOUSLY USED SEGMENTS (GLOBAL): ${usedSegments.join(', ')}\n`;
+    }
+    
+    // Información específica por región
+    const currentRegion = region !== "to be determined by agent" ? region : null;
+    if (currentRegion && usedSegmentsByRegion && usedSegmentsByRegion[currentRegion]) {
+      contextMessage += `PREVIOUSLY USED SEGMENTS IN ${currentRegion}: ${usedSegmentsByRegion[currentRegion].join(', ')}\n`;
+    }
+    
+    // Mostrar histórico de uso por región
+    if (usedSegmentsByRegion && Object.keys(usedSegmentsByRegion).length > 0) {
+      contextMessage += `SEGMENT USAGE HISTORY BY REGION:\n`;
+      Object.entries(usedSegmentsByRegion).forEach(([regionName, segments]) => {
+        contextMessage += `  ${regionName}: ${segments.join(', ')}\n`;
+      });
+    }
+    
+    contextMessage += `\nSEGMENT SELECTION INSTRUCTIONS:\n`;
+    contextMessage += `1. MANDATORY: You MUST select ONE segment from the available segments above\n`;
+    contextMessage += `2. Choose the segment that best matches the business types you will identify\n`;
+    contextMessage += `3. Include the selected segment ID in your response as 'target_segment_id'\n`;
+    contextMessage += `4. PRIORITIZE segments that haven't been used in the target region (avoid those in PREVIOUSLY USED SEGMENTS IN [REGION])\n`;
+    contextMessage += `5. If all segments have been used in the target region, prefer the least recently used segment\n`;
+    contextMessage += `6. Consider the segment's audience and size when making your selection\n\n`;
+  } else {
+    contextMessage += `NO SEGMENTS AVAILABLE - Agent should focus on general business type research\n\n`;
+  }
   
   // Información de la región
   contextMessage += `REGION INSIGHTS:\n`;
@@ -238,6 +317,7 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `2. MANDATORY: Set target_city and target_region based on business location found in step 1\n`;
     contextMessage += `   - If business location found: Use that exact location or nearby major city\n`;
     contextMessage += `   - If NO business location in context: Use major Spanish business hub (Madrid, Barcelona)\n`;
+    contextMessage += `   - CRITICAL: target_region must be a specific city subsection (Zona, Colonia, Distrito, Barrio)\n`;
     contextMessage += `3. Generate ${maxBusinessTypes} distinct business types relevant to the determined region\n`;
   } else {
     contextMessage += `1. Generate ${maxBusinessTypes} distinct business types relevant to ${region}\n`;
@@ -248,14 +328,24 @@ export function generateBusinessTypeContextMessage(
   contextMessage += `${region === "to be determined by agent" ? '7' : '5'}. Ensure diversity in business types (avoid too many similar businesses)\n`;
   contextMessage += `${region === "to be determined by agent" ? '8' : '6'}. Include business-to-business services that support other businesses\n`;
   contextMessage += `${region === "to be determined by agent" ? '9' : '7'}. Consider seasonal or event-based business opportunities\n`;
+  
+  // Instrucciones específicas para incluir segment_id en el output
+  if (availableSegments && availableSegments.length > 0) {
+    contextMessage += `${region === "to be determined by agent" ? '10' : '8'}. CRITICAL: Include 'target_segment_id' in your response with the ID of the selected segment\n`;
+  }
   contextMessage += `${region === "to be determined by agent" ? '10' : '8'}. Include businesses that serve both local and regional markets\n\n`;
   
   contextMessage += `EXPECTED OUTPUT:\n`;
   if (region === "to be determined by agent") {
     contextMessage += `MANDATORY LOCATION OUTPUT:\n`;
     contextMessage += `- target_city: Determined target city (with explanation of how found)\n`;
-    contextMessage += `- target_region: Determined target region (with explanation of how found)\n`;
+    contextMessage += `- target_region: Determined target region - MUST be specific city subsection (e.g., "Zona Centro", "Colonia Roma", "Distrito Salamanca")\n`;
     contextMessage += `- location_source: "Found in business context: [specific reference]" OR "No business location found, using business hub"\n\n`;
+    contextMessage += `⚠️ REGION OUTPUT REQUIREMENTS:\n`;
+    contextMessage += `- Use SPECIFIC neighborhoods, districts, or zones within the target city\n`;
+    contextMessage += `- Follow local naming conventions (Colonia, Barrio, Zona, Distrito)\n`;
+    contextMessage += `- DO NOT use broad commercial regions like "Bajío", "Norte", "Sur"\n`;
+    contextMessage += `- For large cities, ALWAYS specify a city subsection\n\n`;
     contextMessage += `BUSINESS TYPES OUTPUT:\n`;
   }
   contextMessage += `A list of specific business types with:\n`;

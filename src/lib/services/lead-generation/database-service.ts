@@ -5,13 +5,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import { LeadData, SegmentData } from './search-prompt-generator';
-
-// Lista de ciudades por defecto para rotar
-export const DEFAULT_CITIES = [
-  'Madrid', 'Barcelona', 'Valencia', 'Sevilla', 'Zaragoza', 'Málaga', 'Murcia', 'Palma', 'Las Palmas', 'Bilbao',
-  'Alicante', 'Córdoba', 'Valladolid', 'Vigo', 'Gijón', 'L\'Hospitalet', 'A Coruña', 'Vitoria', 'Granada', 'Elche',
-  'Oviedo', 'Badalona', 'Cartagena', 'Terrassa', 'Jerez', 'Sabadell', 'Móstoles', 'Santa Cruz de Tenerife', 'Pamplona', 'Almería'
-];
+import { getSegmentsBySite } from '@/lib/database/segment-db';
 
 /**
  * Función para validar UUIDs
@@ -19,6 +13,36 @@ export const DEFAULT_CITIES = [
 export function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
+}
+
+/**
+ * Función para obtener segmentos disponibles de un sitio
+ */
+export async function getAvailableSegments(siteId: string, userId: string): Promise<SegmentData[]> {
+  try {
+    console.log(`🔍 Obteniendo segmentos disponibles para sitio: ${siteId}`);
+    
+    const segments = await getSegmentsBySite(siteId, userId);
+    
+    if (!segments || segments.length === 0) {
+      console.log('⚠️ No se encontraron segmentos para el sitio');
+      return [];
+    }
+    
+    console.log(`✅ Encontrados ${segments.length} segmentos disponibles`);
+    
+    // Convertir a formato SegmentData
+    return segments.map(segment => ({
+      id: segment.id,
+      name: segment.name,
+      description: segment.description || undefined,
+      audience: segment.audience || undefined,
+      size: segment.size || undefined
+    }));
+  } catch (error) {
+    console.error('Error al obtener segmentos disponibles:', error);
+    return [];
+  }
 }
 
 /**
@@ -102,13 +126,13 @@ export async function getLeadsBySegmentAndStatus(siteId: string): Promise<{
 
 /**
  * Función para obtener o crear agent_memory para lead_generation
+ * MODIFICADO: Ya no usa DEFAULT_CITIES - el agente determina las ciudades 100%
  */
 export async function getOrCreateLeadGenMemory(agentId: string, userId: string): Promise<{
-  currentCityIndex: number,
-  targetCity: string,
-  targetRegion: string | null,
   usedCities: string[],
   usedRegions: { [key: string]: string[] },
+  usedSegments: string[],
+  usedSegmentsByRegion: { [key: string]: string[] },
   memoryId: string
 }> {
   try {
@@ -129,41 +153,30 @@ export async function getOrCreateLeadGenMemory(agentId: string, userId: string):
       console.error('Error al obtener memoria de agente:', memoryError);
     }
     
-    let currentCityIndex = 0;
     let usedCities: string[] = [];
     let usedRegions: { [key: string]: string[] } = {};
+    let usedSegments: string[] = [];
+    let usedSegmentsByRegion: { [key: string]: string[] } = {};
     let memoryId: string;
     
     if (existingMemory) {
       console.log(`✅ Memoria existente encontrada: ${existingMemory.id}`);
       const memoryData = existingMemory.data || {};
-      currentCityIndex = memoryData.currentCityIndex || 0;
       usedCities = memoryData.usedCities || [];
       usedRegions = memoryData.usedRegions || {};
+      usedSegments = memoryData.usedSegments || [];
+      usedSegmentsByRegion = memoryData.usedSegmentsByRegion || {};
       memoryId = existingMemory.id;
-      
-      // Incrementar índice para la siguiente ciudad
-      currentCityIndex = (currentCityIndex + 1) % DEFAULT_CITIES.length;
     } else {
       console.log(`🆕 Creando nueva memoria de lead_generation`);
       memoryId = uuidv4();
-      currentCityIndex = 0;
       usedCities = [];
       usedRegions = {};
+      usedSegments = [];
+      usedSegmentsByRegion = {};
     }
     
-    const targetCity = DEFAULT_CITIES[currentCityIndex];
-    const newUsedCities = [...usedCities];
-    if (!newUsedCities.includes(targetCity)) {
-      newUsedCities.push(targetCity);
-    }
-    
-    // Inicializar regiones usadas para la ciudad si no existen
-    if (!usedRegions[targetCity]) {
-      usedRegions[targetCity] = [];
-    }
-    
-    // Actualizar o crear memoria
+    // Actualizar o crear memoria (sin modificar las ciudades - solo las devuelve)
     const memoryData = {
       id: memoryId,
       agent_id: agentId,
@@ -171,17 +184,17 @@ export async function getOrCreateLeadGenMemory(agentId: string, userId: string):
       type: 'lead_generation',
       key: 'lead_generation',
       data: {
-        currentCityIndex,
-        targetCity,
-        usedCities: newUsedCities,
+        usedCities: usedCities,
         usedRegions: usedRegions,
+        usedSegments: usedSegments,
+        usedSegmentsByRegion: usedSegmentsByRegion,
         lastUpdated: new Date().toISOString(),
-        totalCitiesAvailable: DEFAULT_CITIES.length
+        agentDeterminedCities: true // Indicador de que el agente determina las ciudades
       },
       metadata: {
-        purpose: 'track_city_and_region_targeting_progression',
-        cityRotationStrategy: 'sequential',
-        regionStrategy: 'dynamic_assignment'
+        purpose: 'track_agent_determined_targeting_history',
+        cityStrategy: 'agent_determined',
+        regionStrategy: 'agent_determined'
       },
       created_at: existingMemory?.created_at || new Date().toISOString(),
       updated_at: new Date().toISOString(),
@@ -199,7 +212,7 @@ export async function getOrCreateLeadGenMemory(agentId: string, userId: string):
       if (updateError) {
         console.error('Error al actualizar memoria:', updateError);
       } else {
-        console.log(`📝 Memoria actualizada para siguiente ciudad: ${targetCity}`);
+        console.log(`📝 Memoria actualizada - agente determinará ciudades`);
       }
     } else {
       // Crear nueva memoria
@@ -210,16 +223,15 @@ export async function getOrCreateLeadGenMemory(agentId: string, userId: string):
       if (insertError) {
         console.error('Error al crear memoria:', insertError);
       } else {
-        console.log(`📝 Nueva memoria creada para ciudad: ${targetCity}`);
+        console.log(`📝 Nueva memoria creada - agente determinará ciudades`);
       }
     }
     
     return {
-      currentCityIndex,
-      targetCity,
-      targetRegion: null,
-      usedCities: newUsedCities,
+      usedCities: usedCities,
       usedRegions: usedRegions,
+      usedSegments: usedSegments,
+      usedSegmentsByRegion: usedSegmentsByRegion,
       memoryId
     };
     
@@ -227,13 +239,186 @@ export async function getOrCreateLeadGenMemory(agentId: string, userId: string):
     console.error('Error en getOrCreateLeadGenMemory:', error);
     // Retornar valores por defecto en caso de error
     return {
-      currentCityIndex: 0,
-      targetCity: DEFAULT_CITIES[0],
-      targetRegion: null,
       usedCities: [],
       usedRegions: {},
+      usedSegments: [],
+      usedSegmentsByRegion: {},
       memoryId: uuidv4()
     };
+  }
+}
+
+/**
+ * Función para actualizar la memoria con un segmento usado
+ */
+export async function updateLeadGenMemoryWithSegment(
+  agentId: string, 
+  userId: string,
+  segmentId: string,
+  region?: string
+): Promise<void> {
+  try {
+    console.log(`🧠 Actualizando memoria con segmento usado: ${segmentId}`);
+    
+    // Obtener memoria actual
+    const { data: existingMemory, error: memoryError } = await supabaseAdmin
+      .from('agent_memories')
+      .select('*')
+      .eq('agent_id', agentId)
+      .eq('type', 'lead_generation')
+      .eq('key', 'lead_generation')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (memoryError) {
+      console.error('Error al obtener memoria para actualizar:', memoryError);
+      return;
+    }
+    
+    if (!existingMemory) {
+      console.error('No se encontró memoria existente para actualizar');
+      return;
+    }
+    
+    const memoryData = existingMemory.data || {};
+    const usedSegments = memoryData.usedSegments || [];
+    const usedSegmentsByRegion = memoryData.usedSegmentsByRegion || {};
+    
+    // Agregar segmento si no está ya usado globalmente
+    if (!usedSegments.includes(segmentId)) {
+      usedSegments.push(segmentId);
+      console.log(`✅ Segmento ${segmentId} agregado a memoria global`);
+    } else {
+      console.log(`⚠️ Segmento ${segmentId} ya estaba en memoria global`);
+    }
+    
+    // Agregar segmento por región si se especifica región
+    if (region) {
+      if (!usedSegmentsByRegion[region]) {
+        usedSegmentsByRegion[region] = [];
+      }
+      
+      if (!usedSegmentsByRegion[region].includes(segmentId)) {
+        usedSegmentsByRegion[region].push(segmentId);
+        console.log(`✅ Segmento ${segmentId} agregado a memoria para región ${region}`);
+      } else {
+        console.log(`⚠️ Segmento ${segmentId} ya estaba en memoria para región ${region}`);
+      }
+    }
+    
+    // Actualizar memoria con nuevo segmento
+    const updatedMemoryData = {
+      ...memoryData,
+      usedSegments: usedSegments,
+      usedSegmentsByRegion: usedSegmentsByRegion,
+      lastUpdated: new Date().toISOString()
+    };
+    
+    const { error: updateError } = await supabaseAdmin
+      .from('agent_memories')
+      .update({
+        data: updatedMemoryData,
+        updated_at: new Date().toISOString(),
+        access_count: (existingMemory.access_count || 0) + 1,
+        last_accessed: new Date().toISOString()
+      })
+      .eq('id', existingMemory.id);
+    
+    if (updateError) {
+      console.error('Error al actualizar memoria con segmento:', updateError);
+    } else {
+      console.log(`📝 Memoria actualizada con segmento: ${segmentId}`);
+    }
+    
+  } catch (error) {
+    console.error('Error en updateLeadGenMemoryWithSegment:', error);
+  }
+}
+
+/**
+ * Función para actualizar la memoria con ciudades y regiones determinadas por el agente
+ */
+export async function updateLeadGenMemoryWithLocation(
+  agentId: string, 
+  userId: string,
+  determinedCity: string | null,
+  determinedRegion: string | null
+): Promise<void> {
+  try {
+    console.log(`🧠 Actualizando memoria con ubicación determinada por agente: ${determinedCity}, ${determinedRegion}`);
+    
+    // Obtener memoria actual
+    const { data: existingMemory, error: memoryError } = await supabaseAdmin
+      .from('agent_memories')
+      .select('*')
+      .eq('agent_id', agentId)
+      .eq('type', 'lead_generation')
+      .eq('key', 'lead_generation')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    if (memoryError) {
+      console.error('Error al obtener memoria para actualizar ubicación:', memoryError);
+      return;
+    }
+    
+    if (!existingMemory) {
+      console.error('No se encontró memoria existente para actualizar ubicación');
+      return;
+    }
+    
+    const memoryData = existingMemory.data || {};
+    let usedCities = memoryData.usedCities || [];
+    let usedRegions = memoryData.usedRegions || {};
+    
+    // Agregar ciudad si fue determinada y no está ya en la lista
+    if (determinedCity && !usedCities.includes(determinedCity)) {
+      usedCities.push(determinedCity);
+      console.log(`✅ Ciudad ${determinedCity} agregada a memoria`);
+    }
+    
+    // Agregar región si fue determinada
+    if (determinedCity && determinedRegion) {
+      if (!usedRegions[determinedCity]) {
+        usedRegions[determinedCity] = [];
+      }
+      
+      if (!usedRegions[determinedCity].includes(determinedRegion)) {
+        usedRegions[determinedCity].push(determinedRegion);
+        console.log(`✅ Región ${determinedRegion} agregada a memoria para ciudad ${determinedCity}`);
+      }
+    }
+    
+    // Actualizar memoria con nueva ubicación
+    const updatedMemoryData = {
+      ...memoryData,
+      usedCities: usedCities,
+      usedRegions: usedRegions,
+      lastUpdated: new Date().toISOString(),
+      lastDeterminedCity: determinedCity,
+      lastDeterminedRegion: determinedRegion
+    };
+    
+    const { error: updateError } = await supabaseAdmin
+      .from('agent_memories')
+      .update({
+        data: updatedMemoryData,
+        updated_at: new Date().toISOString(),
+        access_count: (existingMemory.access_count || 0) + 1,
+        last_accessed: new Date().toISOString()
+      })
+      .eq('id', existingMemory.id);
+    
+    if (updateError) {
+      console.error('Error al actualizar memoria con ubicación:', updateError);
+    } else {
+      console.log(`📝 Memoria actualizada con ubicación determinada por agente`);
+    }
+    
+  } catch (error) {
+    console.error('Error en updateLeadGenMemoryWithLocation:', error);
   }
 }
 

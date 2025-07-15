@@ -40,7 +40,23 @@ export async function createLeadGenerationCommand(
     location_guidance: {
       instruction: "Determine target location from business background/context. If no specific location mentioned, use best judgment for business type.",
       previously_searched_cities: usedCities,
-      previously_searched_regions: usedRegions
+      previously_searched_regions: usedRegions,
+      region_specification: {
+        requirement: "Use SPECIFIC CITY SUBSECTIONS, not broad commercial regions",
+        correct_examples: [
+          "Zona Centro (city center area)",
+          "Colonia Roma (specific neighborhood/colony)",
+          "Distrito Financiero (specific district)",
+          "Barrio Gótico (specific neighborhood)"
+        ],
+        incorrect_examples: [
+          "Bajío (too broad, commercial region)",
+          "Norte (too vague, directional region)",
+          "Sur (too vague, directional region)",
+          "Región Metropolitana (too broad)"
+        ],
+        strategy: "For large cities (>500k population): Always specify a city subsection. Use local naming conventions."
+      }
     }
   };
   
@@ -148,7 +164,26 @@ export async function createBusinessTypeResearchCommand(
         "3. Stay within reasonable proximity to business location when mentioned",
         "4. Only expand to major business hubs (Madrid, Barcelona) if NO location specified in background"
       ],
-      note: "Location determination must prioritize business context over general market analysis"
+      note: "Location determination must prioritize business context over general market analysis",
+      region_specification: {
+        requirement: "Use SPECIFIC CITY SUBSECTIONS, not broad commercial regions",
+        correct_examples: [
+          "Zona Centro (city center area)",
+          "Colonia Roma (specific neighborhood/colony)",
+          "Distrito Financiero (specific district)",
+          "Barrio Gótico (specific neighborhood)",
+          "Zona Industrial (specific industrial area)",
+          "Centro Histórico (historic city center)"
+        ],
+        incorrect_examples: [
+          "Bajío (too broad, commercial region)",
+          "Norte (too vague, directional region)",
+          "Sur (too vague, directional region)",
+          "Región Metropolitana (too broad)",
+          "Área Metropolitana (too broad)"
+        ],
+        strategy: "For large cities (>500k population): Always specify a city subsection. Use local naming conventions (Colonia in Mexico, Barrio in Spain, etc.)"
+      }
     },
     output_requirements: {
       mandatory_fields: ["target_city", "target_region", "business_research_topic", "business_types"],
@@ -168,7 +203,7 @@ export async function createBusinessTypeResearchCommand(
     description: `Research and identify ${maxBusinessTypes} business types ${region && region !== "to be determined by agent" ? `in ${region}` : 'in optimal target region'} based on ${businessResearchTopic}. Determine location from business background and focus on businesses with lead generation potential. CRITICAL: Return results in the exact format specified in the targets configuration with business_types array.`,
     targets: [targetConfig],
     tools,
-    context: contextMessage + `\n\nCRITICAL OUTPUT FORMAT REQUIREMENT:\nYou MUST return your results in this exact JSON structure:\n{\n  "target_city": "determined_city_name",\n  "target_region": "determined_region_name", \n  "business_research_topic": "your_refined_topic",\n  "business_types": [\n    {\n      "name": "Business Type Name",\n      "description": "Detailed description of the business type",\n      "relevance": "Why this business type is relevant to the region",\n      "market_potential": "Assessment of market potential and opportunities"\n    }\n  ]\n}\n\nDO NOT return business types in any other format or field name. The business_types array is MANDATORY and must contain exactly ${maxBusinessTypes} business type objects.`,
+    context: contextMessage + `\n\nCRITICAL OUTPUT FORMAT REQUIREMENT:\nYou MUST return your results in this exact JSON structure:\n{\n  "target_city": "determined_city_name",\n  "target_region": "determined_region_name", \n  "business_research_topic": "your_refined_topic",\n  "business_types": [\n    {\n      "name": "Business Type Name",\n      "description": "Detailed description of the business type",\n      "relevance": "Why this business type is relevant to the region",\n      "market_potential": "Assessment of market potential and opportunities"\n    }\n  ]\n}\n\n🏙️ REGION SPECIFICATION CRITICAL REQUIREMENT:\nThe "target_region" field MUST be a SPECIFIC CITY SUBSECTION, not a broad commercial region.\n\nCORRECT REGION EXAMPLES:\n✅ "Zona Centro" (city center area)\n✅ "Colonia Roma" (specific neighborhood/colony)\n✅ "Distrito Financiero" (specific district)\n✅ "Barrio Gótico" (specific neighborhood)\n✅ "Centro Histórico" (historic city center)\n\nINCORRECT REGION EXAMPLES (DO NOT USE):\n❌ "Bajío" (too broad, commercial region)\n❌ "Norte" (too vague, directional region)\n❌ "Sur" (too vague, directional region)\n❌ "Región Metropolitana" (too broad)\n\nFor large cities (>500k population), ALWAYS specify a city subsection using local naming conventions.\n\nDO NOT return business types in any other format or field name. The business_types array is MANDATORY and must contain exactly ${maxBusinessTypes} business type objects.`,
     supervisor: [
       {
         agent_role: "business_market_analyst",
@@ -211,7 +246,8 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   businessTypes: any[],
   determinedTopic: string,
   determinedCity: string | null,
-  determinedRegion: string | null
+  determinedRegion: string | null,
+  determinedSegmentId: string | null
 } {
   const results = executedCommand.results || [];
   
@@ -346,12 +382,37 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   
   // Extraer ciudad y región como en extractCommandResults
   const targetResult = results.find((r: any) => r.target_city !== undefined || r.target_region !== undefined) || results[0];
+  
+  // DEBUG: Logging detallado para entender por qué target_city puede ser null
+  console.log(`🔍 DEBUG target_city extraction:`);
+  console.log(`  - Total results: ${results.length}`);
+  console.log(`  - Looking for target_city/target_region in results...`);
+  
+  results.forEach((r: any, index: number) => {
+    console.log(`  - Result ${index}:`);
+    console.log(`    - Has target_city: ${r.target_city !== undefined} (value: ${r.target_city})`);
+    console.log(`    - Has target_region: ${r.target_region !== undefined} (value: ${r.target_region})`);
+    console.log(`    - All keys: ${Object.keys(r).join(', ')}`);
+  });
+  
+  console.log(`  - Selected targetResult: ${targetResult ? 'Found' : 'Using first result'}`);
+  if (targetResult) {
+    console.log(`    - target_city: ${targetResult.target_city}`);
+    console.log(`    - target_region: ${targetResult.target_region}`);
+  }
+  
   const determinedCity = targetResult?.target_city || null;
   const determinedRegion = targetResult?.target_region || null;
+  
+  // Extraer segment_id determinado por el agente
+  const determinedSegmentId = targetResult?.target_segment_id || 
+                             results.find((r: any) => r.target_segment_id)?.target_segment_id || 
+                             null;
   
   console.log(`🎯 RESULTADO FINAL: ${businessTypes.length} business types extraídos`);
   console.log(`🎯 Topic determinado: ${determinedTopic}`);
   console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}`);
+  console.log(`🎯 Segmento determinado: ${determinedSegmentId}`);
   
   if (businessTypes.length > 0) {
     console.log(`✅ Business types encontrados:`);
@@ -367,6 +428,7 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
     businessTypes,
     determinedTopic,
     determinedCity,
-    determinedRegion
+    determinedRegion,
+    determinedSegmentId
   };
 } 

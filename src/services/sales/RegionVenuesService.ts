@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { systemMemoryService } from '@/lib/services/system-memory-service';
 
 // Interfaces para la búsqueda de venues
 export interface Venue {
@@ -58,6 +59,10 @@ export interface VenueSearchParams {
   city: string;
   region: string;
   limit?: number;
+  excludeVenues?: {
+    placeIds?: string[];
+    names?: string[];
+  };
 }
 
 /**
@@ -101,6 +106,143 @@ export class RegionVenuesService {
     }
     
     return { valid: true };
+  }
+
+  /**
+   * Genera una clave única para las memorias del sistema
+   */
+  private generateMemoryKey(searchTerm: string, city: string, region: string): string {
+    return `${searchTerm.toLowerCase().trim()}:${city.toLowerCase().trim()}:${region.toLowerCase().trim()}`;
+  }
+
+  /**
+   * Consulta las memorias del sistema para obtener venues que no dieron resultados
+   */
+  private async getFailedVenuesFromMemory(siteId: string, searchTerm: string, city: string, region: string): Promise<string[]> {
+    try {
+      // Generar clave para búsqueda por ciudad/región
+      const cityKey = `${city.toLowerCase().trim()}:${region.toLowerCase().trim()}`;
+      
+      const memoryResult = await systemMemoryService.findMemory({
+        siteId,
+        systemType: 'venue_failed_names',
+        key: cityKey
+      });
+      
+      if (memoryResult.success && memoryResult.memory) {
+        const excludedNames = memoryResult.memory.data.excludedNames || [];
+        console.log(`🧠 Found ${excludedNames.length} venue names to exclude for ${city}, ${region}`);
+        return excludedNames;
+      }
+      
+      return [];
+    } catch (error) {
+      console.error('Error getting failed venues from memory:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Guarda en memoria cuando una búsqueda no dio resultados
+   */
+  private async saveNoResultsToMemory(siteId: string, searchTerm: string, city: string, region: string): Promise<void> {
+    try {
+      const memoryKey = this.generateMemoryKey(searchTerm, city, region);
+      
+      // Verificar si ya existe una memoria para esta búsqueda
+      const existingMemory = await systemMemoryService.findMemory({
+        siteId,
+        systemType: 'venue_search_no_results',
+        key: memoryKey
+      });
+      
+      const memoryData = {
+        searchTerm,
+        city,
+        region,
+        noResults: true,
+        timestamp: new Date().toISOString(),
+        searchConditions: {
+          searchTerm: searchTerm.toLowerCase().trim(),
+          city: city.toLowerCase().trim(),
+          region: region.toLowerCase().trim()
+        }
+      };
+      
+      // Expirar la memoria después de 7 días
+      const expiresAt = new Date();
+      expiresAt.setDate(expiresAt.getDate() + 7);
+      
+      if (existingMemory.success && existingMemory.memory) {
+        // Actualizar memoria existente
+        await systemMemoryService.updateMemory(
+          {
+            siteId,
+            systemType: 'venue_search_no_results',
+            key: memoryKey
+          },
+          {
+            data: memoryData,
+            expiresAt
+          }
+        );
+        console.log(`🧠 Updated system memory for no-results search: ${searchTerm} in ${city}, ${region}`);
+      } else {
+        // Crear nueva memoria
+        await systemMemoryService.createMemory({
+          siteId,
+          systemType: 'venue_search_no_results',
+          key: memoryKey,
+          data: memoryData,
+          expiresAt
+        });
+        console.log(`🧠 Created system memory for no-results search: ${searchTerm} in ${city}, ${region}`);
+      }
+    } catch (error) {
+      console.error('Error saving no-results to memory:', error);
+    }
+  }
+
+  /**
+   * Verifica si una búsqueda ya está marcada como sin resultados en memoria
+   */
+  private async isSearchMarkedAsNoResults(siteId: string, searchTerm: string, city: string, region: string): Promise<boolean> {
+    try {
+      const memoryKey = this.generateMemoryKey(searchTerm, city, region);
+      
+      const memoryResult = await systemMemoryService.findMemory({
+        siteId,
+        systemType: 'venue_search_no_results',
+        key: memoryKey
+      });
+      
+      if (memoryResult.success && memoryResult.memory) {
+        const isNoResults = memoryResult.memory.data.noResults === true;
+        if (isNoResults) {
+          console.log(`🧠 Search is marked as no-results in memory: ${searchTerm} in ${city}, ${region}`);
+        }
+        return isNoResults;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error checking no-results memory:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Limpia memorias expiradas para el sitio
+   */
+  private async cleanupExpiredMemories(siteId: string): Promise<void> {
+    try {
+      const cleanupResult = await systemMemoryService.cleanupExpiredMemories(siteId);
+      if (cleanupResult.success && cleanupResult.deletedCount && cleanupResult.deletedCount > 0) {
+        console.log(`🧹 Cleaned up ${cleanupResult.deletedCount} expired venue search memories`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up expired memories:', error);
+    }
   }
 
   /**
@@ -169,7 +311,8 @@ export class RegionVenuesService {
     searchTerm: string,
     city: string,
     region: string,
-    limit: number = 1
+    limit: number = 1,
+    excludeVenues?: { placeIds?: string[]; names?: string[] }
   ): Promise<VenueSearchResult> {
     try {
       console.log(`🔍 Starting Places API search for: "${searchTerm}" in ${city}, ${region}`);
@@ -244,9 +387,36 @@ export class RegionVenuesService {
 
       console.log(`✅ Found ${data.results.length} venues from Places API`);
 
+      // Filtrar venues excluidos antes de procesar
+      let filteredResults = data.results;
+      
+      if (excludeVenues) {
+        const originalCount = filteredResults.length;
+        
+        // Filtrar por Place IDs
+        if (excludeVenues.placeIds && excludeVenues.placeIds.length > 0) {
+          filteredResults = filteredResults.filter((place: any) => 
+            !excludeVenues.placeIds!.includes(place.place_id)
+          );
+        }
+        
+        // Filtrar por nombres (case-insensitive)
+        if (excludeVenues.names && excludeVenues.names.length > 0) {
+          const excludeNamesLower = excludeVenues.names.map(name => name.toLowerCase().trim());
+          filteredResults = filteredResults.filter((place: any) => 
+            !excludeNamesLower.includes(place.name?.toLowerCase().trim())
+          );
+        }
+        
+        const excludedCount = originalCount - filteredResults.length;
+        if (excludedCount > 0) {
+          console.log(`🚫 Excluded ${excludedCount} venues based on exclusion criteria`);
+        }
+      }
+
       // Convertir resultados de Google Places a nuestro formato
       const venues = await Promise.all(
-        data.results
+        filteredResults
           .slice(0, limit)
           .map(async (place: any) => await this.mapGooglePlaceToVenue(place))
       );
@@ -450,13 +620,14 @@ export class RegionVenuesService {
     searchTerm: string,
     city: string,
     region: string,
-    limit: number = 1
+    limit: number = 1,
+    excludeVenues?: { placeIds?: string[]; names?: string[] }
   ): Promise<VenueSearchResult> {
     try {
       console.log(`Searching venues: "${searchTerm}" in ${city}, ${region}`);
       
       // Usar Google Places API
-      const result = await this.searchVenuesWithPlaces(searchTerm, city, region, limit);
+      const result = await this.searchVenuesWithPlaces(searchTerm, city, region, limit, excludeVenues);
       
       if (result.success) {
         console.log(`Found ${result.venues?.length || 0} venues`);
@@ -568,16 +739,68 @@ export class RegionVenuesService {
 
       const finalLimit = params.limit || 1;
 
+      // Limpiar memorias expiradas periódicamente
+      await this.cleanupExpiredMemories(params.siteId);
+
+      // Verificar si esta búsqueda ya está marcada como sin resultados
+      const isMarkedAsNoResults = await this.isSearchMarkedAsNoResults(
+        params.siteId,
+        params.searchTerm,
+        params.city,
+        params.region
+      );
+
+      if (isMarkedAsNoResults) {
+        console.log(`🧠 Search already marked as no-results in memory, skipping API call`);
+        return {
+          success: true,
+          venues: []
+        };
+      }
+
+      // Consultar memorias del sistema para obtener venues que no dieron resultados
+      const failedVenuesFromMemory = await this.getFailedVenuesFromMemory(
+        params.siteId,
+        params.searchTerm,
+        params.city,
+        params.region
+      );
+
+      // Combinar venues excluidos con los de la memoria
+      const combinedExcludeVenues = {
+        placeIds: [
+          ...(params.excludeVenues?.placeIds || []),
+        ],
+        names: [
+          ...(params.excludeVenues?.names || []),
+          ...failedVenuesFromMemory
+        ]
+      };
+
+      console.log(`🧠 Total venues to exclude: ${combinedExcludeVenues.names.length} by name, ${combinedExcludeVenues.placeIds.length} by place ID`);
+
       // Buscar venues
       const searchResult = await this.searchVenues(
         params.searchTerm,
         params.city,
         params.region,
-        finalLimit
+        finalLimit,
+        combinedExcludeVenues
       );
 
       if (!searchResult.success) {
         return searchResult;
+      }
+
+      // Si no encontramos venues, guardar en memoria para futuras búsquedas
+      if (searchResult.venues && searchResult.venues.length === 0) {
+        console.log(`🧠 No venues found for search, saving to memory for future optimization`);
+        await this.saveNoResultsToMemory(
+          params.siteId,
+          params.searchTerm,
+          params.city,
+          params.region
+        );
       }
 
       // Guardar resultados en la base de datos si se proporcionó userId
