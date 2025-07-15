@@ -972,7 +972,7 @@ async function captureHTMLServerless(url: string, options?: { timeout?: number; 
         signal: controller.signal,
         // Agregar configuraciones adicionales para evitar bloqueos
         redirect: 'follow',
-        referrer: 'no-referrer'
+        referrerPolicy: 'no-referrer'
       });
       
       clearTimeout(timeoutId);
