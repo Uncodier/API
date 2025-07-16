@@ -2,7 +2,12 @@ import { NextResponse } from 'next/server';
 import { 
   generateSearchTopic, 
   generateSearchPrompts, 
-  generateContextMessage 
+  generateContextMessage,
+  generatePersonalizedSearchTopic,
+  generatePersonalizedSearchPrompts,
+  generatePersonalizedContextMessage,
+  generateIndustrySpecificPrompts,
+  CompanyData
 } from '@/lib/services/lead-generation/search-prompt-generator';
 import { 
   getLeadsBySegmentAndStatus, 
@@ -15,6 +20,7 @@ import {
   extractCommandResults 
 } from '@/lib/services/lead-generation/command-service';
 import { ProcessorInitializer } from '@/lib/agentbase';
+import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -161,12 +167,38 @@ export async function POST(request: Request) {
     // 2. Obtener memoria del agente para historial de búsquedas
     const { usedCities, usedRegions } = await getOrCreateLeadGenMemory(effectiveAgentId || 'default', effectiveUserId);
     
-    // 3. Generar search_topic y prompts basados en los segmentos y leads exitosos
-    const searchTopic = generateSearchTopic(segments, convertedLeads);
-    const searchPrompts = generateSearchPrompts(segments, convertedLeads);
+    // 3. Obtener información completa de la empresa
+    console.log(`🏢 Obteniendo información completa de la empresa para sitio: ${effectiveSiteId}`);
+    const siteInfo = await DataFetcher.getSiteInfo(effectiveSiteId);
     
-    // 4. Preparar contexto con análisis de segmentos y leads
-    const contextMessage = generateContextMessage(
+    // 4. Preparar datos de la empresa personalizados
+    const companyData: CompanyData = {
+      name: company?.name || siteInfo.site?.name || 'Unknown Company',
+      industry: company?.industry || siteInfo.settings?.industry || siteInfo.site?.industry,
+      description: company?.description || siteInfo.site?.description || siteInfo.settings?.about,
+      location: company?.location || (siteInfo.settings?.locations && Array.isArray(siteInfo.settings.locations) && siteInfo.settings.locations[0]?.address),
+      target_market: company?.target_market || siteInfo.settings?.target_market,
+      services: company?.services || siteInfo.settings?.services,
+      size: company?.size || siteInfo.settings?.company_size,
+      about: company?.about || siteInfo.settings?.about
+    };
+    
+    console.log(`🎯 Datos de empresa preparados:`, {
+      name: companyData.name,
+      industry: companyData.industry,
+      location: companyData.location,
+      size: companyData.size
+    });
+    
+    // 5. Generar search_topic y prompts personalizados basados en la empresa específica
+    const searchTopic = generatePersonalizedSearchTopic(companyData, segments, convertedLeads);
+    const searchPrompts = generatePersonalizedSearchPrompts(companyData, segments, convertedLeads);
+    
+    console.log(`📋 Search topic personalizado generado: ${searchTopic}`);
+    
+    // 6. Preparar contexto personalizado con análisis específico de la empresa
+    const contextMessage = generatePersonalizedContextMessage(
+      companyData,
       segments,
       convertedLeads,
       nonConvertedLeads,
@@ -175,17 +207,16 @@ export async function POST(request: Request) {
       usedCities,
       usedRegions,
       maxLeads,
-      webhook,
-      company // Cambio de business a company
+      webhook
     );
     
-    // 5. Herramientas por defecto para lead generation
+    // 7. Herramientas por defecto para lead generation
     const tools = (agentInfo && agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0) 
       ? agentInfo.tools 
       : [];
     
-    // 6. Crear el comando
-    console.log(`🚀 Creando comando de lead generation...`);
+    // 8. Crear el comando con información personalizada de la empresa
+    console.log(`🚀 Creando comando de lead generation personalizado para: ${companyData.name}...`);
     const internalCommandId = await createLeadGenerationCommand(
       effectiveUserId,
       effectiveAgentId,
@@ -198,9 +229,9 @@ export async function POST(request: Request) {
       tools,
       webhook
     );
-    console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+    console.log(`📝 Comando creado con ID interno: ${internalCommandId} para empresa: ${companyData.name}`);
     
-    // 7. Esperar a que el comando se complete
+    // 9. Esperar a que el comando se complete
     console.log(`⏳ Esperando completion del comando ${internalCommandId} (timeout: 150 intentos, 2s cada uno = 5 min max)`);
     const { command: executedCommand, completed } = await waitForCommandCompletion(internalCommandId, 150, 2000);
     
@@ -225,12 +256,12 @@ export async function POST(request: Request) {
       }
     }
     
-    // 8. Extraer los valores determinados por el agente
+    // 10. Extraer los valores determinados por el agente
     console.log(`🎯 Extrayendo resultados del comando. Estado: ${executedCommand?.status || 'unknown'}, Resultados: ${executedCommand?.results?.length || 0}`);
     const { determinedCity, determinedRegion, determinedTopic } = extractCommandResults(executedCommand, searchTopic);
     
-    // 9. Retornar respuesta con valores determinados por el agente
-    console.log(`✅ Proceso completado exitosamente. Enviando respuesta con city: ${determinedCity}, region: ${determinedRegion}, topic: ${determinedTopic}`);
+    // 11. Retornar respuesta con valores determinados por el agente
+    console.log(`✅ Proceso completado exitosamente para ${companyData.name}. Enviando respuesta con city: ${determinedCity}, region: ${determinedRegion}, topic: ${determinedTopic}`);
     return NextResponse.json({
       success: true,
       data: {
@@ -245,6 +276,13 @@ export async function POST(request: Request) {
         target_city: determinedCity,
         target_region: determinedRegion,
         search_topic: determinedTopic,
+        personalized_for_company: {
+          name: companyData.name,
+          industry: companyData.industry,
+          location: companyData.location,
+          size: companyData.size,
+          personalization_applied: true
+        },
         segments_analyzed: segments.length,
         segment_insights: {
           converted_leads: convertedLeads.length,
@@ -253,10 +291,11 @@ export async function POST(request: Request) {
           regions_previously_searched: Object.keys(usedRegions).reduce((total, city) => total + usedRegions[city].length, 0)
         },
         location_strategy: {
-          method: "agent_determined_from_background",
+          method: "personalized_company_analysis",
           determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}` : null,
+          company_location_context: companyData.location || "No specific company location provided",
           previously_searched_cities: usedCities,
-          note: "Location determined by agent based on business background/context"
+          note: `Location and search strategy personalized for ${companyData.name} based on company-specific data`
         },
         process_info: {
           stage: "completed",

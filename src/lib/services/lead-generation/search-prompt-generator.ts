@@ -24,8 +24,112 @@ export interface SegmentData {
   size?: number;
 }
 
+export interface CompanyData {
+  name?: string;
+  industry?: string;
+  description?: string;
+  location?: string;
+  target_market?: string;
+  services?: string | string[];
+  size?: string;
+  about?: string;
+}
+
 /**
- * Genera un topic de búsqueda basado en los segmentos y leads convertidos
+ * Genera un topic de búsqueda personalizado basado en información específica de la empresa
+ */
+export function generatePersonalizedSearchTopic(
+  company: CompanyData, 
+  segments: SegmentData[], 
+  convertedLeads: LeadData[]
+): string {
+  // Si no hay información de la empresa, usar la función original
+  if (!company || (!company.name && !company.industry && !company.description)) {
+    return generateSearchTopic(segments, convertedLeads);
+  }
+
+  let searchTopic = "";
+  
+  // Construir topic específico basado en la empresa
+  if (company.name) {
+    searchTopic = `employees, executives, and decision makers at ${company.name}`;
+    
+    // Añadir contexto de industria si está disponible
+    if (company.industry) {
+      searchTopic = `employees, executives, and decision makers at ${company.name} (${company.industry} company)`;
+    }
+    
+    // Añadir contexto de tamaño si está disponible
+    if (company.size) {
+      const sizeContext = getSizeContext(company.size);
+      if (sizeContext) {
+        searchTopic = `employees, executives, and decision makers at ${company.name} (${sizeContext}${company.industry ? ` ${company.industry} company` : ' company'})`;
+      }
+    }
+    
+    // Añadir contexto de ubicación si está disponible
+    if (company.location) {
+      searchTopic += ` based in ${company.location}`;
+    }
+    
+  } else if (company.industry) {
+    // Si no hay nombre específico, usar industria
+    searchTopic = `employees and executives from ${company.industry} companies`;
+    
+    if (company.size) {
+      const sizeContext = getSizeContext(company.size);
+      if (sizeContext) {
+        searchTopic = `employees and executives from ${sizeContext} ${company.industry} companies`;
+      }
+    }
+    
+    if (company.location) {
+      searchTopic += ` in ${company.location}`;
+    }
+  } else {
+    // Fallback genérico pero más específico que antes
+    searchTopic = "company employees, executives, and decision makers";
+    
+    if (company.location) {
+      searchTopic += ` in ${company.location}`;
+    }
+  }
+
+  return searchTopic;
+}
+
+/**
+ * Convierte el tamaño de empresa en contexto descriptivo
+ */
+function getSizeContext(size: string): string | null {
+  const sizeNormalized = size.toLowerCase();
+  
+  if (sizeNormalized.includes('startup') || sizeNormalized.includes('small')) {
+    return 'small/startup';
+  } else if (sizeNormalized.includes('medium') || sizeNormalized.includes('mid')) {
+    return 'medium-sized';
+  } else if (sizeNormalized.includes('large') || sizeNormalized.includes('enterprise')) {
+    return 'large enterprise';
+  } else if (sizeNormalized.includes('micro')) {
+    return 'micro';
+  }
+  
+  // Si contiene números, intentar interpretarlos
+  const numberMatch = sizeNormalized.match(/(\d+)/);
+  if (numberMatch) {
+    const num = parseInt(numberMatch[1]);
+    if (num < 10) return 'micro';
+    if (num < 50) return 'small';
+    if (num < 250) return 'medium-sized';
+    if (num < 1000) return 'large';
+    return 'enterprise';
+  }
+  
+  return null;
+}
+
+/**
+ * Genera un topic de búsqueda basado en los segmentos y leads convertidos (función original)
  */
 export function generateSearchTopic(segments: SegmentData[], convertedLeads: LeadData[]): string {
   if (segments.length === 0) {
@@ -88,7 +192,227 @@ export function generateSearchTopic(segments: SegmentData[], convertedLeads: Lea
 }
 
 /**
- * Genera prompts dinámicos de búsqueda basados en patrones de leads exitosos
+ * Genera prompts de búsqueda personalizados basados en información específica de la empresa
+ */
+export function generatePersonalizedSearchPrompts(
+  company: CompanyData, 
+  segments: SegmentData[], 
+  convertedLeads: LeadData[]
+): string {
+  let searchPrompts = `PERSONALIZED COMPANY EMPLOYEE RESEARCH STRATEGY:\n`;
+  searchPrompts += `Focus on finding employees, executives, and decision makers WHO WORK AT the specific target company.\n\n`;
+
+  // Información específica de la empresa
+  if (company.name) {
+    searchPrompts += `🎯 TARGET COMPANY: ${company.name}\n`;
+    
+    if (company.industry) {
+      searchPrompts += `INDUSTRY SPECIALIZATION: ${company.industry}\n`;
+      searchPrompts += `Search for employees with ${company.industry}-specific roles and expertise.\n`;
+    }
+    
+    if (company.size) {
+      const sizeContext = getSizeContext(company.size);
+      if (sizeContext) {
+        searchPrompts += `COMPANY SIZE: ${sizeContext}\n`;
+        searchPrompts += `Target roles appropriate for ${sizeContext} organizations:\n`;
+        
+        if (sizeContext.includes('micro') || sizeContext.includes('small')) {
+          searchPrompts += `- Focus on owners, founders, and multi-role executives\n`;
+          searchPrompts += `- Look for hands-on decision makers with direct operational involvement\n`;
+        } else if (sizeContext.includes('medium')) {
+          searchPrompts += `- Target department heads, managers, and specialized directors\n`;
+          searchPrompts += `- Look for both executives and key operational staff\n`;
+        } else if (sizeContext.includes('large') || sizeContext.includes('enterprise')) {
+          searchPrompts += `- Focus on C-level executives, VPs, and senior directors\n`;
+          searchPrompts += `- Target specialized department heads and decision makers\n`;
+        }
+      }
+    }
+    
+    if (company.location) {
+      searchPrompts += `COMPANY LOCATION: ${company.location}\n`;
+      searchPrompts += `Use local language and business terms for this region when searching.\n`;
+    }
+    
+    if (company.services) {
+      const services = Array.isArray(company.services) ? company.services : [company.services];
+      searchPrompts += `COMPANY SERVICES: ${services.join(', ')}\n`;
+      searchPrompts += `Look for employees involved in these service areas.\n`;
+    }
+    
+    searchPrompts += `\n`;
+  }
+
+  // Estrategia de búsqueda específica
+  searchPrompts += `🔍 PERSONALIZED SEARCH STRATEGY:\n`;
+  if (company.name) {
+    searchPrompts += `1. EXACT COMPANY SEARCH: "${company.name} CEO", "${company.name} founder", "${company.name} director"\n`;
+    searchPrompts += `2. TEAM RESEARCH: "${company.name} team", "${company.name} leadership", "${company.name} staff"\n`;
+    searchPrompts += `3. ORGANIZATIONAL STRUCTURE: "${company.name} management", "${company.name} executives"\n`;
+    searchPrompts += `4. CONTACT VERIFICATION: "${company.name} contact", "${company.name} phone", "${company.name} email"\n`;
+  }
+  
+  // Análisis de leads exitosos para personalización adicional
+  if (convertedLeads.length > 0) {
+    const successfulPositions = convertedLeads
+      .map(lead => lead.position)
+      .filter(pos => pos)
+      .slice(0, 3);
+    
+    if (successfulPositions.length > 0) {
+      searchPrompts += `\n📊 SUCCESSFUL POSITIONS TO TARGET:\n`;
+      searchPrompts += `Based on previous conversions, prioritize these roles:\n`;
+      successfulPositions.forEach(position => {
+        searchPrompts += `- ${position} at ${company.name || 'target company'}\n`;
+      });
+    }
+  }
+
+  // Agregar prompts específicos de industria y región
+  searchPrompts += `\n${generateIndustrySpecificPrompts(company)}`;
+
+  return searchPrompts;
+}
+
+/**
+ * Genera prompts específicos por industria y región de la empresa
+ */
+export function generateIndustrySpecificPrompts(company: CompanyData): string {
+  let prompts = `INDUSTRY & REGION SPECIFIC SEARCH PROMPTS:\n\n`;
+  
+  // Prompts específicos por industria
+  if (company.industry) {
+    const industry = company.industry.toLowerCase();
+    
+    prompts += `🏭 INDUSTRY-SPECIFIC TARGETING (${company.industry}):\n`;
+    
+    if (industry.includes('technology') || industry.includes('tech') || industry.includes('software')) {
+      prompts += `Tech Industry Roles:\n`;
+      prompts += `- CTO, VP Engineering, Lead Developer at ${company.name || 'target company'}\n`;
+      prompts += `- Product Manager, Technical Director at ${company.name || 'target company'}\n`;
+      prompts += `- DevOps Engineer, System Administrator at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} CTO", "${company.name || 'company'} tech lead", "${company.name || 'company'} developer"\n`;
+    } else if (industry.includes('marketing') || industry.includes('advertising') || industry.includes('agency')) {
+      prompts += `Marketing/Agency Roles:\n`;
+      prompts += `- Creative Director, Account Manager at ${company.name || 'target company'}\n`;
+      prompts += `- Digital Marketing Manager, Brand Manager at ${company.name || 'target company'}\n`;
+      prompts += `- SEO Specialist, Content Manager at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} creative director", "${company.name || 'company'} account manager"\n`;
+    } else if (industry.includes('finance') || industry.includes('banking') || industry.includes('investment')) {
+      prompts += `Finance Industry Roles:\n`;
+      prompts += `- CFO, Financial Controller at ${company.name || 'target company'}\n`;
+      prompts += `- Investment Manager, Risk Manager at ${company.name || 'target company'}\n`;
+      prompts += `- Financial Analyst, Compliance Officer at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} CFO", "${company.name || 'company'} financial director"\n`;
+    } else if (industry.includes('healthcare') || industry.includes('medical') || industry.includes('pharmaceutical')) {
+      prompts += `Healthcare Industry Roles:\n`;
+      prompts += `- Medical Director, Chief Medical Officer at ${company.name || 'target company'}\n`;
+      prompts += `- Healthcare Administrator, Clinical Director at ${company.name || 'target company'}\n`;
+      prompts += `- Research Director, Regulatory Affairs Manager at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} medical director", "${company.name || 'company'} healthcare admin"\n`;
+    } else if (industry.includes('retail') || industry.includes('e-commerce') || industry.includes('commerce')) {
+      prompts += `Retail/E-commerce Roles:\n`;
+      prompts += `- Store Manager, Retail Operations Manager at ${company.name || 'target company'}\n`;
+      prompts += `- E-commerce Manager, Digital Commerce Director at ${company.name || 'target company'}\n`;
+      prompts += `- Merchandising Manager, Supply Chain Manager at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} store manager", "${company.name || 'company'} e-commerce director"\n`;
+    } else if (industry.includes('education') || industry.includes('training') || industry.includes('academic')) {
+      prompts += `Education Industry Roles:\n`;
+      prompts += `- Academic Director, Dean at ${company.name || 'target company'}\n`;
+      prompts += `- Training Manager, Educational Coordinator at ${company.name || 'target company'}\n`;
+      prompts += `- Curriculum Developer, Program Director at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} director", "${company.name || 'company'} coordinator"\n`;
+    } else if (industry.includes('manufacturing') || industry.includes('industrial') || industry.includes('production')) {
+      prompts += `Manufacturing Industry Roles:\n`;
+      prompts += `- Operations Manager, Production Manager at ${company.name || 'target company'}\n`;
+      prompts += `- Quality Control Manager, Plant Manager at ${company.name || 'target company'}\n`;
+      prompts += `- Supply Chain Director, Manufacturing Engineer at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} operations manager", "${company.name || 'company'} plant manager"\n`;
+    } else {
+      // Generic industry approach
+      prompts += `General Industry Roles:\n`;
+      prompts += `- Operations Manager, Department Head at ${company.name || 'target company'}\n`;
+      prompts += `- Business Development Manager, Strategy Director at ${company.name || 'target company'}\n`;
+      prompts += `- Project Manager, Team Lead at ${company.name || 'target company'}\n`;
+      prompts += `Search terms: "${company.name || 'company'} manager", "${company.name || 'company'} director"\n`;
+    }
+    
+    prompts += `\n`;
+  }
+  
+  // Prompts específicos por región/ubicación
+  if (company.location) {
+    prompts += `🌍 LOCATION-SPECIFIC SEARCH STRATEGY (${company.location}):\n`;
+    
+    const location = company.location.toLowerCase();
+    
+    if (location.includes('spain') || location.includes('españa') || location.includes('madrid') || location.includes('barcelona')) {
+      prompts += `Spanish Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} director ejecutivo", "${company.name || 'empresa'} gerente general"\n`;
+      prompts += `- "equipo directivo de ${company.name || 'empresa'}", "responsable de ${company.name || 'empresa'}"\n`;
+      prompts += `- "contacto ${company.name || 'empresa'}", "teléfono ${company.name || 'empresa'} España"\n`;
+      prompts += `Business Culture: Focus on formal titles and hierarchical structures\n`;
+    } else if (location.includes('mexico') || location.includes('méxico') || location.includes('guadalajara') || location.includes('monterrey')) {
+      prompts += `Mexican Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} dueño", "${company.name || 'empresa'} propietario"\n`;
+      prompts += `- "gerente general de ${company.name || 'empresa'}", "director de ${company.name || 'empresa'}"\n`;
+      prompts += `- "contacto ${company.name || 'empresa'} México", "oficina ${company.name || 'empresa'}"\n`;
+      prompts += `Business Culture: Emphasize relationship-building and family business structures\n`;
+    } else if (location.includes('brazil') || location.includes('brasil') || location.includes('são paulo') || location.includes('rio')) {
+      prompts += `Brazilian Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} proprietário", "${company.name || 'empresa'} sócio"\n`;
+      prompts += `- "diretor geral da ${company.name || 'empresa'}", "gerente da ${company.name || 'empresa'}"\n`;
+      prompts += `- "contato ${company.name || 'empresa'} Brasil", "escritório ${company.name || 'empresa'}"\n`;
+      prompts += `Business Culture: Focus on personal connections and networking\n`;
+    } else if (location.includes('colombia') || location.includes('bogotá') || location.includes('medellín')) {
+      prompts += `Colombian Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} gerente general", "${company.name || 'empresa'} director"\n`;
+      prompts += `- "equipo de ${company.name || 'empresa'}", "empleados de ${company.name || 'empresa'}"\n`;
+      prompts += `- "contacto ${company.name || 'empresa'} Colombia", "oficina ${company.name || 'empresa'}"\n`;
+      prompts += `Business Culture: Professional but warm approach to business relationships\n`;
+    } else if (location.includes('argentina') || location.includes('buenos aires') || location.includes('córdoba')) {
+      prompts += `Argentine Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} director", "${company.name || 'empresa'} responsable"\n`;
+      prompts += `- "equipo directivo de ${company.name || 'empresa'}", "gerencia de ${company.name || 'empresa'}"\n`;
+      prompts += `- "contacto ${company.name || 'empresa'} Argentina", "sede ${company.name || 'empresa'}"\n`;
+      prompts += `Business Culture: European-influenced business formality with Latin warmth\n`;
+    } else if (location.includes('chile') || location.includes('santiago') || location.includes('valparaíso')) {
+      prompts += `Chilean Market Terms:\n`;
+      prompts += `- "${company.name || 'empresa'} gerente general", "${company.name || 'empresa'} ejecutivo"\n`;
+      prompts += `- "administración de ${company.name || 'empresa'}", "dirección de ${company.name || 'empresa'}"\n`;
+      prompts += `- "contacto ${company.name || 'empresa'} Chile", "sucursal ${company.name || 'empresa'}"\n`;
+      prompts += `Business Culture: Conservative and formal business environment\n`;
+    } else if (location.includes('united states') || location.includes('usa') || location.includes('california') || location.includes('new york')) {
+      prompts += `US Market Terms:\n`;
+      prompts += `- "${company.name || 'company'} CEO", "${company.name || 'company'} President"\n`;
+      prompts += `- "${company.name || 'company'} executive team", "${company.name || 'company'} leadership"\n`;
+      prompts += `- "${company.name || 'company'} contact", "${company.name || 'company'} headquarters"\n`;
+      prompts += `Business Culture: Direct communication and results-oriented approach\n`;
+    } else {
+      prompts += `General International Terms:\n`;
+      prompts += `- "${company.name || 'company'} management", "${company.name || 'company'} executives"\n`;
+      prompts += `- "${company.name || 'company'} team", "${company.name || 'company'} staff"\n`;
+      prompts += `- "${company.name || 'company'} contact information", "${company.name || 'company'} office"\n`;
+    }
+    
+    prompts += `\n`;
+  }
+  
+  // Combinación de industria y ubicación
+  if (company.industry && company.location) {
+    prompts += `🎯 COMBINED INDUSTRY + LOCATION TARGETING:\n`;
+    prompts += `Search for ${company.industry} professionals specifically at ${company.name || 'target company'} in ${company.location}\n`;
+    prompts += `Focus on local business networks and industry associations in ${company.location}\n`;
+    prompts += `Look for company representation at ${company.industry} events in ${company.location}\n`;
+    prompts += `\n`;
+  }
+  
+  return prompts;
+}
+
+/**
+ * Genera prompts dinámicos de búsqueda basados en patrones de leads exitosos (función original)
  */
 export function generateSearchPrompts(segments: SegmentData[], convertedLeads: LeadData[]): string {
   const industries: string[] = [];
@@ -168,7 +492,178 @@ export function generateSearchPrompts(segments: SegmentData[], convertedLeads: L
 }
 
 /**
- * Genera el mensaje de contexto completo para el agente
+ * Genera un mensaje de contexto personalizado basado en información específica de la empresa
+ */
+export function generatePersonalizedContextMessage(
+  company: CompanyData,
+  segments: SegmentData[], 
+  convertedLeads: LeadData[], 
+  nonConvertedLeads: LeadData[],
+  searchTopic: string,
+  searchPrompts: string,
+  usedCities: string[],
+  usedRegions: { [key: string]: string[] },
+  maxLeads: number,
+  webhook?: { url: string }
+): string {
+  let contextMessage = `PERSONALIZED LEAD GENERATION ANALYSIS\n\n`;
+  
+  // Información específica de la empresa objetivo
+  contextMessage += `🎯 TARGET COMPANY PROFILE:\n`;
+  
+  if (company.name) {
+    contextMessage += `Company Name: ${company.name}\n`;
+    contextMessage += `CRITICAL FOCUS: Find employees, executives, and decision makers WHO WORK AT "${company.name}"\n`;
+  }
+  
+  if (company.industry) {
+    contextMessage += `Industry: ${company.industry}\n`;
+    contextMessage += `Target roles specific to ${company.industry} sector\n`;
+  }
+  
+  if (company.size) {
+    contextMessage += `Company Size: ${company.size}\n`;
+    const sizeContext = getSizeContext(company.size);
+    if (sizeContext) {
+      contextMessage += `Focus on roles appropriate for ${sizeContext} organizations\n`;
+    }
+  }
+  
+  if (company.location) {
+    contextMessage += `Location: ${company.location}\n`;
+    contextMessage += `Use local language and business culture for this region\n`;
+  }
+  
+  if (company.description || company.about) {
+    const description = company.description || company.about;
+    contextMessage += `Description: ${description}\n`;
+  }
+  
+  if (company.services) {
+    const services = Array.isArray(company.services) ? company.services.join(', ') : company.services;
+    contextMessage += `Services: ${services}\n`;
+  }
+  
+  if (company.target_market) {
+    contextMessage += `Target Market: ${company.target_market}\n`;
+  }
+  
+  contextMessage += `\n`;
+  
+  // Estrategia específica de la empresa
+  contextMessage += `🎯 COMPANY-SPECIFIC SEARCH STRATEGY:\n`;
+  if (company.name) {
+    contextMessage += `PRIMARY OBJECTIVE: Find people who work at "${company.name}" specifically\n`;
+    contextMessage += `SEARCH PATTERNS:\n`;
+    contextMessage += `- Direct company search: "${company.name} CEO", "${company.name} founder"\n`;
+    contextMessage += `- Team discovery: "${company.name} team", "${company.name} leadership"\n`;
+    contextMessage += `- Organizational research: "${company.name} employees", "${company.name} staff"\n`;
+    contextMessage += `- Contact verification: "${company.name} contact information"\n`;
+    
+    if (company.industry) {
+      contextMessage += `INDUSTRY-SPECIFIC ROLES:\n`;
+      contextMessage += `Target ${company.industry}-specific positions at "${company.name}"\n`;
+      contextMessage += `Look for expertise relevant to ${company.industry} sector\n`;
+    }
+    
+    contextMessage += `\n`;
+  }
+  
+  // Información de segmentos (simplificada y enfocada)
+  if (segments.length > 0) {
+    contextMessage += `ACTIVE SEGMENTS FOR REFERENCE (${segments.length}):\n`;
+    segments.slice(0, 3).forEach((segment, index) => {
+      contextMessage += `${index + 1}. ${segment.name}`;
+      if (segment.description) contextMessage += ` - ${segment.description}`;
+      contextMessage += `\n`;
+    });
+    contextMessage += `\n`;
+  }
+  
+  // Análisis de leads convertidos (enfocado en patrones útiles)
+  if (convertedLeads.length > 0) {
+    contextMessage += `SUCCESSFUL CONVERSION PATTERNS (${convertedLeads.length} leads):\n`;
+    
+    // Analizar posiciones exitosas
+    const successfulPositions = convertedLeads
+      .map(lead => lead.position)
+      .filter((pos): pos is string => !!pos)
+      .reduce((acc: {[key: string]: number}, pos) => {
+        acc[pos] = (acc[pos] || 0) + 1;
+        return acc;
+      }, {});
+    
+    if (Object.keys(successfulPositions).length > 0) {
+      contextMessage += `Top converting positions:\n`;
+      Object.entries(successfulPositions)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 3)
+        .forEach(([position, count]) => {
+          contextMessage += `- ${position} (${count} conversions)\n`;
+        });
+    }
+    
+    // Analizar industrias exitosas
+    const successfulIndustries = convertedLeads
+      .map(lead => lead.company?.industry)
+      .filter((industry): industry is string => !!industry)
+      .reduce((acc: {[key: string]: number}, industry) => {
+        acc[industry] = (acc[industry] || 0) + 1;
+        return acc;
+      }, {});
+    
+    if (Object.keys(successfulIndustries).length > 0) {
+      contextMessage += `Top converting industries:\n`;
+      Object.entries(successfulIndustries)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 3)
+        .forEach(([industry, count]) => {
+          contextMessage += `- ${industry} (${count} conversions)\n`;
+        });
+    }
+    
+    contextMessage += `\n`;
+  }
+  
+  // Configuración de búsqueda específica
+  contextMessage += `SEARCH CONFIGURATION:\n`;
+  contextMessage += `Target: ${company.name || 'Specific company'} employees and executives\n`;
+  contextMessage += `Search Topic: ${searchTopic}\n`;
+  contextMessage += `Leads Requested: ${maxLeads}\n`;
+  
+  if (company.location) {
+    contextMessage += `Geographic Focus: ${company.location}\n`;
+  }
+  
+  if (usedCities.length > 0) {
+    contextMessage += `Previously Searched Cities: ${usedCities.join(', ')}\n`;
+  }
+  
+  contextMessage += `\n`;
+  
+  // Prompts de búsqueda personalizados
+  contextMessage += `${searchPrompts}\n`;
+  
+  // Fuentes de datos específicas para la empresa
+  contextMessage += `RECOMMENDED DATA SOURCES FOR COMPANY RESEARCH:\n`;
+  if (company.name) {
+    contextMessage += `• Company Website: Look for "About Us", "Team", "Leadership" pages\n`;
+    contextMessage += `• LinkedIn Company Page: Search for current employees at "${company.name}"\n`;
+    contextMessage += `• Business Directories: Find "${company.name}" in industry-specific directories\n`;
+    contextMessage += `• Industry Publications: Search for "${company.name}" executives in trade publications\n`;
+    contextMessage += `• Professional Networks: Find "${company.name}" employees in professional associations\n`;
+    contextMessage += `• News and Media: Search for "${company.name}" representatives in news articles\n`;
+  }
+  
+  if (webhook) {
+    contextMessage += `\nWebhook URL: ${webhook.url}\n`;
+  }
+  
+  return contextMessage;
+}
+
+/**
+ * Genera el mensaje de contexto completo para el agente (función original)
  */
 export function generateContextMessage(
   segments: SegmentData[], 

@@ -8,7 +8,8 @@ export const maxDuration = 120;
 
 // Schema de validación para la request
 const LeadAttentionSchema = z.object({
-  lead_id: z.string().uuid('lead_id debe ser un UUID válido'),
+  site_id: z.string().uuid('site_id debe ser un UUID válido'),
+  names: z.array(z.string().min(1, 'Name cannot be empty')).min(1, 'At least one name is required'),
   user_message: z.string().optional(),
   system_message: z.string().optional(),
   channel: z.enum(['email', 'whatsapp', 'phone', 'chat', 'form', 'other']).default('other'),
@@ -25,6 +26,28 @@ const LeadAttentionSchema = z.object({
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
+}
+
+// Función para obtener leads por nombres en un sitio específico
+async function getLeadsByNames(siteId: string, names: string[]): Promise<any[]> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('site_id', siteId)
+      .in('name', names)
+      .not('assignee_id', 'is', null); // Solo leads asignados
+    
+    if (error) {
+      console.error('Error al obtener leads por nombres:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error al obtener leads por nombres:', error);
+    return [];
+  }
 }
 
 // Función para obtener información completa del lead incluyendo assignee
@@ -139,6 +162,90 @@ async function getSiteEmailConfig(siteId: string): Promise<{email: string | null
   } catch (error) {
     console.error('Error al obtener configuración de email del sitio:', error);
     return { email: null, aliases: [] };
+  }
+}
+
+// Función para verificar configuración de canales del sitio
+async function checkSiteChannelsConfiguration(siteId: string): Promise<{
+  hasChannels: boolean,
+  configuredChannels: string[],
+  warning?: string
+}> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', siteId)
+      .single();
+    
+    if (error || !data?.channels) {
+      const warning = `⚠️ [LeadAttention] CRITICAL: Site ${siteId} has NO channels configured in settings. Prospecting will be SERIOUSLY AFFECTED without at least one channel configuration.`;
+      console.warn(warning);
+      
+      return {
+        hasChannels: false,
+        configuredChannels: [],
+        warning: 'No channels configured - prospecting will be seriously affected'
+      };
+    }
+    
+    const channels = data.channels;
+    const configuredChannels: string[] = [];
+    
+    // Verificar cada tipo de canal disponible
+    if (channels.email && (channels.email.email || channels.email.aliases)) {
+      configuredChannels.push('email');
+    }
+    
+    if (channels.whatsapp && channels.whatsapp.phone_number) {
+      configuredChannels.push('whatsapp');
+    }
+    
+    if (channels.phone && channels.phone.number) {
+      configuredChannels.push('phone');
+    }
+    
+    if (channels.sms && channels.sms.phone_number) {
+      configuredChannels.push('sms');
+    }
+    
+    if (channels.chat && channels.chat.enabled) {
+      configuredChannels.push('chat');
+    }
+    
+    if (channels.social && (channels.social.facebook || channels.social.twitter || channels.social.linkedin)) {
+      configuredChannels.push('social');
+    }
+    
+    if (configuredChannels.length === 0) {
+      const warning = `⚠️ [LeadAttention] CRITICAL: Site ${siteId} has channels object but NO FUNCTIONAL channels configured. Available channels: ${Object.keys(channels).join(', ')}. Prospecting will be SERIOUSLY AFFECTED without at least one functional channel.`;
+      console.warn(warning);
+      
+      return {
+        hasChannels: false,
+        configuredChannels: [],
+        warning: 'Channels object exists but no functional channels configured - prospecting will be seriously affected'
+      };
+    }
+    
+    console.log(`✅ [LeadAttention] Site ${siteId} has ${configuredChannels.length} channels configured: ${configuredChannels.join(', ')}`);
+    
+    return {
+      hasChannels: true,
+      configuredChannels,
+      warning: undefined
+    };
+    
+  } catch (error) {
+    console.error('Error al verificar configuración de canales del sitio:', error);
+    const warning = `⚠️ [LeadAttention] ERROR: Could not verify channels configuration for site ${siteId}. Prospecting may be affected.`;
+    console.warn(warning);
+    
+    return {
+      hasChannels: false,
+      configuredChannels: [],
+      warning: 'Could not verify channels configuration - prospecting may be affected'
+    };
   }
 }
 
@@ -410,7 +517,8 @@ export async function POST(request: NextRequest) {
     }
     
     const {
-      lead_id,
+      site_id,
+      names,
       user_message,
       system_message,
       channel,
@@ -419,82 +527,28 @@ export async function POST(request: NextRequest) {
       additional_data
     } = validationResult.data;
     
-    console.log(`👤 [LeadAttention] Procesando notificación para lead: ${lead_id}, canal: ${channel}`);
+    console.log(`👤 [LeadAttention] Procesando notificación para leads: ${names.join(', ')}, sitio: ${site_id}`);
     
-    // Obtener información del lead
-    const leadInfo = await getLeadInfo(lead_id);
-    if (!leadInfo) {
+    // Obtener leads por nombres en el sitio
+    const leads = await getLeadsByNames(site_id, names);
+    
+    if (leads.length === 0) {
       return NextResponse.json(
         {
           success: false,
           error: {
-            code: 'LEAD_NOT_FOUND',
-            message: 'Lead not found'
+            code: 'LEADS_NOT_FOUND',
+            message: 'No leads found with the provided names'
           }
         },
         { status: 404 }
-      );
-    }
-    
-    // Obtener el assignee_id del lead
-    const assigneeId = leadInfo.assignee_id;
-    if (!assigneeId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'LEAD_NO_ASSIGNEE',
-            message: 'Lead has no assigned team member'
-          }
-        },
-        { status: 400 }
       );
     }
 
-    // Obtener el site_id del lead
-    const siteId = leadInfo.site_id;
-    if (!siteId) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'LEAD_NO_SITE',
-            message: 'Lead has no associated site'
-          }
-        },
-        { status: 400 }
-      );
-    }
-    
-    // Obtener información del team member
-    const teamMemberInfo = await getTeamMemberInfo(assigneeId);
-    if (!teamMemberInfo) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'TEAM_MEMBER_NOT_FOUND',
-            message: 'Team member not found'
-          }
-        },
-        { status: 404 }
-      );
-    }
-    
-    // Verificar que el team member tenga email
-    if (!teamMemberInfo.email) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'TEAM_MEMBER_NO_EMAIL',
-            message: 'Team member has no email address'
-          }
-        },
-        { status: 400 }
-      );
-    }
-    
+    // Obtener el site_id del primer lead para usarlo en las URLs
+    const firstLead = leads[0];
+    const siteId = firstLead.site_id;
+
     // Obtener información del sitio
     const siteInfo = await getSiteInfo(siteId);
     if (!siteInfo) {
@@ -510,7 +564,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Obtener configuración de email del sitio
+         // Verificar configuración de canales del sitio (solo warning, no bloquea el proceso)
+     const channelsConfig = await checkSiteChannelsConfiguration(siteId);
+
+     // Obtener configuración de email del sitio
     const siteEmailConfig = await getSiteEmailConfig(siteId);
     const replyEmail = siteEmailConfig.aliases.length > 0 ? siteEmailConfig.aliases[0] : siteEmailConfig.email;
     
@@ -522,106 +579,102 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const leadUrl = `${baseUrl}/sites/${siteId}/leads/${lead_id}`;
     const siteUrl = siteInfo.url || `${baseUrl}/sites/${siteId}`;
     
-    console.log(`📧 [LeadAttention] Enviando notificación a team member: ${teamMemberInfo.email}`);
-    
-    try {
-      const channelNames = {
-        email: 'Email',
-        whatsapp: 'WhatsApp',
-        phone: 'Phone',
-        chat: 'Chat',
-        form: 'Form',
-        other: 'Other'
-      };
+    console.log(`📧 [LeadAttention] Enviando notificaciones a team members para los leads:`);
+    for (const lead of leads) {
+      const leadId = lead.id;
+      const assigneeId = lead.assignee_id;
+
+      if (!assigneeId) {
+        console.warn(`⚠️ [LeadAttention] Lead ${leadId} has no assigned team member, skipping.`);
+        continue;
+      }
+
+      console.log(`📧 [LeadAttention] Notificando a team member ${assigneeId} para el lead ${leadId}`);
       
-      const emailResult = await sendGridService.sendEmail({
-        to: teamMemberInfo.email,
-        subject: `🔔 Lead Attention Required: ${leadInfo.name || 'New Lead'} contacted you via ${channelNames[channel]}`,
-        html: generateTeamMemberNotificationHtml({
-          teamMemberName: teamMemberInfo.name || 'Team Member',
-          leadName: leadInfo.name || 'Unknown Lead',
-          leadEmail: leadInfo.email || 'No email',
-          userMessage: user_message,
-          systemMessage: system_message,
-          siteName: siteInfo.name || 'Unknown Site',
-          channel,
-          priority,
-          contactInfo: contact_info,
-          additionalData: additional_data,
-          logoUrl: siteInfo.logo_url,
-          leadUrl,
-          chatUrl: `${baseUrl}/sites/${siteId}/chat`,
-          replyEmail: replyEmail || undefined
-        }),
-        categories: ['lead-attention', 'team-notification', 'priority-' + priority],
-        customArgs: {
-          siteId: siteId,
-          leadId: lead_id,
-          teamMemberId: assigneeId,
-          channel,
-          priority
+      try {
+        const teamMemberInfo = await getTeamMemberInfo(assigneeId);
+        if (!teamMemberInfo) {
+          console.error(`❌ [LeadAttention] Team member ${assigneeId} not found.`);
+          continue;
         }
-      });
-      
-      if (emailResult.success) {
-        console.log(`✅ [LeadAttention] Team member notificado exitosamente: ${teamMemberInfo.email}`);
+
+        if (!teamMemberInfo.email) {
+          console.warn(`⚠️ [LeadAttention] Team member ${assigneeId} has no email address, skipping.`);
+          continue;
+        }
+
+        const leadInfo = await getLeadInfo(leadId);
+        if (!leadInfo) {
+          console.error(`❌ [LeadAttention] Lead ${leadId} not found.`);
+          continue;
+        }
+
+        const channelNames = {
+          email: 'Email',
+          whatsapp: 'WhatsApp',
+          phone: 'Phone',
+          chat: 'Chat',
+          form: 'Form',
+          other: 'Other'
+        };
         
-        return NextResponse.json({
-          success: true,
-          data: {
-            lead_id,
-            site_id: siteId,
-            assignee_id: assigneeId,
+        const emailResult = await sendGridService.sendEmail({
+          to: teamMemberInfo.email,
+          subject: `🔔 Lead Attention Required: ${leadInfo.name || 'New Lead'} contacted you via ${channelNames[channel]}`,
+          html: generateTeamMemberNotificationHtml({
+            teamMemberName: teamMemberInfo.name || 'Team Member',
+            leadName: leadInfo.name || 'Unknown Lead',
+            leadEmail: leadInfo.email || 'No email',
+            userMessage: user_message,
+            systemMessage: system_message,
+            siteName: siteInfo.name || 'Unknown Site',
             channel,
             priority,
-            lead_info: {
-              name: leadInfo.name,
-              email: leadInfo.email
-            },
-            team_member_info: {
-              name: teamMemberInfo.name,
-              email: teamMemberInfo.email,
-              role: teamMemberInfo.role
-            },
-            site_info: {
-              name: siteInfo.name
-            },
-            notification_sent: true,
-            email_sent: true,
-            sent_at: new Date().toISOString()
+            contactInfo: contact_info,
+            additionalData: additional_data,
+            logoUrl: siteInfo.logo_url,
+            leadUrl: `${siteUrl}/leads/${leadId}`,
+            chatUrl: `${baseUrl}/sites/${siteId}/chat`,
+            replyEmail: replyEmail || undefined
+          }),
+          categories: ['lead-attention', 'team-notification', 'priority-' + priority],
+          customArgs: {
+            siteId: siteId,
+            leadId: leadId,
+            teamMemberId: assigneeId,
+            channel,
+            priority
           }
         });
-      } else {
-        console.error(`❌ [LeadAttention] Error enviando email: ${emailResult.error}`);
         
-        return NextResponse.json(
-          {
-            success: false,
-            error: {
-              code: 'EMAIL_SEND_ERROR',
-              message: `Failed to send notification: ${emailResult.error}`
-            }
-          },
-          { status: 500 }
-        );
+        if (emailResult.success) {
+          console.log(`✅ [LeadAttention] Team member ${assigneeId} notificado exitosamente para el lead ${leadId}`);
+        } else {
+          console.error(`❌ [LeadAttention] Error enviando email a team member ${assigneeId} para el lead ${leadId}: ${emailResult.error}`);
+        }
+      } catch (error) {
+        console.error(`❌ [LeadAttention] Error enviando notificación para el lead ${leadId}:`, error);
       }
-    } catch (error) {
-      console.error(`❌ [LeadAttention] Error enviando notificación:`, error);
-      
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'NOTIFICATION_ERROR',
-            message: `Error sending notification: ${error instanceof Error ? error.message : 'Unknown error'}`
-          }
-        },
-        { status: 500 }
-      );
     }
+    
+         return NextResponse.json({
+       success: true,
+       data: {
+         site_id,
+         names,
+         channel,
+         priority,
+         notification_sent: true,
+         sent_at: new Date().toISOString(),
+         channels_configuration: {
+           has_channels: channelsConfig.hasChannels,
+           configured_channels: channelsConfig.configuredChannels,
+           warning: channelsConfig.warning
+         }
+       }
+     });
     
   } catch (error) {
     console.error('❌ [LeadAttention] Error general:', error);
