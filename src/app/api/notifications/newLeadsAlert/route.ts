@@ -119,6 +119,17 @@ function getRelativeTime(date: string): string {
   }
 }
 
+// Función para formatear el origin eliminando guiones bajos y mejorando formato
+function formatOrigin(origin: string): string {
+  if (!origin) return '';
+  
+  return origin
+    .replace(/_/g, ' ')
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
 // Función para generar HTML del email para el equipo
 function generateNewLeadsAlertHtml(data: {
   leads: any[];
@@ -162,22 +173,33 @@ function generateNewLeadsAlertHtml(data: {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>New Leads Alert - ${data.siteName}</title>
+      <style>
+        @media screen and (max-width: 600px) {
+          .mobile-padding { padding: 20px !important; }
+          .mobile-text-sm { font-size: 14px !important; }
+          .mobile-text-xs { font-size: 12px !important; }
+          .mobile-stack { display: block !important; width: 100% !important; margin-bottom: 16px !important; }
+          .mobile-button { display: block !important; width: 100% !important; margin: 8px 0 !important; }
+          .mobile-small-padding { padding: 12px 16px !important; }
+          .mobile-hide-break { display: none !important; }
+        }
+      </style>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
       
       <!-- Main Container -->
-      <div style="max-width: 700px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
+      <div style="max-width: 700px; margin: 20px auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
         
         <!-- Header -->
-        <div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 32px 40px; text-align: center;">
+        <div class="mobile-padding" style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); padding: 32px 20px; text-align: center;">
           ${data.logoUrl ? `
-          <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
-            <img src="${data.logoUrl}" alt="${data.siteName} Logo" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
+          <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 80px; height: 80px; box-sizing: border-box;">
+            <img src="${data.logoUrl}" alt="${data.siteName} Logo" style="width: 48px; height: 48px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
           </div>
           ` : `
-          <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 24px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
-            <div style="width: 48px; height: 48px; background-color: #ffffff; border-radius: 50%; position: relative; margin: 0 auto;">
-              <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 24px;">🎯</div>
+          <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 20px; margin-bottom: 16px; width: 80px; height: 80px; box-sizing: border-box;">
+            <div style="width: 40px; height: 40px; background-color: #ffffff; border-radius: 50%; position: relative; margin: 0 auto;">
+              <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 20px;">🎯</div>
             </div>
           </div>
           `}
@@ -188,7 +210,7 @@ function generateNewLeadsAlertHtml(data: {
         </div>
         
         <!-- Content -->
-        <div style="padding: 40px;">
+        <div class="mobile-padding" style="padding: 40px 20px;">
           
           <!-- Summary -->
           <div style="margin-bottom: 32px; text-align: center;">
@@ -197,28 +219,37 @@ function generateNewLeadsAlertHtml(data: {
             </h2>
             <p style="margin: 0; font-size: 16px; color: #475569; line-height: 1.7;">
               You have <strong>${data.totalUnassignedLeads} new lead${data.totalUnassignedLeads !== 1 ? 's' : ''} from the last 24 hours</strong> that need${data.totalUnassignedLeads === 1 ? 's' : ''} to be assigned to team members.
-              ${data.hoursUntilAutoProspect > 0 ? `<br><strong>In ${data.hoursUntilAutoProspect} hours</strong>, unassigned leads will automatically begin receiving personalized outreach from our sales team.` : ''}
+              ${data.hoursUntilAutoProspect > 0 ? `<span class="mobile-hide-break"><br></span><strong>In ${data.hoursUntilAutoProspect} hours</strong>, unassigned leads will automatically begin receiving personalized outreach from our sales team.` : ''}
             </p>
           </div>
           
-                     <!-- Automatic Outreach Warning -->
-           <div style="margin-bottom: 32px; text-align: center;">
-             <div style="display: inline-block; background-color: ${priorityColor.badge}; color: ${priorityColor.color}; padding: 12px 24px; border-radius: 20px; font-size: 14px; font-weight: 600; letter-spacing: 0.05em;">
-               ⏰ Automatic outreach begins: ${formatDate(autoProspectDate)}
-             </div>
-           </div>
+          <!-- Automatic Outreach Warning -->
+          <div style="margin-bottom: 32px; text-align: center;">
+            <div class="mobile-small-padding" style="display: inline-block; background-color: ${priorityColor.badge}; color: ${priorityColor.color}; padding: 12px 20px; border-radius: 20px; font-size: 14px; font-weight: 600; letter-spacing: 0.05em; max-width: 90%;">
+              ⏰ Automatic outreach begins: ${formatDate(autoProspectDate)}
+            </div>
+          </div>
            
-           <!-- Quick Stats -->
-           <div style="margin-bottom: 32px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px;">
-             <div style="background-color: #eff6ff; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #bfdbfe;">
-               <div style="font-size: 28px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">${data.totalUnassignedLeads.toString()}</div>
-               <div style="font-size: 14px; color: #3730a3; font-weight: 500;">Unassigned Leads</div>
-             </div>
-             <div style="background-color: #fef3c7; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #fbbf24;">
-               <div style="font-size: 28px; font-weight: 700; color: #d97706; margin-bottom: 4px;">${data.hoursUntilAutoProspect.toString()}h</div>
-               <div style="font-size: 14px; color: #92400e; font-weight: 500;">Until Automatic Outreach</div>
-             </div>
-           </div>
+          <!-- Quick Stats -->
+          <div style="margin-bottom: 32px;">
+            <!-- Stats Container - Mobile Friendly -->
+            <table style="width: 100%; border-collapse: collapse;">
+              <tr>
+                <td style="width: 50%; padding: 0 8px 16px 0; vertical-align: top;">
+                  <div style="background-color: #eff6ff; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #bfdbfe;">
+                    <div style="font-size: 28px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">${data.totalUnassignedLeads.toString()}</div>
+                    <div style="font-size: 14px; color: #3730a3; font-weight: 500;">Unassigned Leads</div>
+                  </div>
+                </td>
+                <td style="width: 50%; padding: 0 0 16px 8px; vertical-align: top;">
+                  <div style="background-color: #fef3c7; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #fbbf24;">
+                    <div style="font-size: 28px; font-weight: 700; color: #d97706; margin-bottom: 4px;">${data.hoursUntilAutoProspect.toString()}h</div>
+                    <div style="font-size: 14px; color: #92400e; font-weight: 500;">Until Automatic Outreach</div>
+                  </div>
+                </td>
+              </tr>
+            </table>
+          </div>
           
           ${data.includeLeadDetails && data.leads.length > 0 ? `
           <!-- Leads List -->
@@ -226,30 +257,37 @@ function generateNewLeadsAlertHtml(data: {
             <h3 style="margin: 0 0 20px; font-size: 18px; color: #1e293b; font-weight: 600;">Unassigned Leads (Last 24 Hours)</h3>
             <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
               ${data.leads.slice(0, 10).map((lead, index) => `
-              <div style="padding: 20px; border-bottom: ${index < Math.min(data.leads.length, 10) - 1 ? '1px solid #e2e8f0' : 'none'}; ${index % 2 === 0 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;'}">
-                <div style="display: flex; justify-content: space-between; align-items: start; margin-bottom: 8px;">
-                  <div>
-                    <div style="font-weight: 600; color: #1e293b; font-size: 16px; margin-bottom: 4px;">
-                      ${lead.name || 'Unknown Lead'}
-                    </div>
-                    <div style="color: #64748b; font-size: 14px; margin-bottom: 4px;">
-                      📧 ${lead.email || 'No email'}
-                      ${lead.phone ? ` • 📞 ${lead.phone}` : ''}
-                    </div>
-                    ${lead.company?.name ? `
-                    <div style="color: #64748b; font-size: 14px; margin-bottom: 4px;">
-                      🏢 ${lead.company.name}
-                    </div>
-                    ` : ''}
+              <div class="mobile-small-padding" style="padding: 20px 16px; border-bottom: ${index < Math.min(data.leads.length, 10) - 1 ? '1px solid #e2e8f0' : 'none'}; ${index % 2 === 0 ? 'background-color: #f8fafc;' : 'background-color: #ffffff;'}">
+                <!-- Mobile-friendly lead layout -->
+                <div style="margin-bottom: 8px;">
+                  <div style="font-weight: 600; color: #1e293b; font-size: 16px; margin-bottom: 8px;">
+                    ${lead.name || 'Unknown Lead'}
+                  </div>
+                  
+                  <!-- Contact Info -->
+                  <div style="color: #64748b; font-size: 14px; margin-bottom: 8px; line-height: 1.5;">
+                    <div style="margin-bottom: 4px;">📧 ${lead.email || 'No email'}</div>
+                    ${lead.phone ? `<div style="margin-bottom: 4px;">📞 ${lead.phone}</div>` : ''}
+                    ${lead.company?.name ? `<div style="margin-bottom: 4px;">🏢 ${lead.company.name}</div>` : ''}
+                  </div>
+                  
+                  <!-- Tags and Meta -->
+                  <div style="margin-bottom: 8px;">
                     ${lead.segments?.name ? `
-                    <div style="display: inline-block; background-color: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500;">
+                    <span style="display: inline-block; background-color: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; margin-right: 8px; margin-bottom: 4px;">
                       ${lead.segments.name}
-                    </div>
+                    </span>
+                    ` : ''}
+                    ${lead.origin ? `
+                    <span style="display: inline-block; background-color: #f0fdf4; color: #16a34a; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; margin-bottom: 4px;">
+                      via ${formatOrigin(lead.origin)}
+                    </span>
                     ` : ''}
                   </div>
-                  <div style="text-align: right; color: #64748b; font-size: 12px;">
-                    <div style="margin-bottom: 4px;">${getRelativeTime(lead.created_at)}</div>
-                    ${lead.origin ? `<div style="color: #16a34a; font-weight: 500;">via ${lead.origin}</div>` : ''}
+                  
+                  <!-- Time -->
+                  <div style="color: #94a3b8; font-size: 12px;">
+                    ${getRelativeTime(lead.created_at)}
                   </div>
                 </div>
               </div>
@@ -265,18 +303,26 @@ function generateNewLeadsAlertHtml(data: {
           
           <!-- Action Buttons -->
           <div style="text-align: center; margin: 40px 0 32px;">
-            <a href="${data.assignLeadsUrl}" 
-               style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); margin: 0 8px 12px; vertical-align: top;">
-              Assign Leads Now →
-            </a>
-            <a href="${data.leadsUrl}" 
-               style="display: inline-block; background: #ffffff; color: #3b82f6; border: 2px solid #3b82f6; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; margin: 0 8px 12px; vertical-align: top;">
-              View All Leads →
-            </a>
+            <!-- Primary Button -->
+            <div style="margin-bottom: 16px;">
+              <a href="${data.assignLeadsUrl}" 
+                 class="mobile-button" 
+                 style="display: inline-block; background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); min-width: 200px;">
+                Assign Leads Now →
+              </a>
+            </div>
+            <!-- Secondary Button -->
+            <div>
+              <a href="${data.leadsUrl}" 
+                 class="mobile-button"
+                 style="display: inline-block; background: #ffffff; color: #3b82f6; border: 2px solid #3b82f6; padding: 14px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; min-width: 200px;">
+                View All Leads →
+              </a>
+            </div>
           </div>
           
           <!-- Automatic Outreach Explanation -->
-          <div style="margin-top: 32px; padding: 20px 24px; background-color: #fef9e7; border: 1px solid #fbbf24; border-radius: 8px;">
+          <div class="mobile-small-padding" style="margin-top: 32px; padding: 20px 16px; background-color: #fef9e7; border: 1px solid #fbbf24; border-radius: 8px;">
             <h4 style="margin: 0 0 12px; color: #92400e; font-size: 16px; font-weight: 600;">
               📧 About Automatic Outreach
             </h4>
@@ -289,8 +335,8 @@ function generateNewLeadsAlertHtml(data: {
           
           <!-- Explanation -->
           <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
-            <p style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
-              This notification was automatically generated when new leads were detected.<br>
+            <p class="mobile-text-sm" style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+              This notification was automatically generated when new leads were detected.<span class="mobile-hide-break"><br></span>
               Manage your notification preferences in your account settings.
             </p>
           </div>
@@ -298,9 +344,9 @@ function generateNewLeadsAlertHtml(data: {
         </div>
         
         <!-- Footer -->
-        <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
-          <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-            This notification was automatically generated by ${getCompanyName()}.<br>
+        <div class="mobile-padding" style="background-color: #f8fafc; padding: 24px 20px; border-top: 1px solid #e2e8f0;">
+          <p class="mobile-text-sm" style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
+            This notification was automatically generated by ${getCompanyName()}.<span class="mobile-hide-break"><br></span>
             Manage your notification preferences in your account settings.
           </p>
         </div>
