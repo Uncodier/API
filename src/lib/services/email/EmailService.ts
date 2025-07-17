@@ -1,6 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 import * as nodemailer from 'nodemailer';
 import { ImapFlow } from 'imapflow';
+import { MailboxDetectorService, MailboxInfo } from './MailboxDetectorService';
 
 export interface EmailMessage {
   id: string;
@@ -364,36 +365,34 @@ export class EmailService {
       await Promise.race([connectionPromise, timeoutPromise]);
       console.log(`[EmailService] ✅ Conexión IMAP establecida exitosamente para emails enviados`);
       
-      // Try different possible names for sent folder
-      const possibleSentFolders = ['Sent', 'SENT', '[Gmail]/Sent Mail', 'Elementos enviados', 'Enviados', 'Sent Items'];
-      let sentMailbox = null;
-      
-      console.log(`[EmailService] 🔍 Buscando carpeta de emails enviados...`);
-      
-      // List available mailboxes to find the sent folder
+      // List available mailboxes and use intelligent detection
+      console.log(`[EmailService] 🔍 Listando carpetas disponibles para detección inteligente...`);
       let mailboxList;
       try {
         mailboxList = await client.list();
         console.log(`[EmailService] 📋 Carpetas disponibles:`, mailboxList.map(m => m.name));
       } catch (listError) {
-        console.warn(`[EmailService] ⚠️ No se pudo listar carpetas, usando nombres estándar`);
+        console.error(`[EmailService] ❌ Error al listar carpetas:`, listError);
+        throw new Error('No se pudo acceder a las carpetas del servidor de email');
       }
       
-      // Try to find the sent folder
-      for (const folderName of possibleSentFolders) {
-        try {
-          await client.mailboxOpen(folderName);
-          sentMailbox = folderName;
-          console.log(`[EmailService] ✅ Carpeta de enviados encontrada: ${folderName}`);
-          break;
-        } catch (openError) {
-          console.log(`[EmailService] ❌ No se pudo abrir carpeta: ${folderName}`);
-        }
+      // Convert to MailboxInfo format for intelligent detection
+      const normalizedMailboxes: MailboxInfo[] = MailboxDetectorService.normalizeMailboxInfo(mailboxList);
+      
+      // Use intelligent sent folder detection
+      const detectionResult = MailboxDetectorService.detectSentFolder(
+        normalizedMailboxes,
+        imapConfig.host,
+        imapConfig.auth?.user || emailConfig.user || emailConfig.email
+      );
+      
+      if (!detectionResult.found || !detectionResult.folderName) {
+        const availableNames = mailboxList.map(m => m.name).join(', ');
+        throw new Error(`No se pudo encontrar la carpeta de emails enviados. Carpetas disponibles: ${availableNames}. Métodos intentados: SPECIAL-USE, proveedor específico, mapeo de idiomas, similitud, fallback.`);
       }
       
-      if (!sentMailbox) {
-        throw new Error('No se pudo encontrar la carpeta de emails enviados. Carpetas intentadas: ' + possibleSentFolders.join(', '));
-      }
+      const sentMailbox = detectionResult.folderName;
+      console.log(`[EmailService] ✅ Carpeta de enviados detectada: "${sentMailbox}" (método: ${detectionResult.method}, confianza: ${detectionResult.confidence})`);
       
       // Open sent mailbox with error handling
       console.log(`[EmailService] 📂 Abriendo carpeta de enviados: ${sentMailbox}...`);

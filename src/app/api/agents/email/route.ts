@@ -151,41 +151,82 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
   const filteredEmails = emails.filter(email => {
     const emailTo = (email.to || '').toLowerCase().trim();
     
-    // Verificar si algún alias coincide con el campo "to" del email
+    // Lista de campos donde buscar la información real del destinatario
+    const destinationFields = [
+      emailTo, // Campo 'to' del envelope
+      email.headers?.['delivered-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-original-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-envelope-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-rcpt-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['envelope-to']?.toLowerCase?.().trim?.() || '',
+      // Algunos proveedores usan otros headers
+      email.headers?.['x-received-for']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-received']?.toLowerCase?.().trim?.() || ''
+    ].filter(field => field && field.length > 0);
+
+    console.log(`[EMAIL_API] 🔍 Verificando email - To: ${email.to}`);
+    console.log(`[EMAIL_API] 🔍 Headers relevantes encontrados:`, {
+      'delivered-to': email.headers?.['delivered-to'],
+      'x-original-to': email.headers?.['x-original-to'], 
+      'x-envelope-to': email.headers?.['x-envelope-to'],
+      'x-rcpt-to': email.headers?.['x-rcpt-to'],
+      'envelope-to': email.headers?.['envelope-to']
+    });
+    
+    // Verificar si algún alias coincide con alguno de los campos de destinatario
     const isValidEmail = validAliases.some(alias => {
       const normalizedAlias = alias.toLowerCase().trim();
       
-      // Verificar coincidencia exacta
-      if (emailTo === normalizedAlias) {
-        return true;
-      }
-      
-      // Verificar si el alias está incluido en el campo "to"
-      if (emailTo.includes(normalizedAlias)) {
-        return true;
-      }
-      
-      // Verificar coincidencia en formato "Name <email@domain.com>" o similar
-      const emailMatches = emailTo.match(/<([^>]+)>/g);
-      if (emailMatches) {
-        return emailMatches.some((match: string) => {
-          const extractedEmail = match.replace(/[<>]/g, '').trim();
-          return extractedEmail === normalizedAlias;
-        });
-      }
-      
-      // Verificar si hay múltiples emails separados por coma
-      const emailList = emailTo.split(',').map((e: string) => e.trim());
-      return emailList.some((singleEmail: string) => {
-        const cleanEmail = singleEmail.replace(/.*<([^>]+)>.*/, '$1').trim();
-        return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
+      // Verificar contra todos los campos de destinatario
+      return destinationFields.some(destinationField => {
+        // Verificar coincidencia exacta
+        if (destinationField === normalizedAlias) {
+          console.log(`[EMAIL_API] ✅ Coincidencia exacta encontrada: ${destinationField} = ${normalizedAlias}`);
+          return true;
+        }
+        
+        // Verificar si el alias está incluido en el campo
+        if (destinationField.includes(normalizedAlias)) {
+          console.log(`[EMAIL_API] ✅ Coincidencia parcial encontrada: ${destinationField} contiene ${normalizedAlias}`);
+          return true;
+        }
+        
+        // Verificar coincidencia en formato "Name <email@domain.com>" o similar
+        const emailMatches = destinationField.match(/<([^>]+)>/g);
+        if (emailMatches) {
+          const foundMatch = emailMatches.some((match: string) => {
+            const extractedEmail = match.replace(/[<>]/g, '').trim();
+            return extractedEmail === normalizedAlias;
+          });
+          if (foundMatch) {
+            console.log(`[EMAIL_API] ✅ Coincidencia en formato <email> encontrada en: ${destinationField}`);
+            return true;
+          }
+        }
+        
+        // Verificar si hay múltiples emails separados por coma
+        if (destinationField.includes(',')) {
+          const emailList = destinationField.split(',').map((e: string) => e.trim());
+          const foundInList = emailList.some((singleEmail: string) => {
+            const cleanEmail = singleEmail.replace(/.*<([^>]+)>.*/, '$1').trim();
+            return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
+          });
+          if (foundInList) {
+            console.log(`[EMAIL_API] ✅ Coincidencia en lista de emails encontrada en: ${destinationField}`);
+            return true;
+          }
+        }
+        
+        return false;
       });
     });
 
     if (isValidEmail) {
-      console.log(`[EMAIL_API] ✅ Email incluido - To: ${email.to} (coincide con aliases)`);
+      console.log(`[EMAIL_API] ✅ Email incluido - To: ${email.to} (coincide con aliases configurados)`);
     } else {
-      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to} (no coincide con aliases: ${validAliases.join(', ')})`);
+      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to}`);
+      console.log(`[EMAIL_API] ❌ No coincide con ningún alias: ${validAliases.join(', ')}`);
+      console.log(`[EMAIL_API] ❌ Campos verificados: ${destinationFields.join(', ')}`);
     }
 
     return isValidEmail;
@@ -533,6 +574,28 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] - Emails después del filtro de feedback loops: ${feedbackFilteredEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtrado por aliases: ${emails.length}`);
       console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
+
+      // Validación temprana: si no hay emails para analizar, retornar inmediatamente
+      if (emails.length === 0) {
+        console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado`);
+        return NextResponse.json({
+          success: true,
+          commandId: null,
+          status: 'completed',
+          message: "No se encontraron emails para analizar en el período especificado",
+          emailCount: 0,
+          originalEmailCount: allEmails.length,
+          feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+          analysisCount: 0,
+          aliasesConfigured: normalizedAliases,
+          filteredByAliases: normalizedAliases.length > 0,
+          filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+          emails: [],
+          reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
+                  feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
+                  'Ningún email coincide con los aliases configurados'
+        });
+      }
 
       // Si no se proporciona agentId, buscar el agente de soporte
       console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
