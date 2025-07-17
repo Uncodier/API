@@ -250,7 +250,80 @@ async function addSentMessageToConversation(
   siteId: string
 ): Promise<string | null> {
   try {
-    console.log(`[EMAIL_SYNC] 📧 Agregando mensaje enviado a conversación: ${conversationId}`);
+    console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
+    
+    // 1. Verificar si ya existe un mensaje con este email_id específico
+    if (email.id) {
+      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente con email_id: ${email.id}`);
+      
+      const { data: existingMessage, error: existingError } = await supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .filter('custom_data->email_id', 'eq', email.id)
+        .limit(1);
+        
+      if (existingError) {
+        console.error('[EMAIL_SYNC] Error al buscar mensaje existente por email_id:', existingError);
+      } else if (existingMessage && existingMessage.length > 0) {
+        console.log(`[EMAIL_SYNC] ✅ Mensaje ya existe con email_id ${email.id}, ID: ${existingMessage[0].id}, evitando duplicado`);
+        return existingMessage[0].id;
+      }
+    }
+    
+    // 2. Verificar por contenido y subject para emails que se originaron en el sistema
+    if (email.subject && email.body) {
+      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido similar...`);
+      
+      // Buscar mensajes con subject exacto o muy similar
+      const { data: existingByContent, error: contentError } = await supabaseAdmin
+        .from('messages')
+        .select('id, content, custom_data')
+        .eq('conversation_id', conversationId)
+        .eq('role', 'user')
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // últimas 24 horas
+        .limit(10);
+        
+      if (contentError) {
+        console.error('[EMAIL_SYNC] Error al buscar mensajes por contenido:', contentError);
+      } else if (existingByContent && existingByContent.length > 0) {
+        
+        // Verificar si algún mensaje existente tiene contenido muy similar
+        for (const existingMsg of existingByContent) {
+          const existingContent = existingMsg.content || '';
+          const existingSubject = existingMsg.custom_data?.subject || '';
+          
+          // Extraer subject del contenido si no está en custom_data
+          const subjectMatch = existingContent.match(/^Subject:\s*(.+?)$/m);
+          const extractedSubject = subjectMatch ? subjectMatch[1].trim() : '';
+          
+          const finalExistingSubject = existingSubject || extractedSubject;
+          
+          // Comparar subjects (sin distinción de mayúsculas/minúsculas)
+          const emailSubjectNormalized = email.subject.toLowerCase().trim();
+          const existingSubjectNormalized = finalExistingSubject.toLowerCase().trim();
+          
+          if (emailSubjectNormalized === existingSubjectNormalized) {
+                       // También verificar si el cuerpo del mensaje tiene contenido similar
+           const emailBodyNormalized = (email.body || '').toLowerCase().trim();
+           const existingBodyMatch = existingContent.match(/Subject:[\s\S]*?\n\n([\s\S]+)/);
+           const existingBodyNormalized = existingBodyMatch ? existingBodyMatch[1].toLowerCase().trim() : '';
+            
+            // Si coinciden subject y al menos parte del cuerpo, considerar duplicado
+            if (emailBodyNormalized && existingBodyNormalized && 
+                (emailBodyNormalized === existingBodyNormalized || 
+                 emailBodyNormalized.includes(existingBodyNormalized.substring(0, 100)) ||
+                 existingBodyNormalized.includes(emailBodyNormalized.substring(0, 100)))) {
+              
+              console.log(`[EMAIL_SYNC] ✅ Mensaje duplicado detectado por contenido similar, ID existente: ${existingMsg.id}, evitando duplicado`);
+              return existingMsg.id;
+            }
+          }
+        }
+      }
+    }
+    
+    console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje para email_id: ${email.id}`);
     
     // Obtener user_id de la conversación
     const { data: conversation, error: convError } = await supabaseAdmin
@@ -305,7 +378,7 @@ ${email.body || 'No content available'}`;
       })
       .eq('id', conversationId);
     
-    console.log(`[EMAIL_SYNC] ✅ Mensaje enviado agregado a conversación: ${message.id}`);
+    console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado agregado a conversación: ${message.id}`);
     return message.id;
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al agregar mensaje a conversación:', error);
