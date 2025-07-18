@@ -373,16 +373,60 @@ Estructura base requerida:
 
   let additionalInstructions = '';
   
-  // Agregar deliverables específicos de forma simplificada
+  // Agregar deliverables específicos de forma completa
   if (deliverables?.branding_analysis) {
-    additionalInstructions += `\n\nAdd "branding_analysis" object with simplified structure:
+    additionalInstructions += `\n\nAdd "branding_analysis" object with complete branding structure:
 {
   "branding_analysis": {
-    "brand_archetype": "sage|hero|caregiver|explorer|creator",
-    "primary_color": "#hexcolor",
-    "secondary_color": "#hexcolor",
-    "brand_voice": "Brand voice description",
-    "communication_style": "friendly|professional|casual"
+    "brand_pyramid": {
+      "brand_essence": "Core brand essence description (10-500 chars)",
+      "brand_personality": "Brand personality description (10-300 chars)",
+      "brand_benefits": "Key brand benefits (10-500 chars)",
+      "brand_attributes": "Brand attributes (10-500 chars)",
+      "brand_values": "Brand values (10-300 chars)",
+      "brand_promise": "Brand promise (10-500 chars)"
+    },
+    "brand_archetype": "sage|magician|hero|caregiver|explorer|rebel|lover|creator|innocent|jester|citizen|ruler",
+    "color_palette": {
+      "primary_color": "#hexcolor",
+      "secondary_color": "#hexcolor",
+      "accent_color": "#hexcolor",
+      "success_color": "#hexcolor",
+      "warning_color": "#hexcolor",
+      "error_color": "#hexcolor",
+      "background_color": "#hexcolor",
+      "surface_color": "#hexcolor",
+      "neutral_colors": ["#hexcolor1", "#hexcolor2"]
+    },
+    "typography": {
+      "primary_font": "Primary font family (3-100 chars)",
+      "secondary_font": "Secondary font family (3-100 chars)",
+      "font_size_scale": "small|medium|large",
+      "font_hierarchy": "Font hierarchy description (10-300 chars)",
+      "font_sizes": "Font sizes description (10-200 chars)"
+    },
+    "voice_and_tone": {
+      "communication_style": "friendly|professional|casual|formal|authoritative|conversational",
+      "personality_traits": ["trait1", "trait2", "trait3"],
+      "brand_voice": "Brand voice description (10-300 chars)",
+      "do_and_dont": {
+        "do": ["What to say 1", "What to say 2"],
+        "dont": ["What not to say 1", "What not to say 2"]
+      }
+    },
+    "brand_guidelines": {
+      "logo_usage": "Logo usage guidelines (10-500 chars)",
+      "color_usage": "Color usage guidelines (10-500 chars)",
+      "imagery_style": "Imagery style guidelines (10-500 chars)",
+      "typography_usage": "Typography usage guidelines (10-500 chars)",
+      "messaging_guidelines": "Messaging guidelines (10-500 chars)"
+    },
+    "brand_assets": {
+      "logo_variations": ["Logo variation 1", "Logo variation 2"],
+      "templates": ["Template 1", "Template 2"],
+      "font_files": ["Font file 1", "Font file 2"],
+      "color_swatches": ["#hexcolor1", "#hexcolor2"]
+    }
   }
 }`;
   }

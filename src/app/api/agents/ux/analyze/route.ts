@@ -512,7 +512,7 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
     // Estructura plana como se usa en la base de datos - SOLO campos que realmente existen
     const flatBranding: any = {}
     
-    // Brand pyramid fields (flat) - solo si existen
+    // Brand pyramid fields (flat) - extraer de estructura anidada
     if (brandingAnalysis.brand_pyramid?.brand_essence) {
       flatBranding.brand_essence = brandingAnalysis.brand_pyramid.brand_essence
     }
@@ -540,7 +540,57 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       }
     }
     
-    // Color palette (flat) - solo colores que realmente existen
+    // COMPATIBILIDAD: Extraer campos que pueden venir directamente en la raíz (estructura plana)
+    // Esto mantiene compatibilidad con respuestas que no usen la estructura anidada completa
+    
+    // Campos de brand pyramid que pueden venir directamente
+    if (!flatBranding.brand_essence && brandingAnalysis.brand_essence) {
+      flatBranding.brand_essence = brandingAnalysis.brand_essence
+    }
+    if (!flatBranding.brand_personality && brandingAnalysis.brand_personality) {
+      flatBranding.brand_personality = brandingAnalysis.brand_personality
+    }
+    if (!flatBranding.brand_benefits && brandingAnalysis.brand_benefits) {
+      flatBranding.brand_benefits = brandingAnalysis.brand_benefits
+    }
+    if (!flatBranding.brand_attributes && brandingAnalysis.brand_attributes) {
+      flatBranding.brand_attributes = brandingAnalysis.brand_attributes
+    }
+    if (!flatBranding.brand_values && brandingAnalysis.brand_values) {
+      flatBranding.brand_values = brandingAnalysis.brand_values
+    }
+    if (!flatBranding.brand_promise && brandingAnalysis.brand_promise) {
+      flatBranding.brand_promise = brandingAnalysis.brand_promise
+    }
+    
+    // Campos de colores que pueden venir directamente
+    if (!flatBranding.primary_color && brandingAnalysis.primary_color) {
+      flatBranding.primary_color = brandingAnalysis.primary_color
+    }
+    if (!flatBranding.secondary_color && brandingAnalysis.secondary_color) {
+      flatBranding.secondary_color = brandingAnalysis.secondary_color
+    }
+    if (!flatBranding.accent_color && brandingAnalysis.accent_color) {
+      flatBranding.accent_color = brandingAnalysis.accent_color
+    }
+    
+    // Campos de tipografía que pueden venir directamente
+    if (!flatBranding.primary_font && brandingAnalysis.primary_font) {
+      flatBranding.primary_font = brandingAnalysis.primary_font
+    }
+    if (!flatBranding.secondary_font && brandingAnalysis.secondary_font) {
+      flatBranding.secondary_font = brandingAnalysis.secondary_font
+    }
+    
+    // Campos de voice que pueden venir directamente
+    if (!flatBranding.communication_style && brandingAnalysis.communication_style) {
+      flatBranding.communication_style = brandingAnalysis.communication_style
+    }
+    if (!flatBranding.brand_voice && brandingAnalysis.brand_voice) {
+      flatBranding.brand_voice = brandingAnalysis.brand_voice
+    }
+    
+    // Color palette (flat) - extraer toda la paleta de colores
     if (brandingAnalysis.color_palette?.primary_color) {
       flatBranding.primary_color = brandingAnalysis.color_palette.primary_color
     }
@@ -550,14 +600,34 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
     if (brandingAnalysis.color_palette?.accent_color) {
       flatBranding.accent_color = brandingAnalysis.color_palette.accent_color
     }
-    // No incluir success_color, warning_color, etc. a menos que vengan del análisis
+    if (brandingAnalysis.color_palette?.success_color) {
+      flatBranding.success_color = brandingAnalysis.color_palette.success_color
+    }
+    if (brandingAnalysis.color_palette?.warning_color) {
+      flatBranding.warning_color = brandingAnalysis.color_palette.warning_color
+    }
+    if (brandingAnalysis.color_palette?.error_color) {
+      flatBranding.error_color = brandingAnalysis.color_palette.error_color
+    }
+    if (brandingAnalysis.color_palette?.background_color) {
+      flatBranding.background_color = brandingAnalysis.color_palette.background_color
+    }
+    if (brandingAnalysis.color_palette?.surface_color) {
+      flatBranding.surface_color = brandingAnalysis.color_palette.surface_color
+    }
+    if (brandingAnalysis.color_palette?.neutral_colors && Array.isArray(brandingAnalysis.color_palette.neutral_colors) && brandingAnalysis.color_palette.neutral_colors.length > 0) {
+      flatBranding.neutral_colors = brandingAnalysis.color_palette.neutral_colors
+    }
     
-    // Typography (flat) - solo si existe
+    // Typography (flat) - extraer toda la información tipográfica
     if (brandingAnalysis.typography?.primary_font) {
       flatBranding.primary_font = brandingAnalysis.typography.primary_font
     }
     if (brandingAnalysis.typography?.secondary_font) {
       flatBranding.secondary_font = brandingAnalysis.typography.secondary_font
+    }
+    if (brandingAnalysis.typography?.font_size_scale) {
+      flatBranding.font_size_scale = brandingAnalysis.typography.font_size_scale
     }
     if (brandingAnalysis.typography?.font_hierarchy) {
       flatBranding.font_hierarchy = brandingAnalysis.typography.font_hierarchy
@@ -566,7 +636,7 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       flatBranding.font_sizes = brandingAnalysis.typography.font_sizes
     }
     
-    // Voice and tone (flat) - solo si existe
+    // Voice and tone (flat) - extraer toda la información de voz y tono
     if (brandingAnalysis.voice_and_tone?.communication_style) {
       flatBranding.communication_style = brandingAnalysis.voice_and_tone.communication_style
     }
@@ -577,7 +647,7 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       flatBranding.brand_voice = brandingAnalysis.voice_and_tone.brand_voice
     }
     
-    // Brand guidelines (flat) - solo si existen arrays con contenido
+    // Brand guidelines (flat) - extraer dos arrays separados para do_list y dont_list
     if (brandingAnalysis.voice_and_tone?.do_and_dont?.do && Array.isArray(brandingAnalysis.voice_and_tone.do_and_dont.do) && brandingAnalysis.voice_and_tone.do_and_dont.do.length > 0) {
       flatBranding.do_list = brandingAnalysis.voice_and_tone.do_and_dont.do
       flatBranding.preferred_phrases = brandingAnalysis.voice_and_tone.do_and_dont.do
@@ -587,7 +657,12 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       flatBranding.forbidden_words = brandingAnalysis.voice_and_tone.do_and_dont.dont
     }
     
-    // Brand guidelines additional (flat) - solo si existen
+    // Emociones a evocar (si existe en voice_and_tone)
+    if (brandingAnalysis.voice_and_tone?.emotions_to_evoke && Array.isArray(brandingAnalysis.voice_and_tone.emotions_to_evoke) && brandingAnalysis.voice_and_tone.emotions_to_evoke.length > 0) {
+      flatBranding.emotions_to_evoke = brandingAnalysis.voice_and_tone.emotions_to_evoke
+    }
+    
+    // Brand guidelines additional (flat) - extraer toda la información de guidelines
     if (brandingAnalysis.brand_guidelines?.logo_usage) {
       flatBranding.logo_usage = brandingAnalysis.brand_guidelines.logo_usage
     }
@@ -604,7 +679,7 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       flatBranding.messaging_guidelines = brandingAnalysis.brand_guidelines.messaging_guidelines
     }
     
-    // Brand assets (flat) - solo si existen arrays con contenido
+    // Brand assets (flat) - extraer todos los assets de marca
     if (brandingAnalysis.brand_assets?.logo_variations && Array.isArray(brandingAnalysis.brand_assets.logo_variations) && brandingAnalysis.brand_assets.logo_variations.length > 0) {
       flatBranding.logo_variations = brandingAnalysis.brand_assets.logo_variations
     }
@@ -618,13 +693,12 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
       flatBranding.color_swatches = brandingAnalysis.brand_assets.color_swatches
     }
     
-    // Neutral colors (flat) - solo si existen
-    if (brandingAnalysis.color_palette?.neutral_colors && Array.isArray(brandingAnalysis.color_palette.neutral_colors) && brandingAnalysis.color_palette.neutral_colors.length > 0) {
-      flatBranding.neutral_colors = brandingAnalysis.color_palette.neutral_colors
-    }
-    
     // Solo devolver branding si tenemos al menos algunos campos significativos
-    const significantFields = ['brand_essence', 'brand_personality', 'brand_archetype', 'primary_color', 'communication_style']
+    const significantFields = [
+      'brand_essence', 'brand_personality', 'brand_benefits', 'brand_attributes', 'brand_values', 'brand_promise',
+      'brand_archetype', 'primary_color', 'secondary_color', 'accent_color', 'communication_style', 'brand_voice',
+      'primary_font', 'logo_usage', 'imagery_style', 'messaging_guidelines'
+    ]
     const hasSignificantData = significantFields.some(field => flatBranding[field])
     
     if (!hasSignificantData) {
