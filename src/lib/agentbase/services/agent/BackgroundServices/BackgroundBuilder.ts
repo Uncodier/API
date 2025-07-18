@@ -450,6 +450,12 @@ export class BackgroundBuilder {
         }
       }
       
+      // Customer Journey Tactics (CRITICAL INFORMATION)
+      if (siteInfo.settings.customer_journey) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo customer_journey tactics`);
+        siteSection += this.createCustomerJourneySection(siteInfo.settings.customer_journey);
+      }
+      
       // Agregar objetivos/metas si están disponibles
       if (siteInfo.settings.goals) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo goals`);
@@ -680,9 +686,130 @@ export class BackgroundBuilder {
       if (siteInfo.settings.branding && !finalPrompt.includes('## Brand Identity')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Brand Identity pero no se encontró en el prompt final`);
       }
+      
+      // Verificar customer journey tactics si están disponibles
+      if (siteInfo.settings.customer_journey) {
+        try {
+          const journeyData = typeof siteInfo.settings.customer_journey === 'string' 
+            ? JSON.parse(siteInfo.settings.customer_journey) 
+            : siteInfo.settings.customer_journey;
+          
+          const stages = ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'];
+          const hasValidContent = stages.some(stage => {
+            const stageData = journeyData[stage];
+            if (!stageData || typeof stageData !== 'object') return false;
+            
+            return ['metrics', 'actions', 'tactics'].some(category => {
+              const categoryData = stageData[category];
+              return Array.isArray(categoryData) && categoryData.length > 0 && 
+                     categoryData.some((item: any) => item && typeof item === 'string' && item.trim() !== '');
+            });
+          });
+          
+          if (hasValidContent && !finalPrompt.includes('## ⚠️ IMPORTANT: Customer Journey Strategy')) {
+            console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Customer Journey Strategy pero no se encontró en el prompt final`);
+          }
+        } catch (error) {
+          console.error(`⚠️ [BackgroundBuilder] Error al verificar customer_journey en verifyPromptSections:`, error);
+        }
+      }
     }
   }
   
+  /**
+   * Crea la sección de Customer Journey Tactics
+   */
+  private static createCustomerJourneySection(customerJourney: any): string {
+    try {
+      const journeyData = typeof customerJourney === 'string' 
+        ? JSON.parse(customerJourney) 
+        : customerJourney;
+      
+      if (!journeyData || typeof journeyData !== 'object') {
+        return '';
+      }
+      
+      // Verificar si hay al menos una etapa con contenido válido
+      const stages = ['awareness', 'consideration', 'decision', 'purchase', 'retention', 'referral'];
+      const hasValidContent = stages.some(stage => {
+        const stageData = journeyData[stage];
+        if (!stageData || typeof stageData !== 'object') return false;
+        
+        return ['metrics', 'actions', 'tactics'].some(category => {
+          const categoryData = stageData[category];
+          return Array.isArray(categoryData) && categoryData.length > 0 && 
+                 categoryData.some(item => item && typeof item === 'string' && item.trim() !== '');
+        });
+      });
+      
+      if (!hasValidContent) {
+        return '';
+      }
+      
+      let journeySection = '\n## ⚠️ IMPORTANT: Customer Journey Strategy\n';
+      journeySection += '**CRITICAL**: All activities, tasks, and communications must consider the appropriate customer journey stage.\n';
+      journeySection += 'Always align your actions with the lead\'s current stage and the objective of each task.\n';
+      journeySection += 'This strategic framework guides all agent operations and decision-making.\n\n';
+      
+      stages.forEach(stage => {
+        const stageData = journeyData[stage];
+        if (!stageData || typeof stageData !== 'object') return;
+        
+        // Verificar si la etapa tiene contenido válido
+        const hasStageContent = ['metrics', 'actions', 'tactics'].some(category => {
+          const categoryData = stageData[category];
+          return Array.isArray(categoryData) && categoryData.length > 0 && 
+                 categoryData.some(item => item && typeof item === 'string' && item.trim() !== '');
+        });
+        
+        if (!hasStageContent) return;
+        
+        // Capitalizar la primera letra y formatear el nombre de la etapa
+        const stageName = stage.charAt(0).toUpperCase() + stage.slice(1);
+        journeySection += `### ${stageName} Stage\n`;
+        
+        // Añadir métricas si están disponibles
+        if (Array.isArray(stageData.metrics) && stageData.metrics.length > 0) {
+          const validMetrics = stageData.metrics.filter((metric: any) => 
+            metric && typeof metric === 'string' && metric.trim() !== ''
+          );
+          if (validMetrics.length > 0) {
+            journeySection += `**Key Metrics:** ${validMetrics.join(', ')}\n`;
+          }
+        }
+        
+        // Añadir acciones si están disponibles
+        if (Array.isArray(stageData.actions) && stageData.actions.length > 0) {
+          const validActions = stageData.actions.filter((action: any) => 
+            action && typeof action === 'string' && action.trim() !== ''
+          );
+          if (validActions.length > 0) {
+            journeySection += `**Strategic Actions:** ${validActions.join(', ')}\n`;
+          }
+        }
+        
+        // Añadir tácticas si están disponibles
+        if (Array.isArray(stageData.tactics) && stageData.tactics.length > 0) {
+          const validTactics = stageData.tactics.filter((tactic: any) => 
+            tactic && typeof tactic === 'string' && tactic.trim() !== ''
+          );
+          if (validTactics.length > 0) {
+            journeySection += `**Implementation Tactics:** ${validTactics.join(', ')}\n`;
+          }
+        }
+        
+        journeySection += '\n';
+      });
+      
+      console.log(`🔍 [BackgroundBuilder] Sección de Customer Journey creada (${journeySection.length} caracteres)`);
+      return journeySection;
+      
+    } catch (error) {
+      console.error(`❌ [BackgroundBuilder] Error procesando customer_journey:`, error);
+      return '';
+    }
+  }
+
   /**
    * Crea un background de emergencia en caso de error
    */

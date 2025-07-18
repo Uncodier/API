@@ -7,7 +7,7 @@
   {
     "info_type": "SCHEMA_SUMMARY",
     "object_type": "TABLES",
-    "count": 84
+    "count": 83
   },
   {
     "info_type": "SCHEMA_SUMMARY",
@@ -56,25 +56,6 @@ CREATE TABLE public.agent_memories (
   chain_of_thoughts text,
   CONSTRAINT agent_memories_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_agent_memories FOREIGN KEY (command_id) REFERENCES public.commands(id)
-);
-CREATE TABLE public.system_memories (
-  id uuid NOT NULL DEFAULT gen_random_uuid(),
-  site_id uuid NOT NULL,
-  system_type text NOT NULL,
-  key text NOT NULL,
-  data jsonb NOT NULL DEFAULT '{}'::jsonb,
-  raw_data text,
-  metadata jsonb DEFAULT '{}'::jsonb,
-  created_at timestamp with time zone DEFAULT now(),
-  updated_at timestamp with time zone DEFAULT now(),
-  access_count integer DEFAULT 0,
-  last_accessed timestamp with time zone DEFAULT now(),
-  expires_at timestamp with time zone,
-  command_id uuid,
-  CONSTRAINT system_memories_pkey PRIMARY KEY (id),
-  CONSTRAINT system_memories_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
-  CONSTRAINT fk_command_system_memories FOREIGN KEY (command_id) REFERENCES public.commands(id),
-  CONSTRAINT system_memories_site_id_system_type_key_key UNIQUE (site_id, system_type, key)
 );
 CREATE TABLE public.agents (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -823,6 +804,7 @@ CREATE TABLE public.settings (
   channels jsonb DEFAULT '[]'::jsonb,
   business_hours jsonb DEFAULT '[]'::jsonb,
   branding jsonb DEFAULT NULL,
+  customer_journey jsonb DEFAULT '{"awareness": {"metrics": [], "actions": [], "tactics": []}, "consideration": {"metrics": [], "actions": [], "tactics": []}, "decision": {"metrics": [], "actions": [], "tactics": []}, "purchase": {"metrics": [], "actions": [], "tactics": []}, "retention": {"metrics": [], "actions": [], "tactics": []}, "referral": {"metrics": [], "actions": [], "tactics": []}}'::jsonb,
   CONSTRAINT settings_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_settings FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT settings_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
@@ -830,6 +812,7 @@ CREATE TABLE public.settings (
 
 -- Comments on columns
 COMMENT ON COLUMN public.settings.branding IS 'Brand identity information including: brand pyramid (essence, personality, benefits, attributes, values, promise), color palette, typography, voice/tone, communication style, brand assets, and guidelines';
+COMMENT ON COLUMN public.settings.customer_journey IS 'Customer journey configuration with metrics, actions, and tactics for each stage: awareness, interest, consideration, purchase, retention, and advocacy';
 CREATE TABLE public.site_members (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   site_id uuid NOT NULL,
@@ -1119,9 +1102,7 @@ CREATE TABLE public.waitlist (
 | FUNCTION    | word_similarity_op                               | C                     |
 | INDEX       | agent_assets_pkey                                | agent_assets          |
 | INDEX       | agent_memories_agent_id_user_id_key_key          | agent_memories        |
-| INDEX       | system_memories_site_id_system_type_key_key      | system_memories       |
 | INDEX       | agent_memories_pkey                              | agent_memories        |
-| INDEX       | system_memories_pkey                             | system_memories       |
 | INDEX       | agents_pkey                                      | agents                |
 | INDEX       | allowed_domains_pkey                             | allowed_domains       |
 | INDEX       | analysis_created_at_idx                          | analysis              |
@@ -1253,12 +1234,6 @@ CREATE TABLE public.waitlist (
 | INDEX       | idx_memories_raw_data                            | agent_memories        |
 | INDEX       | idx_memories_type                                | agent_memories        |
 | INDEX       | idx_memories_user_id                             | agent_memories        |
-| INDEX       | idx_system_memories_site_id                      | system_memories       |
-| INDEX       | idx_system_memories_system_type                  | system_memories       |
-| INDEX       | idx_system_memories_key                          | system_memories       |
-| INDEX       | idx_system_memories_last_accessed               | system_memories       |
-| INDEX       | idx_system_memories_expires_at                   | system_memories       |
-| INDEX       | idx_system_memories_command_id                   | system_memories       |
 | INDEX       | idx_messages_agent_id                            | messages              |
 | INDEX       | idx_messages_command_id                          | messages              |
 | INDEX       | idx_messages_conversation_id                     | messages              |

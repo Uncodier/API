@@ -65,7 +65,7 @@ export async function createLeadGenerationCommand(
     userId: userId,
     agentId: agentId,
     site_id: siteId,
-    description: `Generate ${maxLeads} qualified leads focusing on ${searchTopic}. Determine location from business background.`,
+    description: `Generate a lead reserach plan for ${maxLeads} qualified leads focusing on ${searchTopic}. Determine location from business background.`,
     targets: [targetConfig],
     tools,
     context: contextMessage,

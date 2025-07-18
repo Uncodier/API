@@ -350,7 +350,13 @@ export async function POST(request: NextRequest) {
     // Extraer branding del análisis estructurado si se solicitó
     if (requestedDeliverables.branding_analysis) {
       console.log(`🎨 [UX Analysis] Procesando branding_analysis desde análisis estructurado`)
-      responseData.branding = await extractBrandingFromAnalysis(structuredAnalysis, siteInfo, options?.language || 'es')
+      const extractedBranding = await extractBrandingFromAnalysis(structuredAnalysis, siteInfo, options?.language || 'es')
+      if (extractedBranding) {
+        responseData.branding = extractedBranding
+        console.log(`✅ [UX Analysis] Branding extraído correctamente con ${Object.keys(extractedBranding).length} campos`)
+      } else {
+        console.log(`ℹ️ [UX Analysis] No se extrajo branding - no hay datos suficientes en el análisis`)
+      }
     }
 
     // Procesar UX assessment si se solicitó
@@ -398,19 +404,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Guardar análisis en base de datos
+    const analysisStructure: any = {
+      original_analysis: structuredAnalysis,
+      ux_assessment: responseData.ux_assessment,
+      recommendations: responseData.recommendations,
+      problems: responseData.problems,
+      opportunities: responseData.opportunities,
+      processing_time: processingTime,
+      analysis_type: 'ux_analysis'
+    }
+
+    // Solo incluir branding_analysis si hay datos reales
+    if (responseData.branding && Object.keys(responseData.branding).length > 0) {
+      analysisStructure.branding_analysis = responseData.branding
+      console.log(`📝 [UX Analysis] Incluyendo branding_analysis en la base de datos con ${Object.keys(responseData.branding).length} campos`)
+    } else {
+      console.log(`📝 [UX Analysis] No se incluye branding_analysis en la base de datos - no hay datos suficientes`)
+    }
+
     const analysisData = {
       site_id,
       url_path: siteInfo.site.url,
-      structure: {
-        original_analysis: structuredAnalysis,
-        branding_analysis: responseData.branding, // Esta es la estructura plana
-        ux_assessment: responseData.ux_assessment,
-        recommendations: responseData.recommendations,
-        problems: responseData.problems,
-        opportunities: responseData.opportunities,
-        processing_time: processingTime,
-        analysis_type: 'ux_analysis'
-      },
+      structure: analysisStructure,
       user_id: effectiveUserId,
       status: 'completed' as const,
       request_time: processingTime,
@@ -426,7 +441,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Actualizar settings.branding automáticamente si hay datos de branding disponibles
-    if (responseData.branding && siteInfo.settings !== undefined) {
+    if (responseData.branding && Object.keys(responseData.branding).length > 0 && siteInfo.settings !== undefined) {
       try {
         await updateSiteBranding(site_id, responseData.branding, siteInfo.settings?.branding)
         console.log(`✅ [UX Analysis] Branding actualizado en settings para sitio: ${site_id}`)
@@ -434,8 +449,10 @@ export async function POST(request: NextRequest) {
         console.error(`❌ [UX Analysis] Error actualizando branding en settings: ${error}`)
         // No falla la petición completa, solo log el error
       }
-    } else if (responseData.branding && siteInfo.settings === undefined) {
+    } else if (responseData.branding && Object.keys(responseData.branding).length > 0 && siteInfo.settings === undefined) {
       console.warn(`⚠️ [UX Analysis] No se encontró settings para actualizar branding en sitio: ${site_id}`)
+    } else if (!responseData.branding || Object.keys(responseData.branding).length === 0) {
+      console.log(`ℹ️ [UX Analysis] No hay datos de branding para actualizar en settings`)
     }
 
     // Asignar ID del análisis guardado
@@ -492,150 +509,197 @@ async function extractBrandingFromAnalysis(analysis: any, siteInfo: any, languag
     console.log(`🎨 [UX Analysis] Usando branding_analysis del análisis estructurado`)
     const brandingAnalysis = analysis.branding_analysis
     
-    // Estructura plana como se usa en la base de datos
-    const flatBranding = {
-      // Brand pyramid fields (flat)
-      brand_essence: brandingAnalysis.brand_pyramid?.brand_essence || 'Esencia de marca extraída del análisis del sitio',
-      brand_personality: brandingAnalysis.brand_pyramid?.brand_personality || 'Personalidad innovadora y confiable',
-      brand_benefits: brandingAnalysis.brand_pyramid?.brand_benefits || 'Beneficios extraídos del análisis del sitio',
-      brand_attributes: brandingAnalysis.brand_pyramid?.brand_attributes || 'Atributos identificados en el análisis',
-      brand_values: brandingAnalysis.brand_pyramid?.brand_values || 'Innovación, calidad, orientación al cliente',
-      brand_promise: brandingAnalysis.brand_pyramid?.brand_promise || 'Promesa de marca basada en el análisis del sitio',
-      
-      // Brand archetype (flat) - extraer solo el valor principal
-      brand_archetype: extractArchetypeValue(brandingAnalysis.brand_archetype),
-      
-      // Color palette (flat) - extraer todos los colores
-      primary_color: brandingAnalysis.color_palette?.primary_color || '#2563eb',
-      secondary_color: brandingAnalysis.color_palette?.secondary_color || '#1e293b',
-      accent_color: brandingAnalysis.color_palette?.accent_color || '#6366f1',
-      success_color: '#22c55e',
-      warning_color: '#f59e0b',
-      error_color: '#ef4444',
-      background_color: '#ffffff',
-      surface_color: '#f8fafc',
-      
-      // Typography (flat) - extraer toda la info tipográfica
-      primary_font: brandingAnalysis.typography?.primary_font || 'Inter, sans-serif',
-      secondary_font: brandingAnalysis.typography?.secondary_font || 'system-ui, sans-serif',
-      font_size_scale: 'medium',
-      font_hierarchy: brandingAnalysis.typography?.font_hierarchy || 'Jerarquía tipográfica clara y legible',
-      font_sizes: brandingAnalysis.typography?.font_sizes || 'xs, sm, base, lg, xl, 2xl, 3xl, 4xl, 5xl, 6xl, 7xl',
-      
-      // Voice and tone (flat)
-      communication_style: brandingAnalysis.voice_and_tone?.communication_style || 'friendly',
-      personality_traits: brandingAnalysis.voice_and_tone?.personality_traits || ['profesional', 'innovador', 'confiable'],
-      brand_voice: brandingAnalysis.voice_and_tone?.brand_voice || 'Voz profesional e inspiradora',
-      
-      // Brand guidelines (flat) - extraer do_and_dont
-      do_list: brandingAnalysis.voice_and_tone?.do_and_dont?.do || [],
-      dont_list: brandingAnalysis.voice_and_tone?.do_and_dont?.dont || [],
-      forbidden_words: brandingAnalysis.voice_and_tone?.do_and_dont?.dont || [],
-      preferred_phrases: brandingAnalysis.voice_and_tone?.do_and_dont?.do || [],
-      emotions_to_evoke: [],
-      
-      // Brand guidelines additional (flat)
-      logo_usage: brandingAnalysis.brand_guidelines?.logo_usage || 'Uso consistente del logotipo',
-      color_usage: brandingAnalysis.brand_guidelines?.color_usage || 'Aplicación coherente de colores',
-      imagery_style: brandingAnalysis.brand_guidelines?.imagery_style || 'Estilo visual consistente',
-      typography_usage: brandingAnalysis.brand_guidelines?.typography_usage || 'Jerarquía tipográfica clara',
-      messaging_guidelines: brandingAnalysis.brand_guidelines?.messaging_guidelines || 'Mensajes centrados en valor y beneficios',
-      
-      // Brand assets (flat) - extraer todos los assets
-      logo_variations: brandingAnalysis.brand_assets?.logo_variations || [],
-      templates: brandingAnalysis.brand_assets?.templates || [],
-      font_files: brandingAnalysis.brand_assets?.font_files || [],
-      color_swatches: brandingAnalysis.brand_assets?.color_swatches || [
-        brandingAnalysis.color_palette?.primary_color || '#2563eb',
-        brandingAnalysis.color_palette?.secondary_color || '#1e293b',
-        brandingAnalysis.color_palette?.accent_color || '#6366f1',
-        '#ffffff'
-      ],
-      
-      // Neutral colors (flat)
-      neutral_colors: brandingAnalysis.color_palette?.neutral_colors || ['#ffffff', '#f2f6fe', '#4b5563']
+    // Estructura plana como se usa en la base de datos - SOLO campos que realmente existen
+    const flatBranding: any = {}
+    
+    // Brand pyramid fields (flat) - solo si existen
+    if (brandingAnalysis.brand_pyramid?.brand_essence) {
+      flatBranding.brand_essence = brandingAnalysis.brand_pyramid.brand_essence
+    }
+    if (brandingAnalysis.brand_pyramid?.brand_personality) {
+      flatBranding.brand_personality = brandingAnalysis.brand_pyramid.brand_personality
+    }
+    if (brandingAnalysis.brand_pyramid?.brand_benefits) {
+      flatBranding.brand_benefits = brandingAnalysis.brand_pyramid.brand_benefits
+    }
+    if (brandingAnalysis.brand_pyramid?.brand_attributes) {
+      flatBranding.brand_attributes = brandingAnalysis.brand_pyramid.brand_attributes
+    }
+    if (brandingAnalysis.brand_pyramid?.brand_values) {
+      flatBranding.brand_values = brandingAnalysis.brand_pyramid.brand_values
+    }
+    if (brandingAnalysis.brand_pyramid?.brand_promise) {
+      flatBranding.brand_promise = brandingAnalysis.brand_pyramid.brand_promise
+    }
+    
+    // Brand archetype (flat) - solo si existe y es válido
+    if (brandingAnalysis.brand_archetype) {
+      const archetypeValue = extractArchetypeValue(brandingAnalysis.brand_archetype)
+      if (archetypeValue !== 'sage' || brandingAnalysis.brand_archetype.toLowerCase().includes('sage')) {
+        flatBranding.brand_archetype = archetypeValue
+      }
+    }
+    
+    // Color palette (flat) - solo colores que realmente existen
+    if (brandingAnalysis.color_palette?.primary_color) {
+      flatBranding.primary_color = brandingAnalysis.color_palette.primary_color
+    }
+    if (brandingAnalysis.color_palette?.secondary_color) {
+      flatBranding.secondary_color = brandingAnalysis.color_palette.secondary_color
+    }
+    if (brandingAnalysis.color_palette?.accent_color) {
+      flatBranding.accent_color = brandingAnalysis.color_palette.accent_color
+    }
+    // No incluir success_color, warning_color, etc. a menos que vengan del análisis
+    
+    // Typography (flat) - solo si existe
+    if (brandingAnalysis.typography?.primary_font) {
+      flatBranding.primary_font = brandingAnalysis.typography.primary_font
+    }
+    if (brandingAnalysis.typography?.secondary_font) {
+      flatBranding.secondary_font = brandingAnalysis.typography.secondary_font
+    }
+    if (brandingAnalysis.typography?.font_hierarchy) {
+      flatBranding.font_hierarchy = brandingAnalysis.typography.font_hierarchy
+    }
+    if (brandingAnalysis.typography?.font_sizes) {
+      flatBranding.font_sizes = brandingAnalysis.typography.font_sizes
+    }
+    
+    // Voice and tone (flat) - solo si existe
+    if (brandingAnalysis.voice_and_tone?.communication_style) {
+      flatBranding.communication_style = brandingAnalysis.voice_and_tone.communication_style
+    }
+    if (brandingAnalysis.voice_and_tone?.personality_traits && Array.isArray(brandingAnalysis.voice_and_tone.personality_traits) && brandingAnalysis.voice_and_tone.personality_traits.length > 0) {
+      flatBranding.personality_traits = brandingAnalysis.voice_and_tone.personality_traits
+    }
+    if (brandingAnalysis.voice_and_tone?.brand_voice) {
+      flatBranding.brand_voice = brandingAnalysis.voice_and_tone.brand_voice
+    }
+    
+    // Brand guidelines (flat) - solo si existen arrays con contenido
+    if (brandingAnalysis.voice_and_tone?.do_and_dont?.do && Array.isArray(brandingAnalysis.voice_and_tone.do_and_dont.do) && brandingAnalysis.voice_and_tone.do_and_dont.do.length > 0) {
+      flatBranding.do_list = brandingAnalysis.voice_and_tone.do_and_dont.do
+      flatBranding.preferred_phrases = brandingAnalysis.voice_and_tone.do_and_dont.do
+    }
+    if (brandingAnalysis.voice_and_tone?.do_and_dont?.dont && Array.isArray(brandingAnalysis.voice_and_tone.do_and_dont.dont) && brandingAnalysis.voice_and_tone.do_and_dont.dont.length > 0) {
+      flatBranding.dont_list = brandingAnalysis.voice_and_tone.do_and_dont.dont
+      flatBranding.forbidden_words = brandingAnalysis.voice_and_tone.do_and_dont.dont
+    }
+    
+    // Brand guidelines additional (flat) - solo si existen
+    if (brandingAnalysis.brand_guidelines?.logo_usage) {
+      flatBranding.logo_usage = brandingAnalysis.brand_guidelines.logo_usage
+    }
+    if (brandingAnalysis.brand_guidelines?.color_usage) {
+      flatBranding.color_usage = brandingAnalysis.brand_guidelines.color_usage
+    }
+    if (brandingAnalysis.brand_guidelines?.imagery_style) {
+      flatBranding.imagery_style = brandingAnalysis.brand_guidelines.imagery_style
+    }
+    if (brandingAnalysis.brand_guidelines?.typography_usage) {
+      flatBranding.typography_usage = brandingAnalysis.brand_guidelines.typography_usage
+    }
+    if (brandingAnalysis.brand_guidelines?.messaging_guidelines) {
+      flatBranding.messaging_guidelines = brandingAnalysis.brand_guidelines.messaging_guidelines
+    }
+    
+    // Brand assets (flat) - solo si existen arrays con contenido
+    if (brandingAnalysis.brand_assets?.logo_variations && Array.isArray(brandingAnalysis.brand_assets.logo_variations) && brandingAnalysis.brand_assets.logo_variations.length > 0) {
+      flatBranding.logo_variations = brandingAnalysis.brand_assets.logo_variations
+    }
+    if (brandingAnalysis.brand_assets?.templates && Array.isArray(brandingAnalysis.brand_assets.templates) && brandingAnalysis.brand_assets.templates.length > 0) {
+      flatBranding.templates = brandingAnalysis.brand_assets.templates
+    }
+    if (brandingAnalysis.brand_assets?.font_files && Array.isArray(brandingAnalysis.brand_assets.font_files) && brandingAnalysis.brand_assets.font_files.length > 0) {
+      flatBranding.font_files = brandingAnalysis.brand_assets.font_files
+    }
+    if (brandingAnalysis.brand_assets?.color_swatches && Array.isArray(brandingAnalysis.brand_assets.color_swatches) && brandingAnalysis.brand_assets.color_swatches.length > 0) {
+      flatBranding.color_swatches = brandingAnalysis.brand_assets.color_swatches
+    }
+    
+    // Neutral colors (flat) - solo si existen
+    if (brandingAnalysis.color_palette?.neutral_colors && Array.isArray(brandingAnalysis.color_palette.neutral_colors) && brandingAnalysis.color_palette.neutral_colors.length > 0) {
+      flatBranding.neutral_colors = brandingAnalysis.color_palette.neutral_colors
+    }
+    
+    // Solo devolver branding si tenemos al menos algunos campos significativos
+    const significantFields = ['brand_essence', 'brand_personality', 'brand_archetype', 'primary_color', 'communication_style']
+    const hasSignificantData = significantFields.some(field => flatBranding[field])
+    
+    if (!hasSignificantData) {
+      console.log(`⚠️ [UX Analysis] No hay datos significativos de branding en el análisis estructurado`)
+      return null
     }
     
     console.log(`✅ [UX Analysis] Branding extraído y mapeado a estructura plana:`, {
-      brand_essence: flatBranding.brand_essence,
-      brand_archetype: flatBranding.brand_archetype,
-      primary_color: flatBranding.primary_color,
-      communication_style: flatBranding.communication_style,
-      fields_mapped: Object.keys(flatBranding).length
+      fields_found: Object.keys(flatBranding).length,
+      significant_fields: significantFields.filter(field => flatBranding[field]).length,
+      sample_fields: Object.keys(flatBranding).slice(0, 5)
     })
     
     return flatBranding
   }
   
-  // Fallback: usar análisis manual si no hay branding_analysis
-  console.log(`⚠️ [UX Analysis] No hay branding_analysis en el análisis estructurado, usando fallback`)
+  // Si no hay branding_analysis, intentar extraer información básica del análisis estructurado
+  console.log(`⚠️ [UX Analysis] No hay branding_analysis en el análisis estructurado, intentando extraer datos básicos`)
   
-  // Extraer información del análisis estructurado básico
   const siteStructure = analysis.structure || {}
   const visualElements = siteStructure.visual_elements || {}
   const content = siteStructure.content || {}
   
-  // Estructura plana para fallback
-  return {
-    // Brand pyramid fields (flat)
-    brand_essence: content?.brand_essence || 
-                  content?.value_proposition || 
-                  'Esencia de marca basada en el análisis del sitio',
-    brand_personality: inferBrandPersonality(content, visualElements),
-    brand_benefits: content?.benefits || 
-                   content?.value_proposition || 
-                   'Beneficios extraídos del análisis',
-    brand_attributes: content?.attributes || 
-                     inferBrandAttributes(content, visualElements),
-    brand_values: extractValues(content),
-    brand_promise: content?.promise || 
-                  content?.value_proposition || 
-                  'Promesa de marca basada en el análisis',
-    
-    // Brand archetype (flat)
-    brand_archetype: inferBrandArchetype(content, visualElements),
-    
-    // Color palette (flat)
-    primary_color: visualElements?.colors?.[0] || '#2563eb',
-    secondary_color: visualElements?.colors?.[1] || '#1e293b',
-    accent_color: visualElements?.colors?.[2] || '#6366f1',
-    success_color: '#22c55e',
-    warning_color: '#f59e0b',
-    error_color: '#ef4444',
-    background_color: '#ffffff',
-    surface_color: '#f8fafc',
-    
-    // Typography (flat)
-    primary_font: visualElements?.fonts?.[0] || 'Inter, sans-serif',
-    secondary_font: visualElements?.fonts?.[1] || 'system-ui, sans-serif',
-    font_size_scale: 'medium',
-    font_hierarchy: 'Jerarquía tipográfica clara y legible',
-    font_sizes: 'xs, sm, base, lg, xl, 2xl, 3xl, 4xl, 5xl, 6xl, 7xl',
-    
-    // Voice and tone (flat)
-    communication_style: inferCommunicationStyle(content),
-    personality_traits: inferPersonalityTraits(content, visualElements),
-    brand_voice: 'Voz profesional e inspiradora',
-    forbidden_words: [],
-    preferred_phrases: [],
-    
-    // Brand guidelines (flat)
-    do_list: [],
-    dont_list: [],
-    emotions_to_evoke: [],
-    logo_usage: 'Uso consistente del logotipo',
-    color_usage: 'Aplicación coherente de colores',
-    imagery_style: 'Estilo visual consistente',
-    typography_usage: 'Jerarquía tipográfica clara',
-    messaging_guidelines: 'Mensajes centrados en valor y beneficios',
-    
-    // Brand assets (flat)
-    logo_variations: [],
-    templates: [],
-    font_files: [],
-    color_swatches: [],
-    neutral_colors: ['#ffffff', '#f2f6fe', '#4b5563']
+  const extractedBranding: any = {}
+  
+  // Solo extraer datos si realmente existen y son significativos
+  if (content?.brand_essence || content?.value_proposition) {
+    extractedBranding.brand_essence = content.brand_essence || content.value_proposition
   }
+  
+  if (content?.benefits && content.benefits !== 'Beneficios extraídos del análisis') {
+    extractedBranding.brand_benefits = content.benefits
+  }
+  
+  if (visualElements?.colors && Array.isArray(visualElements.colors) && visualElements.colors.length > 0) {
+    if (visualElements.colors[0] && visualElements.colors[0] !== '#2563eb') {
+      extractedBranding.primary_color = visualElements.colors[0]
+    }
+    if (visualElements.colors[1] && visualElements.colors[1] !== '#1e293b') {
+      extractedBranding.secondary_color = visualElements.colors[1]
+    }
+    if (visualElements.colors[2] && visualElements.colors[2] !== '#6366f1') {
+      extractedBranding.accent_color = visualElements.colors[2]
+    }
+  }
+  
+  if (visualElements?.fonts && Array.isArray(visualElements.fonts) && visualElements.fonts.length > 0) {
+    if (visualElements.fonts[0] && visualElements.fonts[0] !== 'Inter, sans-serif') {
+      extractedBranding.primary_font = visualElements.fonts[0]
+    }
+    if (visualElements.fonts[1] && visualElements.fonts[1] !== 'system-ui, sans-serif') {
+      extractedBranding.secondary_font = visualElements.fonts[1]
+    }
+  }
+  
+  // Solo extraer communication_style si hay evidencia real
+  if (content?.tone && content.tone !== 'neutral' && content.tone !== 'friendly') {
+    const inferredStyle = inferCommunicationStyle(content)
+    if (inferredStyle !== 'friendly') {
+      extractedBranding.communication_style = inferredStyle
+    }
+  }
+  
+  // Solo devolver si tenemos al menos 2 campos reales
+  if (Object.keys(extractedBranding).length < 2) {
+    console.log(`⚠️ [UX Analysis] No hay suficientes datos reales de branding para extraer (${Object.keys(extractedBranding).length} campos)`)
+    return null
+  }
+  
+  console.log(`✅ [UX Analysis] Branding básico extraído:`, {
+    fields_found: Object.keys(extractedBranding).length,
+    fields: Object.keys(extractedBranding)
+  })
+  
+  return extractedBranding
 }
 
 // Función auxiliar para extraer el valor principal del brand archetype
@@ -1420,9 +1484,10 @@ export async function GET(request: NextRequest) {
     ],
     important_notes: [
       'El análisis siempre se guarda en la base de datos con todos los datos generados',
-      'El branding se actualiza automáticamente en settings.branding preservando datos existentes',
+      'El branding solo se incluye y actualiza si hay datos reales extraídos del análisis',
+      'No se generan valores por defecto - solo se guardan datos que realmente existen',
       'Solo se actualizan campos de branding que estén vacíos o no existan en la base de datos',
-      'El proceso no sobrescribe información existente, solo completa campos faltantes'
+      'El proceso no sobrescribe información existente, solo completa campos faltantes con datos reales'
     ]
   })
 } 

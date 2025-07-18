@@ -634,6 +634,53 @@ Brand identity and design system information.
 }
 ```
 
+### `customer_journey` (jsonb)
+Customer journey configuration with metrics, actions, and tactics for each stage.
+
+**Default:** `{"awareness": {"metrics": [], "actions": [], "tactics": []}, "consideration": {"metrics": [], "actions": [], "tactics": []}, "decision": {"metrics": [], "actions": [], "tactics": []}, "purchase": {"metrics": [], "actions": [], "tactics": []}, "retention": {"metrics": [], "actions": [], "tactics": []}, "referral": {"metrics": [], "actions": [], "tactics": []}}`
+
+**Structure:**
+```json
+{
+  "awareness": {
+    "metrics": ["Website traffic", "Brand mentions", "Impressions", "Social media reach"],
+    "actions": ["Content marketing", "SEO optimization", "Social media ads", "PR campaigns"],
+    "tactics": ["Blog posts", "Video content", "Infographics", "Influencer partnerships"]
+  },
+  "consideration": {
+    "metrics": ["Product page views", "Demo requests", "Comparison views", "Reviews read"],
+    "actions": ["Product demos", "Free trials", "Case studies", "Competitor comparison"],
+    "tactics": ["Sales presentations", "ROI calculators", "Customer testimonials", "Feature comparisons"]
+  },
+  "decision": {
+    "metrics": ["Quote requests", "Sales meetings", "Proposal views", "Decision timeline"],
+    "actions": ["Sales calls", "Proposal creation", "Contract negotiation", "Decision support"],
+    "tactics": ["Personalized proposals", "Pricing options", "Implementation plans", "Risk mitigation"]
+  },
+  "purchase": {
+    "metrics": ["Conversion rate", "Cart abandonment", "Purchase value", "Payment completion"],
+    "actions": ["Checkout optimization", "Payment options", "Security badges", "Limited offers"],
+    "tactics": ["Discount codes", "Free shipping", "Money-back guarantee", "Multiple payment methods"]
+  },
+  "retention": {
+    "metrics": ["Repeat purchases", "Churn rate", "Usage frequency", "Support tickets"],
+    "actions": ["Onboarding", "Customer support", "Product updates", "Loyalty programs"],
+    "tactics": ["Welcome series", "Progress tracking", "Feature tutorials", "Reward systems"]
+  },
+  "referral": {
+    "metrics": ["Referrals", "Reviews", "Social shares", "NPS score"],
+    "actions": ["Referral programs", "Review requests", "Community building", "VIP experiences"],
+    "tactics": ["Referral bonuses", "Ambassador programs", "User-generated content", "Exclusive events"]
+  }
+}
+```
+
+**Usage Notes:**
+- Each stage contains three types of data: metrics (what to measure), actions (what to do), and tactics (how to do it)
+- Arrays can be empty if no configuration is set for that category
+- Users can customize these lists through the Customer Journey settings tab
+- This data is used throughout the system to guide marketing automation and analytics
+
 ### `press_releases` (jsonb)
 Company press releases and news.
 
