@@ -1,0 +1,270 @@
+# Lead Selection
+
+Analyzes multiple leads to determine contact priority and team assignments. This endpoint processes a list of leads, examines their tasks and conversations, and provides strategic recommendations for which leads to contact first and which accounts require dedicated team member assignments.
+
+## Endpoint
+
+```http
+POST /api/agents/sales/leadSelection
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string | Yes | UUID of the site |
+| `leads` | array | Yes | Array of lead IDs or lead objects to analyze |
+| `userId` | string | No | UUID of the requesting user (optional if active agent exists) |
+| `agent_id` | string | No | UUID of the sales agent to use (optional) |
+| `includeTeamMembers` | boolean | No | Include team member information for assignments (default: true) |
+| `priorityFactors` | object | No | Weighting factors for priority scoring |
+
+### Priority Factors Object
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `recentActivity` | number | 0.3 | Weight for recent activity (0-1) |
+| `companySize` | number | 0.2 | Weight for company size (0-1) |
+| `engagement` | number | 0.3 | Weight for engagement level (0-1) |
+| `leadScore` | number | 0.2 | Weight for lead score (0-1) |
+
+### Example Request
+
+```json
+{
+  "siteId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "leads": [
+    "12345678-90ab-cdef-1234-567890abcdef",
+    "87654321-09ba-fedc-4321-0987654321ba",
+    {
+      "id": "abcdef12-3456-789a-bcde-f1234567890a"
+    }
+  ],
+  "userId": "user-uuid-here",
+  "includeTeamMembers": true,
+  "priorityFactors": {
+    "recentActivity": 0.4,
+    "companySize": 0.2,
+    "engagement": 0.3,
+    "leadScore": 0.1
+  }
+}
+```
+
+## Response Structure
+
+### Success Response (200 OK)
+
+```json
+{
+  "success": true,
+  "data": {
+    "analysis": {
+      "total_leads_analyzed": 3,
+      "companies_analyzed": 2,
+      "strategic_analysis": "Comprehensive analysis summary..."
+    },
+    "priority_leads": [
+      {
+        "company": "TechCorp Inc",
+        "primary_lead_id": "12345678-90ab-cdef-1234-567890abcdef",
+        "primary_lead_name": "John Smith",
+        "priority_score": 85,
+        "reasoning": "CEO with recent activity and high engagement score"
+      }
+    ],
+    "important_accounts": [
+      {
+        "company": "TechCorp Inc",
+        "lead_id": "12345678-90ab-cdef-1234-567890abcdef",
+        "recommended_assignee_id": "team-member-uuid",
+        "recommended_assignee_name": "Sarah Johnson",
+        "account_value": "High",
+        "assignment_reasoning": "Large enterprise account with significant potential"
+      }
+    ],
+    "contact_recommendations": [
+      {
+        "lead_id": "12345678-90ab-cdef-1234-567890abcdef",
+        "company": "TechCorp Inc",
+        "contact_strategy": "Executive-level approach focusing on ROI",
+        "urgency": "High",
+        "key_talking_points": "Cost savings, scalability, security concerns"
+      }
+    ],
+    "team_members": [
+      {
+        "id": "team-member-uuid",
+        "name": "Sarah Johnson",
+        "email": "sarah@company.com",
+        "role": "sales_agent"
+      }
+    ],
+    "command_info": {
+      "command_id": "cmd-internal-id",
+      "db_uuid": "db-uuid-here"
+    }
+  }
+}
+```
+
+## Response Fields
+
+### Analysis Object
+- `total_leads_analyzed`: Number of leads successfully processed
+- `companies_analyzed`: Number of unique companies represented
+- `strategic_analysis`: AI-generated strategic overview
+
+### Priority Leads Array
+- `company`: Company name
+- `primary_lead_id`: ID of the lead to contact first
+- `primary_lead_name`: Name of the primary contact
+- `priority_score`: Priority score (1-100)
+- `reasoning`: Explanation for why this lead has priority
+
+### Important Accounts Array
+- `company`: Company name
+- `lead_id`: Lead ID for assignment
+- `recommended_assignee_id`: Team member ID for assignment
+- `recommended_assignee_name`: Team member name
+- `account_value`: Account value assessment (High/Medium/Low)
+- `assignment_reasoning`: Why this account needs dedicated assignment
+
+### Contact Recommendations Array
+- `lead_id`: Lead ID
+- `company`: Company name
+- `contact_strategy`: Recommended approach
+- `urgency`: Contact urgency level
+- `key_talking_points`: Main discussion points
+
+## Error Responses
+
+### Bad Request (400)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "siteId is required"
+  }
+}
+```
+
+### No Valid Leads (400)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NO_VALID_LEADS",
+    "message": "No valid leads found to process"
+  }
+}
+```
+
+### Command Failed (500)
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "COMMAND_FAILED",
+    "message": "Lead selection analysis did not complete successfully"
+  }
+}
+```
+
+## Business Logic
+
+### Lead Analysis Process
+
+1. **Data Collection**: For each lead, the system gathers:
+   - Basic lead information
+   - All associated tasks
+   - All conversations and messages
+   - Previous interactions history
+
+2. **Company Grouping**: Leads are grouped by company to identify:
+   - Multiple contacts within the same organization
+   - Potential coordination opportunities
+   - Account-level strategic decisions
+
+3. **Priority Scoring**: Each lead is evaluated based on:
+   - Recent activity levels
+   - Engagement metrics
+   - Lead qualification scores
+   - Company size and potential value
+
+4. **Strategic Analysis**: AI agent considers:
+   - Contact hierarchy within companies
+   - Existing relationships and conversation history
+   - Task completion status and follow-up needs
+   - Team member expertise and availability
+
+### Recommendation Types
+
+- **Contact Priority**: Identifies the single best lead to contact first within each company
+- **Important Accounts**: Flags high-value companies that need dedicated team assignment
+- **Contact Strategy**: Provides tactical approach recommendations for each priority lead
+
+## Use Cases
+
+### Multi-Lead Company Analysis
+Analyze multiple contacts within the same company to determine the optimal entry point.
+
+```json
+{
+  "siteId": "site-uuid",
+  "leads": [
+    "ceo-lead-id",
+    "cto-lead-id", 
+    "procurement-lead-id"
+  ]
+}
+```
+
+### Account Assignment Strategy
+Determine which high-value accounts warrant dedicated team member assignment.
+
+```json
+{
+  "siteId": "site-uuid",
+  "leads": ["lead1", "lead2", "lead3"],
+  "includeTeamMembers": true,
+  "priorityFactors": {
+    "companySize": 0.4,
+    "leadScore": 0.3,
+    "engagement": 0.2,
+    "recentActivity": 0.1
+  }
+}
+```
+
+### Sales Pipeline Optimization
+Optimize contact sequence across multiple qualified leads for maximum conversion efficiency.
+
+```json
+{
+  "siteId": "site-uuid",
+  "leads": ["qualified-lead-1", "qualified-lead-2", "qualified-lead-3"],
+  "priorityFactors": {
+    "engagement": 0.5,
+    "recentActivity": 0.3,
+    "leadScore": 0.2
+  }
+}
+```
+
+## Integration Notes
+
+- This endpoint works best with leads that have existing task and conversation data
+- The analysis quality improves with richer lead data (scores, pain points, budget information)
+- Team member recommendations require active team members with appropriate roles
+- The system considers existing lead assignments to avoid conflicts
+
+## Related Endpoints
+
+- [Lead Follow-Up](/rest-api/agents/sales/lead-follow-up) - Execute follow-up for selected leads
+- [Assign Leads](/rest-api/agents/cmo/assign-leads) - Bulk assign leads to team members
+- [Lead Research](/rest-api/agents/sales/lead-research) - Gather additional lead intelligence 

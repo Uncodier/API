@@ -393,6 +393,11 @@ export class RegionVenuesService {
       if (excludeVenues) {
         const originalCount = filteredResults.length;
         
+        console.log(`🚫 Processing exclusions for ${originalCount} venues:`, {
+          excludePlaceIds: excludeVenues.placeIds || [],
+          excludeNames: excludeVenues.names || []
+        });
+        
         // Filtrar por Place IDs
         if (excludeVenues.placeIds && excludeVenues.placeIds.length > 0) {
           filteredResults = filteredResults.filter((place: any) => 
@@ -403,9 +408,16 @@ export class RegionVenuesService {
         // Filtrar por nombres (case-insensitive)
         if (excludeVenues.names && excludeVenues.names.length > 0) {
           const excludeNamesLower = excludeVenues.names.map(name => name.toLowerCase().trim());
-          filteredResults = filteredResults.filter((place: any) => 
-            !excludeNamesLower.includes(place.name?.toLowerCase().trim())
-          );
+          console.log(`🚫 Names to exclude (normalized):`, excludeNamesLower);
+          
+          filteredResults = filteredResults.filter((place: any) => {
+            const placeName = place.name?.toLowerCase().trim();
+            const shouldExclude = excludeNamesLower.includes(placeName);
+            if (shouldExclude) {
+              console.log(`🚫 EXCLUDING venue: "${place.name}" (normalized: "${placeName}")`);
+            }
+            return !shouldExclude;
+          });
         }
         
         const excludedCount = originalCount - filteredResults.length;

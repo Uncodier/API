@@ -177,6 +177,21 @@ export async function POST(request: Request) {
     // Procesar parámetros de exclusión del body
     const excludeVenues = params.excludeVenues || {};
     
+    // También procesar excludeNames y excludePlaceIds del nivel raíz (como en GET)
+    if (params.excludeNames && Array.isArray(params.excludeNames)) {
+      excludeVenues.names = params.excludeNames.filter((name: string) => name && name.trim());
+    }
+    if (params.excludePlaceIds && Array.isArray(params.excludePlaceIds)) {
+      excludeVenues.placeIds = params.excludePlaceIds.filter((id: string) => id && id.trim());
+    }
+    
+    console.log('🚫 POST - Exclusion parameters processed:', {
+      excludeVenuesFromParam: Object.keys(params.excludeVenues || {}).length > 0,
+      excludeNamesCount: excludeVenues.names?.length || 0,
+      excludePlaceIdsCount: excludeVenues.placeIds?.length || 0,
+      excludeNames: excludeVenues.names
+    });
+    
     // Buscar venues en la región
     const searchResult = await regionVenuesService.searchRegionVenues({
       siteId: params.siteId,

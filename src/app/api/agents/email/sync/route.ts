@@ -176,7 +176,7 @@ async function updateLeadStatusIfNeeded(leadId: string): Promise<boolean> {
 /**
  * Función para buscar o crear conversación de email para el lead
  */
-async function findOrCreateEmailConversation(leadId: string, siteId: string): Promise<string | null> {
+async function findOrCreateEmailConversation(leadId: string, siteId: string, emailSubject?: string): Promise<string | null> {
   try {
     console.log(`[EMAIL_SYNC] 💬 Buscando conversación de email para lead: ${leadId}`);
     
@@ -208,12 +208,17 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string): Pr
       return null;
     }
     
+    // Usar el subject del email como título si está disponible, sino usar título por defecto
+    const conversationTitle = emailSubject && emailSubject.trim() 
+      ? emailSubject.trim()
+      : `Email Conversation - ${lead.name || lead.email}`;
+    
     const conversationData = {
       lead_id: leadId,
       site_id: siteId,
       user_id: lead.user_id,
       channel: 'email',
-      title: `Email Conversation - ${lead.name || lead.email}`,
+      title: conversationTitle,
       status: 'active',
       custom_data: {
         channel: 'email',
@@ -232,7 +237,7 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string): Pr
       return null;
     }
     
-    console.log(`[EMAIL_SYNC] ✅ Nueva conversación de email creada: ${conversation.id}`);
+    console.log(`[EMAIL_SYNC] ✅ Nueva conversación de email creada: ${conversation.id} con título: "${conversationTitle}"`);
     return conversation.id;
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al buscar/crear conversación:', error);
@@ -275,12 +280,11 @@ async function addSentMessageToConversation(
     if (email.subject && email.body) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido similar...`);
       
-      // Buscar mensajes con subject exacto o muy similar
+      // Buscar mensajes con subject exacto o muy similar (cualquier role ahora)
       const { data: existingByContent, error: contentError } = await supabaseAdmin
         .from('messages')
         .select('id, content, custom_data')
         .eq('conversation_id', conversationId)
-        .eq('role', 'user')
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // últimas 24 horas
         .limit(10);
         
@@ -304,10 +308,9 @@ async function addSentMessageToConversation(
           const existingSubjectNormalized = finalExistingSubject.toLowerCase().trim();
           
           if (emailSubjectNormalized === existingSubjectNormalized) {
-                       // También verificar si el cuerpo del mensaje tiene contenido similar
-           const emailBodyNormalized = (email.body || '').toLowerCase().trim();
-           const existingBodyMatch = existingContent.match(/Subject:[\s\S]*?\n\n([\s\S]+)/);
-           const existingBodyNormalized = existingBodyMatch ? existingBodyMatch[1].toLowerCase().trim() : '';
+            // También verificar si el cuerpo del mensaje tiene contenido similar
+            const emailBodyNormalized = (email.body || '').toLowerCase().trim();
+            const existingBodyNormalized = existingContent.toLowerCase().trim();
             
             // Si coinciden subject y al menos parte del cuerpo, considerar duplicado
             if (emailBodyNormalized && existingBodyNormalized && 
@@ -325,10 +328,10 @@ async function addSentMessageToConversation(
     
     console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje para email_id: ${email.id}`);
     
-    // Obtener user_id de la conversación
+    // Obtener información de la conversación
     const { data: conversation, error: convError } = await supabaseAdmin
       .from('conversations')
-      .select('user_id')
+      .select('user_id, title')
       .eq('id', conversationId)
       .single();
       
@@ -337,15 +340,31 @@ async function addSentMessageToConversation(
       return null;
     }
     
-    const messageContent = `Subject: ${email.subject || 'No Subject'}
+    // Determinar quién envió el email y el role correcto
+    let messageRole = 'system'; // Por defecto sistema
+    let messageSenderId = conversation.user_id; // Por defecto el user_id de la conversación
+    let teamMemberId: string | null = null;
     
-${email.body || 'No content available'}`;
+    if (email.from) {
+      const teamMember = await findTeamMemberByEmail(email.from, siteId);
+      if (teamMember) {
+        messageRole = 'team_member';
+        messageSenderId = teamMember.id;
+        teamMemberId = teamMember.id;
+        console.log(`[EMAIL_SYNC] 👤 Email enviado por team member: ${teamMember.id} (${teamMember.name || email.from})`);
+      } else {
+        console.log(`[EMAIL_SYNC] 🤖 Email enviado por el sistema (no se encontró team member para: ${email.from})`);
+      }
+    }
     
-    const messageData = {
+    // Contenido del mensaje sin el subject (solo el cuerpo del email)
+    const messageContent = email.body || 'No content available';
+    
+    const messageData: any = {
       conversation_id: conversationId,
       content: messageContent,
-      role: 'user', // Nosotros enviamos el email, somos el 'user'
-      user_id: conversation.user_id,
+      role: messageRole,
+      user_id: messageSenderId,
       lead_id: leadId,
       custom_data: {
         type: 'sent_email',
@@ -358,6 +377,11 @@ ${email.body || 'No content available'}`;
       }
     };
     
+    // Agregar team_member_id si aplica
+    if (teamMemberId) {
+      messageData.user_id = teamMemberId;
+    }
+    
     const { data: message, error: messageError } = await supabaseAdmin
       .from('messages')
       .insert([messageData])
@@ -369,16 +393,35 @@ ${email.body || 'No content available'}`;
       return null;
     }
     
-    // Actualizar timestamp de última actividad de la conversación
-    await supabaseAdmin
-      .from('conversations')
-      .update({ 
-        last_message_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', conversationId);
+    // Actualizar título de la conversación con el subject si es necesario
+    const shouldUpdateTitle = email.subject && email.subject.trim() && (
+      !conversation.title || 
+      conversation.title.startsWith('Email Conversation -') ||
+      conversation.title === 'Nueva conversación'
+    );
     
-    console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado agregado a conversación: ${message.id}`);
+    if (shouldUpdateTitle) {
+      console.log(`[EMAIL_SYNC] 📝 Actualizando título de conversación con subject: "${email.subject}"`);
+      await supabaseAdmin
+        .from('conversations')
+        .update({ 
+          title: email.subject.trim(),
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conversationId);
+    } else {
+      // Solo actualizar timestamps
+      await supabaseAdmin
+        .from('conversations')
+        .update({ 
+          last_message_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', conversationId);
+    }
+    
+    console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado agregado a conversación: ${message.id} (role: ${messageRole})`);
     return message.id;
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al agregar mensaje a conversación:', error);
@@ -494,7 +537,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     const statusUpdated = await updateLeadStatusIfNeeded(leadId);
     
     // 3. Buscar o crear conversación de email
-    const conversationId = await findOrCreateEmailConversation(leadId, siteId);
+    const conversationId = await findOrCreateEmailConversation(leadId, siteId, email.subject);
     
     if (!conversationId) {
       return {
@@ -528,6 +571,68 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
     };
+  }
+}
+
+/**
+ * Función para buscar un team member por email en el sitio
+ */
+async function findTeamMemberByEmail(email: string, siteId: string): Promise<{id: string, name?: string} | null> {
+  try {
+    console.log(`[EMAIL_SYNC] 🔍 Buscando team member por email: ${email} en sitio: ${siteId}`);
+    
+    // 1. Buscar en site_members por email
+    const { data: siteMembers, error: siteMembersError } = await supabaseAdmin
+      .from('site_members')
+      .select('user_id, email, name')
+      .eq('site_id', siteId)
+      .eq('email', email.toLowerCase().trim())
+      .eq('status', 'active')
+      .limit(1);
+    
+    if (siteMembersError) {
+      console.error('[EMAIL_SYNC] Error al buscar en site_members:', siteMembersError);
+    } else if (siteMembers && siteMembers.length > 0) {
+      const member = siteMembers[0];
+      console.log(`[EMAIL_SYNC] ✅ Team member encontrado en site_members: ${member.user_id}`);
+      return {
+        id: member.user_id,
+        name: member.name || undefined
+      };
+    }
+    
+    // 2. Buscar en site_ownership por email del usuario auth
+    const { data: siteOwners, error: siteOwnersError } = await supabaseAdmin
+      .from('site_ownership')
+      .select('user_id')
+      .eq('site_id', siteId);
+    
+    if (siteOwnersError) {
+      console.error('[EMAIL_SYNC] Error al buscar en site_ownership:', siteOwnersError);
+    } else if (siteOwners && siteOwners.length > 0) {
+      // Verificar el email de cada owner
+      for (const owner of siteOwners) {
+        try {
+          const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(owner.user_id);
+          if (!userError && userData.user && userData.user.email && 
+              userData.user.email.toLowerCase().trim() === email.toLowerCase().trim()) {
+            console.log(`[EMAIL_SYNC] ✅ Team member (owner) encontrado: ${owner.user_id}`);
+            return {
+              id: owner.user_id,
+              name: userData.user.user_metadata?.name || userData.user.user_metadata?.full_name || undefined
+            };
+          }
+        } catch (ownerCheckError) {
+          console.warn(`[EMAIL_SYNC] Error verificando owner ${owner.user_id}:`, ownerCheckError);
+        }
+      }
+    }
+    
+    console.log(`[EMAIL_SYNC] ⚠️ No se encontró team member con email: ${email}`);
+    return null;
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error al buscar team member por email:', error);
+    return null;
   }
 }
 
