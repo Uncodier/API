@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { NotificationService, NotificationType } from '@/lib/services/notification-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { v4 as uuidv4 } from 'uuid';
 import { 
   NotificationPriority 
@@ -14,9 +15,186 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+/**
+ * Crea un task de soporte para el lead asociado a la conversación
+ */
+async function createSupportTask(
+  conversationId: string, 
+  leadId: string | null, 
+  siteId: string, 
+  userId: string,
+  message: string,
+  summary?: string,
+  contactName?: string
+): Promise<string | null> {
+  try {
+    if (!leadId) {
+      console.log('No se puede crear task de soporte: no hay lead asociado a la conversación');
+      return null;
+    }
 
+    console.log(`📋 Creando task de soporte para lead: ${leadId}`);
+    
+    // Obtener información del lead para usar en el task
+    const { data: lead, error: leadError } = await supabaseAdmin
+      .from('leads')
+      .select('name, email')
+      .eq('id', leadId)
+      .single();
+    
+    if (leadError || !lead) {
+      console.error('Error al obtener información del lead para el task:', leadError);
+      return null;
+    }
+    
+    // Preparar datos para el task
+    const taskData = {
+      lead_id: leadId,
+      conversation_id: conversationId,
+      title: `Soporte solicitado - ${contactName || lead.name}`,
+      description: `Tarea de soporte creada automáticamente cuando el usuario solicitó ayuda humana.\n\nMensaje del usuario: "${message}"${summary ? `\n\nResumen de la conversación: ${summary}` : ''}`,
+      type: 'support',
+      stage: 'retention',
+      status: 'pending',
+      priority: 1,
+      user_id: userId,
+      site_id: siteId,
+      scheduled_date: new Date().toISOString(),
+      notes: `Intervención humana solicitada. Conversación ID: ${conversationId}`
+    };
+    
+    console.log(`📋 Datos para el task de soporte:`, JSON.stringify(taskData));
+    
+    // Insertar el task en la base de datos
+    const { data: task, error: taskError } = await supabaseAdmin
+      .from('tasks')
+      .insert([taskData])
+      .select()
+      .single();
+    
+    if (taskError) {
+      console.error('Error al crear task de soporte:', taskError);
+      return null;
+    }
+    
+    console.log(`✅ Task de soporte creado exitosamente: ${task.id}`);
+    return task.id;
+    
+  } catch (error) {
+    console.error('Error inesperado al crear task de soporte:', error);
+    return null;
+  }
+}
 
+/**
+ * Función para enviar respuesta automática via WhatsApp 
+ */
+async function sendWhatsAppAutoResponse(
+  conversationData: any,
+  message: string,
+  contactName?: string
+): Promise<boolean> {
+  try {
+    console.log(`📱 Enviando respuesta automática vía WhatsApp para conversación ${conversationData.id}`);
+    
+    // Obtener el número de teléfono desde custom_data
+    let phoneNumber: string | null = null;
+    
+    if (conversationData.custom_data?.whatsapp_phone) {
+      phoneNumber = conversationData.custom_data.whatsapp_phone;
+    } else if (conversationData.custom_data?.phone) {
+      phoneNumber = conversationData.custom_data.phone;
+    }
+    
+    if (!phoneNumber) {
+      console.error('❌ No se encontró número de teléfono en la conversación de WhatsApp');
+      return false;
+    }
+    
+    // Mensaje automático informando que se contactará un humano
+    const autoMessage = `Hola ${contactName || 'estimado/a cliente'}, ` +
+      `hemos recibido tu solicitud de ayuda: "${message}". ` +
+      `Un miembro de nuestro equipo se pondrá en contacto contigo pronto. ` +
+      `Gracias por tu paciencia. 🙏`;
+    
+    const result = await WhatsAppSendService.sendMessage({
+      phone_number: phoneNumber,
+      message: autoMessage,
+      from: 'Equipo de Soporte',
+      site_id: conversationData.site_id,
+      conversation_id: conversationData.id,
+      lead_id: conversationData.lead_id
+    });
+    
+    if (result.success) {
+      console.log(`✅ Respuesta automática de WhatsApp enviada: ${result.message_id}`);
+      return true;
+    } else {
+      console.error(`❌ Error al enviar respuesta automática de WhatsApp:`, result.error);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error('❌ Error inesperado al enviar respuesta automática de WhatsApp:', error);
+    return false;
+  }
+}
 
+/**
+ * Función para enviar respuesta automática vía email
+ */
+async function sendEmailAutoResponse(
+  conversationData: any,
+  message: string,
+  contactEmail?: string,
+  contactName?: string
+): Promise<boolean> {
+  try {
+    console.log(`📧 Enviando respuesta automática vía email para conversación ${conversationData.id}`);
+    
+    let emailAddress = contactEmail;
+    
+    // Si no se proporciona email, intentar obtenerlo del lead
+    if (!emailAddress && conversationData.lead_id) {
+      const { data: lead, error: leadError } = await supabaseAdmin
+        .from('leads')
+        .select('email')
+        .eq('id', conversationData.lead_id)
+        .single();
+      
+      if (!leadError && lead?.email) {
+        emailAddress = lead.email;
+      }
+    }
+    
+    if (!emailAddress) {
+      console.error('❌ No se encontró dirección de email para enviar respuesta automática');
+      return false;
+    }
+    
+    // Usar VisitorNotificationService para enviar el email
+    const result = await VisitorNotificationService.notifyMessageReceived({
+      visitorEmail: emailAddress,
+      visitorName: contactName,
+      message: `Hemos recibido tu solicitud: "${message}". Un miembro de nuestro equipo se pondrá en contacto contigo pronto.`,
+      agentName: 'Sistema de Soporte',
+      summary: 'Solicitud de ayuda humana recibida y en proceso',
+      supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
+    });
+    
+    if (result.success) {
+      console.log(`✅ Respuesta automática por email enviada a: ${emailAddress}`);
+      return true;
+    } else {
+      console.error(`❌ Error al enviar respuesta automática por email:`, result.error);
+      return false;
+    }
+    
+  } catch (error) {
+    console.error('❌ Error inesperado al enviar respuesta automática por email:', error);
+    return false;
+  }
+}
 
 /**
  * Endpoint para solicitar la intervención de un humano en una conversación
@@ -102,10 +280,10 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Verificar que la conversación existe
+    // Verificar que la conversación existe y obtener información del origen
     const { data: conversationData, error: conversationError } = await supabaseAdmin
       .from('conversations')
-      .select('id, user_id, title, site_id, lead_id, visitor_id')
+      .select('id, user_id, title, site_id, lead_id, visitor_id, channel, custom_data')
       .eq('id', conversation_id)
       .single();
     
@@ -122,6 +300,24 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+    
+    // Detectar el origen de la conversación
+    let conversationOrigin = 'web'; // Default
+    
+    // Verificar en el campo channel directo
+    if (conversationData.channel) {
+      conversationOrigin = conversationData.channel;
+    } 
+    // Verificar en custom_data.channel como fallback
+    else if (conversationData.custom_data && conversationData.custom_data.channel) {
+      conversationOrigin = conversationData.custom_data.channel;
+    }
+    // Verificar en custom_data.source (formato anterior)
+    else if (conversationData.custom_data && conversationData.custom_data.source) {
+      conversationOrigin = conversationData.custom_data.source;
+    }
+    
+    console.log(`📺 Origen de conversación detectado: "${conversationOrigin}" para conversación ${conversation_id}`);
     
     // Variables para almacenar datos del agente
     let agentData = null;
@@ -224,30 +420,72 @@ export async function POST(request: NextRequest) {
     const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(siteId);
     const notifiedEmails = teamMembers.map(member => member.email);
 
+    // Variables para tracking de respuestas automáticas
+    let channelResponseSent = false;
+    let channelResponseType = 'none';
+    
     if (!teamNotificationResult.success) {
       console.error('Error al notificar al equipo:', teamNotificationResult.errors);
     } else {
       console.log(`Equipo notificado exitosamente: ${teamNotificationResult.notificationsSent} notificaciones, ${teamNotificationResult.emailsSent} emails`);
       
-      // Si la notificación al equipo fue exitosa y tenemos email del visitante, notificar al visitante
-      if (email) {
-        console.log(`📧 Enviando confirmación al visitante: ${email}`);
+      // Enviar respuesta automática según el origen de la conversación
+      if (conversationOrigin === 'whatsapp') {
+        console.log(`📱 Conversación de WhatsApp detectada - enviando respuesta automática`);
+        channelResponseSent = await sendWhatsAppAutoResponse(conversationData, message, name);
+        channelResponseType = 'whatsapp';
+      } else if (conversationOrigin === 'email') {
+        console.log(`📧 Conversación de email detectada - enviando respuesta automática`);
+        channelResponseSent = await sendEmailAutoResponse(conversationData, message, email, name);
+        channelResponseType = 'email';
+      } else {
+        console.log(`🌐 Conversación web detectada - solo notificación al equipo`);
         
-        const visitorNotificationResult = await VisitorNotificationService.notifyMessageReceived({
-          visitorEmail: email,
-          visitorName: name,
-          message,
-          agentName: agentData?.name,
-          summary,
-          supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
-        });
-        
-        if (visitorNotificationResult.success) {
-          console.log(`✅ Visitante notificado exitosamente: ${email}`);
-        } else {
-          console.error(`❌ Error al notificar al visitante ${email}:`, visitorNotificationResult.error);
+        // Para conversaciones web, mantener el comportamiento original si hay email del visitante
+        if (email) {
+          console.log(`📧 Enviando confirmación al visitante vía email: ${email}`);
+          
+          const visitorNotificationResult = await VisitorNotificationService.notifyMessageReceived({
+            visitorEmail: email,
+            visitorName: name,
+            message,
+            agentName: agentData?.name,
+            summary,
+            supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
+          });
+          
+          if (visitorNotificationResult.success) {
+            console.log(`✅ Visitante notificado exitosamente: ${email}`);
+            channelResponseSent = true;
+            channelResponseType = 'email_fallback';
+          } else {
+            console.error(`❌ Error al notificar al visitante ${email}:`, visitorNotificationResult.error);
+          }
         }
       }
+    }
+    
+    // Crear task de soporte para el lead si existe
+    let supportTaskId = null;
+    if (conversationData.lead_id) {
+      console.log(`📋 Creando task de soporte para el lead asociado`);
+      supportTaskId = await createSupportTask(
+        conversation_id,
+        conversationData.lead_id,
+        siteId,
+        conversationData.user_id,
+        message,
+        summary,
+        name
+      );
+      
+      if (supportTaskId) {
+        console.log(`✅ Task de soporte creado: ${supportTaskId}`);
+      } else {
+        console.log(`⚠️ No se pudo crear el task de soporte`);
+      }
+    } else {
+      console.log(`ℹ️ No se crea task de soporte: no hay lead asociado a la conversación`);
     }
     
     // Respuesta exitosa con los datos de la intervención
@@ -263,15 +501,25 @@ export async function POST(request: NextRequest) {
         summary,
         contact_name: name,
         contact_email: email,
+        conversation_origin: conversationOrigin,
         team_notification: {
           notifications_sent: teamNotificationResult.notificationsSent,
           emails_sent: teamNotificationResult.emailsSent,
           notified_emails: notifiedEmails,
           total_members: teamNotificationResult.totalMembers
         },
+        channel_response: {
+          sent: channelResponseSent,
+          type: channelResponseType,
+          channel: conversationOrigin
+        },
         visitor_notification: {
           sent: !!email && teamNotificationResult.success,
           email: email || null
+        },
+        support_task: {
+          created: !!supportTaskId,
+          task_id: supportTaskId
         }
       }
     }, { status: 201 });

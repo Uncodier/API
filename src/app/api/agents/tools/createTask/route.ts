@@ -187,6 +187,7 @@ const CreateTaskSchema = z.object({
   stage: z.string().default('pending'),
   priority: z.number().int().min(0).default(0),
   lead_id: z.string().uuid('Lead ID debe ser un UUID válido'),
+  conversation_id: z.string().uuid('Conversation ID debe ser un UUID válido').optional(),
   user_id: z.string().uuid('User ID debe ser un UUID válido').optional(),
   site_id: z.string().uuid('Site ID debe ser un UUID válido').optional(),
   scheduled_date: z.string()

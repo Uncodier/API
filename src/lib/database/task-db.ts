@@ -37,6 +37,7 @@ export interface DbTask {
   user_id: string;
   site_id: string;
   lead_id: string | null;
+  conversation_id: string | null;
   scheduled_date: string | null;
   completed_date: string | null;
   amount: number | null;
@@ -60,6 +61,7 @@ export interface ApiTask {
   status: string;
   stage: string;
   priority: number;
+  conversation_id: string | null;
   scheduled_date: string | null;
   completed_date: string | null;
   amount: number | null;
@@ -93,6 +95,7 @@ export interface CreateTaskParams {
   user_id: string;
   site_id: string;
   lead_id?: string;
+  conversation_id?: string;
   scheduled_date?: string;
   amount?: number;
   assignee?: string;
@@ -111,6 +114,7 @@ export interface UpdateTaskParams {
   status?: string;
   stage?: string;
   priority?: number;
+  conversation_id?: string;
   scheduled_date?: string;
   amount?: number;
   assignee?: string;
@@ -249,6 +253,7 @@ export async function getTasks(filters: TaskFilters = {}): Promise<{
         status,
         stage,
         priority,
+        conversation_id,
         scheduled_date,
         completed_date,
         amount,

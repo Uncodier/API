@@ -633,12 +633,18 @@ export async function POST(request: Request) {
     // Agregar instrucciones específicas sobre selección de canal al contexto
     contextMessage += `\n\n=== INSTRUCCIONES CRÍTICAS SOBRE SELECCIÓN DE CANAL ===\n`;
     contextMessage += `ATENCIÓN: De los ${followUpChannels.length} canales disponibles (${followUpChannels.map(c => c.channel).join(', ')}), debes seleccionar ÚNICAMENTE EL MÁS EFECTIVO.\n`;
+    contextMessage += `\n🚨 REGLA FUNDAMENTAL: SOLO CONTACTAR POR UN CANAL A LA VEZ 🚨\n`;
+    contextMessage += `- NUNCA uses múltiples canales simultáneamente\n`;
+    contextMessage += `- Un lead debe recibir comunicación por un solo canal en cada interacción\n`;
+    contextMessage += `- Contactar por múltiples canales genera molestia y puede alejar al prospecto\n`;
+    contextMessage += `- La estrategia es elegir el canal MÁS PROBABLE de generar respuesta positiva\n`;
     contextMessage += `\nCRITERIOS DE SELECCIÓN:\n`;
     contextMessage += `1. Email: Ideal para leads profesionales, información detallada, documentos adjuntos\n`;
     contextMessage += `2. WhatsApp: Perfecto para comunicación inmediata, leads que prefieren mensajería móvil\n`;
     contextMessage += `3. Notification: Ideal para usuarios activos en la plataforma, mensajes cortos y directos\n`;
     contextMessage += `4. Web: Efectivo para visitors que aún navegan el sitio web, ofertas y demos\n`;
-    contextMessage += `\nDEBES RETORNAR SOLO 1 CANAL en el follow_up_content para no hostigar al lead.\n`;
+    contextMessage += `\n⚠️ IMPORTANTE: DEBES RETORNAR SOLO 1 CANAL en el follow_up_content para no hostigar al lead.\n`;
+    contextMessage += `⚠️ RESPETA LA REGLA: UN SOLO CANAL POR INTERACCIÓN.\n`;
     contextMessage += `Basa tu decisión en el historial, contexto y perfil del lead mostrado arriba.\n`;
     contextMessage += `=== FIN DE INSTRUCCIONES ===\n\n`;
 

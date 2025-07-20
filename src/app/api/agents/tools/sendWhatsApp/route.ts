@@ -3,10 +3,16 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 
 /**
- * Endpoint para enviar mensajes de WhatsApp desde un agente
+ * Endpoint para enviar mensajes de WhatsApp desde un agente con manejo automático de ventana de respuesta
+ * 
+ * NUEVA FUNCIONALIDAD:
+ * - Detecta automáticamente si la conversación está dentro de la ventana de respuesta de 24 horas
+ * - Si está fuera de la ventana, crea y usa templates de Twilio automáticamente
+ * - Reutiliza templates existentes para mensajes similares
+ * - Fallback a mensaje regular si hay problemas con templates
  * 
  * @param request Solicitud entrante con los datos del mensaje a enviar
- * @returns Respuesta con el estado del envío
+ * @returns Respuesta con el estado del envío, información de template y ventana de respuesta
  * 
  * Parámetros de la solicitud:
  * - phone_number: (Requerido) Número de teléfono del destinatario en formato internacional (+1234567890)
@@ -14,8 +20,14 @@ import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService
  * - message: (Requerido) Contenido del mensaje
  * - site_id: (Requerido) ID del sitio para obtener configuración de WhatsApp
  * - agent_id: (Opcional) ID del agente que envía el mensaje
- * - conversation_id: (Opcional) ID de la conversación
+ * - conversation_id: (Opcional) ID de la conversación (requerido para detectar ventana de respuesta)
  * - lead_id: (Opcional) ID del lead asociado
+ * 
+ * Respuesta incluye:
+ * - template_used: boolean - Si se usó un template de Twilio
+ * - template_sid: string - SID del template usado (si aplica)
+ * - within_response_window: boolean - Si estaba dentro de la ventana de 24 horas
+ * - hours_elapsed: number - Horas transcurridas desde el último mensaje del usuario
  */
 export async function POST(request: NextRequest) {
   try {
@@ -196,19 +208,63 @@ export async function POST(request: NextRequest) {
       success: result.success,
       status: result.status,
       error: result.error,
-      messageId: result.message_id
+      messageId: result.message_id,
+      templateUsed: result.template_used,
+      templateSid: result.template_sid,
+      withinResponseWindow: result.within_response_window,
+      hoursElapsed: result.hours_elapsed
     });
 
     if (!result.success) {
-      const statusCode = result.error?.code === 'WHATSAPP_CONFIG_NOT_FOUND' ? 404 : 500;
+      // Determinar código de estado basado en el tipo de error
+      let statusCode = 500; // Default para errores internos
+      
+      if (result.error?.code === 'WHATSAPP_CONFIG_NOT_FOUND') {
+        statusCode = 404;
+      } else if (result.errorType) {
+        // Mapear tipos de error de Twilio a códigos HTTP apropiados
+        switch (result.errorType) {
+          case 'USER_LIMITATION':
+          case 'INVALID_NUMBER':
+            statusCode = 400; // Bad Request - problema con el destinatario
+            break;
+          case 'SENDER_CONFIG':
+          case 'BUSINESS_SETUP':
+            statusCode = 502; // Bad Gateway - configuración del servidor
+            break;
+          case 'RATE_LIMIT':
+          case 'QUALITY_LIMIT':
+            statusCode = 429; // Too Many Requests
+            break;
+          case 'RESPONSE_WINDOW':
+            statusCode = 422; // Unprocessable Entity - necesita template
+            break;
+          case 'TEMPLATE_ERROR':
+          case 'ACCOUNT_ERROR':
+            statusCode = 503; // Service Unavailable - problema temporal del servicio
+            break;
+          default:
+            statusCode = 500;
+        }
+      }
+      
       console.error('❌ [SendWhatsApp] Error en el envío:', {
         error: result.error,
+        errorCode: result.errorCode,
+        errorType: result.errorType,
+        suggestion: result.suggestion,
         statusCode
       });
+      
       return NextResponse.json(
         { 
           success: false, 
-          error: result.error
+          error: {
+            message: result.error,
+            code: result.errorCode || 'UNKNOWN',
+            type: result.errorType || 'UNKNOWN',
+            suggestion: result.suggestion || 'Contactar soporte técnico'
+          }
         },
         { status: statusCode }
       );
@@ -220,7 +276,11 @@ export async function POST(request: NextRequest) {
       result: {
         success: result.success,
         status: result.status,
-        message_id: result.message_id
+        message_id: result.message_id,
+        template_used: result.template_used,
+        template_sid: result.template_sid,
+        within_response_window: result.within_response_window,
+        hours_elapsed: result.hours_elapsed
       }
     });
     

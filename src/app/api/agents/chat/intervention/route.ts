@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { EmailSendService } from '@/lib/services/email/EmailSendService';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -132,6 +134,186 @@ async function getAgentInfo(agentId: string): Promise<{ site_id?: string } | nul
   }
 }
 
+// Función para detectar el canal de una conversación
+async function getConversationChannel(conversationId: string): Promise<{ channel?: string; leadPhone?: string; leadEmail?: string; visitorPhone?: string } | null> {
+  try {
+    if (!conversationId || !isValidUUID(conversationId)) {
+      console.log(`⚠️ ID de conversación no válido: ${conversationId}`);
+      return null;
+    }
+
+    console.log(`🔍 Detectando canal para conversación: ${conversationId}`);
+
+    // Obtener información de la conversación con lead y visitor
+    const { data: conversation, error } = await supabaseAdmin
+      .from('conversations')
+      .select(`
+        id,
+        channel,
+        custom_data,
+        lead_id,
+        visitor_id,
+        leads:lead_id (
+          phone,
+          email
+        ),
+        visitors:visitor_id (
+          custom_data
+        )
+      `)
+      .eq('id', conversationId)
+      .single();
+
+    if (error) {
+      console.error('Error al obtener información de conversación:', error);
+      return null;
+    }
+
+    if (!conversation) {
+      console.log(`⚠️ No se encontró la conversación: ${conversationId}`);
+      return null;
+    }
+
+    // Detectar el canal
+    let channel = null;
+
+    // 1. Verificar campo directo channel
+    if (conversation.channel) {
+      channel = conversation.channel;
+    }
+    // 2. Verificar custom_data.channel como fallback
+    else if (conversation.custom_data && conversation.custom_data.channel) {
+      channel = conversation.custom_data.channel;
+    }
+    // 3. Verificar custom_data.source (formato anterior)
+    else if (conversation.custom_data && conversation.custom_data.source) {
+      channel = conversation.custom_data.source;
+    }
+
+    console.log(`📺 Canal detectado: "${channel || 'sin canal'}" para conversación ${conversationId}`);
+
+    // Obtener información de contacto según el canal
+    let leadPhone = null;
+    let leadEmail = null;
+    let visitorPhone = null;
+
+    // Información del lead
+    if (conversation.leads) {
+      const lead = conversation.leads as any;
+      leadPhone = lead.phone;
+      leadEmail = lead.email;
+    }
+
+    // Información del visitor (para WhatsApp)
+    if (conversation.visitors) {
+      const visitor = conversation.visitors as any;
+      if (visitor && visitor.custom_data && visitor.custom_data.whatsapp_phone) {
+        visitorPhone = visitor.custom_data.whatsapp_phone;
+      }
+    }
+
+    return {
+      channel,
+      leadPhone,
+      leadEmail,
+      visitorPhone
+    };
+  } catch (error) {
+    console.error('Error al detectar canal de conversación:', error);
+    return null;
+  }
+}
+
+// Función para enviar mensaje según el canal
+async function sendMessageByChannel(
+  channel: string,
+  message: string,
+  contactInfo: { leadPhone?: string; leadEmail?: string; visitorPhone?: string },
+  siteId: string,
+  agentId: string,
+  conversationId: string,
+  leadId?: string
+): Promise<{ success: boolean; method?: string; error?: string }> {
+  try {
+    console.log(`📤 Enviando mensaje por canal: ${channel}`);
+
+    if (channel === 'whatsapp') {
+      // Para WhatsApp, priorizar el teléfono del visitor (más específico) o del lead
+      const phoneNumber = contactInfo.visitorPhone || contactInfo.leadPhone;
+      
+      if (!phoneNumber) {
+        return {
+          success: false,
+          error: 'No se encontró número de teléfono para envío por WhatsApp'
+        };
+      }
+
+      console.log(`📱 Enviando mensaje de intervención por WhatsApp a: ${phoneNumber.substring(0, 5)}***`);
+
+      const result = await WhatsAppSendService.sendMessage({
+        phone_number: phoneNumber,
+        message,
+        from: 'Equipo de Soporte',
+        site_id: siteId,
+        agent_id: agentId,
+        conversation_id: conversationId,
+        lead_id: leadId
+      });
+
+      return {
+        success: result.success,
+        method: 'whatsapp',
+        error: result.error?.message
+      };
+
+    } else if (channel === 'email') {
+      // Para email, usar el email del lead
+      const email = contactInfo.leadEmail;
+      
+      if (!email) {
+        return {
+          success: false,
+          error: 'No se encontró dirección de email para envío por correo'
+        };
+      }
+
+      console.log(`📧 Enviando mensaje de intervención por email a: ${email}`);
+
+      const result = await EmailSendService.sendEmail({
+        email,
+        subject: 'Respuesta de nuestro equipo',
+        message,
+        from: 'Equipo de Soporte',
+        site_id: siteId,
+        agent_id: agentId,
+        conversation_id: conversationId,
+        lead_id: leadId
+      });
+
+      return {
+        success: result.success,
+        method: 'email',
+        error: result.error?.message
+      };
+
+    } else {
+      console.log(`ℹ️ Canal "${channel}" no requiere envío externo (web/chat)`);
+      return {
+        success: true,
+        method: 'none',
+        error: 'No external sending required for this channel'
+      };
+    }
+
+  } catch (error) {
+    console.error('Error al enviar mensaje por canal:', error);
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Error desconocido'
+    };
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
@@ -197,7 +379,7 @@ export async function POST(request: Request) {
       agentId
     );
     
-    // Verificar que se guardaron correctamente los mensajes
+        // Verificar que se guardaron correctamente los mensajes
     if (!savedMessages) {
       return NextResponse.json(
         { 
@@ -210,26 +392,71 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
+
+    // Detectar canal y enviar mensaje si es necesario
+    let channelSendResult = null;
     
+    if (savedMessages.conversationId && site_id) {
+      console.log(`🔍 Detectando canal para envío de intervención...`);
+      
+      const conversationInfo = await getConversationChannel(savedMessages.conversationId);
+      
+      if (conversationInfo && conversationInfo.channel) {
+        const { channel, leadPhone, leadEmail, visitorPhone } = conversationInfo;
+        
+        console.log(`📺 Canal detectado: "${channel}" - iniciando envío externo`);
+        
+        channelSendResult = await sendMessageByChannel(
+          channel,
+          message,
+          { leadPhone, leadEmail, visitorPhone },
+          site_id,
+          agentId,
+          savedMessages.conversationId,
+          lead_id
+        );
+        
+        if (channelSendResult.success) {
+          console.log(`✅ Mensaje de intervención enviado exitosamente por ${channelSendResult.method}`);
+        } else {
+          console.error(`❌ Error enviando mensaje de intervención:`, channelSendResult.error);
+        }
+      } else {
+        console.log(`ℹ️ No se detectó canal específico o no requiere envío externo`);
+      }
+    }
+
     // Generar un ID único para la intervención
     const interventionId = uuidv4();
-    
+
+    // Preparar respuesta con información del envío por canal
+    const responseData: any = {
+      interventionId,
+      status: 'completed',
+      conversation_id: savedMessages.conversationId,
+      conversation_title: savedMessages.conversationTitle,
+      message: {
+        content: message,
+        message_id: savedMessages.interventionMessageId,
+        role: 'team_member',
+        user_id: user_id
+      }
+    };
+
+    // Agregar información del envío por canal si está disponible
+    if (channelSendResult) {
+      responseData.channel_send = {
+        success: channelSendResult.success,
+        method: channelSendResult.method,
+        error: channelSendResult.error
+      };
+    }
+
     // Si todo es correcto, devolvemos la respuesta exitosa
     return NextResponse.json(
       { 
         success: true, 
-        data: { 
-          interventionId,
-          status: 'completed',
-          conversation_id: savedMessages.conversationId,
-          conversation_title: savedMessages.conversationTitle,
-          message: {
-            content: message,
-            message_id: savedMessages.interventionMessageId,
-            role: 'team_member',
-            user_id: user_id
-          }
-        } 
+        data: responseData
       },
       { status: 200 }
     );

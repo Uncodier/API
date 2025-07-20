@@ -901,12 +901,14 @@ CREATE TABLE public.tasks (
   serial_id text NOT NULL,
   priority integer NOT NULL DEFAULT 0,
   address jsonb,
+  conversation_id uuid,
   CONSTRAINT tasks_pkey PRIMARY KEY (id),
   CONSTRAINT tasks_lead_id_fkey FOREIGN KEY (lead_id) REFERENCES public.leads(id),
   CONSTRAINT tasks_assignee_fkey FOREIGN KEY (assignee) REFERENCES auth.users(id),
   CONSTRAINT tasks_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT fk_command_tasks FOREIGN KEY (command_id) REFERENCES public.commands(id),
-  CONSTRAINT tasks_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+  CONSTRAINT tasks_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
+  CONSTRAINT fk_conversation_tasks FOREIGN KEY (conversation_id) REFERENCES public.conversations(id)
 );
 CREATE TABLE public.transactions (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1006,6 +1008,25 @@ CREATE TABLE public.waitlist (
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   CONSTRAINT waitlist_pkey PRIMARY KEY (id)
 );
+CREATE TABLE public.whatsapp_templates (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  template_sid text NOT NULL,
+  template_name text NOT NULL,
+  content text NOT NULL,
+  original_message text,
+  site_id uuid NOT NULL,
+  account_sid text NOT NULL,
+  status text DEFAULT 'active'::text CHECK (status = ANY (ARRAY['active'::text, 'inactive'::text, 'pending'::text, 'failed'::text])),
+  language text DEFAULT 'es'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  last_used timestamp with time zone,
+  usage_count integer DEFAULT 0,
+  CONSTRAINT whatsapp_templates_pkey PRIMARY KEY (id),
+  CONSTRAINT whatsapp_templates_unique_sid UNIQUE (template_sid),
+  CONSTRAINT whatsapp_templates_unique_name_site UNIQUE (template_name, site_id),
+  CONSTRAINT whatsapp_templates_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
 
 | object_type | object_name                                      | table_name            |
 | ----------- | ------------------------------------------------ | --------------------- |
@@ -1050,6 +1071,7 @@ CREATE TABLE public.waitlist (
 | FUNCTION    | handle_session_events_updated_at                 | PLPGSQL               |
 | FUNCTION    | handle_updated_at                                | PLPGSQL               |
 | FUNCTION    | increment_agent_conversations                    | PLPGSQL               |
+| FUNCTION    | increment_template_usage                         | PLPGSQL               |
 | FUNCTION    | increment_referral_code_usage                    | PLPGSQL               |
 | FUNCTION    | is_superadmin                                    | PLPGSQL               |
 | FUNCTION    | log_asset_insert                                 | PLPGSQL               |
@@ -1091,6 +1113,7 @@ CREATE TABLE public.waitlist (
 | FUNCTION    | update_sale_orders_updated_at                    | PLPGSQL               |
 | FUNCTION    | update_timestamp                                 | PLPGSQL               |
 | FUNCTION    | update_updated_at_column                         | PLPGSQL               |
+| FUNCTION    | update_whatsapp_templates_updated_at             | PLPGSQL               |
 | FUNCTION    | user_has_access_to_site                          | PLPGSQL               |
 | FUNCTION    | validate_notifications                           | PLPGSQL               |
 | FUNCTION    | validate_performance_bitmask                     | PLPGSQL               |
@@ -1300,6 +1323,7 @@ CREATE TABLE public.waitlist (
 | INDEX       | idx_task_comments_user_id                        | task_comments         |
 | INDEX       | idx_tasks_address                                | tasks                 |
 | INDEX       | idx_tasks_command_id                             | tasks                 |
+| INDEX       | idx_tasks_conversation_id                        | tasks                 |
 | INDEX       | idx_tasks_lead_id                                | tasks                 |
 | INDEX       | idx_tasks_priority                               | tasks                 |
 | INDEX       | idx_tasks_serial_id                              | tasks                 |
@@ -1361,6 +1385,14 @@ CREATE TABLE public.waitlist (
 | INDEX       | visitors_pkey                                    | visitors              |
 | INDEX       | waitlist_email_key                               | waitlist              |
 | INDEX       | waitlist_pkey                                    | waitlist              |
+| INDEX       | idx_whatsapp_templates_account_sid               | whatsapp_templates    |
+| INDEX       | idx_whatsapp_templates_created_at                | whatsapp_templates    |
+| INDEX       | idx_whatsapp_templates_last_used                 | whatsapp_templates    |
+| INDEX       | idx_whatsapp_templates_site_id                   | whatsapp_templates    |
+| INDEX       | idx_whatsapp_templates_status                    | whatsapp_templates    |
+| INDEX       | whatsapp_templates_pkey                          | whatsapp_templates    |
+| INDEX       | whatsapp_templates_unique_name_site              | whatsapp_templates    |
+| INDEX       | whatsapp_templates_unique_sid                    | whatsapp_templates    |
 | TRIGGER     | activate_pending_memberships_trigger             | profiles              |
 | TRIGGER     | billing_timestamp_trigger                        | billing               |
 | TRIGGER     | campaign_cascade_delete_trigger                  | campaigns             |
@@ -1391,6 +1423,7 @@ CREATE TABLE public.waitlist (
 | TRIGGER     | trigger_set_task_serial_id                       | tasks                 |
 | TRIGGER     | trigger_update_cron_status_updated_at            | cron_status           |
 | TRIGGER     | trigger_update_sale_orders_updated_at            | sale_orders           |
+| TRIGGER     | trigger_update_whatsapp_templates_updated_at     | whatsapp_templates    |
 | TRIGGER     | update_api_key_usage                             | api_keys              |
 | TRIGGER     | update_api_keys_updated_at                       | api_keys              |
 | TRIGGER     | update_companies_updated_at                      | companies             |
