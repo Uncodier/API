@@ -231,8 +231,8 @@ async function executeCopywriterRefinement(
       copywriterContext += `5. Ensure the content resonates with the audience while maintaining sales objectives\n`;
       copywriterContext += `6. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
       copywriterContext += `7. Use ONLY the real information provided in the lead context\n`;
-      copywriterContext += `8. Write final content ready to send without additional editing\n\n`;
-      copywriterContext += `9. Sign on behalf of the team (when relevant and the context merits adding a signature)\n\n`;
+      copywriterContext += `8. Write final content ready to send without additional editing\n`;
+      copywriterContext += `9. SIGNATURE RULES: Avoid signing emails unless absolutely necessary. If a signature is required, use only "*company name* or similar" without personal names\n\n`;
       
       console.log(`📝 PHASE 2: Structured context prepared with ${copywriterContext.length} characters`);
     } else {
@@ -796,19 +796,31 @@ export async function POST(request: Request) {
     // Extract content from final command
     if (finalCommand && finalCommand.results && Array.isArray(finalCommand.results)) {
       for (const result of finalCommand.results) {
-        // For copywriter, search for refined_content
-        if (copywriterCompleted && result.refined_content && Array.isArray(result.refined_content)) {
-          finalContent = result.refined_content;
+        // For copywriter, search for refined_content (can be object or array)
+        if (copywriterCompleted && result.refined_content) {
+          if (Array.isArray(result.refined_content)) {
+            finalContent = result.refined_content;
+          } else if (typeof result.refined_content === 'object') {
+            finalContent = [result.refined_content]; // Convert object to array
+          }
           break;
         }
-        // For sales, search for follow_up_content (now expecting object)
-        else if (!copywriterCompleted && result.follow_up_content && typeof result.follow_up_content === 'object' && !Array.isArray(result.follow_up_content)) {
-          finalContent = [result.follow_up_content]; // Convert to array for consistent processing
+        // For sales, search for follow_up_content (can be object or array)
+        else if (!copywriterCompleted && result.follow_up_content) {
+          if (Array.isArray(result.follow_up_content)) {
+            finalContent = result.follow_up_content;
+          } else if (typeof result.follow_up_content === 'object') {
+            finalContent = [result.follow_up_content]; // Convert object to array
+          }
           break;
         }
         // Fallbacks
         else if (result.content && Array.isArray(result.content)) {
           finalContent = result.content;
+          break;
+        }
+        else if (result.content && typeof result.content === 'object') {
+          finalContent = [result.content]; // Convert object to array
           break;
         }
         else if (Array.isArray(result)) {

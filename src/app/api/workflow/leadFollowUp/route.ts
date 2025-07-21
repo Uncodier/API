@@ -70,7 +70,7 @@ export async function POST(request: NextRequest) {
     // Opciones de ejecución del workflow
     const workflowOptions: WorkflowExecutionOptions = {
       priority: 'medium',
-      async: false, // Esperamos el resultado
+      async: true, // No esperamos el resultado, ejecutar de forma asíncrona
       retryAttempts: 3,
       taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
       workflowId: `lead-follow-up-${site_id}-${lead_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -78,41 +78,43 @@ export async function POST(request: NextRequest) {
 
     console.log(`🔄 Iniciando workflow de seguimiento de lead con ID: ${workflowOptions.workflowId}`);
 
-    // Ejecutar el workflow específico para seguimiento de leads
+    // Ejecutar el workflow específico para seguimiento de leads de forma asíncrona
     const result = await workflowService.leadFollowUp(
       workflowArgs,
       workflowOptions
     );
 
     if (!result.success) {
-      console.error('❌ Error en la ejecución del workflow de seguimiento de lead:', result.error);
+      console.error('❌ Error al iniciar el workflow de seguimiento de lead:', result.error);
       return NextResponse.json(
         { 
           success: false, 
           error: { 
-            code: result.error?.code || 'WORKFLOW_EXECUTION_ERROR',
-            message: result.error?.message || 'Error al ejecutar el workflow de seguimiento de lead'
+            code: result.error?.code || 'WORKFLOW_START_ERROR',
+            message: result.error?.message || 'Error al iniciar el workflow de seguimiento de lead'
           }
         },
         { status: 500 }
       );
     }
 
-    console.log('✅ Workflow de seguimiento de lead ejecutado exitosamente');
-    console.log('📊 Resultado del workflow de seguimiento de lead:', result);
+    console.log('✅ Workflow de seguimiento de lead iniciado exitosamente');
+    console.log('📊 Información del workflow iniciado:', result);
 
-    // Respuesta exitosa
+    // Respuesta exitosa - workflow iniciado correctamente
     return NextResponse.json(
       { 
         success: true, 
+        message: 'Workflow de seguimiento de lead iniciado correctamente',
         data: {
           site_id,
           lead_id,
           workflowId: result.workflowId,
           executionId: result.executionId,
           runId: result.runId,
-          status: result.status,
-          result: result.data
+          status: 'RUNNING',
+          startedAt: new Date().toISOString(),
+          estimated_duration: '2 horas aproximadamente'
         }
       },
       { status: 200 }
