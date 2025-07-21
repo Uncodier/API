@@ -9,6 +9,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
+import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
@@ -77,7 +78,91 @@ function extractDomainFromUrl(url: string): string | null {
 }
 
 /**
- * Filtra emails que contengan referencias al servidor para evitar feedback loops
+ * Obtiene las direcciones de email no-reply configuradas
+ */
+function getNoReplyAddresses(): string[] {
+  const addresses = [
+    process.env.EMAIL_FROM,
+    process.env.SENDGRID_FROM_EMAIL,
+    process.env.NO_REPLY_EMAILS, // Nueva variable para configurar emails adicionales
+    'no-reply@uncodie.com',
+    'noreply@uncodie.com',
+    'no-reply@example.com',
+    'noreply@example.com'
+  ].filter(Boolean); // Remover valores undefined/null
+  
+  // Si NO_REPLY_EMAILS es una lista separada por comas, dividirla
+  const expandedAddresses: string[] = [];
+  addresses.forEach(addr => {
+    if (addr && typeof addr === 'string') {
+      if (addr.includes(',')) {
+        expandedAddresses.push(...addr.split(',').map(a => a.trim()));
+      } else {
+        expandedAddresses.push(addr);
+      }
+    }
+  });
+  
+  // Remover duplicados usando Array.from para compatibilidad
+  return Array.from(new Set(expandedAddresses));
+}
+
+/**
+ * Valida que un email no sea de una dirección no-reply antes del procesamiento
+ */
+function validateEmailNotFromNoReply(email: any): { isValid: boolean, reason?: string } {
+  const emailFrom = (email.from || '').toLowerCase();
+  const noReplyAddresses = getNoReplyAddresses();
+  
+  // Verificar contra direcciones no-reply específicas
+  for (const noReplyAddr of noReplyAddresses) {
+    if (!noReplyAddr) continue;
+    
+    const normalizedAddr = noReplyAddr.toLowerCase();
+    
+    if (emailFrom.includes(normalizedAddr)) {
+      return {
+        isValid: false,
+        reason: `Email viene de dirección no-reply configurada: ${normalizedAddr}`
+      };
+    }
+    
+    // Verificar dominio
+    const noReplyDomain = extractDomainFromUrl(`mailto:${normalizedAddr}`);
+    if (noReplyDomain && emailFrom.includes(noReplyDomain)) {
+      return {
+        isValid: false,
+        reason: `Email viene de dominio no-reply configurado: ${noReplyDomain}`
+      };
+    }
+  }
+  
+  // Verificar patrones comunes de no-reply
+  const noReplyPatterns = [
+    'noreply',
+    'no-reply', 
+    'donotreply',
+    'do-not-reply',
+    'automated',
+    'system@',
+    'daemon@',
+    'postmaster@'
+  ];
+  
+  for (const pattern of noReplyPatterns) {
+    if (emailFrom.includes(pattern)) {
+      return {
+        isValid: false,
+        reason: `Email contiene patrón no-reply: ${pattern}`
+      };
+    }
+  }
+  
+  return { isValid: true };
+}
+
+/**
+ * Filtra emails que contengan referencias al servidor o direcciones no-reply para evitar feedback loops
  */
 function filterFeedbackLoopEmails(emails: any[]): any[] {
   if (emails.length === 0) {
@@ -86,38 +171,82 @@ function filterFeedbackLoopEmails(emails: any[]): any[] {
 
   const serverUrl = getServerUrl();
   const serverDomain = extractDomainFromUrl(serverUrl);
+  const noReplyAddresses = getNoReplyAddresses();
   
-  if (!serverDomain) {
-    console.log('[EMAIL_API] 🔄 No se pudo extraer dominio del servidor, omitiendo filtro de feedback loops');
-    return emails;
-  }
-
-  console.log(`[EMAIL_API] 🔄 Filtrando emails para evitar feedback loops (dominio: ${serverDomain})`);
+  console.log(`[EMAIL_API] 🔄 Filtrando emails para evitar feedback loops:`);
+  console.log(`[EMAIL_API] - Dominio del servidor: ${serverDomain || 'No detectado'}`);
+  console.log(`[EMAIL_API] - Direcciones no-reply bloqueadas: ${noReplyAddresses.join(', ')}`);
   
   const filteredEmails = emails.filter(email => {
     const emailContent = (email.body || email.text || '').toLowerCase();
     const emailSubject = (email.subject || '').toLowerCase();
     const emailFrom = (email.from || '').toLowerCase();
     
-    // Verificar si el email contiene la URL del servidor
-    const containsServerUrl = emailContent.includes(serverDomain) || 
-                              emailSubject.includes(serverDomain) ||
-                              emailContent.includes(serverUrl.toLowerCase());
+    // 1. Verificar si el email contiene la URL del servidor
+    const containsServerUrl = serverDomain && (
+      emailContent.includes(serverDomain) || 
+      emailSubject.includes(serverDomain) ||
+      emailContent.includes(serverUrl.toLowerCase())
+    );
     
-    // Verificar si el email viene de una dirección relacionada con nuestro servidor
-    const isFromServerDomain = emailFrom.includes(serverDomain);
+    // 2. Verificar si el email viene de una dirección relacionada con nuestro servidor
+    const isFromServerDomain = serverDomain && emailFrom.includes(serverDomain);
     
-    // Verificar patrones comunes de emails automáticos
-    const isAutomatedEmail = emailSubject.includes('re:') && 
-                            (emailContent.includes('generated by') || 
-                             emailContent.includes('automated') ||
-                             emailContent.includes('do not reply') ||
-                             emailContent.includes('noreply'));
+    // 3. Verificar si el email viene de una dirección no-reply configurada
+    const isFromNoReplyAddress = noReplyAddresses.some(noReplyAddr => {
+      if (!noReplyAddr) return false;
+      const normalizedAddr = noReplyAddr.toLowerCase();
+      
+      // Verificar coincidencia exacta
+      if (emailFrom.includes(normalizedAddr)) {
+        console.log(`[EMAIL_API] 🚫 Email de dirección no-reply detectado: ${emailFrom} contiene ${normalizedAddr}`);
+        return true;
+      }
+      
+      // Verificar si el dominio de la dirección no-reply coincide
+      const noReplyDomain = extractDomainFromUrl(`mailto:${normalizedAddr}`);
+      if (noReplyDomain && emailFrom.includes(noReplyDomain)) {
+        console.log(`[EMAIL_API] 🚫 Email de dominio no-reply detectado: ${emailFrom} contiene dominio ${noReplyDomain}`);
+        return true;
+      }
+      
+      return false;
+    });
     
-    const shouldExclude = containsServerUrl || isFromServerDomain || isAutomatedEmail;
+    // 4. Verificar patrones comunes de emails automáticos
+    const isAutomatedEmail = (
+      emailFrom.includes('noreply') || 
+      emailFrom.includes('no-reply') ||
+      emailFrom.includes('donotreply') ||
+      emailFrom.includes('do-not-reply') ||
+      emailFrom.includes('automated') ||
+      emailFrom.includes('system@') ||
+      emailFrom.includes('daemon@') ||
+      (emailSubject.includes('re:') && 
+        (emailContent.includes('generated by') || 
+         emailContent.includes('automated') ||
+         emailContent.includes('do not reply') ||
+         emailContent.includes('noreply')))
+    );
+    
+    // 5. Verificar headers específicos de emails automáticos
+    const hasAutomatedHeaders = email.headers && (
+      email.headers['auto-submitted'] ||
+      email.headers['x-auto-response-suppress'] ||
+      (email.headers['precedence'] && email.headers['precedence'].toLowerCase() === 'bulk')
+    );
+    
+    const shouldExclude = containsServerUrl || isFromServerDomain || isFromNoReplyAddress || isAutomatedEmail || hasAutomatedHeaders;
     
     if (shouldExclude) {
       console.log(`[EMAIL_API] 🚫 Email excluido (feedback loop): From: ${email.from}, Subject: ${email.subject}`);
+      console.log(`[EMAIL_API] 🔍 Razones de exclusión:`, {
+        containsServerUrl,
+        isFromServerDomain,
+        isFromNoReplyAddress,
+        isAutomatedEmail,
+        hasAutomatedHeaders
+      });
       return false;
     }
     
@@ -409,12 +538,14 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
   console.log(`[EMAIL_API] - Ahorro de tokens: ~${Math.round((totalOriginalLength - totalOptimizedLength) / 4)} tokens`);
 
   // Crear versión ultra-optimizada con solo los datos esenciales para el contexto
-  const essentialEmailData = optimizedEmails.map(email => ({
+  // IMPORTANTE: Ahora incluimos el ID del email original
+  const essentialEmailData = optimizedEmails.map((email, index) => ({
+    id: emails[index]?.id || emails[index]?.messageId || emails[index]?.uid || `temp_${Date.now()}_${index}`, // ID del email original
     subject: email.subject,
     from: email.from,
     to: email.to,
     content: email.extractedText, // Solo el texto optimizado, NO el original
-    date: emails[optimizedEmails.indexOf(email)]?.date || emails[optimizedEmails.indexOf(email)]?.received_date || 'unknown'
+    date: emails[index]?.date || emails[index]?.received_date || 'unknown'
   }));
 
   // Calcular estadísticas finales con los datos esenciales
@@ -437,20 +568,22 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     targets: [
       {
         email: {
+          id: "email_id_from_context",
           original_subject: "Original subject of the email",
+          original_text: "Original email content/message as received",
           summary: "Summary of the message and client inquiry",
-            contact_info: {
-              name: "name found in the email",
-              email: "from email address",
-              phone: "phone found in the email",
-              company: "company found in the email"
-            }
+          contact_info: {
+            name: "name found in the email",
+            email: "from email address",
+            phone: "phone found in the email",
+            company: "company found in the email"
+          }
         }
       }
     ],
     tools: [],
     context: JSON.stringify({
-      emails: essentialEmailData, // Usar solo datos esenciales en lugar de optimizedEmails
+      emails: essentialEmailData, // Ahora incluye IDs de emails
       email_count: emails.length,
       optimized_email_count: essentialEmailData.length,
       text_compression_stats: {
@@ -471,7 +604,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
       analysis_type: analysisType,
       lead_id: leadId,
       team_member_id: teamMemberId,
-      special_instructions: 'Return an array with every important email. Analyze only the essential email data provided. Email content has been heavily optimized: signatures, quoted text, headers, and legal disclaimers removed. Text limited to 1000 chars per email. Focus on emails showing genuine commercial interest. IMPORTANT: If there is not at least 1 email that require a response or qualify as a potential lead, return an empty array in the results. []. DO NOT ANALYZE ALL THE EMMAILS IN A SINGLE SUMMARY AS THIS WILL GENERATE A WRONG ANSWER OR REPLY FOR A LEAD OR CLIENT.'
+      special_instructions: 'Return an array with every important email. Analyze only the essential email data provided. Email content has been heavily optimized: signatures, quoted text, headers, and legal disclaimers removed. Text limited to 1000 chars per email. Focus on emails showing genuine commercial interest. IMPORTANT: If there is not at least 1 email that require a response or qualify as a potential lead, return an empty array in the results. []. DO NOT ANALYZE ALL THE EMMAILS IN A SINGLE SUMMARY AS THIS WILL GENERATE A WRONG ANSWER OR REPLY FOR A LEAD OR CLIENT. CRITICAL: Always include the "id" field from the email context in your response for each email you analyze. This ID is essential for tracking and preventing duplicates. IMPORTANT: Also include the "original_text" field with the actual email content from the context for each email you process - this allows the system to access the original message content for follow-up actions.'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },
@@ -542,6 +675,16 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
+      // Validación inicial: logs de configuración de no-reply
+      console.log(`[EMAIL_API] 🔒 Configuración de filtros de seguridad:`);
+      const noReplyAddresses = getNoReplyAddresses();
+      console.log(`[EMAIL_API] - Direcciones no-reply configuradas: ${noReplyAddresses.join(', ')}`);
+      console.log(`[EMAIL_API] - Variables de entorno detectadas:`, {
+        EMAIL_FROM: process.env.EMAIL_FROM ? '✅ Configurado' : '❌ No configurado',
+        SENDGRID_FROM_EMAIL: process.env.SENDGRID_FROM_EMAIL ? '✅ Configurado' : '❌ No configurado',
+        NO_REPLY_EMAILS: process.env.NO_REPLY_EMAILS ? '✅ Configurado' : '❌ No configurado'
+      });
+
       // Filter emails to avoid feedback loops (first filter)
       console.log(`[EMAIL_API] 🔄 Aplicando filtro de feedback loops...`);
       const feedbackFilteredEmails = filterFeedbackLoopEmails(allEmails);
@@ -567,17 +710,31 @@ export async function POST(request: NextRequest) {
       }
       
       console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases...`);
-      const emails = filterEmailsByAliases(feedbackFilteredEmails, normalizedAliases);
+      const aliasFilteredEmails = filterEmailsByAliases(feedbackFilteredEmails, normalizedAliases);
+      
+      // Filter emails to avoid processing duplicates (third filter)
+      console.log(`[EMAIL_API] 🔄 Filtrando emails ya procesados para evitar duplicaciones...`);
+      const { unprocessed: emails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
+        aliasFilteredEmails, 
+        siteId, 
+        'email'
+      );
       
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
       console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtro de feedback loops: ${feedbackFilteredEmails.length}`);
-      console.log(`[EMAIL_API] - Emails después del filtrado por aliases: ${emails.length}`);
+      console.log(`[EMAIL_API] - Emails después del filtrado por aliases: ${aliasFilteredEmails.length}`);
+      console.log(`[EMAIL_API] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
+      console.log(`[EMAIL_API] - Emails finales para análisis: ${emails.length}`);
       console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
       // Validación temprana: si no hay emails para analizar, retornar inmediatamente
       if (emails.length === 0) {
         console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado`);
+        
+        // Obtener estadísticas de procesamiento para mejor reporte
+        const stats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
+        
         return NextResponse.json({
           success: true,
           commandId: null,
@@ -586,14 +743,83 @@ export async function POST(request: NextRequest) {
           emailCount: 0,
           originalEmailCount: allEmails.length,
           feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+          aliasFilteredCount: aliasFilteredEmails.length,
+          alreadyProcessedCount: alreadyProcessed.length,
           analysisCount: 0,
           aliasesConfigured: normalizedAliases,
           filteredByAliases: normalizedAliases.length > 0,
           filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+          filteredByDuplicates: alreadyProcessed.length > 0,
+          processingStats: stats,
           emails: [],
           reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
                   feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
-                  'Ningún email coincide con los aliases configurados'
+                  aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
+                  'Todos los emails ya han sido procesados previamente'
+        });
+      }
+
+      // Validación de seguridad final: verificar que ningún email de no-reply haya pasado los filtros
+      console.log(`[EMAIL_API] 🔒 Ejecutando validación de seguridad final...`);
+      const unsafeEmails: any[] = [];
+      const safeEmails = emails.filter(email => {
+        const validation = validateEmailNotFromNoReply(email);
+        if (!validation.isValid) {
+          console.warn(`[EMAIL_API] ⚠️ ALERTA DE SEGURIDAD: Email no-reply detectado en validación final:`, {
+            from: email.from,
+            subject: email.subject,
+            reason: validation.reason
+          });
+          unsafeEmails.push({ email, reason: validation.reason });
+          return false;
+        }
+        return true;
+      });
+
+      if (unsafeEmails.length > 0) {
+        console.warn(`[EMAIL_API] 🚨 ADVERTENCIA: Se detectaron ${unsafeEmails.length} emails no-reply que pasaron el filtro inicial`);
+        console.warn(`[EMAIL_API] 📋 Emails bloqueados en validación final:`, unsafeEmails);
+      }
+
+      console.log(`[EMAIL_API] ✅ Validación de seguridad completada: ${safeEmails.length}/${emails.length} emails seguros para procesar`);
+      
+      // Usar safeEmails en lugar de emails para el resto del proceso
+      const finalEmails = safeEmails;
+
+      if (finalEmails.length === 0) {
+        console.log(`[EMAIL_API] ⚠️ No quedan emails seguros para analizar después de las validaciones de seguridad`);
+        
+        // Obtener estadísticas de procesamiento para mejor reporte
+        const stats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
+        
+        return NextResponse.json({
+          success: true,
+          commandId: null,
+          status: 'completed',
+          message: "No se encontraron emails seguros para analizar después de las validaciones de seguridad",
+          emailCount: 0,
+          originalEmailCount: allEmails.length,
+          feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+          aliasFilteredCount: aliasFilteredEmails.length,
+          alreadyProcessedCount: alreadyProcessed.length,
+          unsafeEmailsBlocked: unsafeEmails.length,
+          analysisCount: 0,
+          aliasesConfigured: normalizedAliases,
+          filteredByAliases: normalizedAliases.length > 0,
+          filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+          filteredByDuplicates: alreadyProcessed.length > 0,
+          filteredBySecurity: unsafeEmails.length > 0,
+          securityValidation: {
+            detected: unsafeEmails.length,
+            reasons: unsafeEmails.map(u => u.reason)
+          },
+          processingStats: stats,
+          emails: [],
+          reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
+                  feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
+                  aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
+                  emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
+                  'Todos los emails fueron bloqueados por validaciones de seguridad'
         });
       }
 
@@ -604,7 +830,7 @@ export async function POST(request: NextRequest) {
       
       // Create and submit command
       console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails...`);
-      const command = createEmailCommand(effectiveAgentId, siteId, emails, emailConfig, analysisType, leadId, teamMemberId, userId);
+      const command = createEmailCommand(effectiveAgentId, siteId, finalEmails, emailConfig, analysisType, leadId, teamMemberId, userId);
       console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
       const internalCommandId = await commandService.submitCommand(command);
       
@@ -647,6 +873,7 @@ export async function POST(request: NextRequest) {
       // Extraer los datos de email de los results para incluir en la respuesta
       // NOTA: Solo extraemos de results, NO de targets (que contienen solo templates)
       const emailsForResponse: any[] = [];
+      const processedEmailIds: string[] = [];
       
       console.log(`[EMAIL_API] 🔍 Diagnosticando comando ejecutado:`);
       console.log(`[EMAIL_API] executedCommand existe: ${!!executedCommand}`);
@@ -672,6 +899,11 @@ export async function POST(request: NextRequest) {
           if (result.email) {
             console.log(`[EMAIL_API] ✅ Email encontrado en results:`, JSON.stringify(result.email, null, 2));
             emailsForResponse.push(result.email);
+            
+            // Recopilar IDs de emails procesados para marcarlos como completados
+            if (result.email.id) {
+              processedEmailIds.push(result.email.id);
+            }
           } else {
             console.log(`[EMAIL_API] ❌ Result no tiene propiedad email:`, Object.keys(result));
           }
@@ -684,19 +916,84 @@ export async function POST(request: NextRequest) {
       // Los targets son la estructura esperada, no los resultados reales
       
       console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
+      console.log(`[EMAIL_API] 📝 IDs de emails para marcar como procesados: ${processedEmailIds.length}`);
+      
+      // Marcar emails analizados como procesados en paralelo
+      console.log(`[EMAIL_API] 🔄 Marcando emails como procesados...`);
+      const markingPromises = processedEmailIds.map(async (emailId) => {
+        try {
+          const marked = await SyncedObjectsService.markAsProcessed(emailId, siteId, {
+            command_id: effectiveDbUuid || internalCommandId,
+            analysis_timestamp: new Date().toISOString(),
+            agent_id: effectiveAgentId
+          });
+          if (marked) {
+            console.log(`[EMAIL_API] ✅ Email ${emailId} marcado como procesado`);
+          } else {
+            console.log(`[EMAIL_API] ⚠️ No se pudo marcar email ${emailId} como procesado`);
+          }
+          return marked;
+        } catch (error) {
+          console.error(`[EMAIL_API] ❌ Error marcando email ${emailId} como procesado:`, error);
+          return false;
+        }
+      });
+      
+      // Marcar todos los emails que fueron enviados al agente pero no tuvieron respuesta como "procesados" también
+      const allEmailIds = finalEmails.map(email => email.id || email.messageId || email.uid).filter(Boolean);
+      const unprocessedEmailIds = allEmailIds.filter(id => !processedEmailIds.includes(id));
+      
+      console.log(`[EMAIL_API] 📝 Marcando ${unprocessedEmailIds.length} emails sin respuesta como procesados...`);
+      const unprocessedPromises = unprocessedEmailIds.map(async (emailId) => {
+        try {
+          const marked = await SyncedObjectsService.markAsProcessed(emailId, siteId, {
+            command_id: effectiveDbUuid || internalCommandId,
+            analysis_timestamp: new Date().toISOString(),
+            agent_id: effectiveAgentId,
+            status: 'no_action_required'
+          });
+          if (marked) {
+            console.log(`[EMAIL_API] ✅ Email ${emailId} marcado como procesado (sin acción requerida)`);
+          }
+          return marked;
+        } catch (error) {
+          console.error(`[EMAIL_API] ❌ Error marcando email ${emailId} como procesado:`, error);
+          return false;
+        }
+      });
+      
+      // Esperar a que todas las operaciones de marcado se completen
+      const markingResults = await Promise.all([...markingPromises, ...unprocessedPromises]);
+      const successfulMarks = markingResults.filter(Boolean).length;
+      console.log(`[EMAIL_API] 📊 Marcado completado: ${successfulMarks}/${markingResults.length} emails actualizados`);
+      
+      // Obtener estadísticas actualizadas
+      const finalStats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
       
       return NextResponse.json({
         success: true,
         commandId: effectiveDbUuid || internalCommandId,
         status: executedCommand?.status || 'completed',
         message: "Análisis de emails completado exitosamente",
-        emailCount: emails.length,
+        emailCount: finalEmails.length,
         originalEmailCount: allEmails.length,
         feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+        aliasFilteredCount: aliasFilteredEmails.length,
+        alreadyProcessedCount: alreadyProcessed.length,
+        unsafeEmailsBlocked: unsafeEmails.length,
         analysisCount: emailsForResponse.length,
+        processedEmailsMarked: successfulMarks,
         aliasesConfigured: normalizedAliases,
         filteredByAliases: normalizedAliases.length > 0,
         filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+        filteredByDuplicates: alreadyProcessed.length > 0,
+        filteredBySecurity: unsafeEmails.length > 0,
+        securityValidation: {
+          detected: unsafeEmails.length,
+          reasons: unsafeEmails.map(u => u.reason),
+          noReplyAddressesConfigured: noReplyAddresses
+        },
+        processingStats: finalStats,
         emails: emailsForResponse
       });
       

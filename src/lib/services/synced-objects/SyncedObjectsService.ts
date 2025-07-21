@@ -1,0 +1,338 @@
+/**
+ * SyncedObjectsService - Maneja el tracking de objetos procesados para evitar duplicaciones
+ */
+
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+
+export interface SyncedObject {
+  id: string;
+  external_id: string;
+  site_id: string;
+  object_type: string;
+  status: string;
+  provider?: string;
+  first_seen_at: string;
+  last_processed_at?: string;
+  process_count: number;
+  metadata: Record<string, any>;
+  error_message?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateSyncedObjectInput {
+  external_id: string;
+  site_id: string;
+  object_type?: string;
+  status?: string;
+  provider?: string;
+  metadata?: Record<string, any>;
+}
+
+export interface UpdateSyncedObjectInput {
+  status?: string;
+  metadata?: Record<string, any>;
+  error_message?: string;
+}
+
+export class SyncedObjectsService {
+  private static readonly DEFAULT_OBJECT_TYPE = 'email';
+  private static readonly DEFAULT_STATUS = 'pending';
+
+  /**
+   * Verifica si un objeto ya existe en la base de datos
+   */
+  static async objectExists(
+    externalId: string, 
+    siteId: string, 
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<boolean> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('id')
+        .eq('external_id', externalId)
+        .eq('site_id', siteId)
+        .eq('object_type', objectType)
+        .single();
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = No rows found
+        throw error;
+      }
+
+      return !!data;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error checking object existence:', error);
+      return false; // En caso de error, asumir que no existe para no bloquear el proceso
+    }
+  }
+
+  /**
+   * Obtiene un objeto sincronizado por ID externo
+   */
+  static async getObject(
+    externalId: string, 
+    siteId: string, 
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<SyncedObject | null> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('*')
+        .eq('external_id', externalId)
+        .eq('site_id', siteId)
+        .eq('object_type', objectType)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return null;
+        }
+        throw error;
+      }
+
+      return data as SyncedObject;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error getting object:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Crea un nuevo objeto sincronizado
+   */
+  static async createObject(input: CreateSyncedObjectInput): Promise<SyncedObject | null> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .insert({
+          external_id: input.external_id,
+          site_id: input.site_id,
+          object_type: input.object_type || this.DEFAULT_OBJECT_TYPE,
+          status: input.status || this.DEFAULT_STATUS,
+          provider: input.provider,
+          metadata: input.metadata || {},
+          first_seen_at: new Date().toISOString(),
+          process_count: 0
+        })
+        .select()
+        .single();
+
+      if (error) {
+        // Si es un error de duplicado, intentar obtener el objeto existente
+        if (error.code === '23505') { // Unique constraint violation
+          console.log(`[SYNCED_OBJECTS] Object already exists: ${input.external_id}`);
+          return await this.getObject(input.external_id, input.site_id, input.object_type);
+        }
+        throw error;
+      }
+
+      console.log(`[SYNCED_OBJECTS] ✅ Object created: ${input.external_id}`);
+      return data as SyncedObject;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error creating object:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Actualiza un objeto sincronizado
+   */
+  static async updateObject(
+    externalId: string, 
+    siteId: string, 
+    updates: UpdateSyncedObjectInput,
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<SyncedObject | null> {
+    try {
+      const updateData: any = {
+        ...updates,
+        last_processed_at: new Date().toISOString()
+      };
+
+      // Si se está actualizando el status, incrementar process_count
+      if (updates.status) {
+        const { data: currentData } = await supabaseAdmin
+          .from('synced_objects')
+          .select('process_count')
+          .eq('external_id', externalId)
+          .eq('site_id', siteId)
+          .eq('object_type', objectType)
+          .single();
+
+        if (currentData) {
+          updateData.process_count = (currentData.process_count || 0) + 1;
+        }
+      }
+
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .update(updateData)
+        .eq('external_id', externalId)
+        .eq('site_id', siteId)
+        .eq('object_type', objectType)
+        .select()
+        .single();
+
+      if (error) {
+        throw error;
+      }
+
+      console.log(`[SYNCED_OBJECTS] ✅ Object updated: ${externalId} -> ${updates.status || 'metadata updated'}`);
+      return data as SyncedObject;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error updating object:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Marca un objeto como procesado
+   */
+  static async markAsProcessed(
+    externalId: string, 
+    siteId: string, 
+    metadata?: Record<string, any>,
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<boolean> {
+    try {
+      const result = await this.updateObject(externalId, siteId, {
+        status: 'processed',
+        metadata: metadata
+      }, objectType);
+
+      return !!result;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error marking as processed:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Marca un objeto como respondido
+   */
+  static async markAsReplied(
+    externalId: string, 
+    siteId: string, 
+    metadata?: Record<string, any>,
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<boolean> {
+    try {
+      const result = await this.updateObject(externalId, siteId, {
+        status: 'replied',
+        metadata: metadata
+      }, objectType);
+
+      return !!result;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error marking as replied:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Filtra emails que no han sido procesados previamente
+   */
+  static async filterUnprocessedEmails(
+    emails: any[], 
+    siteId: string,
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<{ unprocessed: any[], alreadyProcessed: any[] }> {
+    const unprocessed: any[] = [];
+    const alreadyProcessed: any[] = [];
+
+    for (const email of emails) {
+      const emailId = email.id || email.messageId || email.uid;
+      
+      if (!emailId) {
+        console.warn('[SYNCED_OBJECTS] Email without ID found, including in unprocessed list');
+        unprocessed.push(email);
+        continue;
+      }
+
+      const exists = await this.objectExists(emailId, siteId, objectType);
+      
+      if (exists) {
+        console.log(`[SYNCED_OBJECTS] 🔄 Email ${emailId} already processed, skipping`);
+        alreadyProcessed.push(email);
+      } else {
+        console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet, including`);
+        unprocessed.push(email);
+        
+        // Crear registro como "pending" para futuras verificaciones
+        await this.createObject({
+          external_id: emailId,
+          site_id: siteId,
+          object_type: objectType,
+          status: 'pending',
+          provider: email.provider || 'unknown',
+          metadata: {
+            subject: email.subject,
+            from: email.from,
+            to: email.to,
+            date: email.date || email.received_date
+          }
+        });
+      }
+    }
+
+    console.log(`[SYNCED_OBJECTS] 📊 Filter results: ${unprocessed.length} unprocessed, ${alreadyProcessed.length} already processed`);
+    
+    return { unprocessed, alreadyProcessed };
+  }
+
+  /**
+   * Obtiene estadísticas de objetos procesados para un sitio
+   */
+  static async getProcessingStats(
+    siteId: string,
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<{
+    total: number;
+    pending: number;
+    processing: number;
+    processed: number;
+    replied: number;
+    error: number;
+  }> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('status')
+        .eq('site_id', siteId)
+        .eq('object_type', objectType);
+
+      if (error) {
+        throw error;
+      }
+
+      const stats = {
+        total: data.length,
+        pending: 0,
+        processing: 0,
+        processed: 0,
+        replied: 0,
+        error: 0
+      };
+
+      data.forEach(item => {
+        const status = item.status as keyof typeof stats;
+        if (status in stats) {
+          stats[status]++;
+        }
+      });
+
+      return stats;
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error getting stats:', error);
+      return {
+        total: 0,
+        pending: 0,
+        processing: 0,
+        processed: 0,
+        replied: 0,
+        error: 0
+      };
+    }
+  }
+} 

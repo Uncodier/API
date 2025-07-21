@@ -11,6 +11,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 import { ConversationService } from '@/lib/services/conversation-service';
 import { createTask } from '@/lib/database/task-db';
+import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
+import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 
 // Create schemas for request validation
 const EmailSyncRequestSchema = z.object({
@@ -34,6 +36,123 @@ const ERROR_CODES = {
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
+}
+
+/**
+ * Obtiene los dominios internos de Uncodie que deben ser filtrados
+ */
+function getInternalDomains(): string[] {
+  const domains = [
+    // Dominios principales de Uncodie
+    'uncodie.com',
+    'www.uncodie.com',
+    'api.uncodie.com',
+    'app.uncodie.com',
+    
+    // Extraer dominios de variables de entorno
+    process.env.UNCODIE_SUPPORT_EMAIL,
+    process.env.EMAIL_FROM,
+    process.env.SENDGRID_FROM_EMAIL,
+    process.env.NO_REPLY_EMAILS
+  ].filter(Boolean);
+
+  // Expandir emails separados por comas y extraer dominios
+  const expandedDomains: string[] = [];
+  domains.forEach(item => {
+    if (item && typeof item === 'string') {
+      if (item.includes(',')) {
+        // Dividir emails separados por comas
+        item.split(',').forEach(email => {
+          const domain = extractDomainFromEmail(email.trim());
+          if (domain) expandedDomains.push(domain);
+        });
+      } else if (item.includes('@')) {
+        // Es un email, extraer dominio
+        const domain = extractDomainFromEmail(item);
+        if (domain) expandedDomains.push(domain);
+      } else {
+        // Es un dominio directo
+        expandedDomains.push(item.toLowerCase().trim());
+      }
+    }
+  });
+
+  // Remover duplicados y añadir dominios base
+  const allDomains = [
+    'uncodie.com',
+    'www.uncodie.com',
+    'api.uncodie.com', 
+    'app.uncodie.com',
+    ...expandedDomains
+  ];
+
+  return Array.from(new Set(allDomains.map(d => d.toLowerCase().trim())));
+}
+
+/**
+ * Extrae el dominio de una dirección de email
+ */
+function extractDomainFromEmail(email: string): string | null {
+  if (!email || typeof email !== 'string') return null;
+  
+  // Remover espacios y caracteres especiales
+  const cleanEmail = email.trim().toLowerCase();
+  
+  // Extraer email de formato "Name <email@domain.com>"
+  const emailMatch = cleanEmail.match(/<([^>]+)>/);
+  const finalEmail = emailMatch ? emailMatch[1] : cleanEmail;
+  
+  // Dividir por @ y tomar la parte del dominio
+  const parts = finalEmail.split('@');
+  if (parts.length === 2) {
+    return parts[1].trim();
+  }
+  
+  return null;
+}
+
+/**
+ * Valida que un email no sea enviado a dominios internos de Uncodie
+ */
+function validateEmailNotToInternalDomains(email: any): { isValid: boolean, reason?: string } {
+  const emailTo = email.to || '';
+  
+  if (!emailTo || typeof emailTo !== 'string') {
+    return { isValid: true };
+  }
+
+  const internalDomains = getInternalDomains();
+  const targetDomain = extractDomainFromEmail(emailTo);
+
+  if (!targetDomain) {
+    return { isValid: true };
+  }
+
+  // Verificar contra dominios internos
+  for (const internalDomain of internalDomains) {
+    if (!internalDomain) continue;
+    
+    const normalizedInternalDomain = internalDomain.toLowerCase().trim();
+    const normalizedTargetDomain = targetDomain.toLowerCase().trim();
+    
+    // Verificar coincidencia exacta
+    if (normalizedTargetDomain === normalizedInternalDomain) {
+      return {
+        isValid: false,
+        reason: `Email enviado a dominio interno: ${normalizedInternalDomain}`
+      };
+    }
+    
+    // Verificar subdominios de uncodie.com
+    if (normalizedInternalDomain === 'uncodie.com' && normalizedTargetDomain.endsWith('.uncodie.com')) {
+      return {
+        isValid: false,
+        reason: `Email enviado a subdominio de Uncodie: ${normalizedTargetDomain}`
+      };
+    }
+  }
+
+  return { isValid: true };
 }
 
 /**
@@ -357,8 +476,38 @@ async function addSentMessageToConversation(
       }
     }
     
-    // Contenido del mensaje sin el subject (solo el cuerpo del email)
-    const messageContent = email.body || 'No content available';
+    // Extraer contenido del email usando EmailTextExtractorService para mejor compatibilidad
+    let messageContent = 'No content available';
+    
+    try {
+      const extractedContent = EmailTextExtractorService.extractEmailText(email, {
+        maxTextLength: 4000,
+        removeSignatures: false, // Mantener firma para emails enviados
+        removeQuotedText: false,
+        preserveStructure: true
+      });
+      
+      if (extractedContent.extractedText && extractedContent.extractedText.trim()) {
+        messageContent = extractedContent.extractedText.trim();
+        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
+      } else {
+        // Fallback a otras propiedades del email
+        const fallbackContent = email.text || email.html || email.body;
+        if (fallbackContent && typeof fallbackContent === 'string' && fallbackContent.trim()) {
+          messageContent = fallbackContent.trim();
+          console.log(`[EMAIL_SYNC] ⚠️ Usando contenido fallback: ${messageContent.length} caracteres`);
+        } else {
+          console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer contenido del email, usando fallback`);
+        }
+      }
+    } catch (extractionError) {
+      console.error('[EMAIL_SYNC] Error extrayendo contenido del email:', extractionError);
+      // Usar fallback manual
+      const fallbackContent = email.body || email.text || email.html;
+      if (fallbackContent && typeof fallbackContent === 'string' && fallbackContent.trim()) {
+        messageContent = fallbackContent.trim();
+      }
+    }
     
     const messageData: any = {
       conversation_id: conversationId,
@@ -505,15 +654,46 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   isNewLead?: boolean;
   statusUpdated?: boolean;
   error?: string;
+  skipped?: boolean;
 }> {
   try {
     console.log(`[EMAIL_SYNC] 🔄 Procesando email enviado a: ${email.to}`);
     
+    const emailId = email.id || email.messageId || email.uid;
+    
     const toEmail = email.to;
     if (!toEmail || !toEmail.includes('@')) {
+      // Marcar como error en SyncedObjectsService si hay ID
+      if (emailId) {
+        await SyncedObjectsService.updateObject(emailId, siteId, {
+          status: 'error',
+          error_message: 'Email destinatario inválido'
+        }, 'sent_email');
+      }
+      
       return {
         success: false,
         error: 'Email destinatario inválido'
+      };
+    }
+
+    // Validar que no sea un email enviado a dominios internos de Uncodie
+    const internalValidation = validateEmailNotToInternalDomains(email);
+    if (!internalValidation.isValid) {
+      console.log(`[EMAIL_SYNC] 🚫 Email enviado a dominio interno detectado: ${email.to} - ${internalValidation.reason}`);
+      
+      // Marcar como skipped en SyncedObjectsService si hay ID
+      if (emailId) {
+        await SyncedObjectsService.updateObject(emailId, siteId, {
+          status: 'skipped',
+          error_message: internalValidation.reason
+        }, 'sent_email');
+      }
+      
+      return {
+        success: false,
+        error: internalValidation.reason,
+        skipped: true
       };
     }
     
@@ -555,6 +735,27 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     // 5. Crear tarea de first contact si es necesario
     const taskId = await createFirstContactTaskIfNeeded(leadId, siteId);
     
+    // 6. Marcar email como procesado exitosamente
+    if (emailId) {
+      await SyncedObjectsService.updateObject(emailId, siteId, {
+        status: 'processed',
+        metadata: {
+          lead_id: leadId,
+          conversation_id: conversationId,
+          message_id: messageId,
+          task_id: taskId,
+          subject: email.subject,
+          to: email.to,
+          from: email.from,
+          is_new_lead: isNewLead,
+          status_updated: statusUpdated,
+          processed_at: new Date().toISOString()
+        }
+      }, 'sent_email');
+      
+      console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado exitosamente`);
+    }
+    
     return {
       success: true,
       leadId,
@@ -567,6 +768,16 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al procesar email enviado:', error);
+    
+    // Marcar como error en SyncedObjectsService si hay ID
+    const emailId = email.id || email.messageId || email.uid;
+    if (emailId) {
+      await SyncedObjectsService.updateObject(emailId, siteId, {
+        status: 'error',
+        error_message: error instanceof Error ? error.message : 'Error desconocido'
+      }, 'sent_email');
+    }
+    
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -687,10 +898,10 @@ export async function POST(request: NextRequest) {
       
       // Fetch sent emails
       console.log(`[EMAIL_SYNC] 📤 Obteniendo emails ENVIADOS con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
-      const sentEmails = await EmailService.fetchSentEmails(emailConfig, limit, sinceDate);
-      console.log(`[EMAIL_SYNC] ✅ Emails enviados obtenidos exitosamente: ${sentEmails.length} emails`);
+      const allSentEmails = await EmailService.fetchSentEmails(emailConfig, limit, sinceDate);
+      console.log(`[EMAIL_SYNC] ✅ Emails enviados obtenidos exitosamente: ${allSentEmails.length} emails`);
       
-      if (sentEmails.length === 0) {
+      if (allSentEmails.length === 0) {
         return NextResponse.json({
           success: true,
           message: "No se encontraron emails enviados para sincronizar",
@@ -700,6 +911,49 @@ export async function POST(request: NextRequest) {
         });
       }
       
+      // Filter emails sent to internal domains (first filter)
+      console.log(`[EMAIL_SYNC] 🔒 Filtrando emails enviados a dominios internos...`);
+      const internalDomains = getInternalDomains();
+      console.log(`[EMAIL_SYNC] 🔒 Dominios internos configurados para filtrado:`, internalDomains);
+      
+      const internalFilteredEmails = allSentEmails.filter(email => {
+        const validation = validateEmailNotToInternalDomains(email);
+        if (!validation.isValid) {
+          console.log(`[EMAIL_SYNC] 🚫 Email excluido (dominio interno): To: ${email.to} - ${validation.reason}`);
+          return false;
+        }
+        return true;
+      });
+      
+      const preFilteredInternalCount = allSentEmails.length - internalFilteredEmails.length;
+      
+      // Filter emails to avoid processing duplicates using SyncedObjectsService (second filter)
+      console.log(`[EMAIL_SYNC] 🔄 Filtrando emails ya procesados para evitar duplicaciones...`);
+      const { unprocessed: sentEmails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
+        internalFilteredEmails, 
+        siteId, 
+        'sent_email'
+      );
+      
+      console.log(`[EMAIL_SYNC] 📈 Resumen de filtrado:`);
+      console.log(`[EMAIL_SYNC] - Emails enviados obtenidos inicialmente: ${allSentEmails.length}`);
+      console.log(`[EMAIL_SYNC] - Emails después del filtro de dominios internos: ${internalFilteredEmails.length}`);
+      console.log(`[EMAIL_SYNC] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
+      console.log(`[EMAIL_SYNC] - Emails finales para sincronización: ${sentEmails.length}`);
+      
+      if (sentEmails.length === 0) {
+        return NextResponse.json({
+          success: true,
+          message: "Todos los emails enviados ya han sido sincronizados previamente",
+          emailCount: allSentEmails.length,
+          processedCount: 0,
+          alreadyProcessedCount: alreadyProcessed.length,
+          results: []
+        });
+      }
+      
+      // Logging de configuración de filtros internos ya aplicados anteriormente
+      
       // Procesar cada email enviado
       console.log(`[EMAIL_SYNC] 🔄 Procesando ${sentEmails.length} emails enviados...`);
       const results = [];
@@ -707,6 +961,7 @@ export async function POST(request: NextRequest) {
       let newLeadsCount = 0;
       let statusUpdatedCount = 0;
       let tasksCreatedCount = 0;
+      let skippedInternalCount = 0;
       
       for (const email of sentEmails) {
         const result = await processSentEmail(email, siteId);
@@ -722,12 +977,17 @@ export async function POST(request: NextRequest) {
           if (result.isNewLead) newLeadsCount++;
           if (result.statusUpdated) statusUpdatedCount++;
           if (result.taskId) tasksCreatedCount++;
+        } else if (result.skipped) {
+          skippedInternalCount++;
         }
       }
       
       console.log(`[EMAIL_SYNC] ✅ Sincronización completada:`);
-      console.log(`[EMAIL_SYNC] - Emails enviados encontrados: ${sentEmails.length}`);
+      console.log(`[EMAIL_SYNC] - Emails enviados encontrados: ${allSentEmails.length}`);
+      console.log(`[EMAIL_SYNC] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
+      console.log(`[EMAIL_SYNC] - Emails nuevos para sincronizar: ${sentEmails.length}`);
       console.log(`[EMAIL_SYNC] - Emails procesados exitosamente: ${processedCount}`);
+      console.log(`[EMAIL_SYNC] - Emails saltados (dominios internos): ${skippedInternalCount}`);
       console.log(`[EMAIL_SYNC] - Nuevos leads creados: ${newLeadsCount}`);
       console.log(`[EMAIL_SYNC] - Leads con status actualizado: ${statusUpdatedCount}`);
       console.log(`[EMAIL_SYNC] - Tareas de first contact creadas: ${tasksCreatedCount}`);
@@ -735,11 +995,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: "Sincronización de emails enviados completada exitosamente",
-        emailCount: sentEmails.length,
+        emailCount: allSentEmails.length,
+        newEmailsCount: sentEmails.length,
+        alreadyProcessedCount: alreadyProcessed.length,
         processedCount,
+        skippedInternalCount,
         newLeadsCount,
         statusUpdatedCount,
         tasksCreatedCount,
+        internalDomainsFiltered: getInternalDomains(),
+        preFilteredInternalCount,
         results
       });
       
@@ -791,6 +1056,27 @@ export async function GET(request: NextRequest) {
     method: "POST",
     required_parameters: ["site_id"],
     optional_parameters: ["limit", "since_date"],
-    description: "Fetches sent emails, creates/updates leads, manages email conversations, updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage."
+    description: "Fetches sent emails, creates/updates leads, manages email conversations, updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage.",
+    features: [
+      "Duplicate prevention using SyncedObjectsService",
+      "Internal domain filtering (Uncodie domains)",
+      "Intelligent email content extraction",
+      "Lead creation and status management",
+      "Email conversation tracking",
+      "First contact task automation",
+      "Team member detection by email"
+    ],
+    response_fields: {
+      emailCount: "Total emails found in sent folder",
+      newEmailsCount: "New emails processed (excluding duplicates and internal domains)",
+      alreadyProcessedCount: "Emails already processed in previous runs",
+      processedCount: "Successfully processed emails in this run",
+      preFilteredInternalCount: "Emails filtered out during initial processing (sent to internal domains)",
+      skippedInternalCount: "Emails skipped during individual processing due to internal domains",
+      newLeadsCount: "New leads created from sent emails",
+      statusUpdatedCount: "Leads with updated status",
+      tasksCreatedCount: "First contact tasks created",
+      internalDomainsFiltered: "List of internal domains that are filtered out"
+    }
   }, { status: 200 });
 } 
