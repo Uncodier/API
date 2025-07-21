@@ -98,6 +98,10 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.assignLeads(args, options);
   }
 
+  public async dailyProspectionWorkflow(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.dailyProspectionWorkflow(args, options);
+  }
+
   // Métodos de configuración y reporte (heredados de BaseWorkflowService)
   public getConfigurationReport(): {
     deploymentType: 'local' | 'cloud' | 'custom';

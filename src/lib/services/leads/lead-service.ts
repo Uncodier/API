@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -32,9 +33,12 @@ export async function findLeadByInfo(email?: string, phone?: string, name?: stri
     
     // Construir la consulta según los datos disponibles
     if (email && phone) {
-      // Si tenemos ambos, email y phone, usar correctamente el operador OR de Supabase
-      query = query.or(`email.eq.${email},phone.eq.${phone}`);
-      console.log(`🔍 Buscando lead con email="${email}" O phone="${phone}"`);
+      // Si tenemos ambos, email y phone, generar variantes del teléfono para búsqueda más flexible
+      const phoneVariants = normalizePhoneForSearch(phone);
+      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      const allQueries = [`email.eq.${email}`, ...phoneQueries];
+      query = query.or(allQueries.join(','));
+      console.log(`🔍 Buscando lead con email="${email}" O phone en variantes: ${phoneVariants.join(', ')}`);
     } else {
       // Si solo tenemos uno de los dos, usar el operador eq correspondiente
       if (email) {
@@ -43,8 +47,18 @@ export async function findLeadByInfo(email?: string, phone?: string, name?: stri
       }
       
       if (phone) {
-        query = query.eq('phone', phone);
-        console.log(`🔍 Buscando lead con phone="${phone}"`);
+        // Generar variantes del número de teléfono para búsqueda más flexible
+        const phoneVariants = normalizePhoneForSearch(phone);
+        if (phoneVariants.length > 1) {
+          const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+          query = query.or(phoneQueries.join(','));
+          console.log(`🔍 Buscando lead con phone en variantes: ${phoneVariants.join(', ')}`);
+        } else if (phoneVariants.length === 1) {
+          query = query.eq('phone', phoneVariants[0]);
+          console.log(`🔍 Buscando lead con phone="${phoneVariants[0]}"`);
+        } else {
+          console.log(`⚠️ No se pudieron generar variantes válidas para el teléfono: ${phone}`);
+        }
       }
     }
     
@@ -104,7 +118,12 @@ export async function createLead(name: string, email?: string, phone?: string, s
     
     // Agregar campos opcionales si están presentes
     if (email) leadData.email = email;
-    if (phone) leadData.phone = phone;
+    if (phone) {
+      // Normalizar el teléfono para almacenamiento consistente
+      const normalizedPhone = normalizePhoneForStorage(phone);
+      leadData.phone = normalizedPhone;
+      console.log(`📞 Teléfono normalizado para almacenamiento: "${phone}" -> "${normalizedPhone}"`);
+    }
     
     // Primero obtenemos los datos completos del sitio para usar site.id y site.user_id
     if (siteId && isValidUUID(siteId)) {

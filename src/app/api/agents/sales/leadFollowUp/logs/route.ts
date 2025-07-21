@@ -77,25 +77,41 @@ async function createChannelConversation(data: {
       return null;
     }
 
+    // 🔧 CORRECCIÓN: Determinar el command_id más relevante para la conversación
+    let effectiveCommandId: string | null = null;
+    
+    if (data.commandIds?.copywriter && isValidUUID(data.commandIds.copywriter)) {
+      effectiveCommandId = data.commandIds.copywriter;
+      console.log(`📝 Usando copywriter command_id para conversación: ${effectiveCommandId}`);
+    } else if (data.commandIds?.sales && isValidUUID(data.commandIds.sales)) {
+      effectiveCommandId = data.commandIds.sales;
+      console.log(`💼 Usando sales command_id para conversación: ${effectiveCommandId}`);
+    }
+
     const conversationData: any = {
       user_id: data.userId,
       site_id: data.siteId,
       lead_id: data.leadId,
       title: data.title || `${data.channel} Follow-up`,
       channel: data.channel, // Nueva propiedad channel
+      command_id: effectiveCommandId, // 🔧 CORRECCIÓN: Guardar command_id directamente en conversación
       custom_data: {
         channel: data.channel,
         follow_up_type: 'lead_nurture',
-        command_ids: data.commandIds || {}
+        command_ids: data.commandIds || {},
+        delay_timer: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() // 2 horas en el futuro
       },
-      status: 'active'
+      status: 'pending'
     };
 
     if (data.agentId) {
       conversationData.agent_id = data.agentId;
     }
 
-    console.log(`🗣️ Creando conversación para canal ${data.channel}:`, conversationData);
+    console.log(`🗣️ Creando conversación para canal ${data.channel}:`, {
+      ...conversationData,
+      command_id: effectiveCommandId || 'N/A'
+    });
 
     const { data: conversation, error } = await supabaseAdmin
       .from('conversations')
@@ -108,7 +124,7 @@ async function createChannelConversation(data: {
       return null;
     }
 
-    console.log(`✅ Conversación creada exitosamente para canal ${data.channel}: ${conversation.id}`);
+    console.log(`✅ Conversación creada exitosamente para canal ${data.channel}: ${conversation.id}${effectiveCommandId ? ` con command_id: ${effectiveCommandId}` : ' sin command_id'}`);
     return conversation.id;
   } catch (error) {
     console.error(`Error en createChannelConversation para canal ${data.channel}:`, error);
@@ -170,7 +186,9 @@ async function createChannelConversationsAndMessages(
           follow_up_type: 'lead_nurture',
           title: messageData.title,
           strategy: messageData.strategy,
-          original_message: messageData.message
+          original_message: messageData.message,
+          status: 'pending',
+          delay_timer: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString() // 2 horas en el futuro
         }
       };
 
@@ -180,6 +198,25 @@ async function createChannelConversationsAndMessages(
 
       if (agentId) {
         messageRecord.agent_id = agentId;
+      }
+
+      // 🔧 CORRECCIÓN: Guardar command_id directamente en el mensaje
+      // Determinar qué command_id usar basado en el canal o usar el principal
+      let effectiveCommandId: string | null = null;
+      
+      if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
+        effectiveCommandId = commandIds.copywriter; // Priorizar copywriter si existe
+        console.log(`📝 Usando copywriter command_id para mensaje: ${effectiveCommandId}`);
+      } else if (commandIds?.sales && isValidUUID(commandIds.sales)) {
+        effectiveCommandId = commandIds.sales;
+        console.log(`💼 Usando sales command_id para mensaje: ${effectiveCommandId}`);
+      }
+      
+      if (effectiveCommandId) {
+        messageRecord.command_id = effectiveCommandId;
+        console.log(`🔗 Command ID asignado al mensaje: ${effectiveCommandId}`);
+      } else {
+        console.log(`⚠️ No se pudo asignar command_id válido al mensaje del canal ${channel}`);
       }
 
       console.log(`💬 Creando mensaje para canal ${channel}...`);
@@ -196,7 +233,7 @@ async function createChannelConversationsAndMessages(
       }
 
       messagesByChannel[channel] = message.id;
-      console.log(`✅ Mensaje creado para canal ${channel}: ${message.id}`);
+      console.log(`✅ Mensaje creado para canal ${channel}: ${message.id} con command_id: ${effectiveCommandId || 'N/A'}`);
     }
 
     return { conversations, messages: messagesByChannel };
@@ -239,6 +276,17 @@ This task was automatically created as part of the lead follow-up sequence to en
 
 Related conversation: ${conversationId}`;
 
+    // 🔧 CORRECCIÓN: Usar el command_id más relevante para la tarea
+    let effectiveCommandId: string | undefined = undefined;
+    
+    if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
+      effectiveCommandId = commandIds.copywriter;
+      console.log(`📝 Usando copywriter command_id para tarea: ${effectiveCommandId}`);
+    } else if (commandIds?.sales && isValidUUID(commandIds.sales)) {
+      effectiveCommandId = commandIds.sales;
+      console.log(`💼 Usando sales command_id para tarea: ${effectiveCommandId}`);
+    }
+
     const taskData = {
       title: taskTitle,
       description: taskDescription,
@@ -249,13 +297,13 @@ Related conversation: ${conversationId}`;
       user_id: userId,
       site_id: siteId,
       lead_id: leadData?.id || undefined,
-      command_id: commandIds?.sales || undefined,
-      notes: `Auto-generated from lead follow-up sequence. Conversation ID: ${conversationId}`,
+      command_id: effectiveCommandId,
+      notes: `Auto-generated from lead follow-up sequence. Conversation ID: ${conversationId}${effectiveCommandId ? `. Command ID: ${effectiveCommandId}` : ''}`,
       scheduled_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Scheduled for tomorrow
     };
 
     const task = await createTask(taskData);
-    console.log(`✅ Tarea de awareness creada: ${task.id}`);
+    console.log(`✅ Tarea de awareness creada: ${task.id}${effectiveCommandId ? ` con command_id: ${effectiveCommandId}` : ' sin command_id'}`);
     
     return task.id;
   } catch (error) {

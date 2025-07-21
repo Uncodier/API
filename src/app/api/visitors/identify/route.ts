@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { supabaseAdmin } from '@/lib/database/supabase-client'
 import { extractRequestInfo, extractRequestInfoWithLocation, detectScreenSize } from '@/lib/utils/request-info-extractor'
+import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer'
 
 /**
  * API DE IDENTIFICACIÓN DE VISITANTES
@@ -66,7 +67,13 @@ async function findExistingLead(
   let orFilters: string[] = [];
   
   if (email) orFilters.push(`email.eq."${email}"`);
-  if (phone) orFilters.push(`phone.eq."${phone}"`);
+  if (phone) {
+    // Generar variantes normalizadas del teléfono para búsqueda más flexible
+    const phoneVariants = normalizePhoneForSearch(phone);
+    phoneVariants.forEach(variant => {
+      orFilters.push(`phone.eq."${variant}"`);
+    });
+  }
   if (name) orFilters.push(`name.eq."${name}"`);
   
   const { data: leads, error } = await supabaseAdmin
@@ -94,7 +101,7 @@ async function createNewLead(siteId: string, userIdFromSite: string, traits: any
       site_id: siteId,
       user_id: userIdFromSite,
       email: traits?.email,
-      phone: traits?.phone,
+      phone: traits?.phone ? normalizePhoneForStorage(traits.phone) : undefined,
       name: traits?.name,
       position: traits?.position,
       status: 'contacted',
@@ -135,9 +142,12 @@ async function updateLeadIfNeeded(lead: any, traits: any): Promise<any> {
     updatedFields.email = traits.email;
     needsUpdate = true;
   }
-  if (traits.phone && traits.phone !== lead.phone) {
-    updatedFields.phone = traits.phone;
-    needsUpdate = true;
+  if (traits.phone) {
+    const normalizedPhone = normalizePhoneForStorage(traits.phone);
+    if (normalizedPhone !== lead.phone) {
+      updatedFields.phone = normalizedPhone;
+      needsUpdate = true;
+    }
   }
   if (traits.name && traits.name !== lead.name) {
     updatedFields.name = traits.name;

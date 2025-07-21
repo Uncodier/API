@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 import { v4 as uuidv4 } from 'uuid';
 
 interface WhatsAppLeadResult {
@@ -82,16 +83,35 @@ export class WhatsAppLeadService {
   
   /**
    * Busca un lead por número de teléfono en un sitio específico
+   * Utiliza normalización para encontrar números equivalentes en diferentes formatos
    */
   private static async findLeadByPhone(phoneNumber: string, siteId: string): Promise<string | null> {
     try {
       console.log(`🔍 [WhatsAppLeadService] Buscando lead por teléfono: ${phoneNumber.substring(0, 6)}*** en sitio ${siteId}`);
       
-      const { data, error } = await supabaseAdmin
+      // Generar variantes normalizadas del número para búsqueda más flexible
+      const phoneVariants = normalizePhoneForSearch(phoneNumber);
+      console.log(`📞 [WhatsAppLeadService] Variantes generadas: ${phoneVariants.join(', ')}`);
+      
+      if (phoneVariants.length === 0) {
+        console.log(`⚠️ [WhatsAppLeadService] No se pudieron generar variantes válidas para el teléfono: ${phoneNumber}`);
+        return null;
+      }
+      
+      let query = supabaseAdmin
         .from('leads')
         .select('id')
-        .eq('phone', phoneNumber)
-        .eq('site_id', siteId)
+        .eq('site_id', siteId);
+      
+      // Si hay múltiples variantes, usar OR query
+      if (phoneVariants.length > 1) {
+        const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+        query = query.or(phoneQueries.join(','));
+      } else {
+        query = query.eq('phone', phoneVariants[0]);
+      }
+      
+      const { data, error } = await query
         .order('created_at', { ascending: false })
         .limit(1);
       
@@ -105,6 +125,7 @@ export class WhatsAppLeadService {
         return null;
       }
       
+      console.log(`✅ [WhatsAppLeadService] Lead encontrado: ${data[0].id}`);
       return data[0].id;
     } catch (error) {
       console.error(`❌ [WhatsAppLeadService] Excepción buscando lead por teléfono:`, error);
@@ -120,11 +141,14 @@ export class WhatsAppLeadService {
       console.log(`➕ [WhatsAppLeadService] Creando nuevo lead para WhatsApp: ${phoneNumber.substring(0, 6)}***`);
       
       // Preparar datos del lead
+      const normalizedPhone = normalizePhoneForStorage(phoneNumber);
       const leadData: any = {
-        phone: phoneNumber,
+        phone: normalizedPhone,
         origin: 'whatsapp',
         status: 'contacted'
       };
+      
+      console.log(`📞 [WhatsAppLeadService] Teléfono normalizado para almacenamiento: "${phoneNumber}" -> "${normalizedPhone}"`);
       
       // Agregar nombre si está disponible
       if (senderName && senderName.trim()) {
@@ -270,20 +294,5 @@ export class WhatsAppLeadService {
   private static isValidUUID(uuid: string): boolean {
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     return uuidRegex.test(uuid);
-  }
-  
-  /**
-   * Normaliza el número de teléfono para búsqueda consistente
-   */
-  private static normalizePhoneNumber(phone: string): string {
-    // Remover espacios, guiones, paréntesis, etc.
-    let normalized = phone.replace(/[\s\-\(\)\.]/g, '');
-    
-    // Asegurar que empiece con +
-    if (!normalized.startsWith('+')) {
-      normalized = '+' + normalized;
-    }
-    
-    return normalized;
   }
 } 

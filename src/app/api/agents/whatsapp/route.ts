@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TwilioValidationService } from '@/lib/services/twilio/TwilioValidationService';
+import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
 /**
  * Webhook de Twilio para WhatsApp
@@ -76,12 +77,31 @@ async function getUserIdFromSite(siteId: string): Promise<string | null> {
 // Función para buscar un lead existente basado en el siteId y número de teléfono
 async function findExistingLead(siteId: string, phoneNumber: string): Promise<string | null> {
   try {
-    const { data: lead, error } = await supabaseAdmin
+    console.log(`🔍 Buscando lead existente para teléfono: ${phoneNumber.substring(0, 6)}*** en sitio ${siteId}`);
+    
+    // Generar variantes normalizadas del número para búsqueda más flexible
+    const phoneVariants = normalizePhoneForSearch(phoneNumber);
+    console.log(`📞 Variantes generadas: ${phoneVariants.join(', ')}`);
+    
+    if (phoneVariants.length === 0) {
+      console.log(`⚠️ No se pudieron generar variantes válidas para el teléfono: ${phoneNumber}`);
+      return null;
+    }
+    
+    let query = supabaseAdmin
       .from('leads')
       .select('id')
-      .eq('site_id', siteId)
-      .eq('phone', phoneNumber)
-      .single();
+      .eq('site_id', siteId);
+    
+    // Si hay múltiples variantes, usar OR query
+    if (phoneVariants.length > 1) {
+      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      query = query.or(phoneQueries.join(','));
+    } else {
+      query = query.eq('phone', phoneVariants[0]);
+    }
+    
+    const { data: lead, error } = await query.single();
 
     if (error && error.code !== 'PGRST116') {
       // PGRST116 es "no rows returned" que es esperado si no existe el lead
@@ -89,7 +109,14 @@ async function findExistingLead(siteId: string, phoneNumber: string): Promise<st
       return null;
     }
 
-    return lead?.id || null;
+    const leadId = lead?.id || null;
+    if (leadId) {
+      console.log(`✅ Lead existente encontrado: ${leadId}`);
+    } else {
+      console.log(`⚠️ No se encontró lead existente para el teléfono`);
+    }
+    
+    return leadId;
   } catch (error) {
     console.error('❌ Error al buscar lead existente:', error);
     return null;

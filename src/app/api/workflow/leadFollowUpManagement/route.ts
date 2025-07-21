@@ -1,0 +1,142 @@
+import { NextRequest, NextResponse } from 'next/server';
+import { WorkflowService } from '@/lib/services/workflow-service';
+
+interface DailyProspectionWorkflowArgs {
+  site_id: string;
+}
+
+interface WorkflowExecutionOptions {
+  priority?: 'low' | 'medium' | 'high';
+  async?: boolean;
+  retryAttempts?: number;
+  taskQueue?: string;
+  workflowId?: string;
+}
+
+/**
+ * API endpoint para ejecutar el workflow dailyProspectionWorkflow en Temporal
+ * POST /api/workflow/leadFollowUpManagement
+ */
+export async function POST(request: NextRequest) {
+  try {
+    console.log('🚀 Iniciando ejecución del workflow dailyProspectionWorkflow');
+
+    // Validar y extraer site_id del cuerpo de la petición
+    const body = await request.json();
+    const { site_id } = body;
+
+    // Validación del site_id
+    if (!site_id || typeof site_id !== 'string') {
+      console.error('❌ site_id requerido y debe ser una cadena');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_SITE_ID', 
+            message: 'site_id es requerido y debe ser una cadena válida' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+
+    console.log(`📝 Ejecutando daily prospection workflow para site_id: ${site_id}`);
+
+    // Obtener instancia del servicio de workflows
+    const workflowService = WorkflowService.getInstance();
+
+    // Preparar argumentos para el workflow
+    const workflowArgs: DailyProspectionWorkflowArgs = {
+      site_id
+    };
+
+    // Opciones de ejecución del workflow
+    const workflowOptions: WorkflowExecutionOptions = {
+      priority: 'high', // Alta prioridad para prospección diaria
+      async: false, // Esperamos el resultado completo
+      retryAttempts: 3, // Consistente con otras rutas
+      taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+      workflowId: `daily-prospection-${site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    };
+
+    console.log(`🔄 Iniciando daily prospection workflow con ID: ${workflowOptions.workflowId}`);
+
+    // Ejecutar el workflow específico para prospección diaria
+    const result = await workflowService.dailyProspectionWorkflow(
+      workflowArgs,
+      workflowOptions
+    );
+
+    if (!result.success) {
+      console.error('❌ Error en la ejecución del workflow de prospección diaria:', result.error);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: result.error?.code || 'WORKFLOW_EXECUTION_ERROR',
+            message: result.error?.message || 'Error al ejecutar el workflow de prospección diaria'
+          }
+        },
+        { status: 500 }
+      );
+    }
+
+    console.log('✅ Workflow de prospección diaria ejecutado exitosamente');
+    console.log('📊 Resultado del workflow de prospección diaria:', result);
+
+    // Respuesta exitosa
+    return NextResponse.json(
+      { 
+        success: true, 
+        data: {
+          site_id,
+          workflowId: result.workflowId,
+          executionId: result.executionId,
+          runId: result.runId,
+          status: result.status,
+          result: result.data
+        }
+      },
+      { status: 200 }
+    );
+
+  } catch (error) {
+    console.error('❌ Error en el endpoint del workflow leadFollowUpManagement:', error);
+    
+    return NextResponse.json(
+      { 
+        success: false, 
+        error: { 
+          code: 'INTERNAL_SERVER_ERROR', 
+          message: 'Error interno del servidor al ejecutar el workflow de prospección diaria'
+        } 
+      },
+      { status: 500 }
+    );
+  }
+}
+
+/**
+ * Método GET para obtener información sobre el endpoint
+ */
+export async function GET() {
+  return NextResponse.json({
+    name: 'leadFollowUpManagement API',
+    description: 'Ejecuta el workflow dailyProspectionWorkflow en Temporal para gestión de seguimiento de leads y prospección diaria',
+    workflow_name: 'dailyProspectionWorkflow',
+    methods: ['POST'],
+    requiredParams: {
+      site_id: 'string - ID del sitio para ejecutar la prospección diaria'
+    },
+    workflow_steps: [
+      '1. Lead Analysis - Análisis de leads existentes y su estado',
+      '2. Prospection Strategy - Estrategia de prospección basada en el sitio',  
+      '3. Follow-up Planning - Planificación de seguimiento de leads',
+      '4. Activity Generation - Generación de actividades de prospección',
+      '5. Results Summary - Resumen de actividades generadas'
+    ],
+    example: {
+      site_id: 'site_12345'
+    }
+  });
+} 
