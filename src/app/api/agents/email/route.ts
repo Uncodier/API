@@ -620,7 +620,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
       analysis_type: analysisType,
       lead_id: leadId,
       team_member_id: teamMemberId,
-      special_instructions: 'Return an array with every important email. Analyze only the essential email data provided. Email content has been heavily optimized: signatures, quoted text, headers, and legal disclaimers removed. Text limited to 1000 chars per email. Focus on emails showing genuine commercial interest. IMPORTANT: If there is not at least 1 email that require a response or qualify as a potential lead, return an empty array in the results. []. DO NOT ANALYZE ALL THE EMMAILS IN A SINGLE SUMMARY AS THIS WILL GENERATE A WRONG ANSWER OR REPLY FOR A LEAD OR CLIENT. CRITICAL: Always include the "id" field from the email context in your response for each email you analyze. This ID is essential for tracking and preventing duplicates. IMPORTANT: Also include the "original_text" field with the actual email content from the context for each email you process - this allows the system to access the original message content for follow-up actions.'
+      special_instructions: 'Return an array with every important email. Analyze only the essential email data provided. Email content has been heavily optimized: signatures, quoted text, headers, and legal disclaimers removed. Text limited to 1000 chars per email. Focus on emails showing genuine commercial interest. IMPORTANT: If there is not at least 1 email that require a response or qualify as a potential lead, RETURN AN EMPTY ARRAY in the results. []. DO NOT ANALYZE ALL THE EMMAILS IN A SINGLE SUMMARY AS THIS WILL GENERATE A WRONG ANSWER OR REPLY FOR A LEAD OR CLIENT. CRITICAL: Always include the "id" field from the email context in your response for each email you analyze. This ID is essential for tracking and preventing duplicates. IMPORTANT: Also include the "original_text" field with the actual email content from the context for each email you process - this allows the system to access the original message content for follow-up actions.'
     }),
     supervisor: [
       { agent_role: "email_specialist", status: "not_initialized" },
@@ -917,12 +917,41 @@ export async function POST(request: NextRequest) {
         }, null, 2));
       }
       
+      // Función para validar si un email contiene tokens de instrucciones
+      const containsInstructionTokens = (email: any): boolean => {
+        const tokenPatterns = [
+          'email_id_from_context',
+          'Original subject of the email',
+          'Original email content/message as received',
+          'Summary of the message and client inquiry',
+          'name found in the email',
+          'from email address',
+          'phone found in the email',
+          'company found in the email',
+          'original_subject',
+          'original_text',
+          'contact_info'
+        ];
+        
+        const emailStr = JSON.stringify(email).toLowerCase();
+        
+        return tokenPatterns.some(pattern => 
+          emailStr.includes(pattern.toLowerCase())
+        );
+      };
+
       // Extraer SOLO de results (que contienen los emails procesados por el agente)
       if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
         console.log(`[EMAIL_API] 🔄 Iterando sobre ${executedCommand.results.length} resultados...`);
         for (const result of executedCommand.results) {
           console.log(`[EMAIL_API] 📧 Resultado encontrado:`, JSON.stringify(result, null, 2));
           if (result.email) {
+            // Validar si el email contiene tokens de instrucciones
+            if (containsInstructionTokens(result.email)) {
+              console.log(`[EMAIL_API] 🚫 Email rechazado - contiene tokens de instrucciones:`, JSON.stringify(result.email, null, 2));
+              continue; // Saltar este email
+            }
+            
             console.log(`[EMAIL_API] ✅ Email encontrado en results:`, JSON.stringify(result.email, null, 2));
             emailsForResponse.push(result.email);
             
