@@ -261,6 +261,30 @@ async function createAwarenessTaskIfNeeded(
       return null;
     }
 
+    // 🔍 VALIDACIÓN: Verificar si ya existe una tarea de awareness para este lead
+    if (leadData?.id) {
+      console.log(`🔍 Verificando tareas de awareness existentes para lead: ${leadData.id}`);
+      
+      const { data: existingTasks, error: tasksError } = await supabaseAdmin
+        .from('tasks')
+        .select('id, title, created_at')
+        .eq('lead_id', leadData.id)
+        .eq('type', 'awareness')
+        .eq('site_id', siteId)
+        .limit(1);
+        
+      if (tasksError) {
+        console.error('Error al verificar tareas de awareness existentes:', tasksError);
+        // Continuamos sin crear la tarea para evitar duplicados en caso de error
+        return null;
+      }
+      
+      if (existingTasks && existingTasks.length > 0) {
+        console.log(`ℹ️ Lead ya tiene tarea de awareness existente (ID: ${existingTasks[0].id}), no se crea nueva`);
+        return existingTasks[0].id; // Retornar el ID de la tarea existente
+      }
+    }
+
     console.log(`📋 Creando tarea de awareness para lead en stage: ${leadStage}`);
 
     const taskTitle = `Lead Awareness Follow-up: ${leadData?.name || leadData?.email || 'Unknown Lead'}`;

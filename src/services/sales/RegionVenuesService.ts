@@ -117,7 +117,7 @@ export class RegionVenuesService {
 
   /**
    * Consulta las memorias del sistema para obtener venues que no dieron resultados
-   * Busca en 3 niveles: sitio específico, región de cualquier sitio, y ciudad de cualquier sitio
+   * Busca en 3 niveles: sitio específico, misma ciudad:región de otros sitios, y otras regiones de la misma ciudad
    */
   private async getFailedVenuesFromMemory(siteId: string, searchTerm: string, city: string, region: string): Promise<string[]> {
     try {
@@ -139,26 +139,28 @@ export class RegionVenuesService {
         console.log(`🧠 [Nivel 1] Encontradas ${siteExcludedNames.length} memorias del sitio específico`);
       }
       
-      // 2. Memorias de la región de cualquier sitio
-      console.log(`🧠 [Nivel 2] Buscando memorias de la región de todos los sitios: ${region}`);
-      const regionMemoriesResult = await systemMemoryService.findMemoriesGlobalByPattern(
+      // 2. Memorias de la misma ciudad:región exacta de otros sitios
+      console.log(`🧠 [Nivel 2] Buscando memorias de la misma región exacta de otros sitios: ${city}:${region}`);
+      const regionMemoriesResult = await systemMemoryService.findMemoriesGlobal(
         'venue_failed_names',
-        `%:${region.toLowerCase().trim()}`
+        cityRegionKey
       );
       
       if (regionMemoriesResult.success && regionMemoriesResult.memories) {
         let regionExcludedCount = 0;
         regionMemoriesResult.memories.forEach(memory => {
-          const regionExcludedNames = memory.data.excludedNames || [];
-          allExcludedNames.push(...regionExcludedNames);
-          regionExcludedCount += regionExcludedNames.length;
+          // Solo incluir memorias de otros sitios (no del actual)
+          if (memory.siteId !== siteId) {
+            const regionExcludedNames = memory.data.excludedNames || [];
+            allExcludedNames.push(...regionExcludedNames);
+            regionExcludedCount += regionExcludedNames.length;
+          }
         });
-        console.log(`🧠 [Nivel 2] Encontradas ${regionExcludedCount} memorias de la región de ${regionMemoriesResult.memories.length} sitios`);
+        console.log(`🧠 [Nivel 2] Encontradas ${regionExcludedCount} memorias de la región exacta de otros sitios`);
       }
       
-      // 3. Memorias de la ciudad de cualquier sitio
-      const cityKey = `${city.toLowerCase().trim()}:`;
-      console.log(`🧠 [Nivel 3] Buscando memorias de la ciudad de todos los sitios: ${city}`);
+      // 3. Memorias de la misma ciudad (cualquier región) de otros sitios
+      console.log(`🧠 [Nivel 3] Buscando memorias de la ciudad de todos los sitios: ${city}:*`);
       const cityMemoriesResult = await systemMemoryService.findMemoriesGlobalByPattern(
         'venue_failed_names',
         `${city.toLowerCase().trim()}:%`
@@ -167,17 +169,20 @@ export class RegionVenuesService {
       if (cityMemoriesResult.success && cityMemoriesResult.memories) {
         let cityExcludedCount = 0;
         cityMemoriesResult.memories.forEach(memory => {
-          const cityExcludedNames = memory.data.excludedNames || [];
-          allExcludedNames.push(...cityExcludedNames);
-          cityExcludedCount += cityExcludedNames.length;
+          // Solo incluir memorias de otros sitios y otras regiones (no la región actual)
+          if (memory.siteId !== siteId && memory.key !== cityRegionKey) {
+            const cityExcludedNames = memory.data.excludedNames || [];
+            allExcludedNames.push(...cityExcludedNames);
+            cityExcludedCount += cityExcludedNames.length;
+          }
         });
-        console.log(`🧠 [Nivel 3] Encontradas ${cityExcludedCount} memorias de la ciudad de ${cityMemoriesResult.memories.length} sitios`);
+        console.log(`🧠 [Nivel 3] Encontradas ${cityExcludedCount} memorias de otras regiones de la ciudad de otros sitios`);
       }
       
       // Eliminar duplicados y retornar
       const uniqueExcludedNames = Array.from(new Set(allExcludedNames));
       console.log(`🧠 [Resumen] Total venues a excluir: ${uniqueExcludedNames.length} únicos de ${allExcludedNames.length} totales`);
-      console.log(`🧠 [Detalle] Niveles - Sitio: ${siteMemoryResult.memory?.data.excludedNames?.length || 0}, Región: ${regionMemoriesResult.memories?.length || 0} sitios, Ciudad: ${cityMemoriesResult.memories?.length || 0} sitios`);
+      console.log(`🧠 [Detalle] Niveles - Sitio específico: ${siteMemoryResult.memory?.data.excludedNames?.length || 0}, Misma región de otros sitios: ${regionMemoriesResult.memories?.length || 0}, Otras regiones de la ciudad: ${cityMemoriesResult.memories?.length || 0}`);
       
       return uniqueExcludedNames;
     } catch (error) {
@@ -249,7 +254,7 @@ export class RegionVenuesService {
 
   /**
    * Verifica si una búsqueda ya está marcada como sin resultados en memoria
-   * Busca en 3 niveles: sitio específico, región de cualquier sitio, y ciudad de cualquier sitio
+   * Busca en 3 niveles: sitio específico, misma ciudad:región de otros sitios, y otras regiones de la misma ciudad
    */
   private async isSearchMarkedAsNoResults(siteId: string, searchTerm: string, city: string, region: string): Promise<boolean> {
     try {
@@ -271,8 +276,8 @@ export class RegionVenuesService {
         }
       }
       
-      // 2. Verificar memorias de la región de cualquier sitio
-      console.log(`🧠 [NoResults-Nivel 2] Verificando región de todos los sitios`);
+      // 2. Verificar memorias de la misma ciudad:región exacta en otros sitios
+      console.log(`🧠 [NoResults-Nivel 2] Verificando misma región exacta en otros sitios`);
       const regionNoResultsResult = await systemMemoryService.findMemoriesGlobal(
         'venue_search_no_results',
         memoryKey
@@ -280,16 +285,17 @@ export class RegionVenuesService {
       
       if (regionNoResultsResult.success && regionNoResultsResult.memories) {
         for (const memory of regionNoResultsResult.memories) {
-          if (memory.data.noResults === true) {
+          // Solo verificar memorias de otros sitios
+          if (memory.siteId !== siteId && memory.data.noResults === true) {
             console.log(`🧠 [NoResults-Nivel 2] Búsqueda marcada como sin resultados en otro sitio: ${searchTerm} in ${city}, ${region}`);
             return true;
           }
         }
       }
       
-      // 3. Verificar memorias de búsquedas similares en la ciudad
-      const citySearchPattern = `%:${city.toLowerCase().trim()}:${region.toLowerCase().trim()}`;
-      console.log(`🧠 [NoResults-Nivel 3] Verificando búsquedas similares en la ciudad`);
+      // 3. Verificar memorias de búsquedas en la misma ciudad (cualquier región)
+      const citySearchPattern = `%:${city.toLowerCase().trim()}:%`;
+      console.log(`🧠 [NoResults-Nivel 3] Verificando búsquedas en la misma ciudad (otras regiones)`);
       const cityNoResultsResult = await systemMemoryService.findMemoriesGlobalByPattern(
         'venue_search_no_results',
         citySearchPattern
@@ -297,8 +303,9 @@ export class RegionVenuesService {
       
       if (cityNoResultsResult.success && cityNoResultsResult.memories) {
         for (const memory of cityNoResultsResult.memories) {
-          if (memory.data.noResults === true) {
-            console.log(`🧠 [NoResults-Nivel 3] Búsqueda similar marcada como sin resultados en ciudad: ${memory.key}`);
+          // Solo verificar memorias de otros sitios y otras regiones
+          if (memory.siteId !== siteId && memory.key !== memoryKey && memory.data.noResults === true) {
+            console.log(`🧠 [NoResults-Nivel 3] Búsqueda similar marcada como sin resultados en otra región: ${memory.key}`);
             return true;
           }
         }
