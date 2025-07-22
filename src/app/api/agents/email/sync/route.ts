@@ -479,6 +479,15 @@ async function addSentMessageToConversation(
     // Extraer contenido del email usando EmailTextExtractorService para mejor compatibilidad
     let messageContent = 'No content available';
     
+    console.log(`[EMAIL_SYNC] 🔍 Estructura del objeto email recibido:`, {
+      hasSubject: !!email.subject,
+      hasBody: !!email.body,
+      hasText: !!email.text,
+      hasHtml: !!email.html,
+      bodyType: typeof email.body,
+      bodyLength: email.body ? (typeof email.body === 'string' ? email.body.length : 'not string') : 'null'
+    });
+    
     try {
       const extractedContent = EmailTextExtractorService.extractEmailText(email, {
         maxTextLength: 4000,
@@ -487,25 +496,86 @@ async function addSentMessageToConversation(
         preserveStructure: true
       });
       
-      if (extractedContent.extractedText && extractedContent.extractedText.trim()) {
+      console.log(`[EMAIL_SYNC] 📄 Resultado de EmailTextExtractor:`, {
+        hasExtractedText: !!extractedContent.extractedText,
+        extractedTextLength: extractedContent.extractedText ? extractedContent.extractedText.length : 0,
+        extractedTextTrimmed: extractedContent.extractedText ? extractedContent.extractedText.trim().length : 0
+      });
+      
+      if (extractedContent.extractedText && 
+          extractedContent.extractedText.trim() && 
+          extractedContent.extractedText !== 'Error al extraer texto del email') {
         messageContent = extractedContent.extractedText.trim();
         console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
       } else {
-        // Fallback a otras propiedades del email
-        const fallbackContent = email.text || email.html || email.body;
-        if (fallbackContent && typeof fallbackContent === 'string' && fallbackContent.trim()) {
-          messageContent = fallbackContent.trim();
-          console.log(`[EMAIL_SYNC] ⚠️ Usando contenido fallback: ${messageContent.length} caracteres`);
+        if (extractedContent.extractedText === 'Error al extraer texto del email') {
+          console.log(`[EMAIL_SYNC] ❌ EmailTextExtractor reportó error interno, usando fallback directo`);
         } else {
-          console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer contenido del email, usando fallback`);
+          console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido, usando fallback directo`);
+        }
+        
+        // Fallback directo más robusto - verificar directamente las propiedades del email
+        let fallbackContent = '';
+        
+        // 1. Intentar con email.body (principal en EmailService)
+        if (email.body && typeof email.body === 'string' && email.body.trim()) {
+          fallbackContent = email.body.trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body: ${fallbackContent.length} caracteres`);
+        }
+        // 2. Intentar con email.text
+        else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+          fallbackContent = email.text.trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
+        }
+        // 3. Intentar con email.html (extraer texto básico)
+        else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+          // Extraer texto básico de HTML
+          fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
+        }
+        // 4. Verificar si body es un objeto con propiedades anidadas
+        else if (email.body && typeof email.body === 'object') {
+          console.log(`[EMAIL_SYNC] 🔍 email.body es objeto, estructura:`, Object.keys(email.body));
+          
+          if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
+            fallbackContent = email.body.text.trim();
+            console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
+          } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
+            fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+            console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
+          }
+        }
+        
+        if (fallbackContent && fallbackContent.length > 0) {
+          messageContent = fallbackContent;
+          console.log(`[EMAIL_SYNC] ✅ Usando contenido fallback: ${messageContent.length} caracteres`);
+        } else {
+          console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer contenido del email, manteniendo fallback por defecto`);
+          messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
         }
       }
     } catch (extractionError) {
       console.error('[EMAIL_SYNC] Error extrayendo contenido del email:', extractionError);
-      // Usar fallback manual
-      const fallbackContent = email.body || email.text || email.html;
-      if (fallbackContent && typeof fallbackContent === 'string' && fallbackContent.trim()) {
-        messageContent = fallbackContent.trim();
+      
+      // Fallback manual más directo en caso de error
+      console.log(`[EMAIL_SYNC] 🔧 Aplicando fallback manual por error en extracción`);
+      
+      let fallbackContent = '';
+      
+      if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
+      } else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+        fallbackContent = email.text.trim();
+      } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      }
+      
+      if (fallbackContent && fallbackContent.length > 0) {
+        messageContent = fallbackContent;
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
+      } else {
+        messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
+        console.log(`[EMAIL_SYNC] ⚠️ Usando contenido de emergencia basado en subject y destinatario`);
       }
     }
     
