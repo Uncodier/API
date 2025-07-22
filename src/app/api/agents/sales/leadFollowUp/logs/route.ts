@@ -314,8 +314,8 @@ Related conversation: ${conversationId}`;
       title: taskTitle,
       description: taskDescription,
       type: 'awareness',
-      status: 'active',
-      stage: 'pending',
+      status: 'pending',
+      stage: 'awareness',
       priority: 2, // Medium priority
       user_id: userId,
       site_id: siteId,

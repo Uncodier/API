@@ -1,5 +1,3 @@
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { v4 as uuidv4 } from 'uuid';
 import { systemMemoryService } from '@/lib/services/system-memory-service';
 
 // Interfaces para la búsqueda de venues
@@ -46,11 +44,7 @@ export interface VenueSearchResult {
   error?: string;
 }
 
-export interface DbSaveResult {
-  success: boolean;
-  searchId?: string;
-  venueCount?: number;
-}
+
 
 export interface VenueSearchParams {
   siteId: string;
@@ -591,7 +585,7 @@ export class RegionVenuesService {
       const details = place.place_id ? await this.getPlaceDetails(place.place_id) : null;
       
       return {
-        id: place.place_id || uuidv4(),
+        id: place.place_id || `venue_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         name: place.name || 'Unknown',
         address: details?.formatted_address || place.formatted_address || details?.vicinity || 'Address not available',
         phone: details?.formatted_phone_number || 'Not available',
@@ -742,85 +736,7 @@ export class RegionVenuesService {
     }
   }
 
-  /**
-   * Guarda los resultados de búsqueda en la base de datos
-   */
-  async saveSearchResults(siteId: string, userId: string, searchTerm: string, city: string, region: string, venues: Venue[]): Promise<DbSaveResult> {
-    try {
-      const searchId = uuidv4();
-      
-      // Guardar la búsqueda principal
-      const { error: searchError } = await supabaseAdmin
-        .from('region_venue_searches')
-        .insert({
-          id: searchId,
-          site_id: siteId,
-          user_id: userId,
-          search_term: searchTerm,
-          city: city,
-          region: region,
-          venue_count: venues.length,
-          created_at: new Date().toISOString()
-        });
 
-      if (searchError) {
-        console.error('Error saving search:', searchError);
-        return {
-          success: false
-        };
-      }
-
-      // Guardar los venues encontrados
-      if (venues.length > 0) {
-        const venueRecords = venues.map(venue => ({
-          id: uuidv4(),
-          search_id: searchId,
-          venue_id: venue.id,
-          name: venue.name,
-          address: venue.address,
-          phone: venue.phone,
-          international_phone: venue.international_phone,
-          website: venue.website,
-          google_maps_url: venue.google_maps_url,
-          business_status: venue.business_status,
-          rating: venue.rating,
-          total_ratings: venue.total_ratings,
-          price_level: venue.price_level,
-          types: venue.types,
-          location_lat: venue.location.lat,
-          location_lng: venue.location.lng,
-          opening_hours: venue.opening_hours,
-          amenities: venue.amenities,
-          description: venue.description,
-          reviews: venue.reviews,
-          photos: venue.photos,
-          created_at: new Date().toISOString()
-        }));
-
-        const { error: venuesError } = await supabaseAdmin
-          .from('region_venues')
-          .insert(venueRecords);
-
-        if (venuesError) {
-          console.error('Error saving venues:', venuesError);
-          return {
-            success: false
-          };
-        }
-      }
-
-      return {
-        success: true,
-        searchId: searchId,
-        venueCount: venues.length
-      };
-    } catch (error) {
-      console.error('Error saving search results:', error);
-      return {
-        success: false
-      };
-    }
-  }
 
   /**
    * Busca venues en una región (método principal del servicio)
@@ -900,22 +816,6 @@ export class RegionVenuesService {
           params.city,
           params.region
         );
-      }
-
-      // Guardar resultados en la base de datos si se proporcionó userId
-      if (params.userId && searchResult.venues) {
-        const saveResult = await this.saveSearchResults(
-          params.siteId,
-          params.userId,
-          params.searchTerm,
-          params.city,
-          params.region,
-          searchResult.venues
-        );
-
-        if (!saveResult.success) {
-          console.warn('Failed to save search results to database');
-        }
       }
 
       return searchResult;

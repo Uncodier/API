@@ -579,34 +579,71 @@ async function addSentMessageToConversation(
 }
 
 /**
- * Función para verificar si el lead tiene tareas de awareness y crear si es necesario
+ * Función para verificar si el lead tiene tareas de prospection en awareness o stages posteriores y crear si es necesario
  */
 async function createFirstContactTaskIfNeeded(leadId: string, siteId: string): Promise<string | null> {
   try {
-    console.log(`[EMAIL_SYNC] 📋 Verificando tareas de awareness para lead: ${leadId}`);
+    console.log(`[EMAIL_SYNC] 📋 Verificando tareas de prospection para lead: ${leadId}`);
     
-    // Buscar tareas existentes en stage 'awareness'
+    // Definir stages del customer journey en orden de progresión
+    const customerJourneyStages = ['awareness', 'consideration', 'decision', 'action', 'retention'];
+    
+    // Buscar cualquier tarea existente en awareness o stages posteriores
     const { data: existingTasks, error: tasksError } = await supabaseAdmin
       .from('tasks')
-      .select('id')
+      .select('id, type, stage, status')
       .eq('lead_id', leadId)
-      .eq('stage', 'awareness')
-      .limit(1);
+      .in('stage', customerJourneyStages)
+      .limit(10);
       
     if (tasksError) {
-      console.error('[EMAIL_SYNC] Error al buscar tareas de awareness:', tasksError);
+      console.error('[EMAIL_SYNC] Error al buscar tareas existentes:', tasksError);
       return null;
     }
     
     if (existingTasks && existingTasks.length > 0) {
-      console.log(`[EMAIL_SYNC] ℹ️ Lead ya tiene tareas de awareness, no se crea nueva`);
+      console.log(`[EMAIL_SYNC] ✅ Lead ya tiene ${existingTasks.length} tareas en customer journey:`, 
+        existingTasks.map(t => `${t.type}(${t.stage}:${t.status})`).join(', '));
+      
+      // Buscar tareas de prospection en estado pending para marcarlas como completed
+      const pendingProspectionTasks = existingTasks.filter(t => 
+        ['prospection', 'first_contact', 'follow_up'].includes(t.type) && 
+        t.status === 'pending'
+      );
+      
+      if (pendingProspectionTasks.length > 0) {
+        console.log(`[EMAIL_SYNC] 🔄 Marcando ${pendingProspectionTasks.length} tareas de prospection como completed`);
+        
+        // Marcar todas las tareas de prospection pending como completed
+        for (const task of pendingProspectionTasks) {
+          const { error: updateError } = await supabaseAdmin
+            .from('tasks')
+            .update({ 
+              status: 'completed',
+              completed_date: new Date().toISOString(),
+              notes: `Marked as completed from email sync. Email sent to lead successfully.`,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', task.id);
+            
+          if (updateError) {
+            console.error(`[EMAIL_SYNC] Error al actualizar tarea ${task.id}:`, updateError);
+          } else {
+            console.log(`[EMAIL_SYNC] ✅ Tarea ${task.type} (${task.id}) marcada como completed`);
+          }
+        }
+        
+        return pendingProspectionTasks[0].id; // Retornar ID de la primera tarea actualizada
+      }
+      
+      console.log(`[EMAIL_SYNC] ℹ️ No hay tareas de prospection en pending, no se crea nueva tarea`);
       return null;
     }
     
     // Obtener información del lead para la tarea
     const { data: lead, error: leadError } = await supabaseAdmin
       .from('leads')
-      .select('name, email, user_id')
+      .select('name, email, user_id, status')
       .eq('id', leadId)
       .single();
       
@@ -615,29 +652,47 @@ async function createFirstContactTaskIfNeeded(leadId: string, siteId: string): P
       return null;
     }
     
-    console.log(`[EMAIL_SYNC] ➕ Creando tarea de first contact para lead: ${leadId}`);
+    console.log(`[EMAIL_SYNC] ➕ Creando tarea de prospection para lead: ${leadId} (status: ${lead.status})`);
+    
+    // Determinar el tipo de tarea y stage basado en el status del lead
+    let taskType = 'prospection';
+    let taskStatus = 'completed'; // Marcada como completada porque ya se envió el email
+    let taskStage = 'awareness';
+    let taskTitle = `Prospection - ${lead.name || lead.email}`;
+    let taskDescription = `Tarea de prospección creada automáticamente al sincronizar email enviado. El lead ha sido contactado exitosamente vía email.`;
+    
+    // Ajustar tipo de tarea según el contexto
+    if (lead.status === 'new') {
+      taskType = 'first_contact';
+      taskTitle = `First Contact - ${lead.name || lead.email}`;
+      taskDescription = `Tarea de primer contacto creada automáticamente. El lead ha sido contactado por primera vez vía email.`;
+    } else if (lead.status === 'contacted') {
+      taskType = 'follow_up';
+      taskTitle = `Follow Up - ${lead.name || lead.email}`;
+      taskDescription = `Tarea de seguimiento creada automáticamente. Continuar prospección del lead vía email.`;
+    }
     
     const taskData = {
-      title: `First Contact - ${lead.name || lead.email}`,
-      description: `Tarea de primer contacto creada automáticamente al sincronizar email enviado. El lead ha sido contactado por primera vez vía email.`,
-      type: 'first_contact',
-      status: 'completed', // Marcada como completada porque ya se envió el email
-      stage: 'awareness',
+      title: taskTitle,
+      description: taskDescription,
+      type: taskType,
+      status: taskStatus,
+      stage: taskStage,
       priority: 1,
       user_id: lead.user_id,
       site_id: siteId,
       lead_id: leadId,
       scheduled_date: new Date().toISOString(),
       completed_date: new Date().toISOString(),
-      notes: `Auto-created from email sync. First email sent to lead successfully.`
+      notes: `Auto-created from email sync. Email sent to lead successfully. Lead status: ${lead.status}`
     };
     
     const task = await createTask(taskData);
-    console.log(`[EMAIL_SYNC] ✅ Tarea de first contact creada: ${task.id}`);
+    console.log(`[EMAIL_SYNC] ✅ Tarea de ${taskType} creada: ${task.id} para lead status: ${lead.status}`);
     
     return task.id;
   } catch (error) {
-    console.error('[EMAIL_SYNC] Error al crear tarea de first contact:', error);
+    console.error('[EMAIL_SYNC] Error al crear tarea de prospection:', error);
     return null;
   }
 }
