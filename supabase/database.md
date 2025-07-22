@@ -7,7 +7,7 @@
   {
     "info_type": "SCHEMA_SUMMARY",
     "object_type": "TABLES",
-    "count": 83
+    "count": 84
   },
   {
     "info_type": "SCHEMA_SUMMARY",
@@ -854,6 +854,22 @@ CREATE TABLE public.sites (
   CONSTRAINT fk_command_sites FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT sites_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id)
 );
+CREATE TABLE public.synced_objects (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  external_id text NOT NULL,
+  site_id uuid NOT NULL,
+  object_type text NOT NULL DEFAULT 'email'::text,
+  status text NOT NULL DEFAULT 'pending'::text,
+  provider text,
+  first_seen_at timestamp with time zone DEFAULT now(),
+  last_processed_at timestamp with time zone,
+  process_count integer DEFAULT 0,
+  metadata jsonb DEFAULT '{}'::jsonb,
+  error_message text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT synced_objects_pkey PRIMARY KEY (id)
+);
 CREATE TABLE public.task_categories (
   task_id uuid NOT NULL,
   category_id uuid NOT NULL,
@@ -1316,6 +1332,16 @@ CREATE TABLE public.whatsapp_templates (
 | INDEX       | idx_site_members_site_id                         | site_members          |
 | INDEX       | idx_site_members_user_id                         | site_members          |
 | INDEX       | idx_sites_command_id                             | sites                 |
+| INDEX       | idx_synced_objects_external_id                   | synced_objects        |
+| INDEX       | idx_synced_objects_site_id                       | synced_objects        |
+| INDEX       | idx_synced_objects_object_type                   | synced_objects        |
+| INDEX       | idx_synced_objects_status                        | synced_objects        |
+| INDEX       | idx_synced_objects_provider                      | synced_objects        |
+| INDEX       | idx_synced_objects_site_object_type              | synced_objects        |
+| INDEX       | idx_synced_objects_site_status                   | synced_objects        |
+| INDEX       | idx_synced_objects_external_site_type            | synced_objects        |
+| INDEX       | idx_synced_objects_unique_external_site_type     | synced_objects        |
+| INDEX       | synced_objects_pkey                              | synced_objects        |
 | INDEX       | idx_task_categories_category_id                  | task_categories       |
 | INDEX       | idx_task_categories_task_id                      | task_categories       |
 | INDEX       | idx_task_comments_created_at                     | task_comments         |
@@ -1423,6 +1449,7 @@ CREATE TABLE public.whatsapp_templates (
 | TRIGGER     | trigger_set_task_serial_id                       | tasks                 |
 | TRIGGER     | trigger_update_cron_status_updated_at            | cron_status           |
 | TRIGGER     | trigger_update_sale_orders_updated_at            | sale_orders           |
+| TRIGGER     | trigger_update_synced_objects_updated_at         | synced_objects        |
 | TRIGGER     | trigger_update_whatsapp_templates_updated_at     | whatsapp_templates    |
 | TRIGGER     | update_api_key_usage                             | api_keys              |
 | TRIGGER     | update_api_keys_updated_at                       | api_keys              |

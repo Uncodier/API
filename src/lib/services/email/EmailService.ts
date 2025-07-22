@@ -282,6 +282,260 @@ export class EmailService {
   }
 
   /**
+   * Elimina un email del servidor IMAP
+   * @param emailConfig Configuración del servidor de email
+   * @param emailId ID del email a eliminar (UID)
+   * @param isFromSent Si el email está en la carpeta de enviados (true) o en INBOX (false)
+   */
+  static async deleteEmail(
+    emailConfig: EmailConfig,
+    emailId: string,
+    isFromSent: boolean = false
+  ): Promise<boolean> {
+    let client: ImapFlow | undefined;
+    
+    try {
+      console.log(`[EmailService] 🗑️ Iniciando eliminación de email ID: ${emailId} ${isFromSent ? '(enviados)' : '(recibidos)'}`);
+
+      // Validar configuración básica
+      if (!emailConfig.password && !emailConfig.accessToken) {
+        throw new Error('No se proporcionó contraseña ni token de acceso OAuth2');
+      }
+
+      if (!emailConfig.user && !emailConfig.email) {
+        throw new Error('No se proporcionó usuario o email');
+      }
+
+      // Parse ports to ensure they are numbers
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') {
+        imapPort = parseInt(imapPort, 10);
+      }
+
+      if (isNaN(imapPort) || imapPort <= 0) {
+        throw new Error(`Puerto IMAP inválido: ${imapPort}`);
+      }
+      
+      // Create ImapFlow connection configuration
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: {
+          rejectUnauthorized: false
+        }
+      };
+
+      // Configure authentication
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        console.log(`[EmailService] 🔐 Usando autenticación OAuth2 para eliminación`);
+        imapConfig.auth = {
+          user: emailConfig.user || emailConfig.email,
+          accessToken: emailConfig.accessToken
+        };
+      } else {
+        console.log(`[EmailService] 🔐 Usando autenticación con contraseña para eliminación`);
+        imapConfig.auth = {
+          user: emailConfig.user || emailConfig.email,
+          pass: emailConfig.password
+        };
+      }
+
+      console.log(`[EmailService] 📡 Conectando a servidor IMAP para eliminación: ${imapConfig.host}:${imapConfig.port}`);
+      
+      // Create ImapFlow client
+      client = new ImapFlow(imapConfig);
+      
+      // Connect to the server with timeout
+      const connectionPromise = client.connect();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout de conexión IMAP (30s)')), 30000);
+      });
+
+      await Promise.race([connectionPromise, timeoutPromise]);
+      console.log(`[EmailService] ✅ Conexión IMAP establecida para eliminación`);
+      
+      let mailboxName = 'INBOX';
+      
+      // Si es de enviados, necesitamos detectar la carpeta de enviados
+      if (isFromSent) {
+        try {
+          console.log(`[EmailService] 🔍 Detectando carpeta de enviados...`);
+          const mailboxList = await client.list();
+          const normalizedMailboxes: MailboxInfo[] = MailboxDetectorService.normalizeMailboxInfo(mailboxList);
+          
+          const detectionResult = MailboxDetectorService.detectSentFolder(
+            normalizedMailboxes,
+            imapConfig.host,
+            imapConfig.auth?.user || emailConfig.user || emailConfig.email
+          );
+          
+          if (detectionResult.found && detectionResult.folderName) {
+            mailboxName = detectionResult.folderName;
+            console.log(`[EmailService] ✅ Carpeta de enviados detectada para eliminación: "${mailboxName}"`);
+          } else {
+            console.warn(`[EmailService] ⚠️ No se pudo detectar carpeta de enviados, usando INBOX`);
+          }
+        } catch (listError) {
+          console.warn(`[EmailService] ⚠️ Error detectando carpeta de enviados:`, listError);
+        }
+      }
+      
+      // Open mailbox with write permissions
+      console.log(`[EmailService] 📂 Abriendo ${mailboxName} para eliminación...`);
+      const lock = await client.getMailboxLock(mailboxName);
+      
+      try {
+        await client.mailboxOpen(mailboxName);
+        
+        // Convert string ID to number if needed
+        const uid = parseInt(emailId, 10);
+        if (isNaN(uid)) {
+          throw new Error(`ID de email inválido: ${emailId}`);
+        }
+        
+        console.log(`[EmailService] 🔍 Verificando existencia del email UID: ${uid}...`);
+        
+                 // First, check if the email exists
+         const messages = [];
+         try {
+           for await (const message of client.fetch(uid.toString(), { uid: true, envelope: true })) {
+             messages.push(message);
+           }
+         } catch (fetchError) {
+           console.error(`[EmailService] ❌ Error verificando email UID ${uid}:`, fetchError);
+           throw new Error(`No se pudo verificar el email con UID ${uid}`);
+         }
+        
+        if (messages.length === 0) {
+          console.warn(`[EmailService] ⚠️ Email con UID ${uid} no encontrado en ${mailboxName}`);
+          return false;
+        }
+        
+        console.log(`[EmailService] ✅ Email UID ${uid} encontrado, procediendo con eliminación...`);
+        
+                 // Mark email as deleted using the \Deleted flag
+         try {
+           await client.messageFlagsAdd(uid.toString(), ['\\Deleted'], { uid: true });
+           console.log(`[EmailService] 🏷️ Email UID ${uid} marcado para eliminación`);
+         } catch (flagError) {
+           console.error(`[EmailService] ❌ Error marcando email para eliminación:`, flagError);
+           throw new Error(`No se pudo marcar el email UID ${uid} para eliminación`);
+         }
+        
+        // Expunge to permanently delete marked emails
+        try {
+          await client.mailboxClose();
+          console.log(`[EmailService] 🗑️ Email UID ${uid} eliminado permanentemente de ${mailboxName}`);
+          return true;
+        } catch (expungeError) {
+          console.error(`[EmailService] ❌ Error expunging emails:`, expungeError);
+          throw new Error(`Email marcado para eliminación pero no se pudo confirmar la eliminación permanente`);
+        }
+        
+      } finally {
+        // Always release the lock
+        try {
+          lock.release();
+          console.log(`[EmailService] 🔓 Lock de ${mailboxName} liberado`);
+        } catch (lockError) {
+          console.warn(`[EmailService] ⚠️ Error liberando lock de ${mailboxName}:`, lockError);
+        }
+      }
+      
+    } catch (error) {
+      console.error(`[EmailService] 💥 Error crítico en deleteEmail:`, error);
+      
+      // Provide more specific error messages
+      let errorMessage = error instanceof Error ? error.message : String(error);
+      
+      if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
+        errorMessage = `No se pudo conectar al servidor IMAP: ${emailConfig.imapHost || emailConfig.host || 'imap.gmail.com'}`;
+      } else if (errorMessage.includes('ECONNREFUSED')) {
+        errorMessage = `Conexión rechazada por el servidor IMAP en puerto ${emailConfig.imapPort || 993}`;
+      } else if (errorMessage.includes('authentication') || errorMessage.includes('login')) {
+        errorMessage = `Error de autenticación: credenciales inválidas`;
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
+        errorMessage = `Timeout de conexión al servidor IMAP`;
+      }
+      
+      throw new Error(`Email delete error: ${errorMessage}`);
+    } finally {
+      // Clean up connection
+      if (client) {
+        try {
+          await client.logout();
+          console.log(`[EmailService] 👋 Desconectado del servidor IMAP (eliminación)`);
+        } catch (logoutError) {
+          console.warn(`[EmailService] ⚠️ Error durante logout IMAP (eliminación):`, logoutError);
+        }
+      }
+    }
+  }
+
+  /**
+   * Elimina múltiples emails del servidor IMAP
+   * @param emailConfig Configuración del servidor de email
+   * @param emailIds Array de IDs de emails a eliminar
+   * @param isFromSent Si los emails están en la carpeta de enviados
+   */
+  static async deleteMultipleEmails(
+    emailConfig: EmailConfig,
+    emailIds: string[],
+    isFromSent: boolean = false
+  ): Promise<{ success: number; failed: number; results: Array<{ id: string; success: boolean; error?: string }> }> {
+    console.log(`[EmailService] 🗑️ Iniciando eliminación múltiple de ${emailIds.length} emails ${isFromSent ? '(enviados)' : '(recibidos)'}`);
+    
+    const results: Array<{ id: string; success: boolean; error?: string }> = [];
+    let successCount = 0;
+    let failedCount = 0;
+    
+    // Process emails in batches to avoid overwhelming the server
+    const batchSize = 10;
+    for (let i = 0; i < emailIds.length; i += batchSize) {
+      const batch = emailIds.slice(i, i + batchSize);
+      console.log(`[EmailService] 📦 Procesando lote ${Math.floor(i / batchSize) + 1}/${Math.ceil(emailIds.length / batchSize)}`);
+      
+      const batchPromises = batch.map(async (emailId) => {
+        try {
+          const success = await this.deleteEmail(emailConfig, emailId, isFromSent);
+          if (success) {
+            successCount++;
+            return { id: emailId, success: true };
+          } else {
+            failedCount++;
+            return { id: emailId, success: false, error: 'Email no encontrado' };
+          }
+        } catch (error) {
+          failedCount++;
+          return { 
+            id: emailId, 
+            success: false, 
+            error: error instanceof Error ? error.message : String(error)
+          };
+        }
+      });
+      
+      const batchResults = await Promise.all(batchPromises);
+      results.push(...batchResults);
+      
+      // Small delay between batches to be gentle on the server
+      if (i + batchSize < emailIds.length) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    }
+    
+    console.log(`[EmailService] ✅ Eliminación múltiple completada: ${successCount} exitosos, ${failedCount} fallidos`);
+    
+    return {
+      success: successCount,
+      failed: failedCount,
+      results
+    };
+  }
+
+  /**
    * Obtiene emails enviados desde un servidor IMAP usando ImapFlow
    * @param emailConfig Configuración del servidor de email
    * @param limit Número máximo de emails a obtener

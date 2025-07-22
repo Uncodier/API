@@ -77,15 +77,15 @@ async function createChannelConversation(data: {
       return null;
     }
 
-    // 🔧 CORRECCIÓN: Determinar el command_id más relevante para la conversación
+    // 🔧 CORRECCIÓN: Priorizar sales command_id sobre copywriter
     let effectiveCommandId: string | null = null;
     
-    if (data.commandIds?.copywriter && isValidUUID(data.commandIds.copywriter)) {
-      effectiveCommandId = data.commandIds.copywriter;
-      console.log(`📝 Usando copywriter command_id para conversación: ${effectiveCommandId}`);
-    } else if (data.commandIds?.sales && isValidUUID(data.commandIds.sales)) {
+    if (data.commandIds?.sales && isValidUUID(data.commandIds.sales)) {
       effectiveCommandId = data.commandIds.sales;
       console.log(`💼 Usando sales command_id para conversación: ${effectiveCommandId}`);
+    } else if (data.commandIds?.copywriter && isValidUUID(data.commandIds.copywriter)) {
+      effectiveCommandId = data.commandIds.copywriter;
+      console.log(`📝 Usando copywriter command_id como fallback para conversación: ${effectiveCommandId}`);
     }
 
     const conversationData: any = {
@@ -200,16 +200,15 @@ async function createChannelConversationsAndMessages(
         messageRecord.agent_id = agentId;
       }
 
-      // 🔧 CORRECCIÓN: Guardar command_id directamente en el mensaje
-      // Determinar qué command_id usar basado en el canal o usar el principal
+      // 🔧 CORRECCIÓN: Priorizar sales command_id sobre copywriter
       let effectiveCommandId: string | null = null;
       
-      if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
-        effectiveCommandId = commandIds.copywriter; // Priorizar copywriter si existe
-        console.log(`📝 Usando copywriter command_id para mensaje: ${effectiveCommandId}`);
-      } else if (commandIds?.sales && isValidUUID(commandIds.sales)) {
+      if (commandIds?.sales && isValidUUID(commandIds.sales)) {
         effectiveCommandId = commandIds.sales;
         console.log(`💼 Usando sales command_id para mensaje: ${effectiveCommandId}`);
+      } else if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
+        effectiveCommandId = commandIds.copywriter;
+        console.log(`📝 Usando copywriter command_id como fallback para mensaje: ${effectiveCommandId}`);
       }
       
       if (effectiveCommandId) {
@@ -276,15 +275,15 @@ This task was automatically created as part of the lead follow-up sequence to en
 
 Related conversation: ${conversationId}`;
 
-    // 🔧 CORRECCIÓN: Usar el command_id más relevante para la tarea
+    // 🔧 CORRECCIÓN: Priorizar sales command_id sobre copywriter
     let effectiveCommandId: string | undefined = undefined;
     
-    if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
-      effectiveCommandId = commandIds.copywriter;
-      console.log(`📝 Usando copywriter command_id para tarea: ${effectiveCommandId}`);
-    } else if (commandIds?.sales && isValidUUID(commandIds.sales)) {
+    if (commandIds?.sales && isValidUUID(commandIds.sales)) {
       effectiveCommandId = commandIds.sales;
       console.log(`💼 Usando sales command_id para tarea: ${effectiveCommandId}`);
+    } else if (commandIds?.copywriter && isValidUUID(commandIds.copywriter)) {
+      effectiveCommandId = commandIds.copywriter;
+      console.log(`📝 Usando copywriter command_id como fallback para tarea: ${effectiveCommandId}`);
     }
 
     const taskData = {
@@ -297,13 +296,14 @@ Related conversation: ${conversationId}`;
       user_id: userId,
       site_id: siteId,
       lead_id: leadData?.id || undefined,
+      conversation_id: conversationId, // 🔧 CORRECCIÓN: Agregar conversation_id al task
       command_id: effectiveCommandId,
       notes: `Auto-generated from lead follow-up sequence. Conversation ID: ${conversationId}${effectiveCommandId ? `. Command ID: ${effectiveCommandId}` : ''}`,
       scheduled_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Scheduled for tomorrow
     };
 
     const task = await createTask(taskData);
-    console.log(`✅ Tarea de awareness creada: ${task.id}${effectiveCommandId ? ` con command_id: ${effectiveCommandId}` : ' sin command_id'}`);
+    console.log(`✅ Tarea de awareness creada: ${task.id} con conversation_id: ${conversationId}${effectiveCommandId ? ` y command_id: ${effectiveCommandId}` : ' sin command_id'}`);
     
     return task.id;
   } catch (error) {

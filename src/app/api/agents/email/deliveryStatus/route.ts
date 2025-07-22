@@ -1,0 +1,436 @@
+/**
+ * API de Email Delivery Status - Maneja correos de Mail Delivery Subsystem (bounced emails)
+ * Route: POST /api/agents/email/deliveryStatus
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
+import { z } from 'zod';
+import { EmailService } from '@/lib/services/email/EmailService';
+import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { WorkflowService } from '@/lib/services/workflow-service';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
+
+// Create schemas for request validation
+const DeliveryStatusRequestSchema = z.object({
+  site_id: z.string().min(1, "Site ID is required"),
+  limit: z.number().default(50).optional(),
+  since_date: z.string().optional().refine(
+    (date) => !date || !isNaN(Date.parse(date)),
+    "since_date debe ser una fecha válida en formato ISO"
+  ),
+});
+
+// Error codes
+const ERROR_CODES = {
+  INVALID_REQUEST: 'INVALID_REQUEST',
+  EMAIL_CONFIG_NOT_FOUND: 'EMAIL_CONFIG_NOT_FOUND',
+  EMAIL_FETCH_ERROR: 'EMAIL_FETCH_ERROR',
+  SYSTEM_ERROR: 'SYSTEM_ERROR',
+  WORKFLOW_ERROR: 'WORKFLOW_ERROR',
+  EMAIL_DELETE_ERROR: 'EMAIL_DELETE_ERROR'
+};
+
+/**
+ * Extrae el email original de un mensaje de bounce
+ */
+function extractOriginalEmailFromBounce(bounceMessage: string): string | null {
+  // Patrones comunes para extraer el email de un mensaje de bounce
+  const patterns = [
+    /The following addresses had permanent fatal errors:\s*([^\s<>]+@[^\s<>]+)/i,
+    /failed delivery to:\s*([^\s<>]+@[^\s<>]+)/i,
+    /could not be delivered to:\s*([^\s<>]+@[^\s<>]+)/i,
+    /delivery to the following recipient failed:\s*([^\s<>]+@[^\s<>]+)/i,
+    /recipient address rejected:\s*([^\s<>]+@[^\s<>]+)/i,
+    /user unknown.*:\s*([^\s<>]+@[^\s<>]+)/i,
+    /mailbox unavailable.*:\s*([^\s<>]+@[^\s<>]+)/i,
+    /final-recipient:\s*rfc822;\s*([^\s<>]+@[^\s<>]+)/i,
+    /<([^\s<>]+@[^\s<>]+)>:?\s*(?:host|delivery)/i,
+    /to\s+([^\s<>]+@[^\s<>]+).*failed/i,
+    /([^\s<>]+@[^\s<>]+).*user unknown/i,
+    /([^\s<>]+@[^\s<>]+).*does not exist/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = bounceMessage.match(pattern);
+    if (match && match[1]) {
+      const email = match[1].trim().toLowerCase();
+      // Validar que el email extraído sea válido
+      if (isValidEmail(email)) {
+        return email;
+      }
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Busca el lead_id basado en el email extraído del bounce
+ */
+async function findLeadByEmail(email: string, siteId: string): Promise<string | null> {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .select('id')
+      .eq('email', email)
+      .eq('site_id', siteId)
+      .single();
+
+    if (error || !data) {
+      console.log(`[DELIVERY_STATUS] No se encontró lead para email: ${email}`);
+      return null;
+    }
+
+    return data.id;
+  } catch (error) {
+    console.error(`[DELIVERY_STATUS] Error buscando lead por email ${email}:`, error);
+    return null;
+  }
+}
+
+/**
+ * Identifica si un email es un bounce/delivery failure de Mail Delivery Subsystem
+ */
+function isBounceEmail(email: any): boolean {
+  const from = (email.from || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  const body = (email.body || '').toLowerCase();
+
+  // Verificar si viene de Mail Delivery Subsystem o similar
+  const bounceFromPatterns = [
+    'mail delivery subsystem',
+    'postmaster',
+    'mailer-daemon',
+    'mail delivery system',
+    'delivery status notification',
+    'undelivered mail returned',
+    'bounce',
+    'delivery failure',
+    'mail administrator'
+  ];
+
+  const fromMatches = bounceFromPatterns.some(pattern => from.includes(pattern));
+
+  // Verificar patrones en el asunto
+  const bounceSubjectPatterns = [
+    'undelivered mail returned',
+    'delivery status notification',
+    'failure notice',
+    'mail delivery failed',
+    'returned mail',
+    'delivery failure',
+    'bounce',
+    'undeliverable',
+    'mail delivery subsystem',
+    'permanent failure',
+    'delivery report'
+  ];
+
+  const subjectMatches = bounceSubjectPatterns.some(pattern => subject.includes(pattern));
+
+  // Verificar patrones en el cuerpo del mensaje
+  const bounceBodyPatterns = [
+    'permanent failure',
+    'delivery failed',
+    'user unknown',
+    'mailbox not found',
+    'recipient address rejected',
+    'does not exist',
+    'mailbox unavailable',
+    'delivery to the following recipient failed',
+    'the following addresses had permanent fatal errors',
+    'host unknown'
+  ];
+
+  const bodyMatches = bounceBodyPatterns.some(pattern => body.includes(pattern));
+
+  return fromMatches || subjectMatches || bodyMatches;
+}
+
+/**
+ * Función para validar email
+ */
+function isValidEmail(email: string): boolean {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+/**
+ * Elimina un email del servidor IMAP
+ */
+async function deleteEmailFromServer(emailConfig: any, emailId: string, isFromSent: boolean = false): Promise<boolean> {
+  try {
+    console.log(`[DELIVERY_STATUS] 🗑️ Eliminando email ${emailId} del servidor (isFromSent: ${isFromSent})`);
+    const success = await EmailService.deleteEmail(emailConfig, emailId, isFromSent);
+    
+    if (success) {
+      console.log(`[DELIVERY_STATUS] ✅ Email ${emailId} eliminado exitosamente`);
+    } else {
+      console.log(`[DELIVERY_STATUS] ⚠️ Email ${emailId} no pudo ser eliminado (posiblemente no encontrado)`);
+    }
+    
+    return success;
+  } catch (error) {
+    console.error(`[DELIVERY_STATUS] ❌ Error eliminando email ${emailId}:`, error);
+    return false;
+  }
+}
+
+/**
+ * Main POST endpoint para procesar delivery status
+ */
+export async function POST(request: NextRequest) {
+  try {
+    // Get and validate request data
+    const requestData = await request.json();
+    console.log('[DELIVERY_STATUS] Request data received:', JSON.stringify(requestData, null, 2));
+    
+    // Normalizar datos del request
+    const normalizedData = CaseConverterService.normalizeRequestData(requestData, 'snake');
+    console.log('[DELIVERY_STATUS] Normalized data:', JSON.stringify(normalizedData, null, 2));
+    
+    const validationResult = DeliveryStatusRequestSchema.safeParse(normalizedData);
+    
+    if (!validationResult.success) {
+      console.error("[DELIVERY_STATUS] Validation error details:", JSON.stringify({
+        error: validationResult.error.format(),
+        issues: validationResult.error.issues,
+      }, null, 2));
+      
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: ERROR_CODES.INVALID_REQUEST,
+            message: "Parámetros de solicitud inválidos",
+            details: validationResult.error.format(),
+          },
+        },
+        { status: 400 }
+      );
+    }
+    
+    console.log('[DELIVERY_STATUS] Validation successful, parsed data:', JSON.stringify(validationResult.data, null, 2));
+    
+    // Extraer parámetros
+    const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
+    const limit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 50;
+    const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
+    
+    console.log('[DELIVERY_STATUS] Extracted parameters:', {
+      siteId, limit, sinceDate
+    });
+    
+    try {
+      // Get email configuration
+      console.log(`[DELIVERY_STATUS] 🔧 Obteniendo configuración de email para sitio: ${siteId}`);
+      const emailConfig = await EmailConfigService.getEmailConfig(siteId);
+      console.log(`[DELIVERY_STATUS] ✅ Configuración de email obtenida exitosamente`);
+      
+      // Fetch emails from INBOX
+      console.log(`[DELIVERY_STATUS] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
+      const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
+      
+      // Filter for bounce emails from Mail Delivery Subsystem
+      console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
+      const bounceEmails = allEmails.filter(email => isBounceEmail(email));
+      console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
+      
+      if (bounceEmails.length === 0) {
+        return NextResponse.json({
+          success: true,
+          message: "No se encontraron emails de Mail Delivery Subsystem",
+          totalEmails: allEmails.length,
+          bounceEmails: 0,
+          processedBounces: 0,
+          workflowsTriggered: 0,
+          emailsDeleted: 0
+        });
+      }
+      
+      // Process each bounce email
+      console.log(`[DELIVERY_STATUS] 🔄 Procesando ${bounceEmails.length} bounce emails...`);
+      const results = [];
+      let workflowsTriggered = 0;
+      let emailsDeleted = 0;
+      
+      for (const bounceEmail of bounceEmails) {
+        try {
+          console.log(`[DELIVERY_STATUS] 📧 Procesando bounce email ID: ${bounceEmail.id}, Subject: ${bounceEmail.subject}`);
+          
+          // Extract original email address from bounce message
+          const originalEmail = extractOriginalEmailFromBounce(bounceEmail.body || '');
+          
+          if (!originalEmail) {
+            console.log(`[DELIVERY_STATUS] ⚠️ No se pudo extraer email original del bounce: ${bounceEmail.id}`);
+            results.push({
+              bounceEmailId: bounceEmail.id,
+              success: false,
+              reason: 'No se pudo extraer email original del mensaje de bounce'
+            });
+            continue;
+          }
+          
+          console.log(`[DELIVERY_STATUS] 📮 Email original extraído: ${originalEmail}`);
+          
+          // Find lead by email
+          const leadId = await findLeadByEmail(originalEmail, siteId);
+          
+          if (!leadId) {
+            console.log(`[DELIVERY_STATUS] ⚠️ No se encontró lead para email: ${originalEmail}`);
+            results.push({
+              bounceEmailId: bounceEmail.id,
+              originalEmail,
+              success: false,
+              reason: 'No se encontró lead asociado al email'
+            });
+            continue;
+          }
+          
+          console.log(`[DELIVERY_STATUS] 👤 Lead encontrado: ${leadId} para email: ${originalEmail}`);
+          
+                     // Call leadInvalidationWorkflow
+           console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación de lead...`);
+           const workflowService = WorkflowService.getInstance();
+           
+           const workflowResult = await workflowService.leadInvalidation(
+             {
+               lead_id: leadId,
+               email: originalEmail,
+               site_id: siteId,
+               reason: 'email_bounce',
+               bounce_details: {
+                 bounce_email_id: bounceEmail.id,
+                 bounce_subject: bounceEmail.subject,
+                 bounce_from: bounceEmail.from,
+                 bounce_date: bounceEmail.date,
+                 bounce_message: bounceEmail.body?.substring(0, 500) // Limitar el mensaje
+               }
+             },
+             {
+               taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+               workflowId: `lead-invalidation-${leadId}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+               async: true, // Ejecutar de forma asíncrona
+               priority: 'high'
+             }
+           );
+          
+          if (workflowResult.success) {
+            console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
+            workflowsTriggered++;
+          } else {
+            console.error(`[DELIVERY_STATUS] ❌ Error en workflow de invalidación:`, workflowResult.error);
+          }
+          
+          // Delete the bounce email from server
+          console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email del servidor...`);
+          const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id, false);
+          
+          // Try to find and delete the original sent email (if exists)
+          // This is more complex as we need to search in sent folder
+          console.log(`[DELIVERY_STATUS] 🔍 Buscando email original enviado para eliminar...`);
+          
+          let originalEmailDeleted = false;
+          try {
+            // Fetch sent emails to find the original
+            const sentEmails = await EmailService.fetchSentEmails(emailConfig, 100, sinceDate);
+            const originalSentEmail = sentEmails.find(sentEmail => 
+              sentEmail.to && sentEmail.to.toLowerCase() === originalEmail.toLowerCase()
+            );
+            
+            if (originalSentEmail) {
+              console.log(`[DELIVERY_STATUS] 📮 Email original enviado encontrado: ${originalSentEmail.id}`);
+              originalEmailDeleted = await deleteEmailFromServer(emailConfig, originalSentEmail.id, true);
+              console.log(`[DELIVERY_STATUS] ${originalEmailDeleted ? '✅' : '❌'} Email original enviado ${originalEmailDeleted ? 'eliminado' : 'no pudo ser eliminado'}`);
+            } else {
+              console.log(`[DELIVERY_STATUS] ⚠️ No se encontró email original enviado para: ${originalEmail}`);
+            }
+          } catch (sentEmailError) {
+            console.error(`[DELIVERY_STATUS] ❌ Error buscando email original enviado:`, sentEmailError);
+          }
+          
+          if (bounceDeleted) {
+            emailsDeleted++;
+          }
+          if (originalEmailDeleted) {
+            emailsDeleted++;
+          }
+          
+          results.push({
+            bounceEmailId: bounceEmail.id,
+            originalEmail,
+            leadId,
+            workflowTriggered: workflowResult.success,
+            workflowId: workflowResult.workflowId,
+            bounceEmailDeleted: bounceDeleted,
+            originalEmailDeleted,
+            success: true
+          });
+          
+        } catch (processingError) {
+          console.error(`[DELIVERY_STATUS] ❌ Error procesando bounce email ${bounceEmail.id}:`, processingError);
+          results.push({
+            bounceEmailId: bounceEmail.id,
+            success: false,
+            error: processingError instanceof Error ? processingError.message : String(processingError)
+          });
+        }
+      }
+      
+      console.log(`[DELIVERY_STATUS] ✅ Procesamiento completado. Workflows: ${workflowsTriggered}, Emails eliminados: ${emailsDeleted}`);
+      
+      return NextResponse.json({
+        success: true,
+        message: "Procesamiento de delivery status completado",
+        totalEmails: allEmails.length,
+        bounceEmails: bounceEmails.length,
+        processedBounces: results.length,
+        workflowsTriggered,
+        emailsDeleted,
+        results
+      });
+      
+    } catch (error: unknown) {
+      console.error(`[DELIVERY_STATUS] 💥 Error en el flujo principal:`, error);
+      
+      const isConfigError = error instanceof Error && (
+        error.message.includes('settings') || 
+        error.message.includes('token')
+      );
+      
+      const errorCode = isConfigError ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR;
+      const errorMessage = error instanceof Error ? error.message : "Error procesando delivery status";
+      
+      console.error(`[DELIVERY_STATUS] 🚨 Retornando error: ${errorCode} - ${errorMessage}`);
+      
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: errorCode,
+            message: errorMessage,
+          },
+        },
+        { status: isConfigError ? 404 : 500 }
+      );
+    }
+  } catch (error: unknown) {
+    return NextResponse.json({
+      success: false,
+      error: {
+        code: ERROR_CODES.SYSTEM_ERROR,
+        message: error instanceof Error ? error.message : "Error interno del sistema",
+      }
+    }, { status: 500 });
+  }
+}
+
+// GET method for backward compatibility
+export async function GET(request: NextRequest) {
+  return NextResponse.json({
+    success: true,
+    message: "This endpoint requires a POST request with delivery status analysis parameters. Please refer to the documentation."
+  }, { status: 200 });
+} 

@@ -582,6 +582,87 @@ export class DataWorkflowService extends BaseWorkflowService {
   }
 
   /**
+   * Ejecuta el workflow para invalidación de leads
+   */
+  public async leadInvalidation(args: { 
+    lead_id: string; 
+    email: string; 
+    site_id: string; 
+    reason: 'email_bounce' | 'invalid_email' | 'manual_invalidation';
+    bounce_details?: {
+      bounce_email_id: string;
+      bounce_subject?: string;
+      bounce_from?: string;
+      bounce_date?: string;
+      bounce_message?: string;
+    };
+    metadata?: {
+      invalidated_by?: string;
+      user_id?: string;
+      additional_info?: any;
+    };
+  }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.lead_id || !args.email || !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren lead_id, email y site_id para la invalidación de lead'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `lead-invalidation-${args.lead_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🚫 Iniciando workflow de invalidación de lead: ${workflowId}`);
+      console.log(`👤 Lead ID: ${args.lead_id}, Email: ${args.email}, Razón: ${args.reason}`);
+
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('leadInvalidationWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        const result = await client.workflow.execute('leadInvalidationWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de invalidación de lead:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de invalidación de lead'
+        }
+      };
+    }
+  }
+
+  /**
    * Ejecuta el workflow de prospección diaria
    */
   public async dailyProspectionWorkflow(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {

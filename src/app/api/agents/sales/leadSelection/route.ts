@@ -305,6 +305,133 @@ async function findActiveSalesAgent(siteId: string): Promise<{agentId: string, u
   return await findActiveAgentByRole(siteId, 'Sales/CRM Specialist');
 }
 
+// Función para obtener canales configurados del sitio
+async function getSiteChannelsConfiguration(siteId: string): Promise<{
+  hasChannels: boolean,
+  configuredChannels: string[],
+  channelsDetails: Record<string, any>,
+  warning?: string
+}> {
+  try {
+    console.log(`📡 Obteniendo configuración de canales para sitio: ${siteId}`);
+    
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', siteId)
+      .single();
+    
+    if (error || !data?.channels) {
+      const warning = `⚠️ Site ${siteId} has NO channels configured in settings. Lead contact recommendations will be limited.`;
+      console.warn(warning);
+      
+      return {
+        hasChannels: false,
+        configuredChannels: [],
+        channelsDetails: {},
+        warning: 'No channels configured - lead contact options will be limited'
+      };
+    }
+    
+    const channels = data.channels;
+    const configuredChannels: string[] = [];
+    const channelsDetails: Record<string, any> = {};
+    
+    // Verificar cada tipo de canal disponible
+    if (channels.email && (channels.email.email || channels.email.aliases)) {
+      configuredChannels.push('email');
+      channelsDetails.email = {
+        type: 'email',
+        email: channels.email.email || null,
+        aliases: channels.email.aliases || [],
+        description: 'Email marketing and outreach'
+      };
+    }
+    
+    if (channels.whatsapp && channels.whatsapp.phone_number) {
+      configuredChannels.push('whatsapp');
+      channelsDetails.whatsapp = {
+        type: 'whatsapp',
+        phone_number: channels.whatsapp.phone_number,
+        description: 'WhatsApp Business messaging'
+      };
+    }
+    
+    if (channels.phone && channels.phone.number) {
+      configuredChannels.push('phone');
+      channelsDetails.phone = {
+        type: 'phone',
+        number: channels.phone.number,
+        description: 'Direct phone calls'
+      };
+    }
+    
+    if (channels.sms && channels.sms.phone_number) {
+      configuredChannels.push('sms');
+      channelsDetails.sms = {
+        type: 'sms',
+        phone_number: channels.sms.phone_number,
+        description: 'SMS text messaging'
+      };
+    }
+    
+    if (channels.chat && channels.chat.enabled) {
+      configuredChannels.push('chat');
+      channelsDetails.chat = {
+        type: 'chat',
+        enabled: channels.chat.enabled,
+        description: 'Live chat on website'
+      };
+    }
+    
+    if (channels.social && (channels.social.facebook || channels.social.twitter || channels.social.linkedin)) {
+      configuredChannels.push('social');
+      channelsDetails.social = {
+        type: 'social',
+        platforms: {
+          facebook: channels.social.facebook || null,
+          twitter: channels.social.twitter || null,
+          linkedin: channels.social.linkedin || null
+        },
+        description: 'Social media outreach'
+      };
+    }
+    
+    if (configuredChannels.length === 0) {
+      const warning = `⚠️ Site ${siteId} has channels object but NO FUNCTIONAL channels configured. Available channels: ${Object.keys(channels).join(', ')}. Lead contact recommendations will be limited.`;
+      console.warn(warning);
+      
+      return {
+        hasChannels: false,
+        configuredChannels: [],
+        channelsDetails: {},
+        warning: 'Channels object exists but no functional channels configured - lead contact options will be limited'
+      };
+    }
+    
+    console.log(`✅ Site ${siteId} has ${configuredChannels.length} channels configured: ${configuredChannels.join(', ')}`);
+    
+    return {
+      hasChannels: true,
+      configuredChannels,
+      channelsDetails,
+      warning: undefined
+    };
+    
+  } catch (error) {
+    console.error('Error al verificar configuración de canales del sitio:', error);
+    const warning = `⚠️ ERROR: Could not verify channels configuration for site ${siteId}. Lead contact recommendations may be affected.`;
+    console.warn(warning);
+    
+    return {
+      hasChannels: false,
+      configuredChannels: [],
+      channelsDetails: {},
+      warning: 'Could not verify channels configuration - lead contact recommendations may be affected'
+    };
+  }
+}
+
 // Función para obtener team members disponibles para asignación
 async function getAvailableTeamMembers(siteId: string): Promise<any[]> {
   try {
@@ -578,6 +705,9 @@ export async function POST(request: Request) {
       teamMembers = await getAvailableTeamMembers(siteId);
     }
 
+    // Obtener configuración de canales del sitio
+    const siteChannelsConfig = await getSiteChannelsConfiguration(siteId);
+
     // Obtener leads convertidos y perdidos por segmento
     const convertedLeadsBySegment = await getConvertedLeadsBySegment(siteId);
     const lostLeadsBySegment = await getLostLeadsBySegment(siteId);
@@ -715,6 +845,51 @@ export async function POST(request: Request) {
         contextMessage += `   └─ Email: ${member.email}\n\n`;
       });
     }
+
+    // Añadir información de canales configurados del sitio
+    contextMessage += `=== SITE CHANNELS CONFIGURATION ===\n\n`;
+    if (siteChannelsConfig.hasChannels) {
+      contextMessage += `Site has ${siteChannelsConfig.configuredChannels.length} channels configured:\n\n`;
+      siteChannelsConfig.configuredChannels.forEach((channelType, index) => {
+        const channelDetails = siteChannelsConfig.channelsDetails[channelType];
+        contextMessage += `${index + 1}. ${channelType.toUpperCase()}\n`;
+        contextMessage += `   ├─ Type: ${channelDetails.type}\n`;
+        contextMessage += `   ├─ Description: ${channelDetails.description}\n`;
+        
+        if (channelDetails.email) {
+          contextMessage += `   ├─ Email: ${channelDetails.email}\n`;
+        }
+        if (channelDetails.aliases && channelDetails.aliases.length > 0) {
+          contextMessage += `   ├─ Aliases: ${channelDetails.aliases.join(', ')}\n`;
+        }
+        if (channelDetails.phone_number) {
+          contextMessage += `   ├─ Phone: ${channelDetails.phone_number}\n`;
+        }
+        if (channelDetails.number) {
+          contextMessage += `   ├─ Number: ${channelDetails.number}\n`;
+        }
+        if (channelDetails.enabled !== undefined) {
+          contextMessage += `   ├─ Enabled: ${channelDetails.enabled}\n`;
+        }
+        if (channelDetails.platforms) {
+          const platforms = Object.entries(channelDetails.platforms)
+            .filter(([_, url]) => url)
+            .map(([platform, url]) => `${platform}: ${url}`)
+            .join(', ');
+          if (platforms) {
+            contextMessage += `   ├─ Platforms: ${platforms}\n`;
+          }
+        }
+        contextMessage += `   └─ Available for lead contact\n\n`;
+      });
+    } else {
+      contextMessage += `⚠️ WARNING: Site has NO channels configured!\n`;
+      contextMessage += `   This will severely limit contact recommendations.\n`;
+      if (siteChannelsConfig.warning) {
+        contextMessage += `   Details: ${siteChannelsConfig.warning}\n`;
+      }
+      contextMessage += `\n`;
+    }
     
     // Añadir instrucciones para el agente
     contextMessage += `=== ANALYSIS INSTRUCTIONS ===\n\n`;
@@ -722,6 +897,18 @@ export async function POST(request: Request) {
     contextMessage += `1. CONTACT PRIORITY: For each company with multiple leads, determine which lead should be contacted FIRST and why\n`;
     contextMessage += `2. STRATEGIC ACCOUNT ASSIGNMENTS: Identify ONLY the most high-value companies that truly require dedicated team member assignment\n`;
     contextMessage += `3. CONTACT STRATEGY: Recommend the best approach for each priority lead\n\n`;
+    contextMessage += `CRITICAL CHANNEL RESTRICTIONS:\n`;
+    if (siteChannelsConfig.hasChannels) {
+      contextMessage += `- ONLY use channels that are configured for this site: ${siteChannelsConfig.configuredChannels.join(', ')}\n`;
+      contextMessage += `- DO NOT recommend channels that are not configured for this site\n`;
+      contextMessage += `- When a lead has multiple contact methods (email, phone, etc.), prioritize channels that the site has configured\n`;
+      contextMessage += `- If a lead's preferred channel is not configured, suggest the best alternative from available channels\n`;
+    } else {
+      contextMessage += `- ⚠️ CRITICAL: Site has NO channels configured! Contact recommendations will be severely limited\n`;
+      contextMessage += `- Recommend that the site configure at least one communication channel before implementing contact strategies\n`;
+      contextMessage += `- Focus on lead prioritization and preparation rather than specific contact methods\n`;
+    }
+    contextMessage += `\n`;
     contextMessage += `CRITICAL ASSIGNMENT GUIDELINES:\n`;
     contextMessage += `- DO NOT assign ALL leads to team members\n`;
     contextMessage += `- ONLY assign leads from companies that represent significant strategic value (top 20-30% of accounts)\n`;
@@ -736,7 +923,9 @@ export async function POST(request: Request) {
     contextMessage += `- Company size and potential value\n`;
     contextMessage += `- Existing relationships and conversation history\n`;
     contextMessage += `- Task completion status and follow-up needs\n`;
-    contextMessage += `- Patterns from converted vs lost leads in same segments\n\n`;
+    contextMessage += `- Patterns from converted vs lost leads in same segments\n`;
+    contextMessage += `- Available site communication channels and their capabilities\n`;
+    contextMessage += `- Lead contact preferences vs site channel availability\n\n`;
     contextMessage += `Priority Factors Configuration:\n`;
     contextMessage += `- Recent Activity Weight: ${priorityFactors.recentActivity}\n`;
     contextMessage += `- Company Size Weight: ${priorityFactors.companySize}\n`;
@@ -870,6 +1059,12 @@ export async function POST(request: Request) {
         important_accounts: importantAccounts,
         contact_recommendations: contactRecommendations,
         team_members: teamMembers,
+        site_channels: {
+          has_channels: siteChannelsConfig.hasChannels,
+          configured_channels: siteChannelsConfig.configuredChannels,
+          channels_details: siteChannelsConfig.channelsDetails,
+          warning: siteChannelsConfig.warning
+        },
         command_info: {
           command_id: commandId,
           db_uuid: dbUuid

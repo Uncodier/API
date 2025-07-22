@@ -102,6 +102,27 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.dailyProspectionWorkflow(args, options);
   }
 
+  public async leadInvalidation(args: { 
+    lead_id: string; 
+    email: string; 
+    site_id: string; 
+    reason: 'email_bounce' | 'invalid_email' | 'manual_invalidation';
+    bounce_details?: {
+      bounce_email_id: string;
+      bounce_subject?: string;
+      bounce_from?: string;
+      bounce_date?: string;
+      bounce_message?: string;
+    };
+    metadata?: {
+      invalidated_by?: string;
+      user_id?: string;
+      additional_info?: any;
+    };
+  }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.leadInvalidation(args, options);
+  }
+
   // Métodos de configuración y reporte (heredados de BaseWorkflowService)
   public getConfigurationReport(): {
     deploymentType: 'local' | 'cloud' | 'custom';
