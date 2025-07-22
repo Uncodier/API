@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { EmailFilterService } from '@/lib/services/email/EmailFilterService';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
@@ -89,64 +90,7 @@ async function findLeadByEmail(email: string, siteId: string): Promise<string | 
   }
 }
 
-/**
- * Identifica si un email es un bounce/delivery failure de Mail Delivery Subsystem
- */
-function isBounceEmail(email: any): boolean {
-  const from = (email.from || '').toLowerCase();
-  const subject = (email.subject || '').toLowerCase();
-  const body = (email.body || '').toLowerCase();
 
-  // Verificar si viene de Mail Delivery Subsystem o similar
-  const bounceFromPatterns = [
-    'mail delivery subsystem',
-    'postmaster',
-    'mailer-daemon',
-    'mail delivery system',
-    'delivery status notification',
-    'undelivered mail returned',
-    'bounce',
-    'delivery failure',
-    'mail administrator'
-  ];
-
-  const fromMatches = bounceFromPatterns.some(pattern => from.includes(pattern));
-
-  // Verificar patrones en el asunto
-  const bounceSubjectPatterns = [
-    'undelivered mail returned',
-    'delivery status notification',
-    'failure notice',
-    'mail delivery failed',
-    'returned mail',
-    'delivery failure',
-    'bounce',
-    'undeliverable',
-    'mail delivery subsystem',
-    'permanent failure',
-    'delivery report'
-  ];
-
-  const subjectMatches = bounceSubjectPatterns.some(pattern => subject.includes(pattern));
-
-  // Verificar patrones en el cuerpo del mensaje
-  const bounceBodyPatterns = [
-    'permanent failure',
-    'delivery failed',
-    'user unknown',
-    'mailbox not found',
-    'recipient address rejected',
-    'does not exist',
-    'mailbox unavailable',
-    'delivery to the following recipient failed',
-    'the following addresses had permanent fatal errors',
-    'host unknown'
-  ];
-
-  const bodyMatches = bounceBodyPatterns.some(pattern => body.includes(pattern));
-
-  return fromMatches || subjectMatches || bodyMatches;
-}
 
 /**
  * Función para validar email
@@ -233,9 +177,12 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-      // Filter for bounce emails from Mail Delivery Subsystem
-      console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
-      const bounceEmails = allEmails.filter(email => isBounceEmail(email));
+      // Filter for bounce emails from Mail Delivery Subsystem usando EmailFilterService
+      console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure con EmailFilterService...`);
+      const bounceEmails = allEmails.filter(email => {
+        const validation = EmailFilterService.validateEmailNotDeliveryOrBounce(email);
+        return !validation.isValid; // Los emails inválidos son los bounce/delivery status que queremos procesar
+      });
       console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
       
       if (bounceEmails.length === 0) {

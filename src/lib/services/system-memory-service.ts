@@ -262,6 +262,72 @@ export class SystemMemoryService {
       };
     }
   }
+
+  /**
+   * Busca memorias por tipo y clave de cualquier sitio (sin restricción de siteId)
+   */
+  async findMemoriesGlobal(systemType: string, key: string): Promise<SystemMemoryListResult> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('system_memories')
+        .select('*')
+        .eq('system_type', systemType)
+        .eq('key', key)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Error finding global system memories:', error);
+        return {
+          success: false,
+          error: 'Failed to find global system memories'
+        };
+      }
+      
+      return {
+        success: true,
+        memories: data?.map(d => this.mapDatabaseToMemory(d)) || []
+      };
+    } catch (error) {
+      console.error('Error in findMemoriesGlobal:', error);
+      return {
+        success: false,
+        error: 'Failed to find global system memories'
+      };
+    }
+  }
+
+  /**
+   * Busca memorias por tipo y clave con patrón LIKE de cualquier sitio
+   */
+  async findMemoriesGlobalByPattern(systemType: string, keyPattern: string): Promise<SystemMemoryListResult> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('system_memories')
+        .select('*')
+        .eq('system_type', systemType)
+        .like('key', keyPattern)
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error('Error finding global system memories by pattern:', error);
+        return {
+          success: false,
+          error: 'Failed to find global system memories by pattern'
+        };
+      }
+      
+      return {
+        success: true,
+        memories: data?.map(d => this.mapDatabaseToMemory(d)) || []
+      };
+    } catch (error) {
+      console.error('Error in findMemoriesGlobalByPattern:', error);
+      return {
+        success: false,
+        error: 'Failed to find global system memories by pattern'
+      };
+    }
+  }
   
   /**
    * Incrementa el contador de acceso de una memoria

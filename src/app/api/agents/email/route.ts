@@ -9,6 +9,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
+import { EmailFilterService } from '@/lib/services/email/EmailFilterService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
@@ -107,59 +108,7 @@ function getNoReplyAddresses(): string[] {
   return Array.from(new Set(expandedAddresses));
 }
 
-/**
- * Valida que un email no sea de una dirección no-reply antes del procesamiento
- */
-function validateEmailNotFromNoReply(email: any): { isValid: boolean, reason?: string } {
-  const emailFrom = (email.from || '').toLowerCase();
-  const noReplyAddresses = getNoReplyAddresses();
-  
-  // Verificar contra direcciones no-reply específicas
-  for (const noReplyAddr of noReplyAddresses) {
-    if (!noReplyAddr) continue;
-    
-    const normalizedAddr = noReplyAddr.toLowerCase();
-    
-    if (emailFrom.includes(normalizedAddr)) {
-      return {
-        isValid: false,
-        reason: `Email viene de dirección no-reply configurada: ${normalizedAddr}`
-      };
-    }
-    
-    // Verificar dominio
-    const noReplyDomain = extractDomainFromUrl(`mailto:${normalizedAddr}`);
-    if (noReplyDomain && emailFrom.includes(noReplyDomain)) {
-      return {
-        isValid: false,
-        reason: `Email viene de dominio no-reply configurado: ${noReplyDomain}`
-      };
-    }
-  }
-  
-  // Verificar patrones comunes de no-reply
-  const noReplyPatterns = [
-    'noreply',
-    'no-reply', 
-    'donotreply',
-    'do-not-reply',
-    'automated',
-    'system@',
-    'daemon@',
-    'postmaster@'
-  ];
-  
-  for (const pattern of noReplyPatterns) {
-    if (emailFrom.includes(pattern)) {
-      return {
-        isValid: false,
-        reason: `Email contiene patrón no-reply: ${pattern}`
-      };
-    }
-  }
-  
-  return { isValid: true };
-}
+
 
 /**
  * Filtra emails que contengan referencias al servidor o direcciones no-reply para evitar feedback loops
@@ -759,26 +708,28 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Validación de seguridad final: verificar que ningún email de no-reply haya pasado los filtros
-      console.log(`[EMAIL_API] 🔒 Ejecutando validación de seguridad final...`);
-      const unsafeEmails: any[] = [];
-      const safeEmails = emails.filter(email => {
-        const validation = validateEmailNotFromNoReply(email);
-        if (!validation.isValid) {
-          console.warn(`[EMAIL_API] ⚠️ ALERTA DE SEGURIDAD: Email no-reply detectado en validación final:`, {
-            from: email.from,
-            subject: email.subject,
-            reason: validation.reason
-          });
-          unsafeEmails.push({ email, reason: validation.reason });
-          return false;
-        }
-        return true;
-      });
-
+      // Validación de seguridad final usando EmailFilterService
+      console.log(`[EMAIL_API] 🔒 Ejecutando validación de seguridad final con EmailFilterService...`);
+      
+      const { validEmails: safeEmails, filteredEmails: unsafeEmails } = EmailFilterService.filterValidEmails(emails, noReplyAddresses);
+      
       if (unsafeEmails.length > 0) {
-        console.warn(`[EMAIL_API] 🚨 ADVERTENCIA: Se detectaron ${unsafeEmails.length} emails no-reply que pasaron el filtro inicial`);
-        console.warn(`[EMAIL_API] 📋 Emails bloqueados en validación final:`, unsafeEmails);
+        console.warn(`[EMAIL_API] 🚨 ADVERTENCIA: Se detectaron ${unsafeEmails.length} emails no válidos que pasaron el filtro inicial`);
+        
+        // Agrupar por categoría para mejor reporte
+        const categorizedEmails = EmailFilterService.getFilteringStats(unsafeEmails);
+        console.warn(`[EMAIL_API] 📊 Estadísticas de filtrado:`, categorizedEmails);
+        
+        // Log detallado por categoría
+        const emailsByCategory = unsafeEmails.reduce((acc, { email, reason, category }) => {
+          if (!acc[category]) acc[category] = [];
+          acc[category].push({ email, reason });
+          return acc;
+        }, {} as Record<string, any[]>);
+        
+        Object.entries(emailsByCategory).forEach(([category, emailsInCategory]) => {
+          console.warn(`[EMAIL_API] 📋 Emails ${category} bloqueados (${emailsInCategory.length}):`, emailsInCategory);
+        });
       }
 
       console.log(`[EMAIL_API] ✅ Validación de seguridad completada: ${safeEmails.length}/${emails.length} emails seguros para procesar`);
@@ -802,17 +753,18 @@ export async function POST(request: NextRequest) {
           feedbackLoopFilteredCount: feedbackFilteredEmails.length,
           aliasFilteredCount: aliasFilteredEmails.length,
           alreadyProcessedCount: alreadyProcessed.length,
-          unsafeEmailsBlocked: unsafeEmails.length,
-          analysisCount: 0,
-          aliasesConfigured: normalizedAliases,
-          filteredByAliases: normalizedAliases.length > 0,
-          filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
-          filteredByDuplicates: alreadyProcessed.length > 0,
-          filteredBySecurity: unsafeEmails.length > 0,
-          securityValidation: {
-            detected: unsafeEmails.length,
-            reasons: unsafeEmails.map(u => u.reason)
-          },
+                  unsafeEmailsBlocked: unsafeEmails.length,
+        analysisCount: 0,
+        aliasesConfigured: normalizedAliases,
+        filteredByAliases: normalizedAliases.length > 0,
+        filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+        filteredByDuplicates: alreadyProcessed.length > 0,
+        filteredBySecurity: unsafeEmails.length > 0,
+        securityValidation: {
+          detected: unsafeEmails.length,
+          categories: EmailFilterService.getFilteringStats(unsafeEmails),
+          reasons: unsafeEmails.map(u => u.reason)
+        },
           processingStats: stats,
           emails: [],
           reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
@@ -990,6 +942,7 @@ export async function POST(request: NextRequest) {
         filteredBySecurity: unsafeEmails.length > 0,
         securityValidation: {
           detected: unsafeEmails.length,
+          categories: EmailFilterService.getFilteringStats(unsafeEmails),
           reasons: unsafeEmails.map(u => u.reason),
           noReplyAddressesConfigured: noReplyAddresses
         },
