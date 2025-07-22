@@ -15,7 +15,7 @@ import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-conv
 // Create schemas for request validation
 const DeliveryStatusRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  limit: z.number().default(50).optional(),
+  limit: z.number().default(20).optional(), // Cambiado de 50 a 20
   since_date: z.string().optional().refine(
     (date) => !date || !isNaN(Date.parse(date)),
     "since_date debe ser una fecha válida en formato ISO"
@@ -159,7 +159,9 @@ export async function POST(request: NextRequest) {
     
     // Extraer parámetros
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
-    const limit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 50;
+    const requestedLimit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 20;
+    // Limitar a máximo 20 emails para evitar timeouts
+    const limit = Math.min(requestedLimit, 20);
     const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
     
     console.log('[DELIVERY_STATUS] Extracted parameters:', {
@@ -197,13 +199,16 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // Process each bounce email
-      console.log(`[DELIVERY_STATUS] 🔄 Procesando ${bounceEmails.length} bounce emails...`);
+      // Process each bounce email (limit to 10 max to avoid timeouts)
+      const maxBouncesToProcess = Math.min(bounceEmails.length, 10);
+      const bouncesToProcess = bounceEmails.slice(0, maxBouncesToProcess);
+      
+      console.log(`[DELIVERY_STATUS] 🔄 Procesando ${bouncesToProcess.length} bounce emails (de ${bounceEmails.length} encontrados)...`);
       const results = [];
       let workflowsTriggered = 0;
       let emailsDeleted = 0;
       
-      for (const bounceEmail of bounceEmails) {
+      for (const bounceEmail of bouncesToProcess) {
         try {
           console.log(`[DELIVERY_STATUS] 📧 Procesando bounce email ID: ${bounceEmail.id}, Subject: ${bounceEmail.subject}`);
           
@@ -238,31 +243,31 @@ export async function POST(request: NextRequest) {
           
           console.log(`[DELIVERY_STATUS] 👤 Lead encontrado: ${leadId} para email: ${originalEmail}`);
           
-                     // Call leadInvalidationWorkflow
-           console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación de lead...`);
-           const workflowService = WorkflowService.getInstance();
-           
-           const workflowResult = await workflowService.leadInvalidation(
-             {
-               lead_id: leadId,
-               email: originalEmail,
-               site_id: siteId,
-               reason: 'email_bounce',
-               bounce_details: {
-                 bounce_email_id: bounceEmail.id,
-                 bounce_subject: bounceEmail.subject,
-                 bounce_from: bounceEmail.from,
-                 bounce_date: bounceEmail.date,
-                 bounce_message: bounceEmail.body?.substring(0, 500) // Limitar el mensaje
-               }
-             },
-             {
-               taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
-               workflowId: `lead-invalidation-${leadId}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-               async: true, // Ejecutar de forma asíncrona
-               priority: 'high'
-             }
-           );
+          // Call leadInvalidationWorkflow
+          console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación para lead: ${leadId}...`);
+          const workflowService = WorkflowService.getInstance();
+          
+          const workflowResult = await workflowService.leadInvalidation(
+            {
+              lead_id: leadId,
+              email: originalEmail,
+              site_id: siteId,
+              reason: 'email_bounce',
+              bounce_details: {
+                bounce_email_id: bounceEmail.id,
+                bounce_subject: bounceEmail.subject,
+                bounce_from: bounceEmail.from,
+                bounce_date: bounceEmail.date,
+                bounce_message: bounceEmail.body?.substring(0, 500) // Limitar el mensaje
+              }
+            },
+            {
+              taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+              workflowId: `lead-invalidation-${leadId}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+              async: true, // Ejecutar de forma asíncrona
+              priority: 'high'
+            }
+          );
           
           if (workflowResult.success) {
             console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
@@ -275,33 +280,11 @@ export async function POST(request: NextRequest) {
           console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email del servidor...`);
           const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id, false);
           
-          // Try to find and delete the original sent email (if exists)
-          // This is more complex as we need to search in sent folder
-          console.log(`[DELIVERY_STATUS] 🔍 Buscando email original enviado para eliminar...`);
-          
-          let originalEmailDeleted = false;
-          try {
-            // Fetch sent emails to find the original
-            const sentEmails = await EmailService.fetchSentEmails(emailConfig, 100, sinceDate);
-            const originalSentEmail = sentEmails.find(sentEmail => 
-              sentEmail.to && sentEmail.to.toLowerCase() === originalEmail.toLowerCase()
-            );
-            
-            if (originalSentEmail) {
-              console.log(`[DELIVERY_STATUS] 📮 Email original enviado encontrado: ${originalSentEmail.id}`);
-              originalEmailDeleted = await deleteEmailFromServer(emailConfig, originalSentEmail.id, true);
-              console.log(`[DELIVERY_STATUS] ${originalEmailDeleted ? '✅' : '❌'} Email original enviado ${originalEmailDeleted ? 'eliminado' : 'no pudo ser eliminado'}`);
-            } else {
-              console.log(`[DELIVERY_STATUS] ⚠️ No se encontró email original enviado para: ${originalEmail}`);
-            }
-          } catch (sentEmailError) {
-            console.error(`[DELIVERY_STATUS] ❌ Error buscando email original enviado:`, sentEmailError);
-          }
+          // Skip searching for original sent emails to avoid timeout
+          // TODO: Implement this as a separate background task if needed
+          const originalEmailDeleted = false;
           
           if (bounceDeleted) {
-            emailsDeleted++;
-          }
-          if (originalEmailDeleted) {
             emailsDeleted++;
           }
           
@@ -336,7 +319,10 @@ export async function POST(request: NextRequest) {
         processedBounces: results.length,
         workflowsTriggered,
         emailsDeleted,
-        results
+        results,
+        note: bouncesToProcess.length < bounceEmails.length 
+          ? `Se procesaron solo los primeros ${bouncesToProcess.length} bounce emails de ${bounceEmails.length} encontrados para evitar timeouts`
+          : undefined
       });
       
     } catch (error: unknown) {

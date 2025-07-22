@@ -247,7 +247,7 @@ async function createAwarenessTaskIfNeeded(
   leadData: any,
   siteId: string,
   userId: string,
-  conversationId: string,
+  conversationId: string | null,
   commandIds?: { sales?: string; copywriter?: string }
 ): Promise<string | null> {
   try {
@@ -320,9 +320,9 @@ Related conversation: ${conversationId}`;
       user_id: userId,
       site_id: siteId,
       lead_id: leadData?.id || undefined,
-      conversation_id: conversationId, // 🔧 CORRECCIÓN: Agregar conversation_id al task
+      conversation_id: conversationId || undefined, // 🔧 CORRECCIÓN: Convertir null a undefined
       command_id: effectiveCommandId,
-      notes: `Auto-generated from lead follow-up sequence. Conversation ID: ${conversationId}${effectiveCommandId ? `. Command ID: ${effectiveCommandId}` : ''}`,
+      notes: `Auto-generated from lead follow-up sequence.${conversationId ? ` Conversation ID: ${conversationId}` : ' No conversation created'}${effectiveCommandId ? `. Command ID: ${effectiveCommandId}` : ''}`,
       scheduled_date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() // Scheduled for tomorrow
     };
 
@@ -453,7 +453,7 @@ export async function POST(request: Request) {
       effectiveLeadData,
       siteId,
       userId,
-      firstConversationId || `No conversations created`,
+      firstConversationId, // Pasar null si no hay conversaciones
       command_ids
     );
 
