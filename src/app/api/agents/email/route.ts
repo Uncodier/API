@@ -207,42 +207,106 @@ function filterFeedbackLoopEmails(emails: any[]): any[] {
 }
 
 /**
- * Función para filtrar emails según aliases configurados
+ * Busca leads asignados a la IA (assignee_id IS NULL) por email
  */
-function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
+async function findLeadsAssignedToAI(emails: any[], siteId: string): Promise<Map<string, any>> {
+  try {
+    console.log(`[EMAIL_API] 🤖 Buscando leads asignados a la IA para ${emails.length} emails en sitio: ${siteId}`);
+    
+    // Extraer emails únicos de los correos
+    const emailAddresses = emails.map(email => {
+      const fromEmail = (email.from || '').toLowerCase().trim();
+      // Extraer email de formato "Name <email@domain.com>"
+      const emailMatch = fromEmail.match(/<([^>]+)>/);
+      return emailMatch ? emailMatch[1] : fromEmail;
+    }).filter(email => email && email.includes('@'));
+    
+    if (emailAddresses.length === 0) {
+      console.log(`[EMAIL_API] ⚠️ No se encontraron direcciones de email válidas para buscar leads`);
+      return new Map();
+    }
+    
+    console.log(`[EMAIL_API] 📧 Buscando leads para ${emailAddresses.length} direcciones de email únicas`);
+    
+    // Buscar leads asignados a la IA (assignee_id IS NULL) que coincidan con los emails
+    const { data: aiLeads, error } = await supabaseAdmin
+      .from('leads')
+      .select('id, email, name, assignee_id, status, created_at')
+      .eq('site_id', siteId)
+      .is('assignee_id', null) // Asignados a la IA
+      .in('email', emailAddresses);
+    
+    if (error) {
+      console.error(`[EMAIL_API] ❌ Error buscando leads asignados a la IA:`, error);
+      return new Map();
+    }
+    
+    const leadsMap = new Map<string, any>();
+    
+    if (aiLeads && aiLeads.length > 0) {
+      console.log(`[EMAIL_API] 🎯 Encontrados ${aiLeads.length} leads asignados a la IA:`);
+      
+      aiLeads.forEach(lead => {
+        leadsMap.set(lead.email.toLowerCase(), lead);
+        console.log(`[EMAIL_API] - Lead ${lead.name} (${lead.email}) - Estado: ${lead.status} - ID: ${lead.id}`);
+      });
+    } else {
+      console.log(`[EMAIL_API] ℹ️ No se encontraron leads asignados a la IA para los emails proporcionados`);
+    }
+    
+    return leadsMap;
+  } catch (error) {
+    console.error(`[EMAIL_API] 💥 Error buscando leads asignados a la IA:`, error);
+    return new Map();
+  }
+}
+
+/**
+ * Función para filtrar emails según aliases configurados y leads asignados a la IA
+ */
+function filterEmailsByAliasesAndAILeads(emails: any[], aliases: string[], aiLeadsMap: Map<string, any>): any[] {
   // Validar que aliases sea un array válido
-  if (!Array.isArray(aliases) || aliases.length === 0) {
-    console.log('[EMAIL_API] 📧 No se especificaron aliases válidos, procesando todos los emails');
-    return emails;
-  }
-
-  // Filtrar aliases válidos (solo strings no vacíos)
-  const validAliases = aliases.filter(alias => typeof alias === 'string' && alias.trim().length > 0);
+  const hasValidAliases = Array.isArray(aliases) && aliases.length > 0;
+  const validAliases = hasValidAliases ? aliases.filter(alias => typeof alias === 'string' && alias.trim().length > 0) : [];
   
-  if (validAliases.length === 0) {
-    console.log('[EMAIL_API] 📧 No se encontraron aliases válidos, procesando todos los emails');
-    return emails;
-  }
-
-  console.log(`[EMAIL_API] 🔍 Filtrando emails según aliases configurados: ${validAliases.join(', ')}`);
+  console.log(`[EMAIL_API] 🔍 Filtrando ${emails.length} emails:`);
+  console.log(`[EMAIL_API] - Aliases configurados: ${validAliases.length > 0 ? validAliases.join(', ') : 'Ninguno'}`);
+  console.log(`[EMAIL_API] - Leads asignados a IA encontrados: ${aiLeadsMap.size}`);
   
   const filteredEmails = emails.filter(email => {
     const emailTo = (email.to || '').toLowerCase().trim();
+    const emailFrom = (email.from || '').toLowerCase().trim();
     
-    // Lista de campos donde buscar la información real del destinatario
+    // Extraer email del remitente para verificar si es un lead asignado a la IA
+    const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
+    
+    console.log(`[EMAIL_API] 🔍 Verificando email - From: ${email.from}, To: ${email.to}`);
+    
+    // 1. Verificar si el remitente es un lead asignado a la IA
+    if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
+      const aiLead = aiLeadsMap.get(fromEmailAddress);
+      console.log(`[EMAIL_API] 🤖 Email de lead asignado a IA detectado: ${aiLead.name} (${aiLead.email}) - INCLUIDO automáticamente`);
+      return true;
+    }
+    
+    // 2. Si no hay aliases válidos configurados, incluir todos los emails (excepto los ya filtrados por feedback loops)
+    if (validAliases.length === 0) {
+      console.log(`[EMAIL_API] ✅ Email incluido - No hay aliases configurados (procesar todos)`);
+      return true;
+    }
+    
+    // 3. Verificar contra aliases configurados (lógica original)
     const destinationFields = [
-      emailTo, // Campo 'to' del envelope
+      emailTo,
       email.headers?.['delivered-to']?.toLowerCase?.().trim?.() || '',
       email.headers?.['x-original-to']?.toLowerCase?.().trim?.() || '',
       email.headers?.['x-envelope-to']?.toLowerCase?.().trim?.() || '',
       email.headers?.['x-rcpt-to']?.toLowerCase?.().trim?.() || '',
       email.headers?.['envelope-to']?.toLowerCase?.().trim?.() || '',
-      // Algunos proveedores usan otros headers
       email.headers?.['x-received-for']?.toLowerCase?.().trim?.() || '',
       email.headers?.['x-received']?.toLowerCase?.().trim?.() || ''
     ].filter(field => field && field.length > 0);
 
-    console.log(`[EMAIL_API] 🔍 Verificando email - To: ${email.to}`);
     console.log(`[EMAIL_API] 🔍 Headers relevantes encontrados:`, {
       'delivered-to': email.headers?.['delivered-to'],
       'x-original-to': email.headers?.['x-original-to'], 
@@ -252,20 +316,19 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
     });
     
     // Verificar si algún alias coincide con alguno de los campos de destinatario
-    const isValidEmail = validAliases.some(alias => {
+    const isValidByAlias = validAliases.some(alias => {
       const normalizedAlias = alias.toLowerCase().trim();
       
-      // Verificar contra todos los campos de destinatario
       return destinationFields.some(destinationField => {
         // Verificar coincidencia exacta
         if (destinationField === normalizedAlias) {
-          console.log(`[EMAIL_API] ✅ Coincidencia exacta encontrada: ${destinationField} = ${normalizedAlias}`);
+          console.log(`[EMAIL_API] ✅ Coincidencia exacta por alias: ${destinationField} = ${normalizedAlias}`);
           return true;
         }
         
         // Verificar si el alias está incluido en el campo
         if (destinationField.includes(normalizedAlias)) {
-          console.log(`[EMAIL_API] ✅ Coincidencia parcial encontrada: ${destinationField} contiene ${normalizedAlias}`);
+          console.log(`[EMAIL_API] ✅ Coincidencia parcial por alias: ${destinationField} contiene ${normalizedAlias}`);
           return true;
         }
         
@@ -277,7 +340,7 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
             return extractedEmail === normalizedAlias;
           });
           if (foundMatch) {
-            console.log(`[EMAIL_API] ✅ Coincidencia en formato <email> encontrada en: ${destinationField}`);
+            console.log(`[EMAIL_API] ✅ Coincidencia en formato <email> por alias: ${destinationField}`);
             return true;
           }
         }
@@ -290,7 +353,7 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
             return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
           });
           if (foundInList) {
-            console.log(`[EMAIL_API] ✅ Coincidencia en lista de emails encontrada en: ${destinationField}`);
+            console.log(`[EMAIL_API] ✅ Coincidencia en lista de emails por alias: ${destinationField}`);
             return true;
           }
         }
@@ -299,18 +362,22 @@ function filterEmailsByAliases(emails: any[], aliases: string[]): any[] {
       });
     });
 
-    if (isValidEmail) {
-      console.log(`[EMAIL_API] ✅ Email incluido - To: ${email.to} (coincide con aliases configurados)`);
+    if (isValidByAlias) {
+      console.log(`[EMAIL_API] ✅ Email incluido por alias - To: ${email.to}`);
     } else {
-      console.log(`[EMAIL_API] ❌ Email excluido - To: ${email.to}`);
-      console.log(`[EMAIL_API] ❌ No coincide con ningún alias: ${validAliases.join(', ')}`);
+      console.log(`[EMAIL_API] ❌ Email excluido - No coincide con aliases ni es lead asignado a IA`);
+      console.log(`[EMAIL_API] ❌ From: ${email.from}, To: ${email.to}`);
+      console.log(`[EMAIL_API] ❌ Aliases verificados: ${validAliases.join(', ')}`);
       console.log(`[EMAIL_API] ❌ Campos verificados: ${destinationFields.join(', ')}`);
     }
 
-    return isValidEmail;
+    return isValidByAlias;
   });
 
   console.log(`[EMAIL_API] 📊 Filtrado completado: ${filteredEmails.length}/${emails.length} emails incluidos`);
+  console.log(`[EMAIL_API] - Por aliases: ${filteredEmails.length - aiLeadsMap.size} emails`);
+  console.log(`[EMAIL_API] - Por leads asignados a IA: ${Math.min(aiLeadsMap.size, filteredEmails.length)} emails`);
+  
   return filteredEmails;
 }
 
@@ -638,7 +705,12 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] 🔄 Aplicando filtro de feedback loops...`);
       const feedbackFilteredEmails = filterFeedbackLoopEmails(allEmails);
       
-      // Filter emails by aliases if configured (second filter)
+      // Find leads assigned to AI before filtering by aliases (second filter)
+      console.log(`[EMAIL_API] 🤖 Buscando leads asignados a la IA...`);
+      const aiLeadsMap = await findLeadsAssignedToAI(feedbackFilteredEmails, siteId);
+      console.log(`[EMAIL_API] ✅ Leads asignados a la IA encontrados: ${aiLeadsMap.size}`);
+      
+      // Filter emails by aliases if configured (third filter)
       // Los aliases pueden venir como string separado por comas o como array
       console.log(`[EMAIL_API] 🔍 Procesando aliases de configuración...`);
       let normalizedAliases: string[] = [];
@@ -658,23 +730,24 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases...`);
-      const aliasFilteredEmails = filterEmailsByAliases(feedbackFilteredEmails, normalizedAliases);
+      console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases y leads asignados a la IA...`);
+      const aliasFilteredEmails = filterEmailsByAliasesAndAILeads(feedbackFilteredEmails, normalizedAliases, aiLeadsMap);
       
-      // Filter emails to avoid processing duplicates (third filter)
+      // Filter emails to avoid processing duplicates (fourth filter)
       console.log(`[EMAIL_API] 🔄 Filtrando emails ya procesados para evitar duplicaciones...`);
       const { unprocessed: emails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
         aliasFilteredEmails, 
         siteId, 
         'email'
       );
-      
+
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
       console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtro de feedback loops: ${feedbackFilteredEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtrado por aliases: ${aliasFilteredEmails.length}`);
       console.log(`[EMAIL_API] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
       console.log(`[EMAIL_API] - Emails finales para análisis: ${emails.length}`);
+      console.log(`[EMAIL_API] - Leads asignados a IA encontrados: ${aiLeadsMap.size}`);
       console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
       // Validación temprana: si no hay emails para analizar, retornar inmediatamente
@@ -704,7 +777,8 @@ export async function POST(request: NextRequest) {
           reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
                   feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
                   aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
-                  'Todos los emails ya han sido procesados previamente'
+                  emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
+                  'Todos los emails fueron bloqueados por validaciones de seguridad'
         });
       }
 
@@ -735,9 +809,9 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] ✅ Validación de seguridad completada: ${safeEmails.length}/${emails.length} emails seguros para procesar`);
       
       // Usar safeEmails en lugar de emails para el resto del proceso
-      const finalEmails = safeEmails;
+      const finalEmailsForAnalysis = safeEmails;
 
-      if (finalEmails.length === 0) {
+      if (finalEmailsForAnalysis.length === 0) {
         console.log(`[EMAIL_API] ⚠️ No quedan emails seguros para analizar después de las validaciones de seguridad`);
         
         // Obtener estadísticas de procesamiento para mejor reporte
@@ -782,7 +856,7 @@ export async function POST(request: NextRequest) {
       
       // Create and submit command
       console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails...`);
-      const command = createEmailCommand(effectiveAgentId, siteId, finalEmails, emailConfig, analysisType, leadId, teamMemberId, userId);
+      const command = createEmailCommand(effectiveAgentId, siteId, finalEmailsForAnalysis, emailConfig, analysisType, leadId, teamMemberId, userId);
       console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
       const internalCommandId = await commandService.submitCommand(command);
       
@@ -892,7 +966,7 @@ export async function POST(request: NextRequest) {
       });
       
       // Marcar todos los emails que fueron enviados al agente pero no tuvieron respuesta como "procesados" también
-      const allEmailIds = finalEmails.map(email => email.id || email.messageId || email.uid).filter(Boolean);
+      const allEmailIds = finalEmailsForAnalysis.map((email: any) => email.id || email.messageId || email.uid).filter(Boolean);
       const unprocessedEmailIds = allEmailIds.filter(id => !processedEmailIds.includes(id));
       
       console.log(`[EMAIL_API] 📝 Marcando ${unprocessedEmailIds.length} emails sin respuesta como procesados...`);
@@ -927,7 +1001,7 @@ export async function POST(request: NextRequest) {
         commandId: effectiveDbUuid || internalCommandId,
         status: executedCommand?.status || 'completed',
         message: "Análisis de emails completado exitosamente",
-        emailCount: finalEmails.length,
+        emailCount: finalEmailsForAnalysis.length,
         originalEmailCount: allEmails.length,
         feedbackLoopFilteredCount: feedbackFilteredEmails.length,
         aliasFilteredCount: aliasFilteredEmails.length,
