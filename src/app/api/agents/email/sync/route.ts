@@ -479,6 +479,8 @@ async function addSentMessageToConversation(
     // Extraer contenido del email con análisis detallado de estructura
     let messageContent = 'No content available';
     
+    console.log(`[EMAIL_SYNC] 🔍 OBJETO EMAIL COMPLETO:`, JSON.stringify(email, null, 2));
+    
     console.log(`[EMAIL_SYNC] 🔍 Estructura del objeto email recibido:`, {
       hasSubject: !!email.subject,
       hasBody: !!email.body,
@@ -488,9 +490,12 @@ async function addSentMessageToConversation(
       bodyLength: email.body ? (typeof email.body === 'string' ? email.body.length : 'object') : 'null'
     });
     
+    console.log(`[EMAIL_SYNC] 🔍 Todas las propiedades del objeto email:`, Object.keys(email));
+    
     // Si email.body es un objeto, analizar su estructura
     if (email.body && typeof email.body === 'object') {
       console.log(`[EMAIL_SYNC] 🔍 email.body es objeto, estructura:`, Object.keys(email.body));
+      console.log(`[EMAIL_SYNC] 🔍 email.body completo:`, JSON.stringify(email.body, null, 2));
       console.log(`[EMAIL_SYNC] 🔍 Propiedades del objeto body:`, {
         hasText: !!(email.body.text),
         hasHtml: !!(email.body.html),
