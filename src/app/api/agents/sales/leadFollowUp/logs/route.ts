@@ -457,12 +457,26 @@ export async function POST(request: Request) {
       command_ids
     );
 
+    // Preparar arrays de IDs para respuesta
+    const conversationIds = Object.values(channelConversations);
+    const messageIds = Object.values(channelMessages);
+
     // Respuesta exitosa
     return NextResponse.json({
       success: true,
       data: {
+        // Arrays de IDs para fácil acceso
+        conversation_ids: conversationIds,
+        message_ids: messageIds,
+        
+        // Objetos por canal para referencia detallada
+        conversations_by_channel: channelConversations,
+        messages_by_channel: channelMessages,
+        
+        // Mantener nombres anteriores para compatibilidad
         conversations: channelConversations,
         messages: channelMessages,
+        
         awareness_task_id: awarenessTaskId,
         lead: effectiveLeadData,
         agent_info: {
@@ -476,7 +490,9 @@ export async function POST(request: Request) {
           messages_created: Object.keys(channelMessages).length,
           channels: Object.keys(channelConversations),
           awareness_task_created: !!awarenessTaskId,
-          lead_stage: effectiveLeadData?.status || effectiveLeadData?.stage || 'unknown'
+          lead_stage: effectiveLeadData?.status || effectiveLeadData?.stage || 'unknown',
+          total_conversation_ids: conversationIds.length,
+          total_message_ids: messageIds.length
         }
       }
     });
