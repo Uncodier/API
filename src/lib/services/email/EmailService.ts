@@ -2,6 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import * as nodemailer from 'nodemailer';
 import { ImapFlow } from 'imapflow';
 import { MailboxDetectorService, MailboxInfo } from './MailboxDetectorService';
+import * as quotedPrintable from 'quoted-printable';
 
 export interface EmailMessage {
   id: string;
@@ -30,6 +31,29 @@ export interface EmailConfig {
 }
 
 export class EmailService {
+  /**
+   * Decodifica el contenido del email si está encoded
+   */
+  private static decodeEmailContent(content: string): string {
+    if (!content) return content;
+    
+    try {
+      // Detectar si está en Quoted-Printable (contiene =XX o =\r\n)
+      if (content.includes('=') && (content.match(/=[0-9A-F]{2}/gi) || content.includes('=\r\n') || content.includes('=\n'))) {
+        console.log(`[EmailService] 🔧 Decodificando contenido Quoted-Printable...`);
+        const decoded = quotedPrintable.decode(content);
+        console.log(`[EmailService] ✅ Contenido decodificado: ${content.length} -> ${decoded.length} caracteres`);
+        return decoded;
+      }
+      
+      // Si no parece ser Quoted-Printable, devolver como está
+      return content;
+    } catch (decodeError) {
+      console.warn(`[EmailService] ⚠️ Error decodificando contenido:`, decodeError);
+      return content; // Devolver original si falla la decodificación
+    }
+  }
+
   /**
    * Obtiene emails desde un servidor IMAP usando ImapFlow
    * @param emailConfig Configuración del servidor de email
@@ -799,7 +823,8 @@ export class EmailService {
               const textPart = message.bodyParts.get('TEXT');
               if (textPart) {
                 try {
-                  bodyContent = textPart.toString('utf8');
+                  const rawContent = textPart.toString('utf8');
+                  bodyContent = this.decodeEmailContent(rawContent);
                   console.log(`[EmailService] ✅ Body content obtenido de TEXT part: ${bodyContent.length} caracteres`);
                 } catch (textError) {
                   console.log(`[EmailService] ⚠️ Error procesando TEXT part:`, textError);
@@ -812,9 +837,9 @@ export class EmailService {
                 for (const [key, part] of bodyPartsArray) {
                   if (!key.toLowerCase().includes('header')) {
                     try {
-                      const content = part.toString('utf8');
-                      if (content && content.length > 10) {
-                        bodyContent = content;
+                      const rawContent = part.toString('utf8');
+                      if (rawContent && rawContent.length > 10) {
+                        bodyContent = this.decodeEmailContent(rawContent);
                         console.log(`[EmailService] ✅ Body content obtenido de "${key}" part: ${bodyContent.length} caracteres`);
                         break;
                       }

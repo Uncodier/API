@@ -5,7 +5,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { 
   getLeadInfo, 
   getPreviousInteractions, 
-  buildEnrichedContext 
+  buildEnrichedContext,
+  safeStringify
 } from '@/lib/helpers/lead-context-helper';
 
 // Función para validar UUIDs
@@ -288,12 +289,12 @@ async function createAwarenessTaskIfNeeded(
     console.log(`📋 Creando tarea de awareness para lead en stage: ${leadStage}`);
 
     const taskTitle = `Lead Awareness Follow-up: ${leadData?.name || leadData?.email || 'Unknown Lead'}`;
-    const taskDescription = `Follow-up task created for lead ${leadData?.name || leadData?.email} from ${leadData?.company || 'Unknown Company'}.
+    const taskDescription = `Follow-up task created for lead ${leadData?.name || leadData?.email} from ${safeStringify(leadData?.company)}.
 
 Lead Stage: ${leadStage}
 Email: ${leadData?.email || 'Not provided'}
 Phone: ${leadData?.phone || 'Not provided'}
-Company: ${leadData?.company || 'Not provided'}
+Company: ${safeStringify(leadData?.company)}
 
 This task was automatically created as part of the lead follow-up sequence to ensure proper awareness-stage nurturing.
 

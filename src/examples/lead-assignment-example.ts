@@ -1,6 +1,25 @@
 import { LeadAssignmentService } from '@/lib/services/lead-assignment-service';
 
 /**
+ * Helper function para manejar campos que pueden ser objetos JSON
+ */
+function safeStringify(value: any): string {
+  if (!value) return 'Not provided';
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object') {
+    if (value.name) return value.name;
+    if (value.company_name) return value.company_name;
+    if (value.title) return value.title;
+    try {
+      return JSON.stringify(value);
+    } catch (e) {
+      return 'Unknown Object';
+    }
+  }
+  return String(value);
+}
+
+/**
  * Ejemplo de uso del servicio de asignación de leads
  */
 export async function leadAssignmentExamples() {
@@ -163,7 +182,7 @@ export async function completeLeadAssignmentFlow() {
       brief,
       next_steps: nextSteps,
       priority: newLead.lead_score > 80 ? 'high' : 'normal',
-      additional_context: `Lead Score: ${newLead.lead_score}/100. Empresa: ${newLead.company}`,
+      additional_context: `Lead Score: ${newLead.lead_score}/100. Empresa: ${safeStringify(newLead.company)}`,
       include_team_notification: newLead.lead_score > 85, // Notificar al equipo solo para leads de alta calidad
       metadata: {
         lead_score: newLead.lead_score,

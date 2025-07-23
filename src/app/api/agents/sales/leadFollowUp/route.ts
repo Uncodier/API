@@ -6,7 +6,8 @@ import { v4 as uuidv4 } from 'uuid';
 import { 
   getLeadInfo, 
   getPreviousInteractions, 
-  buildEnrichedContext 
+  buildEnrichedContext,
+  safeStringify
 } from '@/lib/helpers/lead-context-helper';
 
 // Function to validate UUIDs
@@ -509,7 +510,7 @@ export async function POST(request: Request) {
       contextMessage += `\n\nLead Information:`;
       
       if (effectiveLeadData.name) contextMessage += `\nName: ${effectiveLeadData.name}`;
-      if (effectiveLeadData.company) contextMessage += `\nCompany: ${effectiveLeadData.company}`;
+      if (effectiveLeadData.company) contextMessage += `\nCompany: ${safeStringify(effectiveLeadData.company)}`;
       if (effectiveLeadData.position) contextMessage += `\nPosition: ${effectiveLeadData.position}`;
       if (effectiveLeadData.email) contextMessage += `\nEmail: ${effectiveLeadData.email}`;
       if (effectiveLeadData.phone) contextMessage += `\nPhone: ${effectiveLeadData.phone}`;

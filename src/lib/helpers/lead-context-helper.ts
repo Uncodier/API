@@ -285,3 +285,66 @@ export async function buildEnrichedContext(siteId: string, leadId: string): Prom
   
   return contextParts.join('\n');
 } 
+
+/**
+ * Función helper para convertir campos que pueden ser objetos JSON a strings legibles
+ * Maneja casos donde el campo puede ser string, objeto o null/undefined
+ */
+export function safeStringify(value: any): string {
+  if (!value) {
+    return 'Not provided';
+  }
+  
+  if (typeof value === 'string') {
+    return value;
+  }
+  
+  if (typeof value === 'object') {
+    // Si es un objeto, intentar extraer campos comunes como name, title, etc.
+    if (value.name) {
+      return value.name;
+    }
+    if (value.title) {
+      return value.title;
+    }
+    if (value.company_name) {
+      return value.company_name;
+    }
+    if (value.label) {
+      return value.label;
+    }
+    
+    // Si tiene múltiples campos, crear un string descriptivo
+    if (typeof value === 'object' && value !== null) {
+      const keys = Object.keys(value);
+      if (keys.length > 0) {
+        // Intentar crear un string legible con los valores más importantes
+        const importantValues = [];
+        if (value.name) importantValues.push(value.name);
+        if (value.company_name) importantValues.push(value.company_name);
+        if (value.title) importantValues.push(value.title);
+        
+        if (importantValues.length > 0) {
+          return importantValues.join(' - ');
+        }
+        
+        // Fallback: mostrar el primer valor que no sea null/undefined
+        for (const key of keys) {
+          if (value[key] && typeof value[key] === 'string') {
+            return value[key];
+          }
+        }
+      }
+    }
+    
+    // Último recurso: JSON.stringify para objetos complejos
+    try {
+      return JSON.stringify(value);
+    } catch (e) {
+      return 'Unknown Object';
+    }
+  }
+  
+  // Para otros tipos (numbers, booleans, etc.)
+  return String(value);
+} 

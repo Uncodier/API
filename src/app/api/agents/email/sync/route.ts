@@ -376,7 +376,102 @@ async function addSentMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
     
-    // 1. Verificar si ya existe un mensaje con este email_id específico
+    // 1. Primero extraer y validar contenido - Si no hay contenido válido, no crear mensaje
+    console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email...`);
+    
+    let messageContent = '';
+    let extractionSuccessful = false;
+    
+    try {
+      // Usar EmailTextExtractorService con la configuración que SÍ funciona
+      const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
+        maxTextLength: 2000, // Suficiente texto para emails enviados
+        removeSignatures: false, // Mantener firma para emails enviados (contexto importante)
+        removeQuotedText: true,  // Remover texto citado de respuestas anteriores
+        removeHeaders: true,     // Remover headers técnicos
+        removeLegalDisclaimer: true // Remover disclaimers legales
+      });
+      
+      console.log(`[EMAIL_SYNC] 📊 Resultado de EmailTextExtractor:`, {
+        originalLength: optimizedEmail.originalLength,
+        extractedLength: optimizedEmail.textLength,
+        compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
+        hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0
+      });
+      
+      // Verificar si el contenido extraído es válido y útil
+      if (optimizedEmail.extractedText && 
+          optimizedEmail.extractedText.trim() && 
+          optimizedEmail.extractedText !== 'Error al extraer texto del email' &&
+          optimizedEmail.extractedText.trim().length > 10) { // Mínimo 10 caracteres para contenido útil
+        messageContent = optimizedEmail.extractedText.trim();
+        extractionSuccessful = true;
+        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
+      } else {
+        console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido`);
+      }
+    } catch (extractorError) {
+      console.log(`[EMAIL_SYNC] 🔧 EmailTextExtractor falló, intentando fallback manual...`);
+      console.error(`[EMAIL_SYNC] Error del extractor:`, extractorError);
+    }
+    
+    // Si EmailTextExtractor falló, intentar fallback manual más estricto
+    if (!extractionSuccessful) {
+      let fallbackContent = '';
+      
+      // 1. Intentar con email.body (string directo)
+      if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.body (string): ${fallbackContent.length} caracteres`);
+      }
+      // 2. Intentar con email.text
+      else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+        fallbackContent = email.text.trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
+      }
+      // 3. Intentar con email.html (extraer texto básico)
+      else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
+      }
+      // 4. Verificar si body es un objeto con propiedades anidadas
+      else if (email.body && typeof email.body === 'object') {
+        console.log(`[EMAIL_SYNC] 🔍 Analizando email.body como objeto...`);
+        
+        if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
+          fallbackContent = email.body.text.trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
+        } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
+          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
+        }
+      }
+      
+      // Validar que el contenido fallback sea útil (mínimo 10 caracteres)
+      if (fallbackContent && fallbackContent.length >= 10) {
+        messageContent = fallbackContent;
+        extractionSuccessful = true;
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
+      }
+    }
+    
+    // Si no se pudo extraer contenido válido, NO crear el mensaje
+    if (!extractionSuccessful || !messageContent || messageContent.length < 10) {
+      console.log(`[EMAIL_SYNC] ❌ No se pudo extraer contenido válido del email. NO se creará mensaje para evitar ruido.`);
+      console.log(`[EMAIL_SYNC] 🔍 Email debug info:`, {
+        hasSubject: !!email.subject,
+        hasBody: !!email.body,
+        hasText: !!email.text,
+        hasHtml: !!email.html,
+        extractedLength: messageContent.length,
+        to: email.to,
+        from: email.from,
+        emailId: email.id
+      });
+      return null;
+    }
+    
+    // 2. Verificar si ya existe un mensaje con este email_id específico
     if (email.id) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente con email_id: ${email.id}`);
       
@@ -395,57 +490,59 @@ async function addSentMessageToConversation(
       }
     }
     
-    // 2. Verificar por contenido y subject para emails que se originaron en el sistema
-    if (email.subject && email.body) {
-      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido similar...`);
+    // 3. Verificar por contenido extraído para detectar duplicados más precisamente
+    if (email.subject && messageContent) {
+      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido y subject...`);
       
-      // Buscar mensajes con subject exacto o muy similar (cualquier role ahora)
+      // Buscar mensajes similares en las últimas 24 horas
       const { data: existingByContent, error: contentError } = await supabaseAdmin
         .from('messages')
         .select('id, content, custom_data')
         .eq('conversation_id', conversationId)
-        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()) // últimas 24 horas
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .limit(10);
         
       if (contentError) {
         console.error('[EMAIL_SYNC] Error al buscar mensajes por contenido:', contentError);
       } else if (existingByContent && existingByContent.length > 0) {
         
-        // Verificar si algún mensaje existente tiene contenido muy similar
+        // Normalizar contenido para comparación más precisa
+        const normalizedNewContent = messageContent.toLowerCase().trim().replace(/\s+/g, ' ');
+        const emailSubjectNormalized = email.subject.toLowerCase().trim();
+        
         for (const existingMsg of existingByContent) {
           const existingContent = existingMsg.content || '';
           const existingSubject = existingMsg.custom_data?.subject || '';
           
-          // Extraer subject del contenido si no está en custom_data
-          const subjectMatch = existingContent.match(/^Subject:\s*(.+?)$/m);
-          const extractedSubject = subjectMatch ? subjectMatch[1].trim() : '';
+          // Normalizar contenido existente
+          const normalizedExistingContent = existingContent.toLowerCase().trim().replace(/\s+/g, ' ');
+          const existingSubjectNormalized = existingSubject.toLowerCase().trim();
           
-          const finalExistingSubject = existingSubject || extractedSubject;
+          // Verificar coincidencia de subject exacta
+          const subjectMatch = emailSubjectNormalized === existingSubjectNormalized;
           
-          // Comparar subjects (sin distinción de mayúsculas/minúsculas)
-          const emailSubjectNormalized = email.subject.toLowerCase().trim();
-          const existingSubjectNormalized = finalExistingSubject.toLowerCase().trim();
+          // Verificar coincidencia de contenido (exacta o alta similitud)
+          const exactContentMatch = normalizedNewContent === normalizedExistingContent;
+          const highSimilarity = normalizedNewContent.length > 50 && normalizedExistingContent.length > 50 &&
+                                (normalizedNewContent.includes(normalizedExistingContent.substring(0, 100)) ||
+                                 normalizedExistingContent.includes(normalizedNewContent.substring(0, 100)));
           
-          if (emailSubjectNormalized === existingSubjectNormalized) {
-            // También verificar si el cuerpo del mensaje tiene contenido similar
-            const emailBodyNormalized = (email.body || '').toLowerCase().trim();
-            const existingBodyNormalized = existingContent.toLowerCase().trim();
-            
-            // Si coinciden subject y al menos parte del cuerpo, considerar duplicado
-            if (emailBodyNormalized && existingBodyNormalized && 
-                (emailBodyNormalized === existingBodyNormalized || 
-                 emailBodyNormalized.includes(existingBodyNormalized.substring(0, 100)) ||
-                 existingBodyNormalized.includes(emailBodyNormalized.substring(0, 100)))) {
-              
-              console.log(`[EMAIL_SYNC] ✅ Mensaje duplicado detectado por contenido similar, ID existente: ${existingMsg.id}, evitando duplicado`);
-              return existingMsg.id;
-            }
+          if (subjectMatch && (exactContentMatch || highSimilarity)) {
+            console.log(`[EMAIL_SYNC] ✅ Mensaje duplicado detectado por contenido similar, ID existente: ${existingMsg.id}, evitando duplicado`);
+            console.log(`[EMAIL_SYNC] 📊 Coincidencia:`, {
+              subjectMatch,
+              exactContentMatch,
+              highSimilarity,
+              newContentLength: normalizedNewContent.length,
+              existingContentLength: normalizedExistingContent.length
+            });
+            return existingMsg.id;
           }
         }
       }
     }
     
-    console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje para email_id: ${email.id}`);
+    console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje con contenido válido (${messageContent.length} caracteres)`);
     
     // Obtener información de la conversación
     const { data: conversation, error: convError } = await supabaseAdmin
@@ -476,115 +573,9 @@ async function addSentMessageToConversation(
       }
     }
     
-    // Extraer contenido del email con análisis detallado de estructura
-    let messageContent = 'No content available';
-    
-    console.log(`[EMAIL_SYNC] 🔍 OBJETO EMAIL COMPLETO:`, JSON.stringify(email, null, 2));
-    
-    console.log(`[EMAIL_SYNC] 🔍 Estructura del objeto email recibido:`, {
-      hasSubject: !!email.subject,
-      hasBody: !!email.body,
-      hasText: !!email.text,
-      hasHtml: !!email.html,
-      bodyType: typeof email.body,
-      bodyLength: email.body ? (typeof email.body === 'string' ? email.body.length : 'object') : 'null'
-    });
-    
-    console.log(`[EMAIL_SYNC] 🔍 Todas las propiedades del objeto email:`, Object.keys(email));
-    
-    // Si email.body es un objeto, analizar su estructura
-    if (email.body && typeof email.body === 'object') {
-      console.log(`[EMAIL_SYNC] 🔍 email.body es objeto, estructura:`, Object.keys(email.body));
-      console.log(`[EMAIL_SYNC] 🔍 email.body completo:`, JSON.stringify(email.body, null, 2));
-      console.log(`[EMAIL_SYNC] 🔍 Propiedades del objeto body:`, {
-        hasText: !!(email.body.text),
-        hasHtml: !!(email.body.html),
-        textLength: email.body.text ? email.body.text.length : 0,
-        htmlLength: email.body.html ? email.body.html.length : 0
-      });
-    }
-    
-    console.log(`[EMAIL_SYNC] 🔧 Intentando extracción con EmailTextExtractorService...`);
-    
-    try {
-      // Usar EmailTextExtractorService con la configuración que SÍ funciona
-      const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
-        maxTextLength: 2000, // Suficiente texto para emails enviados
-        removeSignatures: false, // Mantener firma para emails enviados (contexto importante)
-        removeQuotedText: true,  // Remover texto citado de respuestas anteriores
-        removeHeaders: true,     // Remover headers técnicos
-        removeLegalDisclaimer: true // Remover disclaimers legales
-      });
-      
-      console.log(`[EMAIL_SYNC] 📊 Resultado de EmailTextExtractor:`, {
-        originalLength: optimizedEmail.originalLength,
-        extractedLength: optimizedEmail.textLength,
-        compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
-        hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0,
-        extractedText: optimizedEmail.extractedText ? optimizedEmail.extractedText.substring(0, 100) + '...' : 'null'
-      });
-      
-      // Usar el contenido extraído si es válido
-      if (optimizedEmail.extractedText && 
-          optimizedEmail.extractedText.trim() && 
-          optimizedEmail.extractedText !== 'Error al extraer texto del email') {
-        messageContent = optimizedEmail.extractedText.trim();
-        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
-      } else {
-        console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido, aplicando fallback manual`);
-        throw new Error('EmailTextExtractor failed - applying manual fallback');
-      }
-    } catch (extractorError) {
-      console.log(`[EMAIL_SYNC] 🔧 EmailTextExtractor falló, aplicando fallback manual robusto...`);
-      console.error(`[EMAIL_SYNC] Error del extractor:`, extractorError);
-      
-      // Fallback manual robusto - verificar directamente las propiedades del email
-      let fallbackContent = '';
-      
-      // 1. Intentar con email.body (string directo)
-      if (email.body && typeof email.body === 'string' && email.body.trim()) {
-        fallbackContent = email.body.trim();
-        console.log(`[EMAIL_SYNC] 📝 Usando email.body (string): ${fallbackContent.length} caracteres`);
-      }
-      // 2. Intentar con email.text
-      else if (email.text && typeof email.text === 'string' && email.text.trim()) {
-        fallbackContent = email.text.trim();
-        console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
-      }
-      // 3. Intentar con email.html (extraer texto básico)
-      else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
-      }
-      // 4. Verificar si body es un objeto con propiedades anidadas
-      else if (email.body && typeof email.body === 'object') {
-        console.log(`[EMAIL_SYNC] 🔍 Analizando email.body como objeto...`);
-        
-        if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
-          fallbackContent = email.body.text.trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
-        } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
-          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
-        } else {
-          console.log(`[EMAIL_SYNC] ⚠️ email.body es objeto pero no tiene text ni html válidos`);
-          console.log(`[EMAIL_SYNC] 🔍 Estructura completa de email.body:`, email.body);
-        }
-      }
-      
-      if (fallbackContent && fallbackContent.length > 0) {
-        messageContent = fallbackContent;
-        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
-      } else {
-        console.log(`[EMAIL_SYNC] ❌ Todos los fallbacks fallaron, el email no tiene contenido extraíble`);
-        messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
-        console.log(`[EMAIL_SYNC] 🆘 Usando contenido de emergencia: "${messageContent}"`);
-      }
-    }
-    
     const messageData: any = {
       conversation_id: conversationId,
-      content: messageContent,
+      content: messageContent, // Usando contenido extraído y validado
       role: messageRole,
       user_id: messageSenderId,
       lead_id: leadId,
@@ -595,6 +586,7 @@ async function addSentMessageToConversation(
         to: email.to,
         from: email.from,
         date: email.date,
+        content_extracted: true, // Marcar que el contenido fue extraído exitosamente
         sync_source: 'email_sync'
       }
     };
@@ -643,7 +635,7 @@ async function addSentMessageToConversation(
         .eq('id', conversationId);
     }
     
-    console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado agregado a conversación: ${message.id} (role: ${messageRole})`);
+    console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado creado exitosamente: ${message.id} (role: ${messageRole}, ${messageContent.length} caracteres)`);
     return message.id;
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al agregar mensaje a conversación:', error);
@@ -983,9 +975,93 @@ async function addReceivedMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📩 Agregando mensaje recibido del hilo a conversación: ${conversationId}`);
     
-    // Verificar si ya existe un mensaje con este email_id
+    // 1. Primero extraer y validar contenido - Si no hay contenido válido, no crear mensaje
+    console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email recibido...`);
+    
+    let messageContent = '';
+    let extractionSuccessful = false;
+    
+    try {
+      // Extraer contenido del email recibido con configuración específica
+      const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
+        maxTextLength: 2000,
+        removeSignatures: true,    // Remover firmas de emails recibidos
+        removeQuotedText: true,    // Remover texto citado
+        removeHeaders: true,       // Remover headers
+        removeLegalDisclaimer: true
+      });
+      
+      console.log(`[EMAIL_SYNC] 📊 Resultado de EmailTextExtractor (recibido):`, {
+        originalLength: optimizedEmail.originalLength,
+        extractedLength: optimizedEmail.textLength,
+        compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
+        hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0
+      });
+      
+      // Verificar si el contenido extraído es válido y útil
+      if (optimizedEmail.extractedText && 
+          optimizedEmail.extractedText.trim() && 
+          optimizedEmail.extractedText !== 'Error al extraer texto del email' &&
+          optimizedEmail.extractedText.trim().length > 10) { // Mínimo 10 caracteres para contenido útil
+        messageContent = optimizedEmail.extractedText.trim();
+        extractionSuccessful = true;
+        console.log(`[EMAIL_SYNC] ✅ Contenido de email recibido extraído exitosamente: ${messageContent.length} caracteres`);
+      } else {
+        console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido para email recibido`);
+      }
+    } catch (extractorError) {
+      console.log(`[EMAIL_SYNC] 🔧 EmailTextExtractor falló para email recibido, intentando fallback...`);
+      console.error(`[EMAIL_SYNC] Error del extractor:`, extractorError);
+    }
+    
+    // Si EmailTextExtractor falló, intentar fallback manual más estricto
+    if (!extractionSuccessful) {
+      let fallbackContent = '';
+      
+      // Intentar extraer contenido con fallbacks
+      if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
+      } else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+        fallbackContent = email.text.trim();
+      } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      } else if (email.body && typeof email.body === 'object') {
+        if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
+          fallbackContent = email.body.text.trim();
+        } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
+          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        }
+      }
+      
+      // Validar que el contenido fallback sea útil (mínimo 10 caracteres)
+      if (fallbackContent && fallbackContent.length >= 10) {
+        messageContent = fallbackContent;
+        extractionSuccessful = true;
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso para email recibido: ${messageContent.length} caracteres`);
+      }
+    }
+    
+    // Si no se pudo extraer contenido válido, NO crear el mensaje
+    if (!extractionSuccessful || !messageContent || messageContent.length < 10) {
+      console.log(`[EMAIL_SYNC] ❌ No se pudo extraer contenido válido del email recibido. NO se creará mensaje para evitar ruido.`);
+      console.log(`[EMAIL_SYNC] 🔍 Email recibido debug info:`, {
+        hasSubject: !!email.subject,
+        hasBody: !!email.body,
+        hasText: !!email.text,
+        hasHtml: !!email.html,
+        extractedLength: messageContent.length,
+        from: email.from,
+        to: email.to,
+        emailId: email.id || email.messageId || email.uid
+      });
+      return null;
+    }
+    
+    // 2. Verificar si ya existe un mensaje con este email_id
     const emailId = email.id || email.messageId || email.uid;
     if (emailId) {
+      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje recibido existente con email_id: ${emailId}`);
+      
       const { data: existingMessage } = await supabaseAdmin
         .from('messages')
         .select('id')
@@ -994,28 +1070,51 @@ async function addReceivedMessageToConversation(
         .limit(1);
         
       if (existingMessage && existingMessage.length > 0) {
-        console.log(`[EMAIL_SYNC] ✅ Mensaje del hilo ya existe: ${existingMessage[0].id}`);
+        console.log(`[EMAIL_SYNC] ✅ Mensaje recibido ya existe: ${existingMessage[0].id}`);
         return existingMessage[0].id;
       }
     }
     
-    // Extraer contenido del email recibido
-    const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
-      maxTextLength: 2000,
-      removeSignatures: true,    // Remover firmas de emails recibidos
-      removeQuotedText: true,    // Remover texto citado
-      removeHeaders: true,       // Remover headers
-      removeLegalDisclaimer: true
-    });
-    
-    let messageContent = 'Contenido no disponible';
-    if (optimizedEmail.extractedText && 
-        optimizedEmail.extractedText.trim() && 
-        optimizedEmail.extractedText !== 'Error al extraer texto del email') {
-      messageContent = optimizedEmail.extractedText.trim();
-    } else {
-      messageContent = email.body || email.text || 'Contenido no disponible';
+    // 3. Verificar por contenido extraído para detectar duplicados más precisamente
+    if (email.subject && messageContent) {
+      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje recibido existente por contenido...`);
+      
+      const { data: existingByContent } = await supabaseAdmin
+        .from('messages')
+        .select('id, content, custom_data')
+        .eq('conversation_id', conversationId)
+        .eq('role', 'lead') // Solo buscar otros mensajes del lead
+        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .limit(10);
+        
+      if (existingByContent && existingByContent.length > 0) {
+        // Normalizar contenido para comparación
+        const normalizedNewContent = messageContent.toLowerCase().trim().replace(/\s+/g, ' ');
+        const emailSubjectNormalized = email.subject.toLowerCase().trim();
+        
+        for (const existingMsg of existingByContent) {
+          const existingContent = existingMsg.content || '';
+          const existingSubject = existingMsg.custom_data?.subject || '';
+          
+          const normalizedExistingContent = existingContent.toLowerCase().trim().replace(/\s+/g, ' ');
+          const existingSubjectNormalized = existingSubject.toLowerCase().trim();
+          
+          // Verificar coincidencias
+          const subjectMatch = emailSubjectNormalized === existingSubjectNormalized;
+          const exactContentMatch = normalizedNewContent === normalizedExistingContent;
+          const highSimilarity = normalizedNewContent.length > 50 && normalizedExistingContent.length > 50 &&
+                                (normalizedNewContent.includes(normalizedExistingContent.substring(0, 100)) ||
+                                 normalizedExistingContent.includes(normalizedNewContent.substring(0, 100)));
+          
+          if (subjectMatch && (exactContentMatch || highSimilarity)) {
+            console.log(`[EMAIL_SYNC] ✅ Mensaje recibido duplicado detectado, ID existente: ${existingMsg.id}`);
+            return existingMsg.id;
+          }
+        }
+      }
     }
+    
+    console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje recibido con contenido válido (${messageContent.length} caracteres)`);
     
     // Obtener información de la conversación
     const { data: conversation } = await supabaseAdmin
@@ -1032,7 +1131,7 @@ async function addReceivedMessageToConversation(
     // Crear mensaje como 'lead' (mensaje del destinatario/cliente)
     const messageData = {
       conversation_id: conversationId,
-      content: messageContent,
+      content: messageContent, // Usando contenido extraído y validado
       role: 'lead',  // Email recibido del lead/cliente
       user_id: conversation.user_id,
       lead_id: leadId,
@@ -1043,6 +1142,7 @@ async function addReceivedMessageToConversation(
         from: email.from,
         to: email.to,
         date: email.date,
+        content_extracted: true, // Marcar que el contenido fue extraído exitosamente
         sync_source: 'thread_sync'
       }
     };
@@ -1067,7 +1167,7 @@ async function addReceivedMessageToConversation(
       })
       .eq('id', conversationId);
     
-    console.log(`[EMAIL_SYNC] ✅ Mensaje recibido del hilo agregado: ${message.id}`);
+    console.log(`[EMAIL_SYNC] ✅ Mensaje recibido del hilo creado exitosamente: ${message.id} (${messageContent.length} caracteres)`);
     return message.id;
   } catch (error) {
     console.error('[EMAIL_SYNC] Error agregando mensaje recibido del hilo:', error);
@@ -1185,6 +1285,11 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     // 5. Agregar mensaje enviado a la conversación
     const messageId = await addSentMessageToConversation(conversationId, email, leadId, siteId);
     
+    // Si no se pudo crear el mensaje debido a contenido inválido, registrarlo pero continuar con el procesamiento
+    if (!messageId) {
+      console.log(`[EMAIL_SYNC] ⚠️ No se pudo crear mensaje debido a contenido insuficiente, pero continuando con procesamiento del lead y conversación`);
+    }
+    
     // 6. Detectar y sincronizar hilo de conversación si es necesario
     let threadSyncResult: {
       processedCount: number;
@@ -1242,6 +1347,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
           lead_id: leadId,
           conversation_id: conversationId,
           message_id: messageId,
+          message_created: !!messageId, // Indicar si se creó el mensaje o no
           task_id: taskId,
           subject: email.subject,
           to: email.to,
@@ -1249,11 +1355,16 @@ async function processSentEmail(email: any, siteId: string): Promise<{
           is_new_lead: isNewLead,
           status_updated: statusUpdated,
           thread_sync_result: threadSyncResult,
+          no_content_extracted: !messageId, // Indicar si falló por falta de contenido
           processed_at: new Date().toISOString()
         }
       }, 'sent_email');
       
-      console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado exitosamente`);
+      if (messageId) {
+        console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado exitosamente con mensaje creado`);
+      } else {
+        console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado (sin mensaje por falta de contenido)`);
+      }
     }
     
     return {
@@ -1495,6 +1606,7 @@ export async function POST(request: NextRequest) {
       let assignedToTeamMemberCount = 0;
       let threadsDetectedCount = 0;
       let threadEmailsSyncedCount = 0;
+      let messagesNotCreatedCount = 0; // Contador para mensajes no creados por falta de contenido
       
       for (const email of sentEmails) {
         const result = await processSentEmail(email, siteId);
@@ -1515,6 +1627,10 @@ export async function POST(request: NextRequest) {
             threadsDetectedCount++;
             threadEmailsSyncedCount += result.threadSync.processedCount;
           }
+          // Contar si no se pudo crear el mensaje por falta de contenido
+          if (!result.messageId) {
+            messagesNotCreatedCount++;
+          }
         } else if (result.skipped) {
           skippedInternalCount++;
         }
@@ -1532,6 +1648,7 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] - Tareas de first contact creadas: ${tasksCreatedCount}`);
       console.log(`[EMAIL_SYNC] - Hilos de conversación detectados: ${threadsDetectedCount}`);
       console.log(`[EMAIL_SYNC] - Emails adicionales sincronizados de hilos: ${threadEmailsSyncedCount}`);
+      console.log(`[EMAIL_SYNC] - Mensajes no creados por falta de contenido: ${messagesNotCreatedCount}`);
       
       return NextResponse.json({
         success: true,
@@ -1547,6 +1664,7 @@ export async function POST(request: NextRequest) {
         tasksCreatedCount,
         threadsDetectedCount,
         threadEmailsSyncedCount,
+        messagesNotCreatedCount,
         internalDomainsFiltered: getInternalDomains(),
         preFilteredInternalCount,
         results
@@ -1627,6 +1745,7 @@ export async function GET(request: NextRequest) {
       tasksCreatedCount: "First contact tasks created",
       threadsDetectedCount: "Email threads detected and processed",
       threadEmailsSyncedCount: "Additional emails from threads synchronized",
+      messagesNotCreatedCount: "Messages not created due to insufficient or invalid content",
       internalDomainsFiltered: "List of internal domains that are filtered out"
     }
   }, { status: 200 });
