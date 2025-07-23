@@ -156,8 +156,10 @@ export class EmailService {
         try {
           for await (const message of client.fetch(searchQuery, {
             envelope: true,
-            bodyParts: ['HEADER', 'TEXT'],
-            bodyStructure: true
+            source: true, // Get full message source
+            bodyParts: ['HEADER', 'TEXT', 'BODY[TEXT]', 'BODY[1]', 'BODY[]'], // Try multiple part specifiers
+            bodyStructure: true,
+            flags: true
           })) {
             messages.push(message);
             
@@ -186,14 +188,74 @@ export class EmailService {
               headers: null
             };
             
-            // Get text body if available
-            try {
-              const textPart = message.bodyParts?.get('TEXT');
-              if (textPart) {
-                email.body = textPart.toString('utf8');
+            // Multiple strategies to get email body content
+            let bodyContent: string | null = null;
+            
+            // Strategy 1: Try different bodyParts keys
+            if (message.bodyParts) {
+              console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyParts disponibles:`, Array.from(message.bodyParts.keys()));
+              
+              // Try common bodyParts keys
+              const bodyPartsToTry = ['TEXT', 'BODY[TEXT]', 'BODY[1]', '1', 'text/plain', 'text'];
+              
+              for (const partKey of bodyPartsToTry) {
+                try {
+                  const part = message.bodyParts.get(partKey);
+                  if (part) {
+                    bodyContent = part.toString('utf8');
+                    console.log(`[EmailService] ✅ DIAGNOSTICO - Body encontrado con clave "${partKey}": ${bodyContent.length} chars`);
+                    break;
+                  }
+                } catch (partError) {
+                  console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error con clave "${partKey}":`, partError);
+                }
               }
-            } catch (bodyError) {
-              console.warn(`[EmailService] ⚠️ Error reading email body for ID ${email.id}:`, bodyError);
+              
+              // If no specific part worked, try to get any text part
+              if (!bodyContent) {
+                console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando con todas las partes disponibles...`);
+                const bodyPartsArray = Array.from(message.bodyParts.entries());
+                for (const [key, part] of bodyPartsArray) {
+                  try {
+                    const content = part.toString('utf8');
+                    console.log(`[EmailService] 🔍 DIAGNOSTICO - Parte "${key}": ${content.length} chars, preview: "${content.substring(0, 100)}..."`);
+                    
+                    // Skip header parts and take first substantial text content
+                    if (!key.toLowerCase().includes('header') && content.length > 10) {
+                      bodyContent = content;
+                      console.log(`[EmailService] ✅ DIAGNOSTICO - Using parte "${key}" como body`);
+                      break;
+                    }
+                  } catch (partError) {
+                    console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando parte "${key}":`, partError);
+                  }
+                }
+              }
+            }
+            
+            // Strategy 2: Try to get full message source and parse it
+            if (!bodyContent && message.source) {
+              try {
+                console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando extraer del source completo...`);
+                const sourceContent = message.source.toString('utf8');
+                console.log(`[EmailService] 🔍 DIAGNOSTICO - Source length: ${sourceContent.length}`);
+                
+                // Try to find content after headers (simple approach)
+                const headerEndIndex = sourceContent.indexOf('\n\n');
+                if (headerEndIndex !== -1) {
+                  bodyContent = sourceContent.substring(headerEndIndex + 2).trim();
+                  console.log(`[EmailService] ✅ DIAGNOSTICO - Body extraído del source: ${bodyContent.length} chars`);
+                }
+              } catch (sourceError) {
+                console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando source:`, sourceError);
+              }
+            }
+            
+            if (bodyContent) {
+              email.body = bodyContent;
+              console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
+            } else {
+              console.log(`[EmailService] ❌ DIAGNOSTICO - No se pudo obtener body content para email ${email.id}`);
               email.body = null;
             }
             
@@ -690,8 +752,10 @@ export class EmailService {
         try {
           for await (const message of client.fetch(searchQuery, {
             envelope: true,
-            bodyParts: ['HEADER', 'TEXT'],
-            bodyStructure: true
+            source: true, // Get full message source
+            bodyParts: ['HEADER', 'TEXT', 'BODY[TEXT]', 'BODY[1]', 'BODY[]'], // Try multiple part specifiers
+            bodyStructure: true,
+            flags: true
           })) {
             messages.push(message);
             
@@ -710,6 +774,23 @@ export class EmailService {
         // Process messages
         for (const message of messages) {
           try {
+            // Log estructura completa del mensaje para diagnóstico
+            console.log(`[EmailService] 🔍 DIAGNOSTICO - Estructura completa del mensaje:`, {
+              uid: message.uid,
+              envelope: {
+                subject: message.envelope?.subject,
+                from: message.envelope?.from?.[0]?.address,
+                to: message.envelope?.to?.[0]?.address,
+                date: message.envelope?.date
+              },
+              bodyParts: message.bodyParts ? 'Present' : 'Absent',
+              bodyPartsKeys: message.bodyParts ? Array.from(message.bodyParts.keys()) : [],
+              bodyStructure: message.bodyStructure ? 'Present' : 'Absent',
+              source: message.source ? 'Present' : 'Absent',
+              flags: message.flags,
+              allKeys: Object.keys(message)
+            });
+
             const email: EmailMessage = {
               id: message.uid.toString(),
               subject: message.envelope?.subject || 'No Subject',
@@ -720,14 +801,81 @@ export class EmailService {
               headers: null
             };
             
-            // Get text body if available
-            try {
-              const textPart = message.bodyParts?.get('TEXT');
-              if (textPart) {
-                email.body = textPart.toString('utf8');
+            // Multiple strategies to get email body content
+            let bodyContent: string | null = null;
+            
+            // Strategy 1: Try different bodyParts keys
+            if (message.bodyParts) {
+              console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyParts disponibles:`, Array.from(message.bodyParts.keys()));
+              
+              // Try common bodyParts keys
+              const bodyPartsToTry = ['TEXT', 'BODY[TEXT]', 'BODY[1]', '1', 'text/plain', 'text'];
+              
+              for (const partKey of bodyPartsToTry) {
+                try {
+                  const part = message.bodyParts.get(partKey);
+                  if (part) {
+                    bodyContent = part.toString('utf8');
+                    console.log(`[EmailService] ✅ DIAGNOSTICO - Body encontrado con clave "${partKey}": ${bodyContent.length} chars`);
+                    break;
+                  }
+                } catch (partError) {
+                  console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error con clave "${partKey}":`, partError);
+                }
               }
-            } catch (bodyError) {
-              console.warn(`[EmailService] ⚠️ Error reading email body for ID ${email.id}:`, bodyError);
+              
+                             // If no specific part worked, try to get any text part
+               if (!bodyContent) {
+                 console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando con todas las partes disponibles...`);
+                 const bodyPartsArray = Array.from(message.bodyParts.entries());
+                 for (const [key, part] of bodyPartsArray) {
+                   try {
+                     const content = part.toString('utf8');
+                     console.log(`[EmailService] 🔍 DIAGNOSTICO - Parte "${key}": ${content.length} chars, preview: "${content.substring(0, 100)}..."`);
+                     
+                     // Skip header parts and take first substantial text content
+                     if (!key.toLowerCase().includes('header') && content.length > 10) {
+                       bodyContent = content;
+                       console.log(`[EmailService] ✅ DIAGNOSTICO - Using parte "${key}" como body`);
+                       break;
+                     }
+                   } catch (partError) {
+                     console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando parte "${key}":`, partError);
+                   }
+                 }
+               }
+            }
+            
+            // Strategy 2: Try to get full message source and parse it
+            if (!bodyContent && message.source) {
+              try {
+                console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando extraer del source completo...`);
+                const sourceContent = message.source.toString('utf8');
+                console.log(`[EmailService] 🔍 DIAGNOSTICO - Source length: ${sourceContent.length}`);
+                
+                // Try to find content after headers (simple approach)
+                const headerEndIndex = sourceContent.indexOf('\n\n');
+                if (headerEndIndex !== -1) {
+                  bodyContent = sourceContent.substring(headerEndIndex + 2).trim();
+                  console.log(`[EmailService] ✅ DIAGNOSTICO - Body extraído del source: ${bodyContent.length} chars`);
+                }
+              } catch (sourceError) {
+                console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando source:`, sourceError);
+              }
+            }
+            
+            // Strategy 3: Try bodyStructure parsing (advanced)
+            if (!bodyContent && message.bodyStructure) {
+              console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyStructure:`, JSON.stringify(message.bodyStructure, null, 2));
+              // This would require more complex parsing based on bodyStructure
+              // For now, just log it for analysis
+            }
+            
+            if (bodyContent) {
+              email.body = bodyContent;
+              console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
+            } else {
+              console.log(`[EmailService] ❌ DIAGNOSTICO - No se pudo obtener body content para email ${email.id}`);
               email.body = null;
             }
             
