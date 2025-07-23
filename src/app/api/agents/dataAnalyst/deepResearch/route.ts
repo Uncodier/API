@@ -2,30 +2,24 @@ import { NextResponse } from 'next/server';
 import { DeepResearchService } from '@/lib/services/deep-research-service';
 import { isValidUUID } from '@/lib/helpers/command-utils';
 
-// Función para detectar URLs en el contexto
-function detectURLsInContext(context: string): string[] {
-  if (!context) return [];
+// Función para detectar URLs en un texto
+function extractUrls(text: string): string[] {
+  if (!text) return [];
   
-  // Regex para detectar URLs (http, https, www, dominios)
-  const urlRegex = /(?:https?:\/\/|www\.)[^\s<>"{}|\\^`[\]]+/gi;
-  const matches = context.match(urlRegex) || [];
+  // Regex para detectar URLs (http/https, www, o dominios)
+  const urlRegex = /(?:https?:\/\/)?(?:www\.)?(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/[^\s]*)?/g;
+  const matches = text.match(urlRegex) || [];
   
-  // Limpiar y validar URLs
-  const cleanUrls = matches
+  // Filtrar y limpiar URLs
+  return matches
     .map(url => {
-      // Limpiar caracteres finales comunes que no son parte de la URL
-      return url.replace(/[.,;:)}\]]+$/, '');
+      // Añadir https:// si no tiene protocolo
+      if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        return `https://${url}`;
+      }
+      return url;
     })
-    .filter(url => {
-      // Filtrar URLs que parecen válidas y relevantes
-      return url.length > 5 && 
-             !url.includes(' ') && 
-             (url.startsWith('http') || url.startsWith('www.'));
-    })
-    // Eliminar duplicados
-    .filter((url, index, arr) => arr.indexOf(url) === index);
-  
-  return cleanUrls;
+    .filter((url, index, self) => self.indexOf(url) === index); // Eliminar duplicados
 }
 
 export async function POST(request: Request) {
@@ -55,10 +49,6 @@ export async function POST(request: Request) {
       );
     }
     
-    // Detectar URLs importantes en el contexto
-    const detectedUrls = detectURLsInContext(context || '');
-    console.log(`🔗 URLs detectadas en el contexto: ${detectedUrls.length}`, detectedUrls);
-    
     // Procesar deliverables: convertir objeto a string o mantener string
     let processedDeliverables = deliverables;
     if (deliverables && typeof deliverables === 'object') {
@@ -70,6 +60,17 @@ export async function POST(request: Request) {
       }
     }
 
+    // Detectar URLs en research_topic y context
+    const topicUrls = extractUrls(research_topic);
+    const contextUrls = extractUrls(context || '');
+    const deliverablesUrls = extractUrls(typeof deliverables === 'string' ? deliverables : JSON.stringify(deliverables || ''));
+    
+    // Combinar todas las URLs encontradas
+    const allUrls = [...topicUrls, ...contextUrls, ...deliverablesUrls]
+      .filter((url, index, self) => self.indexOf(url) === index); // Eliminar duplicados
+
+    console.log(`🔗 URLs detectadas en la investigación: ${allUrls.length > 0 ? allUrls.join(', ') : 'ninguna'}`);
+
     // Agregar deliverables al contexto para búsquedas más específicas
     let enhancedContext = context || '';
     if (deliverables) {
@@ -79,31 +80,19 @@ export async function POST(request: Request) {
       
       enhancedContext += deliverablesContext;
     }
-    
-    // NUEVA FUNCIONALIDAD: Agregar instrucciones para URLs detectadas
-    if (detectedUrls.length > 0) {
-      enhancedContext += '\n\n🔗 IMPORTANT URLs DETECTED IN CONTEXT:\n';
-      detectedUrls.forEach((url, index) => {
-        enhancedContext += `${index + 1}. ${url}\n`;
-      });
-      
-      enhancedContext += `
-MANDATORY INSTRUCTION: Since important URLs have been detected in the context, you MUST include at least one search operation specifically designed to gather comprehensive information about these URLs. This operation should:
 
-1. Analyze the website content, structure, and purpose
-2. Extract key information about the domain/organization
-3. Identify important references, partnerships, or connections
-4. Gather competitive intelligence if applicable
-5. Extract contact information, business model, or relevant data
-6. Analyze any products, services, or content offered
+    // Añadir instrucción específica sobre URLs si se detectaron
+    if (allUrls.length > 0) {
+      enhancedContext += `\n\nIMPORTANT URLs DETECTED: ${allUrls.join(', ')}`;
+      enhancedContext += `\n\nURL RESEARCH INSTRUCTION: For each URL that is IMPORTANT and RELEVANT to achieving the research objectives, you should include at least one specific search operation to gather comprehensive information about that URL/website/domain. Only include URL research operations if the URL contains critical information for the research topic. This should include:
+- Website content analysis and key information
+- Company/organization details if it's a business website
+- Recent news or updates related to the domain
+- Technical specifications or service details
+- Contact information and business model
+- Any relevant data that supports the research topic
 
-Create a specific search operation with queries like:
-- "site analysis [URL] company information business model"
-- "[domain name] company profile organization information"
-- "website analysis [URL] content structure purpose"
-- "[company/domain] competitors industry analysis"
-
-This URL analysis operation is REQUIRED when URLs are detected in the context.`;
+Evaluate each URL's importance to the research goals before creating dedicated search operations.`;
     }
     
     console.log(`🔧 Ejecutando investigación profunda para sitio: ${site_id}, topic: ${research_topic}`);
@@ -130,7 +119,6 @@ This URL analysis operation is REQUIRED when URLs are detected in the context.`;
         research_topic: result.researchTopic || research_topic,
         research_depth: research_depth,
         deliverables: processedDeliverables || null,
-        detected_urls: detectedUrls.length > 0 ? detectedUrls : null,
         siteName: result.siteName,
         siteUrl: result.siteUrl,
         errors: result.errors,
