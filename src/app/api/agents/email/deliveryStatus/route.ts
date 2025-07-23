@@ -12,6 +12,9 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
+// Configuración de timeout extendido para Vercel
+export const maxDuration = 900; // 15 minutos en segundos
+
 // Create schemas for request validation
 const DeliveryStatusRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),

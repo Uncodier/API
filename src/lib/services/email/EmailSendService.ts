@@ -1,7 +1,6 @@
 import * as nodemailer from 'nodemailer';
 import { EmailConfigService } from './EmailConfigService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { v4 as uuidv4 } from 'uuid';
 
 export interface SendEmailParams {
   email: string;
@@ -56,7 +55,7 @@ export class EmailSendService {
       
       return {
         success: true,
-        email_id: uuidv4(),
+        email_id: `temp-${Date.now()}`,
         recipient: email,
         sender: fromEmail || from,
         subject,
@@ -122,16 +121,17 @@ export class EmailSendService {
         subject
       });
 
-      // Guardar registro del email enviado en la base de datos (opcional)
-      await this.saveEmailLog({
+      // Log del email enviado (se guarda automáticamente en Vercel/Supabase)
+      console.log('📧 Email enviado - Detalles:', {
         recipient_email: email,
         sender_email: fromAddress,
         subject,
-        message_content: message,
+        message_preview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
         agent_id,
         conversation_id,
         lead_id,
-        smtp_message_id: info.messageId
+        smtp_message_id: info.messageId,
+        sent_at: new Date().toISOString()
       });
       
       return {
@@ -209,42 +209,7 @@ export class EmailSendService {
     `;
   }
 
-  /**
-   * Guarda el log del email enviado en la base de datos
-   */
-  private static async saveEmailLog(logData: {
-    recipient_email: string;
-    sender_email: string;
-    subject: string;
-    message_content: string;
-    agent_id?: string;
-    conversation_id?: string;
-    lead_id?: string;
-    smtp_message_id: string;
-  }): Promise<void> {
-    try {
-      const emailLogData = {
-        id: uuidv4(),
-        ...logData,
-        agent_id: logData.agent_id || null,
-        conversation_id: logData.conversation_id || null,
-        lead_id: logData.lead_id || null,
-        sent_at: new Date().toISOString(),
-        status: 'sent'
-      };
-      
-      // Intentar guardar en tabla de logs de emails (si existe)
-      const { error: logError } = await supabaseAdmin
-        .from('email_logs')
-        .insert([emailLogData]);
-      
-      if (logError) {
-        console.warn('No se pudo guardar el log del email (tabla posiblemente no existe):', logError.message);
-      }
-    } catch (logError) {
-      console.warn('Error al intentar guardar log del email:', logError);
-    }
-  }
+
 
   /**
    * Valida el formato de email

@@ -14,6 +14,9 @@ import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObject
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
+// Configuración de timeout extendido para Vercel
+export const maxDuration = 900; // 15 minutos en segundos
+
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();

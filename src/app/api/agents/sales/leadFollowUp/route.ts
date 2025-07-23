@@ -233,7 +233,9 @@ async function executeCopywriterRefinement(
       copywriterContext += `6. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
       copywriterContext += `7. Use ONLY the real information provided in the lead context\n`;
       copywriterContext += `8. Write final content ready to send without additional editing\n`;
-      copywriterContext += `9. SIGNATURE RULES: Avoid signing emails unless absolutely necessary. If a signature is required, use only "*company name* or similar" without personal names\n\n`;
+      copywriterContext += `9. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off\n`;
+      copywriterContext += `10. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
+      copywriterContext += `11. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n\n`;
       
       console.log(`📝 PHASE 2: Structured context prepared with ${copywriterContext.length} characters`);
     } else {

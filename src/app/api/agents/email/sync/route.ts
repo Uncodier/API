@@ -14,6 +14,9 @@ import { createTask } from '@/lib/database/task-db';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 
+// Configuración de timeout extendido para Vercel
+export const maxDuration = 900; // 15 minutos en segundos
+
 // Create schemas for request validation
 const EmailSyncRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
