@@ -157,7 +157,7 @@ export class EmailService {
           for await (const message of client.fetch(searchQuery, {
             envelope: true,
             source: true, // Get full message source
-            bodyParts: ['HEADER', 'TEXT', 'BODY[TEXT]', 'BODY[1]', 'BODY[]'], // Try multiple part specifiers
+            bodyParts: ['HEADER', 'TEXT', '1', '1.1', '1.2'], // Valid IMAP part specifiers
             bodyStructure: true,
             flags: true
           })) {
@@ -195,8 +195,8 @@ export class EmailService {
             if (message.bodyParts) {
               console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyParts disponibles:`, Array.from(message.bodyParts.keys()));
               
-              // Try common bodyParts keys
-              const bodyPartsToTry = ['TEXT', 'BODY[TEXT]', 'BODY[1]', '1', 'text/plain', 'text'];
+              // Try common bodyParts keys - using valid IMAP part specifiers
+              const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
               
               for (const partKey of bodyPartsToTry) {
                 try {
@@ -753,7 +753,7 @@ export class EmailService {
           for await (const message of client.fetch(searchQuery, {
             envelope: true,
             source: true, // Get full message source
-            bodyParts: ['HEADER', 'TEXT', 'BODY[TEXT]', 'BODY[1]', 'BODY[]'], // Try multiple part specifiers
+            bodyParts: ['HEADER', 'TEXT', '1', '1.1', '1.2'], // Valid IMAP part specifiers
             bodyStructure: true,
             flags: true
           })) {
@@ -808,8 +808,8 @@ export class EmailService {
             if (message.bodyParts) {
               console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyParts disponibles:`, Array.from(message.bodyParts.keys()));
               
-              // Try common bodyParts keys
-              const bodyPartsToTry = ['TEXT', 'BODY[TEXT]', 'BODY[1]', '1', 'text/plain', 'text'];
+              // Try common bodyParts keys - using valid IMAP part specifiers
+              const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
               
               for (const partKey of bodyPartsToTry) {
                 try {
