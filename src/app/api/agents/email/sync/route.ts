@@ -936,7 +936,7 @@ async function assignLeadToTeamMember(leadId: string, teamMemberId: string, team
     const { error } = await supabaseAdmin
       .from('leads')
       .update({ 
-        assigned_to: teamMemberId,
+        assignee_id: teamMemberId,
         updated_at: new Date().toISOString()
       })
       .eq('id', leadId);
