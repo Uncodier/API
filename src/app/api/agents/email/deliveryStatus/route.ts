@@ -181,9 +181,23 @@ export async function POST(request: NextRequest) {
       
       // Filter for bounce emails from Mail Delivery Subsystem usando EmailFilterService
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure con EmailFilterService...`);
-      const bounceEmails = allEmails.filter(email => {
+      
+      // Log detallado de cada email para debugging
+      const bounceEmails = allEmails.filter((email, index) => {
+        console.log(`[DELIVERY_STATUS] 🔍 Evaluando email ${index + 1}/${allEmails.length}:`);
+        console.log(`[DELIVERY_STATUS]   - ID: ${email.id}`);
+        console.log(`[DELIVERY_STATUS]   - From: ${email.from}`);
+        console.log(`[DELIVERY_STATUS]   - Subject: ${email.subject}`);
+        console.log(`[DELIVERY_STATUS]   - Body preview: ${(email.body || '').substring(0, 200)}...`);
+        
         const validation = EmailFilterService.validateEmailNotDeliveryOrBounce(email);
-        return !validation.isValid; // Los emails inválidos son los bounce/delivery status que queremos procesar
+        console.log(`[DELIVERY_STATUS]   - Filter result: isValid=${validation.isValid}, reason="${validation.reason}", category="${validation.category}"`);
+        
+        const isBounce = !validation.isValid;
+        console.log(`[DELIVERY_STATUS]   - Will process as bounce: ${isBounce}`);
+        console.log(`[DELIVERY_STATUS]   ---`);
+        
+        return isBounce; // Los emails inválidos son los bounce/delivery status que queremos procesar
       });
       console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
       

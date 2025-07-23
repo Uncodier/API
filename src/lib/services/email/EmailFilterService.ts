@@ -49,6 +49,7 @@ export class EmailFilterService {
     // Patrones comunes en el SUBJECT de delivery status emails
     const deliveryStatusSubjectPatterns = [
       'delivery status notification',
+      'delivery status notification (failure)',
       'delivery status',
       'mail delivery subsystem',
       'undelivered mail returned to sender',
@@ -65,6 +66,9 @@ export class EmailFilterService {
       'message delivery failed',
       'mail could not be delivered',
       'non-delivery notification',
+      'delivery notification',
+      'failure notice',
+      'mail failure',
       'auto-reply',
       'automatic reply',
       'out of office',
@@ -172,14 +176,21 @@ export class EmailFilterService {
     // Verificar si viene de Mail Delivery Subsystem o similar
     const bounceFromPatterns = [
       'mail delivery subsystem',
+      'mail delivery system',
       'postmaster',
       'mailer-daemon',
-      'mail delivery system',
+      'mail-daemon',
+      'mailerdaemon',
       'delivery status notification',
       'undelivered mail returned',
       'bounce',
       'delivery failure',
-      'mail administrator'
+      'mail administrator',
+      'mail delivery',
+      'delivery notification',
+      'mail system',
+      'system administrator',
+      'mail server'
     ];
 
     const fromMatches = bounceFromPatterns.some(pattern => from.includes(pattern));
@@ -188,6 +199,8 @@ export class EmailFilterService {
     const bounceSubjectPatterns = [
       'undelivered mail returned',
       'delivery status notification',
+      'delivery status notification (failure)',
+      'delivery status notification (delay)',
       'failure notice',
       'mail delivery failed',
       'returned mail',
@@ -196,7 +209,11 @@ export class EmailFilterService {
       'undeliverable',
       'mail delivery subsystem',
       'permanent failure',
-      'delivery report'
+      'delivery report',
+      'delivery notification',
+      'mail failure',
+      'message not delivered',
+      'notification of delivery failure'
     ];
 
     const subjectMatches = bounceSubjectPatterns.some(pattern => subject.includes(pattern));

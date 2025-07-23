@@ -476,38 +476,105 @@ async function addSentMessageToConversation(
       }
     }
     
-    // Extraer contenido del email usando la misma lógica exitosa de email/route.ts
+    // Extraer contenido del email con análisis detallado de estructura
     let messageContent = 'No content available';
     
-    console.log(`[EMAIL_SYNC] 🔧 Optimizando email antes del procesamiento...`);
-    
-    // Usar EmailTextExtractorService con la configuración que SÍ funciona
-    const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
-      maxTextLength: 2000, // Suficiente texto para emails enviados
-      removeSignatures: false, // Mantener firma para emails enviados (contexto importante)
-      removeQuotedText: true,  // Remover texto citado de respuestas anteriores
-      removeHeaders: true,     // Remover headers técnicos
-      removeLegalDisclaimer: true // Remover disclaimers legales
+    console.log(`[EMAIL_SYNC] 🔍 Estructura del objeto email recibido:`, {
+      hasSubject: !!email.subject,
+      hasBody: !!email.body,
+      hasText: !!email.text,
+      hasHtml: !!email.html,
+      bodyType: typeof email.body,
+      bodyLength: email.body ? (typeof email.body === 'string' ? email.body.length : 'object') : 'null'
     });
     
-    console.log(`[EMAIL_SYNC] 📊 Resultado de extracción:`, {
-      originalLength: optimizedEmail.originalLength,
-      extractedLength: optimizedEmail.textLength,
-      compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
-      hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0
-    });
+    // Si email.body es un objeto, analizar su estructura
+    if (email.body && typeof email.body === 'object') {
+      console.log(`[EMAIL_SYNC] 🔍 email.body es objeto, estructura:`, Object.keys(email.body));
+      console.log(`[EMAIL_SYNC] 🔍 Propiedades del objeto body:`, {
+        hasText: !!(email.body.text),
+        hasHtml: !!(email.body.html),
+        textLength: email.body.text ? email.body.text.length : 0,
+        htmlLength: email.body.html ? email.body.html.length : 0
+      });
+    }
     
-    // Usar el contenido extraído directamente (igual que email/route.ts)
-    if (optimizedEmail.extractedText && 
-        optimizedEmail.extractedText.trim() && 
-        optimizedEmail.extractedText !== 'Error al extraer texto del email') {
-      messageContent = optimizedEmail.extractedText.trim();
-      console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
-    } else {
-      // Fallback directo sin el contenido de emergencia problemático
-      console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor falló, aplicando fallback directo`);
-      messageContent = email.body || email.text || email.html?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Contenido no disponible';
-      console.log(`[EMAIL_SYNC] 📝 Usando fallback directo: ${messageContent.length} caracteres`);
+    console.log(`[EMAIL_SYNC] 🔧 Intentando extracción con EmailTextExtractorService...`);
+    
+    try {
+      // Usar EmailTextExtractorService con la configuración que SÍ funciona
+      const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
+        maxTextLength: 2000, // Suficiente texto para emails enviados
+        removeSignatures: false, // Mantener firma para emails enviados (contexto importante)
+        removeQuotedText: true,  // Remover texto citado de respuestas anteriores
+        removeHeaders: true,     // Remover headers técnicos
+        removeLegalDisclaimer: true // Remover disclaimers legales
+      });
+      
+      console.log(`[EMAIL_SYNC] 📊 Resultado de EmailTextExtractor:`, {
+        originalLength: optimizedEmail.originalLength,
+        extractedLength: optimizedEmail.textLength,
+        compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
+        hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0,
+        extractedText: optimizedEmail.extractedText ? optimizedEmail.extractedText.substring(0, 100) + '...' : 'null'
+      });
+      
+      // Usar el contenido extraído si es válido
+      if (optimizedEmail.extractedText && 
+          optimizedEmail.extractedText.trim() && 
+          optimizedEmail.extractedText !== 'Error al extraer texto del email') {
+        messageContent = optimizedEmail.extractedText.trim();
+        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
+      } else {
+        console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido, aplicando fallback manual`);
+        throw new Error('EmailTextExtractor failed - applying manual fallback');
+      }
+    } catch (extractorError) {
+      console.log(`[EMAIL_SYNC] 🔧 EmailTextExtractor falló, aplicando fallback manual robusto...`);
+      console.error(`[EMAIL_SYNC] Error del extractor:`, extractorError);
+      
+      // Fallback manual robusto - verificar directamente las propiedades del email
+      let fallbackContent = '';
+      
+      // 1. Intentar con email.body (string directo)
+      if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.body (string): ${fallbackContent.length} caracteres`);
+      }
+      // 2. Intentar con email.text
+      else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+        fallbackContent = email.text.trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
+      }
+      // 3. Intentar con email.html (extraer texto básico)
+      else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
+      }
+      // 4. Verificar si body es un objeto con propiedades anidadas
+      else if (email.body && typeof email.body === 'object') {
+        console.log(`[EMAIL_SYNC] 🔍 Analizando email.body como objeto...`);
+        
+        if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
+          fallbackContent = email.body.text.trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
+        } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
+          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
+        } else {
+          console.log(`[EMAIL_SYNC] ⚠️ email.body es objeto pero no tiene text ni html válidos`);
+          console.log(`[EMAIL_SYNC] 🔍 Estructura completa de email.body:`, email.body);
+        }
+      }
+      
+      if (fallbackContent && fallbackContent.length > 0) {
+        messageContent = fallbackContent;
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
+      } else {
+        console.log(`[EMAIL_SYNC] ❌ Todos los fallbacks fallaron, el email no tiene contenido extraíble`);
+        messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
+        console.log(`[EMAIL_SYNC] 🆘 Usando contenido de emergencia: "${messageContent}"`);
+      }
     }
     
     const messageData: any = {
