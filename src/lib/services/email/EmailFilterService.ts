@@ -19,25 +19,34 @@ export class EmailFilterService {
     const emailSubject = (email.subject || '').toLowerCase();
     const emailContent = (email.body || email.text || '').toLowerCase();
     
-    // Patrones comunes en el FROM de delivery status emails
+    // Patrones comunes en el FROM de delivery status emails (mejorados)
     const deliveryStatusFromPatterns = [
       'mailer-daemon@',
+      'mailer-daemon ',
       'mail-daemon@',
+      'mail-daemon ',
       'postmaster@',
+      'postmaster ',
       'mailerdaemon@',
+      'mailerdaemon ',
       'mail-delivery-subsystem@',
+      'mail delivery subsystem',
       'delivery-status@',
       'bounce@',
       'bounces@',
       'return@',
       'returns@',
       'mail-delivery@',
-      'maildelivery@'
+      'maildelivery@',
+      'mail delivery system',
+      'delivery notification',
+      'noreply@googlemail.com'
     ];
     
     // Verificar patrones en FROM
     for (const pattern of deliveryStatusFromPatterns) {
       if (emailFrom.includes(pattern)) {
+        console.log(`[EmailFilterService] 🎯 DELIVERY STATUS FROM detected: "${pattern}" in "${emailFrom}"`);
         return {
           isValid: false,
           reason: `Email de delivery status detectado por FROM: ${pattern}`,
@@ -173,34 +182,55 @@ export class EmailFilterService {
     const subject = (email.subject || '').toLowerCase();
     const body = (email.body || '').toLowerCase();
 
-    // Verificar si viene de Mail Delivery Subsystem o similar
+    console.log(`[EmailFilterService] 🔍 Evaluando bounce email:`);
+    console.log(`[EmailFilterService]   - From: "${from}"`);
+    console.log(`[EmailFilterService]   - Subject: "${subject}"`);
+    console.log(`[EmailFilterService]   - Body length: ${body.length} chars`);
+
+    // Verificar si viene de Mail Delivery Subsystem o similar (patrones mejorados)
     const bounceFromPatterns = [
       'mail delivery subsystem',
       'mail delivery system',
-      'postmaster',
-      'mailer-daemon',
-      'mail-daemon',
-      'mailerdaemon',
+      'mail-delivery-subsystem',
+      'postmaster@',
+      'postmaster ',
+      'mailer-daemon@',
+      'mailer-daemon ',
+      'mail-daemon@',
+      'mail-daemon ',
+      'mailerdaemon@',
+      'mailerdaemon ',
       'delivery status notification',
       'undelivered mail returned',
-      'bounce',
+      'bounce@',
+      'bounces@',
       'delivery failure',
       'mail administrator',
       'mail delivery',
       'delivery notification',
       'mail system',
       'system administrator',
-      'mail server'
+      'mail server',
+      'noreply@googlemail.com', // Gmail bounce específico
+      'delivery-daemon@'
     ];
 
-    const fromMatches = bounceFromPatterns.some(pattern => from.includes(pattern));
+    let fromMatches = false;
+    for (const pattern of bounceFromPatterns) {
+      if (from.includes(pattern)) {
+        console.log(`[EmailFilterService]   ✅ FROM match found: "${pattern}"`);
+        fromMatches = true;
+        break;
+      }
+    }
 
-    // Verificar patrones en el asunto
+    // Verificar patrones en el asunto (patrones mejorados)
     const bounceSubjectPatterns = [
       'undelivered mail returned',
       'delivery status notification',
       'delivery status notification (failure)',
       'delivery status notification (delay)',
+      'delivery status notification failure',
       'failure notice',
       'mail delivery failed',
       'returned mail',
@@ -213,10 +243,21 @@ export class EmailFilterService {
       'delivery notification',
       'mail failure',
       'message not delivered',
-      'notification of delivery failure'
+      'notification of delivery failure',
+      'mail could not be delivered',
+      'delivery failed',
+      'undelivered mail',
+      'message delivery failed'
     ];
 
-    const subjectMatches = bounceSubjectPatterns.some(pattern => subject.includes(pattern));
+    let subjectMatches = false;
+    for (const pattern of bounceSubjectPatterns) {
+      if (subject.includes(pattern)) {
+        console.log(`[EmailFilterService]   ✅ SUBJECT match found: "${pattern}"`);
+        subjectMatches = true;
+        break;
+      }
+    }
 
     // Verificar patrones en el cuerpo del mensaje
     const bounceBodyPatterns = [
@@ -229,12 +270,35 @@ export class EmailFilterService {
       'mailbox unavailable',
       'delivery to the following recipient failed',
       'the following addresses had permanent fatal errors',
-      'host unknown'
+      'host unknown',
+      'your message could not be delivered',
+      'delivery has failed',
+      'message was not delivered',
+      'mail delivery failed',
+      'smtp error',
+      'bounce message',
+      'mailbox full',
+      'requested action not taken',
+      '550 requested action not taken',
+      'final-recipient: rfc822',
+      'action: failed',
+      'status: 5.',
+      'diagnostic-code: smtp'
     ];
 
-    const bodyMatches = bounceBodyPatterns.some(pattern => body.includes(pattern));
+    let bodyMatches = false;
+    for (const pattern of bounceBodyPatterns) {
+      if (body.includes(pattern)) {
+        console.log(`[EmailFilterService]   ✅ BODY match found: "${pattern}"`);
+        bodyMatches = true;
+        break;
+      }
+    }
 
-    return fromMatches || subjectMatches || bodyMatches;
+    const isBounce = fromMatches || subjectMatches || bodyMatches;
+    console.log(`[EmailFilterService]   - Final result: fromMatches=${fromMatches}, subjectMatches=${subjectMatches}, bodyMatches=${bodyMatches}, isBounce=${isBounce}`);
+
+    return isBounce;
   }
 
   /**

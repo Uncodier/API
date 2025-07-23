@@ -190,10 +190,51 @@ export async function POST(request: NextRequest) {
         console.log(`[DELIVERY_STATUS]   - Subject: ${email.subject}`);
         console.log(`[DELIVERY_STATUS]   - Body preview: ${(email.body || '').substring(0, 200)}...`);
         
+        // Debugging más detallado - verificar campos específicos
+        const from = (email.from || '').toLowerCase();
+        const subject = (email.subject || '').toLowerCase();
+        const body = (email.body || '').toLowerCase();
+        
+        console.log(`[DELIVERY_STATUS]   - From (lowercase): ${from}`);
+        console.log(`[DELIVERY_STATUS]   - Subject (lowercase): ${subject}`);
+        console.log(`[DELIVERY_STATUS]   - Body length: ${body.length} chars`);
+        
+        // Verificaciones manuales específicas para debugging
+        const manualBounceCheck = {
+          fromContainsDelivery: from.includes('delivery'),
+          fromContainsSubsystem: from.includes('subsystem'),
+          fromContainsMailer: from.includes('mailer'),
+          fromContainsPostmaster: from.includes('postmaster'),
+          subjectContainsDelivery: subject.includes('delivery'),
+          subjectContainsStatus: subject.includes('status'),
+          subjectContainsFailure: subject.includes('failure'),
+          subjectContainsUndelivered: subject.includes('undelivered'),
+          bodyContainsDelivery: body.includes('delivery'),
+          bodyContainsFailed: body.includes('failed'),
+          bodyContainsUnknown: body.includes('unknown')
+        };
+        
+        console.log(`[DELIVERY_STATUS]   - Manual bounce checks:`, manualBounceCheck);
+        
         const validation = EmailFilterService.validateEmailNotDeliveryOrBounce(email);
         console.log(`[DELIVERY_STATUS]   - Filter result: isValid=${validation.isValid}, reason="${validation.reason}", category="${validation.category}"`);
         
-        const isBounce = !validation.isValid;
+        // Verificación manual adicional usando patrones simplificados
+        const simpleIsBounce = (
+          from.includes('mail delivery subsystem') ||
+          from.includes('mailer-daemon') ||
+          from.includes('postmaster') ||
+          subject.includes('delivery status notification') ||
+          subject.includes('undelivered mail') ||
+          subject.includes('delivery failure') ||
+          body.includes('delivery failed') ||
+          body.includes('user unknown') ||
+          body.includes('mailbox unavailable')
+        );
+        
+        console.log(`[DELIVERY_STATUS]   - Simple bounce check: ${simpleIsBounce}`);
+        
+        const isBounce = !validation.isValid || simpleIsBounce;
         console.log(`[DELIVERY_STATUS]   - Will process as bounce: ${isBounce}`);
         console.log(`[DELIVERY_STATUS]   ---`);
         
