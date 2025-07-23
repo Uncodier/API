@@ -190,7 +190,7 @@ async function findLeadByEmail(email: string, siteId: string): Promise<string | 
 /**
  * Función para crear un nuevo lead basado en email enviado
  */
-async function createLeadFromSentEmail(toEmail: string, siteId: string, emailSubject: string): Promise<string | null> {
+async function createLeadFromSentEmail(toEmail: string, siteId: string, emailSubject: string, emailObject?: any): Promise<string | null> {
   try {
     console.log(`[EMAIL_SYNC] ➕ Creando nuevo lead para email: ${toEmail} en sitio: ${siteId}`);
     
@@ -206,9 +206,9 @@ async function createLeadFromSentEmail(toEmail: string, siteId: string, emailSub
       return null;
     }
     
-    // Extraer nombre del email si es posible
-    const extractedName = toEmail.split('@')[0].replace(/[._]/g, ' ').trim();
-    const leadName = extractedName || 'Contact from Email';
+    // Extraer nombre del contacto usando método mejorado
+    const extractedName = emailObject ? extractContactName(emailObject, toEmail) : null;
+    const leadName = extractedName || `Contact from Email`;
     
     const leadData = {
       email: toEmail,
@@ -329,7 +329,7 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string, ema
     
     // Usar el subject del email como título si está disponible, sino usar título por defecto
     const conversationTitle = emailSubject && emailSubject.trim() 
-      ? emailSubject.trim()
+      ? fixTextEncoding(emailSubject.trim())
       : `Email Conversation - ${lead.name || lead.email}`;
     
     const conversationData = {
@@ -404,9 +404,9 @@ async function addSentMessageToConversation(
           optimizedEmail.extractedText.trim() && 
           optimizedEmail.extractedText !== 'Error al extraer texto del email' &&
           optimizedEmail.extractedText.trim().length > 10) { // Mínimo 10 caracteres para contenido útil
-        messageContent = optimizedEmail.extractedText.trim();
+        messageContent = fixTextEncoding(optimizedEmail.extractedText.trim());
         extractionSuccessful = true;
-        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
+        console.log(`[EMAIL_SYNC] ✅ Contenido extraído y corregido exitosamente: ${messageContent.length} caracteres`);
       } else {
         console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido`);
       }
@@ -449,9 +449,9 @@ async function addSentMessageToConversation(
       
       // Validar que el contenido fallback sea útil (mínimo 10 caracteres)
       if (fallbackContent && fallbackContent.length >= 10) {
-        messageContent = fallbackContent;
+        messageContent = fixTextEncoding(fallbackContent);
         extractionSuccessful = true;
-        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso y corregido: ${messageContent.length} caracteres`);
       }
     }
     
@@ -506,9 +506,9 @@ async function addSentMessageToConversation(
         console.error('[EMAIL_SYNC] Error al buscar mensajes por contenido:', contentError);
       } else if (existingByContent && existingByContent.length > 0) {
         
-        // Normalizar contenido para comparación más precisa
-        const normalizedNewContent = messageContent.toLowerCase().trim().replace(/\s+/g, ' ');
-        const emailSubjectNormalized = email.subject.toLowerCase().trim();
+        // Normalizar contenido para comparación más precisa (incluyendo corrección de codificación)
+        const normalizedNewContent = fixTextEncoding(messageContent).toLowerCase().trim().replace(/\s+/g, ' ');
+        const emailSubjectNormalized = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
         
         for (const existingMsg of existingByContent) {
           const existingContent = existingMsg.content || '';
@@ -582,7 +582,7 @@ async function addSentMessageToConversation(
       custom_data: {
         type: 'sent_email',
         email_id: email.id,
-        subject: email.subject,
+        subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         to: email.to,
         from: email.from,
         date: email.date,
@@ -615,11 +615,12 @@ async function addSentMessageToConversation(
     );
     
     if (shouldUpdateTitle) {
-      console.log(`[EMAIL_SYNC] 📝 Actualizando título de conversación con subject: "${email.subject}"`);
+      const correctedSubject = fixTextEncoding(email.subject.trim());
+      console.log(`[EMAIL_SYNC] 📝 Actualizando título de conversación con subject corregido: "${correctedSubject}"`);
       await supabaseAdmin
         .from('conversations')
         .update({ 
-          title: email.subject.trim(),
+          title: correctedSubject,
           last_message_at: new Date().toISOString(),
           updated_at: new Date().toISOString()
         })
@@ -913,6 +914,11 @@ async function syncRelatedThreadEmails(
       try {
         console.log(`[EMAIL_SYNC] 📧 Procesando email del hilo: "${email.subject}" de ${email.from}`);
         
+        // Intentar mejorar el nombre del lead con información del email recibido
+        if (email.from) {
+          await updateLeadNameIfBetter(leadId, email, email.from);
+        }
+        
         // Agregar mensaje recibido a la conversación
         const messageId = await addReceivedMessageToConversation(conversationId, email, leadId, siteId);
         
@@ -1003,9 +1009,9 @@ async function addReceivedMessageToConversation(
           optimizedEmail.extractedText.trim() && 
           optimizedEmail.extractedText !== 'Error al extraer texto del email' &&
           optimizedEmail.extractedText.trim().length > 10) { // Mínimo 10 caracteres para contenido útil
-        messageContent = optimizedEmail.extractedText.trim();
+        messageContent = fixTextEncoding(optimizedEmail.extractedText.trim());
         extractionSuccessful = true;
-        console.log(`[EMAIL_SYNC] ✅ Contenido de email recibido extraído exitosamente: ${messageContent.length} caracteres`);
+        console.log(`[EMAIL_SYNC] ✅ Contenido de email recibido extraído y corregido exitosamente: ${messageContent.length} caracteres`);
       } else {
         console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido para email recibido`);
       }
@@ -1035,9 +1041,9 @@ async function addReceivedMessageToConversation(
       
       // Validar que el contenido fallback sea útil (mínimo 10 caracteres)
       if (fallbackContent && fallbackContent.length >= 10) {
-        messageContent = fallbackContent;
+        messageContent = fixTextEncoding(fallbackContent);
         extractionSuccessful = true;
-        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso para email recibido: ${messageContent.length} caracteres`);
+        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso y corregido para email recibido: ${messageContent.length} caracteres`);
       }
     }
     
@@ -1088,9 +1094,9 @@ async function addReceivedMessageToConversation(
         .limit(10);
         
       if (existingByContent && existingByContent.length > 0) {
-        // Normalizar contenido para comparación
-        const normalizedNewContent = messageContent.toLowerCase().trim().replace(/\s+/g, ' ');
-        const emailSubjectNormalized = email.subject.toLowerCase().trim();
+        // Normalizar contenido para comparación (incluyendo corrección de codificación)
+        const normalizedNewContent = fixTextEncoding(messageContent).toLowerCase().trim().replace(/\s+/g, ' ');
+        const emailSubjectNormalized = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
         
         for (const existingMsg of existingByContent) {
           const existingContent = existingMsg.content || '';
@@ -1138,7 +1144,7 @@ async function addReceivedMessageToConversation(
       custom_data: {
         type: 'received_email',
         email_id: emailId,
-        subject: email.subject,
+        subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         from: email.from,
         to: email.to,
         date: email.date,
@@ -1186,6 +1192,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   taskId?: string;
   isNewLead?: boolean;
   statusUpdated?: boolean;
+  nameUpdated?: boolean;
   assignedToTeamMember?: boolean;
   threadSync?: {
     processedCount: number;
@@ -1241,7 +1248,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     let isNewLead = false;
     
     if (!leadId) {
-      leadId = await createLeadFromSentEmail(toEmail, siteId, email.subject || 'No Subject');
+      leadId = await createLeadFromSentEmail(toEmail, siteId, email.subject || 'No Subject', email);
       isNewLead = true;
     }
     
@@ -1251,6 +1258,9 @@ async function processSentEmail(email: any, siteId: string): Promise<{
         error: 'No se pudo obtener o crear lead'
       };
     }
+    
+    // 1.5. Intentar mejorar el nombre del lead si encontramos uno mejor en el email
+    const nameUpdated = await updateLeadNameIfBetter(leadId, email, toEmail);
     
     // 2. Verificar si el email fue enviado por un team member y asignar el lead si es necesario
     let assignedToTeamMember = false;
@@ -1354,6 +1364,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
           from: email.from,
           is_new_lead: isNewLead,
           status_updated: statusUpdated,
+          name_updated: nameUpdated,
           thread_sync_result: threadSyncResult,
           no_content_extracted: !messageId, // Indicar si falló por falta de contenido
           processed_at: new Date().toISOString()
@@ -1375,6 +1386,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       taskId: taskId || undefined,
       isNewLead,
       statusUpdated,
+      nameUpdated,
       assignedToTeamMember,
       threadSync: threadSyncResult || undefined
     };
@@ -1485,6 +1497,258 @@ async function findTeamMemberByEmail(email: string, siteId: string): Promise<{id
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al buscar team member por email:', error);
     return null;
+  }
+}
+
+/**
+ * Función para corregir problemas de codificación de caracteres en texto de email
+ */
+function fixTextEncoding(text: string): string {
+  if (!text || typeof text !== 'string') {
+    return text;
+  }
+  
+  try {
+    let fixedText = text;
+    
+    // Correcciones más comunes de caracteres mal codificados
+    // Problema específico mencionado: "extracciÃ³n" -> "extracción"
+    fixedText = fixedText
+      .replace(/Ã¡/g, 'á')
+      .replace(/Ã©/g, 'é')
+      .replace(/Ã­/g, 'í')
+      .replace(/Ã³/g, 'ó')
+      .replace(/Ãº/g, 'ú')
+      .replace(/Ã±/g, 'ñ')
+      .replace(/Ã§/g, 'ç')
+      .replace(/Ã /g, 'à')
+      .replace(/Ã¨/g, 'è')
+      .replace(/Ã¬/g, 'ì')
+      .replace(/Ã²/g, 'ò')
+      .replace(/Ã¹/g, 'ù')
+      .replace(/Ã¢/g, 'â')
+      .replace(/Ãª/g, 'ê')
+      .replace(/Ã®/g, 'î')
+      .replace(/Ã´/g, 'ô')
+      .replace(/Ã»/g, 'û')
+      .replace(/Ã£/g, 'ã')
+      // Mayúsculas comunes
+      .replace(/Ã€/g, 'À')
+      .replace(/Ã‰/g, 'É')
+      .replace(/Ã"/g, 'Ó')
+      .replace(/Ã'/g, 'Ñ')
+      .replace(/Ã‡/g, 'Ç')
+      // Espacios problemáticos
+      .replace(/Â /g, ' ')
+      .replace(/Â/g, '');
+      
+    // Aplicar correcciones adicionales si es necesario
+    
+    // Intentar decodificar HTML entities si están presentes
+    const htmlEntities: { [key: string]: string } = {
+      '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
+      '&aacute;': 'á', '&eacute;': 'é', '&iacute;': 'í', '&oacute;': 'ó', '&uacute;': 'ú',
+      '&agrave;': 'à', '&egrave;': 'è', '&igrave;': 'ì', '&ograve;': 'ò', '&ugrave;': 'ù',
+      '&acirc;': 'â', '&ecirc;': 'ê', '&icirc;': 'î', '&ocirc;': 'ô', '&ucirc;': 'û',
+      '&atilde;': 'ã', '&ntilde;': 'ñ', '&ccedil;': 'ç',
+      '&Aacute;': 'Á', '&Eacute;': 'É', '&Iacute;': 'Í', '&Oacute;': 'Ó', '&Uacute;': 'Ú',
+      '&Agrave;': 'À', '&Egrave;': 'È', '&Igrave;': 'Ì', '&Ograve;': 'Ò', '&Ugrave;': 'Ù',
+      '&Acirc;': 'Â', '&Ecirc;': 'Ê', '&Icirc;': 'Î', '&Ocirc;': 'Ô', '&Ucirc;': 'Û',
+      '&Atilde;': 'Ã', '&Ntilde;': 'Ñ', '&Ccedil;': 'Ç'
+    };
+    
+    for (const [entity, char] of Object.entries(htmlEntities)) {
+      fixedText = fixedText.replace(new RegExp(entity, 'gi'), char);
+    }
+    
+    // Limpiar espacios múltiples y caracteres de control
+    fixedText = fixedText
+      .replace(/\s+/g, ' ') // Múltiples espacios a uno solo
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Caracteres de control
+      .trim();
+    
+    return fixedText;
+  } catch (error) {
+    console.warn('[EMAIL_SYNC] Error al corregir codificación de texto:', error);
+    return text; // Retornar texto original si hay error
+  }
+}
+
+/**
+ * Función para extraer el nombre de un contacto desde información de email
+ */
+function extractContactName(email: any, emailAddress?: string): string | null {
+  try {
+    // 1. Intentar extraer nombre del campo "from" con formato "Nombre <email@domain.com>"
+    if (email.from && typeof email.from === 'string') {
+      const fromField = fixTextEncoding(email.from.trim());
+      
+      // Formato: "Juan Pérez <juan@empresa.com>"
+      const nameMatch = fromField.match(/^(.+?)\s*<([^>]+)>$/);
+      if (nameMatch) {
+        const extractedName = nameMatch[1].trim();
+        // Verificar que no sea solo un email
+        if (extractedName && !extractedName.includes('@') && extractedName.length > 1) {
+          console.log(`[EMAIL_SYNC] 👤 Nombre extraído del campo 'from': "${extractedName}"`);
+          return extractedName;
+        }
+      }
+      
+      // Formato: "Juan Pérez" (sin <email>)
+      if (fromField && !fromField.includes('@') && !fromField.includes('<') && fromField.length > 1) {
+        console.log(`[EMAIL_SYNC] 👤 Nombre extraído directamente del campo 'from': "${fromField}"`);
+        return fromField;
+      }
+    }
+    
+    // 2. Intentar extraer desde headers adicionales
+    if (email.headers && typeof email.headers === 'object') {
+      // Header "Reply-To" a veces contiene nombre
+      const replyTo = email.headers['reply-to'] || email.headers['Reply-To'];
+      if (replyTo && typeof replyTo === 'string') {
+        const replyToField = fixTextEncoding(replyTo.trim());
+        const nameMatch = replyToField.match(/^(.+?)\s*<([^>]+)>$/);
+        if (nameMatch) {
+          const extractedName = nameMatch[1].trim();
+          if (extractedName && !extractedName.includes('@') && extractedName.length > 1) {
+            console.log(`[EMAIL_SYNC] 👤 Nombre extraído del campo 'Reply-To': "${extractedName}"`);
+            return extractedName;
+          }
+        }
+      }
+      
+      // Header "Sender" como alternativa
+      const sender = email.headers['sender'] || email.headers['Sender'];
+      if (sender && typeof sender === 'string') {
+        const senderField = fixTextEncoding(sender.trim());
+        const nameMatch = senderField.match(/^(.+?)\s*<([^>]+)>$/);
+        if (nameMatch) {
+          const extractedName = nameMatch[1].trim();
+          if (extractedName && !extractedName.includes('@') && extractedName.length > 1) {
+            console.log(`[EMAIL_SYNC] 👤 Nombre extraído del campo 'Sender': "${extractedName}"`);
+            return extractedName;
+          }
+        }
+      }
+    }
+    
+    // 3. Intentar extraer nombre del propio campo email si se proporciona
+    const targetEmail = emailAddress || email.to || email.from;
+    if (targetEmail && typeof targetEmail === 'string') {
+      // Buscar formato "Nombre <email@domain.com>" en el email objetivo
+      const emailMatch = targetEmail.match(/^(.+?)\s*<([^>]+)>$/);
+      if (emailMatch) {
+        const extractedName = emailMatch[1].trim();
+        if (extractedName && !extractedName.includes('@') && extractedName.length > 1) {
+          console.log(`[EMAIL_SYNC] 👤 Nombre extraído del email objetivo: "${extractedName}"`);
+          return fixTextEncoding(extractedName);
+        }
+      }
+      
+      // 4. Como último recurso, generar nombre inteligente desde la dirección de email
+      const emailOnly = emailMatch ? emailMatch[2] : targetEmail;
+      if (emailOnly && emailOnly.includes('@')) {
+        const [localPart] = emailOnly.split('@');
+        
+        // Mejorar la extracción del nombre desde la parte local del email
+        let nameFromEmail = localPart
+          .replace(/[._+]/g, ' ')           // Reemplazar puntos, guiones y + por espacios
+          .replace(/\d+/g, '')             // Remover números
+          .replace(/\s+/g, ' ')            // Múltiples espacios a uno
+          .trim();
+        
+        // Capitalizar palabras apropiadamente
+        if (nameFromEmail && nameFromEmail.length > 1) {
+          nameFromEmail = nameFromEmail
+            .split(' ')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+            .join(' ');
+          
+          // Solo retornar si parece un nombre real (más de 2 caracteres, no solo números/símbolos)
+          if (nameFromEmail.length > 2 && /[a-zA-Z]/.test(nameFromEmail)) {
+            console.log(`[EMAIL_SYNC] 👤 Nombre generado desde email: "${nameFromEmail}"`);
+            return nameFromEmail;
+          }
+        }
+      }
+    }
+    
+    console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer nombre del contacto`);
+    return null;
+  } catch (error) {
+    console.warn('[EMAIL_SYNC] Error al extraer nombre del contacto:', error);
+    return null;
+  }
+}
+
+/**
+ * Función para actualizar el nombre de un lead si encontramos uno mejor
+ */
+async function updateLeadNameIfBetter(leadId: string, emailObject: any, currentEmail: string): Promise<boolean> {
+  try {
+    console.log(`[EMAIL_SYNC] 🏷️ Verificando si se puede mejorar el nombre del lead: ${leadId}`);
+    
+    // Obtener información actual del lead
+    const { data: lead, error: leadError } = await supabaseAdmin
+      .from('leads')
+      .select('name, email')
+      .eq('id', leadId)
+      .single();
+      
+    if (leadError || !lead) {
+      console.error('[EMAIL_SYNC] Error al obtener lead para actualizar nombre:', leadError);
+      return false;
+    }
+    
+    const currentName = lead.name || '';
+    console.log(`[EMAIL_SYNC] 📝 Nombre actual del lead: "${currentName}"`);
+    
+    // Verificar si el nombre actual parece generado automáticamente o es genérico
+    const isGenericName = !currentName || 
+                         currentName.startsWith('Contact from Email') ||
+                         currentName.startsWith('Contact from') ||
+                         currentName.length < 3 ||
+                         currentName === currentEmail.split('@')[0];
+    
+    // Extraer nombre del email
+    const extractedName = extractContactName(emailObject, currentEmail);
+    
+    if (extractedName && extractedName.length > 2) {
+      // Si el nombre actual es genérico, o si el nuevo nombre es significativamente mejor
+      const shouldUpdate = isGenericName || 
+                          (extractedName.length > currentName.length && 
+                           extractedName.includes(' ') && 
+                           !currentName.includes(' '));
+      
+      if (shouldUpdate) {
+        console.log(`[EMAIL_SYNC] ✨ Actualizando nombre del lead de "${currentName}" a "${extractedName}"`);
+        
+        const { error: updateError } = await supabaseAdmin
+          .from('leads')
+          .update({ 
+            name: extractedName,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', leadId);
+          
+        if (updateError) {
+          console.error('[EMAIL_SYNC] Error al actualizar nombre del lead:', updateError);
+          return false;
+        }
+        
+        console.log(`[EMAIL_SYNC] ✅ Nombre del lead actualizado exitosamente`);
+        return true;
+      } else {
+        console.log(`[EMAIL_SYNC] ℹ️ El nombre actual "${currentName}" ya es bueno, no se actualiza`);
+        return false;
+      }
+    } else {
+      console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer un nombre mejor del email`);
+      return false;
+    }
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error al actualizar nombre del lead:', error);
+    return false;
   }
 }
 
@@ -1601,6 +1865,7 @@ export async function POST(request: NextRequest) {
       let processedCount = 0;
       let newLeadsCount = 0;
       let statusUpdatedCount = 0;
+      let namesUpdatedCount = 0;
       let tasksCreatedCount = 0;
       let skippedInternalCount = 0;
       let assignedToTeamMemberCount = 0;
@@ -1621,6 +1886,7 @@ export async function POST(request: NextRequest) {
           processedCount++;
           if (result.isNewLead) newLeadsCount++;
           if (result.statusUpdated) statusUpdatedCount++;
+          if (result.nameUpdated) namesUpdatedCount++;
           if (result.taskId) tasksCreatedCount++;
           if (result.assignedToTeamMember) assignedToTeamMemberCount++;
           if (result.threadSync) {
@@ -1644,6 +1910,7 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] - Emails saltados (dominios internos): ${skippedInternalCount}`);
       console.log(`[EMAIL_SYNC] - Nuevos leads creados: ${newLeadsCount}`);
       console.log(`[EMAIL_SYNC] - Leads con status actualizado: ${statusUpdatedCount}`);
+      console.log(`[EMAIL_SYNC] - Nombres de leads mejorados: ${namesUpdatedCount}`);
       console.log(`[EMAIL_SYNC] - Leads asignados a team members: ${assignedToTeamMemberCount}`);
       console.log(`[EMAIL_SYNC] - Tareas de first contact creadas: ${tasksCreatedCount}`);
       console.log(`[EMAIL_SYNC] - Hilos de conversación detectados: ${threadsDetectedCount}`);
@@ -1660,6 +1927,7 @@ export async function POST(request: NextRequest) {
         skippedInternalCount,
         newLeadsCount,
         statusUpdatedCount,
+        namesUpdatedCount,
         assignedToTeamMemberCount,
         tasksCreatedCount,
         threadsDetectedCount,
@@ -1722,8 +1990,10 @@ export async function GET(request: NextRequest) {
     features: [
       "Duplicate prevention using SyncedObjectsService",
       "Internal domain filtering (Uncodie domains)",
-      "Intelligent email content extraction",
+      "Intelligent email content extraction with character encoding fixes",
+      "Smart contact name extraction from email headers and addresses",
       "Lead creation and status management",
+      "Automatic lead name improvement from extracted contact information",
       "Email conversation tracking",
       "First contact task automation",
       "Team member detection by email",
@@ -1741,6 +2011,7 @@ export async function GET(request: NextRequest) {
       skippedInternalCount: "Emails skipped during individual processing due to internal domains",
       newLeadsCount: "New leads created from sent emails",
       statusUpdatedCount: "Leads with updated status",
+      namesUpdatedCount: "Leads with improved names extracted from email headers",
       assignedToTeamMemberCount: "Leads assigned to team members who sent the email",
       tasksCreatedCount: "First contact tasks created",
       threadsDetectedCount: "Email threads detected and processed",
