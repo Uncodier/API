@@ -476,107 +476,38 @@ async function addSentMessageToConversation(
       }
     }
     
-    // Extraer contenido del email usando EmailTextExtractorService para mejor compatibilidad
+    // Extraer contenido del email usando la misma lógica exitosa de email/route.ts
     let messageContent = 'No content available';
     
-    console.log(`[EMAIL_SYNC] 🔍 Estructura del objeto email recibido:`, {
-      hasSubject: !!email.subject,
-      hasBody: !!email.body,
-      hasText: !!email.text,
-      hasHtml: !!email.html,
-      bodyType: typeof email.body,
-      bodyLength: email.body ? (typeof email.body === 'string' ? email.body.length : 'not string') : 'null'
+    console.log(`[EMAIL_SYNC] 🔧 Optimizando email antes del procesamiento...`);
+    
+    // Usar EmailTextExtractorService con la configuración que SÍ funciona
+    const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
+      maxTextLength: 2000, // Suficiente texto para emails enviados
+      removeSignatures: false, // Mantener firma para emails enviados (contexto importante)
+      removeQuotedText: true,  // Remover texto citado de respuestas anteriores
+      removeHeaders: true,     // Remover headers técnicos
+      removeLegalDisclaimer: true // Remover disclaimers legales
     });
     
-    try {
-      const extractedContent = EmailTextExtractorService.extractEmailText(email, {
-        maxTextLength: 4000,
-        removeSignatures: false, // Mantener firma para emails enviados
-        removeQuotedText: false,
-        preserveStructure: true
-      });
-      
-      console.log(`[EMAIL_SYNC] 📄 Resultado de EmailTextExtractor:`, {
-        hasExtractedText: !!extractedContent.extractedText,
-        extractedTextLength: extractedContent.extractedText ? extractedContent.extractedText.length : 0,
-        extractedTextTrimmed: extractedContent.extractedText ? extractedContent.extractedText.trim().length : 0
-      });
-      
-      if (extractedContent.extractedText && 
-          extractedContent.extractedText.trim() && 
-          extractedContent.extractedText !== 'Error al extraer texto del email') {
-        messageContent = extractedContent.extractedText.trim();
-        console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
-      } else {
-        if (extractedContent.extractedText === 'Error al extraer texto del email') {
-          console.log(`[EMAIL_SYNC] ❌ EmailTextExtractor reportó error interno, usando fallback directo`);
-        } else {
-          console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor no devolvió contenido válido, usando fallback directo`);
-        }
-        
-        // Fallback directo más robusto - verificar directamente las propiedades del email
-        let fallbackContent = '';
-        
-        // 1. Intentar con email.body (principal en EmailService)
-        if (email.body && typeof email.body === 'string' && email.body.trim()) {
-          fallbackContent = email.body.trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.body: ${fallbackContent.length} caracteres`);
-        }
-        // 2. Intentar con email.text
-        else if (email.text && typeof email.text === 'string' && email.text.trim()) {
-          fallbackContent = email.text.trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
-        }
-        // 3. Intentar con email.html (extraer texto básico)
-        else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-          // Extraer texto básico de HTML
-          fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
-        }
-        // 4. Verificar si body es un objeto con propiedades anidadas
-        else if (email.body && typeof email.body === 'object') {
-          console.log(`[EMAIL_SYNC] 🔍 email.body es objeto, estructura:`, Object.keys(email.body));
-          
-          if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
-            fallbackContent = email.body.text.trim();
-            console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
-          } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
-            fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-            console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
-          }
-        }
-        
-        if (fallbackContent && fallbackContent.length > 0) {
-          messageContent = fallbackContent;
-          console.log(`[EMAIL_SYNC] ✅ Usando contenido fallback: ${messageContent.length} caracteres`);
-        } else {
-          console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer contenido del email, manteniendo fallback por defecto`);
-          messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
-        }
-      }
-    } catch (extractionError) {
-      console.error('[EMAIL_SYNC] Error extrayendo contenido del email:', extractionError);
-      
-      // Fallback manual más directo en caso de error
-      console.log(`[EMAIL_SYNC] 🔧 Aplicando fallback manual por error en extracción`);
-      
-      let fallbackContent = '';
-      
-      if (email.body && typeof email.body === 'string' && email.body.trim()) {
-        fallbackContent = email.body.trim();
-      } else if (email.text && typeof email.text === 'string' && email.text.trim()) {
-        fallbackContent = email.text.trim();
-      } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-      }
-      
-      if (fallbackContent && fallbackContent.length > 0) {
-        messageContent = fallbackContent;
-        console.log(`[EMAIL_SYNC] ✅ Fallback manual exitoso: ${messageContent.length} caracteres`);
-      } else {
-        messageContent = `Email enviado: ${email.subject || 'Sin asunto'}${email.to ? ` a ${email.to}` : ''}`;
-        console.log(`[EMAIL_SYNC] ⚠️ Usando contenido de emergencia basado en subject y destinatario`);
-      }
+    console.log(`[EMAIL_SYNC] 📊 Resultado de extracción:`, {
+      originalLength: optimizedEmail.originalLength,
+      extractedLength: optimizedEmail.textLength,
+      compressionRatio: `${(optimizedEmail.compressionRatio * 100).toFixed(1)}%`,
+      hasContent: !!optimizedEmail.extractedText && optimizedEmail.extractedText.trim().length > 0
+    });
+    
+    // Usar el contenido extraído directamente (igual que email/route.ts)
+    if (optimizedEmail.extractedText && 
+        optimizedEmail.extractedText.trim() && 
+        optimizedEmail.extractedText !== 'Error al extraer texto del email') {
+      messageContent = optimizedEmail.extractedText.trim();
+      console.log(`[EMAIL_SYNC] ✅ Contenido extraído exitosamente: ${messageContent.length} caracteres`);
+    } else {
+      // Fallback directo sin el contenido de emergencia problemático
+      console.log(`[EMAIL_SYNC] ⚠️ EmailTextExtractor falló, aplicando fallback directo`);
+      messageContent = email.body || email.text || email.html?.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() || 'Contenido no disponible';
+      console.log(`[EMAIL_SYNC] 📝 Usando fallback directo: ${messageContent.length} caracteres`);
     }
     
     const messageData: any = {
@@ -768,6 +699,311 @@ async function createFirstContactTaskIfNeeded(leadId: string, siteId: string): P
 }
 
 /**
+ * Detecta si un email es parte de un hilo de conversación
+ */
+function detectEmailThread(email: any): {
+  isThread: boolean;
+  threadSubject: string;
+  replyType?: 'reply' | 'forward';
+  inReplyTo?: string;
+  references?: string[];
+} {
+  const subject = email.subject || '';
+  const headers = email.headers || {};
+  
+  // Detectar por subject (Re:, Fwd:, etc.)
+  const replyMatch = subject.match(/^(Re|RE|Fwd|FWD|Fw|FW):\s*(.+)/i);
+  const isReplyBySubject = !!replyMatch;
+  
+  // Detectar por headers
+  const inReplyTo = headers['in-reply-to'] || headers['In-Reply-To'];
+  const references = headers['references'] || headers['References'];
+  const referencesArray = references ? references.split(/\s+/).filter(Boolean) : [];
+  
+  const isReplyByHeaders = !!(inReplyTo || referencesArray.length > 0);
+  
+  const isThread = isReplyBySubject || isReplyByHeaders;
+  
+  // Obtener subject limpio (sin Re:, Fwd:)
+  const cleanSubject = replyMatch ? replyMatch[2].trim() : subject;
+  
+  // Determinar tipo de respuesta
+  let replyType: 'reply' | 'forward' | undefined;
+  if (isReplyBySubject) {
+    const prefix = replyMatch![1].toLowerCase();
+    if (prefix.startsWith('re')) {
+      replyType = 'reply';
+    } else if (prefix.startsWith('fw') || prefix.startsWith('fwd')) {
+      replyType = 'forward';
+    }
+  }
+  
+  console.log(`[EMAIL_SYNC] 🧵 Detección de hilo para "${subject}":`, {
+    isThread,
+    replyType,
+    cleanSubject,
+    hasInReplyTo: !!inReplyTo,
+    referencesCount: referencesArray.length
+  });
+  
+  return {
+    isThread,
+    threadSubject: cleanSubject,
+    replyType,
+    inReplyTo,
+    references: referencesArray
+  };
+}
+
+/**
+ * Busca emails relacionados del mismo hilo en la bandeja de entrada
+ */
+async function fetchRelatedThreadEmails(
+  threadSubject: string,
+  participantEmail: string,
+  siteId: string,
+  emailConfig: any,
+  sentEmailDate: string
+): Promise<any[]> {
+  try {
+    console.log(`[EMAIL_SYNC] 🔍 Buscando emails relacionados del hilo:`);
+    console.log(`[EMAIL_SYNC] - Subject: "${threadSubject}"`);
+    console.log(`[EMAIL_SYNC] - Participante: ${participantEmail}`);
+    console.log(`[EMAIL_SYNC] - Fecha email enviado: ${sentEmailDate}`);
+    
+    // Calcular rango de fechas: 30 días antes del email enviado
+    const sentDate = new Date(sentEmailDate);
+    const searchFromDate = new Date(sentDate.getTime() - (30 * 24 * 60 * 60 * 1000));
+    
+    console.log(`[EMAIL_SYNC] 📅 Buscando emails desde: ${searchFromDate.toISOString()}`);
+    
+    // Obtener emails recibidos en el rango de fechas
+    const allReceivedEmails = await EmailService.fetchEmails(emailConfig, 50, searchFromDate.toISOString());
+    
+    console.log(`[EMAIL_SYNC] 📥 Emails recibidos encontrados: ${allReceivedEmails.length}`);
+    
+    // Filtrar emails relacionados al hilo
+    const relatedEmails = allReceivedEmails.filter(email => {
+      const emailFrom = email.from?.toLowerCase() || '';
+      const emailSubject = email.subject || '';
+      
+      // Verificar que sea del participante
+      const isFromParticipant = emailFrom.includes(participantEmail.toLowerCase());
+      
+      // Verificar que el subject esté relacionado
+      const emailSubjectClean = emailSubject.replace(/^(Re|RE|Fwd|FWD|Fw|FW):\s*/gi, '').trim();
+      const isRelatedSubject = emailSubjectClean.toLowerCase() === threadSubject.toLowerCase() ||
+                               emailSubject.toLowerCase().includes(threadSubject.toLowerCase()) ||
+                               threadSubject.toLowerCase().includes(emailSubjectClean.toLowerCase());
+      
+      return isFromParticipant && isRelatedSubject;
+    });
+    
+    console.log(`[EMAIL_SYNC] 🧵 Emails relacionados al hilo encontrados: ${relatedEmails.length}`);
+    
+    relatedEmails.forEach(email => {
+      console.log(`[EMAIL_SYNC] - ${email.date}: "${email.subject}" de ${email.from}`);
+    });
+    
+    return relatedEmails;
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error buscando emails relacionados:', error);
+    return [];
+  }
+}
+
+/**
+ * Procesa y sincroniza emails relacionados del hilo que no han sido procesados
+ */
+async function syncRelatedThreadEmails(
+  relatedEmails: any[],
+  siteId: string,
+  leadId: string,
+  conversationId: string
+): Promise<{
+  processedCount: number;
+  alreadySyncedCount: number;
+  messageIds: string[];
+}> {
+  try {
+    console.log(`[EMAIL_SYNC] 🔄 Sincronizando ${relatedEmails.length} emails relacionados del hilo...`);
+    
+    // Filtrar emails ya procesados
+    const { unprocessed: unprocessedEmails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
+      relatedEmails,
+      siteId,
+      'email' // Tipo para emails recibidos
+    );
+    
+    console.log(`[EMAIL_SYNC] 📊 Emails del hilo:`, {
+      total: relatedEmails.length,
+      nuevos: unprocessedEmails.length,
+      yaProcesados: alreadyProcessed.length
+    });
+    
+    const messageIds: string[] = [];
+    let processedCount = 0;
+    
+    // Procesar emails no sincronizados
+    for (const email of unprocessedEmails) {
+      try {
+        console.log(`[EMAIL_SYNC] 📧 Procesando email del hilo: "${email.subject}" de ${email.from}`);
+        
+        // Agregar mensaje recibido a la conversación
+        const messageId = await addReceivedMessageToConversation(conversationId, email, leadId, siteId);
+        
+        if (messageId) {
+          messageIds.push(messageId);
+          processedCount++;
+          
+          // Marcar como procesado
+          const emailId = email.id || email.messageId || email.uid;
+          if (emailId) {
+            await SyncedObjectsService.updateObject(emailId, siteId, {
+              status: 'processed',
+              metadata: {
+                conversation_id: conversationId,
+                message_id: messageId,
+                lead_id: leadId,
+                sync_source: 'thread_sync',
+                processed_at: new Date().toISOString()
+              }
+            }, 'email');
+          }
+          
+          console.log(`[EMAIL_SYNC] ✅ Email del hilo sincronizado: ${messageId}`);
+        }
+      } catch (emailError) {
+        console.error(`[EMAIL_SYNC] Error procesando email del hilo:`, emailError);
+      }
+    }
+    
+    console.log(`[EMAIL_SYNC] ✅ Sincronización del hilo completada:`, {
+      processedCount,
+      alreadySyncedCount: alreadyProcessed.length,
+      messageIds: messageIds.length
+    });
+    
+    return {
+      processedCount,
+      alreadySyncedCount: alreadyProcessed.length,
+      messageIds
+    };
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error sincronizando emails del hilo:', error);
+    return {
+      processedCount: 0,
+      alreadySyncedCount: 0,
+      messageIds: []
+    };
+  }
+}
+
+/**
+ * Agrega un mensaje recibido (del hilo) a la conversación
+ */
+async function addReceivedMessageToConversation(
+  conversationId: string,
+  email: any,
+  leadId: string,
+  siteId: string
+): Promise<string | null> {
+  try {
+    console.log(`[EMAIL_SYNC] 📩 Agregando mensaje recibido del hilo a conversación: ${conversationId}`);
+    
+    // Verificar si ya existe un mensaje con este email_id
+    const emailId = email.id || email.messageId || email.uid;
+    if (emailId) {
+      const { data: existingMessage } = await supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .filter('custom_data->email_id', 'eq', emailId)
+        .limit(1);
+        
+      if (existingMessage && existingMessage.length > 0) {
+        console.log(`[EMAIL_SYNC] ✅ Mensaje del hilo ya existe: ${existingMessage[0].id}`);
+        return existingMessage[0].id;
+      }
+    }
+    
+    // Extraer contenido del email recibido
+    const optimizedEmail = EmailTextExtractorService.extractEmailText(email, {
+      maxTextLength: 2000,
+      removeSignatures: true,    // Remover firmas de emails recibidos
+      removeQuotedText: true,    // Remover texto citado
+      removeHeaders: true,       // Remover headers
+      removeLegalDisclaimer: true
+    });
+    
+    let messageContent = 'Contenido no disponible';
+    if (optimizedEmail.extractedText && 
+        optimizedEmail.extractedText.trim() && 
+        optimizedEmail.extractedText !== 'Error al extraer texto del email') {
+      messageContent = optimizedEmail.extractedText.trim();
+    } else {
+      messageContent = email.body || email.text || 'Contenido no disponible';
+    }
+    
+    // Obtener información de la conversación
+    const { data: conversation } = await supabaseAdmin
+      .from('conversations')
+      .select('user_id')
+      .eq('id', conversationId)
+      .single();
+      
+    if (!conversation) {
+      console.error('[EMAIL_SYNC] No se pudo obtener conversación para mensaje recibido');
+      return null;
+    }
+    
+    // Crear mensaje como 'lead' (mensaje del destinatario/cliente)
+    const messageData = {
+      conversation_id: conversationId,
+      content: messageContent,
+      role: 'lead',  // Email recibido del lead/cliente
+      user_id: conversation.user_id,
+      lead_id: leadId,
+      custom_data: {
+        type: 'received_email',
+        email_id: emailId,
+        subject: email.subject,
+        from: email.from,
+        to: email.to,
+        date: email.date,
+        sync_source: 'thread_sync'
+      }
+    };
+    
+    const { data: message, error } = await supabaseAdmin
+      .from('messages')
+      .insert([messageData])
+      .select()
+      .single();
+      
+    if (error) {
+      console.error('[EMAIL_SYNC] Error creando mensaje recibido del hilo:', error);
+      return null;
+    }
+    
+    // Actualizar última actividad de la conversación
+    await supabaseAdmin
+      .from('conversations')
+      .update({ 
+        last_message_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', conversationId);
+    
+    console.log(`[EMAIL_SYNC] ✅ Mensaje recibido del hilo agregado: ${message.id}`);
+    return message.id;
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error agregando mensaje recibido del hilo:', error);
+    return null;
+  }
+}
+
+/**
  * Función para procesar un email enviado individual
  */
 async function processSentEmail(email: any, siteId: string): Promise<{
@@ -779,6 +1015,11 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   isNewLead?: boolean;
   statusUpdated?: boolean;
   assignedToTeamMember?: boolean;
+  threadSync?: {
+    processedCount: number;
+    alreadySyncedCount: number;
+    messageIds: string[];
+  };
   error?: string;
   skipped?: boolean;
 }> {
@@ -872,10 +1113,56 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     // 5. Agregar mensaje enviado a la conversación
     const messageId = await addSentMessageToConversation(conversationId, email, leadId, siteId);
     
-    // 6. Crear tarea de first contact si es necesario
+    // 6. Detectar y sincronizar hilo de conversación si es necesario
+    let threadSyncResult: {
+      processedCount: number;
+      alreadySyncedCount: number;
+      messageIds: string[];
+    } | null = null;
+    
+    const threadInfo = detectEmailThread(email);
+    if (threadInfo.isThread) {
+      console.log(`[EMAIL_SYNC] 🧵 Email detectado como parte de un hilo: "${threadInfo.threadSubject}" (${threadInfo.replyType})`);
+      
+      try {
+        // Obtener configuración de email para buscar emails relacionados
+        const emailConfig = await EmailConfigService.getEmailConfig(siteId);
+        
+        // Buscar emails relacionados del destinatario en el hilo
+        const relatedEmails = await fetchRelatedThreadEmails(
+          threadInfo.threadSubject,
+          email.to, // Email del destinatario
+          siteId,
+          emailConfig,
+          email.date || new Date().toISOString()
+        );
+        
+        if (relatedEmails.length > 0) {
+          console.log(`[EMAIL_SYNC] 🔄 Sincronizando ${relatedEmails.length} emails relacionados del hilo...`);
+          
+          // Sincronizar emails relacionados del hilo
+          threadSyncResult = await syncRelatedThreadEmails(
+            relatedEmails,
+            siteId,
+            leadId,
+            conversationId
+          );
+          
+          console.log(`[EMAIL_SYNC] ✅ Sincronización del hilo completada:`, threadSyncResult);
+        } else {
+          console.log(`[EMAIL_SYNC] ℹ️ No se encontraron emails relacionados del hilo para sincronizar`);
+        }
+      } catch (threadError) {
+        console.error('[EMAIL_SYNC] Error sincronizando hilo:', threadError);
+      }
+    } else {
+      console.log(`[EMAIL_SYNC] ℹ️ Email no es parte de un hilo existente`);
+    }
+    
+    // 7. Crear tarea de first contact si es necesario
     const taskId = await createFirstContactTaskIfNeeded(leadId, siteId);
     
-    // 7. Marcar email como procesado exitosamente
+    // 8. Marcar email como procesado exitosamente
     if (emailId) {
       await SyncedObjectsService.updateObject(emailId, siteId, {
         status: 'processed',
@@ -889,6 +1176,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
           from: email.from,
           is_new_lead: isNewLead,
           status_updated: statusUpdated,
+          thread_sync_result: threadSyncResult,
           processed_at: new Date().toISOString()
         }
       }, 'sent_email');
@@ -904,7 +1192,8 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       taskId: taskId || undefined,
       isNewLead,
       statusUpdated,
-      assignedToTeamMember
+      assignedToTeamMember,
+      threadSync: threadSyncResult || undefined
     };
     
   } catch (error) {
@@ -1132,6 +1421,8 @@ export async function POST(request: NextRequest) {
       let tasksCreatedCount = 0;
       let skippedInternalCount = 0;
       let assignedToTeamMemberCount = 0;
+      let threadsDetectedCount = 0;
+      let threadEmailsSyncedCount = 0;
       
       for (const email of sentEmails) {
         const result = await processSentEmail(email, siteId);
@@ -1148,6 +1439,10 @@ export async function POST(request: NextRequest) {
           if (result.statusUpdated) statusUpdatedCount++;
           if (result.taskId) tasksCreatedCount++;
           if (result.assignedToTeamMember) assignedToTeamMemberCount++;
+          if (result.threadSync) {
+            threadsDetectedCount++;
+            threadEmailsSyncedCount += result.threadSync.processedCount;
+          }
         } else if (result.skipped) {
           skippedInternalCount++;
         }
@@ -1163,6 +1458,8 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] - Leads con status actualizado: ${statusUpdatedCount}`);
       console.log(`[EMAIL_SYNC] - Leads asignados a team members: ${assignedToTeamMemberCount}`);
       console.log(`[EMAIL_SYNC] - Tareas de first contact creadas: ${tasksCreatedCount}`);
+      console.log(`[EMAIL_SYNC] - Hilos de conversación detectados: ${threadsDetectedCount}`);
+      console.log(`[EMAIL_SYNC] - Emails adicionales sincronizados de hilos: ${threadEmailsSyncedCount}`);
       
       return NextResponse.json({
         success: true,
@@ -1176,6 +1473,8 @@ export async function POST(request: NextRequest) {
         statusUpdatedCount,
         assignedToTeamMemberCount,
         tasksCreatedCount,
+        threadsDetectedCount,
+        threadEmailsSyncedCount,
         internalDomainsFiltered: getInternalDomains(),
         preFilteredInternalCount,
         results
@@ -1238,7 +1537,10 @@ export async function GET(request: NextRequest) {
       "Email conversation tracking",
       "First contact task automation",
       "Team member detection by email",
-      "Automatic lead assignment to team members who sent the email"
+      "Automatic lead assignment to team members who sent the email",
+      "Thread detection and synchronization",
+      "Automatic sync of related thread emails from recipients",
+      "Complete conversation context reconstruction"
     ],
     response_fields: {
       emailCount: "Total emails found in sent folder",
@@ -1251,6 +1553,8 @@ export async function GET(request: NextRequest) {
       statusUpdatedCount: "Leads with updated status",
       assignedToTeamMemberCount: "Leads assigned to team members who sent the email",
       tasksCreatedCount: "First contact tasks created",
+      threadsDetectedCount: "Email threads detected and processed",
+      threadEmailsSyncedCount: "Additional emails from threads synchronized",
       internalDomainsFiltered: "List of internal domains that are filtered out"
     }
   }, { status: 200 });
