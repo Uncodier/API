@@ -793,60 +793,115 @@ export async function POST(request: Request) {
     const finalCommand = copywriterCompleted ? completedCopywriterCommand : completedSalesCommand;
     let finalContent = [];
     
+    console.log(`📊 FINAL EXTRACTION: Using ${copywriterCompleted ? 'COPYWRITER' : 'SALES'} command for final content`);
+    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent available:`, !!salesFollowUpContent);
+    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent:`, JSON.stringify(salesFollowUpContent, null, 2));
+    console.log(`📊 FINAL EXTRACTION: finalCommand exists:`, !!finalCommand);
+    console.log(`📊 FINAL EXTRACTION: finalCommand.results exists:`, !!(finalCommand && finalCommand.results));
+    console.log(`📊 FINAL EXTRACTION: finalCommand.results is array:`, !!(finalCommand && finalCommand.results && Array.isArray(finalCommand.results)));
+    
     // Extract content from final command
     if (finalCommand && finalCommand.results && Array.isArray(finalCommand.results)) {
+      console.log(`📊 FINAL EXTRACTION: Processing ${finalCommand.results.length} results`);
+      
       for (const result of finalCommand.results) {
+        console.log(`📊 FINAL EXTRACTION: Processing result with keys:`, Object.keys(result));
+        
         // For copywriter, search for refined_content (can be object or array)
         if (copywriterCompleted && result.refined_content) {
+          console.log(`📊 FINAL EXTRACTION: Found refined_content (copywriter mode)`);
           if (Array.isArray(result.refined_content)) {
             finalContent = result.refined_content;
+            console.log(`📊 FINAL EXTRACTION: Using refined_content array with ${finalContent.length} items`);
           } else if (typeof result.refined_content === 'object') {
             finalContent = [result.refined_content]; // Convert object to array
+            console.log(`📊 FINAL EXTRACTION: Converted refined_content object to array`);
           }
           break;
         }
         // For sales, search for follow_up_content (can be object or array)
         else if (!copywriterCompleted && result.follow_up_content) {
+          console.log(`📊 FINAL EXTRACTION: Found follow_up_content (sales mode)`);
+          console.log(`📊 FINAL EXTRACTION: follow_up_content type:`, typeof result.follow_up_content);
+          console.log(`📊 FINAL EXTRACTION: follow_up_content is array:`, Array.isArray(result.follow_up_content));
+          console.log(`📊 FINAL EXTRACTION: follow_up_content content:`, JSON.stringify(result.follow_up_content, null, 2));
+          
           if (Array.isArray(result.follow_up_content)) {
             finalContent = result.follow_up_content;
+            console.log(`📊 FINAL EXTRACTION: Using follow_up_content array with ${finalContent.length} items`);
           } else if (typeof result.follow_up_content === 'object') {
             finalContent = [result.follow_up_content]; // Convert object to array
+            console.log(`📊 FINAL EXTRACTION: Converted follow_up_content object to array`);
+            console.log(`📊 FINAL EXTRACTION: finalContent after conversion:`, JSON.stringify(finalContent, null, 2));
           }
           break;
         }
         // Fallbacks
         else if (result.content && Array.isArray(result.content)) {
+          console.log(`📊 FINAL EXTRACTION: Using fallback content array`);
           finalContent = result.content;
           break;
         }
         else if (result.content && typeof result.content === 'object') {
+          console.log(`📊 FINAL EXTRACTION: Using fallback content object`);
           finalContent = [result.content]; // Convert object to array
           break;
         }
         else if (Array.isArray(result)) {
+          console.log(`📊 FINAL EXTRACTION: Using result as array`);
           finalContent = result;
           break;
         }
+        else {
+          console.log(`📊 FINAL EXTRACTION: No matching content found in this result`);
+        }
       }
+    } else {
+      console.error(`❌ FINAL EXTRACTION: Could not access finalCommand.results`);
+    }
+    
+    console.log(`📊 FINAL EXTRACTION: Final finalContent:`, JSON.stringify(finalContent, null, 2));
+    console.log(`📊 FINAL EXTRACTION: finalContent length:`, finalContent.length);
+    
+    // 🔧 FALLBACK: Si finalContent está vacío pero tenemos salesFollowUpContent, usarlo
+    if ((!finalContent || finalContent.length === 0) && salesFollowUpContent && typeof salesFollowUpContent === 'object') {
+      console.log(`🔄 FALLBACK: finalContent is empty, using salesFollowUpContent as fallback`);
+      console.log(`🔄 FALLBACK: salesFollowUpContent:`, JSON.stringify(salesFollowUpContent, null, 2));
+      finalContent = [salesFollowUpContent];
+      console.log(`✅ FALLBACK: Set finalContent from salesFollowUpContent`);
     }
     
     // Organize messages by channel
     const messages: any = {};
     
+    console.log(`🏗️ MESSAGE STRUCTURING: Starting with finalContent length: ${finalContent.length}`);
+    
     if (finalContent && Array.isArray(finalContent)) {
-      finalContent.forEach((item: any) => {
+      finalContent.forEach((item: any, index: number) => {
+        console.log(`🏗️ MESSAGE STRUCTURING: Processing item ${index}:`, JSON.stringify(item, null, 2));
+        console.log(`🏗️ MESSAGE STRUCTURING: Item has channel:`, !!item.channel);
+        console.log(`🏗️ MESSAGE STRUCTURING: Item channel value:`, item.channel);
+        
         if (item.channel) {
           messages[item.channel] = {
             title: item.title || '',
             message: item.message || '',
             strategy: item.strategy || ''
           };
+          console.log(`✅ MESSAGE STRUCTURING: Added message for channel ${item.channel}`);
+        } else {
+          console.log(`⚠️ MESSAGE STRUCTURING: Item ${index} has no channel property`);
         }
       });
+    } else {
+      console.error(`❌ MESSAGE STRUCTURING: finalContent is not a valid array`);
+      console.log(`❌ MESSAGE STRUCTURING: finalContent type:`, typeof finalContent);
+      console.log(`❌ MESSAGE STRUCTURING: finalContent is array:`, Array.isArray(finalContent));
     }
     
     console.log(`🚀 Sequence completed - Sales: ${salesCompleted ? 'SUCCESS' : 'FAILED'}, Copywriter: ${copywriterCompleted ? 'SUCCESS' : 'FAILED'}`);
     console.log(`📦 Messages structured by channel:`, Object.keys(messages));
+    console.log(`📦 Messages content:`, JSON.stringify(messages, null, 2));
     
     // 🔧 CORRECCIÓN: Usar UUIDs de la base de datos en lugar de IDs internos
     const finalCommandIds = {
