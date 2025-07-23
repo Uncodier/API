@@ -778,6 +778,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   taskId?: string;
   isNewLead?: boolean;
   statusUpdated?: boolean;
+  assignedToTeamMember?: boolean;
   error?: string;
   skipped?: boolean;
 }> {
@@ -838,10 +839,23 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       };
     }
     
-    // 2. Actualizar status del lead si es necesario
+    // 2. Verificar si el email fue enviado por un team member y asignar el lead si es necesario
+    let assignedToTeamMember = false;
+    if (email.from) {
+      const teamMember = await findTeamMemberByEmail(email.from, siteId);
+      if (teamMember) {
+        const assigned = await assignLeadToTeamMember(leadId, teamMember.id, teamMember.name);
+        if (assigned) {
+          assignedToTeamMember = true;
+          console.log(`[EMAIL_SYNC] ✅ Lead ${leadId} asignado al team member: ${teamMember.id} (${teamMember.name || email.from})`);
+        }
+      }
+    }
+    
+    // 3. Actualizar status del lead si es necesario
     const statusUpdated = await updateLeadStatusIfNeeded(leadId);
     
-    // 3. Buscar o crear conversación de email
+    // 4. Buscar o crear conversación de email
     const conversationId = await findOrCreateEmailConversation(leadId, siteId, email.subject);
     
     if (!conversationId) {
@@ -850,17 +864,18 @@ async function processSentEmail(email: any, siteId: string): Promise<{
         leadId,
         isNewLead,
         statusUpdated,
+        assignedToTeamMember,
         error: 'No se pudo obtener o crear conversación'
       };
     }
     
-    // 4. Agregar mensaje enviado a la conversación
+    // 5. Agregar mensaje enviado a la conversación
     const messageId = await addSentMessageToConversation(conversationId, email, leadId, siteId);
     
-    // 5. Crear tarea de first contact si es necesario
+    // 6. Crear tarea de first contact si es necesario
     const taskId = await createFirstContactTaskIfNeeded(leadId, siteId);
     
-    // 6. Marcar email como procesado exitosamente
+    // 7. Marcar email como procesado exitosamente
     if (emailId) {
       await SyncedObjectsService.updateObject(emailId, siteId, {
         status: 'processed',
@@ -888,7 +903,8 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       messageId: messageId || undefined,
       taskId: taskId || undefined,
       isNewLead,
-      statusUpdated
+      statusUpdated,
+      assignedToTeamMember
     };
     
   } catch (error) {
@@ -907,6 +923,34 @@ async function processSentEmail(email: any, siteId: string): Promise<{
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
     };
+  }
+}
+
+/**
+ * Función para asignar un lead a un team member
+ */
+async function assignLeadToTeamMember(leadId: string, teamMemberId: string, teamMemberName?: string): Promise<boolean> {
+  try {
+    console.log(`[EMAIL_SYNC] 👤 Asignando lead ${leadId} al team member: ${teamMemberId} (${teamMemberName || 'sin nombre'})`);
+    
+    const { error } = await supabaseAdmin
+      .from('leads')
+      .update({ 
+        assigned_to: teamMemberId,
+        updated_at: new Date().toISOString()
+      })
+      .eq('id', leadId);
+      
+    if (error) {
+      console.error('[EMAIL_SYNC] Error al asignar lead al team member:', error);
+      return false;
+    }
+    
+    console.log(`[EMAIL_SYNC] ✅ Lead ${leadId} asignado exitosamente al team member: ${teamMemberId}`);
+    return true;
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error al asignar lead al team member:', error);
+    return false;
   }
 }
 
@@ -1087,6 +1131,7 @@ export async function POST(request: NextRequest) {
       let statusUpdatedCount = 0;
       let tasksCreatedCount = 0;
       let skippedInternalCount = 0;
+      let assignedToTeamMemberCount = 0;
       
       for (const email of sentEmails) {
         const result = await processSentEmail(email, siteId);
@@ -1102,6 +1147,7 @@ export async function POST(request: NextRequest) {
           if (result.isNewLead) newLeadsCount++;
           if (result.statusUpdated) statusUpdatedCount++;
           if (result.taskId) tasksCreatedCount++;
+          if (result.assignedToTeamMember) assignedToTeamMemberCount++;
         } else if (result.skipped) {
           skippedInternalCount++;
         }
@@ -1115,6 +1161,7 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] - Emails saltados (dominios internos): ${skippedInternalCount}`);
       console.log(`[EMAIL_SYNC] - Nuevos leads creados: ${newLeadsCount}`);
       console.log(`[EMAIL_SYNC] - Leads con status actualizado: ${statusUpdatedCount}`);
+      console.log(`[EMAIL_SYNC] - Leads asignados a team members: ${assignedToTeamMemberCount}`);
       console.log(`[EMAIL_SYNC] - Tareas de first contact creadas: ${tasksCreatedCount}`);
       
       return NextResponse.json({
@@ -1127,6 +1174,7 @@ export async function POST(request: NextRequest) {
         skippedInternalCount,
         newLeadsCount,
         statusUpdatedCount,
+        assignedToTeamMemberCount,
         tasksCreatedCount,
         internalDomainsFiltered: getInternalDomains(),
         preFilteredInternalCount,
@@ -1189,7 +1237,8 @@ export async function GET(request: NextRequest) {
       "Lead creation and status management",
       "Email conversation tracking",
       "First contact task automation",
-      "Team member detection by email"
+      "Team member detection by email",
+      "Automatic lead assignment to team members who sent the email"
     ],
     response_fields: {
       emailCount: "Total emails found in sent folder",
@@ -1200,6 +1249,7 @@ export async function GET(request: NextRequest) {
       skippedInternalCount: "Emails skipped during individual processing due to internal domains",
       newLeadsCount: "New leads created from sent emails",
       statusUpdatedCount: "Leads with updated status",
+      assignedToTeamMemberCount: "Leads assigned to team members who sent the email",
       tasksCreatedCount: "First contact tasks created",
       internalDomainsFiltered: "List of internal domains that are filtered out"
     }
