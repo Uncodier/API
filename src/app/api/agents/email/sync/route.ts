@@ -15,7 +15,7 @@ import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObject
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 
 // Configuración de timeout extendido para Vercel
-export const maxDuration = 900; // 15 minutos en segundos
+export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
 
 // Create schemas for request validation
 const EmailSyncRequestSchema = z.object({
