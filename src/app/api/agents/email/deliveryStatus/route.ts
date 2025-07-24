@@ -188,46 +188,58 @@ export async function POST(request: NextRequest) {
       const allEmails = await Promise.race([fetchEmailsPromise, timeoutPromise]);
       console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-      // Filter for bounce emails from Mail Delivery Subsystem usando EmailFilterService
-      console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure con EmailFilterService...`);
+      // Filter for bounce emails with timeout para evitar que emails grandes causen timeouts
+      console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
       
-      // Optimized filtering with minimal logging to avoid timeouts
-      const bounceEmails = allEmails.filter((email, index) => {
-        // Solo log básico para evitar timeouts
-        if (index === 0) {
-          console.log(`[DELIVERY_STATUS] 🔍 Procesando ${allEmails.length} emails para detectar bounces...`);
-        }
+      const filteringPromise = new Promise<any[]>((resolve) => {
+        // Filtrado optimizado sin EmailFilterService para evitar timeouts
+        const bounceEmails = allEmails.filter((email, index) => {
+          // Solo log cada 5 emails para evitar spam de logs
+          if (index % 5 === 0) {
+            console.log(`[DELIVERY_STATUS] 🔍 Procesando email ${index + 1}/${allEmails.length}...`);
+          }
+          
+          // Optimized bounce detection (sin usar EmailFilterService que puede ser lento)
+          const from = (email.from || '').toLowerCase();
+          const subject = (email.subject || '').toLowerCase();
+          
+          // Solo analizar los primeros 1000 caracteres del body para evitar emails grandes
+          const body = (email.body || '').substring(0, 1000).toLowerCase();
+          
+          // Quick bounce detection usando solo strings básicas
+          const isBounce = (
+            from.includes('mail delivery subsystem') ||
+            from.includes('mailer-daemon') ||
+            from.includes('postmaster') ||
+            from.includes('mail delivery system') ||
+            subject.includes('delivery status notification') ||
+            subject.includes('undelivered mail') ||
+            subject.includes('delivery failure') ||
+            subject.includes('returned mail') ||
+            subject.includes('failure notice') ||
+            body.includes('delivery failed') ||
+            body.includes('user unknown') ||
+            body.includes('mailbox unavailable') ||
+            body.includes('permanent failure') ||
+            body.includes('recipient address rejected')
+          );
+          
+          // Log solo los bounces encontrados
+          if (isBounce) {
+            console.log(`[DELIVERY_STATUS] 📧 Bounce detectado: ID=${email.id}, From=${email.from}, Subject=${email.subject?.substring(0, 50)}...`);
+          }
+          
+          return isBounce;
+        });
         
-        // Optimized bounce detection
-        const from = (email.from || '').toLowerCase();
-        const subject = (email.subject || '').toLowerCase();
-        const body = (email.body || '').toLowerCase();
-        
-        // Use EmailFilterService for primary validation
-        const validation = EmailFilterService.validateEmailNotDeliveryOrBounce(email);
-        
-        // Quick simple bounce detection (optimized for performance)
-        const simpleIsBounce = (
-          from.includes('mail delivery subsystem') ||
-          from.includes('mailer-daemon') ||
-          from.includes('postmaster') ||
-          subject.includes('delivery status notification') ||
-          subject.includes('undelivered mail') ||
-          subject.includes('delivery failure') ||
-          body.includes('delivery failed') ||
-          body.includes('user unknown') ||
-          body.includes('mailbox unavailable')
-        );
-        
-        const isBounce = !validation.isValid || simpleIsBounce;
-        
-        // Log solo los bounces encontrados
-        if (isBounce) {
-          console.log(`[DELIVERY_STATUS] 📧 Bounce detectado: ID=${email.id}, From=${email.from}, Subject=${email.subject?.substring(0, 100)}...`);
-        }
-        
-        return isBounce;
+        resolve(bounceEmails);
       });
+      
+      const filteringTimeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout en filtrado de emails (20s)')), 20000);
+      });
+      
+      const bounceEmails = await Promise.race([filteringPromise, filteringTimeoutPromise]);
       console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
       
       if (bounceEmails.length === 0) {

@@ -493,106 +493,80 @@ async function addSentMessageToConversation(
       }
     }
     
-    // 2.5. Verificar duplicación por cantidad de mensajes en rango de tiempo para este lead específico
-    if (email.date) {
-      console.log(`[EMAIL_SYNC] 🕐 Verificando duplicación por cantidad de mensajes en rango de tiempo para lead: ${leadId}`);
-      console.log(`[EMAIL_SYNC] 📧 Email dirigido a: ${email.to}`);
+    // 2.5. Verificar duplicación basándose en el estado actual de la DB para este lead
+    console.log(`[EMAIL_SYNC] 🕐 Verificando estado de sincronización en DB para lead: ${leadId}`);
+    console.log(`[EMAIL_SYNC] 📧 Email dirigido a: ${email.to}`);
+    
+    try {
+      // Usar ventana de tiempo amplia en las últimas 48 horas para cubrir desfases temporales
+      const now = new Date();
+      const timeWindowHours = 48; // 48 horas hacia atrás para cubrir husos horarios y desfases
+      const startTime = new Date(now.getTime() - (timeWindowHours * 60 * 60 * 1000));
       
-      try {
-        const emailDate = new Date(email.date);
+      console.log(`[EMAIL_SYNC] 📅 Verificando mensajes en DB en ventana: ${startTime.toISOString()} - ${now.toISOString()}`);
+      console.log(`[EMAIL_SYNC] 📧 Email fecha: ${email.date || 'sin fecha'}`);
+      
+      // Contar mensajes de email enviados en la DB para este lead en las últimas 48 horas
+      const { data: existingEmailMessages, error: dbCountError } = await supabaseAdmin
+        .from('messages')
+        .select('id, created_at, custom_data')
+        .eq('conversation_id', conversationId)
+        .eq('lead_id', leadId) // Específico para este lead
+        .in('role', ['team_member', 'system']) // Solo mensajes enviados por nosotros
+        .filter('custom_data->type', 'eq', 'sent_email')
+        .gte('created_at', startTime.toISOString())
+        .order('created_at', { ascending: true });
         
-        // Crear rango de tiempo de ±3 horas considerando husos horarios y posibles desfases
-        const timeWindowHours = 3;
-        const startTime = new Date(emailDate.getTime() - (timeWindowHours * 60 * 60 * 1000));
-        const endTime = new Date(emailDate.getTime() + (timeWindowHours * 60 * 60 * 1000));
+      if (dbCountError) {
+        console.error('[EMAIL_SYNC] Error al verificar mensajes email en DB:', dbCountError);
+      } else {
+        const dbEmailCount = existingEmailMessages?.length || 0;
+        console.log(`[EMAIL_SYNC] 📊 Mensajes email existentes en DB para este lead en últimas 48h: ${dbEmailCount}`);
         
-        console.log(`[EMAIL_SYNC] 📅 Buscando mensajes en rango: ${startTime.toISOString()} - ${endTime.toISOString()}`);
-        console.log(`[EMAIL_SYNC] 📧 Email actual con fecha: ${emailDate.toISOString()}`);
-        
-        // Buscar mensajes enviados en el rango de tiempo para este lead específico
-        const { data: existingMessagesInRange, error: rangeError } = await supabaseAdmin
-          .from('messages')
-          .select('id, created_at, custom_data, content')
-          .eq('conversation_id', conversationId)
-          .eq('lead_id', leadId) // Específico para este lead
-          .in('role', ['team_member', 'system']) // Solo mensajes enviados por nosotros
-          .filter('custom_data->type', 'eq', 'sent_email')
-          .gte('created_at', startTime.toISOString())
-          .lte('created_at', endTime.toISOString())
-          .order('created_at', { ascending: true });
+        // Si ya hay 2 o más mensajes de email en las últimas 48h, probablemente ya está sincronizado
+        if (dbEmailCount >= 2) {
+          console.log(`[EMAIL_SYNC] ✅ Ya existen ${dbEmailCount} mensajes email para este lead en las últimas 48h`);
+          console.log(`[EMAIL_SYNC] 🚫 Asumiendo que los emails recientes ya están sincronizados, evitando duplicación`);
           
-        if (rangeError) {
-          console.error('[EMAIL_SYNC] Error al buscar mensajes en rango de tiempo para lead:', rangeError);
-        } else if (existingMessagesInRange && existingMessagesInRange.length > 0) {
-          console.log(`[EMAIL_SYNC] 📊 Mensajes enviados existentes para este lead en rango de tiempo: ${existingMessagesInRange.length}`);
-          
-          // Obtener información básica del email para comparar
-          const emailSubjectNormalized = email.subject ? 
-            fixTextEncoding(email.subject).toLowerCase().trim().replace(/^(re|fwd?):\s*/i, '') : '';
-          const emailTo = email.to?.toLowerCase().trim() || '';
-          
-          // Verificar si alguno de los mensajes existentes coincide en subject y destinatario
-          const potentialDuplicate = existingMessagesInRange.find(msg => {
-            const msgSubject = msg.custom_data?.subject ? 
-              fixTextEncoding(msg.custom_data.subject).toLowerCase().trim().replace(/^(re|fwd?):\s*/i, '') : '';
+          // Verificar si alguno de los mensajes existentes tiene el mismo destinatario
+          const currentTo = email.to?.toLowerCase().trim() || '';
+          const sameRecipientMessage = existingEmailMessages?.find(msg => {
             const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
-            
-            // Coincidencia de subject y destinatario
-            const subjectMatch = emailSubjectNormalized && msgSubject && 
-                                emailSubjectNormalized === msgSubject;
-            const recipientMatch = emailTo && msgTo && emailTo === msgTo;
-            
-            return subjectMatch && recipientMatch;
+            return msgTo === currentTo;
           });
           
-          if (potentialDuplicate) {
-            console.log(`[EMAIL_SYNC] 🎯 Mensaje duplicado detectado para lead ${leadId} por subject y destinatario:`);
-            console.log(`[EMAIL_SYNC] - Subject: "${emailSubjectNormalized}"`);
-            console.log(`[EMAIL_SYNC] - To: "${emailTo}"`);
-            console.log(`[EMAIL_SYNC] - Mensaje existente ID: ${potentialDuplicate.id}`);
-            console.log(`[EMAIL_SYNC] - Fecha mensaje existente: ${potentialDuplicate.created_at}`);
-            console.log(`[EMAIL_SYNC] 🚫 Evitando duplicación para este lead específico`);
-            
-            return potentialDuplicate.id;
+          if (sameRecipientMessage) {
+            console.log(`[EMAIL_SYNC] 🎯 Encontrado mensaje existente al mismo destinatario: ${sameRecipientMessage.id}`);
+            return sameRecipientMessage.id;
+          } else {
+            // Retornar el mensaje más reciente para mantener consistencia
+            const mostRecentMessage = existingEmailMessages[existingEmailMessages.length - 1];
+            console.log(`[EMAIL_SYNC] 📝 Retornando mensaje más reciente: ${mostRecentMessage.id}`);
+            return mostRecentMessage.id;
           }
+        } else if (dbEmailCount === 1) {
+          console.log(`[EMAIL_SYNC] ⚠️ Solo existe 1 mensaje email para este lead, verificando si es al mismo destinatario`);
           
-          // Si hay 3+ mensajes para este lead en un rango de 6 horas, probablemente indica duplicación masiva
-          if (existingMessagesInRange.length >= 3) {
-            console.log(`[EMAIL_SYNC] ⚠️ Detectados ${existingMessagesInRange.length} mensajes para lead ${leadId} en rango de ${timeWindowHours * 2}h`);
-            console.log(`[EMAIL_SYNC] 📋 Mensajes existentes para este lead:`, existingMessagesInRange.map(m => ({
-              id: m.id,
-              created_at: m.created_at,
-              subject: m.custom_data?.subject,
-              to: m.custom_data?.to,
-              email_id: m.custom_data?.email_id
-            })));
-            
-            // Verificar si el destinatario coincide (debe ser el mismo para este lead)
-            const sameRecipientCount = existingMessagesInRange.filter(msg => {
-              const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
-              return msgTo === emailTo;
-            }).length;
-            
-            if (sameRecipientCount >= 2) {
-              console.log(`[EMAIL_SYNC] 🚫 Evitando duplicación masiva para lead ${leadId}: ${sameRecipientCount} mensajes al mismo destinatario en ventana de tiempo`);
-              // Retornar el mensaje más reciente al mismo destinatario de este lead
-              const sameRecipientMessages = existingMessagesInRange.filter(msg => {
-                const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
-                return msgTo === emailTo;
-              });
-              const mostRecentMessage = sameRecipientMessages[sameRecipientMessages.length - 1];
-              return mostRecentMessage.id;
-            }
+          const currentTo = email.to?.toLowerCase().trim() || '';
+          const existingMessage = existingEmailMessages[0];
+          const existingTo = existingMessage.custom_data?.to?.toLowerCase().trim() || '';
+          
+          if (existingTo === currentTo) {
+            console.log(`[EMAIL_SYNC] 🎯 El mensaje existente es al mismo destinatario (${currentTo}), evitando duplicación`);
+            return existingMessage.id;
+          } else {
+            console.log(`[EMAIL_SYNC] ➡️ El mensaje existente es a diferente destinatario (${existingTo} vs ${currentTo}), continuando`);
           }
-          
-          console.log(`[EMAIL_SYNC] ✅ No se detectó duplicación para lead ${leadId} en rango de tiempo, continuando con creación`);
         } else {
-          console.log(`[EMAIL_SYNC] ℹ️ No hay mensajes existentes para lead ${leadId} en el rango de tiempo, continuando con creación`);
+          console.log(`[EMAIL_SYNC] ℹ️ No hay mensajes email existentes para este lead en últimas 48h, continuando con creación`);
         }
-      } catch (timeRangeError) {
-        console.error('[EMAIL_SYNC] Error en verificación por rango de tiempo:', timeRangeError);
-        // Continuar con el flujo normal si hay error en esta verificación
       }
+      
+      console.log(`[EMAIL_SYNC] ✅ Verificación de estado DB completada, continuando con creación del mensaje`);
+      
+    } catch (dbStateCheckError) {
+      console.error('[EMAIL_SYNC] Error en verificación de estado DB:', dbStateCheckError);
+      // Continuar con el flujo normal si hay error en esta verificación
     }
     
     // 3. Verificar por contenido extraído para detectar duplicados más precisamente
