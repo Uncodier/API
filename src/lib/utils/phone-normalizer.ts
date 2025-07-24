@@ -138,3 +138,137 @@ export function arePhoneNumbersEquivalent(phone1: string, phone2: string): boole
   // Verificar si alguna variante del primer número coincide con alguna del segundo
   return variants1.some(v1 => variants2.includes(v1));
 } 
+
+/**
+ * Intenta rescatar un número de teléfono que no está en formato internacional válido
+ * aplicando heurísticas comunes para diferentes países y prefijos
+ * 
+ * @param phone - Número de teléfono en formato problemático
+ * @returns Número normalizado en formato internacional o null si no se puede rescatar
+ */
+export function attemptPhoneRescue(phone: string): string | null {
+  if (!phone || typeof phone !== 'string') {
+    return null;
+  }
+
+  console.log(`🔧 [PhoneRescue] Intentando rescatar: "${phone}"`);
+
+  // Limpiar el número de caracteres de formato
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  cleaned = cleaned.replace(/[^\d+]/g, '');
+  
+  if (!cleaned) {
+    console.log(`❌ [PhoneRescue] Número vacío después de limpiar`);
+    return null;
+  }
+
+  // Si ya está en formato internacional válido, retornarlo
+  if (cleaned.startsWith('+') && /^\+[1-9]\d{6,14}$/.test(cleaned)) {
+    console.log(`✅ [PhoneRescue] Ya está en formato válido: ${cleaned}`);
+    return cleaned;
+  }
+
+  console.log(`🔍 [PhoneRescue] Número limpio: "${cleaned}"`);
+
+  // Array de intentos de rescate
+  const rescueAttempts: string[] = [];
+
+  // Remover el + si existe para procesar el número
+  const numberOnly = cleaned.startsWith('+') ? cleaned.substring(1) : cleaned;
+
+  // 1. Intentar remover prefijos de salida comunes
+  let processedNumber = numberOnly;
+  
+  // Remover prefijos "011" primero (código de salida internacional en algunos países)
+  if (processedNumber.startsWith('011')) {
+    processedNumber = processedNumber.substring(3);
+    console.log(`🔄 [PhoneRescue] Removido prefijo "011": ${processedNumber}`);
+  }
+  // Remover prefijos "00" (código de salida internacional común)
+  else if (processedNumber.startsWith('00')) {
+    processedNumber = processedNumber.substring(2);
+    console.log(`🔄 [PhoneRescue] Removido prefijo "00": ${processedNumber}`);
+  }
+  // Remover prefijos "01" (código de salida nacional común en algunos países)
+  else if (processedNumber.startsWith('01')) {
+    processedNumber = processedNumber.substring(2);
+    console.log(`🔄 [PhoneRescue] Removido prefijo "01": ${processedNumber}`);
+  }
+
+  // 2. Aplicar heurísticas basadas en la longitud del número
+  
+  // Para números de 10 dígitos - Asumir México sin código de país
+  if (processedNumber.length === 10 && /^[1-9]/.test(processedNumber)) {
+    rescueAttempts.push(`+52${processedNumber}`);
+    console.log(`🇲🇽 [PhoneRescue] Intento México (10 dígitos): +52${processedNumber}`);
+  }
+  
+  // Para números de 11 dígitos
+  if (processedNumber.length === 11) {
+    // Si empieza con 1, podría ser México con lada
+    if (processedNumber.startsWith('1')) {
+      rescueAttempts.push(`+52${processedNumber}`);
+      console.log(`🇲🇽 [PhoneRescue] Intento México con lada (11 dígitos): +52${processedNumber}`);
+    }
+    // Si empieza con otro dígito, podría ser un número de 10 dígitos con un 1 extra
+    else {
+      rescueAttempts.push(`+52${processedNumber.substring(1)}`);
+      console.log(`🇲🇽 [PhoneRescue] Intento México removiendo primer dígito: +52${processedNumber.substring(1)}`);
+    }
+  }
+  
+  // Para números de 12 dígitos
+  if (processedNumber.length === 12) {
+    // Si empieza con 52, podría ser México sin +
+    if (processedNumber.startsWith('52')) {
+      rescueAttempts.push(`+${processedNumber}`);
+      console.log(`🇲🇽 [PhoneRescue] Intento México (12 dígitos con 52): +${processedNumber}`);
+    }
+    // Si no empieza con 52, intentar como México
+    else {
+      rescueAttempts.push(`+52${processedNumber.substring(2)}`);
+      console.log(`🇲🇽 [PhoneRescue] Intento México removiendo 2 dígitos: +52${processedNumber.substring(2)}`);
+    }
+  }
+  
+  // Para números de 13 dígitos
+  if (processedNumber.length === 13) {
+    // Si empieza con 521, podría ser México con lada sin +
+    if (processedNumber.startsWith('521')) {
+      rescueAttempts.push(`+${processedNumber}`);
+      console.log(`🇲🇽 [PhoneRescue] Intento México con lada (13 dígitos): +${processedNumber}`);
+    }
+  }
+
+  // 3. Otros códigos de país comunes
+  if (processedNumber.length === 10) {
+    // Estados Unidos/Canadá (+1)
+    rescueAttempts.push(`+1${processedNumber}`);
+    console.log(`🇺🇸 [PhoneRescue] Intento USA/Canadá: +1${processedNumber}`);
+    
+    // España (+34)
+    rescueAttempts.push(`+34${processedNumber}`);
+    console.log(`🇪🇸 [PhoneRescue] Intento España: +34${processedNumber}`);
+  }
+
+  // 4. Intentar con el número tal como está si tiene longitud razonable
+  if (processedNumber.length >= 7 && processedNumber.length <= 15) {
+    rescueAttempts.push(`+${processedNumber}`);
+    console.log(`🌍 [PhoneRescue] Intento genérico: +${processedNumber}`);
+  }
+
+  // 5. Validar cada intento y retornar el primero válido
+  const phoneRegex = /^\+[1-9]\d{6,14}$/;
+  
+  for (const attempt of rescueAttempts) {
+    if (phoneRegex.test(attempt)) {
+      console.log(`✅ [PhoneRescue] Rescate exitoso: "${phone}" -> "${attempt}"`);
+      return attempt;
+    } else {
+      console.log(`❌ [PhoneRescue] Intento fallido (formato inválido): ${attempt}`);
+    }
+  }
+
+  console.log(`❌ [PhoneRescue] No se pudo rescatar el número: "${phone}"`);
+  return null;
+} 

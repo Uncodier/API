@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
 /**
  * Endpoint para enviar mensajes de WhatsApp desde un agente con manejo automático de ventana de respuesta
@@ -168,23 +169,36 @@ export async function POST(request: NextRequest) {
     
     console.log('✅ [SendWhatsApp] Configuración de WhatsApp válida, procediendo con validación de teléfono');
     
-    // Validar formato del número de teléfono
+    // Validar formato del número de teléfono con rescate automático
+    let validatedPhone = phone_number;
+    
     if (!WhatsAppSendService.isValidPhoneNumber(phone_number)) {
-      console.error('❌ [SendWhatsApp] Formato de teléfono inválido:', phone_number);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_PHONE_NUMBER', 
-            message: 'Invalid phone number format. Use international format (e.g., +1234567890)' 
-          } 
-        },
-        { status: 400 }
-      );
+      console.log(`⚠️ [SendWhatsApp] Formato de teléfono inválido detectado, intentando rescate: ${phone_number}`);
+      
+      // Intentar rescatar el número usando heurísticas
+      const rescuedPhone = attemptPhoneRescue(phone_number);
+      
+      if (rescuedPhone && WhatsAppSendService.isValidPhoneNumber(rescuedPhone)) {
+        validatedPhone = rescuedPhone;
+        console.log(`✅ [SendWhatsApp] Teléfono rescatado exitosamente: ${phone_number} -> ${rescuedPhone}`);
+      } else {
+        console.error(`❌ [SendWhatsApp] No se pudo rescatar el teléfono: ${phone_number}`);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'INVALID_PHONE_NUMBER', 
+              message: `Invalid phone number format: "${phone_number}". Use international format (e.g., +1234567890). Attempted rescue but failed.` 
+            } 
+          },
+          { status: 400 }
+        );
+      }
     }
 
     console.log('📤 [SendWhatsApp] Enviando mensaje via WhatsAppSendService con parámetros:', {
-      phone_number,
+      phone_number: validatedPhone,
+      originalPhone: phone_number !== validatedPhone ? phone_number : undefined,
       from: from || '',
       messageLength: message.length,
       agent_id,
@@ -193,9 +207,9 @@ export async function POST(request: NextRequest) {
       site_id
     });
 
-    // Enviar el mensaje usando el servicio
+    // Enviar el mensaje usando el servicio con el teléfono validado
     const result = await WhatsAppSendService.sendMessage({
-      phone_number,
+      phone_number: validatedPhone,
       from: from || '', // Nombre del remitente (opcional)
       message,
       agent_id,

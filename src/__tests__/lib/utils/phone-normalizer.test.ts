@@ -1,4 +1,4 @@
-import { normalizePhoneForSearch, normalizePhoneForStorage, arePhoneNumbersEquivalent } from '@/lib/utils/phone-normalizer';
+import { normalizePhoneForSearch, normalizePhoneForStorage, arePhoneNumbersEquivalent, attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
 describe('Phone Number Normalizer', () => {
   describe('normalizePhoneForSearch', () => {
@@ -98,6 +98,73 @@ describe('Phone Number Normalizer', () => {
       // Este es el caso específico que mencionó el usuario
       expect(arePhoneNumbersEquivalent('+52 (1) 5555551234', '5555551234')).toBe(true);
       expect(arePhoneNumbersEquivalent('+52 1 5555551234', '5555551234')).toBe(true);
+    });
+  });
+
+  describe('attemptPhoneRescue', () => {
+    it('should rescue numbers with "01" prefix (Mexican format)', () => {
+      // Caso específico del usuario
+      expect(attemptPhoneRescue('014616132105')).toBe('+524616132105');
+      expect(attemptPhoneRescue('015555551234')).toBe('+525555551234');
+    });
+
+    it('should rescue numbers with "00" international prefix', () => {
+      expect(attemptPhoneRescue('00525555551234')).toBe('+525555551234');
+      // "0015555551234" -> "15555551234" (11 dígitos empezando con 1) -> interpretado como México con lada
+      expect(attemptPhoneRescue('0015555551234')).toBe('+5215555551234');
+    });
+
+    it('should rescue numbers with "011" prefix', () => {
+      expect(attemptPhoneRescue('011525555551234')).toBe('+525555551234');
+      // "01115555551234" -> "15555551234" (11 dígitos empezando con 1) -> interpretado como México con lada  
+      expect(attemptPhoneRescue('01115555551234')).toBe('+5215555551234');
+    });
+
+    it('should rescue 10-digit Mexican numbers without country code', () => {
+      expect(attemptPhoneRescue('4616132105')).toBe('+524616132105');
+      expect(attemptPhoneRescue('5555551234')).toBe('+525555551234');
+    });
+
+    it('should rescue 11-digit Mexican numbers with area code', () => {
+      expect(attemptPhoneRescue('15555551234')).toBe('+5215555551234');
+    });
+
+    it('should rescue 12-digit numbers starting with 52', () => {
+      expect(attemptPhoneRescue('525555551234')).toBe('+525555551234');
+      expect(attemptPhoneRescue('524616132105')).toBe('+524616132105');
+    });
+
+    it('should rescue 13-digit numbers starting with 521', () => {
+      expect(attemptPhoneRescue('5215555551234')).toBe('+5215555551234');
+    });
+
+    it('should try US/Canada format for 10-digit numbers', () => {
+      const result = attemptPhoneRescue('2125551234');
+      // Debería intentar múltiples formatos, México primero por heurística
+      expect(result).toBe('+522125551234');
+    });
+
+    it('should return already valid international numbers unchanged', () => {
+      expect(attemptPhoneRescue('+525555551234')).toBe('+525555551234');
+      expect(attemptPhoneRescue('+15555551234')).toBe('+15555551234');
+    });
+
+    it('should handle formatted numbers with special characters', () => {
+      expect(attemptPhoneRescue('01 (461) 613-2105')).toBe('+524616132105');
+      expect(attemptPhoneRescue('00 52 555 555 1234')).toBe('+525555551234');
+    });
+
+    it('should return null for invalid inputs', () => {
+      expect(attemptPhoneRescue('')).toBe(null);
+      expect(attemptPhoneRescue(null as any)).toBe(null);
+      expect(attemptPhoneRescue(undefined as any)).toBe(null);
+      expect(attemptPhoneRescue('abc')).toBe(null);
+      expect(attemptPhoneRescue('123')).toBe(null); // Muy corto
+    });
+
+    it('should handle edge cases gracefully', () => {
+      expect(attemptPhoneRescue('000000000000000000')).toBe(null); // Muy largo
+      expect(attemptPhoneRescue('0000')).toBe(null); // Muy corto después de limpiar
     });
   });
 }); 

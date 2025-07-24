@@ -12,13 +12,13 @@ import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
-// Configuración de timeout extendido para Vercel
-export const maxDuration = 900; // 15 minutos en segundos
+// Configuración de timeout extendido para Vercel (máximo 800s para plan pro)
+export const maxDuration = 300; // 5 minutos en segundos
 
 // Create schemas for request validation
 const DeliveryStatusRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  limit: z.number().default(20).optional(), // Cambiado de 50 a 20
+  limit: z.number().default(10).optional(), // Cambiado de 20 a 10 para mayor estabilidad
   since_date: z.string().optional().refine(
     (date) => !date || !isNaN(Date.parse(date)),
     "since_date debe ser una fecha válida en formato ISO"
@@ -162,9 +162,9 @@ export async function POST(request: NextRequest) {
     
     // Extraer parámetros
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
-    const requestedLimit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 20;
-    // Limitar a máximo 20 emails para evitar timeouts
-    const limit = Math.min(requestedLimit, 20);
+    const requestedLimit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 10;
+    // Limitar a máximo 10 emails para evitar timeouts
+    const limit = Math.min(requestedLimit, 10);
     const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
     
     console.log('[DELIVERY_STATUS] Extracted parameters:', {
@@ -177,9 +177,15 @@ export async function POST(request: NextRequest) {
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       console.log(`[DELIVERY_STATUS] ✅ Configuración de email obtenida exitosamente`);
       
-      // Fetch emails from INBOX
+      // Fetch emails from INBOX con timeout agresivo
       console.log(`[DELIVERY_STATUS] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
-      const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      
+      const fetchEmailsPromise = EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Timeout al obtener emails (45s)')), 45000);
+      });
+      
+      const allEmails = await Promise.race([fetchEmailsPromise, timeoutPromise]);
       console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
       // Filter for bounce emails from Mail Delivery Subsystem usando EmailFilterService
@@ -257,8 +263,8 @@ export async function POST(request: NextRequest) {
         });
       }
       
-      // Process each bounce email (limit to 10 max to avoid timeouts)
-      const maxBouncesToProcess = Math.min(bounceEmails.length, 10);
+      // Process each bounce email (limit to 3 max to avoid timeouts)
+      const maxBouncesToProcess = Math.min(bounceEmails.length, 3);
       const bouncesToProcess = bounceEmails.slice(0, maxBouncesToProcess);
       
       console.log(`[DELIVERY_STATUS] 🔄 Procesando ${bouncesToProcess.length} bounce emails (de ${bounceEmails.length} encontrados)...`);
@@ -266,9 +272,27 @@ export async function POST(request: NextRequest) {
       let workflowsTriggered = 0;
       let emailsDeleted = 0;
       
+      // Timeout general para todo el procesamiento (120 segundos)
+      const processingStartTime = Date.now();
+      const maxProcessingTime = 120000; // 2 minutos
+      
       for (const bounceEmail of bouncesToProcess) {
+        // Verificar timeout general
+        if (Date.now() - processingStartTime > maxProcessingTime) {
+          console.warn(`[DELIVERY_STATUS] ⏰ Timeout general alcanzado, deteniendo procesamiento`);
+          results.push({
+            bounceEmailId: bounceEmail.id,
+            success: false,
+            reason: 'Timeout general alcanzado - procesamiento detenido'
+          });
+          break;
+        }
         try {
           console.log(`[DELIVERY_STATUS] 📧 Procesando bounce email ID: ${bounceEmail.id}, Subject: ${bounceEmail.subject}`);
+          
+          // Timeout individual por email (60 segundos)
+          const emailProcessingStart = Date.now();
+          const maxEmailProcessingTime = 60000; // 60 segundos por email
           
           // Extract original email address from bounce message
           const originalEmail = extractOriginalEmailFromBounce(bounceEmail.body || '');
@@ -284,6 +308,18 @@ export async function POST(request: NextRequest) {
           }
           
           console.log(`[DELIVERY_STATUS] 📮 Email original extraído: ${originalEmail}`);
+          
+          // Verificar timeout individual
+          if (Date.now() - emailProcessingStart > maxEmailProcessingTime) {
+            console.warn(`[DELIVERY_STATUS] ⏰ Timeout individual alcanzado para email ${bounceEmail.id}`);
+            results.push({
+              bounceEmailId: bounceEmail.id,
+              originalEmail,
+              success: false,
+              reason: 'Timeout individual de procesamiento (60s)'
+            });
+            continue;
+          }
           
           // Find lead by email
           const leadId = await findLeadByEmail(originalEmail, siteId);
@@ -301,11 +337,11 @@ export async function POST(request: NextRequest) {
           
           console.log(`[DELIVERY_STATUS] 👤 Lead encontrado: ${leadId} para email: ${originalEmail}`);
           
-          // Call leadInvalidationWorkflow
+          // Call leadInvalidationWorkflow con timeout
           console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación para lead: ${leadId}...`);
           const workflowService = WorkflowService.getInstance();
           
-          const workflowResult = await workflowService.leadInvalidation(
+          const workflowPromise = workflowService.leadInvalidation(
             {
               lead_id: leadId,
               email: originalEmail,
@@ -327,16 +363,39 @@ export async function POST(request: NextRequest) {
             }
           );
           
-          if (workflowResult.success) {
-            console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
-            workflowsTriggered++;
-          } else {
-            console.error(`[DELIVERY_STATUS] ❌ Error en workflow de invalidación:`, workflowResult.error);
+          const workflowTimeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error('Timeout en workflow (30s)')), 30000);
+          });
+          
+          let workflowResult;
+          try {
+            workflowResult = await Promise.race([workflowPromise, workflowTimeoutPromise]);
+            
+            if (workflowResult.success) {
+              console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
+              workflowsTriggered++;
+            } else {
+              console.error(`[DELIVERY_STATUS] ❌ Error en workflow de invalidación:`, workflowResult.error);
+            }
+          } catch (workflowError) {
+            console.warn(`[DELIVERY_STATUS] ⚠️ Error/timeout en workflow para lead ${leadId}:`, workflowError);
+            workflowResult = { success: false, error: workflowError instanceof Error ? workflowError.message : String(workflowError) };
           }
           
-          // Delete the bounce email from server
+          // Delete the bounce email from server con timeout
           console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email del servidor...`);
-          const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id, false);
+          const deletePromise = deleteEmailFromServer(emailConfig, bounceEmail.id, false);
+          const deleteTimeoutPromise = new Promise<boolean>((_, reject) => {
+            setTimeout(() => reject(new Error('Timeout en eliminación (20s)')), 20000);
+          });
+          
+          let bounceDeleted = false;
+          try {
+            bounceDeleted = await Promise.race([deletePromise, deleteTimeoutPromise]);
+          } catch (deleteError) {
+            console.warn(`[DELIVERY_STATUS] ⚠️ Error/timeout eliminando email ${bounceEmail.id}:`, deleteError);
+            bounceDeleted = false;
+          }
           
           // Skip searching for original sent emails to avoid timeout
           // TODO: Implement this as a separate background task if needed
@@ -379,7 +438,7 @@ export async function POST(request: NextRequest) {
         emailsDeleted,
         results,
         note: bouncesToProcess.length < bounceEmails.length 
-          ? `Se procesaron solo los primeros ${bouncesToProcess.length} bounce emails de ${bounceEmails.length} encontrados para evitar timeouts`
+          ? `Se procesaron solo los primeros ${bouncesToProcess.length} bounce emails de ${bounceEmails.length} encontrados para evitar timeouts (límite: 3 por ejecución)`
           : undefined
       });
       

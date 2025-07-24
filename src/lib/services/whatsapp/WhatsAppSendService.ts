@@ -2,6 +2,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import CryptoJS from 'crypto-js';
 import { WhatsAppTemplateService } from './WhatsAppTemplateService';
+import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -76,18 +77,31 @@ export class WhatsAppSendService {
       const whatsappConfig = await this.getWhatsAppConfig(site_id);
       
       // Validar formato del número de teléfono
+      let validatedPhone = phone_number;
+      
       if (!this.isValidPhoneNumber(phone_number)) {
-        return {
-          success: false,
-          error: {
-            code: 'INVALID_PHONE_NUMBER',
-            message: 'Invalid phone number format. Use international format (e.g., +1234567890)'
-          }
-        };
+        console.log(`⚠️ [WhatsAppSendService] Número inválido detectado, intentando rescate: ${phone_number}`);
+        
+        // Intentar rescatar el número usando heurísticas
+        const rescuedPhone = attemptPhoneRescue(phone_number);
+        
+        if (rescuedPhone && this.isValidPhoneNumber(rescuedPhone)) {
+          validatedPhone = rescuedPhone;
+          console.log(`✅ [WhatsAppSendService] Número rescatado exitosamente: ${phone_number} -> ${rescuedPhone}`);
+        } else {
+          console.error(`❌ [WhatsAppSendService] No se pudo rescatar el número: ${phone_number}`);
+          return {
+            success: false,
+            error: {
+              code: 'INVALID_PHONE_NUMBER',
+              message: `Invalid phone number format: "${phone_number}". Use international format (e.g., +1234567890). Attempted rescue but failed.`
+            }
+          };
+        }
       }
 
       // Normalizar número de teléfono (remover espacios, guiones, etc.)
-      const normalizedPhone = this.normalizePhoneNumber(phone_number);
+      const normalizedPhone = this.normalizePhoneNumber(validatedPhone);
 
       // Formatear el mensaje con información del sitio
       const formattedMessage = this.formatMessage(message, siteInfo, from);
