@@ -677,8 +677,8 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const leadUrl = `${baseUrl}/sites/${leadInfo.site_id}/leads/${lead_id}`;
-    const siteUrl = siteInfo.url || `${baseUrl}/sites/${leadInfo.site_id}`;
+    const leadUrl = `${baseUrl}/leads/${lead_id}`;
+    const siteUrl = siteInfo.url || `${baseUrl}/dashboard`;
     
     // 1. Notificar al vendedor asignado
     console.log(`📧 [LeadAssignment] Enviando notificación al vendedor: ${assigneeInfo.email}`);

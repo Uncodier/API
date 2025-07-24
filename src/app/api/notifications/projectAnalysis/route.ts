@@ -348,7 +348,7 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const siteUrl = `${baseUrl}/sites/${site_id}`;
+    const siteUrl = `${baseUrl}/dashboard`;
     
     // Usar los insights proporcionados o valores por defecto
     const insights = validationResult.data.insights.length > 0 ? validationResult.data.insights : [

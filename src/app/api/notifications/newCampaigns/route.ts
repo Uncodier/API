@@ -420,8 +420,8 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const campaignsUrl = `${baseUrl}/sites/${site_id}/campaigns`;
-    const reviewUrl = `${baseUrl}/sites/${site_id}/campaigns?status=${campaign_status}`;
+    const campaignsUrl = `${baseUrl}/campaigns`;
+    const reviewUrl = `${baseUrl}/campaigns?status=${campaign_status}`;
     
     // Enviar notificación al equipo
     console.log('📢 [NewCampaigns] Enviando notificación al equipo...');

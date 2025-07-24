@@ -434,8 +434,8 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const leadsUrl = `${baseUrl}/sites/${site_id}/leads`;
-    const assignLeadsUrl = `${baseUrl}/sites/${site_id}/leads?action=assign`;
+    const leadsUrl = `${baseUrl}/leads`;
+    const assignLeadsUrl = `${baseUrl}/leads?action=assign`;
     
     // Enviar notificación al equipo
     console.log('📢 [NewLeadsAlert] Enviando notificación al equipo...');

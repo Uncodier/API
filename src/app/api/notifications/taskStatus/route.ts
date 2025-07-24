@@ -643,9 +643,9 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const taskUrl = task_id ? `${baseUrl}/sites/${site_id}/tasks/${task_id}` : undefined;
+    const taskUrl = task_id ? `${baseUrl}/control-center/${task_id}` : undefined;
     // Usar la URL real del sitio si está disponible, sino usar la URL de la aplicación
-    const siteUrl = siteInfo.url || `${baseUrl}/sites/${site_id}`;
+    const siteUrl = siteInfo.url || `${baseUrl}/dashboard`;
     
     // Mapear el tipo de notificación
     const notificationTypeMap = {

@@ -579,7 +579,7 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const siteUrl = siteInfo.url || `${baseUrl}/sites/${siteId}`;
+    const siteUrl = siteInfo.url || `${baseUrl}/dashboard`;
     
     console.log(`📧 [LeadAttention] Enviando notificaciones a team members para los leads:`);
     for (const lead of leads) {
@@ -635,8 +635,8 @@ export async function POST(request: NextRequest) {
             contactInfo: contact_info,
             additionalData: additional_data,
             logoUrl: siteInfo.logo_url,
-            leadUrl: `${siteUrl}/leads/${leadId}`,
-            chatUrl: `${baseUrl}/sites/${siteId}/chat`,
+            leadUrl: `${baseUrl}/leads/${leadId}`,
+            chatUrl: `${baseUrl}/chat`,
             replyEmail: replyEmail || undefined
           }),
           categories: ['lead-attention', 'team-notification', 'priority-' + priority],

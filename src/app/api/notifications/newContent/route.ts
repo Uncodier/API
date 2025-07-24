@@ -389,8 +389,8 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const contentUrl = `${baseUrl}/sites/${site_id}/content`;
-    const reviewUrl = `${baseUrl}/sites/${site_id}/content?status=${content_status}`;
+    const contentUrl = `${baseUrl}/content`;
+    const reviewUrl = `${baseUrl}/content?status=${content_status}`;
     
     // Enviar notificación al equipo
     console.log('📢 [NewContent] Enviando notificación al equipo...');

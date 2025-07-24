@@ -674,8 +674,8 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const taskUrl = `${baseUrl}/sites/${site_id}/tasks/${task_id}`;
-    const siteUrl = siteInfo.url || `${baseUrl}/sites/${site_id}`;
+    const taskUrl = `${baseUrl}/control-center/${task_id}`;
+    const siteUrl = siteInfo.url || `${baseUrl}/dashboard`;
     
     // Preparar datos del CTA primario
     const primaryCta = {

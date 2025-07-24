@@ -375,7 +375,7 @@ export async function POST(request: NextRequest) {
     
     // URLs para los emails
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const dashboardUrl = `${baseUrl}/sites/${site_id}`;
+    const dashboardUrl = `${baseUrl}/dashboard`;
     
     // Enviar notificación al equipo
     console.log('📢 [DailyStandUp] Enviando notificación al equipo...');
