@@ -93,6 +93,31 @@ async function findGrowthMarketerAgent(siteId: string): Promise<{agentId: string
   }
 }
 
+// Function to validate if a campaign exists
+async function validateCampaignExists(campaignId: string): Promise<boolean> {
+  try {
+    if (!campaignId || !isValidUUID(campaignId)) {
+      return false;
+    }
+    
+    const { data, error } = await supabaseAdmin
+      .from('campaigns')
+      .select('id')
+      .eq('id', campaignId)
+      .single();
+    
+    if (error || !data) {
+      console.log(`⚠️ Campaign ${campaignId} does not exist in database`);
+      return false;
+    }
+    
+    return true;
+  } catch (error) {
+    console.error('Error validating campaign existence:', error);
+    return false;
+  }
+}
+
 // Function to save content items to the database
 async function saveContentItemsToDatabase(
   contentItems: any[],
@@ -110,9 +135,30 @@ async function saveContentItemsToDatabase(
     
     console.log(`Saving ${contentItems.length} content items to database`);
     
+    // Validate campaign_id exists if provided
+    let validatedCampaignId: string | undefined = campaignId;
+    if (campaignId && isValidUUID(campaignId)) {
+      const campaignExists = await validateCampaignExists(campaignId);
+      if (!campaignExists) {
+        console.log(`⚠️ Campaign ${campaignId} does not exist, removing campaign_id from content items`);
+        validatedCampaignId = undefined;
+      }
+    }
+    
     // Map content items to database structure
-    const formattedItems = contentItems.map((item: any, index: number) => {
+    const formattedItems = await Promise.all(contentItems.map(async (item: any, index: number) => {
       const contentType = item.type;
+      
+      // Validate individual item campaign_id if present
+      let itemCampaignId = item.campaign_id || validatedCampaignId;
+      if (itemCampaignId && isValidUUID(itemCampaignId)) {
+        const campaignExists = await validateCampaignExists(itemCampaignId);
+        if (!campaignExists) {
+          console.log(`⚠️ Item ${index + 1}: Campaign ${itemCampaignId} does not exist, removing campaign_id`);
+          itemCampaignId = undefined;
+        }
+      }
+      
       console.log(`💾 Guardando contenido ${index + 1}:`, {
         title: item.title?.substring(0, 50) + '...',
         type: contentType,
@@ -120,8 +166,8 @@ async function saveContentItemsToDatabase(
         hasInstructions: !!item.instructions,
         textLength: item.text?.length || 0,
         instructionsLength: item.instructions?.length || 0,
-        campaignId: item.campaign_id || 'general-param',
-        hasCampaignId: !!item.campaign_id
+        campaignId: itemCampaignId || 'none',
+        hasCampaignId: !!itemCampaignId
       });
       
       // Debug: Log the full item structure for the first content piece
@@ -138,7 +184,7 @@ async function saveContentItemsToDatabase(
         status: 'draft',
         site_id: siteId,
         segment_id: segmentId || null,
-        campaign_id: item.campaign_id || campaignId || null, // Prioritize individual item campaign_id over general parameter
+        campaign_id: itemCampaignId || null, // Use validated campaign_id
         command_id: commandId || null, // Add command_id to track the command that generated this content
         user_id: userId || 'system',
         estimated_reading_time: item.estimated_reading_time ? parseInt(item.estimated_reading_time, 10) : null,
@@ -153,7 +199,7 @@ async function saveContentItemsToDatabase(
           ...(item.publishing_date && { publishing_date: item.publishing_date })
         }
       };
-    });
+    }));
     
     // Insert into content table (was previously content_items)
     const { data, error } = await supabaseAdmin
