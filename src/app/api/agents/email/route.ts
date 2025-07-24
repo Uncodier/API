@@ -15,7 +15,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
 // Configuración de timeout extendido para Vercel
-export const maxDuration = 900; // 15 minutos en segundos
+export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
 
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
