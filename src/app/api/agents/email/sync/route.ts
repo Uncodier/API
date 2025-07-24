@@ -493,6 +493,108 @@ async function addSentMessageToConversation(
       }
     }
     
+    // 2.5. Verificar duplicación por cantidad de mensajes en rango de tiempo para este lead específico
+    if (email.date) {
+      console.log(`[EMAIL_SYNC] 🕐 Verificando duplicación por cantidad de mensajes en rango de tiempo para lead: ${leadId}`);
+      console.log(`[EMAIL_SYNC] 📧 Email dirigido a: ${email.to}`);
+      
+      try {
+        const emailDate = new Date(email.date);
+        
+        // Crear rango de tiempo de ±3 horas considerando husos horarios y posibles desfases
+        const timeWindowHours = 3;
+        const startTime = new Date(emailDate.getTime() - (timeWindowHours * 60 * 60 * 1000));
+        const endTime = new Date(emailDate.getTime() + (timeWindowHours * 60 * 60 * 1000));
+        
+        console.log(`[EMAIL_SYNC] 📅 Buscando mensajes en rango: ${startTime.toISOString()} - ${endTime.toISOString()}`);
+        console.log(`[EMAIL_SYNC] 📧 Email actual con fecha: ${emailDate.toISOString()}`);
+        
+        // Buscar mensajes enviados en el rango de tiempo para este lead específico
+        const { data: existingMessagesInRange, error: rangeError } = await supabaseAdmin
+          .from('messages')
+          .select('id, created_at, custom_data, content')
+          .eq('conversation_id', conversationId)
+          .eq('lead_id', leadId) // Específico para este lead
+          .in('role', ['team_member', 'system']) // Solo mensajes enviados por nosotros
+          .filter('custom_data->type', 'eq', 'sent_email')
+          .gte('created_at', startTime.toISOString())
+          .lte('created_at', endTime.toISOString())
+          .order('created_at', { ascending: true });
+          
+        if (rangeError) {
+          console.error('[EMAIL_SYNC] Error al buscar mensajes en rango de tiempo para lead:', rangeError);
+        } else if (existingMessagesInRange && existingMessagesInRange.length > 0) {
+          console.log(`[EMAIL_SYNC] 📊 Mensajes enviados existentes para este lead en rango de tiempo: ${existingMessagesInRange.length}`);
+          
+          // Obtener información básica del email para comparar
+          const emailSubjectNormalized = email.subject ? 
+            fixTextEncoding(email.subject).toLowerCase().trim().replace(/^(re|fwd?):\s*/i, '') : '';
+          const emailTo = email.to?.toLowerCase().trim() || '';
+          
+          // Verificar si alguno de los mensajes existentes coincide en subject y destinatario
+          const potentialDuplicate = existingMessagesInRange.find(msg => {
+            const msgSubject = msg.custom_data?.subject ? 
+              fixTextEncoding(msg.custom_data.subject).toLowerCase().trim().replace(/^(re|fwd?):\s*/i, '') : '';
+            const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
+            
+            // Coincidencia de subject y destinatario
+            const subjectMatch = emailSubjectNormalized && msgSubject && 
+                                emailSubjectNormalized === msgSubject;
+            const recipientMatch = emailTo && msgTo && emailTo === msgTo;
+            
+            return subjectMatch && recipientMatch;
+          });
+          
+          if (potentialDuplicate) {
+            console.log(`[EMAIL_SYNC] 🎯 Mensaje duplicado detectado para lead ${leadId} por subject y destinatario:`);
+            console.log(`[EMAIL_SYNC] - Subject: "${emailSubjectNormalized}"`);
+            console.log(`[EMAIL_SYNC] - To: "${emailTo}"`);
+            console.log(`[EMAIL_SYNC] - Mensaje existente ID: ${potentialDuplicate.id}`);
+            console.log(`[EMAIL_SYNC] - Fecha mensaje existente: ${potentialDuplicate.created_at}`);
+            console.log(`[EMAIL_SYNC] 🚫 Evitando duplicación para este lead específico`);
+            
+            return potentialDuplicate.id;
+          }
+          
+          // Si hay 3+ mensajes para este lead en un rango de 6 horas, probablemente indica duplicación masiva
+          if (existingMessagesInRange.length >= 3) {
+            console.log(`[EMAIL_SYNC] ⚠️ Detectados ${existingMessagesInRange.length} mensajes para lead ${leadId} en rango de ${timeWindowHours * 2}h`);
+            console.log(`[EMAIL_SYNC] 📋 Mensajes existentes para este lead:`, existingMessagesInRange.map(m => ({
+              id: m.id,
+              created_at: m.created_at,
+              subject: m.custom_data?.subject,
+              to: m.custom_data?.to,
+              email_id: m.custom_data?.email_id
+            })));
+            
+            // Verificar si el destinatario coincide (debe ser el mismo para este lead)
+            const sameRecipientCount = existingMessagesInRange.filter(msg => {
+              const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
+              return msgTo === emailTo;
+            }).length;
+            
+            if (sameRecipientCount >= 2) {
+              console.log(`[EMAIL_SYNC] 🚫 Evitando duplicación masiva para lead ${leadId}: ${sameRecipientCount} mensajes al mismo destinatario en ventana de tiempo`);
+              // Retornar el mensaje más reciente al mismo destinatario de este lead
+              const sameRecipientMessages = existingMessagesInRange.filter(msg => {
+                const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
+                return msgTo === emailTo;
+              });
+              const mostRecentMessage = sameRecipientMessages[sameRecipientMessages.length - 1];
+              return mostRecentMessage.id;
+            }
+          }
+          
+          console.log(`[EMAIL_SYNC] ✅ No se detectó duplicación para lead ${leadId} en rango de tiempo, continuando con creación`);
+        } else {
+          console.log(`[EMAIL_SYNC] ℹ️ No hay mensajes existentes para lead ${leadId} en el rango de tiempo, continuando con creación`);
+        }
+      } catch (timeRangeError) {
+        console.error('[EMAIL_SYNC] Error en verificación por rango de tiempo:', timeRangeError);
+        // Continuar con el flujo normal si hay error en esta verificación
+      }
+    }
+    
     // 3. Verificar por contenido extraído para detectar duplicados más precisamente
     if (email.subject && messageContent) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido y subject...`);
@@ -1505,6 +1607,7 @@ async function findTeamMemberByEmail(email: string, siteId: string): Promise<{id
 
 /**
  * Función para corregir problemas de codificación de caracteres en texto de email
+ * Ahora más simple - delegamos principalmente al EmailTextExtractorService
  */
 function fixTextEncoding(text: string): string {
   if (!text || typeof text !== 'string') {
@@ -1514,60 +1617,23 @@ function fixTextEncoding(text: string): string {
   try {
     let fixedText = text;
     
-    // Correcciones más comunes de caracteres mal codificados
-    // Problema específico mencionado: "extracciÃ³n" -> "extracción"
+    // Correcciones básicas más comunes de UTF-8 mal interpretado como ISO-8859-1
     fixedText = fixedText
-      .replace(/Ã¡/g, 'á')
-      .replace(/Ã©/g, 'é')
-      .replace(/Ã­/g, 'í')
-      .replace(/Ã³/g, 'ó')
-      .replace(/Ãº/g, 'ú')
-      .replace(/Ã±/g, 'ñ')
-      .replace(/Ã§/g, 'ç')
-      .replace(/Ã /g, 'à')
-      .replace(/Ã¨/g, 'è')
-      .replace(/Ã¬/g, 'ì')
-      .replace(/Ã²/g, 'ò')
-      .replace(/Ã¹/g, 'ù')
-      .replace(/Ã¢/g, 'â')
-      .replace(/Ãª/g, 'ê')
-      .replace(/Ã®/g, 'î')
-      .replace(/Ã´/g, 'ô')
-      .replace(/Ã»/g, 'û')
-      .replace(/Ã£/g, 'ã')
-      // Mayúsculas comunes
-      .replace(/Ã€/g, 'À')
-      .replace(/Ã‰/g, 'É')
-      .replace(/Ã"/g, 'Ó')
-      .replace(/Ã'/g, 'Ñ')
-      .replace(/Ã‡/g, 'Ç')
+      .replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é').replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
+      .replace(/Ã /g, 'à').replace(/Ã¨/g, 'è').replace(/Ã¬/g, 'ì').replace(/Ã²/g, 'ò').replace(/Ã¹/g, 'ù')
+      .replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê').replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
+      .replace(/Ã£/g, 'ã').replace(/Ã±/g, 'ñ').replace(/Ã§/g, 'ç')
+      // Mayúsculas
+      .replace(/Ã€/g, 'À').replace(/Ã‰/g, 'É').replace(/Ã"/g, 'Ó').replace(/Ã‡/g, 'Ç')
+      .replace(/Ã‚/g, 'Â').replace(/ÃŠ/g, 'Ê').replace(/ÃŽ/g, 'Î').replace(/Ã„/g, 'Ä').replace(/Ã‹/g, 'Ë')
+      .replace(/Ã–/g, 'Ö').replace(/Ãœ/g, 'Ü')
       // Espacios problemáticos
-      .replace(/Â /g, ' ')
-      .replace(/Â/g, '');
-      
-    // Aplicar correcciones adicionales si es necesario
-    
-    // Intentar decodificar HTML entities si están presentes
-    const htmlEntities: { [key: string]: string } = {
-      '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
-      '&aacute;': 'á', '&eacute;': 'é', '&iacute;': 'í', '&oacute;': 'ó', '&uacute;': 'ú',
-      '&agrave;': 'à', '&egrave;': 'è', '&igrave;': 'ì', '&ograve;': 'ò', '&ugrave;': 'ù',
-      '&acirc;': 'â', '&ecirc;': 'ê', '&icirc;': 'î', '&ocirc;': 'ô', '&ucirc;': 'û',
-      '&atilde;': 'ã', '&ntilde;': 'ñ', '&ccedil;': 'ç',
-      '&Aacute;': 'Á', '&Eacute;': 'É', '&Iacute;': 'Í', '&Oacute;': 'Ó', '&Uacute;': 'Ú',
-      '&Agrave;': 'À', '&Egrave;': 'È', '&Igrave;': 'Ì', '&Ograve;': 'Ò', '&Ugrave;': 'Ù',
-      '&Acirc;': 'Â', '&Ecirc;': 'Ê', '&Icirc;': 'Î', '&Ocirc;': 'Ô', '&Ucirc;': 'Û',
-      '&Atilde;': 'Ã', '&Ntilde;': 'Ñ', '&Ccedil;': 'Ç'
-    };
-    
-    for (const [entity, char] of Object.entries(htmlEntities)) {
-      fixedText = fixedText.replace(new RegExp(entity, 'gi'), char);
-    }
-    
-    // Limpiar espacios múltiples y caracteres de control
-    fixedText = fixedText
-      .replace(/\s+/g, ' ') // Múltiples espacios a uno solo
-      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Caracteres de control
+      .replace(/Â /g, ' ').replace(/Â/g, '')
+      // Símbolos comunes problemáticos
+      .replace(/Â°/g, '°').replace(/Â£/g, '£').replace(/Â©/g, '©').replace(/Â®/g, '®')
+      // Limpiar espacios múltiples y caracteres de control
+      .replace(/\s+/g, ' ')
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
       .trim();
     
     return fixedText;

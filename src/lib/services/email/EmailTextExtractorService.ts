@@ -75,6 +75,9 @@ export class EmailTextExtractorService {
       // Limpiar y optimizar el texto
       let cleanText = this.cleanEmailText(rawContent, opts);
       
+      // Aplicar corrección de codificación de caracteres al final
+      cleanText = this.fixTextEncoding(cleanText);
+      
       // Truncar si es necesario
       if (opts.maxTextLength && cleanText.length > opts.maxTextLength) {
         cleanText = cleanText.substring(0, opts.maxTextLength) + '...';
@@ -169,8 +172,16 @@ export class EmailTextExtractorService {
   private static cleanEmailText(text: string, options: EmailTextExtractionOptions): string {
     let cleanText = text;
 
+    // Primero, remover estructuras MIME y multipart (debe ser antes de todo)
+    cleanText = this.removeMimeStructures(cleanText);
+
     // Normalizar espacios en blanco
     cleanText = cleanText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    
+    // Eliminar headers de email si está habilitado (mejorado para incluir MIME headers)
+    if (options.removeHeaders) {
+      cleanText = this.removeEmailHeaders(cleanText);
+    }
     
     // Eliminar firmas si está habilitado
     if (options.removeSignatures) {
@@ -180,11 +191,6 @@ export class EmailTextExtractorService {
     // Eliminar texto citado/quoted si está habilitado
     if (options.removeQuotedText) {
       cleanText = this.removeQuotedText(cleanText);
-    }
-    
-    // Eliminar headers de email si está habilitado
-    if (options.removeHeaders) {
-      cleanText = this.removeEmailHeaders(cleanText);
     }
     
     // Eliminar footers/disclaimers legales si está habilitado
@@ -202,6 +208,40 @@ export class EmailTextExtractorService {
     cleanText = cleanText.replace(/^\s*$/gm, '');
     
     return cleanText.trim();
+  }
+
+  /**
+   * Remueve estructuras MIME multipart y boundaries
+   */
+  private static removeMimeStructures(text: string): string {
+    let cleanText = text;
+
+    // Remover boundaries MIME (líneas que empiezan con ---- seguidas de cadenas largas)
+    cleanText = cleanText.replace(/^----==_mimepart_[a-f0-9_]+.*$/gm, '');
+    cleanText = cleanText.replace(/^--[a-zA-Z0-9=_-]{10,}.*$/gm, '');
+    
+    // Remover headers Content-Type multiline
+    cleanText = cleanText.replace(/^Content-Type:\s*.*$/gmi, '');
+    cleanText = cleanText.replace(/^Content-Transfer-Encoding:\s*.*$/gmi, '');
+    cleanText = cleanText.replace(/^Content-Disposition:\s*.*$/gmi, '');
+    cleanText = cleanText.replace(/^Content-Description:\s*.*$/gmi, '');
+    
+    // Remover líneas con charset y boundary definitions
+    cleanText = cleanText.replace(/^.*charset=.*$/gmi, '');
+    cleanText = cleanText.replace(/^.*boundary=.*$/gmi, '');
+    
+    // Remover headers MIME técnicos adicionales
+    cleanText = cleanText.replace(/^MIME-Version:\s*.*$/gmi, '');
+    cleanText = cleanText.replace(/^X-.*?:\s*.*$/gmi, ''); // Headers X- personalizados
+    
+    // Remover líneas que solo contienen = (quoted-printable artifacts)
+    cleanText = cleanText.replace(/^=+$/gm, '');
+    
+    // Remover secuencias de quoted-printable problemáticas
+    cleanText = cleanText.replace(/=\s*$/gm, ''); // Líneas que terminan con =
+    cleanText = cleanText.replace(/=\n/g, ''); // Saltos de línea codificados
+    
+    return cleanText;
   }
 
   /**
@@ -246,7 +286,8 @@ export class EmailTextExtractorService {
           line.match(/^On .+ wrote:$/i) || // "On [date] [person] wrote:"
           line.match(/^El .+ escribió:$/i) || // "El [fecha] [persona] escribió:"
           line.match(/^From:\s*.+$/i) || // Headers de email quoted
-          line.match(/^De:\s*.+$/i)) {
+          line.match(/^De:\s*.+$/i) ||
+          line.match(/^Original Thread:/i)) { // "Original Thread:" markers
         inQuotedSection = true;
         continue;
       }
@@ -261,20 +302,49 @@ export class EmailTextExtractorService {
   }
 
   /**
-   * Elimina headers de email
+   * Elimina headers de email (mejorado para incluir MIME headers)
    */
   private static removeEmailHeaders(text: string): string {
     const headerPatterns = [
-      /^From:\s*.+$/im,
-      /^To:\s*.+$/im,
-      /^Subject:\s*.+$/im,
-      /^Date:\s*.+$/im,
-      /^Sent:\s*.+$/im,
-      /^De:\s*.+$/im,
-      /^Para:\s*.+$/im,
-      /^Asunto:\s*.+$/im,
-      /^Fecha:\s*.+$/im,
-      /^Enviado:\s*.+$/im,
+      // Headers básicos de email
+      /^From:\s*.+$/gmi,
+      /^To:\s*.+$/gmi,
+      /^Subject:\s*.+$/gmi,
+      /^Date:\s*.+$/gmi,
+      /^Sent:\s*.+$/gmi,
+      /^De:\s*.+$/gmi,
+      /^Para:\s*.+$/gmi,
+      /^Asunto:\s*.+$/gmi,
+      /^Fecha:\s*.+$/gmi,
+      /^Enviado:\s*.+$/gmi,
+      
+      // Headers MIME y técnicos
+      /^Content-Type:\s*.+$/gmi,
+      /^Content-Transfer-Encoding:\s*.+$/gmi,
+      /^Content-Disposition:\s*.+$/gmi,
+      /^Content-Description:\s*.+$/gmi,
+      /^Content-ID:\s*.+$/gmi,
+      /^MIME-Version:\s*.+$/gmi,
+      
+      // Headers adicionales comunes
+      /^Message-ID:\s*.+$/gmi,
+      /^In-Reply-To:\s*.+$/gmi,
+      /^References:\s*.+$/gmi,
+      /^Return-Path:\s*.+$/gmi,
+      /^Received:\s*.+$/gmi,
+      /^Reply-To:\s*.+$/gmi,
+      /^Cc:\s*.+$/gmi,
+      /^Bcc:\s*.+$/gmi,
+      /^Priority:\s*.+$/gmi,
+      /^Importance:\s*.+$/gmi,
+      /^X-.*?:\s*.+$/gmi, // Todos los headers X- personalizados
+      
+      // Headers de email clients específicos
+      /^Delivered-To:\s*.+$/gmi,
+      /^Authentication-Results:\s*.+$/gmi,
+      /^ARC-.*?:\s*.+$/gmi,
+      /^DKIM-.*?:\s*.+$/gmi,
+      /^SPF-.*?:\s*.+$/gmi,
     ];
 
     let cleanText = text;
@@ -300,6 +370,8 @@ export class EmailTextExtractorService {
       /^LEGAL NOTICE.*$/gmi,
       /^Please consider the environment.*$/gmi,
       /^Por favor considera el medio ambiente.*$/gmi,
+      /^If you don't want to hear from me again.*$/gmi, // Unsubscribe messages
+      /^Si no quieres recibir más.*$/gmi,
     ];
 
     let cleanText = text;
@@ -308,5 +380,69 @@ export class EmailTextExtractorService {
     });
 
     return cleanText;
+  }
+
+  /**
+   * Corrige problemas de codificación de caracteres en texto
+   */
+  private static fixTextEncoding(text: string): string {
+    if (!text || typeof text !== 'string') {
+      return text;
+    }
+    
+    try {
+      let fixedText = text;
+      
+                           // Aplicar correcciones usando replace directo para evitar problemas de encoding
+       fixedText = fixedText
+         // Correcciones más comunes de UTF-8 mal interpretado como ISO-8859-1
+         .replace(/Ã¡/g, 'á').replace(/Ã©/g, 'é').replace(/Ã­/g, 'í').replace(/Ã³/g, 'ó').replace(/Ãº/g, 'ú')
+         .replace(/Ã /g, 'à').replace(/Ã¨/g, 'è').replace(/Ã¬/g, 'ì').replace(/Ã²/g, 'ò').replace(/Ã¹/g, 'ù')
+         .replace(/Ã¢/g, 'â').replace(/Ãª/g, 'ê').replace(/Ã®/g, 'î').replace(/Ã´/g, 'ô').replace(/Ã»/g, 'û')
+         .replace(/Ã£/g, 'ã').replace(/Ã±/g, 'ñ').replace(/Ã§/g, 'ç')
+         // Mayúsculas
+         .replace(/Ã€/g, 'À').replace(/Ã‰/g, 'É').replace(/Ã"/g, 'Ó').replace(/Ã‡/g, 'Ç')
+         .replace(/Ã‚/g, 'Â').replace(/ÃŠ/g, 'Ê').replace(/ÃŽ/g, 'Î').replace(/Ã„/g, 'Ä').replace(/Ã‹/g, 'Ë')
+         .replace(/Ã–/g, 'Ö').replace(/Ãœ/g, 'Ü')
+         // Espacios problemáticos
+         .replace(/Â /g, ' ').replace(/Â/g, '')
+         // Símbolos comunes problemáticos
+         .replace(/Â°/g, '°').replace(/Â£/g, '£').replace(/Â©/g, '©').replace(/Â®/g, '®')
+         
+         // Correcciones adicionales con regex para patrones
+         // Secuencias de A seguidas de caracteres especiales (patrón común UTF-8 mal interpretado)
+         .replace(/Ã([¡-ÿ])/g, (match, p1) => {
+           const charCode = p1.charCodeAt(0);
+           return String.fromCharCode(192 + charCode - 161);
+         })
+         
+         // Limpiar espacios múltiples que puedan quedar después de las correcciones
+         .replace(/\s+/g, ' ')
+         
+         // Remover caracteres de control problemáticos
+         .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+
+      // Intentar decodificar HTML entities si están presentes
+      const htmlEntities: { [key: string]: string } = {
+        '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'",
+        '&aacute;': 'á', '&eacute;': 'é', '&iacute;': 'í', '&oacute;': 'ó', '&uacute;': 'ú',
+        '&agrave;': 'à', '&egrave;': 'è', '&igrave;': 'ì', '&ograve;': 'ò', '&ugrave;': 'ù',
+        '&acirc;': 'â', '&ecirc;': 'ê', '&icirc;': 'î', '&ocirc;': 'ô', '&ucirc;': 'û',
+        '&atilde;': 'ã', '&ntilde;': 'ñ', '&ccedil;': 'ç',
+        '&Aacute;': 'Á', '&Eacute;': 'É', '&Iacute;': 'Í', '&Oacute;': 'Ó', '&Uacute;': 'Ú',
+        '&Agrave;': 'À', '&Egrave;': 'È', '&Igrave;': 'Ì', '&Ograve;': 'Ò', '&Ugrave;': 'Ù',
+        '&Acirc;': 'Â', '&Ecirc;': 'Ê', '&Icirc;': 'Î', '&Ocirc;': 'Ô', '&Ucirc;': 'Û',
+        '&Atilde;': 'Ã', '&Ntilde;': 'Ñ', '&Ccedil;': 'Ç'
+      };
+      
+      for (const [entity, char] of Object.entries(htmlEntities)) {
+        fixedText = fixedText.replace(new RegExp(entity, 'gi'), char);
+      }
+      
+      return fixedText.trim();
+    } catch (error) {
+      console.warn('[EmailTextExtractor] Error al corregir codificación de texto:', error);
+      return text; // Retornar texto original si hay error
+    }
   }
 } 
