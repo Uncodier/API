@@ -177,12 +177,12 @@ export async function POST(request: NextRequest) {
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       console.log(`[DELIVERY_STATUS] ✅ Configuración de email obtenida exitosamente`);
       
-      // Fetch emails from INBOX con timeout agresivo
+      // Fetch emails from INBOX con timeout solo para la operación de fetch
       console.log(`[DELIVERY_STATUS] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
       
       const fetchEmailsPromise = EmailService.fetchEmails(emailConfig, limit, sinceDate);
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout al obtener emails (45s)')), 45000);
+        setTimeout(() => reject(new Error('Timeout al obtener emails del servidor (30s)')), 30000);
       });
       
       const allEmails = await Promise.race([fetchEmailsPromise, timeoutPromise]);
@@ -191,44 +191,22 @@ export async function POST(request: NextRequest) {
       // Filter for bounce emails from Mail Delivery Subsystem usando EmailFilterService
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure con EmailFilterService...`);
       
-      // Log detallado de cada email para debugging
+      // Optimized filtering with minimal logging to avoid timeouts
       const bounceEmails = allEmails.filter((email, index) => {
-        console.log(`[DELIVERY_STATUS] 🔍 Evaluando email ${index + 1}/${allEmails.length}:`);
-        console.log(`[DELIVERY_STATUS]   - ID: ${email.id}`);
-        console.log(`[DELIVERY_STATUS]   - From: ${email.from}`);
-        console.log(`[DELIVERY_STATUS]   - Subject: ${email.subject}`);
-        console.log(`[DELIVERY_STATUS]   - Body preview: ${(email.body || '').substring(0, 200)}...`);
+        // Solo log básico para evitar timeouts
+        if (index === 0) {
+          console.log(`[DELIVERY_STATUS] 🔍 Procesando ${allEmails.length} emails para detectar bounces...`);
+        }
         
-        // Debugging más detallado - verificar campos específicos
+        // Optimized bounce detection
         const from = (email.from || '').toLowerCase();
         const subject = (email.subject || '').toLowerCase();
         const body = (email.body || '').toLowerCase();
         
-        console.log(`[DELIVERY_STATUS]   - From (lowercase): ${from}`);
-        console.log(`[DELIVERY_STATUS]   - Subject (lowercase): ${subject}`);
-        console.log(`[DELIVERY_STATUS]   - Body length: ${body.length} chars`);
-        
-        // Verificaciones manuales específicas para debugging
-        const manualBounceCheck = {
-          fromContainsDelivery: from.includes('delivery'),
-          fromContainsSubsystem: from.includes('subsystem'),
-          fromContainsMailer: from.includes('mailer'),
-          fromContainsPostmaster: from.includes('postmaster'),
-          subjectContainsDelivery: subject.includes('delivery'),
-          subjectContainsStatus: subject.includes('status'),
-          subjectContainsFailure: subject.includes('failure'),
-          subjectContainsUndelivered: subject.includes('undelivered'),
-          bodyContainsDelivery: body.includes('delivery'),
-          bodyContainsFailed: body.includes('failed'),
-          bodyContainsUnknown: body.includes('unknown')
-        };
-        
-        console.log(`[DELIVERY_STATUS]   - Manual bounce checks:`, manualBounceCheck);
-        
+        // Use EmailFilterService for primary validation
         const validation = EmailFilterService.validateEmailNotDeliveryOrBounce(email);
-        console.log(`[DELIVERY_STATUS]   - Filter result: isValid=${validation.isValid}, reason="${validation.reason}", category="${validation.category}"`);
         
-        // Verificación manual adicional usando patrones simplificados
+        // Quick simple bounce detection (optimized for performance)
         const simpleIsBounce = (
           from.includes('mail delivery subsystem') ||
           from.includes('mailer-daemon') ||
@@ -241,13 +219,14 @@ export async function POST(request: NextRequest) {
           body.includes('mailbox unavailable')
         );
         
-        console.log(`[DELIVERY_STATUS]   - Simple bounce check: ${simpleIsBounce}`);
-        
         const isBounce = !validation.isValid || simpleIsBounce;
-        console.log(`[DELIVERY_STATUS]   - Will process as bounce: ${isBounce}`);
-        console.log(`[DELIVERY_STATUS]   ---`);
         
-        return isBounce; // Los emails inválidos son los bounce/delivery status que queremos procesar
+        // Log solo los bounces encontrados
+        if (isBounce) {
+          console.log(`[DELIVERY_STATUS] 📧 Bounce detectado: ID=${email.id}, From=${email.from}, Subject=${email.subject?.substring(0, 100)}...`);
+        }
+        
+        return isBounce;
       });
       console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
       
