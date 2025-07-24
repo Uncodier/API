@@ -694,6 +694,9 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
+      // Add diagnostic checkpoint
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 1: Iniciando procesamiento de emails obtenidos...`);
+      
       // Validación inicial: logs de configuración de no-reply
       console.log(`[EMAIL_API] 🔒 Configuración de filtros de seguridad:`);
       const noReplyAddresses = getNoReplyAddresses();
@@ -703,15 +706,28 @@ export async function POST(request: NextRequest) {
         SENDGRID_FROM_EMAIL: process.env.SENDGRID_FROM_EMAIL ? '✅ Configurado' : '❌ No configurado',
         NO_REPLY_EMAILS: process.env.NO_REPLY_EMAILS ? '✅ Configurado' : '❌ No configurado'
       });
-
-      // Filter emails to avoid feedback loops (first filter)
-      console.log(`[EMAIL_API] 🔄 Aplicando filtro de feedback loops...`);
-      const feedbackFilteredEmails = filterFeedbackLoopEmails(allEmails);
       
-      // Find leads assigned to AI before filtering by aliases (second filter)
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 2: Configuración de seguridad completada...`);
+
+      // Filter emails to avoid feedback loops (first filter) - with timeout
+      console.log(`[EMAIL_API] 🔄 Aplicando filtro de feedback loops...`);
+      const feedbackFilteredEmails = await Promise.race([
+        Promise.resolve(filterFeedbackLoopEmails(allEmails)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout en filtro de feedback loops')), 30000))
+      ]) as any[];
+      console.log(`[EMAIL_API] ✅ Filtro de feedback loops completado: ${feedbackFilteredEmails.length}/${allEmails.length} emails`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 3: Filtro de feedback loops completado...`);
+      
+      // Find leads assigned to AI before filtering by aliases (second filter) - with timeout
       console.log(`[EMAIL_API] 🤖 Buscando leads asignados a la IA...`);
-      const aiLeadsMap = await findLeadsAssignedToAI(feedbackFilteredEmails, siteId);
+      const aiLeadsMap = await Promise.race([
+        findLeadsAssignedToAI(feedbackFilteredEmails, siteId),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout buscando leads asignados a IA')), 30000))
+      ]) as Map<string, any>;
       console.log(`[EMAIL_API] ✅ Leads asignados a la IA encontrados: ${aiLeadsMap.size}`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 4: Búsqueda de leads IA completada...`);
       
       // Filter emails by aliases if configured (third filter)
       // Los aliases pueden venir como string separado por comas o como array
@@ -733,16 +749,28 @@ export async function POST(request: NextRequest) {
         }
       }
       
-      console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases y leads asignados a la IA...`);
-      const aliasFilteredEmails = filterEmailsByAliasesAndAILeads(feedbackFilteredEmails, normalizedAliases, aiLeadsMap);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 5: Aliases procesados: ${normalizedAliases.length} encontrados...`);
       
-      // Filter emails to avoid processing duplicates (fourth filter)
+      console.log(`[EMAIL_API] 🔍 Filtrando emails por aliases y leads asignados a la IA...`);
+      const aliasFilteredEmails = await Promise.race([
+        Promise.resolve(filterEmailsByAliasesAndAILeads(feedbackFilteredEmails, normalizedAliases, aiLeadsMap)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout en filtro de aliases')), 30000))
+      ]) as any[];
+      console.log(`[EMAIL_API] ✅ Filtro de aliases completado: ${aliasFilteredEmails.length}/${feedbackFilteredEmails.length} emails`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 6: Filtro de aliases completado...`);
+      
+      // Filter emails to avoid processing duplicates (fourth filter) - with timeout
       console.log(`[EMAIL_API] 🔄 Filtrando emails ya procesados para evitar duplicaciones...`);
-      const { unprocessed: emails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
-        aliasFilteredEmails, 
-        siteId, 
-        'email'
-      );
+      const filterResult = await Promise.race([
+        SyncedObjectsService.filterUnprocessedEmails(aliasFilteredEmails, siteId, 'email'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout filtrando emails procesados')), 30000))
+      ]) as { unprocessed: any[], alreadyProcessed: any[] };
+      
+      const { unprocessed: emails, alreadyProcessed } = filterResult;
+      console.log(`[EMAIL_API] ✅ Filtro de duplicados completado: ${emails.length} sin procesar, ${alreadyProcessed.length} ya procesados`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 7: Filtro de duplicados completado...`);
 
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
       console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
@@ -753,12 +781,19 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] - Leads asignados a IA encontrados: ${aiLeadsMap.size}`);
       console.log(`[EMAIL_API] - Aliases configurados: ${normalizedAliases.length > 0 ? normalizedAliases.join(', ') : 'Ninguno (procesar todos)'}`);
 
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 8: Resumen de filtrado completado...`);
+
       // Validación temprana: si no hay emails para analizar, retornar inmediatamente
       if (emails.length === 0) {
         console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado`);
         
         // Obtener estadísticas de procesamiento para mejor reporte
-        const stats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 9: Obteniendo estadísticas de procesamiento...`);
+        const stats = await Promise.race([
+          SyncedObjectsService.getProcessingStats(siteId, 'email'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout obteniendo estadísticas')), 10000))
+        ]);
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 10: Estadísticas obtenidas, retornando respuesta temprana...`);
         
         return NextResponse.json({
           success: true,
@@ -785,32 +820,45 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Validación de seguridad final usando EmailFilterService
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 11: Continuando con validación de seguridad...`);
+
+      // Validación de seguridad final usando EmailFilterService - with timeout
       console.log(`[EMAIL_API] 🔒 Ejecutando validación de seguridad final con EmailFilterService...`);
       
-      const { validEmails: safeEmails, filteredEmails: unsafeEmails } = EmailFilterService.filterValidEmails(emails, noReplyAddresses);
+      const securityResult = await Promise.race([
+        Promise.resolve(EmailFilterService.filterValidEmails(emails, noReplyAddresses)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout en validación de seguridad')), 30000))
+      ]) as { validEmails: any[], filteredEmails: any[] };
+      
+      const { validEmails: safeEmails, filteredEmails: unsafeEmails } = securityResult;
+      console.log(`[EMAIL_API] ✅ Validación de seguridad completada: ${safeEmails.length}/${emails.length} emails seguros`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 12: Validación de seguridad completada...`);
       
       if (unsafeEmails.length > 0) {
         console.warn(`[EMAIL_API] 🚨 ADVERTENCIA: Se detectaron ${unsafeEmails.length} emails no válidos que pasaron el filtro inicial`);
         
-        // Agrupar por categoría para mejor reporte
-        const categorizedEmails = EmailFilterService.getFilteringStats(unsafeEmails);
+        // Agrupar por categoría para mejor reporte - with timeout
+        const categorizedEmails = await Promise.race([
+          Promise.resolve(EmailFilterService.getFilteringStats(unsafeEmails)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout obteniendo estadísticas de filtrado')), 5000))
+        ]);
         console.warn(`[EMAIL_API] 📊 Estadísticas de filtrado:`, categorizedEmails);
         
         // Log detallado por categoría
-        const emailsByCategory = unsafeEmails.reduce((acc, { email, reason, category }) => {
-          if (!acc[category]) acc[category] = [];
-          acc[category].push({ email, reason });
-          return acc;
-        }, {} as Record<string, any[]>);
+        const emailsByCategory: Record<string, Array<{ email: any, reason: string }>> = {};
+        unsafeEmails.forEach(({ email, reason, category }) => {
+          if (!emailsByCategory[category]) emailsByCategory[category] = [];
+          emailsByCategory[category].push({ email, reason });
+        });
         
         Object.entries(emailsByCategory).forEach(([category, emailsInCategory]) => {
           console.warn(`[EMAIL_API] 📋 Emails ${category} bloqueados (${emailsInCategory.length}):`, emailsInCategory);
         });
       }
 
-      console.log(`[EMAIL_API] ✅ Validación de seguridad completada: ${safeEmails.length}/${emails.length} emails seguros para procesar`);
-      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 13: Manejo de emails no seguros completado...`);
+
       // Usar safeEmails en lugar de emails para el resto del proceso
       const finalEmailsForAnalysis = safeEmails;
 
@@ -818,7 +866,12 @@ export async function POST(request: NextRequest) {
         console.log(`[EMAIL_API] ⚠️ No quedan emails seguros para analizar después de las validaciones de seguridad`);
         
         // Obtener estadísticas de procesamiento para mejor reporte
-        const stats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 14: Obteniendo estadísticas para respuesta sin emails seguros...`);
+        const stats = await Promise.race([
+          SyncedObjectsService.getProcessingStats(siteId, 'email'),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout obteniendo estadísticas finales')), 10000))
+        ]);
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 15: Retornando respuesta sin emails seguros...`);
         
         return NextResponse.json({
           success: true,
@@ -852,36 +905,74 @@ export async function POST(request: NextRequest) {
         });
       }
 
-      // Si no se proporciona agentId, buscar el agente de soporte
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 16: Continuando con búsqueda de agente...`);
+
+      // Si no se proporciona agentId, buscar el agente de soporte - with timeout
       console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
-      const effectiveAgentId = agentId || await findSupportAgent(siteId);
+      const effectiveAgentId = agentId || await Promise.race([
+        findSupportAgent(siteId),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout buscando agente de soporte')), 15000))
+      ]);
       console.log(`[EMAIL_API] ✅ Agente ID efectivo: ${effectiveAgentId}`);
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 17: Agente determinado, creando comando...`);
       
       // Create and submit command
       console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails...`);
       const command = createEmailCommand(effectiveAgentId, siteId, finalEmailsForAnalysis, emailConfig, analysisType, leadId, teamMemberId, userId);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 18: Comando creado, enviando al servicio...`);
+      
       console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
-      const internalCommandId = await commandService.submitCommand(command);
+      const internalCommandId = await Promise.race([
+        commandService.submitCommand(command),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout enviando comando')), 30000))
+      ]);
       
       console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 19: Comando enviado exitosamente...`);
       
       // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
-      let initialDbUuid = await getCommandDbUuid(internalCommandId);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 20: Obteniendo UUID de base de datos...`);
+      let initialDbUuid = await Promise.race([
+        getCommandDbUuid(internalCommandId),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout obteniendo UUID inicial')), 10000))
+      ]).catch(error => {
+        console.warn(`[EMAIL_API] ⚠️ No se pudo obtener UUID inicial: ${error.message}`);
+        return null;
+      });
+      
       if (initialDbUuid) {
         console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
       }
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 21: UUID de BD procesado, esperando ejecución...`);
       
       // Esperar a que el comando se complete utilizando nuestra función
-      const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+      console.log(`[EMAIL_API] ⏳ Esperando a que el comando se complete...`);
+      const commandResult = await Promise.race([
+        waitForCommandCompletion(internalCommandId),
+        new Promise<{command: any, dbUuid: string | null, completed: boolean}>((_, reject) => 
+          setTimeout(() => reject(new Error('Timeout esperando completar comando')), 280000) // 280 segundos para dejar margen
+        )
+      ]).catch(error => {
+        console.error(`[EMAIL_API] ❌ Error/timeout esperando comando: ${error.message}`);
+        return { command: null, dbUuid: null, completed: false };
+      });
+      
+      const { command: executedCommand, dbUuid, completed } = commandResult;
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 22: Comando completado o timeout alcanzado...`);
       
       // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
       const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 23: UUID efectivo determinado: ${effectiveDbUuid || 'No disponible'}...`);
       
       // Si no completado y no hay resultados, retornar error
       if (!completed) {
         console.warn(`⚠️ Comando ${internalCommandId} no completó exitosamente en el tiempo esperado`);
         
         if (!executedCommand || !executedCommand.results || executedCommand.results.length === 0) {
+          console.log(`[EMAIL_API] 🔍 CHECKPOINT 24: Comando falló sin resultados, retornando error...`);
           // Solo fallar si realmente no hay resultados utilizables
           return NextResponse.json(
             { 
@@ -899,6 +990,8 @@ export async function POST(request: NextRequest) {
         }
       }
       
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 25: Procesando resultados del comando...`);
+      
       // Extraer los datos de email de los results para incluir en la respuesta
       // NOTA: Solo extraemos de results, NO de targets (que contienen solo templates)
       const emailsForResponse: any[] = [];
@@ -910,6 +1003,8 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] executedCommand.results es array: ${!!(executedCommand && executedCommand.results && Array.isArray(executedCommand.results))}`);
       console.log(`[EMAIL_API] executedCommand.results.length: ${executedCommand?.results?.length || 0}`);
       
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 26: Diagnóstico de comando completado...`);
+      
       if (executedCommand) {
         console.log(`[EMAIL_API] 📋 Estructura completa del comando:`, JSON.stringify({
           status: executedCommand.status,
@@ -919,6 +1014,8 @@ export async function POST(request: NextRequest) {
           targetsCount: executedCommand.targets?.length || 0
         }, null, 2));
       }
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 27: Logs de estructura completados...`);
       
       // Función para validar si un email contiene tokens de instrucciones
       const containsInstructionTokens = (email: any): boolean => {
@@ -946,6 +1043,8 @@ export async function POST(request: NextRequest) {
       // Extraer SOLO de results (que contienen los emails procesados por el agente)
       if (executedCommand && executedCommand.results && Array.isArray(executedCommand.results)) {
         console.log(`[EMAIL_API] 🔄 Iterando sobre ${executedCommand.results.length} resultados...`);
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 28: Iniciando extracción de emails de resultados...`);
+        
         for (const result of executedCommand.results) {
           console.log(`[EMAIL_API] 📧 Resultado encontrado:`, JSON.stringify(result, null, 2));
           if (result.email) {
@@ -966,8 +1065,10 @@ export async function POST(request: NextRequest) {
             console.log(`[EMAIL_API] ❌ Result no tiene propiedad email:`, Object.keys(result));
           }
         }
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 29: Extracción de emails completada...`);
       } else {
         console.log(`[EMAIL_API] ❌ No se encontraron results válidos para procesar`);
+        console.log(`[EMAIL_API] 🔍 CHECKPOINT 30: Sin resultados válidos para procesar...`);
       }
       
       // NO extraer de targets ya que contienen solo templates/placeholders
@@ -975,6 +1076,7 @@ export async function POST(request: NextRequest) {
       
       console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
       console.log(`[EMAIL_API] 📝 IDs de emails para marcar como procesados: ${processedEmailIds.length}`);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 31: Iniciando marcado de emails como procesados...`);
       
       // Marcar emails analizados como procesados en paralelo
       console.log(`[EMAIL_API] 🔄 Marcando emails como procesados...`);
@@ -996,6 +1098,8 @@ export async function POST(request: NextRequest) {
           return false;
         }
       });
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 32: Promesas de marcado de emails procesados creadas...`);
       
       // Marcar todos los emails que fueron enviados al agente pero no tuvieron respuesta como "procesados" también
       const allEmailIds = finalEmailsForAnalysis.map((email: any) => email.id || email.messageId || email.uid).filter(Boolean);
@@ -1020,13 +1124,32 @@ export async function POST(request: NextRequest) {
         }
       });
       
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 33: Promesas de marcado de emails sin respuesta creadas...`);
+      
       // Esperar a que todas las operaciones de marcado se completen
-      const markingResults = await Promise.all([...markingPromises, ...unprocessedPromises]);
+      const markingResults = await Promise.race([
+        Promise.all([...markingPromises, ...unprocessedPromises]),
+        new Promise<boolean[]>((_, reject) => setTimeout(() => reject(new Error('Timeout marcando emails')), 30000))
+      ]).catch(error => {
+        console.error(`[EMAIL_API] ❌ Error/timeout marcando emails:`, error.message);
+        return [] as boolean[];
+      });
+      
       const successfulMarks = markingResults.filter(Boolean).length;
       console.log(`[EMAIL_API] 📊 Marcado completado: ${successfulMarks}/${markingResults.length} emails actualizados`);
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 34: Marcado de emails completado...`);
       
       // Obtener estadísticas actualizadas
-      const finalStats = await SyncedObjectsService.getProcessingStats(siteId, 'email');
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 35: Obteniendo estadísticas finales...`);
+      const finalStats = await Promise.race([
+        SyncedObjectsService.getProcessingStats(siteId, 'email'),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout obteniendo estadísticas finales')), 10000))
+      ]).catch(error => {
+        console.error(`[EMAIL_API] ❌ Error obteniendo estadísticas finales:`, error.message);
+        return null;
+      });
+      
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 36: Preparando respuesta final...`);
       
       return NextResponse.json({
         success: true,
