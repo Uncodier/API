@@ -243,45 +243,6 @@ async function createChannelConversationsAndMessages(
   }
 }
 
-// Función helper para extraer el nombre de la empresa de forma segura
-function getCompanyName(companyData: any): string {
-  if (!companyData) {
-    return 'Not provided';
-  }
-  
-  if (typeof companyData === 'string') {
-    return companyData;
-  }
-  
-  if (typeof companyData === 'object') {
-    // Intentar extraer el nombre de la empresa de diferentes campos posibles
-    if (companyData.name) return companyData.name;
-    if (companyData.company_name) return companyData.company_name;
-    if (companyData.title) return companyData.title;
-    if (companyData.label) return companyData.label;
-    
-    // Si tiene múltiples campos, crear un string descriptivo
-    const keys = Object.keys(companyData);
-    if (keys.length > 0) {
-      // Buscar el primer valor que sea string y no vacío
-      for (const key of keys) {
-        if (companyData[key] && typeof companyData[key] === 'string' && companyData[key].trim()) {
-          return companyData[key];
-        }
-      }
-      
-      // Si no encontramos strings, serializar el objeto
-      try {
-        return JSON.stringify(companyData);
-      } catch (e) {
-        return 'Unknown Company';
-      }
-    }
-  }
-  
-  return String(companyData);
-}
-
 // Función para crear tarea de awareness si es necesario
 async function createAwarenessTaskIfNeeded(
   leadData: any,
@@ -326,25 +287,14 @@ async function createAwarenessTaskIfNeeded(
     }
 
     console.log(`📋 Creando tarea de awareness para lead en stage: ${leadStage}`);
-    
-    // 🐛 DEBUG: Log del company data para diagnosticar el problema
-    console.log('🔍 DEBUG - Company data:', {
-      raw: leadData?.company,
-      type: typeof leadData?.company,
-      keys: leadData?.company && typeof leadData?.company === 'object' ? Object.keys(leadData.company) : 'N/A'
-    });
-
-    // Extraer información de la empresa de forma más robusta
-    const companyName = getCompanyName(leadData?.company);
-    console.log('🏢 Company name extracted:', companyName);
 
     const taskTitle = `Lead Awareness Follow-up: ${leadData?.name || leadData?.email || 'Unknown Lead'}`;
-    const taskDescription = `Follow-up task created for lead ${leadData?.name || leadData?.email} from ${companyName}.
+    const taskDescription = `Follow-up task created for lead ${leadData?.name || leadData?.email} from ${safeStringify(leadData?.company)}.
 
 Lead Stage: ${leadStage}
 Email: ${leadData?.email || 'Not provided'}
 Phone: ${leadData?.phone || 'Not provided'}
-Company: ${companyName}
+Company: ${safeStringify(leadData?.company)}
 
 This task was automatically created as part of the lead follow-up sequence to ensure proper awareness-stage nurturing.
 
