@@ -426,7 +426,7 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string, ema
 }
 
 /**
- * Función simple para verificar si ya existe un mensaje del mismo email ENVIADO basado en channel
+ * Función simple para verificar si ya existe un mensaje del mismo email ENVIADO basado en la nueva estructura de custom_data
  */
 async function findExistingEmailMessageByChannel(
   conversationId: string,
@@ -434,60 +434,60 @@ async function findExistingEmailMessageByChannel(
   leadId: string
 ): Promise<{ exists: boolean; messageId?: string; reason?: string }> {
   try {
-    console.log(`[EMAIL_SYNC] 🔍 Verificando mensaje ENVIADO existente por custom_data.channel...`);
+    console.log(`[EMAIL_SYNC] 🔍 Verificando mensaje ENVIADO existente por custom_data.delivery.channel...`);
     
     // Buscar mensajes ENVIADOS del canal email para este lead
+    // Actualizado para buscar por la estructura real: custom_data.delivery.channel = "email" y status = "sent"
     const { data: emailMessages, error } = await supabaseAdmin
       .from('messages')
       .select('id, custom_data, created_at, role, content')
       .eq('conversation_id', conversationId)
       .eq('lead_id', leadId)
-      .filter('custom_data->channel', 'eq', 'email')
-      .filter('custom_data->type', 'eq', 'sent_email') // Solo emails enviados
+      .filter('custom_data->delivery->channel', 'eq', 'email')
+      .filter('custom_data->status', 'eq', 'sent') // Solo emails enviados
       .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 7 días
       .order('created_at', { ascending: false })
       .limit(20);
       
     if (error) {
-      console.error('[EMAIL_SYNC] Error al buscar mensajes enviados por custom_data.channel:', error);
+      console.error('[EMAIL_SYNC] Error al buscar mensajes enviados por custom_data.delivery.channel:', error);
       return { exists: false };
     }
     
     if (!emailMessages || emailMessages.length === 0) {
-      console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con custom_data.channel=email');
+      console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con custom_data.delivery.channel=email');
       return { exists: false };
     }
     
-    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS con channel=email para comparar`);
+    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS con delivery.channel=email para comparar`);
     
     // Normalizar datos del email ENVIADO actual para comparación
     const currentSubject = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
     const currentTo = email.to ? email.to.toLowerCase().trim() : '';
-    const currentFrom = email.from ? email.from.toLowerCase().trim() : '';
     const currentDate = email.date ? new Date(email.date) : new Date();
     
     // Revisar cada mensaje ENVIADO existente
     for (const existingMessage of emailMessages) {
       const customData = existingMessage.custom_data || {};
+      const deliveryDetails = customData.delivery?.details || {};
       
-      // Comparar características del email enviado
+      // Comparar características del email enviado usando la nueva estructura
       const existingSubject = customData.subject ? customData.subject.toLowerCase().trim() : '';
-      const existingTo = customData.to ? customData.to.toLowerCase().trim() : '';
-      const existingFrom = customData.from ? customData.from.toLowerCase().trim() : '';
-      const existingDate = customData.date ? new Date(customData.date) : new Date(existingMessage.created_at);
+      const existingRecipient = deliveryDetails.recipient ? deliveryDetails.recipient.toLowerCase().trim() : '';
+      const existingTimestamp = deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(existingMessage.created_at);
       
       // Verificación por subject + destinatario (ambos emails enviados)
       if (currentSubject && existingSubject && currentSubject === existingSubject &&
-          currentTo && existingTo && currentTo === existingTo) {
+          currentTo && existingRecipient && currentTo === existingRecipient) {
         
         // Verificar proximidad temporal (dentro de 1 hora)
-        const timeDiff = Math.abs(currentDate.getTime() - existingDate.getTime());
-        const oneHour = 60 * 60 * 1000;
+        const timeDiff = Math.abs(currentDate.getTime() - existingTimestamp.getTime());
+        const oneHour = 60 * 60 * 1000; // 1 hora
         
         if (timeDiff <= oneHour) {
-          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por custom_data.channel: ${existingMessage.id}`);
+          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por custom_data.delivery.channel: ${existingMessage.id}`);
           console.log(`[EMAIL_SYNC] - Subject match: "${currentSubject}"`);
-          console.log(`[EMAIL_SYNC] - To match: "${currentTo}"`);
+          console.log(`[EMAIL_SYNC] - Recipient match: "${currentTo}"`);
           console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000/60)} minutos`);
           
           return {
@@ -500,7 +500,7 @@ async function findExistingEmailMessageByChannel(
       
       // Verificación adicional por email_id si existe
       const currentEmailId = extractValidEmailId(email);
-      const existingEmailId = customData.email_id;
+      const existingEmailId = customData.email_id || deliveryDetails.api_messageId;
       
       if (currentEmailId && existingEmailId && currentEmailId === existingEmailId) {
         console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por email_id: ${existingMessage.id}`);
@@ -512,13 +512,31 @@ async function findExistingEmailMessageByChannel(
           reason: `Email enviado duplicado por email_id: "${currentEmailId}"`
         };
       }
+      
+      // Verificación por destinatario + timestamp exactos (misma cantidad en el periodo)
+      if (currentTo && existingRecipient && currentTo === existingRecipient) {
+        const timeDiff = Math.abs(currentDate.getTime() - existingTimestamp.getTime());
+        const fiveMinutes = 5 * 60 * 1000; // 5 minutos para timestamps muy cercanos
+        
+        if (timeDiff <= fiveMinutes) {
+          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por destinatario + timestamp: ${existingMessage.id}`);
+          console.log(`[EMAIL_SYNC] - Recipient match: "${currentTo}"`);
+          console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000)} segundos`);
+          
+          return {
+            exists: true,
+            messageId: existingMessage.id,
+            reason: `Email enviado duplicado: mismo destinatario "${currentTo}" en ventana temporal muy cercana`
+          };
+        }
+      }
     }
     
-    console.log('[EMAIL_SYNC] ✅ No se encontraron emails ENVIADOS duplicados por custom_data.channel');
+    console.log('[EMAIL_SYNC] ✅ No se encontraron emails ENVIADOS duplicados por custom_data.delivery.channel');
     return { exists: false };
     
   } catch (error) {
-    console.error('[EMAIL_SYNC] Error en verificación de emails enviados por custom_data.channel:', error);
+    console.error('[EMAIL_SYNC] Error en verificación de emails enviados por custom_data.delivery.channel:', error);
     return { exists: false };
   }
 }
@@ -763,16 +781,31 @@ async function addSentMessageToConversation(
       user_id: messageSenderId,
       lead_id: leadId,
       custom_data: {
-        type: 'sent_email',
-        channel: 'email', // ✅ AGREGADO: marcar canal para validación simple
+        status: "sent",
+        delivery: {
+          channel: "email",
+          details: {
+            channel: "email",
+            recipient: email.to,
+            timestamp: email.date || new Date().toISOString(),
+            api_messageId: email.id || "unknown"
+          },
+          success: true,
+          timestamp: new Date().toISOString()
+        },
+        follow_up: {
+          lead_id: leadId,
+          site_id: siteId,
+          processed: true,
+          processed_at: new Date().toISOString()
+        },
+        // Mantener campos adicionales para compatibilidad y deduplicación
         email_id: email.id,
         subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
-        to: email.to,
         from: email.from,
-        date: email.date,
-        content_extracted: true, // Marcar que el contenido fue extraído exitosamente
+        content_extracted: true,
         sync_source: 'email_sync',
-        // NUEVOS CAMPOS para deduplicación estable:
+        // CAMPOS para deduplicación estable:
         stable_hash: stableFingerprint.stableHash,
         semantic_hash: stableFingerprint.semanticHash,
         time_window: stableFingerprint.timeWindow,
@@ -1172,12 +1205,7 @@ async function addReceivedMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📩 Agregando mensaje recibido del hilo a conversación: ${conversationId}`);
     
-    // 1. VALIDACIÓN SIMPLE POR CHANNEL: Verificar primero por channel email
-    const channelCheck = await findExistingEmailMessageByChannel(conversationId, email, leadId);
-    if (channelCheck.exists) {
-      console.log(`[EMAIL_SYNC] ✅ Mensaje recibido ya existe: ${channelCheck.reason}, ID: ${channelCheck.messageId}`);
-      return channelCheck.messageId!;
-    }
+    // 1. VALIDACIÓN: Los emails recibidos del hilo usan estructura diferente, usar validación por email_id
     
     // 2. Extraer y validar contenido - Si no hay contenido válido, no crear mensaje
     console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email recibido...`);
@@ -1335,6 +1363,7 @@ async function addReceivedMessageToConversation(
     }
     
     // Crear mensaje como 'lead' (mensaje del destinatario/cliente)
+    // Los emails recibidos del hilo mantienen estructura simple de custom_data
     const messageData = {
       conversation_id: conversationId,
       content: messageContent, // Usando contenido extraído y validado
@@ -1343,13 +1372,13 @@ async function addReceivedMessageToConversation(
       lead_id: leadId,
       custom_data: {
         type: 'received_email',
-        channel: 'email', // ✅ AGREGADO: marcar canal para validación simple
+        channel: 'email',
         email_id: emailId,
         subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         from: email.from,
         to: email.to,
         date: email.date,
-        content_extracted: true, // Marcar que el contenido fue extraído exitosamente
+        content_extracted: true,
         sync_source: 'thread_sync'
       }
     };
