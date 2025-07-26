@@ -40,6 +40,58 @@ export class SyncedObjectsService {
   private static readonly DEFAULT_STATUS = 'pending';
 
   /**
+   * Valida que un ID de email sea válido y suficientemente único
+   */
+  private static isValidEmailId(emailId: any): boolean {
+    // Verificar que sea string válido
+    if (!emailId || typeof emailId !== 'string') {
+      return false;
+    }
+
+    const trimmedId = emailId.trim();
+    
+    // Verificar longitud mínima
+    if (trimmedId.length < 3) {
+      return false;
+    }
+    
+    // Verificar que no sea un ID demasiado genérico o común
+    const genericIds = /^(1|2|3|4|5|6|7|8|9|0|test|temp|undefined|null|msg|email|id)$/i;
+    if (genericIds.test(trimmedId)) {
+      return false;
+    }
+    
+    // Verificar que no sean solo números simples (1-100)
+    if (/^\d{1,2}$/.test(trimmedId) && parseInt(trimmedId) <= 100) {
+      return false;
+    }
+    
+    return true;
+  }
+
+  /**
+   * Extrae y valida el ID más confiable de un email
+   */
+  private static extractValidEmailId(email: any): string | null {
+    const candidates = [
+      email.id,
+      email.messageId, 
+      email.uid,
+      email.message_id,
+      email.Message_ID,
+      email.ID
+    ];
+    
+    for (const candidate of candidates) {
+      if (this.isValidEmailId(candidate)) {
+        return candidate.trim();
+      }
+    }
+    
+    return null;
+  }
+
+  /**
    * Verifica si un objeto ya existe en la base de datos
    */
   static async objectExists(
@@ -242,37 +294,61 @@ export class SyncedObjectsService {
     const alreadyProcessed: any[] = [];
 
     for (const email of emails) {
-      const emailId = email.id || email.messageId || email.uid;
+      const emailId = this.extractValidEmailId(email);
       
+      // Validar que el ID sea válido y suficientemente único
       if (!emailId) {
-        console.warn('[SYNCED_OBJECTS] Email without ID found, including in unprocessed list');
+        console.warn(`[SYNCED_OBJECTS] Email with invalid/insufficient ID found: "${email.id || email.messageId || email.uid}", including in unprocessed list`);
         unprocessed.push(email);
         continue;
       }
 
-      const exists = await this.objectExists(emailId, siteId, objectType);
-      
-      if (exists) {
-        console.log(`[SYNCED_OBJECTS] 🔄 Email ${emailId} already processed, skipping`);
-        alreadyProcessed.push(email);
-      } else {
-        console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet, including`);
-        unprocessed.push(email);
+      try {
+        // SOLUCIÓN al race condition: Usar upsert en lugar de check + create
+        const { data: syncedObject, error } = await supabaseAdmin
+          .from('synced_objects')
+          .upsert({
+            external_id: emailId,
+            site_id: siteId,
+            object_type: objectType,
+            status: 'pending',
+            provider: email.provider || 'unknown',
+            metadata: {
+              subject: email.subject,
+              from: email.from,
+              to: email.to,
+              date: email.date || email.received_date
+            },
+            first_seen_at: new Date().toISOString(),
+            process_count: 0
+          }, {
+            onConflict: 'external_id,site_id,object_type'
+          })
+          .select('id, first_seen_at, status')
+          .single();
+
+        if (error) {
+          console.error(`[SYNCED_OBJECTS] Error upserting email ${emailId}:`, error);
+          // En caso de error, incluir en unprocessed para no bloquear el proceso
+          unprocessed.push(email);
+          continue;
+        }
+
+        // Verificar si es primera vez que vemos este email (creado ahora)
+        const isNewObject = new Date(syncedObject.first_seen_at).getTime() >= (Date.now() - 5000); // Última 5 segundos
         
-        // Crear registro como "pending" para futuras verificaciones
-        await this.createObject({
-          external_id: emailId,
-          site_id: siteId,
-          object_type: objectType,
-          status: 'pending',
-          provider: email.provider || 'unknown',
-          metadata: {
-            subject: email.subject,
-            from: email.from,
-            to: email.to,
-            date: email.date || email.received_date
-          }
-        });
+        if (isNewObject || syncedObject.status === 'pending') {
+          console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet, including`);
+          unprocessed.push(email);
+        } else {
+          console.log(`[SYNCED_OBJECTS] 🔄 Email ${emailId} already processed (status: ${syncedObject.status}), skipping`);
+          alreadyProcessed.push(email);
+        }
+
+      } catch (error) {
+        console.error(`[SYNCED_OBJECTS] Unexpected error processing email ${emailId}:`, error);
+        // En caso de error, incluir en unprocessed para no bloquear el proceso
+        unprocessed.push(email);
       }
     }
 

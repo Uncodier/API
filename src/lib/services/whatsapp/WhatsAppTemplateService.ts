@@ -519,8 +519,28 @@ export class WhatsAppTemplateService {
    */
   private static async incrementTemplateUsage(templateSid: string): Promise<void> {
     try {
+      // Obtener el valor actual
+      const { data: currentTemplate, error: selectError } = await supabaseAdmin
+        .from('whatsapp_templates')
+        .select('usage_count')
+        .eq('template_sid', templateSid)
+        .single();
+
+      if (selectError) {
+        console.warn('⚠️ [WhatsAppTemplateService] Error obteniendo template para incremento:', selectError);
+        return;
+      }
+
+      // Incrementar y actualizar
+      const currentCount = currentTemplate?.usage_count || 0;
       const { error } = await supabaseAdmin
-        .rpc('increment_template_usage', { template_sid_param: templateSid });
+        .from('whatsapp_templates')
+        .update({ 
+          usage_count: currentCount + 1,
+          last_used: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('template_sid', templateSid);
       
       if (error) {
         console.warn(`⚠️ [WhatsAppTemplateService] Error incrementando uso del template ${templateSid}:`, error);

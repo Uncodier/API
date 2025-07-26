@@ -1,8 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
-import { EmailSendService } from '@/lib/services/email/EmailSendService';
+import { WorkflowService } from '@/lib/services/workflow-service';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -224,7 +223,7 @@ async function getConversationChannel(conversationId: string): Promise<{ channel
   }
 }
 
-// Función para enviar mensaje según el canal
+// Función para enviar mensaje según el canal usando workflows de Temporal
 async function sendMessageByChannel(
   channel: string,
   message: string,
@@ -233,9 +232,11 @@ async function sendMessageByChannel(
   agentId: string,
   conversationId: string,
   leadId?: string
-): Promise<{ success: boolean; method?: string; error?: string }> {
+): Promise<{ success: boolean; method?: string; error?: string; workflowId?: string }> {
   try {
-    console.log(`📤 Enviando mensaje por canal: ${channel}`);
+    console.log(`📤 Enviando mensaje por canal usando workflows de Temporal: ${channel}`);
+    
+    const workflowService = WorkflowService.getInstance();
 
     if (channel === 'whatsapp') {
       // Para WhatsApp, priorizar el teléfono del visitor (más específico) o del lead
@@ -248,21 +249,22 @@ async function sendMessageByChannel(
         };
       }
 
-      console.log(`📱 Enviando mensaje de intervención por WhatsApp a: ${phoneNumber.substring(0, 5)}***`);
+      console.log(`📱 Enviando mensaje de intervención por WhatsApp usando workflow a: ${phoneNumber.substring(0, 5)}***`);
 
-      const result = await WhatsAppSendService.sendMessage({
+      // Usar sendWhatsappFromAgent workflow para intervenciones
+      const result = await workflowService.sendWhatsappFromAgent({
         phone_number: phoneNumber,
         message,
         from: 'Equipo de Soporte',
         site_id: siteId,
         agent_id: agentId,
-        conversation_id: conversationId,
         lead_id: leadId
       });
 
       return {
         success: result.success,
         method: 'whatsapp',
+        workflowId: result.workflowId,
         error: result.error?.message
       };
 
@@ -277,22 +279,23 @@ async function sendMessageByChannel(
         };
       }
 
-      console.log(`📧 Enviando mensaje de intervención por email a: ${email}`);
+      console.log(`📧 Enviando mensaje de intervención por email usando workflow a: ${email}`);
 
-      const result = await EmailSendService.sendEmail({
+      // Usar sendEmailFromAgent workflow 
+      const result = await workflowService.sendEmailFromAgent({
         email,
+        from: 'Equipo de Soporte',
         subject: 'Respuesta de nuestro equipo',
         message,
-        from: 'Equipo de Soporte',
         site_id: siteId,
         agent_id: agentId,
-        conversation_id: conversationId,
         lead_id: leadId
       });
 
       return {
         success: result.success,
         method: 'email',
+        workflowId: result.workflowId,
         error: result.error?.message
       };
 
@@ -306,7 +309,7 @@ async function sendMessageByChannel(
     }
 
   } catch (error) {
-    console.error('Error al enviar mensaje por canal:', error);
+    console.error('Error al enviar mensaje por canal usando workflows:', error);
     return {
       success: false,
       error: error instanceof Error ? error.message : 'Error desconocido'
@@ -417,9 +420,9 @@ export async function POST(request: Request) {
         );
         
         if (channelSendResult.success) {
-          console.log(`✅ Mensaje de intervención enviado exitosamente por ${channelSendResult.method}`);
+          console.log(`✅ Mensaje de intervención enviado exitosamente por ${channelSendResult.method} usando workflow ${channelSendResult.workflowId}`);
         } else {
-          console.error(`❌ Error enviando mensaje de intervención:`, channelSendResult.error);
+          console.error(`❌ Error enviando mensaje de intervención usando workflow:`, channelSendResult.error);
         }
       } else {
         console.log(`ℹ️ No se detectó canal específico o no requiere envío externo`);
@@ -429,7 +432,7 @@ export async function POST(request: Request) {
     // Generar un ID único para la intervención
     const interventionId = uuidv4();
 
-    // Preparar respuesta con información del envío por canal
+    // Preparar respuesta con información del envío por canal y workflows
     const responseData: any = {
       interventionId,
       status: 'completed',
@@ -443,11 +446,12 @@ export async function POST(request: Request) {
       }
     };
 
-    // Agregar información del envío por canal si está disponible
+    // Agregar información del envío por canal usando workflows si está disponible
     if (channelSendResult) {
       responseData.channel_send = {
         success: channelSendResult.success,
         method: channelSendResult.method,
+        workflowId: channelSendResult.workflowId,
         error: channelSendResult.error
       };
     }

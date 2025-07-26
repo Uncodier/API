@@ -7,7 +7,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
-import { EmailFilterService } from '@/lib/services/email/EmailFilterService';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
@@ -18,7 +17,8 @@ export const maxDuration = 800; // Incrementado de 300 a 800 para consistencia c
 // Create schemas for request validation
 const DeliveryStatusRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  limit: z.number().default(20).optional(), // Incrementado de 10 a 20 con las optimizaciones
+  // Coercion para aceptar strings y tope máximo a 30
+  limit: z.coerce.number().max(30).default(20),
   since_date: z.string().optional().refine(
     (date) => !date || !isNaN(Date.parse(date)),
     "since_date debe ser una fecha válida en formato ISO"
@@ -162,9 +162,15 @@ export async function POST(request: NextRequest) {
     
     // Extraer parámetros
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
-    const requestedLimit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 20;
-    // Limitar a máximo 30 emails con las optimizaciones aplicadas
-    const limit = Math.min(requestedLimit, 30);
+    // Aceptar "limit" en cualquier formato y garantizar número válido <=30
+    const requestedLimitRaw = getFlexibleProperty(requestData, 'limit');
+    const requestedLimit = requestedLimitRaw !== undefined && requestedLimitRaw !== null ? Number(requestedLimitRaw) : validationResult.data.limit;
+
+    // Si la conversión falla, fallback a 20
+    const sanitizedLimit = !isNaN(requestedLimit) ? requestedLimit : 20;
+
+    // Limitar siempre a 30 como valor máximo
+    const limit = Math.min(sanitizedLimit, 30);
     const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
     
     console.log('[DELIVERY_STATUS] Extracted parameters:', {
@@ -376,9 +382,14 @@ export async function POST(request: NextRequest) {
 }
 
 // GET method for backward compatibility
-export async function GET(request: NextRequest) {
+export async function GET() {
   return NextResponse.json({
-    success: true,
-    message: "This endpoint requires a POST request with delivery status analysis parameters. Please refer to the documentation."
-  }, { status: 200 });
+    success: false,
+    message: 'Método no permitido. Utiliza POST para procesar el delivery status.'
+  }, {
+    status: 405,
+    headers: {
+      Allow: 'POST'
+    }
+  });
 } 

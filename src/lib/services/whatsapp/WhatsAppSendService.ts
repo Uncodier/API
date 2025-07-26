@@ -35,6 +35,14 @@ export interface SendWhatsAppResult {
   errorCode?: number;
   errorType?: string;
   suggestion?: string;
+  // Nuevos campos para template_required
+  template_required?: boolean;
+  formatted_message?: string;
+  whatsapp_config?: {
+    phone_number_id: string;
+    access_token: string;
+    from_number: string;
+  };
 }
 
 interface SiteInfo {
@@ -126,134 +134,35 @@ export class WhatsAppSendService {
       let templateSid: string | undefined;
 
       if (!windowCheck.withinWindow) {
-        // Fuera de ventana de respuesta - crear y usar Content Template automáticamente
-        console.log('📝 [WhatsAppSendService] Fuera de ventana de respuesta, usando Content Template automático...');
+        // Fuera de ventana de respuesta - retornar que se requiere template
+        console.log('📝 [WhatsAppSendService] Fuera de ventana de respuesta, se requiere template...');
         
-        // Buscar Content Template existente similar
-        console.log('🔍 [WhatsAppSendService] Buscando template existente para:', {
-          messageLength: formattedMessage.length,
-          messagePreview: formattedMessage.substring(0, 50) + '...',
-          siteId: site_id,
-          phoneNumberId: whatsappConfig.phoneNumberId
-        });
+        // Generar un message_id único para el flujo
+        const messageId = uuidv4();
         
-        const existingTemplate = await WhatsAppTemplateService.findExistingTemplate(
-          formattedMessage,
-          site_id,
-          whatsappConfig.phoneNumberId
-        );
+        console.log(`🔄 [WhatsAppSendService] Retornando template_required para que el flujo maneje la creación: ${messageId}`);
         
-        console.log('🔍 [WhatsAppSendService] Resultado de búsqueda de template:', {
-          found: !!existingTemplate,
-          templateSid: existingTemplate?.templateSid,
-          templateName: existingTemplate?.templateName,
-          fullResult: existingTemplate
-        });
-        
-        if (existingTemplate.templateSid) {
-          // Verificar estado de aprobación del template existente antes de usarlo
-          console.log(`♻️ [WhatsAppSendService] Template existente encontrado: ${existingTemplate.templateSid}`);
-          console.log(`🔍 [WhatsAppSendService] Verificando estado de aprobación...`);
-          
-          // Usar el template (ya verificamos que existe)
-          templateSid = existingTemplate.templateSid;
-          console.log(`✅ [WhatsAppSendService] Usando Content Template: ${templateSid}`);
-        } else {
-          // Crear nuevo Content Template automáticamente
-          console.log('🆕 [WhatsAppSendService] Creando nuevo Content Template...');
-          const templateResult = await WhatsAppTemplateService.createTemplate(
-            formattedMessage,
-            whatsappConfig.phoneNumberId,
-            whatsappConfig.accessToken,
-            site_id
-          );
-          
-          if (!templateResult.success) {
-            console.error('❌ [WhatsAppSendService] Error creando Content Template, intentando mensaje regular:', templateResult.error);
-            // Fallback a mensaje regular si no se puede crear template
-            result = await this.sendWhatsAppMessage(
-              normalizedPhone,
-              formattedMessage,
-              whatsappConfig.phoneNumberId,
-              whatsappConfig.accessToken,
-              whatsappConfig.fromNumber
-            );
-          } else {
-            templateSid = templateResult.templateSid;
-            console.log(`✅ [WhatsAppSendService] Content Template creado: ${templateSid}`);
+        // Retornar información para que el flujo maneje la creación del template
+        return {
+          success: true,
+          message_id: messageId,
+          recipient: normalizedPhone,
+          sender: from || 'AI Assistant',
+          message_preview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
+          sent_at: new Date().toISOString(),
+          status: 'template_required',
+          template_used: false,
+          template_sid: undefined,
+          within_response_window: false,
+          hours_elapsed: windowCheck.hoursElapsed,
+          template_required: true,
+          formatted_message: formattedMessage,
+          whatsapp_config: {
+            phone_number_id: whatsappConfig.phoneNumberId,
+            access_token: whatsappConfig.accessToken,
+            from_number: whatsappConfig.fromNumber
           }
-        }
-        
-        // Enviar mensaje con Content Template si se obtuvo uno
-        if (templateSid) {
-          const templateResult = await WhatsAppTemplateService.sendMessageWithTemplate(
-            normalizedPhone,
-            templateSid,
-            whatsappConfig.phoneNumberId,
-            whatsappConfig.accessToken,
-            whatsappConfig.fromNumber,
-            formattedMessage
-          );
-          
-          // Mapear resultado del template al formato esperado
-          result = {
-            success: templateResult.success,
-            messageId: templateResult.messageId,
-            error: templateResult.error,
-            errorCode: templateResult.errorCode,
-            errorType: templateResult.errorType,
-            suggestion: templateResult.suggestion
-          };
-          
-          if (result.success) {
-            templateUsed = true;
-            console.log(`✅ [WhatsAppSendService] Content Template usado exitosamente: ${templateSid}`);
-          } else {
-            console.error(`❌ [WhatsAppSendService] Error usando Content Template:`, result.error);
-            
-            // Si el template no está aprobado, usar fallback a mensaje regular
-            if (result.error?.includes('not approved')) {
-              console.warn(`🔄 [WhatsAppSendService] Template no aprobado, usando fallback a mensaje regular...`);
-              console.warn(`⚠️ [WhatsAppSendService] NOTA: El mensaje regular probablemente fallará por estar fuera de ventana`);
-              
-              // Intentar envío como mensaje regular (probablemente fallará por ventana, pero es el fallback)
-              const fallbackResult = await this.sendWhatsAppMessage(
-                normalizedPhone,
-                formattedMessage,
-                whatsappConfig.phoneNumberId,
-                whatsappConfig.accessToken,
-                whatsappConfig.fromNumber
-              );
-              
-              if (fallbackResult.success) {
-                console.log(`✅ [WhatsAppSendService] Fallback exitoso como mensaje regular`);
-                // Mapear resultado del fallback al formato esperado
-                result = {
-                  success: fallbackResult.success,
-                  messageId: fallbackResult.messageId,
-                  error: fallbackResult.error,
-                  errorCode: fallbackResult.errorCode,
-                  errorType: fallbackResult.errorType,
-                  suggestion: fallbackResult.suggestion
-                };
-              } else {
-                console.error(`❌ [WhatsAppSendService] Fallback también falló:`, fallbackResult.error);
-                // Mantener el resultado original del template para mostrar el error específico
-                // pero también propagar información de error adicional del fallback si no tenemos ya
-                if (fallbackResult.errorCode && !result.errorCode) {
-                  result.errorCode = fallbackResult.errorCode;
-                  result.errorType = fallbackResult.errorType;
-                  result.suggestion = fallbackResult.suggestion;
-                }
-              }
-            } else {
-              // Para otros errores, propagar la información de error
-              if (result.errorCode) {
-                // La información ya debe estar en result desde sendMessageWithTemplate
-              }
-            }
-          }
-        }
+        };
       } else {
         // Dentro de ventana de respuesta - enviar mensaje regular
         console.log('✅ [WhatsAppSendService] Dentro de ventana de respuesta, enviando mensaje regular...');
@@ -276,7 +185,7 @@ export class WhatsAppSendService {
         };
       }
 
-      // Validar que result no sea undefined
+      // Validar que result no sea undefined (solo para mensajes dentro de ventana)
       if (!result) {
         console.error('❌ [WhatsAppSendService] No se pudo obtener resultado del envío');
         return {

@@ -1,15 +1,23 @@
 import { BaseWorkflowService, WorkflowExecutionOptions, WorkflowExecutionResponse } from './base-workflow-service';
 
-// Interfaces específicas para workflows de negocio
+// Interfaces específicas para workflows de negocio (coinciden con Temporal externo)
 interface EmailWorkflowArgs {
-  email: string;
-  from: string;
-  subject: string;
-  message: string;
-  site_id: string;
-  agent_id?: string;
-  conversation_id?: string;
-  lead_id?: string;
+  email: string;            // ✅ REQUERIDO - Email destinatario
+  subject: string;          // ✅ REQUERIDO - Asunto del email
+  message: string;          // ✅ REQUERIDO - Mensaje a enviar
+  site_id: string;          // ✅ REQUERIDO - ID del sitio
+  from?: string;            // 🔸 OPCIONAL - Remitente
+  agent_id?: string;        // 🔸 OPCIONAL - ID del agente
+  lead_id?: string;         // 🔸 OPCIONAL - ID del lead
+}
+
+interface WhatsAppWorkflowArgs {
+  phone_number: string;     // ✅ REQUERIDO - Número de teléfono destinatario
+  message: string;          // ✅ REQUERIDO - Mensaje a enviar
+  site_id: string;          // ✅ REQUERIDO - ID del sitio
+  from?: string;            // 🔸 OPCIONAL - Remitente (default: "AI Assistant")
+  agent_id?: string;        // 🔸 OPCIONAL - ID del agente
+  lead_id?: string;         // 🔸 OPCIONAL - ID del lead
 }
 
 interface AnalysisData {
@@ -110,12 +118,12 @@ export class BusinessWorkflowService extends BaseWorkflowService {
    */
   public async sendEmailFromAgent(args: EmailWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
-      if (!args.email || !args.from || !args.subject || !args.message || !args.site_id) {
+      if (!args.email || !args.subject || !args.message || !args.site_id) {
         return {
           success: false,
           error: {
             code: 'INVALID_ARGUMENTS',
-            message: 'Se requieren email, from, subject, message y site_id para enviar email'
+            message: 'Se requieren email, subject, message y site_id para enviar email'
           }
         };
       }
@@ -149,6 +157,55 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         error: {
           code: 'WORKFLOW_EXECUTION_ERROR',
           message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de envío de email'
+        }
+      };
+    }
+  }
+
+  /**
+   * Ejecuta el workflow para enviar WhatsApp desde agente
+   */
+  public async sendWhatsappFromAgent(args: WhatsAppWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.phone_number || !args.message || !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren phone_number, message y site_id para enviar WhatsApp'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `send-whatsapp-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`📱 Iniciando workflow de envío de WhatsApp: ${workflowId}`);
+
+      const result = await client.workflow.execute('sendWhatsappFromAgentWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de envío de WhatsApp completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de envío de WhatsApp:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de envío de WhatsApp'
         }
       };
     }
@@ -445,6 +502,7 @@ export type {
   ScheduleCustomerSupportParams, 
   WhatsAppMessageWorkflowArgs, 
   EmailWorkflowArgs,
+  WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs
 }; 

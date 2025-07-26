@@ -10,6 +10,7 @@ import type {
   ScheduleCustomerSupportParams, 
   WhatsAppMessageWorkflowArgs, 
   EmailWorkflowArgs,
+  WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs
 } from './workflow/business-workflow-service';
@@ -39,6 +40,10 @@ export class WorkflowService extends BaseWorkflowService {
   // Métodos delegados al BusinessWorkflowService
   public async sendEmailFromAgent(args: EmailWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.businessService.sendEmailFromAgent(args, options);
+  }
+
+  public async sendWhatsappFromAgent(args: WhatsAppWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.businessService.sendWhatsappFromAgent(args, options);
   }
 
   public async scheduleCustomerSupport(params: ScheduleCustomerSupportParams, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {

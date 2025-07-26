@@ -4,13 +4,72 @@ import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
 /**
+ * Guarda el mensaje del asistente en la base de datos cuando se requiere template
+ */
+async function saveAssistantMessageForTemplate(
+  message: string,
+  conversation_id?: string,
+  agent_id?: string,
+  lead_id?: string,
+  site_id?: string,
+  phone_number?: string
+): Promise<string | null> {
+  try {
+    if (!conversation_id) {
+      console.log('⚠️ [saveAssistantMessage] No hay conversation_id, no se puede guardar mensaje');
+      return null;
+    }
+
+    console.log(`💾 [saveAssistantMessage] Guardando mensaje del asistente en conversación: ${conversation_id}`);
+    
+    const messageData: any = {
+      conversation_id: conversation_id,
+      content: message,
+      role: 'assistant',
+      custom_data: {
+        source: 'whatsapp',
+        template_required: true,
+        whatsapp_phone: phone_number,
+        status: 'pending_template'
+      }
+    };
+
+    // Añadir campos opcionales si están presentes
+    if (agent_id) messageData.agent_id = agent_id;
+    if (lead_id) messageData.lead_id = lead_id;
+
+    const { data: savedMessage, error } = await supabaseAdmin
+      .from('messages')
+      .insert([messageData])
+      .select()
+      .single();
+
+    if (error) {
+      console.error('❌ [saveAssistantMessage] Error al guardar mensaje:', error);
+      return null;
+    }
+
+    if (!savedMessage || !savedMessage.id) {
+      console.error('❌ [saveAssistantMessage] No se pudo obtener el ID del mensaje guardado');
+      return null;
+    }
+
+    console.log(`✅ [saveAssistantMessage] Mensaje del asistente guardado con ID: ${savedMessage.id}`);
+    return savedMessage.id;
+
+  } catch (error) {
+    console.error('💥 [saveAssistantMessage] Error general:', error);
+    return null;
+  }
+}
+
+/**
  * Endpoint para enviar mensajes de WhatsApp desde un agente con manejo automático de ventana de respuesta
  * 
- * NUEVA FUNCIONALIDAD:
+ * FUNCIONALIDAD:
  * - Detecta automáticamente si la conversación está dentro de la ventana de respuesta de 24 horas
- * - Si está fuera de la ventana, crea y usa templates de Twilio automáticamente
- * - Reutiliza templates existentes para mensajes similares
- * - Fallback a mensaje regular si hay problemas con templates
+ * - Si está dentro de la ventana, envía el mensaje directamente
+ * - Si está fuera de la ventana, retorna template_required=true para que el flujo maneje la creación del template
  * 
  * @param request Solicitud entrante con los datos del mensaje a enviar
  * @returns Respuesta con el estado del envío, información de template y ventana de respuesta
@@ -26,9 +85,12 @@ import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
  * 
  * Respuesta incluye:
  * - template_used: boolean - Si se usó un template de Twilio
+ * - template_required: boolean - Si se requiere template (fuera de ventana de 24h)
  * - template_sid: string - SID del template usado (si aplica)
  * - within_response_window: boolean - Si estaba dentro de la ventana de 24 horas
  * - hours_elapsed: number - Horas transcurridas desde el último mensaje del usuario
+ * - formatted_message: string - Mensaje formateado (cuando template_required=true)
+ * - whatsapp_config: object - Configuración de WhatsApp (cuando template_required=true)
  */
 export async function POST(request: NextRequest) {
   try {
@@ -226,8 +288,31 @@ export async function POST(request: NextRequest) {
       templateUsed: result.template_used,
       templateSid: result.template_sid,
       withinResponseWindow: result.within_response_window,
-      hoursElapsed: result.hours_elapsed
+      hoursElapsed: result.hours_elapsed,
+      templateRequired: result.template_required
     });
+
+    // Si se requiere template, guardar el mensaje en la base de datos y usar ese ID
+    if (result.success && result.template_required) {
+      console.log('📝 [SendWhatsApp] Template requerido - guardando mensaje en base de datos...');
+      
+      const savedMessageId = await saveAssistantMessageForTemplate(
+        message,
+        conversation_id,
+        agent_id,
+        lead_id,
+        site_id,
+        validatedPhone
+      );
+
+      if (savedMessageId) {
+        console.log(`✅ [SendWhatsApp] Mensaje guardado con ID: ${savedMessageId}`);
+        // Reemplazar el UUID generado por el WhatsAppSendService con el ID real del mensaje
+        result.message_id = savedMessageId;
+      } else {
+        console.warn('⚠️ [SendWhatsApp] No se pudo guardar el mensaje en la base de datos, usando UUID original');
+      }
+    }
 
     if (!result.success) {
       // Determinar código de estado basado en el tipo de error

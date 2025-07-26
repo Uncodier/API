@@ -13,6 +13,7 @@ import { ConversationService } from '@/lib/services/conversation-service';
 import { createTask } from '@/lib/database/task-db';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
+import { StableEmailDeduplicationService } from '@/lib/utils/stable-email-deduplication';
 
 // Configuración de timeout extendido para Vercel
 export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
@@ -39,6 +40,58 @@ const ERROR_CODES = {
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
+}
+
+/**
+ * Valida que un ID de email sea válido y suficientemente único
+ */
+function isValidEmailId(emailId: any): boolean {
+  // Verificar que sea string válido
+  if (!emailId || typeof emailId !== 'string') {
+    return false;
+  }
+
+  const trimmedId = emailId.trim();
+  
+  // Verificar longitud mínima
+  if (trimmedId.length < 3) {
+    return false;
+  }
+  
+  // Verificar que no sea un ID demasiado genérico o común
+  const genericIds = /^(1|2|3|4|5|6|7|8|9|0|test|temp|undefined|null|msg|email|id)$/i;
+  if (genericIds.test(trimmedId)) {
+    return false;
+  }
+  
+  // Verificar que no sean solo números simples (1-100)
+  if (/^\d{1,2}$/.test(trimmedId) && parseInt(trimmedId) <= 100) {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Extrae y valida el ID más confiable de un email
+ */
+function extractValidEmailId(email: any): string | null {
+  const candidates = [
+    email.id,
+    email.messageId, 
+    email.uid,
+    email.message_id,
+    email.Message_ID,
+    email.ID
+  ];
+  
+  for (const candidate of candidates) {
+    if (isValidEmailId(candidate)) {
+      return candidate.trim();
+    }
+  }
+  
+  return null;
 }
 
 /**
@@ -379,7 +432,19 @@ async function addSentMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
     
-    // 1. Primero extraer y validar contenido - Si no hay contenido válido, no crear mensaje
+    // 1. NUEVA VALIDACIÓN ROBUSTA: Verificar por elementos estables ANTES de procesar contenido
+    const stableDuplicateCheck = await StableEmailDeduplicationService.isEmailDuplicateStable(
+      email,
+      conversationId,
+      leadId
+    );
+
+    if (stableDuplicateCheck.isDuplicate) {
+      console.log(`[EMAIL_SYNC] ✅ Email detectado como duplicado (${stableDuplicateCheck.reason}), ID existente: ${stableDuplicateCheck.existingMessageId}`);
+      return stableDuplicateCheck.existingMessageId!;
+    }
+    
+    // 2. Continuar con extracción de contenido solo si NO es duplicado
     console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email...`);
     
     let messageContent = '';
@@ -474,152 +539,45 @@ async function addSentMessageToConversation(
       return null;
     }
     
-    // 2. Verificar si ya existe un mensaje con este email_id específico
-    if (email.id) {
-      console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente con email_id: ${email.id}`);
+    // 3. Verificación adicional por email_id (fallback para compatibilidad)
+    const emailId = extractValidEmailId(email);
+    if (emailId) {
+      console.log(`[EMAIL_SYNC] 🔍 Verificación de fallback: buscando mensaje existente con email_id: ${emailId}`);
       
       const { data: existingMessage, error: existingError } = await supabaseAdmin
         .from('messages')
         .select('id')
         .eq('conversation_id', conversationId)
-        .filter('custom_data->email_id', 'eq', email.id)
+        .filter('custom_data->email_id', 'eq', emailId)
         .limit(1);
         
       if (existingError) {
         console.error('[EMAIL_SYNC] Error al buscar mensaje existente por email_id:', existingError);
       } else if (existingMessage && existingMessage.length > 0) {
-        console.log(`[EMAIL_SYNC] ✅ Mensaje ya existe con email_id ${email.id}, ID: ${existingMessage[0].id}, evitando duplicado`);
+        console.log(`[EMAIL_SYNC] ✅ FALLBACK: Mensaje ya existe con email_id ${emailId}, ID: ${existingMessage[0].id}`);
         return existingMessage[0].id;
       }
+    } else {
+      console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer un email ID válido para verificación de fallback`);
     }
     
+    // NOTA: Validaciones viejas comentadas - ahora usamos StableEmailDeduplicationService
+    // que es más robusto y no depende del HTML exacto
+    /*
     // 2.5. Verificar duplicación basándose en el estado actual de la DB para este lead
     console.log(`[EMAIL_SYNC] 🕐 Verificando estado de sincronización en DB para lead: ${leadId}`);
     console.log(`[EMAIL_SYNC] 📧 Email dirigido a: ${email.to}`);
+    ... (validaciones viejas removidas por simplicidad y robustez)
+    */
     
-    try {
-      // Usar ventana de tiempo amplia en las últimas 48 horas para cubrir desfases temporales
-      const now = new Date();
-      const timeWindowHours = 48; // 48 horas hacia atrás para cubrir husos horarios y desfases
-      const startTime = new Date(now.getTime() - (timeWindowHours * 60 * 60 * 1000));
-      
-      console.log(`[EMAIL_SYNC] 📅 Verificando mensajes en DB en ventana: ${startTime.toISOString()} - ${now.toISOString()}`);
-      console.log(`[EMAIL_SYNC] 📧 Email fecha: ${email.date || 'sin fecha'}`);
-      
-      // Contar mensajes de email enviados en la DB para este lead en las últimas 48 horas
-      const { data: existingEmailMessages, error: dbCountError } = await supabaseAdmin
-        .from('messages')
-        .select('id, created_at, custom_data')
-        .eq('conversation_id', conversationId)
-        .eq('lead_id', leadId) // Específico para este lead
-        .in('role', ['team_member', 'system']) // Solo mensajes enviados por nosotros
-        .filter('custom_data->type', 'eq', 'sent_email')
-        .gte('created_at', startTime.toISOString())
-        .order('created_at', { ascending: true });
-        
-      if (dbCountError) {
-        console.error('[EMAIL_SYNC] Error al verificar mensajes email en DB:', dbCountError);
-      } else {
-        const dbEmailCount = existingEmailMessages?.length || 0;
-        console.log(`[EMAIL_SYNC] 📊 Mensajes email existentes en DB para este lead en últimas 48h: ${dbEmailCount}`);
-        
-        // Si ya hay 2 o más mensajes de email en las últimas 48h, probablemente ya está sincronizado
-        if (dbEmailCount >= 2) {
-          console.log(`[EMAIL_SYNC] ✅ Ya existen ${dbEmailCount} mensajes email para este lead en las últimas 48h`);
-          console.log(`[EMAIL_SYNC] 🚫 Asumiendo que los emails recientes ya están sincronizados, evitando duplicación`);
-          
-          // Verificar si alguno de los mensajes existentes tiene el mismo destinatario
-          const currentTo = email.to?.toLowerCase().trim() || '';
-          const sameRecipientMessage = existingEmailMessages?.find(msg => {
-            const msgTo = msg.custom_data?.to?.toLowerCase().trim() || '';
-            return msgTo === currentTo;
-          });
-          
-          if (sameRecipientMessage) {
-            console.log(`[EMAIL_SYNC] 🎯 Encontrado mensaje existente al mismo destinatario: ${sameRecipientMessage.id}`);
-            return sameRecipientMessage.id;
-          } else {
-            // Retornar el mensaje más reciente para mantener consistencia
-            const mostRecentMessage = existingEmailMessages[existingEmailMessages.length - 1];
-            console.log(`[EMAIL_SYNC] 📝 Retornando mensaje más reciente: ${mostRecentMessage.id}`);
-            return mostRecentMessage.id;
-          }
-        } else if (dbEmailCount === 1) {
-          console.log(`[EMAIL_SYNC] ⚠️ Solo existe 1 mensaje email para este lead, verificando si es al mismo destinatario`);
-          
-          const currentTo = email.to?.toLowerCase().trim() || '';
-          const existingMessage = existingEmailMessages[0];
-          const existingTo = existingMessage.custom_data?.to?.toLowerCase().trim() || '';
-          
-          if (existingTo === currentTo) {
-            console.log(`[EMAIL_SYNC] 🎯 El mensaje existente es al mismo destinatario (${currentTo}), evitando duplicación`);
-            return existingMessage.id;
-          } else {
-            console.log(`[EMAIL_SYNC] ➡️ El mensaje existente es a diferente destinatario (${existingTo} vs ${currentTo}), continuando`);
-          }
-        } else {
-          console.log(`[EMAIL_SYNC] ℹ️ No hay mensajes email existentes para este lead en últimas 48h, continuando con creación`);
-        }
-      }
-      
-      console.log(`[EMAIL_SYNC] ✅ Verificación de estado DB completada, continuando con creación del mensaje`);
-      
-    } catch (dbStateCheckError) {
-      console.error('[EMAIL_SYNC] Error en verificación de estado DB:', dbStateCheckError);
-      // Continuar con el flujo normal si hay error en esta verificación
-    }
-    
+    // NOTA: Validación por contenido vieja comentada - reemplazada por StableEmailDeduplicationService
+    /*
     // 3. Verificar por contenido extraído para detectar duplicados más precisamente
     if (email.subject && messageContent) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido y subject...`);
-      
-      // Buscar mensajes similares en las últimas 24 horas
-      const { data: existingByContent, error: contentError } = await supabaseAdmin
-        .from('messages')
-        .select('id, content, custom_data')
-        .eq('conversation_id', conversationId)
-        .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
-        .limit(10);
-        
-      if (contentError) {
-        console.error('[EMAIL_SYNC] Error al buscar mensajes por contenido:', contentError);
-      } else if (existingByContent && existingByContent.length > 0) {
-        
-        // Normalizar contenido para comparación más precisa (incluyendo corrección de codificación)
-        const normalizedNewContent = fixTextEncoding(messageContent).toLowerCase().trim().replace(/\s+/g, ' ');
-        const emailSubjectNormalized = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
-        
-        for (const existingMsg of existingByContent) {
-          const existingContent = existingMsg.content || '';
-          const existingSubject = existingMsg.custom_data?.subject || '';
-          
-          // Normalizar contenido existente
-          const normalizedExistingContent = existingContent.toLowerCase().trim().replace(/\s+/g, ' ');
-          const existingSubjectNormalized = existingSubject.toLowerCase().trim();
-          
-          // Verificar coincidencia de subject exacta
-          const subjectMatch = emailSubjectNormalized === existingSubjectNormalized;
-          
-          // Verificar coincidencia de contenido (exacta o alta similitud)
-          const exactContentMatch = normalizedNewContent === normalizedExistingContent;
-          const highSimilarity = normalizedNewContent.length > 50 && normalizedExistingContent.length > 50 &&
-                                (normalizedNewContent.includes(normalizedExistingContent.substring(0, 100)) ||
-                                 normalizedExistingContent.includes(normalizedNewContent.substring(0, 100)));
-          
-          if (subjectMatch && (exactContentMatch || highSimilarity)) {
-            console.log(`[EMAIL_SYNC] ✅ Mensaje duplicado detectado por contenido similar, ID existente: ${existingMsg.id}, evitando duplicado`);
-            console.log(`[EMAIL_SYNC] 📊 Coincidencia:`, {
-              subjectMatch,
-              exactContentMatch,
-              highSimilarity,
-              newContentLength: normalizedNewContent.length,
-              existingContentLength: normalizedExistingContent.length
-            });
-            return existingMsg.id;
-          }
-        }
-      }
+      ... (validación vieja removida - ahora se usa fingerprinting estable)
     }
+    */
     
     console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje con contenido válido (${messageContent.length} caracteres)`);
     
@@ -652,6 +610,11 @@ async function addSentMessageToConversation(
       }
     }
     
+    console.log(`[EMAIL_SYNC] ➕ Creando nuevo mensaje con contenido válido y fingerprint único`);
+    
+    // Generar fingerprint estable para el nuevo mensaje
+    const stableFingerprint = StableEmailDeduplicationService.generateStableFingerprint(email);
+    
     const messageData: any = {
       conversation_id: conversationId,
       content: messageContent, // Usando contenido extraído y validado
@@ -666,7 +629,14 @@ async function addSentMessageToConversation(
         from: email.from,
         date: email.date,
         content_extracted: true, // Marcar que el contenido fue extraído exitosamente
-        sync_source: 'email_sync'
+        sync_source: 'email_sync',
+        // NUEVOS CAMPOS para deduplicación estable:
+        stable_hash: stableFingerprint.stableHash,
+        semantic_hash: stableFingerprint.semanticHash,
+        time_window: stableFingerprint.timeWindow,
+        recipient_normalized: stableFingerprint.recipientNormalized,
+        subject_normalized: stableFingerprint.subjectNormalized,
+        dedup_version: '2.0'
       }
     };
     
@@ -1143,7 +1113,7 @@ async function addReceivedMessageToConversation(
     }
     
     // 2. Verificar si ya existe un mensaje con este email_id
-    const emailId = email.id || email.messageId || email.uid;
+    const emailId = extractValidEmailId(email);
     if (emailId) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje recibido existente con email_id: ${emailId}`);
       
@@ -1158,6 +1128,8 @@ async function addReceivedMessageToConversation(
         console.log(`[EMAIL_SYNC] ✅ Mensaje recibido ya existe: ${existingMessage[0].id}`);
         return existingMessage[0].id;
       }
+    } else {
+      console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer un email ID válido para mensaje recibido`);
     }
     
     // 3. Verificar por contenido extraído para detectar duplicados más precisamente
@@ -1284,7 +1256,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   try {
     console.log(`[EMAIL_SYNC] 🔄 Procesando email enviado a: ${email.to}`);
     
-    const emailId = email.id || email.messageId || email.uid;
+    const emailId = extractValidEmailId(email);
     
     const toEmail = email.to;
     if (!toEmail || !toEmail.includes('@')) {
@@ -2029,8 +2001,11 @@ export async function GET(request: NextRequest) {
     method: "POST",
     required_parameters: ["site_id"],
     optional_parameters: ["limit", "since_date"],
-    description: "Fetches sent emails, creates/updates leads, manages email conversations, updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage.",
+    description: "Fetches sent emails, creates/updates leads, manages email conversations with ADVANCED STABLE DEDUPLICATION (v2.0) that prevents duplicates even when HTML content differs between sent and inbox versions. Updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage.",
     features: [
+      "ADVANCED: Stable email deduplication using content fingerprinting (v2.0)",
+      "ROBUST: HTML-agnostic duplicate detection based on semantic content",
+      "SMART: Multi-level validation (stable hash + semantic hash + time windows)",
       "Duplicate prevention using SyncedObjectsService",
       "Internal domain filtering (Uncodie domains)",
       "Intelligent email content extraction with character encoding fixes",
