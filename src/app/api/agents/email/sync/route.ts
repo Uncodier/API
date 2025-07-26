@@ -26,6 +26,11 @@ const EmailSyncRequestSchema = z.object({
     (date) => !date || !isNaN(Date.parse(date)),
     "since_date debe ser una fecha válida en formato ISO"
   ),
+  // También aceptar 'since' para compatibilidad con workflows
+  since: z.string().optional().refine(
+    (date) => !date || !isNaN(Date.parse(date)),
+    "since debe ser una fecha válida en formato ISO"
+  ),
 });
 
 // Error codes
@@ -1835,10 +1840,26 @@ export async function POST(request: NextRequest) {
     // Extraer parámetros usando getFlexibleProperty para máxima compatibilidad
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
     const limit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 10;
-    const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
+    
+    // Buscar fecha desde múltiples fuentes (prioritario: since_date, fallback: since)
+    const sinceDateFromRequest = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
+    const sinceFromRequest = getFlexibleProperty(requestData, 'since') || validationResult.data.since;
+    const sinceDate = sinceDateFromRequest || sinceFromRequest;
     
     console.log('[EMAIL_SYNC] Extracted parameters:', {
-      siteId, limit, sinceDate
+      siteId, 
+      limit, 
+      sinceDate,
+      source: sinceDateFromRequest ? 'since_date' : sinceFromRequest ? 'since' : 'none'
+    });
+    
+    // Si no se especifica fecha, usar las últimas 24 horas para ser más permisivo
+    const finalSinceDate = sinceDate || new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    
+    console.log('[EMAIL_SYNC] Final since date:', {
+      original: sinceDate,
+      final: finalSinceDate,
+      isDefault: !sinceDate
     });
     
     try {
@@ -1846,19 +1867,68 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_SYNC] 🔧 Obteniendo configuración de email para sitio: ${siteId}`);
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       console.log(`[EMAIL_SYNC] ✅ Configuración de email obtenida exitosamente`);
+      console.log(`[EMAIL_SYNC] 📋 Configuración de email:`, {
+        host: emailConfig.imapHost || emailConfig.host,
+        port: emailConfig.imapPort,
+        user: emailConfig.user || emailConfig.email,
+        useOAuth: emailConfig.useOAuth || false,
+        hasPassword: !!emailConfig.password,
+        hasAccessToken: !!emailConfig.accessToken
+      });
       
       // Fetch sent emails
-      console.log(`[EMAIL_SYNC] 📤 Obteniendo emails ENVIADOS con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
-      const allSentEmails = await EmailService.fetchSentEmails(emailConfig, limit, sinceDate);
-      console.log(`[EMAIL_SYNC] ✅ Emails enviados obtenidos exitosamente: ${allSentEmails.length} emails`);
+      console.log(`[EMAIL_SYNC] 📤 Obteniendo emails ENVIADOS con límite: ${limit}, desde: ${finalSinceDate}${sinceDate ? '' : ' (fecha por defecto - últimas 24h)'}`);
+      
+      let allSentEmails = [];
+      try {
+        allSentEmails = await EmailService.fetchSentEmails(emailConfig, limit, finalSinceDate);
+        console.log(`[EMAIL_SYNC] ✅ Emails enviados obtenidos exitosamente: ${allSentEmails.length} emails`);
+      } catch (emailFetchError) {
+        console.error(`[EMAIL_SYNC] ❌ Error al obtener emails enviados:`, emailFetchError);
+        
+        // Si el error es por no encontrar la carpeta de enviados, intentar con un rango más amplio sin filtro de fecha
+        if (emailFetchError instanceof Error && emailFetchError.message.includes('carpeta de emails enviados')) {
+          console.log(`[EMAIL_SYNC] 🔄 Reintentando sin filtro de fecha para encontrar carpeta de enviados...`);
+          try {
+            allSentEmails = await EmailService.fetchSentEmails(emailConfig, limit);
+            console.log(`[EMAIL_SYNC] ✅ Emails enviados obtenidos exitosamente sin filtro de fecha: ${allSentEmails.length} emails`);
+          } catch (retryError) {
+            console.error(`[EMAIL_SYNC] ❌ Error en reintento:`, retryError);
+            throw emailFetchError; // Lanzar el error original
+          }
+        } else {
+          throw emailFetchError;
+        }
+      }
       
       if (allSentEmails.length === 0) {
+        // Información adicional para debugging cuando no se encuentran emails
+        console.log(`[EMAIL_SYNC] ℹ️ Información de debugging - No se encontraron emails:`);
+        console.log(`[EMAIL_SYNC] - Site ID: ${siteId}`);
+        console.log(`[EMAIL_SYNC] - Límite: ${limit}`);
+        console.log(`[EMAIL_SYNC] - Fecha desde: ${finalSinceDate}`);
+        console.log(`[EMAIL_SYNC] - Configuración de host: ${emailConfig.imapHost || emailConfig.host}`);
+        console.log(`[EMAIL_SYNC] - Usuario: ${emailConfig.user || emailConfig.email}`);
+        console.log(`[EMAIL_SYNC] - Usa OAuth: ${emailConfig.useOAuth || false}`);
+        
         return NextResponse.json({
           success: true,
           message: "No se encontraron emails enviados para sincronizar",
           emailCount: 0,
           processedCount: 0,
-          results: []
+          results: [],
+          debug_info: {
+            site_id: siteId,
+            limit,
+            since_date_used: finalSinceDate,
+            was_default_date: !sinceDate,
+            email_config: {
+              host: emailConfig.imapHost || emailConfig.host,
+              port: emailConfig.imapPort,
+              user: emailConfig.user || emailConfig.email,
+              useOAuth: emailConfig.useOAuth || false
+            }
+          }
         });
       }
       

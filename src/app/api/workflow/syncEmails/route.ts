@@ -58,8 +58,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Calcular la fecha "since" (hace una hora)
-    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    // Calcular la fecha "since" (hace 6 horas para ser más permisivo)
+    const since = new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString();
 
     console.log(`📝 Ejecutando workflow para site_id: ${site_id}, user_id: ${user_id}, since: ${since}`);
 
