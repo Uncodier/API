@@ -137,10 +137,20 @@ export class SentEmailDuplicationService {
       roundedTime.setSeconds(0, 0);
       const timeWindow = roundedTime.toISOString().substring(0, 16); // YYYY-MM-DDTHH:MM
       
-      // Normalizar campos
-      const normalizedTo = to.toLowerCase().trim();
-      const normalizedFrom = from.toLowerCase().trim();
+      // 🔧 NORMALIZAR CAMPOS - Extraer solo direcciones de email para consistencia
+      const normalizedTo = this.extractEmailAddress(to).toLowerCase().trim();
+      const normalizedFrom = this.extractEmailAddress(from).toLowerCase().trim();
       const normalizedSubject = subject.toLowerCase().trim().substring(0, 50); // Primeros 50 chars
+      
+      console.log(`[SENT_EMAIL_DEDUP] 📊 Datos normalizados para envelope ID:`, {
+        originalTo: to,
+        normalizedTo,
+        originalFrom: from,
+        normalizedFrom,
+        originalSubject: subject,
+        normalizedSubject: normalizedSubject.substring(0, 30) + '...',
+        timeWindow
+      });
       
       // Crear hash estable usando SHA-256 simplificado
       const dataString = `${timeWindow}|${normalizedTo}|${normalizedFrom}|${normalizedSubject}`;
@@ -157,13 +167,7 @@ export class SentEmailDuplicationService {
       const envelopeId = `env-${Math.abs(hash).toString(16)}-${timeWindow.replace(/[:-]/g, '')}`;
       
       console.log(`[SENT_EMAIL_DEDUP] ✅ ID envelope generado: "${envelopeId}"`);
-      console.log(`[SENT_EMAIL_DEDUP] 📊 Datos usados para envelope ID:`, {
-        timeWindow,
-        to: normalizedTo,
-        from: normalizedFrom,
-        subject: normalizedSubject.substring(0, 30) + '...',
-        dataString: dataString.substring(0, 100) + '...'
-      });
+      console.log(`[SENT_EMAIL_DEDUP] 📊 String hash usado: "${dataString.substring(0, 100)}..."`);
       
       return envelopeId;
       
@@ -171,6 +175,26 @@ export class SentEmailDuplicationService {
       console.error(`[SENT_EMAIL_DEDUP] ❌ Error generando ID desde envelope:`, error);
       return null;
     }
+  }
+
+  /**
+   * Extrae la dirección de email de un string que puede tener formato "Name <email>" o solo "email"
+   */
+  private static extractEmailAddress(emailString: string): string {
+    if (!emailString || typeof emailString !== 'string') {
+      return '';
+    }
+    
+    const trimmed = emailString.trim();
+    
+    // Si tiene formato "Name <email@domain.com>", extraer solo el email
+    const emailMatch = trimmed.match(/<([^>]+)>/);
+    if (emailMatch) {
+      return emailMatch[1].trim();
+    }
+    
+    // Si no tiene <>, asumir que es solo el email
+    return trimmed;
   }
 
   /**

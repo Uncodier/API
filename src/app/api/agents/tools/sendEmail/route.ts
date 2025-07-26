@@ -145,6 +145,17 @@ export async function POST(request: NextRequest) {
       site_id
     });
 
+    // 🔍 DEBUG: Verificar qué IDs están disponibles en el resultado
+    console.log(`[SEND_EMAIL] 🔍 DEBUG - Resultado del envío:`, {
+      success: result.success,
+      status: result.status,
+      email_id: result.email_id,
+      envelope_id: result.envelope_id,
+      hasEnvelopeId: !!result.envelope_id,
+      willUseEnvelopeId: !!(result.envelope_id && result.status === 'sent'),
+      willUseFallback: !!(result.email_id && result.status === 'sent' && !result.envelope_id)
+    });
+
     if (!result.success) {
       const statusCode = result.error?.code === 'EMAIL_CONFIG_NOT_FOUND' ? 404 : 500;
       return NextResponse.json(
@@ -226,7 +237,7 @@ export async function POST(request: NextRequest) {
     // Agregar external_message_id a la respuesta para metadata del mensaje
     const responseData = {
       ...result,
-      external_message_id: result.email_id // Incluir messageId para guardar en metadata
+      external_message_id: result.envelope_id || result.email_id // 🔄 Usar envelope_id cuando esté disponible, fallback a email_id
     };
 
     const statusCode = result.status === 'skipped' ? 200 : 201;
