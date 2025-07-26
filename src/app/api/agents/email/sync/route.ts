@@ -426,6 +426,104 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string, ema
 }
 
 /**
+ * Función simple para verificar si ya existe un mensaje del mismo email ENVIADO basado en channel
+ */
+async function findExistingEmailMessageByChannel(
+  conversationId: string,
+  email: any,
+  leadId: string
+): Promise<{ exists: boolean; messageId?: string; reason?: string }> {
+  try {
+    console.log(`[EMAIL_SYNC] 🔍 Verificando mensaje ENVIADO existente por custom_data.channel...`);
+    
+    // Buscar mensajes ENVIADOS del canal email para este lead
+    const { data: emailMessages, error } = await supabaseAdmin
+      .from('messages')
+      .select('id, custom_data, created_at, role, content')
+      .eq('conversation_id', conversationId)
+      .eq('lead_id', leadId)
+      .filter('custom_data->channel', 'eq', 'email')
+      .filter('custom_data->type', 'eq', 'sent_email') // Solo emails enviados
+      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 7 días
+      .order('created_at', { ascending: false })
+      .limit(20);
+      
+    if (error) {
+      console.error('[EMAIL_SYNC] Error al buscar mensajes enviados por custom_data.channel:', error);
+      return { exists: false };
+    }
+    
+    if (!emailMessages || emailMessages.length === 0) {
+      console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con custom_data.channel=email');
+      return { exists: false };
+    }
+    
+    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS con channel=email para comparar`);
+    
+    // Normalizar datos del email ENVIADO actual para comparación
+    const currentSubject = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
+    const currentTo = email.to ? email.to.toLowerCase().trim() : '';
+    const currentFrom = email.from ? email.from.toLowerCase().trim() : '';
+    const currentDate = email.date ? new Date(email.date) : new Date();
+    
+    // Revisar cada mensaje ENVIADO existente
+    for (const existingMessage of emailMessages) {
+      const customData = existingMessage.custom_data || {};
+      
+      // Comparar características del email enviado
+      const existingSubject = customData.subject ? customData.subject.toLowerCase().trim() : '';
+      const existingTo = customData.to ? customData.to.toLowerCase().trim() : '';
+      const existingFrom = customData.from ? customData.from.toLowerCase().trim() : '';
+      const existingDate = customData.date ? new Date(customData.date) : new Date(existingMessage.created_at);
+      
+      // Verificación por subject + destinatario (ambos emails enviados)
+      if (currentSubject && existingSubject && currentSubject === existingSubject &&
+          currentTo && existingTo && currentTo === existingTo) {
+        
+        // Verificar proximidad temporal (dentro de 1 hora)
+        const timeDiff = Math.abs(currentDate.getTime() - existingDate.getTime());
+        const oneHour = 60 * 60 * 1000;
+        
+        if (timeDiff <= oneHour) {
+          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por custom_data.channel: ${existingMessage.id}`);
+          console.log(`[EMAIL_SYNC] - Subject match: "${currentSubject}"`);
+          console.log(`[EMAIL_SYNC] - To match: "${currentTo}"`);
+          console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000/60)} minutos`);
+          
+          return {
+            exists: true,
+            messageId: existingMessage.id,
+            reason: `Email enviado duplicado: mismo subject "${currentSubject}" y destinatario "${currentTo}"`
+          };
+        }
+      }
+      
+      // Verificación adicional por email_id si existe
+      const currentEmailId = extractValidEmailId(email);
+      const existingEmailId = customData.email_id;
+      
+      if (currentEmailId && existingEmailId && currentEmailId === existingEmailId) {
+        console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por email_id: ${existingMessage.id}`);
+        console.log(`[EMAIL_SYNC] - Email ID match: "${currentEmailId}"`);
+        
+        return {
+          exists: true,
+          messageId: existingMessage.id,
+          reason: `Email enviado duplicado por email_id: "${currentEmailId}"`
+        };
+      }
+    }
+    
+    console.log('[EMAIL_SYNC] ✅ No se encontraron emails ENVIADOS duplicados por custom_data.channel');
+    return { exists: false };
+    
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error en verificación de emails enviados por custom_data.channel:', error);
+    return { exists: false };
+  }
+}
+
+/**
  * Función para agregar mensaje enviado a la conversación
  */
 async function addSentMessageToConversation(
@@ -437,7 +535,14 @@ async function addSentMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
     
-    // 1. NUEVA VALIDACIÓN ROBUSTA: Verificar por elementos estables ANTES de procesar contenido
+    // 1. NUEVA VALIDACIÓN SIMPLE POR CHANNEL: Verificar primero por channel email
+    const channelCheck = await findExistingEmailMessageByChannel(conversationId, email, leadId);
+    if (channelCheck.exists) {
+      console.log(`[EMAIL_SYNC] ✅ ${channelCheck.reason}, ID existente: ${channelCheck.messageId}`);
+      return channelCheck.messageId!;
+    }
+    
+    // 2. VALIDACIÓN ROBUSTA: Verificar por elementos estables SOLO si no se encontró por channel
     const stableDuplicateCheck = await StableEmailDeduplicationService.isEmailDuplicateStable(
       email,
       conversationId,
@@ -449,7 +554,7 @@ async function addSentMessageToConversation(
       return stableDuplicateCheck.existingMessageId!;
     }
     
-    // 2. Continuar con extracción de contenido solo si NO es duplicado
+    // 3. Continuar con extracción de contenido solo si NO es duplicado
     console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email...`);
     
     let messageContent = '';
@@ -659,6 +764,7 @@ async function addSentMessageToConversation(
       lead_id: leadId,
       custom_data: {
         type: 'sent_email',
+        channel: 'email', // ✅ AGREGADO: marcar canal para validación simple
         email_id: email.id,
         subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         to: email.to,
@@ -1066,7 +1172,14 @@ async function addReceivedMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📩 Agregando mensaje recibido del hilo a conversación: ${conversationId}`);
     
-    // 1. Primero extraer y validar contenido - Si no hay contenido válido, no crear mensaje
+    // 1. VALIDACIÓN SIMPLE POR CHANNEL: Verificar primero por channel email
+    const channelCheck = await findExistingEmailMessageByChannel(conversationId, email, leadId);
+    if (channelCheck.exists) {
+      console.log(`[EMAIL_SYNC] ✅ Mensaje recibido ya existe: ${channelCheck.reason}, ID: ${channelCheck.messageId}`);
+      return channelCheck.messageId!;
+    }
+    
+    // 2. Extraer y validar contenido - Si no hay contenido válido, no crear mensaje
     console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email recibido...`);
     
     let messageContent = '';
@@ -1230,6 +1343,7 @@ async function addReceivedMessageToConversation(
       lead_id: leadId,
       custom_data: {
         type: 'received_email',
+        channel: 'email', // ✅ AGREGADO: marcar canal para validación simple
         email_id: emailId,
         subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         from: email.from,
@@ -2102,11 +2216,13 @@ export async function GET(request: NextRequest) {
     method: "POST",
     required_parameters: ["site_id"],
     optional_parameters: ["limit", "since_date"],
-    description: "Fetches sent emails, creates/updates leads, manages email conversations with ADVANCED STABLE DEDUPLICATION (v2.0) that prevents duplicates even when HTML content differs between sent and inbox versions. Updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage.",
+    description: "Fetches sent emails, creates/updates leads, manages email conversations with MULTI-LEVEL DEDUPLICATION including simple channel validation and advanced stable fingerprinting (v2.0) that prevents duplicates even when HTML content differs between sent and inbox versions. Updates lead status to 'contacted', and creates 'first contact' tasks for customer journey awareness stage.",
     features: [
+      "NEW: Simple channel-based duplicate detection (custom_data.channel = 'email')",
+      "FAST: Primary validation using subject + recipient + temporal proximity",
       "ADVANCED: Stable email deduplication using content fingerprinting (v2.0)",
       "ROBUST: HTML-agnostic duplicate detection based on semantic content",
-      "SMART: Multi-level validation (stable hash + semantic hash + time windows)",
+      "SMART: Multi-level validation (channel -> stable hash -> semantic hash -> time windows)",
       "Duplicate prevention using SyncedObjectsService",
       "Internal domain filtering (Uncodie domains)",
       "Intelligent email content extraction with character encoding fixes",
@@ -2121,6 +2237,12 @@ export async function GET(request: NextRequest) {
       "Automatic sync of related thread emails from recipients",
       "Complete conversation context reconstruction"
     ],
+    deduplication_levels: {
+      "1_channel_validation": "Fast check using custom_data.channel='email' with subject+recipient+time",
+      "2_stable_fingerprinting": "Advanced content-based validation with stable hashing",
+      "3_email_id_fallback": "Legacy validation using email IDs",
+      "4_content_similarity": "Semantic content comparison for final validation"
+    },
     response_fields: {
       emailCount: "Total emails found in sent folder",
       newEmailsCount: "New emails processed (excluding duplicates and internal domains)",
