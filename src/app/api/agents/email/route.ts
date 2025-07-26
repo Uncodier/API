@@ -285,6 +285,17 @@ function filterEmailsByAliasesAndAILeads(emails: any[], aliases: string[], aiLea
     
     console.log(`[EMAIL_API] 🔍 Verificando email - From: ${email.from}, To: ${email.to}`);
     
+    // NUEVA VALIDACIÓN: Excluir emails "self-sent" donde FROM == TO
+    // Estos son típicamente emails enviados desde el alias hacia sí mismo, no emails recibidos
+    const fromEmailOnly = fromEmailAddress || emailFrom;
+    const toEmailOnly = emailTo.match(/<([^>]+)>/) ? emailTo.match(/<([^>]+)>/)?.[1] : emailTo;
+    
+    if (fromEmailOnly && toEmailOnly && fromEmailOnly === toEmailOnly) {
+      console.log(`[EMAIL_API] 🚫 Email excluido - Self-sent email detectado: FROM (${fromEmailOnly}) == TO (${toEmailOnly})`);
+      console.log(`[EMAIL_API] 🔍 Razón: Los emails donde FROM == TO típicamente son emails enviados desde el alias, no recibidos hacia el alias`);
+      return false;
+    }
+    
     // 1. Verificar si el remitente es un lead asignado a la IA
     if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
       const aiLead = aiLeadsMap.get(fromEmailAddress);

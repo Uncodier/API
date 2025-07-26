@@ -14,6 +14,7 @@ import { createTask } from '@/lib/database/task-db';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 import { StableEmailDeduplicationService } from '@/lib/utils/stable-email-deduplication';
+import { SentEmailDuplicationService } from '@/lib/services/email/SentEmailDuplicationService';
 
 // Configuración de timeout extendido para Vercel
 export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
@@ -510,16 +511,16 @@ async function findExistingEmailMessageByChannel(
     console.log(`[EMAIL_SYNC] 🔍 Análisis temporal de mensajes con delivery.channel=email...`);
     
     // Buscar TODOS los mensajes ENVIADOS del canal email para esta conversación (últimos 30 días)
+    // Usar consulta más robusta que maneje casos donde custom_data puede no ser JSON válido
     const { data: emailMessages, error } = await supabaseAdmin
       .from('messages')
       .select('id, custom_data, created_at, role, content')
       .eq('conversation_id', conversationId)
       .eq('lead_id', leadId)
-      .filter('custom_data->delivery->channel', 'eq', 'email')
-      .filter('custom_data->status', 'eq', 'sent') // Solo emails enviados
+      .not('custom_data', 'is', null) // Excluir registros con custom_data null
       .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 30 días
       .order('created_at', { ascending: true }) // Ordenar por tiempo ascendente
-      .limit(50);
+      .limit(100); // Aumentar límite para filtrar después
       
     if (error) {
       console.error('[EMAIL_SYNC] Error al buscar mensajes para análisis temporal:', error);
@@ -527,11 +528,39 @@ async function findExistingEmailMessageByChannel(
     }
     
     if (!emailMessages || emailMessages.length === 0) {
+      console.log('[EMAIL_SYNC] ✅ No hay mensajes previos en la conversación');
+      return { exists: false };
+    }
+    
+    // Filtrar manualmente los mensajes de email enviados para evitar errores de JSON en PostgreSQL
+    const emailSentMessages = emailMessages.filter(msg => {
+      try {
+        const customData = msg.custom_data;
+        
+        // Verificar que custom_data sea un objeto válido
+        if (!customData || typeof customData !== 'object') {
+          return false;
+        }
+        
+        // Verificar que tenga estructura de email enviado
+        const isEmailChannel = customData.delivery?.channel === 'email' || 
+                              customData.channel === 'email';
+        const isSentStatus = customData.status === 'sent' || 
+                            customData.delivery?.success === true;
+        
+        return isEmailChannel && isSentStatus;
+      } catch (error) {
+        console.warn(`[EMAIL_SYNC] Error parsing custom_data for message ${msg.id}:`, error);
+        return false;
+      }
+    });
+    
+    if (emailSentMessages.length === 0) {
       console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con delivery.channel=email');
       return { exists: false };
     }
     
-    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS para análisis temporal`);
+    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailSentMessages.length} mensajes ENVIADOS para análisis temporal (de ${emailMessages.length} mensajes totales)`);
     
     // Preparar datos del email actual
     const currentSubject = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
@@ -547,7 +576,7 @@ async function findExistingEmailMessageByChannel(
     });
     
     // Crear array de mensajes existentes con datos normalizados
-    const existingMessages = emailMessages.map(msg => {
+    const existingMessages = emailSentMessages.map(msg => {
       const customData = msg.custom_data || {};
       const deliveryDetails = customData.delivery?.details || {};
       
@@ -727,36 +756,25 @@ async function addSentMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
     
-    // 1. VERIFICACIÓN PRIMARIA: Usar el MISMO estándar de ID que guardamos (RFC 5322)
-    const standardEmailId = extractValidEmailId(email);
-    if (standardEmailId) {
-      const existingMessageId = await findExistingMessageByStandardId(conversationId, leadId, standardEmailId);
-      if (existingMessageId) {
-        console.log(`[EMAIL_SYNC] ✅ DUPLICADO ENCONTRADO por ID estándar RFC 5322: ${existingMessageId}`);
-        return existingMessageId;
-      }
-    }
-    
-    // 2. VALIDACIÓN SECUNDARIA POR CHANNEL: Verificar por análisis temporal si el ID estándar no encuentra nada
-    const channelCheck = await findExistingEmailMessageByChannel(conversationId, email, leadId);
-    if (channelCheck.exists) {
-      console.log(`[EMAIL_SYNC] ✅ ${channelCheck.reason}, ID existente: ${channelCheck.messageId}`);
-      return channelCheck.messageId!;
-    }
-    
-    // 3. VALIDACIÓN ROBUSTA: Verificar por elementos estables SOLO si no se encontró por métodos anteriores
-    const stableDuplicateCheck = await StableEmailDeduplicationService.isEmailDuplicateStable(
+    // VERIFICACIÓN COMPLETA usando el servicio especializado de deduplicación
+    const duplicationCheck = await SentEmailDuplicationService.validateSentEmailForDuplication(
       email,
       conversationId,
       leadId
     );
 
-    if (stableDuplicateCheck.isDuplicate) {
-      console.log(`[EMAIL_SYNC] ✅ Email detectado como duplicado (${stableDuplicateCheck.reason}), ID existente: ${stableDuplicateCheck.existingMessageId}`);
-      return stableDuplicateCheck.existingMessageId!;
-    }
-    
-    // 3. Continuar con extracción de contenido solo si NO es duplicado
+         if (duplicationCheck.isDuplicate) {
+       console.log(`[EMAIL_SYNC] ✅ DUPLICADO ENCONTRADO: ${duplicationCheck.reason}`);
+       console.log(`[EMAIL_SYNC] ✅ ID del mensaje existente: ${duplicationCheck.existingId}`);
+       console.log(`[EMAIL_SYNC] ✅ ID estándar usado: ${duplicationCheck.standardId}`);
+       return duplicationCheck.existingId!;
+     }
+     
+     // Extraer el ID estándar para uso posterior (crear mensaje)
+     const standardEmailId = duplicationCheck.standardId;
+     console.log(`[EMAIL_SYNC] 🆔 ID estándar para nuevo mensaje: "${standardEmailId}"`);
+     
+     // 3. Continuar con extracción de contenido solo si NO es duplicado
     console.log(`[EMAIL_SYNC] 🔧 Extrayendo contenido del email...`);
     
     let messageContent = '';
@@ -1596,13 +1614,8 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     
     const toEmail = email.to;
     if (!toEmail || !toEmail.includes('@')) {
-      // Marcar como error en SyncedObjectsService si hay ID
-      if (emailId) {
-        await SyncedObjectsService.updateObject(emailId, siteId, {
-          status: 'error',
-          error_message: 'Email destinatario inválido'
-        }, 'sent_email');
-      }
+      // Marcar como error usando el servicio especializado
+      await SentEmailDuplicationService.markSentEmailAsError(email, siteId, 'Email destinatario inválido');
       
       return {
         success: false,
@@ -1615,13 +1628,8 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     if (!internalValidation.isValid) {
       console.log(`[EMAIL_SYNC] 🚫 Email enviado a dominio interno detectado: ${email.to} - ${internalValidation.reason}`);
       
-      // Marcar como skipped en SyncedObjectsService si hay ID
-      if (emailId) {
-        await SyncedObjectsService.updateObject(emailId, siteId, {
-          status: 'skipped',
-          error_message: internalValidation.reason
-        }, 'sent_email');
-      }
+      // Marcar como skipped usando el servicio especializado
+      await SentEmailDuplicationService.markSentEmailAsError(email, siteId, internalValidation.reason || 'Email enviado a dominio interno', true);
       
       return {
         success: false,
@@ -1736,33 +1744,31 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     // 7. Crear tarea de first contact si es necesario
     const taskId = await createFirstContactTaskIfNeeded(leadId, siteId);
     
-    // 8. Marcar email como procesado exitosamente
-    if (emailId) {
-      await SyncedObjectsService.updateObject(emailId, siteId, {
-        status: 'processed',
-        metadata: {
-          lead_id: leadId,
-          conversation_id: conversationId,
-          message_id: messageId,
-          message_created: !!messageId, // Indicar si se creó el mensaje o no
-          task_id: taskId,
-          subject: email.subject,
-          to: email.to,
-          from: email.from,
-          is_new_lead: isNewLead,
-          status_updated: statusUpdated,
-          name_updated: nameUpdated,
-          thread_sync_result: threadSyncResult,
-          no_content_extracted: !messageId, // Indicar si falló por falta de contenido
-          processed_at: new Date().toISOString()
-        }
-      }, 'sent_email');
-      
+    // 8. Marcar email como procesado exitosamente usando el servicio especializado
+    const marked = await SentEmailDuplicationService.markSentEmailAsProcessed(email, siteId, {
+      lead_id: leadId,
+      conversation_id: conversationId,
+      message_id: messageId,
+      message_created: !!messageId, // Indicar si se creó el mensaje o no
+      task_id: taskId,
+      subject: email.subject,
+      to: email.to,
+      from: email.from,
+      is_new_lead: isNewLead,
+      status_updated: statusUpdated,
+      name_updated: nameUpdated,
+      thread_sync_result: threadSyncResult,
+      no_content_extracted: !messageId, // Indicar si falló por falta de contenido
+    });
+    
+    if (marked) {
       if (messageId) {
-        console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado exitosamente con mensaje creado`);
+        console.log(`[EMAIL_SYNC] ✅ Email marcado como procesado exitosamente con mensaje creado`);
       } else {
-        console.log(`[EMAIL_SYNC] ✅ Email ${emailId} marcado como procesado (sin mensaje por falta de contenido)`);
+        console.log(`[EMAIL_SYNC] ✅ Email marcado como procesado (sin mensaje por falta de contenido)`);
       }
+    } else {
+      console.log(`[EMAIL_SYNC] ⚠️ No se pudo marcar email como procesado en SentEmailDuplicationService`);
     }
     
     return {
@@ -1781,14 +1787,12 @@ async function processSentEmail(email: any, siteId: string): Promise<{
   } catch (error) {
     console.error('[EMAIL_SYNC] Error al procesar email enviado:', error);
     
-    // Marcar como error en SyncedObjectsService si hay ID
-    const emailId = extractValidEmailId(email);
-    if (emailId) {
-      await SyncedObjectsService.updateObject(emailId, siteId, {
-        status: 'error',
-        error_message: error instanceof Error ? error.message : 'Error desconocido'
-      }, 'sent_email');
-    }
+    // Marcar como error usando el servicio especializado
+    await SentEmailDuplicationService.markSentEmailAsError(
+      email, 
+      siteId, 
+      error instanceof Error ? error.message : 'Error desconocido'
+    );
     
     return {
       success: false,
@@ -2248,19 +2252,24 @@ export async function POST(request: NextRequest) {
       
       const preFilteredInternalCount = allSentEmails.length - internalFilteredEmails.length;
       
-      // Filter emails to avoid processing duplicates using SyncedObjectsService (second filter)
-      console.log(`[EMAIL_SYNC] 🔄 Filtrando emails ya procesados para evitar duplicaciones...`);
-      const { unprocessed: sentEmails, alreadyProcessed } = await SyncedObjectsService.filterUnprocessedEmails(
+      // Filter emails using specialized SentEmailDuplicationService (second filter)
+      console.log(`[EMAIL_SYNC] 🔄 Filtrando emails ENVIADOS ya procesados usando SentEmailDuplicationService...`);
+      const { unprocessed: sentEmails, alreadyProcessed, debugInfo } = await SentEmailDuplicationService.filterUnprocessedSentEmails(
         internalFilteredEmails, 
-        siteId, 
-        'sent_email'
+        siteId
       );
       
-      console.log(`[EMAIL_SYNC] 📈 Resumen de filtrado:`);
+      console.log(`[EMAIL_SYNC] 📈 RESUMEN DE FILTRADO DETALLADO:`);
       console.log(`[EMAIL_SYNC] - Emails enviados obtenidos inicialmente: ${allSentEmails.length}`);
       console.log(`[EMAIL_SYNC] - Emails después del filtro de dominios internos: ${internalFilteredEmails.length}`);
       console.log(`[EMAIL_SYNC] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
       console.log(`[EMAIL_SYNC] - Emails finales para sincronización: ${sentEmails.length}`);
+      
+      // Log detallado de debug para identificar problemas
+      console.log(`[EMAIL_SYNC] 🔍 DEBUG INFO de emails procesados:`);
+      debugInfo.forEach((info, index) => {
+        console.log(`[EMAIL_SYNC] ${index + 1}. To: ${info.emailTo} | ID: ${info.standardEmailId} | Decisión: ${info.decision}`);
+      });
       
       if (sentEmails.length === 0) {
         return NextResponse.json({
