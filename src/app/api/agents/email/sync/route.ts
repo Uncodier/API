@@ -78,11 +78,12 @@ function isValidEmailId(emailId: any): boolean {
 }
 
 /**
- * Extrae y valida el ID más confiable de un email
+ * Extrae y valida el ID más confiable de un email siguiendo RFC 5322
+ * Este es el ESTÁNDAR que usamos tanto para guardar como para buscar duplicados
  */
 function extractValidEmailId(email: any): string | null {
   const candidates = [
-    email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta
+    email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta (RFC 5322)
     email.id,
     email.uid,
     email.message_id,
@@ -97,6 +98,78 @@ function extractValidEmailId(email: any): string | null {
   }
   
   return null;
+}
+
+/**
+ * Busca un mensaje existente usando el MISMO estándar de ID que usamos para guardar
+ * Busca en TODOS los campos donde podríamos haber guardado el extractValidEmailId
+ */
+async function findExistingMessageByStandardId(
+  conversationId: string,
+  leadId: string,
+  standardEmailId: string
+): Promise<string | null> {
+  if (!standardEmailId) return null;
+  
+  console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente con ID estándar: "${standardEmailId}"`);
+  
+  try {
+    // Buscar en TODOS los campos donde guardamos el extractValidEmailId
+    const searchQueries = [
+      // Campo principal actual
+      supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('lead_id', leadId)
+        .filter('custom_data->email_id', 'eq', standardEmailId)
+        .limit(1),
+      
+      // Campo en delivery.details (formato actual)
+      supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('lead_id', leadId)
+        .filter('custom_data->delivery->details->api_messageId', 'eq', standardEmailId)
+        .limit(1),
+      
+      // Campo legacy external_message_id
+      supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('lead_id', leadId)
+        .filter('custom_data->delivery->external_message_id', 'eq', standardEmailId)
+        .limit(1),
+        
+      // Campo legacy en delivery.details
+      supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .eq('lead_id', leadId)
+        .filter('custom_data->delivery->details->external_message_id', 'eq', standardEmailId)
+        .limit(1)
+    ];
+    
+    // Ejecutar todas las búsquedas en paralelo
+    const results = await Promise.allSettled(searchQueries);
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value.data && result.value.data.length > 0) {
+        const foundMessageId = result.value.data[0].id;
+        console.log(`[EMAIL_SYNC] ✅ DUPLICADO ENCONTRADO por ID estándar "${standardEmailId}": ${foundMessageId}`);
+        return foundMessageId;
+      }
+    }
+    
+    console.log(`[EMAIL_SYNC] ✅ No hay duplicados con ID estándar: "${standardEmailId}"`);
+    return null;
+  } catch (error) {
+    console.error('[EMAIL_SYNC] Error buscando por ID estándar:', error);
+    return null;
+  }
 }
 
 /**
@@ -483,7 +556,7 @@ async function findExistingEmailMessageByChannel(
         subject: (deliveryDetails.subject || customData.subject || '').toLowerCase().trim(),
         recipient: (deliveryDetails.recipient || '').toLowerCase().trim(),
         timestamp: deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(msg.created_at),
-        emailId: customData.email_id || deliveryDetails.api_messageId,
+        emailId: customData.email_id || deliveryDetails.api_messageId || deliveryDetails.external_message_id || customData.delivery?.external_message_id,
         createdAt: new Date(msg.created_at)
       };
     }).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()); // Ordenar por timestamp
@@ -654,14 +727,24 @@ async function addSentMessageToConversation(
   try {
     console.log(`[EMAIL_SYNC] 📧 Verificando mensaje enviado en conversación: ${conversationId}`);
     
-    // 1. NUEVA VALIDACIÓN SIMPLE POR CHANNEL: Verificar primero por channel email
+    // 1. VERIFICACIÓN PRIMARIA: Usar el MISMO estándar de ID que guardamos (RFC 5322)
+    const standardEmailId = extractValidEmailId(email);
+    if (standardEmailId) {
+      const existingMessageId = await findExistingMessageByStandardId(conversationId, leadId, standardEmailId);
+      if (existingMessageId) {
+        console.log(`[EMAIL_SYNC] ✅ DUPLICADO ENCONTRADO por ID estándar RFC 5322: ${existingMessageId}`);
+        return existingMessageId;
+      }
+    }
+    
+    // 2. VALIDACIÓN SECUNDARIA POR CHANNEL: Verificar por análisis temporal si el ID estándar no encuentra nada
     const channelCheck = await findExistingEmailMessageByChannel(conversationId, email, leadId);
     if (channelCheck.exists) {
       console.log(`[EMAIL_SYNC] ✅ ${channelCheck.reason}, ID existente: ${channelCheck.messageId}`);
       return channelCheck.messageId!;
     }
     
-    // 2. VALIDACIÓN ROBUSTA: Verificar por elementos estables SOLO si no se encontró por channel
+    // 3. VALIDACIÓN ROBUSTA: Verificar por elementos estables SOLO si no se encontró por métodos anteriores
     const stableDuplicateCheck = await StableEmailDeduplicationService.isEmailDuplicateStable(
       email,
       conversationId,
@@ -768,33 +851,6 @@ async function addSentMessageToConversation(
       return null;
     }
     
-    // 3. Verificación adicional por email_id (fallback para compatibilidad)
-    const emailId = extractValidEmailId(email);
-    if (emailId) {
-      console.log(`[EMAIL_SYNC] 🔍 Verificación de fallback: buscando mensaje existente con email_id: ${emailId}`);
-      
-      try {
-        const { data: existingMessage, error: existingError } = await supabaseAdmin
-          .from('messages')
-          .select('id')
-          .eq('conversation_id', conversationId)
-          .filter('custom_data->email_id', 'eq', emailId)
-          .limit(1);
-          
-        if (existingError) {
-          console.error('[EMAIL_SYNC] Error al buscar mensaje existente por email_id:', existingError);
-        } else if (existingMessage && existingMessage.length > 0) {
-          console.log(`[EMAIL_SYNC] ✅ FALLBACK: Mensaje ya existe con email_id ${emailId}, ID: ${existingMessage[0].id}`);
-          return existingMessage[0].id;
-        }
-      } catch (queryError) {
-        console.error('[EMAIL_SYNC] Error en consulta de verificación de email_id:', queryError);
-        // Continuar con el procesamiento en caso de error de consulta
-      }
-    } else {
-      console.log(`[EMAIL_SYNC] ⚠️ No se pudo extraer un email ID válido para verificación de fallback`);
-    }
-    
     // 4. Verificar por contenido extraído para detectar duplicados más precisamente
     if (email.subject && messageContent) {
       console.log(`[EMAIL_SYNC] 🔍 Buscando mensaje existente por contenido y subject...`);
@@ -890,7 +946,7 @@ async function addSentMessageToConversation(
               recipient: email.to,
               subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
               timestamp: email.date || new Date().toISOString(),
-              api_messageId: email.id || "unknown"
+              api_messageId: standardEmailId || email.id || "unknown"
             },
             success: true,
             timestamp: new Date().toISOString()
@@ -902,7 +958,7 @@ async function addSentMessageToConversation(
           processed_at: new Date().toISOString()
         },
         // Mantener campos adicionales para compatibilidad y deduplicación
-        email_id: email.id,
+        email_id: standardEmailId || email.id,
         from: email.from,
         content_extracted: true,
         sync_source: 'email_sync',
@@ -1726,7 +1782,7 @@ async function processSentEmail(email: any, siteId: string): Promise<{
     console.error('[EMAIL_SYNC] Error al procesar email enviado:', error);
     
     // Marcar como error en SyncedObjectsService si hay ID
-    const emailId = email.id || email.messageId || email.uid;
+    const emailId = extractValidEmailId(email);
     if (emailId) {
       await SyncedObjectsService.updateObject(emailId, siteId, {
         status: 'error',

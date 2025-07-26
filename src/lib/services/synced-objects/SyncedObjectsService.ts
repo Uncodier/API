@@ -70,12 +70,13 @@ export class SyncedObjectsService {
   }
 
   /**
-   * Extrae y valida el ID más confiable de un email
+   * Extrae y valida el ID más confiable de un email siguiendo RFC 5322
+   * DEBE SER IDÉNTICO al extractValidEmailId del email sync route
    */
   private static extractValidEmailId(email: any): string | null {
     const candidates = [
+      email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta (RFC 5322)
       email.id,
-      email.messageId, 
       email.uid,
       email.message_id,
       email.Message_ID,
