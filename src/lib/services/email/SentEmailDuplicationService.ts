@@ -38,25 +38,51 @@ export class SentEmailDuplicationService {
    * Extrae y valida el ID más confiable de un email siguiendo RFC 5322
    */
   static extractStandardEmailId(email: any): string | null {
+    console.log(`[SENT_EMAIL_DEDUP] 🔍 Extrayendo ID estándar del email...`);
+    
     const candidates = [
-      email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta (RFC 5322)
-      email.id,
-      email.uid,
-      email.message_id,
-      email.Message_ID,
-      email.ID
+      { field: 'messageId', value: email.messageId, priority: 1 }, // 🎯 PRIORIZAR Message-ID para correlación perfecta (RFC 5322)
+      { field: 'id', value: email.id, priority: 2 },
+      { field: 'uid', value: email.uid, priority: 3 },
+      { field: 'message_id', value: email.message_id, priority: 4 },
+      { field: 'Message_ID', value: email.Message_ID, priority: 5 },
+      { field: 'ID', value: email.ID, priority: 6 }
     ];
     
+    console.log(`[SENT_EMAIL_DEDUP] 📋 Candidatos disponibles:`, 
+      candidates.map(c => `${c.field}="${c.value}" (prioridad: ${c.priority})`).join(', ')
+    );
+    
+    // Evaluar cada candidato en orden de prioridad
     for (const candidate of candidates) {
-      if (this.isValidEmailId(candidate)) {
-        const standardId = candidate.trim();
-        console.log(`[SENT_EMAIL_DEDUP] 🆔 ID estándar extraído: "${standardId}" (fuente: ${candidates.indexOf(candidate) === 0 ? 'messageId' : 'fallback'})`);
+      console.log(`[SENT_EMAIL_DEDUP] 🔍 Evaluando candidato ${candidate.field}="${candidate.value}"...`);
+      
+      if (this.isValidEmailId(candidate.value)) {
+        const standardId = candidate.value.trim();
+        console.log(`[SENT_EMAIL_DEDUP] ✅ ID estándar seleccionado: "${standardId}" (fuente: ${candidate.field}, prioridad: ${candidate.priority})`);
+        
+        // Logging adicional sobre el tipo de ID seleccionado
+        if (standardId.includes('@')) {
+          console.log(`[SENT_EMAIL_DEDUP] 🎯 EXCELENTE: Message-ID con formato RFC 5322 (contiene @)`);
+        } else if (standardId.includes('-') || standardId.includes('.')) {
+          console.log(`[SENT_EMAIL_DEDUP] ✅ BUENO: ID con formato estructurado (contiene - o .)`);
+        } else if (standardId.length > 10) {
+          console.log(`[SENT_EMAIL_DEDUP] ✅ ACEPTABLE: ID largo (${standardId.length} caracteres)`);
+        }
+        
         return standardId;
+      } else {
+        console.log(`[SENT_EMAIL_DEDUP] ❌ Candidato ${candidate.field}="${candidate.value}" RECHAZADO por validación`);
       }
     }
     
-    console.log(`[SENT_EMAIL_DEDUP] ⚠️ No se pudo extraer un ID estándar válido del email`);
-    console.log(`[SENT_EMAIL_DEDUP] 🔍 Candidatos evaluados:`, candidates.map((c, i) => `${i}: ${c} (válido: ${this.isValidEmailId(c)})`));
+    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN candidato pasó la validación - No se pudo extraer ID estándar válido`);
+    console.log(`[SENT_EMAIL_DEDUP] 🔍 Resumen de rechazo:`, {
+      messageId: { value: email.messageId, reason: this.getValidationFailureReason(email.messageId) },
+      id: { value: email.id, reason: this.getValidationFailureReason(email.id) },
+      uid: { value: email.uid, reason: this.getValidationFailureReason(email.uid) }
+    });
+    
     return null;
   }
 
@@ -70,20 +96,66 @@ export class SentEmailDuplicationService {
 
     const trimmedId = emailId.trim();
     
-    if (trimmedId.length < 3) {
+    // Verificar longitud mínima más estricta
+    if (trimmedId.length < 5) {
       return false;
     }
     
+    // Verificar que no sea un ID demasiado genérico o común
     const genericIds = /^(1|2|3|4|5|6|7|8|9|0|test|temp|undefined|null|msg|email|id)$/i;
     if (genericIds.test(trimmedId)) {
       return false;
     }
     
-    if (/^\d{1,2}$/.test(trimmedId) && parseInt(trimmedId) <= 100) {
+    // Verificar que no sean solo números simples (1-999999) - UIDs de IMAP
+    if (/^\d{1,6}$/.test(trimmedId)) {
+      console.log(`[SENT_EMAIL_DEDUP] ❌ ID rechazado por ser UID numérico simple: "${trimmedId}"`);
+      return false;
+    }
+    
+    // Verificar que no sea solo letras simples (a, b, c, etc.)
+    if (/^[a-zA-Z]{1,3}$/.test(trimmedId)) {
+      return false;
+    }
+    
+    // Preferir IDs que tengan formato de Message-ID (contienen @ o -)
+    const hasMessageIdFormat = trimmedId.includes('@') || 
+                              trimmedId.includes('-') || 
+                              trimmedId.includes('.') ||
+                              trimmedId.length > 10;
+    
+    if (!hasMessageIdFormat) {
+      console.log(`[SENT_EMAIL_DEDUP] ⚠️ ID "${trimmedId}" no tiene formato de Message-ID esperado (sin @, -, . o muy corto)`);
       return false;
     }
     
     return true;
+  }
+
+  /**
+   * Explica por qué un ID falló la validación (para debugging)
+   */
+  private static getValidationFailureReason(emailId: any): string {
+    if (!emailId) return 'valor nulo o undefined';
+    if (typeof emailId !== 'string') return 'no es string';
+    
+    const trimmedId = emailId.trim();
+    if (trimmedId.length < 5) return 'muy corto (< 5 caracteres)';
+    
+    const genericIds = /^(1|2|3|4|5|6|7|8|9|0|test|temp|undefined|null|msg|email|id)$/i;
+    if (genericIds.test(trimmedId)) return 'ID genérico/común';
+    
+    if (/^\d{1,6}$/.test(trimmedId)) return 'UID numérico simple (posible UID de IMAP)';
+    if (/^[a-zA-Z]{1,3}$/.test(trimmedId)) return 'solo letras simples';
+    
+    const hasMessageIdFormat = trimmedId.includes('@') || 
+                              trimmedId.includes('-') || 
+                              trimmedId.includes('.') ||
+                              trimmedId.length > 10;
+    
+    if (!hasMessageIdFormat) return 'sin formato de Message-ID esperado';
+    
+    return 'pasó todas las validaciones'; // No debería llegar aquí
   }
 
   /**

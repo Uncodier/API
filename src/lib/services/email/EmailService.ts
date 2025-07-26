@@ -875,7 +875,45 @@ export class EmailService {
             
             // Get headers if available
             try {
-              const headerPart = message.bodyParts?.get('HEADER');
+              let headerPart = message.bodyParts?.get('HEADER');
+              
+              // Estrategia alternativa si HEADER no está disponible
+              if (!headerPart) {
+                console.log(`[EmailService] 📋 HEADER part no disponible para email ${message.uid}, intentando estrategias alternativas...`);
+                
+                // Intentar otras claves posibles para headers
+                const headerKeys = ['HEADER.FIELDS', 'RFC822.HEADER', 'headers'];
+                for (const key of headerKeys) {
+                  const altHeaderPart = message.bodyParts?.get(key);
+                  if (altHeaderPart) {
+                    headerPart = altHeaderPart;
+                    console.log(`[EmailService] ✅ Headers encontrados con clave alternativa: ${key}`);
+                    break;
+                  }
+                }
+                
+                // Si aún no hay headers, intentar fetchear específicamente
+                if (!headerPart && client) {
+                  try {
+                    console.log(`[EmailService] 🔄 Intentando fetch específico de headers para email ${message.uid}...`);
+                    
+                    // Fetch específico para headers
+                    for await (const headerMessage of client.fetch(`${message.uid}:${message.uid}`, {
+                      envelope: true,
+                      bodyParts: ['HEADER']
+                    })) {
+                      headerPart = headerMessage.bodyParts?.get('HEADER');
+                      if (headerPart) {
+                        console.log(`[EmailService] ✅ Headers obtenidos con fetch específico para email ${message.uid}`);
+                        break;
+                      }
+                    }
+                  } catch (specificFetchError) {
+                    console.warn(`[EmailService] ⚠️ Error en fetch específico de headers para email ${message.uid}:`, specificFetchError);
+                  }
+                }
+              }
+              
               if (headerPart) {
                 const headerStr = headerPart.toString('utf8');
                 const headers: any = {};
@@ -899,20 +937,66 @@ export class EmailService {
                 }
                 email.headers = headers;
                 
-                // 🎯 NUEVO: Usar Message-ID como ID preferido para correlación con sync
+                console.log(`[EmailService] 📋 Headers extraídos para email ${message.uid}:`, {
+                  hasMessageId: !!headers['message-id'],
+                  messageIdValue: headers['message-id'],
+                  totalHeaders: Object.keys(headers).length,
+                  importantHeaders: {
+                    'message-id': headers['message-id'],
+                    'references': headers['references'],
+                    'in-reply-to': headers['in-reply-to']
+                  }
+                });
+                
+                // 🎯 ESTRATEGIA MEJORADA: Usar Message-ID como ID preferido para correlación con sync
                 const messageId = headers['message-id'];
                 if (messageId) {
                   // Limpiar Message-ID (remover < > si están presentes)
                   const cleanMessageId = messageId.replace(/^<|>$/g, '').trim();
-                  if (cleanMessageId) {
+                  if (cleanMessageId && cleanMessageId.length > 3) {
                     email.messageId = cleanMessageId; // Para compatibilidad con extractValidEmailId()
                     email.id = cleanMessageId; // Reemplazar UID con Message-ID
-                    console.log(`[EmailService] 🔄 Email ${message.uid} → usando Message-ID como ID: ${cleanMessageId}`);
+                    console.log(`[EmailService] 🎯 Email ${message.uid} → Message-ID correcto asignado: "${cleanMessageId}"`);
+                  } else {
+                    console.warn(`[EmailService] ⚠️ Message-ID "${cleanMessageId}" demasiado corto o inválido para email ${message.uid}`);
+                  }
+                } else {
+                  console.warn(`[EmailService] ⚠️ NO se encontró Message-ID en headers para email ${message.uid}, usando UID como fallback`);
+                  
+                  // Buscar IDs alternativos en headers si no hay Message-ID
+                  const alternativeIds = [
+                    headers['x-message-id'],
+                    headers['x-original-message-id'], 
+                    headers['x-smtp-message-id'],
+                    headers['x-ms-exchange-message-id']
+                  ];
+                  
+                  for (const altId of alternativeIds) {
+                    if (altId && typeof altId === 'string' && altId.trim().length > 3) {
+                      const cleanAltId = altId.replace(/^<|>$/g, '').trim();
+                      email.messageId = cleanAltId;
+                      email.id = cleanAltId;
+                      console.log(`[EmailService] 🔄 Email ${message.uid} → usando ID alternativo: "${cleanAltId}"`);
+                      break;
+                    }
                   }
                 }
+              } else {
+                console.error(`[EmailService] ❌ NO se pudieron obtener headers para email ${message.uid}, manteniendo UID como ID`);
+                console.log(`[EmailService] 🔍 Debug info para email ${message.uid}:`, {
+                  hasBodyParts: !!message.bodyParts,
+                  bodyPartsKeys: message.bodyParts ? Array.from(message.bodyParts.keys()) : [],
+                  hasEnvelope: !!message.envelope,
+                  subject: message.envelope?.subject
+                });
               }
             } catch (headerError) {
-              console.warn(`[EmailService] ⚠️ Error reading email headers for ID ${email.id}:`, headerError);
+              console.error(`[EmailService] ❌ Error crítico extrayendo headers para email ${message.uid}:`, headerError);
+              console.log(`[EmailService] 🔍 Error details:`, {
+                name: headerError instanceof Error ? headerError.name : 'Unknown',
+                message: headerError instanceof Error ? headerError.message : String(headerError),
+                stack: headerError instanceof Error ? headerError.stack?.substring(0, 500) : 'No stack'
+              });
               email.headers = null;
             }
             

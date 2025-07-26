@@ -708,6 +708,27 @@ export async function POST(request: NextRequest) {
       // Add diagnostic checkpoint
       console.log(`[EMAIL_API] 🔍 CHECKPOINT 1: Iniciando procesamiento de emails obtenidos...`);
       
+      // CRITICAL: Filter emails by size to prevent memory issues
+      console.log(`[EMAIL_API] 🔍 Verificando tamaños de emails para prevenir problemas de memoria...`);
+      const MAX_EMAIL_SIZE = 50000; // 50KB máximo por email
+      const originalEmailCount = allEmails.length;
+      
+      const sizeFilteredEmails = allEmails.filter((email, index) => {
+        const emailSize = JSON.stringify(email).length;
+        if (emailSize > MAX_EMAIL_SIZE) {
+          console.log(`[EMAIL_API] 🚫 Email ${index + 1} excede tamaño máximo: ${emailSize} caracteres (máximo: ${MAX_EMAIL_SIZE})`);
+          console.log(`[EMAIL_API] 🚫 Email excluido - From: ${email.from}, Subject: ${email.subject}`);
+          return false;
+        }
+        return true;
+      });
+      
+      console.log(`[EMAIL_API] 📊 Filtro de tamaño completado: ${sizeFilteredEmails.length}/${originalEmailCount} emails dentro del límite de tamaño`);
+      
+      // Reemplazar allEmails con los emails filtrados por tamaño
+      const processableEmails = sizeFilteredEmails;
+      console.log(`[EMAIL_API] 🔍 CHECKPOINT 1.5: Filtro de tamaño completado, continuando con ${processableEmails.length} emails...`);
+      
       // Validación inicial: logs de configuración de no-reply
       console.log(`[EMAIL_API] 🔒 Configuración de filtros de seguridad:`);
       const noReplyAddresses = getNoReplyAddresses();
@@ -723,10 +744,10 @@ export async function POST(request: NextRequest) {
       // Filter emails to avoid feedback loops (first filter) - with timeout
       console.log(`[EMAIL_API] 🔄 Aplicando filtro de feedback loops...`);
       const feedbackFilteredEmails = await Promise.race([
-        Promise.resolve(filterFeedbackLoopEmails(allEmails)),
+        Promise.resolve(filterFeedbackLoopEmails(processableEmails)),
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout en filtro de feedback loops')), 30000))
       ]) as any[];
-      console.log(`[EMAIL_API] ✅ Filtro de feedback loops completado: ${feedbackFilteredEmails.length}/${allEmails.length} emails`);
+      console.log(`[EMAIL_API] ✅ Filtro de feedback loops completado: ${feedbackFilteredEmails.length}/${processableEmails.length} emails`);
       
       console.log(`[EMAIL_API] 🔍 CHECKPOINT 3: Filtro de feedback loops completado...`);
       
@@ -784,7 +805,8 @@ export async function POST(request: NextRequest) {
       console.log(`[EMAIL_API] 🔍 CHECKPOINT 7: Filtro de duplicados completado...`);
 
       console.log(`[EMAIL_API] 📈 Resumen de filtrado:`);
-      console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${allEmails.length}`);
+      console.log(`[EMAIL_API] - Emails obtenidos inicialmente: ${originalEmailCount}`);
+      console.log(`[EMAIL_API] - Emails después del filtro de tamaño: ${processableEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtro de feedback loops: ${feedbackFilteredEmails.length}`);
       console.log(`[EMAIL_API] - Emails después del filtrado por aliases: ${aliasFilteredEmails.length}`);
       console.log(`[EMAIL_API] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
@@ -812,18 +834,21 @@ export async function POST(request: NextRequest) {
           status: 'completed',
           message: "No se encontraron emails para analizar en el período especificado",
           emailCount: 0,
-          originalEmailCount: allEmails.length,
+          originalEmailCount: originalEmailCount,
+          sizeFilteredCount: processableEmails.length,
           feedbackLoopFilteredCount: feedbackFilteredEmails.length,
           aliasFilteredCount: aliasFilteredEmails.length,
           alreadyProcessedCount: alreadyProcessed.length,
           analysisCount: 0,
           aliasesConfigured: normalizedAliases,
+          filteredBySize: originalEmailCount > processableEmails.length,
           filteredByAliases: normalizedAliases.length > 0,
-          filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+          filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
           filteredByDuplicates: alreadyProcessed.length > 0,
           processingStats: stats,
           emails: [],
-          reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
+          reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
+                  processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
                   feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
                   aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
                   emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
@@ -890,25 +915,28 @@ export async function POST(request: NextRequest) {
           status: 'completed',
           message: "No se encontraron emails seguros para analizar después de las validaciones de seguridad",
           emailCount: 0,
-          originalEmailCount: allEmails.length,
+          originalEmailCount: originalEmailCount,
+          sizeFilteredCount: processableEmails.length,
           feedbackLoopFilteredCount: feedbackFilteredEmails.length,
           aliasFilteredCount: aliasFilteredEmails.length,
           alreadyProcessedCount: alreadyProcessed.length,
-                  unsafeEmailsBlocked: unsafeEmails.length,
-        analysisCount: 0,
-        aliasesConfigured: normalizedAliases,
-        filteredByAliases: normalizedAliases.length > 0,
-        filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
-        filteredByDuplicates: alreadyProcessed.length > 0,
-        filteredBySecurity: unsafeEmails.length > 0,
-        securityValidation: {
-          detected: unsafeEmails.length,
-          categories: EmailFilterService.getFilteringStats(unsafeEmails),
-          reasons: unsafeEmails.map(u => u.reason)
-        },
+          unsafeEmailsBlocked: unsafeEmails.length,
+          analysisCount: 0,
+          aliasesConfigured: normalizedAliases,
+          filteredBySize: originalEmailCount > processableEmails.length,
+          filteredByAliases: normalizedAliases.length > 0,
+          filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
+          filteredByDuplicates: alreadyProcessed.length > 0,
+          filteredBySecurity: unsafeEmails.length > 0,
+          securityValidation: {
+            detected: unsafeEmails.length,
+            categories: EmailFilterService.getFilteringStats(unsafeEmails),
+            reasons: unsafeEmails.map(u => u.reason)
+          },
           processingStats: stats,
           emails: [],
-          reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 
+          reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
+                  processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
                   feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
                   aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
                   emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
@@ -1168,7 +1196,8 @@ export async function POST(request: NextRequest) {
         status: executedCommand?.status || 'completed',
         message: "Análisis de emails completado exitosamente",
         emailCount: finalEmailsForAnalysis.length,
-        originalEmailCount: allEmails.length,
+        originalEmailCount: originalEmailCount,
+        sizeFilteredCount: processableEmails.length,
         feedbackLoopFilteredCount: feedbackFilteredEmails.length,
         aliasFilteredCount: aliasFilteredEmails.length,
         alreadyProcessedCount: alreadyProcessed.length,
@@ -1176,8 +1205,9 @@ export async function POST(request: NextRequest) {
         analysisCount: emailsForResponse.length,
         processedEmailsMarked: successfulMarks,
         aliasesConfigured: normalizedAliases,
+        filteredBySize: originalEmailCount > processableEmails.length,
         filteredByAliases: normalizedAliases.length > 0,
-        filteredByFeedbackLoop: allEmails.length > feedbackFilteredEmails.length,
+        filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
         filteredByDuplicates: alreadyProcessed.length > 0,
         filteredBySecurity: unsafeEmails.length > 0,
         securityValidation: {

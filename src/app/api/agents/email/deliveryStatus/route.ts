@@ -188,9 +188,29 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
+      // CRITICAL: Filter emails by size to prevent memory issues
+      console.log(`[DELIVERY_STATUS] 🔍 Verificando tamaños de emails para prevenir problemas de memoria...`);
+      const MAX_EMAIL_SIZE = 50000; // 50KB máximo por email
+      const originalEmailCount = allEmails.length;
+      
+      const sizeFilteredEmails = allEmails.filter((email, index) => {
+        const emailSize = JSON.stringify(email).length;
+        if (emailSize > MAX_EMAIL_SIZE) {
+          console.log(`[DELIVERY_STATUS] 🚫 Email ${index + 1} excede tamaño máximo: ${emailSize} caracteres (máximo: ${MAX_EMAIL_SIZE})`);
+          console.log(`[DELIVERY_STATUS] 🚫 Email excluido - From: ${email.from}, Subject: ${email.subject}`);
+          return false;
+        }
+        return true;
+      });
+      
+      console.log(`[DELIVERY_STATUS] 📊 Filtro de tamaño completado: ${sizeFilteredEmails.length}/${originalEmailCount} emails dentro del límite de tamaño`);
+      
+      // Usar los emails filtrados por tamaño para el resto del procesamiento
+      const processableEmails = sizeFilteredEmails;
+      
       // Filter for bounce emails (simple and direct)
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
-      const bounceEmails = allEmails.filter(email => {
+      const bounceEmails = processableEmails.filter(email => {
         const from = (email.from || '').toLowerCase();
         const subject = (email.subject || '').toLowerCase();
         const body = (email.body || '').toLowerCase();
@@ -207,17 +227,19 @@ export async function POST(request: NextRequest) {
           body.includes('permanent failure')
         );
       });
-      console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${allEmails.length}`);
+      console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${processableEmails.length}`);
       
       if (bounceEmails.length === 0) {
         return NextResponse.json({
           success: true,
           message: "No se encontraron emails de Mail Delivery Subsystem",
-          totalEmails: allEmails.length,
+          totalEmails: originalEmailCount,
+          sizeFilteredEmails: processableEmails.length,
           bounceEmails: 0,
           processedBounces: 0,
           workflowsTriggered: 0,
-          emailsDeleted: 0
+          emailsDeleted: 0,
+          filteredBySize: originalEmailCount > processableEmails.length
         });
       }
       
@@ -335,11 +357,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         message: "Procesamiento de delivery status completado",
-        totalEmails: allEmails.length,
+        totalEmails: originalEmailCount,
+        sizeFilteredEmails: processableEmails.length,
         bounceEmails: bounceEmails.length,
         processedBounces: results.length,
         workflowsTriggered,
         emailsDeleted,
+        filteredBySize: originalEmailCount > processableEmails.length,
         results,
         note: bouncesToProcess.length < bounceEmails.length 
           ? `Se procesaron solo los primeros ${bouncesToProcess.length} bounce emails de ${bounceEmails.length} encontrados (límite: 10 por ejecución)`
