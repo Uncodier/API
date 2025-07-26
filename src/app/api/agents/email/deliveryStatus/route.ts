@@ -190,13 +190,14 @@ export async function POST(request: NextRequest) {
       
       // CRITICAL: Filter emails by size to prevent memory issues
       console.log(`[DELIVERY_STATUS] 🔍 Verificando tamaños de emails para prevenir problemas de memoria...`);
-      const MAX_EMAIL_SIZE = 50000; // 50KB máximo por email
+      const MAX_BODY_SIZE = 30000; // 30KB máximo para el body del email
       const originalEmailCount = allEmails.length;
       
       const sizeFilteredEmails = allEmails.filter((email, index) => {
-        const emailSize = JSON.stringify(email).length;
-        if (emailSize > MAX_EMAIL_SIZE) {
-          console.log(`[DELIVERY_STATUS] 🚫 Email ${index + 1} excede tamaño máximo: ${emailSize} caracteres (máximo: ${MAX_EMAIL_SIZE})`);
+        // Usar el tamaño del body en lugar de JSON.stringify completo (más eficiente)
+        const bodySize = (email.body || '').length;
+        if (bodySize > MAX_BODY_SIZE) {
+          console.log(`[DELIVERY_STATUS] 🚫 Email ${index + 1} excede tamaño máximo: ${bodySize} caracteres en body (máximo: ${MAX_BODY_SIZE})`);
           console.log(`[DELIVERY_STATUS] 🚫 Email excluido - From: ${email.from}, Subject: ${email.subject}`);
           return false;
         }
@@ -207,26 +208,39 @@ export async function POST(request: NextRequest) {
       
       // Usar los emails filtrados por tamaño para el resto del procesamiento
       const processableEmails = sizeFilteredEmails;
+      console.log(`[DELIVERY_STATUS] ✅ Emails procesables obtenidos: ${processableEmails.length}`);
       
       // Filter for bounce emails (simple and direct)
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
-      const bounceEmails = processableEmails.filter(email => {
+      const bounceEmails = [];
+      
+      for (let i = 0; i < processableEmails.length; i++) {
+        const email = processableEmails[i];
+        console.log(`[DELIVERY_STATUS] 🔍 Analizando email ${i + 1}/${processableEmails.length} - From: ${email.from?.substring(0, 50)}, Subject: ${email.subject?.substring(0, 50)}`);
+        
         const from = (email.from || '').toLowerCase();
         const subject = (email.subject || '').toLowerCase();
-        const body = (email.body || '').toLowerCase();
+        // Usar solo los primeros 1000 caracteres del body para el filtro (más eficiente)
+        const bodyPreview = (email.body || '').toLowerCase().substring(0, 1000);
         
-        return (
+        const isBounce = (
           from.includes('mail delivery subsystem') ||
           from.includes('mailer-daemon') ||
           from.includes('postmaster') ||
           subject.includes('delivery status notification') ||
           subject.includes('undelivered mail') ||
           subject.includes('delivery failure') ||
-          body.includes('delivery failed') ||
-          body.includes('user unknown') ||
-          body.includes('permanent failure')
+          bodyPreview.includes('delivery failed') ||
+          bodyPreview.includes('user unknown') ||
+          bodyPreview.includes('permanent failure')
         );
-      });
+        
+        if (isBounce) {
+          console.log(`[DELIVERY_STATUS] ✅ Bounce email detectado: ${email.from} - ${email.subject}`);
+          bounceEmails.push(email);
+        }
+      }
+      
       console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${processableEmails.length}`);
       
       if (bounceEmails.length === 0) {

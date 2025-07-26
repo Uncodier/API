@@ -157,10 +157,10 @@ export async function POST(request: NextRequest) {
     }
 
     // 🎯 NUEVO: Guardar el messageId en synced_objects para evitar duplicaciones en sync
-    if (result.email_id && result.status === 'sent') {
+    if (result.envelope_id && result.status === 'sent') {
       try {
         await SyncedObjectsService.createObject({
-          external_id: result.email_id, // El messageId de nodemailer
+          external_id: result.envelope_id, // 🔄 Usar envelope_id en lugar de email_id para correlación perfecta
           site_id: site_id,
           object_type: 'sent_email',
           status: 'processed', // Marcar como ya procesado
@@ -178,16 +178,48 @@ export async function POST(request: NextRequest) {
             conversation_id,
             lead_id,
             
+            // IDs para correlación
+            smtp_message_id: result.email_id, // MessageId original del SMTP
+            envelope_id: result.envelope_id,  // ID basado en envelope para correlación
+            
             // Marcar que fue enviado por API, no sincronizado
             source: 'api_send',
             processed_at: new Date().toISOString()
           }
         });
         
-        console.log(`✅ [SEND_EMAIL] MessageId ${result.email_id} guardado en synced_objects para evitar duplicación en sync`);
+        console.log(`✅ [SEND_EMAIL] Envelope ID ${result.envelope_id} guardado en synced_objects para evitar duplicación en sync`);
       } catch (syncError) {
         // No fallar el envío si hay error guardando en sync, solo logear
-        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar messageId en synced_objects:`, syncError);
+        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar envelope ID en synced_objects:`, syncError);
+      }
+    } else if (result.email_id && result.status === 'sent') {
+      // Fallback: usar email_id si no hay envelope_id (compatibilidad con versiones anteriores)
+      try {
+        await SyncedObjectsService.createObject({
+          external_id: result.email_id, // Fallback al messageId de nodemailer
+          site_id: site_id,
+          object_type: 'sent_email',
+          status: 'processed',
+          provider: 'smtp_send_service',
+          metadata: {
+            recipient: result.recipient,
+            sender: result.sender,
+            subject: result.subject,
+            message_preview: result.message_preview,
+            sent_at: result.sent_at,
+            agent_id,
+            conversation_id,
+            lead_id,
+            smtp_message_id: result.email_id,
+            source: 'api_send_fallback',
+            processed_at: new Date().toISOString()
+          }
+        });
+        
+        console.log(`✅ [SEND_EMAIL] MessageId ${result.email_id} guardado en synced_objects (fallback) para evitar duplicación en sync`);
+      } catch (syncError) {
+        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar messageId en synced_objects (fallback):`, syncError);
       }
     }
 

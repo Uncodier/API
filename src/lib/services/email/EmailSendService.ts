@@ -1,5 +1,6 @@
-import * as nodemailer from 'nodemailer';
 import { EmailConfigService } from './EmailConfigService';
+import { SentEmailDuplicationService } from './SentEmailDuplicationService';
+import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export interface SendEmailParams {
@@ -18,6 +19,7 @@ export interface SendEmailParams {
 export interface SendEmailResult {
   success: boolean;
   email_id?: string;
+  envelope_id?: string; // 🆕 ID basado en envelope para correlación con sync
   recipient?: string;
   sender?: string;
   subject?: string;
@@ -134,14 +136,27 @@ export class EmailSendService {
         sent_at: new Date().toISOString()
       });
       
+      // 🆕 Generar envelope-based ID para correlación con sync
+      const sentAt = new Date().toISOString();
+      const envelopeData = {
+        to: email,
+        from: `${fromName} <${fromAddress}>`,
+        subject,
+        date: sentAt
+      };
+      
+      const envelopeId = SentEmailDuplicationService.generateEnvelopeBasedId(envelopeData);
+      console.log(`[EMAIL_SEND] 🏗️ Envelope ID generado para correlación: "${envelopeId}"`);
+      
       return {
         success: true,
         email_id: info.messageId,
+        envelope_id: envelopeId || undefined, // Convertir null a undefined
         recipient: email,
         sender: `${fromName} <${fromAddress}>`,
         subject,
         message_preview: message.substring(0, 100) + (message.length > 100 ? '...' : ''),
-        sent_at: new Date().toISOString(),
+        sent_at: sentAt,
         status: 'sent'
       };
 

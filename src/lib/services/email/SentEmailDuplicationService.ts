@@ -76,14 +76,101 @@ export class SentEmailDuplicationService {
       }
     }
     
-    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN candidato pasó la validación - No se pudo extraer ID estándar válido`);
+    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN candidato tradicional pasó la validación`);
+    
+    // 🆕 FALLBACK: Generar ID basado en envelope (para casos donde no hay Message-ID disponible)
+    const envelopeId = this.generateEnvelopeBasedId(email);
+    if (envelopeId) {
+      console.log(`[SENT_EMAIL_DEDUP] ✅ ID generado desde envelope: "${envelopeId}"`);
+      return envelopeId;
+    }
+    
+    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN método pudo extraer ID estándar válido`);
     console.log(`[SENT_EMAIL_DEDUP] 🔍 Resumen de rechazo:`, {
       messageId: { value: email.messageId, reason: this.getValidationFailureReason(email.messageId) },
       id: { value: email.id, reason: this.getValidationFailureReason(email.id) },
-      uid: { value: email.uid, reason: this.getValidationFailureReason(email.uid) }
+      uid: { value: email.uid, reason: this.getValidationFailureReason(email.uid) },
+      envelopeData: {
+        to: email.to,
+        from: email.from,
+        subject: email.subject,
+        date: email.date
+      }
     });
     
     return null;
+  }
+
+  /**
+   * Genera un ID estable basado en datos del envelope (to, from, subject, timestamp)
+   * Este ID puede generarse tanto al enviar como al sincronizar desde IMAP
+   */
+  static generateEnvelopeBasedId(email: any): string | null {
+    try {
+      console.log(`[SENT_EMAIL_DEDUP] 🏗️ Generando ID basado en envelope...`);
+      
+      // Extraer datos requeridos
+      const to = email.to || email.recipient;
+      const from = email.from || email.sender;
+      const subject = email.subject;
+      const date = email.date || email.sent_at;
+      
+      if (!to || !from || !subject || !date) {
+        console.log(`[SENT_EMAIL_DEDUP] ❌ Datos insuficientes para generar ID desde envelope:`, {
+          hasTo: !!to,
+          hasFrom: !!from, 
+          hasSubject: !!subject,
+          hasDate: !!date
+        });
+        return null;
+      }
+      
+      // Normalizar timestamp a ventana de 1 minuto para manejar diferencias pequeñas
+      const timestamp = new Date(date);
+      if (isNaN(timestamp.getTime())) {
+        console.log(`[SENT_EMAIL_DEDUP] ❌ Fecha inválida para envelope ID: ${date}`);
+        return null;
+      }
+      
+      // Redondear a minuto para crear ventana temporal estable
+      const roundedTime = new Date(timestamp);
+      roundedTime.setSeconds(0, 0);
+      const timeWindow = roundedTime.toISOString().substring(0, 16); // YYYY-MM-DDTHH:MM
+      
+      // Normalizar campos
+      const normalizedTo = to.toLowerCase().trim();
+      const normalizedFrom = from.toLowerCase().trim();
+      const normalizedSubject = subject.toLowerCase().trim().substring(0, 50); // Primeros 50 chars
+      
+      // Crear hash estable usando SHA-256 simplificado
+      const dataString = `${timeWindow}|${normalizedTo}|${normalizedFrom}|${normalizedSubject}`;
+      
+      // Generar hash simple pero estable
+      let hash = 0;
+      for (let i = 0; i < dataString.length; i++) {
+        const char = dataString.charCodeAt(i);
+        hash = ((hash << 5) - hash) + char;
+        hash = hash & hash; // Convert to 32-bit integer
+      }
+      
+      // Crear ID con formato recognizable
+      const envelopeId = `env-${Math.abs(hash).toString(16)}-${timeWindow.replace(/[:-]/g, '')}`;
+      
+      console.log(`[SENT_EMAIL_DEDUP] ✅ ID envelope generado: "${envelopeId}"`);
+      console.log(`[SENT_EMAIL_DEDUP] 📊 Datos usados para envelope ID:`, {
+        timeWindow,
+        to: normalizedTo,
+        from: normalizedFrom,
+        subject: normalizedSubject.substring(0, 30) + '...',
+        dataString: dataString.substring(0, 100) + '...'
+      });
+      
+      return envelopeId;
+      
+    } catch (error) {
+      console.error(`[SENT_EMAIL_DEDUP] ❌ Error generando ID desde envelope:`, error);
+      return null;
+    }
   }
 
   /**
