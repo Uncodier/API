@@ -9,6 +9,7 @@ interface EmailWorkflowArgs {
   from?: string;            // 🔸 OPCIONAL - Remitente
   agent_id?: string;        // 🔸 OPCIONAL - ID del agente
   lead_id?: string;         // 🔸 OPCIONAL - ID del lead
+  message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }
 
 interface WhatsAppWorkflowArgs {
@@ -18,6 +19,7 @@ interface WhatsAppWorkflowArgs {
   from?: string;            // 🔸 OPCIONAL - Remitente (default: "AI Assistant")
   agent_id?: string;        // 🔸 OPCIONAL - ID del agente
   lead_id?: string;         // 🔸 OPCIONAL - ID del lead
+  message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }
 
 interface AnalysisData {

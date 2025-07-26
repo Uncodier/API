@@ -223,20 +223,82 @@ async function getConversationChannel(conversationId: string): Promise<{ channel
   }
 }
 
+// Función para obtener el message_id relevante de la base de datos
+async function getRelevantMessageId(conversationId: string, agentId?: string | null, leadId?: string): Promise<string | null> {
+  try {
+    console.log(`🔍 Obteniendo message_id relevante para conversación: ${conversationId}`);
+    
+    // Primero intentar obtener el último mensaje que no sea del sistema o team_member
+    let { data: message, error } = await supabaseAdmin
+      .from('messages')
+      .select('id')
+      .eq('conversation_id', conversationId)
+      .not('role', 'in', '("system","team_member")')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+    
+    // Si no hay mensajes de usuario/asistente, obtener el último mensaje en general
+    if (error || !message) {
+      console.log(`📝 No se encontraron mensajes de usuario/asistente, buscando último mensaje general...`);
+      
+      const fallbackQuery = await supabaseAdmin
+        .from('messages')
+        .select('id')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      message = fallbackQuery.data;
+      error = fallbackQuery.error;
+    }
+    
+    if (error || !message) {
+      console.warn(`⚠️ No se pudo obtener message_id para conversación ${conversationId}:`, error);
+      return null;
+    }
+    
+    console.log(`✅ Message_id obtenido: ${message.id}`);
+    return message.id;
+    
+  } catch (error) {
+    console.error('❌ Error al obtener message_id desde la base de datos:', error);
+    return null;
+  }
+}
+
 // Función para enviar mensaje según el canal usando workflows de Temporal
+// Si no se proporciona messageId, se obtiene automáticamente de la base de datos
 async function sendMessageByChannel(
   channel: string,
   message: string,
   contactInfo: { leadPhone?: string; leadEmail?: string; visitorPhone?: string },
   siteId: string,
-  agentId: string,
+  agentId: string | null | undefined,
   conversationId: string,
-  leadId?: string
+  leadId?: string,
+  messageId?: string
 ): Promise<{ success: boolean; method?: string; error?: string; workflowId?: string }> {
   try {
     console.log(`📤 Enviando mensaje por canal usando workflows de Temporal: ${channel}`);
     
     const workflowService = WorkflowService.getInstance();
+
+    // Obtener message_id de la base de datos si no se proporciona
+    let effectiveMessageId = messageId;
+    if (!effectiveMessageId) {
+      console.log(`🔍 message_id no proporcionado, obteniendo desde la base de datos...`);
+      const dbMessageId = await getRelevantMessageId(conversationId, agentId, leadId);
+      
+      if (!dbMessageId) {
+        console.warn(`⚠️ No se pudo obtener message_id para la conversación ${conversationId}`);
+        effectiveMessageId = undefined;
+      } else {
+        console.log(`✅ message_id obtenido de la DB: ${dbMessageId}`);
+        effectiveMessageId = dbMessageId;
+      }
+    }
 
     if (channel === 'whatsapp') {
       // Para WhatsApp, priorizar el teléfono del visitor (más específico) o del lead
@@ -257,8 +319,9 @@ async function sendMessageByChannel(
         message,
         from: 'Equipo de Soporte',
         site_id: siteId,
-        agent_id: agentId,
-        lead_id: leadId
+        agent_id: agentId || undefined, // Handle null/undefined agentId
+        lead_id: leadId,
+        message_id: effectiveMessageId
       });
 
       return {
@@ -288,8 +351,9 @@ async function sendMessageByChannel(
         subject: 'Respuesta de nuestro equipo',
         message,
         site_id: siteId,
-        agent_id: agentId,
-        lead_id: leadId
+        agent_id: agentId || undefined, // Handle null/undefined agentId
+        lead_id: leadId,
+        message_id: effectiveMessageId
       });
 
       return {
@@ -332,13 +396,6 @@ export async function POST(request: Request) {
       );
     }
     
-    if (!agentId) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'agentId is required' } },
-        { status: 400 }
-      );
-    }
-    
     if (!user_id) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'user_id is required' } },
@@ -353,20 +410,23 @@ export async function POST(request: Request) {
       );
     }
     
-    // Obtener información del agente (solo site_id si es necesario)
-    const agentInfo = await getAgentInfo(agentId);
-    
-    if (!agentInfo) {
-      return NextResponse.json(
-        { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'The specified agent was not found' } },
-        { status: 404 }
-      );
+    // Obtener información del agente solo si se proporciona agentId
+    let agentInfo = null;
+    if (agentId) {
+      agentInfo = await getAgentInfo(agentId);
+      
+      if (!agentInfo) {
+        return NextResponse.json(
+          { success: false, error: { code: 'AGENT_NOT_FOUND', message: 'The specified agent was not found' } },
+          { status: 404 }
+        );
+      }
     }
     
-    // Use site_id from request if provided, otherwise use the one from the agent
-    const site_id = requestSiteId || agentInfo.site_id;
+    // Use site_id from request if provided, otherwise use the one from the agent (if available)
+    const site_id = requestSiteId || (agentInfo ? agentInfo.site_id : null);
     
-    console.log(`Procesando intervención para agente: ${agentId}, user_id: ${user_id}, site: ${site_id || 'N/A'}`);
+    console.log(`Procesando intervención para agente: ${agentId || 'N/A'}, user_id: ${user_id}, site: ${site_id || 'N/A'}`);
     
     // Usar el título de la conversación proporcionado o crear uno por defecto
     const conversationTitle = conversation_title || "Intervention Conversation";
@@ -416,7 +476,8 @@ export async function POST(request: Request) {
           site_id,
           agentId,
           savedMessages.conversationId,
-          lead_id
+          lead_id,
+          savedMessages.interventionMessageId
         );
         
         if (channelSendResult.success) {
