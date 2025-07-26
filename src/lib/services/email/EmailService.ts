@@ -6,6 +6,7 @@ import * as quotedPrintable from 'quoted-printable';
 
 export interface EmailMessage {
   id: string;
+  messageId?: string; // Message-ID header del email para correlación
   subject?: string;
   from?: string;
   to?: string;
@@ -308,6 +309,18 @@ export class EmailService {
                   }
                 }
                 email.headers = headers;
+                
+                // 🎯 NUEVO: Usar Message-ID como ID preferido para correlación con sync
+                const messageId = headers['message-id'];
+                if (messageId) {
+                  // Limpiar Message-ID (remover < > si están presentes)
+                  const cleanMessageId = messageId.replace(/^<|>$/g, '').trim();
+                  if (cleanMessageId) {
+                    email.messageId = cleanMessageId; // Para compatibilidad con extractValidEmailId()
+                    email.id = cleanMessageId; // Reemplazar UID con Message-ID
+                    console.log(`[EmailService] 🔄 Email ${message.uid} → usando Message-ID como ID: ${cleanMessageId}`);
+                  }
+                }
               }
             } catch (headerError) {
               console.warn(`[EmailService] ⚠️ Error reading email headers for ID ${email.id}:`, headerError);
@@ -885,6 +898,18 @@ export class EmailService {
                   }
                 }
                 email.headers = headers;
+                
+                // 🎯 NUEVO: Usar Message-ID como ID preferido para correlación con sync
+                const messageId = headers['message-id'];
+                if (messageId) {
+                  // Limpiar Message-ID (remover < > si están presentes)
+                  const cleanMessageId = messageId.replace(/^<|>$/g, '').trim();
+                  if (cleanMessageId) {
+                    email.messageId = cleanMessageId; // Para compatibilidad con extractValidEmailId()
+                    email.id = cleanMessageId; // Reemplazar UID con Message-ID
+                    console.log(`[EmailService] 🔄 Email ${message.uid} → usando Message-ID como ID: ${cleanMessageId}`);
+                  }
+                }
               }
             } catch (headerError) {
               console.warn(`[EmailService] ⚠️ Error reading email headers for ID ${email.id}:`, headerError);

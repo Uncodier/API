@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
+import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 
 /**
  * Endpoint para enviar emails desde un agente
@@ -155,8 +156,49 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // 🎯 NUEVO: Guardar el messageId en synced_objects para evitar duplicaciones en sync
+    if (result.email_id && result.status === 'sent') {
+      try {
+        await SyncedObjectsService.createObject({
+          external_id: result.email_id, // El messageId de nodemailer
+          site_id: site_id,
+          object_type: 'sent_email',
+          status: 'processed', // Marcar como ya procesado
+          provider: 'smtp_send_service',
+          metadata: {
+            // Información del email enviado
+            recipient: result.recipient,
+            sender: result.sender,
+            subject: result.subject,
+            message_preview: result.message_preview,
+            sent_at: result.sent_at,
+            
+            // Información del contexto
+            agent_id,
+            conversation_id,
+            lead_id,
+            
+            // Marcar que fue enviado por API, no sincronizado
+            source: 'api_send',
+            processed_at: new Date().toISOString()
+          }
+        });
+        
+        console.log(`✅ [SEND_EMAIL] MessageId ${result.email_id} guardado en synced_objects para evitar duplicación en sync`);
+      } catch (syncError) {
+        // No fallar el envío si hay error guardando en sync, solo logear
+        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar messageId en synced_objects:`, syncError);
+      }
+    }
+
+    // Agregar external_message_id a la respuesta para metadata del mensaje
+    const responseData = {
+      ...result,
+      external_message_id: result.email_id // Incluir messageId para guardar en metadata
+    };
+
     const statusCode = result.status === 'skipped' ? 200 : 201;
-    return NextResponse.json(result, { status: statusCode });
+    return NextResponse.json(responseData, { status: statusCode });
     
   } catch (error) {
     console.error('Error en endpoint send_email_from_agent:', error);

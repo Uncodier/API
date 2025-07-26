@@ -82,8 +82,8 @@ function isValidEmailId(emailId: any): boolean {
  */
 function extractValidEmailId(email: any): string | null {
   const candidates = [
+    email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta
     email.id,
-    email.messageId, 
     email.uid,
     email.message_id,
     email.Message_ID,
@@ -426,7 +426,7 @@ async function findOrCreateEmailConversation(leadId: string, siteId: string, ema
 }
 
 /**
- * Función simple para verificar si ya existe un mensaje del mismo email ENVIADO basado en la nueva estructura de custom_data
+ * Función avanzada para verificar duplicados usando análisis temporal y de rangos
  */
 async function findExistingEmailMessageByChannel(
   conversationId: string,
@@ -434,10 +434,9 @@ async function findExistingEmailMessageByChannel(
   leadId: string
 ): Promise<{ exists: boolean; messageId?: string; reason?: string }> {
   try {
-    console.log(`[EMAIL_SYNC] 🔍 Verificando mensaje ENVIADO existente por custom_data.delivery.channel...`);
+    console.log(`[EMAIL_SYNC] 🔍 Análisis temporal de mensajes con delivery.channel=email...`);
     
-    // Buscar mensajes ENVIADOS del canal email para este lead
-    // Actualizado para buscar por la estructura real: custom_data.delivery.channel = "email" y status = "sent"
+    // Buscar TODOS los mensajes ENVIADOS del canal email para esta conversación (últimos 30 días)
     const { data: emailMessages, error } = await supabaseAdmin
       .from('messages')
       .select('id, custom_data, created_at, role, content')
@@ -445,98 +444,200 @@ async function findExistingEmailMessageByChannel(
       .eq('lead_id', leadId)
       .filter('custom_data->delivery->channel', 'eq', 'email')
       .filter('custom_data->status', 'eq', 'sent') // Solo emails enviados
-      .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 7 días
-      .order('created_at', { ascending: false })
-      .limit(20);
+      .gte('created_at', new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()) // Últimos 30 días
+      .order('created_at', { ascending: true }) // Ordenar por tiempo ascendente
+      .limit(50);
       
     if (error) {
-      console.error('[EMAIL_SYNC] Error al buscar mensajes enviados por custom_data.delivery.channel:', error);
+      console.error('[EMAIL_SYNC] Error al buscar mensajes para análisis temporal:', error);
       return { exists: false };
     }
     
     if (!emailMessages || emailMessages.length === 0) {
-      console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con custom_data.delivery.channel=email');
+      console.log('[EMAIL_SYNC] ✅ No hay mensajes enviados previos con delivery.channel=email');
       return { exists: false };
     }
     
-    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS con delivery.channel=email para comparar`);
+    console.log(`[EMAIL_SYNC] 📧 Encontrados ${emailMessages.length} mensajes ENVIADOS para análisis temporal`);
     
-    // Normalizar datos del email ENVIADO actual para comparación
+    // Preparar datos del email actual
     const currentSubject = email.subject ? fixTextEncoding(email.subject).toLowerCase().trim() : '';
     const currentTo = email.to ? email.to.toLowerCase().trim() : '';
     const currentDate = email.date ? new Date(email.date) : new Date();
+    const currentEmailId = extractValidEmailId(email);
     
-    // Revisar cada mensaje ENVIADO existente
-    for (const existingMessage of emailMessages) {
-      const customData = existingMessage.custom_data || {};
+    console.log(`[EMAIL_SYNC] 📊 Email actual:`, {
+      subject: currentSubject,
+      to: currentTo,
+      date: currentDate.toISOString(),
+      emailId: currentEmailId
+    });
+    
+    // Crear array de mensajes existentes con datos normalizados
+    const existingMessages = emailMessages.map(msg => {
+      const customData = msg.custom_data || {};
       const deliveryDetails = customData.delivery?.details || {};
       
-      // Comparar características del email enviado usando la nueva estructura
-      const existingSubject = customData.subject ? customData.subject.toLowerCase().trim() : '';
-      const existingRecipient = deliveryDetails.recipient ? deliveryDetails.recipient.toLowerCase().trim() : '';
-      const existingTimestamp = deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(existingMessage.created_at);
-      
-      // Verificación por subject + destinatario (ambos emails enviados)
-      if (currentSubject && existingSubject && currentSubject === existingSubject &&
-          currentTo && existingRecipient && currentTo === existingRecipient) {
-        
-        // Verificar proximidad temporal (dentro de 1 hora)
-        const timeDiff = Math.abs(currentDate.getTime() - existingTimestamp.getTime());
-        const oneHour = 60 * 60 * 1000; // 1 hora
-        
-        if (timeDiff <= oneHour) {
-          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por custom_data.delivery.channel: ${existingMessage.id}`);
-          console.log(`[EMAIL_SYNC] - Subject match: "${currentSubject}"`);
-          console.log(`[EMAIL_SYNC] - Recipient match: "${currentTo}"`);
-          console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000/60)} minutos`);
-          
-          return {
-            exists: true,
-            messageId: existingMessage.id,
-            reason: `Email enviado duplicado: mismo subject "${currentSubject}" y destinatario "${currentTo}"`
-          };
-        }
-      }
-      
-      // Verificación adicional por email_id si existe
-      const currentEmailId = extractValidEmailId(email);
-      const existingEmailId = customData.email_id || deliveryDetails.api_messageId;
-      
-      if (currentEmailId && existingEmailId && currentEmailId === existingEmailId) {
-        console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por email_id: ${existingMessage.id}`);
-        console.log(`[EMAIL_SYNC] - Email ID match: "${currentEmailId}"`);
-        
+      return {
+        id: msg.id,
+        subject: (deliveryDetails.subject || customData.subject || '').toLowerCase().trim(),
+        recipient: (deliveryDetails.recipient || '').toLowerCase().trim(),
+        timestamp: deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(msg.created_at),
+        emailId: customData.email_id || deliveryDetails.api_messageId,
+        createdAt: new Date(msg.created_at)
+      };
+    }).sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()); // Ordenar por timestamp
+    
+    console.log(`[EMAIL_SYNC] 📈 Mensajes existentes ordenados por timestamp:`);
+    existingMessages.forEach((msg, index) => {
+      console.log(`[EMAIL_SYNC] ${index + 1}. ${msg.timestamp.toISOString()} - "${msg.subject}" -> ${msg.recipient}`);
+    });
+    
+    // 1. VERIFICACIÓN EXACTA: email_id, subject+recipient, timestamp exacto
+    for (const existing of existingMessages) {
+      // Verificación por email_id
+      if (currentEmailId && existing.emailId && currentEmailId === existing.emailId) {
+        console.log(`[EMAIL_SYNC] ✅ DUPLICADO EXACTO por email_id: ${existing.id}`);
         return {
           exists: true,
-          messageId: existingMessage.id,
-          reason: `Email enviado duplicado por email_id: "${currentEmailId}"`
+          messageId: existing.id,
+          reason: `Duplicado exacto por email_id: "${currentEmailId}"`
         };
       }
       
-      // Verificación por destinatario + timestamp exactos (misma cantidad en el periodo)
-      if (currentTo && existingRecipient && currentTo === existingRecipient) {
-        const timeDiff = Math.abs(currentDate.getTime() - existingTimestamp.getTime());
-        const fiveMinutes = 5 * 60 * 1000; // 5 minutos para timestamps muy cercanos
+      // Verificación por subject + recipient + timestamp cercano (dentro de 5 minutos)
+      if (currentSubject && existing.subject && currentSubject === existing.subject &&
+          currentTo && existing.recipient && currentTo === existing.recipient) {
+        
+        const timeDiff = Math.abs(currentDate.getTime() - existing.timestamp.getTime());
+        const fiveMinutes = 5 * 60 * 1000;
         
         if (timeDiff <= fiveMinutes) {
-          console.log(`[EMAIL_SYNC] ✅ Email ENVIADO duplicado encontrado por destinatario + timestamp: ${existingMessage.id}`);
-          console.log(`[EMAIL_SYNC] - Recipient match: "${currentTo}"`);
+          console.log(`[EMAIL_SYNC] ✅ DUPLICADO EXACTO por subject+recipient+timestamp: ${existing.id}`);
+          console.log(`[EMAIL_SYNC] - Subject: "${currentSubject}"`);
+          console.log(`[EMAIL_SYNC] - Recipient: "${currentTo}"`);
           console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000)} segundos`);
           
           return {
             exists: true,
-            messageId: existingMessage.id,
-            reason: `Email enviado duplicado: mismo destinatario "${currentTo}" en ventana temporal muy cercana`
+            messageId: existing.id,
+            reason: `Duplicado exacto: mismo subject, recipient y timestamp (${Math.round(timeDiff/1000)}s)`
           };
         }
       }
     }
     
-    console.log('[EMAIL_SYNC] ✅ No se encontraron emails ENVIADOS duplicados por custom_data.delivery.channel');
+    // 2. ANÁLISIS TEMPORAL POR RANGOS - Solo si hay al menos 2 mensajes con el mismo subject
+    if (currentSubject) {
+      const sameSubjectMessages = existingMessages.filter(msg => msg.subject === currentSubject);
+      
+      if (sameSubjectMessages.length >= 2) {
+        console.log(`[EMAIL_SYNC] 🧮 Análisis de rangos temporales: ${sameSubjectMessages.length} mensajes con subject "${currentSubject}"`);
+        
+        // Ordenar por timestamp
+        sameSubjectMessages.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+        
+        console.log(`[EMAIL_SYNC] 📅 Secuencia temporal para subject "${currentSubject}":`);
+        sameSubjectMessages.forEach((msg, index) => {
+          console.log(`[EMAIL_SYNC] ${index + 1}. ${msg.timestamp.toISOString()} -> ${msg.recipient} (ID: ${msg.id})`);
+        });
+        
+        // Verificar si el email actual encaja en algún rango temporal existente
+        for (let i = 0; i < sameSubjectMessages.length - 1; i++) {
+          const msg1 = sameSubjectMessages[i];
+          const msg2 = sameSubjectMessages[i + 1];
+          
+          // Si el timestamp del email actual está entre dos mensajes existentes
+          if (currentDate.getTime() > msg1.timestamp.getTime() && 
+              currentDate.getTime() < msg2.timestamp.getTime()) {
+            
+            // Calcular si la diferencia temporal es consistente
+            const gap1 = currentDate.getTime() - msg1.timestamp.getTime();
+            const gap2 = msg2.timestamp.getTime() - currentDate.getTime();
+            const totalGap = msg2.timestamp.getTime() - msg1.timestamp.getTime();
+            
+            // Si los gaps son razonables (el email actual divide el rango de manera lógica)
+            if (gap1 > 1000 && gap2 > 1000 && totalGap < 24 * 60 * 60 * 1000) { // Máximo 24 horas entre extremos
+              console.log(`[EMAIL_SYNC] 🔍 Email actual encaja en rango temporal entre mensajes existentes`);
+              console.log(`[EMAIL_SYNC] - Anterior: ${msg1.timestamp.toISOString()} (${Math.round(gap1/1000/60)} min antes)`);
+              console.log(`[EMAIL_SYNC] - Actual: ${currentDate.toISOString()}`);
+              console.log(`[EMAIL_SYNC] - Siguiente: ${msg2.timestamp.toISOString()} (${Math.round(gap2/1000/60)} min después)`);
+              
+              // Verificar si el recipient también coincide con alguno de los mensajes del rango
+              if (currentTo && (msg1.recipient === currentTo || msg2.recipient === currentTo)) {
+                const matchingMsg = msg1.recipient === currentTo ? msg1 : msg2;
+                console.log(`[EMAIL_SYNC] ✅ DUPLICADO POR RANGO TEMPORAL: ${matchingMsg.id}`);
+                
+                return {
+                  exists: true,
+                  messageId: matchingMsg.id,
+                  reason: `Duplicado por rango temporal: mismo subject "${currentSubject}" y recipient "${currentTo}" en secuencia temporal`
+                };
+              }
+            }
+          }
+        }
+        
+        // Verificar si está muy cerca del primer o último mensaje de la secuencia
+        const firstMsg = sameSubjectMessages[0];
+        const lastMsg = sameSubjectMessages[sameSubjectMessages.length - 1];
+        
+        // Muy cerca del primer mensaje (antes)
+        const diffWithFirst = Math.abs(currentDate.getTime() - firstMsg.timestamp.getTime());
+        if (diffWithFirst < 30 * 60 * 1000 && currentTo === firstMsg.recipient) { // 30 minutos
+          console.log(`[EMAIL_SYNC] ✅ DUPLICADO CERCA DEL PRIMER MENSAJE: ${firstMsg.id}`);
+          return {
+            exists: true,
+            messageId: firstMsg.id,
+            reason: `Duplicado temporal: muy cerca del primer mensaje (${Math.round(diffWithFirst/1000/60)} min)`
+          };
+        }
+        
+        // Muy cerca del último mensaje (después)
+        const diffWithLast = Math.abs(currentDate.getTime() - lastMsg.timestamp.getTime());
+        if (diffWithLast < 30 * 60 * 1000 && currentTo === lastMsg.recipient) { // 30 minutos
+          console.log(`[EMAIL_SYNC] ✅ DUPLICADO CERCA DEL ÚLTIMO MENSAJE: ${lastMsg.id}`);
+          return {
+            exists: true,
+            messageId: lastMsg.id,
+            reason: `Duplicado temporal: muy cerca del último mensaje (${Math.round(diffWithLast/1000/60)} min)`
+          };
+        }
+      }
+    }
+    
+    // 3. VERIFICACIÓN POR RECIPIENT Y PROXIMIDAD TEMPORAL (sin subject)
+    if (currentTo) {
+      const sameRecipientMessages = existingMessages.filter(msg => msg.recipient === currentTo);
+      
+      if (sameRecipientMessages.length >= 1) {
+        console.log(`[EMAIL_SYNC] 🎯 Verificando ${sameRecipientMessages.length} mensajes al mismo recipient: ${currentTo}`);
+        
+        for (const msg of sameRecipientMessages) {
+          const timeDiff = Math.abs(currentDate.getTime() - msg.timestamp.getTime());
+          const oneHour = 60 * 60 * 1000;
+          
+          // Si es al mismo recipient y muy cerca en el tiempo
+          if (timeDiff < oneHour) {
+            console.log(`[EMAIL_SYNC] ✅ DUPLICADO POR RECIPIENT+TIEMPO: ${msg.id}`);
+            console.log(`[EMAIL_SYNC] - Recipient: "${currentTo}"`);
+            console.log(`[EMAIL_SYNC] - Time diff: ${Math.round(timeDiff/1000/60)} minutos`);
+            
+            return {
+              exists: true,
+              messageId: msg.id,
+              reason: `Duplicado por recipient y proximidad temporal: "${currentTo}" (${Math.round(timeDiff/1000/60)} min)`
+            };
+          }
+        }
+      }
+    }
+    
+    console.log('[EMAIL_SYNC] ✅ Análisis temporal completado - NO es duplicado');
     return { exists: false };
     
   } catch (error) {
-    console.error('[EMAIL_SYNC] Error en verificación de emails enviados por custom_data.delivery.channel:', error);
+    console.error('[EMAIL_SYNC] Error en análisis temporal:', error);
     return { exists: false };
   }
 }
@@ -780,19 +881,20 @@ async function addSentMessageToConversation(
       role: messageRole,
       user_id: messageSenderId,
       lead_id: leadId,
-      custom_data: {
-        status: "sent",
-        delivery: {
-          channel: "email",
-          details: {
+              custom_data: {
+          status: "sent",
+          delivery: {
             channel: "email",
-            recipient: email.to,
-            timestamp: email.date || new Date().toISOString(),
-            api_messageId: email.id || "unknown"
+            details: {
+              channel: "email",
+              recipient: email.to,
+              subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
+              timestamp: email.date || new Date().toISOString(),
+              api_messageId: email.id || "unknown"
+            },
+            success: true,
+            timestamp: new Date().toISOString()
           },
-          success: true,
-          timestamp: new Date().toISOString()
-        },
         follow_up: {
           lead_id: leadId,
           site_id: siteId,
@@ -801,7 +903,6 @@ async function addSentMessageToConversation(
         },
         // Mantener campos adicionales para compatibilidad y deduplicación
         email_id: email.id,
-        subject: email.subject ? fixTextEncoding(email.subject) : email.subject,
         from: email.from,
         content_extracted: true,
         sync_source: 'email_sync',
