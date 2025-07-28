@@ -138,7 +138,7 @@ export class StableEmailDeduplicationService {
         .select('id, custom_data')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->stable_hash', 'eq', fingerprint.stableHash)
+        .filter('custom_data->>stable_hash', 'eq', fingerprint.stableHash)
         .limit(1);
 
       if (exactMatch && exactMatch.length > 0) {
@@ -158,7 +158,7 @@ export class StableEmailDeduplicationService {
         .select('id, custom_data, content')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->recipient_normalized', 'eq', fingerprint.recipientNormalized)
+        .filter('custom_data->>recipient_normalized', 'eq', fingerprint.recipientNormalized)
         .gte('created_at', yesterday)
         .limit(10);
 
@@ -190,9 +190,9 @@ export class StableEmailDeduplicationService {
           .select('id, custom_data')
           .eq('conversation_id', conversationId)
           .eq('lead_id', leadId)
-          .filter('custom_data->recipient_normalized', 'eq', fingerprint.recipientNormalized)
-          .filter('custom_data->subject_normalized', 'eq', fingerprint.subjectNormalized)
-          .filter('custom_data->time_window', 'eq', timeWindow)
+          .filter('custom_data->>recipient_normalized', 'eq', fingerprint.recipientNormalized)
+          .filter('custom_data->>subject_normalized', 'eq', fingerprint.subjectNormalized)
+          .filter('custom_data->>time_window', 'eq', timeWindow)
           .limit(1);
 
         if (timeWindowMatches && timeWindowMatches.length > 0) {

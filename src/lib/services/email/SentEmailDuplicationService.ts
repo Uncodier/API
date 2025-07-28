@@ -498,7 +498,7 @@ export class SentEmailDuplicationService {
           .select('id')
           .eq('conversation_id', conversationId)
           .eq('lead_id', leadId)
-          .filter('custom_data->email_id', 'eq', standardEmailId)
+          .filter('custom_data->>email_id', 'eq', standardEmailId)
           .limit(1),
         
         // Campo en delivery.details (formato actual)
@@ -507,7 +507,7 @@ export class SentEmailDuplicationService {
           .select('id')
           .eq('conversation_id', conversationId)
           .eq('lead_id', leadId)
-          .filter('custom_data->delivery->details->api_messageId', 'eq', standardEmailId)
+          .filter('custom_data->delivery->>details->>api_messageId', 'eq', standardEmailId)
           .limit(1),
         
         // Campo legacy external_message_id
@@ -516,7 +516,7 @@ export class SentEmailDuplicationService {
           .select('id')
           .eq('conversation_id', conversationId)
           .eq('lead_id', leadId)
-          .filter('custom_data->delivery->external_message_id', 'eq', standardEmailId)
+          .filter('custom_data->delivery->>external_message_id', 'eq', standardEmailId)
           .limit(1)
       ];
       

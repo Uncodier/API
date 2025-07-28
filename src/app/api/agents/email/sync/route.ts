@@ -123,7 +123,7 @@ async function findExistingMessageByStandardId(
         .select('id')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->email_id', 'eq', standardEmailId)
+        .filter('custom_data->>email_id', 'eq', standardEmailId)
         .limit(1),
       
       // Campo en delivery.details (formato actual)
@@ -132,7 +132,7 @@ async function findExistingMessageByStandardId(
         .select('id')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->delivery->details->api_messageId', 'eq', standardEmailId)
+        .filter('custom_data->delivery->>details->>api_messageId', 'eq', standardEmailId)
         .limit(1),
       
       // Campo legacy external_message_id
@@ -141,7 +141,7 @@ async function findExistingMessageByStandardId(
         .select('id')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->delivery->external_message_id', 'eq', standardEmailId)
+        .filter('custom_data->delivery->>external_message_id', 'eq', standardEmailId)
         .limit(1),
         
       // Campo legacy en delivery.details
@@ -150,7 +150,7 @@ async function findExistingMessageByStandardId(
         .select('id')
         .eq('conversation_id', conversationId)
         .eq('lead_id', leadId)
-        .filter('custom_data->delivery->details->external_message_id', 'eq', standardEmailId)
+        .filter('custom_data->delivery->>details->>external_message_id', 'eq', standardEmailId)
         .limit(1)
     ];
     
@@ -1473,7 +1473,7 @@ async function addReceivedMessageToConversation(
         .from('messages')
         .select('id')
         .eq('conversation_id', conversationId)
-        .filter('custom_data->email_id', 'eq', emailId)
+        .filter('custom_data->>email_id', 'eq', emailId)
         .limit(1);
         
       if (existingMessage && existingMessage.length > 0) {
