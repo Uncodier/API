@@ -1,5 +1,5 @@
 /**
- * API de Email Delivery Status - Maneja correos de Mail Delivery Subsystem (bounced emails)
+ * API de Email Delivery Status - Maneja correos de bounce/delivery failure
  * Route: POST /api/agents/email/deliveryStatus
  */
 
@@ -7,17 +7,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
-// Configuración de timeout extendido para Vercel (máximo 800s para plan pro)
-export const maxDuration = 800; // Incrementado de 300 a 800 para consistencia con ruta principal
+// Configuración de timeout extendido para Vercel
+export const maxDuration = 800;
 
 // Create schemas for request validation
 const DeliveryStatusRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  // Coercion para aceptar strings y tope máximo a 30
   limit: z.coerce.number().max(30).default(20),
   since_date: z.string().optional().refine(
     (date) => !date || !isNaN(Date.parse(date)),
@@ -36,85 +36,99 @@ const ERROR_CODES = {
 };
 
 /**
- * Extrae el email original de un mensaje de bounce
+ * Detecta si un email es un bounce/delivery failure
  */
-function extractOriginalEmailFromBounce(bounceMessage: string): string | null {
-  // Patrones comunes para extraer el email de un mensaje de bounce
-  const patterns = [
-    /The following addresses had permanent fatal errors:\s*([^\s<>]+@[^\s<>]+)/i,
-    /failed delivery to:\s*([^\s<>]+@[^\s<>]+)/i,
-    /could not be delivered to:\s*([^\s<>]+@[^\s<>]+)/i,
-    /delivery to the following recipient failed:\s*([^\s<>]+@[^\s<>]+)/i,
-    /recipient address rejected:\s*([^\s<>]+@[^\s<>]+)/i,
-    /user unknown.*:\s*([^\s<>]+@[^\s<>]+)/i,
-    /mailbox unavailable.*:\s*([^\s<>]+@[^\s<>]+)/i,
-    /final-recipient:\s*rfc822;\s*([^\s<>]+@[^\s<>]+)/i,
-    /<([^\s<>]+@[^\s<>]+)>:?\s*(?:host|delivery)/i,
-    /to\s+([^\s<>]+@[^\s<>]+).*failed/i,
-    /([^\s<>]+@[^\s<>]+).*user unknown/i,
-    /([^\s<>]+@[^\s<>]+).*does not exist/i,
+function isBounceEmail(email: any): boolean {
+  const from = (email.from || '').toLowerCase();
+  const subject = (email.subject || '').toLowerCase();
+  
+  // Filtros para from
+  const bounceFromPatterns = [
+    'mailer-daemon',
+    'mail delivery subsystem',
+    'postmaster',
+    'mail.protection.outlook.com',
+    'no-reply',
+    'noreply'
   ];
-
-  for (const pattern of patterns) {
-    const match = bounceMessage.match(pattern);
-    if (match && match[1]) {
-      const email = match[1].trim().toLowerCase();
-      // Validar que el email extraído sea válido
-      if (isValidEmail(email)) {
-        return email;
-      }
-    }
-  }
-
-  return null;
+  
+  // Filtros para subject
+  const bounceSubjectPatterns = [
+    'delivery status notification',
+    'failure',
+    'undelivered mail',
+    'delivery failure',
+    'returned mail',
+    'mail delivery failed',
+    'undeliverable',
+    'bounce',
+    'could not be delivered'
+  ];
+  
+  const isFromBounce = bounceFromPatterns.some(pattern => from.includes(pattern));
+  const isSubjectBounce = bounceSubjectPatterns.some(pattern => subject.includes(pattern));
+  
+  return isFromBounce || isSubjectBounce;
 }
 
 /**
- * Busca el lead_id basado en el email extraído del bounce
+ * Extrae emails (direcciones con @) del texto del bounce email
  */
-async function findLeadByEmail(email: string, siteId: string): Promise<string | null> {
+function extractEmailAddressesFromBounce(email: any): string[] {
+  const extractedText = EmailTextExtractorService.extractEmailText(email);
+  const fullText = `${extractedText.subject} ${extractedText.extractedText}`;
+  
+  // Regex para extraer emails válidos
+  const emailRegex = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
+  const matches = fullText.match(emailRegex) || [];
+  
+  // Filtrar emails únicos y limpiar
+  const uniqueEmails = Array.from(new Set(matches.map(email => email.toLowerCase().trim())));
+  
+  console.log(`[DELIVERY_STATUS] Emails extraídos del bounce: ${uniqueEmails.join(', ')}`);
+  return uniqueEmails;
+}
+
+/**
+ * Busca leads por email en la base de datos
+ */
+async function findLeadsByEmails(emails: string[], siteId: string): Promise<{email: string, leadId: string}[]> {
+  if (emails.length === 0) return [];
+  
   try {
     const { data, error } = await supabaseAdmin
       .from('leads')
-      .select('id')
-      .eq('email', email)
-      .eq('site_id', siteId)
-      .single();
+      .select('id, email')
+      .in('email', emails)
+      .eq('site_id', siteId);
 
-    if (error || !data) {
-      console.log(`[DELIVERY_STATUS] No se encontró lead para email: ${email}`);
-      return null;
+    if (error) {
+      console.error(`[DELIVERY_STATUS] Error buscando leads:`, error);
+      return [];
     }
 
-    return data.id;
+    return (data || []).map(lead => ({
+      email: lead.email,
+      leadId: lead.id
+    }));
   } catch (error) {
-    console.error(`[DELIVERY_STATUS] Error buscando lead por email ${email}:`, error);
-    return null;
+    console.error(`[DELIVERY_STATUS] Error en consulta de leads:`, error);
+    return [];
   }
-}
-
-
-
-/**
- * Función para validar email
- */
-function isValidEmail(email: string): boolean {
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  return emailRegex.test(email);
 }
 
 /**
  * Elimina un email del servidor IMAP
  */
-async function deleteEmailFromServer(emailConfig: any, emailId: string, isFromSent: boolean = false): Promise<boolean> {
+async function deleteEmailFromServer(emailConfig: any, emailId: string): Promise<boolean> {
   try {
-    console.log(`[DELIVERY_STATUS] 🗑️ Eliminando email ${emailId} del servidor (isFromSent: ${isFromSent})`);
-    const success = await EmailService.deleteEmail(emailConfig, emailId, isFromSent);
+    console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email ${emailId} del servidor`);
+    const success = await EmailService.deleteEmail(emailConfig, emailId, false);
     
     if (success) {
       console.log(`[DELIVERY_STATUS] ✅ Email ${emailId} eliminado exitosamente`);
     } else {
-      console.log(`[DELIVERY_STATUS] ⚠️ Email ${emailId} no pudo ser eliminado (posiblemente no encontrado)`);
+      console.log(`[DELIVERY_STATUS] ⚠️ Email ${emailId} no pudo ser eliminado`);
     }
     
     return success;
@@ -162,14 +176,9 @@ export async function POST(request: NextRequest) {
     
     // Extraer parámetros
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
-    // Aceptar "limit" en cualquier formato y garantizar número válido <=30
     const requestedLimitRaw = getFlexibleProperty(requestData, 'limit');
     const requestedLimit = requestedLimitRaw !== undefined && requestedLimitRaw !== null ? Number(requestedLimitRaw) : validationResult.data.limit;
-
-    // Si la conversión falla, fallback a 20
     const sanitizedLimit = !isNaN(requestedLimit) ? requestedLimit : 20;
-
-    // Limitar siempre a 30 como valor máximo
     const limit = Math.min(sanitizedLimit, 30);
     const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
     
@@ -183,21 +192,20 @@ export async function POST(request: NextRequest) {
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
       console.log(`[DELIVERY_STATUS] ✅ Configuración de email obtenida exitosamente`);
       
-      // Fetch emails from INBOX (simple and direct like other routes)
+      // Fetch emails from INBOX
       console.log(`[DELIVERY_STATUS] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[DELIVERY_STATUS] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-      // CRITICAL: Filter emails by size to prevent memory issues
+      // Filter emails by size to prevent memory issues
       console.log(`[DELIVERY_STATUS] 🔍 Verificando tamaños de emails para prevenir problemas de memoria...`);
-      const MAX_BODY_SIZE = 30000; // 30KB máximo para el body del email
+      const MAX_EMAIL_SIZE = 50000; // 50KB máximo por email
       const originalEmailCount = allEmails.length;
       
       const sizeFilteredEmails = allEmails.filter((email, index) => {
-        // Usar el tamaño del body en lugar de JSON.stringify completo (más eficiente)
-        const bodySize = (email.body || '').length;
-        if (bodySize > MAX_BODY_SIZE) {
-          console.log(`[DELIVERY_STATUS] 🚫 Email ${index + 1} excede tamaño máximo: ${bodySize} caracteres en body (máximo: ${MAX_BODY_SIZE})`);
+        const emailSize = JSON.stringify(email).length;
+        if (emailSize > MAX_EMAIL_SIZE) {
+          console.log(`[DELIVERY_STATUS] 🚫 Email ${index + 1} excede tamaño máximo: ${emailSize} caracteres (máximo: ${MAX_EMAIL_SIZE})`);
           console.log(`[DELIVERY_STATUS] 🚫 Email excluido - From: ${email.from}, Subject: ${email.subject}`);
           return false;
         }
@@ -206,58 +214,37 @@ export async function POST(request: NextRequest) {
       
       console.log(`[DELIVERY_STATUS] 📊 Filtro de tamaño completado: ${sizeFilteredEmails.length}/${originalEmailCount} emails dentro del límite de tamaño`);
       
-      // Usar los emails filtrados por tamaño para el resto del procesamiento
-      const processableEmails = sizeFilteredEmails;
-      console.log(`[DELIVERY_STATUS] ✅ Emails procesables obtenidos: ${processableEmails.length}`);
-      
-      // Filter for bounce emails (simple and direct)
+      // Filter for bounce emails
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
       const bounceEmails = [];
       
-      for (let i = 0; i < processableEmails.length; i++) {
-        const email = processableEmails[i];
-        console.log(`[DELIVERY_STATUS] 🔍 Analizando email ${i + 1}/${processableEmails.length} - From: ${email.from?.substring(0, 50)}, Subject: ${email.subject?.substring(0, 50)}`);
+      for (let i = 0; i < sizeFilteredEmails.length; i++) {
+        const email = sizeFilteredEmails[i];
+        console.log(`[DELIVERY_STATUS] 🔍 Analizando email ${i + 1}/${sizeFilteredEmails.length} - From: ${email.from?.substring(0, 50)}, Subject: ${email.subject?.substring(0, 50)}`);
         
-        const from = (email.from || '').toLowerCase();
-        const subject = (email.subject || '').toLowerCase();
-        // Usar solo los primeros 1000 caracteres del body para el filtro (más eficiente)
-        const bodyPreview = (email.body || '').toLowerCase().substring(0, 1000);
-        
-        const isBounce = (
-          from.includes('mail delivery subsystem') ||
-          from.includes('mailer-daemon') ||
-          from.includes('postmaster') ||
-          subject.includes('delivery status notification') ||
-          subject.includes('undelivered mail') ||
-          subject.includes('delivery failure') ||
-          bodyPreview.includes('delivery failed') ||
-          bodyPreview.includes('user unknown') ||
-          bodyPreview.includes('permanent failure')
-        );
-        
-        if (isBounce) {
+        if (isBounceEmail(email)) {
           console.log(`[DELIVERY_STATUS] ✅ Bounce email detectado: ${email.from} - ${email.subject}`);
           bounceEmails.push(email);
         }
       }
       
-      console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${processableEmails.length}`);
+      console.log(`[DELIVERY_STATUS] 📊 Bounce emails encontrados: ${bounceEmails.length}/${sizeFilteredEmails.length}`);
       
       if (bounceEmails.length === 0) {
         return NextResponse.json({
           success: true,
-          message: "No se encontraron emails de Mail Delivery Subsystem",
+          message: "No se encontraron emails de bounce/delivery failure",
           totalEmails: originalEmailCount,
-          sizeFilteredEmails: processableEmails.length,
+          sizeFilteredEmails: sizeFilteredEmails.length,
           bounceEmails: 0,
           processedBounces: 0,
           workflowsTriggered: 0,
           emailsDeleted: 0,
-          filteredBySize: originalEmailCount > processableEmails.length
+          filteredBySize: originalEmailCount > sizeFilteredEmails.length
         });
       }
       
-      // Process each bounce email (simple processing)
+      // Process each bounce email
       const maxBouncesToProcess = Math.min(bounceEmails.length, 10);
       const bouncesToProcess = bounceEmails.slice(0, maxBouncesToProcess);
       
@@ -270,76 +257,84 @@ export async function POST(request: NextRequest) {
         try {
           console.log(`[DELIVERY_STATUS] 📧 Procesando bounce email ID: ${bounceEmail.id}, Subject: ${bounceEmail.subject}`);
           
-          // Extract original email address from bounce message
-          const originalEmail = extractOriginalEmailFromBounce(bounceEmail.body || '');
+          // Extract email addresses from bounce message
+          const extractedEmails = extractEmailAddressesFromBounce(bounceEmail);
           
-          if (!originalEmail) {
-            console.log(`[DELIVERY_STATUS] ⚠️ No se pudo extraer email original del bounce: ${bounceEmail.id}`);
+          if (extractedEmails.length === 0) {
+            console.log(`[DELIVERY_STATUS] ⚠️ No se pudieron extraer emails del bounce: ${bounceEmail.id}`);
             results.push({
               bounceEmailId: bounceEmail.id,
               success: false,
-              reason: 'No se pudo extraer email original del mensaje de bounce'
+              reason: 'No se pudieron extraer emails del mensaje de bounce'
             });
             continue;
           }
           
-          console.log(`[DELIVERY_STATUS] 📮 Email original extraído: ${originalEmail}`);
+          console.log(`[DELIVERY_STATUS] 📮 Emails extraídos: ${extractedEmails.join(', ')}`);
           
-          // Find lead by email
-          const leadId = await findLeadByEmail(originalEmail, siteId);
+          // Find leads by emails
+          const leadsFound = await findLeadsByEmails(extractedEmails, siteId);
           
-          if (!leadId) {
-            console.log(`[DELIVERY_STATUS] ⚠️ No se encontró lead para email: ${originalEmail}`);
+          if (leadsFound.length === 0) {
+            console.log(`[DELIVERY_STATUS] ⚠️ No se encontraron leads para emails: ${extractedEmails.join(', ')}`);
             results.push({
               bounceEmailId: bounceEmail.id,
-              originalEmail,
+              extractedEmails,
               success: false,
-              reason: 'No se encontró lead asociado al email'
+              reason: 'No se encontraron leads asociados a los emails'
             });
             continue;
           }
           
-          console.log(`[DELIVERY_STATUS] 👤 Lead encontrado: ${leadId} para email: ${originalEmail}`);
+          console.log(`[DELIVERY_STATUS] 👥 Leads encontrados: ${leadsFound.length}`);
           
-          // Call leadInvalidationWorkflow (simple and direct)
-          console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación para lead: ${leadId}...`);
-          const workflowService = WorkflowService.getInstance();
-          
-          const workflowResult = await workflowService.leadInvalidation(
-            {
-              lead_id: leadId,
-              email: originalEmail,
-              site_id: siteId,
-              reason: 'email_bounce',
-              bounce_details: {
-                bounce_email_id: bounceEmail.id,
-                bounce_subject: bounceEmail.subject,
-                bounce_from: bounceEmail.from,
-                bounce_date: bounceEmail.date,
-                bounce_message: bounceEmail.body?.substring(0, 500)
+          // Process each lead found
+          const leadResults = [];
+          for (const { email, leadId } of leadsFound) {
+            console.log(`[DELIVERY_STATUS] 🔄 Iniciando workflow de invalidación para lead: ${leadId} (email: ${email})...`);
+            const workflowService = WorkflowService.getInstance();
+            
+            const workflowResult = await workflowService.leadInvalidation(
+              {
+                lead_id: leadId,
+                email: email,
+                site_id: siteId,
+                reason: 'email_bounce',
+                bounce_details: {
+                  bounce_email_id: bounceEmail.id,
+                  bounce_subject: bounceEmail.subject,
+                  bounce_from: bounceEmail.from,
+                  bounce_date: bounceEmail.date,
+                  bounce_message: `Extracted emails: ${extractedEmails.join(', ')}`
+                }
+              },
+              {
+                taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+                workflowId: `lead-invalidation-${leadId}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+                async: true,
+                priority: 'high'
               }
-            },
-            {
-              taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
-              workflowId: `lead-invalidation-${leadId}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
-              async: true,
-              priority: 'high'
+            );
+            
+            if (workflowResult.success) {
+              console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
+              workflowsTriggered++;
+            } else {
+              console.error(`[DELIVERY_STATUS] ❌ Error en workflow de invalidación:`, workflowResult.error);
             }
-          );
-          
-          if (workflowResult.success) {
-            console.log(`[DELIVERY_STATUS] ✅ Workflow de invalidación iniciado: ${workflowResult.workflowId}`);
-            workflowsTriggered++;
-          } else {
-            console.error(`[DELIVERY_STATUS] ❌ Error en workflow de invalidación:`, workflowResult.error);
+            
+            leadResults.push({
+              leadId,
+              email,
+              workflowTriggered: workflowResult.success,
+              workflowId: workflowResult.workflowId,
+              error: workflowResult.error
+            });
           }
           
-          // Delete the bounce email from server (simple and direct)
+          // Delete the bounce email from server
           console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email del servidor...`);
-          const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id, false);
-          
-          // Skip searching for original sent emails (can be done as separate task if needed)
-          const originalEmailDeleted = false;
+          const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id);
           
           if (bounceDeleted) {
             emailsDeleted++;
@@ -347,12 +342,9 @@ export async function POST(request: NextRequest) {
           
           results.push({
             bounceEmailId: bounceEmail.id,
-            originalEmail,
-            leadId,
-            workflowTriggered: workflowResult.success,
-            workflowId: workflowResult.workflowId,
+            extractedEmails,
+            leadsFound: leadResults,
             bounceEmailDeleted: bounceDeleted,
-            originalEmailDeleted,
             success: true
           });
           
@@ -372,12 +364,12 @@ export async function POST(request: NextRequest) {
         success: true,
         message: "Procesamiento de delivery status completado",
         totalEmails: originalEmailCount,
-        sizeFilteredEmails: processableEmails.length,
+        sizeFilteredEmails: sizeFilteredEmails.length,
         bounceEmails: bounceEmails.length,
         processedBounces: results.length,
         workflowsTriggered,
         emailsDeleted,
-        filteredBySize: originalEmailCount > processableEmails.length,
+        filteredBySize: originalEmailCount > sizeFilteredEmails.length,
         results,
         note: bouncesToProcess.length < bounceEmails.length 
           ? `Se procesaron solo los primeros ${bouncesToProcess.length} bounce emails de ${bounceEmails.length} encontrados (límite: 10 por ejecución)`
