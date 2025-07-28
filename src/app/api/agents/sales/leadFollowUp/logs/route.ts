@@ -288,17 +288,52 @@ async function createAwarenessTaskIfNeeded(
 
     console.log(`📋 Creando tarea de awareness para lead en stage: ${leadStage}`);
 
-    const taskTitle = `Lead Awareness Follow-up: ${leadData?.name || leadData?.email || 'Unknown Lead'}`;
-    const taskDescription = `Follow-up task created for lead ${leadData?.name || leadData?.email} from ${safeStringify(leadData?.company)}.
-
-Lead Stage: ${leadStage}
-Email: ${leadData?.email || 'Not provided'}
-Phone: ${leadData?.phone || 'Not provided'}
-Company: ${safeStringify(leadData?.company)}
-
-This task was automatically created as part of the lead follow-up sequence to ensure proper awareness-stage nurturing.
-
-Related conversation: ${conversationId}`;
+    const leadName = leadData?.name || leadData?.email || 'Unknown Lead';
+    const taskTitle = `Lead Awareness Follow-up: ${leadName}`;
+    
+    // Construir descripción dinámicamente solo con datos disponibles
+    let taskDescription = `Follow-up task created for lead ${leadName}`;
+    
+    // Solo incluir "from [company]" si hay datos de empresa válidos
+    const hasCompanyData = leadData?.company && 
+      typeof leadData.company === 'string' && 
+      leadData.company.trim() !== '' && 
+      leadData.company !== '{}' ||
+      (typeof leadData.company === 'object' && 
+       leadData.company !== null && 
+       Object.keys(leadData.company).length > 0 &&
+       (leadData.company.name || leadData.company.company_name || leadData.company.title));
+    
+    if (hasCompanyData) {
+      const companyInfo = safeStringify(leadData.company);
+      if (companyInfo && companyInfo !== 'Not provided' && companyInfo !== '{}') {
+        taskDescription += ` from ${companyInfo}`;
+      }
+    }
+    
+    taskDescription += `.\n\nLead Stage: ${leadStage}`;
+    
+    // Solo incluir campos con datos válidos
+    if (leadData?.email) {
+      taskDescription += `\nEmail: ${leadData.email}`;
+    }
+    
+    if (leadData?.phone) {
+      taskDescription += `\nPhone: ${leadData.phone}`;
+    }
+    
+    if (hasCompanyData) {
+      const companyInfo = safeStringify(leadData.company);
+      if (companyInfo && companyInfo !== 'Not provided' && companyInfo !== '{}') {
+        taskDescription += `\nCompany: ${companyInfo}`;
+      }
+    }
+    
+    taskDescription += `\n\nThis task was automatically created as part of the lead follow-up sequence to ensure proper awareness-stage nurturing.`;
+    
+    if (conversationId) {
+      taskDescription += `\n\nRelated conversation: ${conversationId}`;
+    }
 
     // 🔧 CORRECCIÓN: Priorizar sales command_id sobre copywriter
     let effectiveCommandId: string | undefined = undefined;
