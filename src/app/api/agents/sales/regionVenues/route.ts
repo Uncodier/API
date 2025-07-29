@@ -12,6 +12,7 @@ export async function GET(request: Request) {
     const searchTerm = url.searchParams.get('searchTerm');
     const city = url.searchParams.get('city');
     const region = url.searchParams.get('region');
+    const country = url.searchParams.get('country');
     const maxVenuesParam = url.searchParams.get('maxVenues');
     const maxVenues = parseInt(maxVenuesParam || '1');
     
@@ -31,6 +32,7 @@ export async function GET(request: Request) {
       searchTerm,
       city,
       region,
+      country,
       maxVenues,
       excludeVenues: {
         placeIds: excludeVenues.placeIds?.length || 0,
@@ -81,6 +83,7 @@ export async function GET(request: Request) {
       searchTerm,
       city,
       region,
+      country: country || undefined,
       limit: maxVenues,
       excludeVenues: (excludeVenues.placeIds || excludeVenues.names) ? excludeVenues : undefined
     });
@@ -115,6 +118,7 @@ export async function GET(request: Request) {
         searchTerm,
         city,
         region,
+        country,
         venueCount: limitedVenues.length,
         venues: limitedVenues,
         timestamp: new Date().toISOString()
@@ -199,6 +203,7 @@ export async function POST(request: Request) {
       searchTerm: params.searchTerm,
       city: params.city,
       region: params.region,
+      country: params.country,
       limit: maxVenues,
       excludeVenues: (excludeVenues.placeIds || excludeVenues.names) ? excludeVenues : undefined
     });
@@ -226,6 +231,7 @@ export async function POST(request: Request) {
         searchTerm: params.searchTerm,
         city: params.city,
         region: params.region,
+        country: params.country,
         venueCount: limitedVenues.length,
         venues: limitedVenues,
         // Incluir datos adicionales si se proporcionaron

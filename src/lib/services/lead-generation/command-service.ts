@@ -247,6 +247,7 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   determinedTopic: string,
   determinedCity: string | null,
   determinedRegion: string | null,
+  determinedCountry: string | null,
   determinedSegmentId: string | null
 } {
   const results = executedCommand.results || [];
@@ -381,17 +382,18 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   const determinedTopic = results.find((r: any) => r.business_research_topic)?.business_research_topic || businessResearchTopic;
   
   // Extraer ciudad y región como en extractCommandResults
-  const targetResult = results.find((r: any) => r.target_city !== undefined || r.target_region !== undefined) || results[0];
+  const targetResult = results.find((r: any) => r.target_city !== undefined || r.target_region !== undefined || r.target_country !== undefined) || results[0];
   
   // DEBUG: Logging detallado para entender por qué target_city puede ser null
   console.log(`🔍 DEBUG target_city extraction:`);
   console.log(`  - Total results: ${results.length}`);
-  console.log(`  - Looking for target_city/target_region in results...`);
+  console.log(`  - Looking for target_city/target_region/target_country in results...`);
   
   results.forEach((r: any, index: number) => {
     console.log(`  - Result ${index}:`);
     console.log(`    - Has target_city: ${r.target_city !== undefined} (value: ${r.target_city})`);
     console.log(`    - Has target_region: ${r.target_region !== undefined} (value: ${r.target_region})`);
+    console.log(`    - Has target_country: ${r.target_country !== undefined} (value: ${r.target_country})`);
     console.log(`    - All keys: ${Object.keys(r).join(', ')}`);
   });
   
@@ -399,10 +401,12 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   if (targetResult) {
     console.log(`    - target_city: ${targetResult.target_city}`);
     console.log(`    - target_region: ${targetResult.target_region}`);
+    console.log(`    - target_country: ${targetResult.target_country}`);
   }
   
   const determinedCity = targetResult?.target_city || null;
   const determinedRegion = targetResult?.target_region || null;
+  const determinedCountry = targetResult?.target_country || null;
   
   // Extraer segment_id determinado por el agente
   const determinedSegmentId = targetResult?.target_segment_id || 
@@ -411,7 +415,7 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   
   console.log(`🎯 RESULTADO FINAL: ${businessTypes.length} business types extraídos`);
   console.log(`🎯 Topic determinado: ${determinedTopic}`);
-  console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}`);
+  console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}, País determinado: ${determinedCountry}`);
   console.log(`🎯 Segmento determinado: ${determinedSegmentId}`);
   
   if (businessTypes.length > 0) {
@@ -429,6 +433,7 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
     determinedTopic,
     determinedCity,
     determinedRegion,
+    determinedCountry,
     determinedSegmentId
   };
 } 

@@ -52,6 +52,7 @@ export interface VenueSearchParams {
   searchTerm: string;
   city: string;
   region: string;
+  country?: string;
   limit?: number;
   excludeVenues?: {
     placeIds?: string[];
@@ -329,9 +330,10 @@ export class RegionVenuesService {
   /**
    * Busca coordenadas de una ubicación usando Google Geocoding API
    */
-  private async geocodeLocation(city: string, region: string): Promise<{ lat: number; lng: number } | null> {
+  private async geocodeLocation(city: string, region: string, country?: string): Promise<{ lat: number; lng: number } | null> {
     try {
-      const query = `${city}, ${region}`;
+      // Construir query con mejor especificidad incluyendo país si está disponible
+      const query = country ? `${city}, ${region}, ${country}` : `${city}, ${region}`;
       const url = `${this.geocodingApiUrl}?address=${encodeURIComponent(query)}&key=${this.googleApiKey}`;
       
       console.log(`🔍 Geocoding request for: "${query}"`);
@@ -393,17 +395,19 @@ export class RegionVenuesService {
     city: string,
     region: string,
     limit: number = 1,
-    excludeVenues?: { placeIds?: string[]; names?: string[] }
+    excludeVenues?: { placeIds?: string[]; names?: string[] },
+    country?: string
   ): Promise<VenueSearchResult> {
     try {
-      console.log(`🔍 Starting Places API search for: "${searchTerm}" in ${city}, ${region}`);
+      console.log(`🔍 Starting Places API search for: "${searchTerm}" in ${city}, ${region}${country ? `, ${country}` : ''}`);
       
       // Primero, obtener coordenadas de la ubicación
-      const coordinates = await this.geocodeLocation(city, region);
+      const coordinates = await this.geocodeLocation(city, region, country);
       if (!coordinates) {
+        const locationString = country ? `${city}, ${region}, ${country}` : `${city}, ${region}`;
         return {
           success: false,
-          error: `Could not find coordinates for ${city}, ${region}. Please check if the location is valid and if Google Geocoding API is properly configured.`
+          error: `Could not find coordinates for ${locationString}. Please check if the location is valid and if Google Geocoding API is properly configured.`
         };
       }
 
@@ -707,20 +711,21 @@ export class RegionVenuesService {
   }
 
   /**
-   * Busca venues (método principal)
+   * Método principal de búsqueda de venues
    */
   async searchVenues(
     searchTerm: string,
     city: string,
     region: string,
     limit: number = 1,
-    excludeVenues?: { placeIds?: string[]; names?: string[] }
+    excludeVenues?: { placeIds?: string[]; names?: string[] },
+    country?: string
   ): Promise<VenueSearchResult> {
     try {
-      console.log(`Searching venues: "${searchTerm}" in ${city}, ${region}`);
+      console.log(`Searching venues: "${searchTerm}" in ${city}, ${region}${country ? `, ${country}` : ''}`);
       
       // Usar Google Places API
-      const result = await this.searchVenuesWithPlaces(searchTerm, city, region, limit, excludeVenues);
+      const result = await this.searchVenuesWithPlaces(searchTerm, city, region, limit, excludeVenues, country);
       
       if (result.success) {
         console.log(`Found ${result.venues?.length || 0} venues`);
@@ -800,7 +805,8 @@ export class RegionVenuesService {
         params.city,
         params.region,
         finalLimit,
-        combinedExcludeVenues
+        combinedExcludeVenues,
+        params.country
       );
 
       if (!searchResult.success) {

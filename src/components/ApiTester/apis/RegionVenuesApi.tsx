@@ -109,6 +109,7 @@ const RegionVenuesApi: BaseApiConfig = {
       searchTerm: 'restaurant',
       city: '',
       region: '',
+      country: '',
       maxVenues: 10,
       userId: '',
       priority: 'medium',
@@ -134,6 +135,7 @@ const RegionVenuesApi: BaseApiConfig = {
     };
 
     // Añadir campos opcionales solo si tienen valor
+    if (state.country) requestBody.country = state.country;
     if (state.userId) requestBody.userId = state.userId;
     if (state.priority) requestBody.priority = state.priority;
     
@@ -174,6 +176,7 @@ const RegionVenuesApi: BaseApiConfig = {
       params.append('searchTerm', state.searchTerm);
       params.append('city', state.city);
       params.append('region', state.region);
+      if (state.country) params.append('country', state.country);
       params.append('maxVenues', state.maxVenues.toString());
       
       return `${endpoint}?${params.toString()}`;
@@ -237,6 +240,15 @@ const RegionVenuesApi: BaseApiConfig = {
           onChange={(value) => setState({ region: value })}
           placeholder="Región/estado/país (ej: Madrid, Spain)"
           required
+        />
+
+        <FormField
+          label="Country"
+          id="country"
+          type="text"
+          value={state.country}
+          onChange={(value) => setState({ country: value })}
+          placeholder="País para geocoding preciso (ej: Spain) - Opcional pero recomendado"
         />
 
         <FormField

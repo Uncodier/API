@@ -302,7 +302,7 @@ export async function POST(request: Request) {
       console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando con procesamiento`);
     }
     
-    const { businessTypes, determinedTopic, determinedCity, determinedRegion, determinedSegmentId } = extractBusinessTypeResults(executedCommand, businessResearchTopic);
+    const { businessTypes, determinedTopic, determinedCity, determinedRegion, determinedCountry, determinedSegmentId } = extractBusinessTypeResults(executedCommand, businessResearchTopic);
     
     // Verificar que se extrajeron business types válidos
     if (!businessTypes || businessTypes.length === 0) {
@@ -319,6 +319,7 @@ export async function POST(request: Request) {
           completed_at: new Date().toISOString(),
           target_city: determinedCity,
           target_region: determinedRegion,
+          target_country: determinedCountry,
           target_segment_id: determinedSegmentId,
           initial_region_input: region || null,
           business_types_requested: maxBusinessTypes,
@@ -335,7 +336,7 @@ export async function POST(request: Request) {
           },
           location_strategy: {
             method: "agent_determined_from_background",
-            determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}` : determinedRegion,
+            determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedRegion ? `${determinedRegion}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedCountry,
             previously_searched_cities: usedCities,
             note: "Location determined by agent based on business background/context or market analysis"
           },
@@ -381,7 +382,7 @@ export async function POST(request: Request) {
     
     // 11. Retornar respuesta con tipos de negocios determinados por el agente
     console.log(`✅ Proceso completado exitosamente. Enviando respuesta con ${businessTypes.length} tipos de negocios`);
-    console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}`);
+    console.log(`🎯 Ciudad determinada: ${determinedCity}, Región determinada: ${determinedRegion}, País determinado: ${determinedCountry}`);
     console.log(`🎯 Segmento utilizado: ${determinedSegmentId}`);
     return NextResponse.json({
       success: true,
@@ -394,6 +395,7 @@ export async function POST(request: Request) {
         completed_at: new Date().toISOString(),
         target_city: determinedCity,
         target_region: determinedRegion,
+        target_country: determinedCountry,
         target_segment_id: determinedSegmentId,
         initial_region_input: region || null,
         business_types_requested: maxBusinessTypes,
@@ -410,7 +412,7 @@ export async function POST(request: Request) {
         },
         location_strategy: {
           method: "agent_determined_from_background",
-          determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}` : determinedRegion,
+          determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedRegion ? `${determinedRegion}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedCountry,
           previously_searched_cities: usedCities,
           note: "Location determined by agent based on business background/context or market analysis"
         },

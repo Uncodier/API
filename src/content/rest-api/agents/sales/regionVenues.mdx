@@ -29,6 +29,7 @@ POST /api/agents/sales/regionVenues
 | `searchTerm` | string | Yes | Term to search for (e.g., "restaurant", "hotel", "gym") |
 | `city` | string | Yes | City name to search in |
 | `region` | string | Yes | Region/state/country (e.g., "Madrid, Spain") |
+| `country` | string | No | Country name for more precise geocoding (e.g., "Spain") |
 | `maxVenues` | number | No | Maximum number of venues to return (1-50, default: 10) |
 
 ### POST Request Body
@@ -40,6 +41,7 @@ POST /api/agents/sales/regionVenues
 | `searchTerm` | string | Yes | Term to search for (e.g., "restaurant", "hotel", "gym") |
 | `city` | string | Yes | City name to search in |
 | `region` | string | Yes | Region/state/country (e.g., "Madrid, Spain") |
+| `country` | string | No | Country name for more precise geocoding (e.g., "Spain") |
 | `maxVenues` | number | No | Maximum number of venues to return (1-50, default: 10) |
 | `priority` | string | No | Priority of search job ("high", "medium", "low") |
 | `targetAudience` | object | No | Information about the target audience |
@@ -47,7 +49,19 @@ POST /api/agents/sales/regionVenues
 | `contactPreferences` | object | No | Preferred contact methods and timing |
 | `venue_search_id` | string | No | ID of existing search if this is a follow-up |
 | `conversation_id` | string | No | ID of conversation if generated from chat interaction |
-| `webhook` | object | No | Webhook configuration for completion notifications |
+
+## Important Note about Country Parameter
+
+While the `country` parameter is optional, it is **highly recommended** to include it for more accurate geocoding results. When searching for venues, the API first converts the location (`city` + `region` + `country`) into precise geographic coordinates using Google's Geocoding API. 
+
+**Why include country?**
+- **Accuracy**: Many cities share the same name across different countries (e.g., "Valencia" exists in Spain and Venezuela)
+- **Better Results**: More precise coordinates lead to more relevant venue search results
+- **Reduced Errors**: Prevents the API from finding venues in the wrong country
+
+**Example:**
+- Without country: `"Madrid, Community of Madrid"` might match different locations
+- With country: `"Madrid, Community of Madrid, Spain"` ensures precise geocoding
 
 ### Example GET Request
 
