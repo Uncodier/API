@@ -359,5 +359,21 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `Send results to: ${webhook.url}\n`;
   }
   
+  contextMessage += `\n🚨 CRITICAL BUSINESS TYPE SEARCH RESTRICTION:\n`;
+  contextMessage += `MANDATORY: Focus ONLY on variations and synonyms of the SAME business type for the selected segment.\n`;
+  contextMessage += `DO NOT generate completely different business types that would complicate Google Maps searches.\n\n`;
+  contextMessage += `✅ CORRECT APPROACH - Same type with different terms:\n`;
+  contextMessage += `• For Marketing Agencies: "Agencias de marketing", "Agencias de publicidad", "Agencias de desarrollo web", "Consultores de marketing digital"\n`;
+  contextMessage += `• For Restaurants: "Restaurantes", "Restaurantes de comida rápida", "Restaurantes de cocina local", "Comedores"\n`;
+  contextMessage += `• For Consultants: "Consultores", "Asesores", "Consultores empresariales", "Servicios de consultoría"\n\n`;
+  contextMessage += `❌ INCORRECT APPROACH - Mixing different business types:\n`;
+  contextMessage += `• Do NOT mix: "Agencias de marketing" + "Ferreterías" + "Clínicas dentales"\n`;
+  contextMessage += `• Do NOT combine unrelated industries in the same search segment\n\n`;
+  contextMessage += `🎯 FOCUS STRATEGY:\n`;
+  contextMessage += `1. Select ONE main business category for the segment\n`;
+  contextMessage += `2. Generate ONLY variations, synonyms, and related terms for that same category\n`;
+  contextMessage += `3. This ensures efficient and accurate Google Maps business discovery\n`;
+  contextMessage += `4. Different search terms but same business essence for better lead generation results\n\n`;
+  
   return contextMessage;
 } 
