@@ -146,6 +146,7 @@ export async function createBusinessTypeResearchCommand(
   const targetConfig = {
     target_city: null,
     target_region: region === "to be determined by agent" ? null : region,
+    target_country: null,
     business_type: businessType,
     keywords: keywords,
     business_research_topic: businessResearchTopic,
@@ -186,7 +187,7 @@ export async function createBusinessTypeResearchCommand(
       }
     },
     output_requirements: {
-      mandatory_fields: ["target_city", "target_region", "business_research_topic", "business_types"],
+      mandatory_fields: ["target_city", "target_region", "target_country", "business_research_topic", "business_types"],
       business_types_format: {
         required_fields: ["name", "description", "relevance", "market_potential"],
         count: maxBusinessTypes,
