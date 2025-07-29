@@ -118,8 +118,18 @@ async function comprehensiveEmailFilter(
   
   // 1. Obtener configuraciones una sola vez
   console.log(`[EMAIL_API] 🔧 Paso 1: Obteniendo configuraciones de seguridad...`);
-  const securityConfig = getSecurityConfig();
-  console.log(`[EMAIL_API] ✅ Paso 1 completado: Configuraciones obtenidas`);
+  let securityConfig;
+  try {
+    securityConfig = getSecurityConfig();
+    console.log(`[EMAIL_API] ✅ Paso 1 completado: Configuraciones obtenidas`, {
+      serverUrl: securityConfig.serverUrl?.substring(0, 30),
+      serverDomain: securityConfig.serverDomain,
+      noReplyCount: securityConfig.noReplyAddresses?.length
+    });
+  } catch (error) {
+    console.error(`[EMAIL_API] ❌ ERROR en getSecurityConfig:`, error);
+    throw error;
+  }
   
   // 2. Normalizar aliases una sola vez
   console.log(`[EMAIL_API] 🔧 Paso 2: Normalizando aliases...`);
@@ -157,7 +167,8 @@ async function comprehensiveEmailFilter(
         emailToEnvelopeMap.set(email, envelopeId);
       }
     } catch (error) {
-      console.warn(`[EMAIL_API] ⚠️ Error generando envelope_id para email:`, error);
+      console.error(`[EMAIL_API] ❌ ERROR generando envelope_id para email:`, error);
+      throw error;
     }
   }
   console.log(`[EMAIL_API] ✅ Paso 3 completado: ${emailToEnvelopeMap.size} envelope_ids generados`);
@@ -210,7 +221,6 @@ async function comprehensiveEmailFilter(
     
     if (containsServerUrl || isFromServerDomain || isFromNoReplyAddress || isAutomatedEmail || hasAutomatedHeaders) {
       stats.feedbackLoopFiltered++;
-      console.log(`[EMAIL_API] 🚫 Email filtrado (feedback loop): ${email.from}`);
       return false;
     }
     
@@ -221,44 +231,43 @@ async function comprehensiveEmailFilter(
     
     if (fromEmailOnly && toEmailOnly && fromEmailOnly === toEmailOnly) {
       stats.aliasFiltered++;
-      console.log(`[EMAIL_API] 🚫 Email filtrado (self-sent): ${fromEmailOnly}`);
       return false;
     }
     
     // VALIDACIÓN 3: Verificar aliases (si están configurados)
     if (normalizedAliases.length > 0) {
-      const destinationFields = [
-        emailTo,
-        email.headers?.['delivered-to']?.toLowerCase?.().trim?.() || '',
-        email.headers?.['x-original-to']?.toLowerCase?.().trim?.() || '',
-        email.headers?.['x-envelope-to']?.toLowerCase?.().trim?.() || '',
-        email.headers?.['x-rcpt-to']?.toLowerCase?.().trim?.() || '',
+    const destinationFields = [
+      emailTo,
+      email.headers?.['delivered-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-original-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-envelope-to']?.toLowerCase?.().trim?.() || '',
+      email.headers?.['x-rcpt-to']?.toLowerCase?.().trim?.() || '',
         email.headers?.['envelope-to']?.toLowerCase?.().trim?.() || ''
-      ].filter(field => field && field.length > 0);
+    ].filter(field => field && field.length > 0);
 
       const isValidByAlias = normalizedAliases.some(alias => {
-        const normalizedAlias = alias.toLowerCase().trim();
-        return destinationFields.some(destinationField => {
+      const normalizedAlias = alias.toLowerCase().trim();
+      return destinationFields.some(destinationField => {
           if (destinationField === normalizedAlias || destinationField.includes(normalizedAlias)) {
-            return true;
-          }
-          
+          return true;
+        }
+        
           // Verificar formato <email>
-          const emailMatches = destinationField.match(/<([^>]+)>/g);
-          if (emailMatches) {
+        const emailMatches = destinationField.match(/<([^>]+)>/g);
+        if (emailMatches) {
             return emailMatches.some((match: string) => {
-              const extractedEmail = match.replace(/[<>]/g, '').trim();
-              return extractedEmail === normalizedAlias;
-            });
-          }
-          
+            const extractedEmail = match.replace(/[<>]/g, '').trim();
+            return extractedEmail === normalizedAlias;
+          });
+        }
+        
           // Verificar lista separada por comas
-          if (destinationField.includes(',')) {
-            const emailList = destinationField.split(',').map((e: string) => e.trim());
+        if (destinationField.includes(',')) {
+          const emailList = destinationField.split(',').map((e: string) => e.trim());
             return emailList.some((singleEmail: string) => {
-              const cleanEmail = singleEmail.replace(/.*<([^>]+)>.*/, '$1').trim();
-              return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
-            });
+            const cleanEmail = singleEmail.replace(/.*<([^>]+)>.*/, '$1').trim();
+            return cleanEmail === normalizedAlias || singleEmail === normalizedAlias;
+          });
           }
           
           return false;
@@ -267,7 +276,6 @@ async function comprehensiveEmailFilter(
 
       if (!isValidByAlias) {
         stats.aliasFiltered++;
-        console.log(`[EMAIL_API] 🚫 Email filtrado (no coincide con aliases): ${email.from}`);
         return false;
       }
     }
@@ -282,14 +290,12 @@ async function comprehensiveEmailFilter(
       emailContent.includes(pattern) || emailSubject.includes(pattern)
     );
     
-    if (isSuspicious) {
+        if (isSuspicious) {
       stats.securityFiltered++;
-      console.log(`[EMAIL_API] 🚫 Email filtrado (seguridad simplificada): ${email.from}`);
-      return false;
+        return false;
     }
     
     // Si llega aquí, el email pasa todas las validaciones básicas
-    console.log(`[EMAIL_API] ✅ Email pasa filtros básicos: ${email.from}`);
     return true;
   });
   
@@ -361,8 +367,6 @@ async function comprehensiveEmailFilter(
     
     // VALIDACIÓN DB 1: Verificar si es lead asignado a IA (INCLUIR automáticamente)
     if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
-      const aiLead = aiLeadsMap.get(fromEmailAddress);
-      console.log(`[EMAIL_API] 🤖 Email de lead asignado a IA (incluido automáticamente): ${aiLead.name}`);
       return true;
     }
     
@@ -370,12 +374,10 @@ async function comprehensiveEmailFilter(
     const emailEnvelopeId = emailToEnvelopeMap.get(email);
     if (emailEnvelopeId && processedEnvelopeIds.has(emailEnvelopeId)) {
       stats.duplicateFiltered++;
-      console.log(`[EMAIL_API] 🚫 Email filtrado (duplicado por envelope_id): ${emailEnvelopeId}`);
       return false;
     }
     
     // Si llega aquí, el email pasa todas las validaciones
-    console.log(`[EMAIL_API] ✅ Email válido final: ${email.from}`);
     return true;
   });
   
@@ -707,19 +709,12 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-             // DEBUG: Verificar estado antes del filtro
-       console.log(`[EMAIL_API] 🔍 DEBUG: Estado antes del filtro - allEmails.length: ${allEmails.length}`);
-       console.log(`[EMAIL_API] 🔍 DEBUG: siteId: ${siteId}`);
-       console.log(`[EMAIL_API] 🔍 DEBUG: emailConfig existe: ${!!emailConfig}`);
-       
        // Aplicar filtro comprehensivo optimizado (UN SOLO recorrido)
        console.log(`[EMAIL_API] 🚀 Iniciando filtro comprehensivo para ${allEmails.length} emails...`);
        
        let validEmails, summary, emailToEnvelopeMap;
        try {
-         console.log(`[EMAIL_API] 🔧 DEBUG: Llamando a comprehensiveEmailFilter...`);
          const result = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
-         console.log(`[EMAIL_API] ✅ DEBUG: comprehensiveEmailFilter terminó exitosamente`);
          validEmails = result.validEmails;
          summary = result.summary;
          emailToEnvelopeMap = result.emailToEnvelopeMap;
@@ -728,7 +723,7 @@ export async function POST(request: NextRequest) {
          throw error;
        }
        
-       console.log(`[EMAIL_API] 🎉 Filtro comprehensivo completado exitosamente`);
+       console.log(`[EMAIL_API] ✅ Filtro completado: ${validEmails.length}/${allEmails.length} emails válidos`);
       
              if (validEmails.length === 0) {
          console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado comprehensivo`);
@@ -868,9 +863,9 @@ export async function POST(request: NextRequest) {
                from: originalEmail?.from,
                to: originalEmail?.to,
                date: originalEmail?.date || originalEmail?.received_date,
-               command_id: effectiveDbUuid || internalCommandId,
-               analysis_timestamp: new Date().toISOString(),
-               agent_id: effectiveAgentId,
+            command_id: effectiveDbUuid || internalCommandId,
+            analysis_timestamp: new Date().toISOString(),
+            agent_id: effectiveAgentId,
                envelope_id: envelopeId,
                source: 'email_analysis'
              },

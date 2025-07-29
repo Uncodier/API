@@ -98,13 +98,7 @@ export class EmailConfigService {
    */
   private static async getEmailToken(siteId: string): Promise<string | null> {
     try {
-      // 1. Intentar obtener el token del servicio de desencriptación
-      const tokenFromService = await this.getTokenFromService(siteId);
-      if (tokenFromService) {
-        return tokenFromService;
-      }
-
-      // 2. Si el servicio falla, intentar obtener directamente de la base de datos
+      // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
       const { data: settings } = await supabaseAdmin
         .from('settings')
         .select('channels')
@@ -124,6 +118,7 @@ export class EmailConfigService {
       if (email) {
         const { data: withIdentifier } = await query.eq('identifier', email).maybeSingle();
         if (withIdentifier?.encrypted_value) {
+          console.log(`[EmailConfigService] ✅ Token encontrado con identifier, desencriptando localmente...`);
           return this.decryptToken(withIdentifier.encrypted_value);
         }
       }
@@ -131,11 +126,22 @@ export class EmailConfigService {
       // Si no se encontró con identifier o no hay email, intentar sin identifier
       const { data: withoutIdentifier } = await query.maybeSingle();
       if (withoutIdentifier?.encrypted_value) {
+        console.log(`[EmailConfigService] ✅ Token encontrado sin identifier, desencriptando localmente...`);
         return this.decryptToken(withoutIdentifier.encrypted_value);
       }
 
+      // 2. SOLO COMO FALLBACK: Intentar obtener del servicio de desencriptación (MÁS LENTO)
+      console.log(`[EmailConfigService] ⚠️ Token no encontrado en DB, intentando servicio de desencriptación...`);
+      const tokenFromService = await this.getTokenFromService(siteId);
+      if (tokenFromService) {
+        console.log(`[EmailConfigService] ✅ Token obtenido del servicio de desencriptación`);
+        return tokenFromService;
+      }
+
+      console.log(`[EmailConfigService] ❌ No se pudo obtener token de ninguna fuente`);
       return null;
     } catch (error) {
+      console.error(`[EmailConfigService] ❌ Error obteniendo token:`, error);
       return null;
     }
   }

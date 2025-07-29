@@ -388,32 +388,7 @@ export class WhatsAppSendService {
     try {
       console.log('🔓 [WhatsAppSendService] Obteniendo token directamente desde base de datos...');
       
-      // 1. Intentar obtener el token del servicio de desencriptación (con try-catch para evitar fallos)
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-        const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
-        
-        const response = await fetch(decryptUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            site_id: siteId,
-            token_type: 'twilio_whatsapp'
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success && result.data?.tokenValue) {
-          console.log('✅ [WhatsAppSendService] Token obtenido del servicio HTTP');
-          const decryptedValue = result.data.tokenValue;
-          return typeof decryptedValue === 'object' ? decryptedValue : JSON.parse(decryptedValue);
-        }
-      } catch (httpError) {
-        console.log('⚠️ [WhatsAppSendService] Servicio HTTP falló, intentando acceso directo:', httpError);
-      }
-      
-      // 2. Si el servicio falla, obtener directamente de la base de datos
+      // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
       const { data, error } = await supabaseAdmin
         .from('secure_tokens')
         .select('*')
@@ -421,13 +396,38 @@ export class WhatsAppSendService {
         .eq('token_type', 'twilio_whatsapp')
         .maybeSingle();
       
-      if (error) {
-        console.error('❌ [WhatsAppSendService] Error consultando secure_tokens:', error);
-        return null;
-      }
-      
-      if (!data) {
-        console.log('❌ [WhatsAppSendService] No se encontró token en secure_tokens');
+      if (error || !data) {
+        if (error) {
+          console.error('❌ [WhatsAppSendService] Error consultando secure_tokens:', error);
+        } else {
+          console.log('⚠️ [WhatsAppSendService] No se encontró token en secure_tokens, intentando servicio HTTP...');
+        }
+        
+        // 2. FALLBACK: Intentar obtener del servicio de desencriptación HTTP (MÁS LENTO)
+        try {
+          const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
+          const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
+          
+          const response = await fetch(decryptUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              site_id: siteId,
+              token_type: 'twilio_whatsapp'
+            })
+          });
+          
+          const result = await response.json();
+          
+          if (response.ok && result.success && result.data?.tokenValue) {
+            console.log('✅ [WhatsAppSendService] Token obtenido del servicio HTTP como fallback');
+            const decryptedValue = result.data.tokenValue;
+            return typeof decryptedValue === 'object' ? decryptedValue : JSON.parse(decryptedValue);
+          }
+        } catch (httpError) {
+          console.log('❌ [WhatsAppSendService] Servicio HTTP también falló:', httpError);
+        }
+        
         return null;
       }
       

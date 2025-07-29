@@ -3,6 +3,7 @@ import { WhatsAppTemplateService } from '../../../../../lib/services/whatsapp/Wh
 import { WhatsAppSendService } from '../../../../../lib/services/whatsapp/WhatsAppSendService';
 import { supabaseAdmin } from '../../../../../lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import CryptoJS from 'crypto-js';
 
 /**
  * Ruta para determinar si se necesita plantilla y crearla si es necesario
@@ -215,32 +216,54 @@ async function getWhatsAppConfig(siteId: string): Promise<{
       }
     }
 
-    // Si aún faltan credenciales, intentar desencriptar desde secure_tokens vía endpoint interno (reutiliza lógica de WhatsAppSendService)
+    // Si aún faltan credenciales, intentar desencriptar desde secure_tokens (optimizado)
     if (!config.phoneNumberId || !config.accessToken) {
       try {
-        console.log('🔓 [CreateTemplate] Intentando obtener token desencriptado desde servicio interno /api/secure-tokens/decrypt ...');
-        const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-        const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
-        const resp = await fetch(decryptUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            site_id: siteId,
-            token_type: 'twilio_whatsapp'
-          })
-        });
-        const json = await resp.json();
-        if (resp.ok && json.success && json.data?.tokenValue) {
-          const tokenValue = typeof json.data.tokenValue === 'string' ? json.data.tokenValue : JSON.stringify(json.data.tokenValue);
-          config.accessToken = tokenValue;
-          // Si aún no tenemos accountSid, usar el de settings
-          if (!config.phoneNumberId && siteSettings.channels?.whatsapp?.account_sid) {
-            config.phoneNumberId = siteSettings.channels.whatsapp.account_sid;
+        console.log('🔓 [CreateTemplate] Intentando obtener token desde base de datos (local)...');
+        
+        // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
+        const { data: tokenData, error } = await supabaseAdmin
+          .from('secure_tokens')
+          .select('*')
+          .eq('site_id', siteId)
+          .eq('token_type', 'twilio_whatsapp')
+          .maybeSingle();
+        
+        if (tokenData?.encrypted_value && !error) {
+          console.log('✅ [CreateTemplate] Token encontrado en DB, desencriptando localmente...');
+          const decryptedValue = decryptToken(tokenData.encrypted_value);
+          if (decryptedValue) {
+            config.accessToken = decryptedValue;
+            if (!config.phoneNumberId && siteSettings.channels?.whatsapp?.account_sid) {
+              config.phoneNumberId = siteSettings.channels.whatsapp.account_sid;
+            }
+            console.log('✅ [CreateTemplate] Token desencriptado localmente');
           }
-          console.log('✅ [CreateTemplate] Token desencriptado y aplicado');
+        } else {
+          // 2. FALLBACK: Intentar desde servicio HTTP (MÁS LENTO)
+          console.log('⚠️ [CreateTemplate] Token no encontrado en DB, intentando servicio HTTP...');
+          const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
+          const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
+          const resp = await fetch(decryptUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              site_id: siteId,
+              token_type: 'twilio_whatsapp'
+            })
+          });
+          const json = await resp.json();
+          if (resp.ok && json.success && json.data?.tokenValue) {
+            const tokenValue = typeof json.data.tokenValue === 'string' ? json.data.tokenValue : JSON.stringify(json.data.tokenValue);
+            config.accessToken = tokenValue;
+            if (!config.phoneNumberId && siteSettings.channels?.whatsapp?.account_sid) {
+              config.phoneNumberId = siteSettings.channels.whatsapp.account_sid;
+            }
+            console.log('✅ [CreateTemplate] Token obtenido del servicio HTTP como fallback');
+          }
         }
       } catch (decryptErr) {
-        console.warn('⚠️ [CreateTemplate] Falló intento de desencriptar token:', decryptErr);
+        console.warn('⚠️ [CreateTemplate] Error obteniendo token:', decryptErr);
       }
     }
 
@@ -474,4 +497,34 @@ export async function GET(request: NextRequest) {
       error: 'Internal server error'
     }, { status: 500 });
   }
+}
+
+/**
+ * Desencripta un token usando CryptoJS (copia de WhatsAppSendService)
+ */
+function decryptToken(encryptedValue: string): string | null {
+  const encryptionKey = process.env.ENCRYPTION_KEY || '';
+  
+  if (!encryptionKey) {
+    console.error("Missing ENCRYPTION_KEY environment variable");
+    return null;
+  }
+  
+  if (encryptedValue.includes(':')) {
+    const [salt, encrypted] = encryptedValue.split(':');
+    const combinedKey = encryptionKey + salt;
+    
+    try {
+      const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
+      const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
+      
+      if (decryptedText) {
+        return decryptedText;
+      }
+    } catch (error) {
+      console.error('Error desencriptando token:', error);
+    }
+  }
+  
+  return null;
 } 
