@@ -36,23 +36,24 @@ const ERROR_CODES = {
 };
 
 /**
- * Detecta si un email es un bounce/delivery failure
+ * Detecta si un email es un bounce/delivery failure con mayor precisión
  */
 function isBounceEmail(email: any): boolean {
   const from = (email.from || '').toLowerCase();
   const subject = (email.subject || '').toLowerCase();
   
-  // Filtros para from
+  // Patrones específicos para remitentes de bounce (más restrictivos)
   const bounceFromPatterns = [
     'mailer-daemon',
     'mail delivery subsystem',
-    'postmaster',
+    'postmaster@',
     'mail.protection.outlook.com',
-    'no-reply',
-    'noreply'
+    'delivery-status@',
+    'bounce@',
+    'failed@'
   ];
   
-  // Filtros para subject
+  // Patrones específicos para subjects de bounce
   const bounceSubjectPatterns = [
     'delivery status notification',
     'failure',
@@ -62,13 +63,49 @@ function isBounceEmail(email: any): boolean {
     'mail delivery failed',
     'undeliverable',
     'bounce',
-    'could not be delivered'
+    'could not be delivered',
+    'message not delivered',
+    'delivery failed',
+    'permanent failure'
   ];
   
+  // Patrones que indican que NO es bounce (emails promocionales/legítimos)
+  const nonBouncePatterns = [
+    'welcome',
+    'bienvenido',
+    'get the official',
+    'tips for using',
+    'activate',
+    'activa tu cuenta',
+    'registration confirmed',
+    'sign in code'
+  ];
+  
+  // Si contiene patrones que claramente NO son bounce, retornar false
+  const isNonBounce = nonBouncePatterns.some(pattern => 
+    subject.includes(pattern) || from.includes(pattern)
+  );
+  
+  if (isNonBounce) {
+    return false;
+  }
+  
+  // Verificar patrones de bounce
   const isFromBounce = bounceFromPatterns.some(pattern => from.includes(pattern));
   const isSubjectBounce = bounceSubjectPatterns.some(pattern => subject.includes(pattern));
   
-  return isFromBounce || isSubjectBounce;
+  // Solo considerar bounce si el subject también indica problema de entrega
+  // O si viene de un remitente específico de bounce + subject neutro
+  if (isFromBounce && (isSubjectBounce || from.includes('mailer-daemon') || from.includes('postmaster@'))) {
+    return true;
+  }
+  
+  // Si solo el subject indica bounce pero viene de remitente normal, ser más estricto
+  if (isSubjectBounce && !from.includes('noreply') && !from.includes('no-reply')) {
+    return true;
+  }
+  
+  return false;
 }
 
 /**

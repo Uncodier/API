@@ -830,29 +830,31 @@ export async function POST(request: NextRequest) {
         
         return NextResponse.json({
           success: true,
-          commandId: null,
-          status: 'completed',
-          message: "No se encontraron emails para analizar en el período especificado",
-          emailCount: 0,
-          originalEmailCount: originalEmailCount,
-          sizeFilteredCount: processableEmails.length,
-          feedbackLoopFilteredCount: feedbackFilteredEmails.length,
-          aliasFilteredCount: aliasFilteredEmails.length,
-          alreadyProcessedCount: alreadyProcessed.length,
-          analysisCount: 0,
-          aliasesConfigured: normalizedAliases,
-          filteredBySize: originalEmailCount > processableEmails.length,
-          filteredByAliases: normalizedAliases.length > 0,
-          filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
-          filteredByDuplicates: alreadyProcessed.length > 0,
-          processingStats: stats,
-          emails: [],
-          reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
-                  processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
-                  feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
-                  aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
-                  emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
-                  'Todos los emails fueron bloqueados por validaciones de seguridad'
+          data: {
+            commandId: null,
+            status: 'completed',
+            message: "No se encontraron emails para analizar en el período especificado",
+            emailCount: 0,
+            originalEmailCount: originalEmailCount,
+            sizeFilteredCount: processableEmails.length,
+            feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+            aliasFilteredCount: aliasFilteredEmails.length,
+            alreadyProcessedCount: alreadyProcessed.length,
+            analysisCount: 0,
+            aliasesConfigured: normalizedAliases,
+            filteredBySize: originalEmailCount > processableEmails.length,
+            filteredByAliases: normalizedAliases.length > 0,
+            filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
+            filteredByDuplicates: alreadyProcessed.length > 0,
+            processingStats: stats,
+            emails: [],
+            reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
+                    processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
+                    feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
+                    aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
+                    emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
+                    'Todos los emails fueron bloqueados por validaciones de seguridad'
+          }
         });
       }
 
@@ -911,36 +913,38 @@ export async function POST(request: NextRequest) {
         
         return NextResponse.json({
           success: true,
-          commandId: null,
-          status: 'completed',
-          message: "No se encontraron emails seguros para analizar después de las validaciones de seguridad",
-          emailCount: 0,
-          originalEmailCount: originalEmailCount,
-          sizeFilteredCount: processableEmails.length,
-          feedbackLoopFilteredCount: feedbackFilteredEmails.length,
-          aliasFilteredCount: aliasFilteredEmails.length,
-          alreadyProcessedCount: alreadyProcessed.length,
-          unsafeEmailsBlocked: unsafeEmails.length,
-          analysisCount: 0,
-          aliasesConfigured: normalizedAliases,
-          filteredBySize: originalEmailCount > processableEmails.length,
-          filteredByAliases: normalizedAliases.length > 0,
-          filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
-          filteredByDuplicates: alreadyProcessed.length > 0,
-          filteredBySecurity: unsafeEmails.length > 0,
-          securityValidation: {
-            detected: unsafeEmails.length,
-            categories: EmailFilterService.getFilteringStats(unsafeEmails),
-            reasons: unsafeEmails.map(u => u.reason)
-          },
-          processingStats: stats,
-          emails: [],
-          reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
-                  processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
-                  feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
-                  aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
-                  emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
-                  'Todos los emails fueron bloqueados por validaciones de seguridad'
+          data: {
+            commandId: null,
+            status: 'completed',
+            message: "No se encontraron emails seguros para analizar después de las validaciones de seguridad",
+            emailCount: 0,
+            originalEmailCount: originalEmailCount,
+            sizeFilteredCount: processableEmails.length,
+            feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+            aliasFilteredCount: aliasFilteredEmails.length,
+            alreadyProcessedCount: alreadyProcessed.length,
+            unsafeEmailsBlocked: unsafeEmails.length,
+            analysisCount: 0,
+            aliasesConfigured: normalizedAliases,
+            filteredBySize: originalEmailCount > processableEmails.length,
+            filteredByAliases: normalizedAliases.length > 0,
+            filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
+            filteredByDuplicates: alreadyProcessed.length > 0,
+            filteredBySecurity: unsafeEmails.length > 0,
+            securityValidation: {
+              detected: unsafeEmails.length,
+              categories: EmailFilterService.getFilteringStats(unsafeEmails),
+              reasons: unsafeEmails.map(u => u.reason)
+            },
+            processingStats: stats,
+            emails: [],
+            reason: originalEmailCount === 0 ? 'No hay emails nuevos en el buzón' : 
+                    processableEmails.length === 0 ? 'Todos los emails fueron filtrados por tamaño excesivo' :
+                    feedbackFilteredEmails.length === 0 ? 'Todos los emails fueron filtrados como feedback loops' :
+                    aliasFilteredEmails.length === 0 ? 'Ningún email coincide con los aliases configurados' :
+                    emails.length === 0 ? 'Todos los emails ya han sido procesados previamente' :
+                    'Todos los emails fueron bloqueados por validaciones de seguridad'
+          }
         });
       }
 
@@ -1192,32 +1196,34 @@ export async function POST(request: NextRequest) {
       
       return NextResponse.json({
         success: true,
-        commandId: effectiveDbUuid || internalCommandId,
-        status: executedCommand?.status || 'completed',
-        message: "Análisis de emails completado exitosamente",
-        emailCount: finalEmailsForAnalysis.length,
-        originalEmailCount: originalEmailCount,
-        sizeFilteredCount: processableEmails.length,
-        feedbackLoopFilteredCount: feedbackFilteredEmails.length,
-        aliasFilteredCount: aliasFilteredEmails.length,
-        alreadyProcessedCount: alreadyProcessed.length,
-        unsafeEmailsBlocked: unsafeEmails.length,
-        analysisCount: emailsForResponse.length,
-        processedEmailsMarked: successfulMarks,
-        aliasesConfigured: normalizedAliases,
-        filteredBySize: originalEmailCount > processableEmails.length,
-        filteredByAliases: normalizedAliases.length > 0,
-        filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
-        filteredByDuplicates: alreadyProcessed.length > 0,
-        filteredBySecurity: unsafeEmails.length > 0,
-        securityValidation: {
-          detected: unsafeEmails.length,
-          categories: EmailFilterService.getFilteringStats(unsafeEmails),
-          reasons: unsafeEmails.map(u => u.reason),
-          noReplyAddressesConfigured: noReplyAddresses
-        },
-        processingStats: finalStats,
-        emails: emailsForResponse
+        data: {
+          commandId: effectiveDbUuid || internalCommandId,
+          status: executedCommand?.status || 'completed',
+          message: "Análisis de emails completado exitosamente",
+          emailCount: finalEmailsForAnalysis.length,
+          originalEmailCount: originalEmailCount,
+          sizeFilteredCount: processableEmails.length,
+          feedbackLoopFilteredCount: feedbackFilteredEmails.length,
+          aliasFilteredCount: aliasFilteredEmails.length,
+          alreadyProcessedCount: alreadyProcessed.length,
+          unsafeEmailsBlocked: unsafeEmails.length,
+          analysisCount: emailsForResponse.length,
+          processedEmailsMarked: successfulMarks,
+          aliasesConfigured: normalizedAliases,
+          filteredBySize: originalEmailCount > processableEmails.length,
+          filteredByAliases: normalizedAliases.length > 0,
+          filteredByFeedbackLoop: processableEmails.length > feedbackFilteredEmails.length,
+          filteredByDuplicates: alreadyProcessed.length > 0,
+          filteredBySecurity: unsafeEmails.length > 0,
+          securityValidation: {
+            detected: unsafeEmails.length,
+            categories: EmailFilterService.getFilteringStats(unsafeEmails),
+            reasons: unsafeEmails.map(u => u.reason),
+            noReplyAddressesConfigured: noReplyAddresses
+          },
+          processingStats: finalStats,
+          emails: emailsForResponse
+        }
       });
       
     } catch (error: unknown) {
@@ -1270,7 +1276,9 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   return NextResponse.json({
     success: true,
-    message: "This endpoint requires a POST request with email analysis parameters. Please refer to the documentation."
+    data: {
+      message: "This endpoint requires a POST request with email analysis parameters. Please refer to the documentation."
+    }
   }, { status: 200 });
 }
 
