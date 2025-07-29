@@ -25,7 +25,7 @@ const commandService = processorInitializer.getCommandService();
 // Create schemas for request validation
 const EmailAgentRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  limit: z.number().max(10).default(5).optional(),
+  limit: z.number().max(20).default(5).optional(),
   lead_id: z.string().optional(),
   agentId: z.string().optional(),
   user_id: z.string().optional(),
