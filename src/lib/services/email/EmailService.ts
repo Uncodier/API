@@ -228,6 +228,12 @@ export class EmailService {
                   const part = message.bodyParts.get(partKey);
                   if (part) {
                     bodyContent = part.toString('utf8');
+                    // OPTIMIZACIÓN: Truncar during bodyParts extraction
+                    const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
+                    if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
+                      console.log(`[EmailService] ✂️ BodyPart truncado durante extracción: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+                      bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                    }
                     console.log(`[EmailService] ✅ DIAGNOSTICO - Body encontrado con clave "${partKey}": ${bodyContent.length} chars`);
                     break;
                   }
@@ -247,7 +253,14 @@ export class EmailService {
                     
                     // Skip header parts and take first substantial text content
                     if (!key.toLowerCase().includes('header') && content.length > 10) {
-                      bodyContent = content;
+                      // OPTIMIZACIÓN: Truncar durante iteración de partes
+                      const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
+                      let processedContent = content;
+                      if (content.length > MAX_EMAIL_CONTENT_LENGTH) {
+                        console.log(`[EmailService] ✂️ Content truncado en iteración: ${content.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+                        processedContent = content.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                      }
+                      bodyContent = processedContent;
                       console.log(`[EmailService] ✅ DIAGNOSTICO - Using parte "${key}" como body`);
                       break;
                     }
@@ -269,6 +282,12 @@ export class EmailService {
                 const headerEndIndex = sourceContent.indexOf('\n\n');
                 if (headerEndIndex !== -1) {
                   bodyContent = sourceContent.substring(headerEndIndex + 2).trim();
+                  // OPTIMIZACIÓN: Truncar también el contenido extraído del source
+                  const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
+                  if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
+                    console.log(`[EmailService] ✂️ Source content truncado: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+                    bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                  }
                   console.log(`[EmailService] ✅ DIAGNOSTICO - Body extraído del source: ${bodyContent.length} chars`);
                 }
               } catch (sourceError) {
@@ -277,6 +296,12 @@ export class EmailService {
             }
             
             if (bodyContent) {
+              // OPTIMIZACIÓN: Truncar emails muy largos durante la descarga para evitar timeouts
+              const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo por email
+              if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
+                console.log(`[EmailService] ✂️ Email truncado durante descarga: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+                bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+              }
               email.body = bodyContent;
               console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
             } else {
