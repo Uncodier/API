@@ -11,6 +11,7 @@ import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
+import { SentEmailDuplicationService } from '@/lib/services/email/SentEmailDuplicationService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
@@ -64,10 +65,10 @@ function getSecurityConfig() {
   const serverDomain = (() => {
     try {
       const urlObj = new URL(serverUrl.startsWith('http') ? serverUrl : `https://${serverUrl}`);
-      return urlObj.hostname.toLowerCase();
-    } catch {
-      return null;
-    }
+    return urlObj.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
   })();
 
   const noReplyAddresses = [
@@ -102,6 +103,7 @@ async function comprehensiveEmailFilter(
   emailConfig: any
 ): Promise<{
   validEmails: any[], 
+  emailToEnvelopeMap: Map<any, string>,
   summary: {
     originalCount: number,
     feedbackLoopFiltered: number,
@@ -137,72 +139,31 @@ async function comprehensiveEmailFilter(
   }
   console.log(`[EMAIL_API] ✅ Paso 2 completado: ${normalizedAliases.length} aliases normalizados`);
   
-  // 3. Buscar leads asignados a IA una sola vez
-  console.log(`[EMAIL_API] 🔧 Paso 3: Extrayendo direcciones de email para buscar leads...`);
-  const emailAddresses = emails.map(email => {
-    const fromEmail = (email.from || '').toLowerCase().trim();
-    const emailMatch = fromEmail.match(/<([^>]+)>/);
-    return emailMatch ? emailMatch[1] : fromEmail;
-  }).filter(email => email && email.includes('@'));
-  console.log(`[EMAIL_API] ✅ Paso 3a completado: ${emailAddresses.length} direcciones de email extraídas`);
+  // 3. Generar envelope_ids para todos los emails (sin consultar DB aún)
+  console.log(`[EMAIL_API] 🔧 Paso 3: Generando envelope_ids para ${emails.length} emails...`);
+  const emailToEnvelopeMap = new Map<any, string>();
   
-  console.log(`[EMAIL_API] 🔧 Paso 3b: Consultando leads asignados a IA en base de datos...`);
-  let aiLeadsMap = new Map<string, any>();
-  if (emailAddresses.length > 0) {
+  for (const email of emails) {
     try {
-      const { data: aiLeads, error } = await supabaseAdmin
-        .from('leads')
-        .select('id, email, name, assignee_id, status, created_at')
-        .eq('site_id', siteId)
-        .is('assignee_id', null)
-        .in('email', emailAddresses);
+      const envelopeData = {
+        to: email.to,
+        from: email.from,
+        subject: email.subject,
+        date: email.date || email.received_date || new Date().toISOString()
+      };
       
-      if (!error && aiLeads) {
-        aiLeads.forEach(lead => {
-          aiLeadsMap.set(lead.email.toLowerCase(), lead);
-        });
+      const envelopeId = SentEmailDuplicationService.generateEnvelopeBasedId(envelopeData);
+      if (envelopeId) {
+        emailToEnvelopeMap.set(email, envelopeId);
       }
-      console.log(`[EMAIL_API] ✅ Paso 3b completado: ${aiLeadsMap.size} leads asignados a IA encontrados`);
     } catch (error) {
-      console.warn(`[EMAIL_API] ⚠️ Error buscando leads asignados a IA:`, error);
+      console.warn(`[EMAIL_API] ⚠️ Error generando envelope_id para email:`, error);
     }
-  } else {
-    console.log(`[EMAIL_API] ⚠️ Paso 3b: No hay direcciones de email válidas para consultar leads`);
   }
+  console.log(`[EMAIL_API] ✅ Paso 3 completado: ${emailToEnvelopeMap.size} envelope_ids generados`);
   
-  // 4. Obtener emails ya procesados una sola vez (OPTIMIZADO - consulta única)
-  console.log(`[EMAIL_API] 🔧 Paso 4: Consultando emails ya procesados...`);
-  let processedEmailIds = new Set<string>();
-  try {
-    // Extraer todos los IDs para consulta en batch
-    const emailIds = emails.map(email => email.id || email.messageId || email.uid).filter(Boolean);
-    console.log(`[EMAIL_API] 🔧 Paso 4a: ${emailIds.length} IDs de email extraídos para verificar duplicados`);
-    
-    if (emailIds.length > 0) {
-      const { data: existingObjects, error } = await supabaseAdmin
-        .from('synced_objects')
-        .select('external_id')
-        .eq('site_id', siteId)
-        .eq('object_type', 'email')
-        .in('external_id', emailIds);
-      
-      if (!error && existingObjects) {
-        existingObjects.forEach(obj => processedEmailIds.add(obj.external_id));
-        console.log(`[EMAIL_API] ✅ Paso 4 completado: ${existingObjects.length} emails ya procesados encontrados`);
-      } else if (error) {
-        console.warn(`[EMAIL_API] ⚠️ Error en consulta synced_objects:`, error);
-      } else {
-        console.log(`[EMAIL_API] ✅ Paso 4 completado: No se encontraron emails ya procesados`);
-      }
-    } else {
-      console.log(`[EMAIL_API] ⚠️ Paso 4: No hay IDs válidos para verificar duplicados`);
-    }
-  } catch (error) {
-    console.warn(`[EMAIL_API] ⚠️ Error verificando emails procesados (simplificado):`, error);
-  }
-  
-  // 5. UN SOLO recorrido aplicando TODAS las validaciones
-  console.log(`[EMAIL_API] 🔧 Paso 5: Iniciando recorrido de validación de ${emails.length} emails...`);
+  // 4. PASO 1: Filtros básicos (SIN CONSULTAS DB) - SÚPER RÁPIDO
+  console.log(`[EMAIL_API] 🔧 Paso 4: Aplicando filtros básicos (sin DB)...`);
   const stats = {
     originalCount: emails.length,
     feedbackLoopFiltered: 0,
@@ -210,15 +171,14 @@ async function comprehensiveEmailFilter(
     duplicateFiltered: 0,
     securityFiltered: 0,
     finalCount: 0,
-    aiLeadsFound: aiLeadsMap.size
+    aiLeadsFound: 0 // Se calculará después
   };
   
-  const validEmails = emails.filter(email => {
+  const basicFilteredEmails = emails.filter(email => {
     const emailContent = (email.body || email.text || '').toLowerCase();
     const emailSubject = (email.subject || '').toLowerCase();
     const emailFrom = (email.from || '').toLowerCase();
     const emailTo = (email.to || '').toLowerCase().trim();
-    const emailId = email.id || email.messageId || email.uid;
     
     // VALIDACIÓN 1: Feedback Loops
     const containsServerUrl = securityConfig.serverDomain && (
@@ -238,8 +198,8 @@ async function comprehensiveEmailFilter(
     const isAutomatedEmail = securityConfig.noReplyPatterns.some(pattern => 
       emailFrom.includes(pattern) || emailSubject.includes(pattern)
     ) || (emailSubject.includes('re:') && 
-      (emailContent.includes('generated by') || 
-       emailContent.includes('automated') ||
+        (emailContent.includes('generated by') || 
+         emailContent.includes('automated') ||
        emailContent.includes('do not reply')));
     
     const hasAutomatedHeaders = email.headers && (
@@ -254,17 +214,8 @@ async function comprehensiveEmailFilter(
       return false;
     }
     
-    // VALIDACIÓN 2: Duplicados (ya procesados)
-    if (emailId && processedEmailIds.has(emailId)) {
-      stats.duplicateFiltered++;
-      console.log(`[EMAIL_API] 🚫 Email filtrado (duplicado): ${emailId}`);
-      return false;
-    }
-    
-    // VALIDACIÓN 3: Extraer email del remitente para verificar leads asignados a IA
+    // VALIDACIÓN 2: Self-sent emails (FROM == TO)
     const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
-    
-    // VALIDACIÓN 4: Self-sent emails (FROM == TO)
     const fromEmailOnly = fromEmailAddress || emailFrom;
     const toEmailOnly = emailTo.match(/<([^>]+)>/) ? emailTo.match(/<([^>]+)>/)?.[1] : emailTo;
     
@@ -274,14 +225,7 @@ async function comprehensiveEmailFilter(
       return false;
     }
     
-    // VALIDACIÓN 5: Verificar si es lead asignado a IA (INCLUIR automáticamente)
-    if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
-      const aiLead = aiLeadsMap.get(fromEmailAddress);
-      console.log(`[EMAIL_API] 🤖 Email de lead asignado a IA (incluido automáticamente): ${aiLead.name}`);
-      return true;
-    }
-    
-    // VALIDACIÓN 6: Verificar aliases (si están configurados)
+    // VALIDACIÓN 3: Verificar aliases (si están configurados)
     if (normalizedAliases.length > 0) {
       const destinationFields = [
         emailTo,
@@ -291,7 +235,7 @@ async function comprehensiveEmailFilter(
         email.headers?.['x-rcpt-to']?.toLowerCase?.().trim?.() || '',
         email.headers?.['envelope-to']?.toLowerCase?.().trim?.() || ''
       ].filter(field => field && field.length > 0);
-      
+
       const isValidByAlias = normalizedAliases.some(alias => {
         const normalizedAlias = alias.toLowerCase().trim();
         return destinationFields.some(destinationField => {
@@ -320,7 +264,7 @@ async function comprehensiveEmailFilter(
           return false;
         });
       });
-      
+
       if (!isValidByAlias) {
         stats.aliasFiltered++;
         console.log(`[EMAIL_API] 🚫 Email filtrado (no coincide con aliases): ${email.from}`);
@@ -328,29 +272,115 @@ async function comprehensiveEmailFilter(
       }
     }
     
-         // VALIDACIÓN 7: Seguridad final simplificada (para performance)
-     const suspiciousPatterns = [
-       'suspicious', 'phishing', 'scam', 'virus', 'malware',
-       'click here now', 'urgent action required', 'verify immediately'
-     ];
-     
-     const isSuspicious = suspiciousPatterns.some(pattern => 
-       emailContent.includes(pattern) || emailSubject.includes(pattern)
-     );
-     
-     if (isSuspicious) {
-       stats.securityFiltered++;
-       console.log(`[EMAIL_API] 🚫 Email filtrado (seguridad simplificada): ${email.from}`);
-       return false;
-     }
+    // VALIDACIÓN 4: Seguridad final simplificada (para performance)
+    const suspiciousPatterns = [
+      'suspicious', 'phishing', 'scam', 'virus', 'malware',
+      'click here now', 'urgent action required', 'verify immediately'
+    ];
+    
+    const isSuspicious = suspiciousPatterns.some(pattern => 
+      emailContent.includes(pattern) || emailSubject.includes(pattern)
+    );
+    
+    if (isSuspicious) {
+      stats.securityFiltered++;
+      console.log(`[EMAIL_API] 🚫 Email filtrado (seguridad simplificada): ${email.from}`);
+      return false;
+    }
+    
+    // Si llega aquí, el email pasa todas las validaciones básicas
+    console.log(`[EMAIL_API] ✅ Email pasa filtros básicos: ${email.from}`);
+    return true;
+  });
+  
+  console.log(`[EMAIL_API] ✅ Paso 4 completado: ${basicFilteredEmails.length}/${emails.length} emails pasaron filtros básicos`);
+  
+  // 5. PASO 2: Consultas DB SOLO para emails pre-filtrados (OPTIMIZADO)
+  console.log(`[EMAIL_API] 🔧 Paso 5: Consultando DB para ${basicFilteredEmails.length} emails pre-filtrados...`);
+  
+  // 5a. Buscar leads asignados a IA para emails pre-filtrados
+  const fromEmails = basicFilteredEmails.map(email => {
+    const fromEmail = (email.from || '').toLowerCase().trim();
+    const emailMatch = fromEmail.match(/<([^>]+)>/);
+    return emailMatch ? emailMatch[1] : fromEmail;
+  }).filter(email => email && email.includes('@'));
+  
+  let aiLeadsMap = new Map<string, any>();
+  if (fromEmails.length > 0) {
+    try {
+      console.log(`[EMAIL_API] 🔧 Consultando leads asignados a IA para ${fromEmails.length} direcciones FROM específicas...`);
+      const { data: aiLeads, error } = await supabaseAdmin
+        .from('leads')
+        .select('id, email, name, assignee_id, status, created_at')
+        .eq('site_id', siteId)
+        .is('assignee_id', null)
+        .in('email', fromEmails);
+      
+      if (!error && aiLeads) {
+        aiLeads.forEach(lead => {
+          aiLeadsMap.set(lead.email.toLowerCase(), lead);
+        });
+      }
+      console.log(`[EMAIL_API] ✅ Paso 5a completado: ${aiLeadsMap.size} leads asignados a IA encontrados`);
+    } catch (error) {
+      console.warn(`[EMAIL_API] ⚠️ Error buscando leads asignados a IA:`, error);
+    }
+  }
+  
+  stats.aiLeadsFound = aiLeadsMap.size;
+  
+  // 5b. Verificar emails ya procesados (duplicados) solo para emails pre-filtrados
+  const envelopeIds = basicFilteredEmails.map(email => emailToEnvelopeMap.get(email)).filter(Boolean);
+  let processedEnvelopeIds = new Set<string>();
+  
+  if (envelopeIds.length > 0) {
+    try {
+      console.log(`[EMAIL_API] 🔧 Consultando synced_objects para ${envelopeIds.length} envelope_ids específicos...`);
+      const { data: existingObjects, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('external_id')
+        .eq('site_id', siteId)
+        .eq('object_type', 'email')
+        .in('external_id', envelopeIds);
+      
+      if (!error && existingObjects) {
+        existingObjects.forEach(obj => processedEnvelopeIds.add(obj.external_id));
+        console.log(`[EMAIL_API] ✅ Paso 5b completado: ${existingObjects.length} emails ya procesados encontrados`);
+      }
+    } catch (error) {
+      console.warn(`[EMAIL_API] ⚠️ Error verificando emails procesados:`, error);
+    }
+  }
+  
+  // 6. PASO 3: Aplicar filtros DB finales
+  console.log(`[EMAIL_API] 🔧 Paso 6: Aplicando filtros DB finales...`);
+  
+  const validEmails = basicFilteredEmails.filter(email => {
+    const emailFrom = (email.from || '').toLowerCase();
+    const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
+    
+    // VALIDACIÓN DB 1: Verificar si es lead asignado a IA (INCLUIR automáticamente)
+    if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
+      const aiLead = aiLeadsMap.get(fromEmailAddress);
+      console.log(`[EMAIL_API] 🤖 Email de lead asignado a IA (incluido automáticamente): ${aiLead.name}`);
+      return true;
+    }
+    
+    // VALIDACIÓN DB 2: Duplicados (ya procesados por envelope_id)
+    const emailEnvelopeId = emailToEnvelopeMap.get(email);
+    if (emailEnvelopeId && processedEnvelopeIds.has(emailEnvelopeId)) {
+      stats.duplicateFiltered++;
+      console.log(`[EMAIL_API] 🚫 Email filtrado (duplicado por envelope_id): ${emailEnvelopeId}`);
+      return false;
+    }
     
     // Si llega aquí, el email pasa todas las validaciones
-    console.log(`[EMAIL_API] ✅ Email válido: ${email.from}`);
+    console.log(`[EMAIL_API] ✅ Email válido final: ${email.from}`);
     return true;
   });
   
   stats.finalCount = validEmails.length;
-  console.log(`[EMAIL_API] ✅ Paso 5 completado: Recorrido de validación terminado`);
+  console.log(`[EMAIL_API] ✅ Paso 6 completado: ${validEmails.length} emails válidos finales`);
   
   console.log(`[EMAIL_API] 📊 Filtro comprehensivo completado:`);
   console.log(`[EMAIL_API] - Emails originales: ${stats.originalCount}`);
@@ -363,6 +393,7 @@ async function comprehensiveEmailFilter(
   
   return {
     validEmails,
+    emailToEnvelopeMap,
     summary: stats
   };
 }
@@ -676,28 +707,46 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-             // Aplicar filtro comprehensivo optimizado (UN SOLO recorrido)
+             // DEBUG: Verificar estado antes del filtro
+       console.log(`[EMAIL_API] 🔍 DEBUG: Estado antes del filtro - allEmails.length: ${allEmails.length}`);
+       console.log(`[EMAIL_API] 🔍 DEBUG: siteId: ${siteId}`);
+       console.log(`[EMAIL_API] 🔍 DEBUG: emailConfig existe: ${!!emailConfig}`);
+       
+       // Aplicar filtro comprehensivo optimizado (UN SOLO recorrido)
        console.log(`[EMAIL_API] 🚀 Iniciando filtro comprehensivo para ${allEmails.length} emails...`);
-       const { validEmails, summary } = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+       
+       let validEmails, summary, emailToEnvelopeMap;
+       try {
+         console.log(`[EMAIL_API] 🔧 DEBUG: Llamando a comprehensiveEmailFilter...`);
+         const result = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+         console.log(`[EMAIL_API] ✅ DEBUG: comprehensiveEmailFilter terminó exitosamente`);
+         validEmails = result.validEmails;
+         summary = result.summary;
+         emailToEnvelopeMap = result.emailToEnvelopeMap;
+       } catch (error) {
+         console.error(`[EMAIL_API] ❌ ERROR en comprehensiveEmailFilter:`, error);
+         throw error;
+       }
+       
        console.log(`[EMAIL_API] 🎉 Filtro comprehensivo completado exitosamente`);
       
              if (validEmails.length === 0) {
          console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado comprehensivo`);
-         return NextResponse.json({
-           success: true,
-           data: {
-             commandId: null,
-             status: 'completed',
+        return NextResponse.json({
+          success: true,
+          data: {
+            commandId: null,
+            status: 'completed',
              message: "No se encontraron emails válidos para analizar",
-             emailCount: 0,
+            emailCount: 0,
              originalEmailCount: allEmails.length,
-             analysisCount: 0,
-             emails: [],
+            analysisCount: 0,
+            emails: [],
              filterSummary: summary,
              reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 'Todos los emails fueron filtrados por validaciones de negocio'
-           }
-         });
-       }
+          }
+        });
+      }
 
       // Si no se proporciona agentId, buscar el agente de soporte
       console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
@@ -796,40 +845,41 @@ export async function POST(request: NextRequest) {
         console.log(`[EMAIL_API] ❌ No se encontraron results válidos para procesar`);
       }
       
-             console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
+      console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
        
-       // Marcar emails como procesados para evitar duplicados en futuras ejecuciones (OPTIMIZADO)
-       const processedEmailIds = emailsForResponse.map(email => email.id).filter(Boolean);
-       if (processedEmailIds.length > 0) {
+       // Marcar emails como procesados usando envelope_ids (SÚPER OPTIMIZADO)
+       const processedEmailsWithEnvelopes = emailsForResponse.map(email => {
+         const originalEmail = validEmails.find(ve => ve.id === email.id || ve.messageId === email.id || ve.uid === email.id);
+         const envelopeId = originalEmail ? emailToEnvelopeMap.get(originalEmail) : null;
+         return { email, originalEmail, envelopeId };
+       }).filter(item => item.envelopeId);
+       
+       if (processedEmailsWithEnvelopes.length > 0) {
          try {
-           // Crear objetos para upsert en batch
-           const syncedObjectsToInsert = processedEmailIds.map(emailId => {
-             const originalEmail = validEmails.find(email => 
-               (email.id || email.messageId || email.uid) === emailId
-             );
-             
-             return {
-               external_id: emailId,
-               site_id: siteId,
-               object_type: 'email',
-               status: 'processed',
-               provider: originalEmail?.provider || 'unknown',
-               metadata: {
-                 subject: originalEmail?.subject,
-                 from: originalEmail?.from,
-                 to: originalEmail?.to,
-                 date: originalEmail?.date || originalEmail?.received_date,
-                 command_id: effectiveDbUuid || internalCommandId,
-                 analysis_timestamp: new Date().toISOString(),
-                 agent_id: effectiveAgentId
-               },
-               first_seen_at: new Date().toISOString(),
-               last_processed_at: new Date().toISOString(),
-               process_count: 1
-             };
-           });
+           // Crear objetos para upsert en batch usando envelope_ids
+           const syncedObjectsToInsert = processedEmailsWithEnvelopes.map(({ email, originalEmail, envelopeId }) => ({
+             external_id: envelopeId, // ✅ Usar envelope_id como external_id
+             site_id: siteId,
+             object_type: 'email',
+             status: 'processed',
+             provider: originalEmail?.provider || 'unknown',
+             metadata: {
+               subject: originalEmail?.subject,
+               from: originalEmail?.from,
+               to: originalEmail?.to,
+               date: originalEmail?.date || originalEmail?.received_date,
+               command_id: effectiveDbUuid || internalCommandId,
+               analysis_timestamp: new Date().toISOString(),
+               agent_id: effectiveAgentId,
+               envelope_id: envelopeId,
+               source: 'email_analysis'
+             },
+             first_seen_at: new Date().toISOString(),
+             last_processed_at: new Date().toISOString(),
+             process_count: 1
+           }));
            
-           // Upsert en batch (mucho más eficiente)
+           // Upsert en batch usando envelope_ids (correlación perfecta con /email/sync)
            const { error } = await supabaseAdmin
              .from('synced_objects')
              .upsert(syncedObjectsToInsert, {
@@ -837,28 +887,28 @@ export async function POST(request: NextRequest) {
              });
            
            if (error) {
-             console.warn(`[EMAIL_API] ⚠️ Error en upsert batch de emails procesados:`, error);
+             console.warn(`[EMAIL_API] ⚠️ Error en upsert batch de emails procesados (envelope_ids):`, error);
            } else {
-             console.log(`[EMAIL_API] ✅ Marcados ${processedEmailIds.length} emails como procesados (batch upsert)`);
+             console.log(`[EMAIL_API] ✅ Marcados ${processedEmailsWithEnvelopes.length} emails como procesados usando envelope_ids`);
            }
-         } catch (error) {
-           console.warn(`[EMAIL_API] ⚠️ Error en marcado de emails:`, error);
+        } catch (error) {
+           console.warn(`[EMAIL_API] ⚠️ Error en marcado de emails por envelope_id:`, error);
          }
        }
-       
-       return NextResponse.json({
-         success: true,
-         data: {
-           commandId: effectiveDbUuid || internalCommandId,
-           status: executedCommand?.status || 'completed',
-           message: "Análisis de emails completado exitosamente",
+      
+      return NextResponse.json({
+        success: true,
+        data: {
+          commandId: effectiveDbUuid || internalCommandId,
+          status: executedCommand?.status || 'completed',
+          message: "Análisis de emails completado exitosamente",
            emailCount: validEmails.length,
            originalEmailCount: allEmails.length,
-           analysisCount: emailsForResponse.length,
+          analysisCount: emailsForResponse.length,
            filterSummary: summary,
-           emails: emailsForResponse
-         }
-       });
+          emails: emailsForResponse
+        }
+      });
       
     } catch (error: unknown) {
       console.error(`[EMAIL_API] 💥 Error en el flujo principal:`, error);
