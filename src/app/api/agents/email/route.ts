@@ -9,7 +9,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
-import { EmailFilterService } from '@/lib/services/email/EmailFilterService';
+
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
@@ -115,9 +115,12 @@ async function comprehensiveEmailFilter(
   console.log(`[EMAIL_API] 🔍 Aplicando filtro comprehensivo a ${emails.length} emails...`);
   
   // 1. Obtener configuraciones una sola vez
+  console.log(`[EMAIL_API] 🔧 Paso 1: Obteniendo configuraciones de seguridad...`);
   const securityConfig = getSecurityConfig();
+  console.log(`[EMAIL_API] ✅ Paso 1 completado: Configuraciones obtenidas`);
   
   // 2. Normalizar aliases una sola vez
+  console.log(`[EMAIL_API] 🔧 Paso 2: Normalizando aliases...`);
   let normalizedAliases: string[] = [];
   if (emailConfig.aliases) {
     if (Array.isArray(emailConfig.aliases)) {
@@ -132,14 +135,18 @@ async function comprehensiveEmailFilter(
       }
     }
   }
+  console.log(`[EMAIL_API] ✅ Paso 2 completado: ${normalizedAliases.length} aliases normalizados`);
   
   // 3. Buscar leads asignados a IA una sola vez
+  console.log(`[EMAIL_API] 🔧 Paso 3: Extrayendo direcciones de email para buscar leads...`);
   const emailAddresses = emails.map(email => {
     const fromEmail = (email.from || '').toLowerCase().trim();
     const emailMatch = fromEmail.match(/<([^>]+)>/);
     return emailMatch ? emailMatch[1] : fromEmail;
   }).filter(email => email && email.includes('@'));
+  console.log(`[EMAIL_API] ✅ Paso 3a completado: ${emailAddresses.length} direcciones de email extraídas`);
   
+  console.log(`[EMAIL_API] 🔧 Paso 3b: Consultando leads asignados a IA en base de datos...`);
   let aiLeadsMap = new Map<string, any>();
   if (emailAddresses.length > 0) {
     try {
@@ -155,26 +162,47 @@ async function comprehensiveEmailFilter(
           aiLeadsMap.set(lead.email.toLowerCase(), lead);
         });
       }
+      console.log(`[EMAIL_API] ✅ Paso 3b completado: ${aiLeadsMap.size} leads asignados a IA encontrados`);
     } catch (error) {
       console.warn(`[EMAIL_API] ⚠️ Error buscando leads asignados a IA:`, error);
     }
+  } else {
+    console.log(`[EMAIL_API] ⚠️ Paso 3b: No hay direcciones de email válidas para consultar leads`);
   }
   
-  // 4. Obtener emails ya procesados una sola vez
+  // 4. Obtener emails ya procesados una sola vez (OPTIMIZADO - consulta única)
+  console.log(`[EMAIL_API] 🔧 Paso 4: Consultando emails ya procesados...`);
   let processedEmailIds = new Set<string>();
   try {
-    const filterResult = await SyncedObjectsService.filterUnprocessedEmails(emails, siteId, 'email');
-    if (filterResult.alreadyProcessed) {
-      filterResult.alreadyProcessed.forEach((email: any) => {
-        const emailId = email.id || email.messageId || email.uid;
-        if (emailId) processedEmailIds.add(emailId);
-      });
+    // Extraer todos los IDs para consulta en batch
+    const emailIds = emails.map(email => email.id || email.messageId || email.uid).filter(Boolean);
+    console.log(`[EMAIL_API] 🔧 Paso 4a: ${emailIds.length} IDs de email extraídos para verificar duplicados`);
+    
+    if (emailIds.length > 0) {
+      const { data: existingObjects, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('external_id')
+        .eq('site_id', siteId)
+        .eq('object_type', 'email')
+        .in('external_id', emailIds);
+      
+      if (!error && existingObjects) {
+        existingObjects.forEach(obj => processedEmailIds.add(obj.external_id));
+        console.log(`[EMAIL_API] ✅ Paso 4 completado: ${existingObjects.length} emails ya procesados encontrados`);
+      } else if (error) {
+        console.warn(`[EMAIL_API] ⚠️ Error en consulta synced_objects:`, error);
+      } else {
+        console.log(`[EMAIL_API] ✅ Paso 4 completado: No se encontraron emails ya procesados`);
+      }
+    } else {
+      console.log(`[EMAIL_API] ⚠️ Paso 4: No hay IDs válidos para verificar duplicados`);
     }
   } catch (error) {
-    console.warn(`[EMAIL_API] ⚠️ Error verificando emails procesados:`, error);
+    console.warn(`[EMAIL_API] ⚠️ Error verificando emails procesados (simplificado):`, error);
   }
   
   // 5. UN SOLO recorrido aplicando TODAS las validaciones
+  console.log(`[EMAIL_API] 🔧 Paso 5: Iniciando recorrido de validación de ${emails.length} emails...`);
   const stats = {
     originalCount: emails.length,
     feedbackLoopFiltered: 0,
@@ -300,17 +328,21 @@ async function comprehensiveEmailFilter(
       }
     }
     
-    // VALIDACIÓN 7: Seguridad final con EmailFilterService
-    try {
-      const securityResult = EmailFilterService.filterValidEmails([email], securityConfig.noReplyAddresses);
-      if (securityResult.filteredEmails.length > 0) {
-        stats.securityFiltered++;
-        console.log(`[EMAIL_API] 🚫 Email filtrado (seguridad): ${email.from}`);
-        return false;
-      }
-    } catch (error) {
-      console.warn(`[EMAIL_API] ⚠️ Error en validación de seguridad para email ${email.from}:`, error);
-    }
+         // VALIDACIÓN 7: Seguridad final simplificada (para performance)
+     const suspiciousPatterns = [
+       'suspicious', 'phishing', 'scam', 'virus', 'malware',
+       'click here now', 'urgent action required', 'verify immediately'
+     ];
+     
+     const isSuspicious = suspiciousPatterns.some(pattern => 
+       emailContent.includes(pattern) || emailSubject.includes(pattern)
+     );
+     
+     if (isSuspicious) {
+       stats.securityFiltered++;
+       console.log(`[EMAIL_API] 🚫 Email filtrado (seguridad simplificada): ${email.from}`);
+       return false;
+     }
     
     // Si llega aquí, el email pasa todas las validaciones
     console.log(`[EMAIL_API] ✅ Email válido: ${email.from}`);
@@ -318,6 +350,7 @@ async function comprehensiveEmailFilter(
   });
   
   stats.finalCount = validEmails.length;
+  console.log(`[EMAIL_API] ✅ Paso 5 completado: Recorrido de validación terminado`);
   
   console.log(`[EMAIL_API] 📊 Filtro comprehensivo completado:`);
   console.log(`[EMAIL_API] - Emails originales: ${stats.originalCount}`);
@@ -643,8 +676,10 @@ export async function POST(request: NextRequest) {
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
       
-      // Aplicar SOLO filtro básico y eficiente (UN SOLO recorrido)
-      const { validEmails, summary } = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+             // Aplicar filtro comprehensivo optimizado (UN SOLO recorrido)
+       console.log(`[EMAIL_API] 🚀 Iniciando filtro comprehensivo para ${allEmails.length} emails...`);
+       const { validEmails, summary } = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+       console.log(`[EMAIL_API] 🎉 Filtro comprehensivo completado exitosamente`);
       
              if (validEmails.length === 0) {
          console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado comprehensivo`);
@@ -763,25 +798,49 @@ export async function POST(request: NextRequest) {
       
              console.log(`[EMAIL_API] 📊 Emails extraídos para respuesta: ${emailsForResponse.length}`);
        
-       // Marcar emails como procesados para evitar duplicados en futuras ejecuciones
+       // Marcar emails como procesados para evitar duplicados en futuras ejecuciones (OPTIMIZADO)
        const processedEmailIds = emailsForResponse.map(email => email.id).filter(Boolean);
        if (processedEmailIds.length > 0) {
          try {
-           const markingPromises = processedEmailIds.map(async (emailId) => {
-             try {
-               return await SyncedObjectsService.markAsProcessed(emailId, siteId, {
+           // Crear objetos para upsert en batch
+           const syncedObjectsToInsert = processedEmailIds.map(emailId => {
+             const originalEmail = validEmails.find(email => 
+               (email.id || email.messageId || email.uid) === emailId
+             );
+             
+             return {
+               external_id: emailId,
+               site_id: siteId,
+               object_type: 'email',
+               status: 'processed',
+               provider: originalEmail?.provider || 'unknown',
+               metadata: {
+                 subject: originalEmail?.subject,
+                 from: originalEmail?.from,
+                 to: originalEmail?.to,
+                 date: originalEmail?.date || originalEmail?.received_date,
                  command_id: effectiveDbUuid || internalCommandId,
                  analysis_timestamp: new Date().toISOString(),
                  agent_id: effectiveAgentId
-               });
-             } catch (error) {
-               console.warn(`[EMAIL_API] ⚠️ Error marcando email ${emailId} como procesado:`, error);
-               return false;
-             }
+               },
+               first_seen_at: new Date().toISOString(),
+               last_processed_at: new Date().toISOString(),
+               process_count: 1
+             };
            });
            
-           await Promise.all(markingPromises);
-           console.log(`[EMAIL_API] ✅ Marcados ${processedEmailIds.length} emails como procesados`);
+           // Upsert en batch (mucho más eficiente)
+           const { error } = await supabaseAdmin
+             .from('synced_objects')
+             .upsert(syncedObjectsToInsert, {
+               onConflict: 'external_id,site_id,object_type'
+             });
+           
+           if (error) {
+             console.warn(`[EMAIL_API] ⚠️ Error en upsert batch de emails procesados:`, error);
+           } else {
+             console.log(`[EMAIL_API] ✅ Marcados ${processedEmailIds.length} emails como procesados (batch upsert)`);
+           }
          } catch (error) {
            console.warn(`[EMAIL_API] ⚠️ Error en marcado de emails:`, error);
          }
