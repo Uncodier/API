@@ -353,13 +353,22 @@ export class EmailService {
       
       throw new Error(`Email fetch error: ${errorMessage}`);
     } finally {
-      // Clean up connection
+      // Clean up connection - OPTIMIZADO para velocidad máxima
       if (client) {
         try {
-          await client.logout();
-          console.log(`[EmailService] 👋 Desconectado del servidor IMAP`);
-        } catch (logoutError) {
-          console.warn(`[EmailService] ⚠️ Error durante logout IMAP:`, logoutError);
+          // NO HACER logout() - se cuelga. Forzar cierre directo.
+          console.log(`[EmailService] ⚡ Forzando cierre directo de conexión IMAP (sin logout)`);
+          
+          if (typeof (client as any).close === 'function') {
+            (client as any).close();
+          } else if (typeof (client as any).destroy === 'function') {
+            (client as any).destroy();
+          }
+          
+          console.log(`[EmailService] 👋 Conexión IMAP cerrada exitosamente`);
+        } catch (closeError) {
+          // Ignorar errores de cierre - no es crítico
+          console.log(`[EmailService] ⚠️ Error cerrando conexión (ignorado):`, closeError instanceof Error ? closeError.message : closeError);
         }
       }
     }

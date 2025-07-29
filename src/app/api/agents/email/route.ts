@@ -478,14 +478,19 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 200, de
   let dbUuid: string | null = null;
   
   console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
+  console.log(`[EMAIL_API] 🔍 DEBUG: WAIT_PUNTO_1 - Iniciando waitForCommandCompletion`);
   
   // Crear una promesa que se resuelve cuando el comando se completa o se agota el tiempo
   return new Promise<{command: any, dbUuid: string | null, completed: boolean}>((resolve) => {
+    console.log(`[EMAIL_API] 🔍 DEBUG: WAIT_PUNTO_2 - Promise creada, iniciando interval`);
     const checkInterval = setInterval(async () => {
       attempts++;
+      console.log(`[EMAIL_API] 🔍 DEBUG: WAIT_PUNTO_3 - Intento ${attempts} iniciado`);
       
       try {
+        console.log(`[EMAIL_API] 🔍 DEBUG: WAIT_PUNTO_4 - Llamando getCommandById`);
         executedCommand = await commandService.getCommandById(commandId);
+        console.log(`[EMAIL_API] 🔍 DEBUG: WAIT_PUNTO_5 - getCommandById completado`);
         
         if (!executedCommand) {
           console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
@@ -549,10 +554,12 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 200, de
 
 // Create command object for email analysis (versión simplificada que funcionaba)
 function createEmailCommand(agentId: string, siteId: string, emails: any[], emailConfig: any, analysisType?: string, leadId?: string, teamMemberId?: string, userId?: string) {
+  console.log(`[EMAIL_API] 🔍 DEBUG: CREATE_PUNTO_1 - Iniciando createEmailCommand`);
   const defaultUserId = '00000000-0000-0000-0000-000000000000';
 
   // Optimizar emails extrayendo solo el texto relevante
   console.log(`[EMAIL_API] 🔧 Optimizando ${emails.length} emails antes del análisis...`);
+  console.log(`[EMAIL_API] 🔍 DEBUG: CREATE_PUNTO_2 - Antes de extractMultipleEmailsText`);
   const optimizedEmails = EmailTextExtractorService.extractMultipleEmailsText(emails, {
     maxTextLength: 1000, // Reducir aún más el límite de texto por email
     removeSignatures: true,
@@ -560,6 +567,7 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     removeHeaders: true,
     removeLegalDisclaimer: true
   });
+  console.log(`[EMAIL_API] 🔍 DEBUG: CREATE_PUNTO_3 - extractMultipleEmailsText completado`);
 
   // Calcular estadísticas de optimización
   const totalOriginalLength = optimizedEmails.reduce((sum, email) => sum + email.originalLength, 0);
@@ -593,7 +601,8 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
   console.log(`[EMAIL_API] - Compresión adicional: ${(finalCompressionRatio * 100).toFixed(1)}%`);
   console.log(`[EMAIL_API] - Ahorro total vs original: ~${Math.round((totalOriginalLength - finalDataSize) / 4)} tokens`);
 
-  return CommandFactory.createCommand({
+  console.log(`[EMAIL_API] 🔍 DEBUG: CREATE_PUNTO_4 - Antes de CommandFactory.createCommand`);
+  const createdCommand = CommandFactory.createCommand({
     task: 'reply to emails',
     userId: userId || teamMemberId || defaultUserId,
     agentId: agentId,
@@ -648,6 +657,8 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
     model: "gpt-4.1",
     modelType: "openai"
   });
+  console.log(`[EMAIL_API] 🔍 DEBUG: CREATE_PUNTO_5 - CommandFactory.createCommand completado`);
+  return createdCommand;
 }
 
 // Main POST endpoint to analyze emails (versión simplificada)
@@ -706,15 +717,23 @@ export async function POST(request: NextRequest) {
       
       // Fetch emails (ya optimizados con límite de 25KB en EmailService)
       console.log(`[EMAIL_API] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PRE_FETCH - ANTES de EmailService.fetchEmails()`);
+      
       const allEmails = await EmailService.fetchEmails(emailConfig, limit, sinceDate);
+      
+      console.log(`[EMAIL_API] 🔍 DEBUG: POST_FETCH - DESPUÉS de EmailService.fetchEmails()`);
       console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 1 - Emails fetched completamente`);
       
        // Aplicar filtro comprehensivo optimizado (UN SOLO recorrido)
        console.log(`[EMAIL_API] 🚀 Iniciando filtro comprehensivo para ${allEmails.length} emails...`);
+       console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 2 - Iniciando filtro comprehensivo`);
        
        let validEmails, summary, emailToEnvelopeMap;
        try {
+         console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 3 - Llamando comprehensiveEmailFilter`);
          const result = await comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+         console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 4 - comprehensiveEmailFilter terminó`);
          validEmails = result.validEmails;
          summary = result.summary;
          emailToEnvelopeMap = result.emailToEnvelopeMap;
@@ -724,6 +743,7 @@ export async function POST(request: NextRequest) {
        }
        
        console.log(`[EMAIL_API] ✅ Filtro completado: ${validEmails.length}/${allEmails.length} emails válidos`);
+       console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 5 - Filtro comprehensivo completado exitosamente`);
       
              if (validEmails.length === 0) {
          console.log(`[EMAIL_API] ⚠️ No se encontraron emails para analizar después del filtrado comprehensivo`);
@@ -745,27 +765,38 @@ export async function POST(request: NextRequest) {
 
       // Si no se proporciona agentId, buscar el agente de soporte
       console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 6 - Antes de findSupportAgent`);
       const effectiveAgentId = agentId || await findSupportAgent(siteId);
       console.log(`[EMAIL_API] ✅ Agente ID efectivo: ${effectiveAgentId}`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 7 - Agente ID obtenido`);
       
       // Create and submit command
       console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails...`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 8 - Antes de createEmailCommand`);
       const command = createEmailCommand(effectiveAgentId, siteId, validEmails, emailConfig, analysisType, leadId, teamMemberId, userId);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 9 - Comando creado`);
       
       console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 10 - Antes de submitCommand`);
       const internalCommandId = await commandService.submitCommand(command);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 11 - submitCommand completado`);
       
       console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 12 - Comando interno creado`);
       
       // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 13 - Antes de getCommandDbUuid`);
       let initialDbUuid = await getCommandDbUuid(internalCommandId);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 14 - getCommandDbUuid completado`);
       if (initialDbUuid) {
         console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
       }
       
       // Esperar a que el comando se complete (igual que chat)
       console.log(`[EMAIL_API] ⏳ Esperando a que el comando se complete...`);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 15 - Antes de waitForCommandCompletion`);
       const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 16 - waitForCommandCompletion completado`);
       
       // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
       const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
