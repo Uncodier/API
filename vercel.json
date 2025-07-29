@@ -7,7 +7,13 @@
       "maxDuration": 60
     },
     "src/app/api/agents/chat/websocket/route.ts": {
-      "maxDuration": 800
+      "maxDuration": 300
+    },
+    "src/app/api/agents/email/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/agents/email/deliveryStatus/route.ts": {
+      "maxDuration": 300
     }
   },
   "regions": ["iad1"]

@@ -15,7 +15,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 
 // Configuración de timeout extendido para Vercel
-export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
+export const maxDuration = 300; // 5 minutos en segundos (máximo para plan Pro)
 
 // Initialize processor and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
@@ -989,19 +989,9 @@ export async function POST(request: NextRequest) {
       }
       console.log(`[EMAIL_API] 🔍 CHECKPOINT 21: UUID de BD procesado, esperando ejecución...`);
       
-      // Esperar a que el comando se complete utilizando nuestra función
+      // Esperar a que el comando se complete utilizando nuestra función (igual que chat)
       console.log(`[EMAIL_API] ⏳ Esperando a que el comando se complete...`);
-      const commandResult = await Promise.race([
-        waitForCommandCompletion(internalCommandId),
-        new Promise<{command: any, dbUuid: string | null, completed: boolean}>((_, reject) => 
-          setTimeout(() => reject(new Error('Timeout esperando completar comando')), 280000) // 280 segundos para dejar margen
-        )
-      ]).catch(error => {
-        console.error(`[EMAIL_API] ❌ Error/timeout esperando comando: ${error.message}`);
-        return { command: null, dbUuid: null, completed: false };
-      });
-      
-      const { command: executedCommand, dbUuid, completed } = commandResult;
+      const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId, 200, 1000); // 200 intentos x 1s = máx 200s, dejando 100s para el resto
       
       console.log(`[EMAIL_API] 🔍 CHECKPOINT 22: Comando completado o timeout alcanzado...`);
       
