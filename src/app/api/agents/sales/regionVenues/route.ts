@@ -40,6 +40,16 @@ export async function GET(request: Request) {
       }
     });
     
+    console.log('🔍 EXACT PARAMETERS RECEIVED:', {
+      searchTerm_exact: JSON.stringify(searchTerm),
+      city_exact: JSON.stringify(city),
+      region_exact: JSON.stringify(region),
+      country_exact: JSON.stringify(country),
+      searchTerm_length: searchTerm?.length,
+      contains_location_in_searchTerm: searchTerm?.includes('in ') || searchTerm?.includes('en '),
+      full_url: request.url
+    });
+    
     // Validar parámetros requeridos
     if (!siteId || !searchTerm || !city || !region) {
       console.error('❌ Missing required parameters:', {
