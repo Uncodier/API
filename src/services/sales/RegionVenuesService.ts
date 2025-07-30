@@ -337,6 +337,7 @@ export class RegionVenuesService {
       const url = `${this.geocodingApiUrl}?address=${encodeURIComponent(query)}&key=${this.googleApiKey}`;
       
       console.log(`🔍 Geocoding request for: "${query}"`);
+      console.log(`🌍 EXACT GEOCODING URL: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
       
       const response = await fetch(url);
       
@@ -415,6 +416,7 @@ export class RegionVenuesService {
       const url = `${this.placesApiUrl}/nearbysearch/json?location=${coordinates.lat},${coordinates.lng}&radius=10000&type=establishment&keyword=${encodeURIComponent(searchTerm)}&key=${this.googleApiKey}`;
       
       console.log(`🚀 Places API Nearby Search request for: "${searchTerm}" near ${coordinates.lat},${coordinates.lng}`);
+      console.log(`📍 EXACT MAPS SEARCH URL: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
       
       const response = await fetch(url);
       
