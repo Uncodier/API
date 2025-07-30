@@ -193,6 +193,42 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `5. Use local naming conventions (Colonia in Mexico, Barrio in Spain, etc.)\n\n`;
   } else {
     contextMessage += `TARGET REGION: ${region}\n\n`;
+    
+    // Nuevas indicaciones para regiones especificadas
+    contextMessage += `🎯 REGION ANALYSIS AND OPTIMIZATION:\n`;
+    contextMessage += `CRITICAL: A specific region has been provided. Apply the following rules:\n\n`;
+    
+    contextMessage += `1. PRIORITY WEIGHT FOR SPECIFIED REGION:\n`;
+    contextMessage += `   - The specified region "${region}" has HIGH PRIORITY and should be given weight\n`;
+    contextMessage += `   - Focus business type research specifically on this region\n`;
+    contextMessage += `   - Prioritize businesses that operate well in this specific geographical area\n`;
+    contextMessage += `   - Consider local market characteristics, demographics, and business environment\n\n`;
+    
+    contextMessage += `2. BROAD REGION OPTIMIZATION (Continents/Countries):\n`;
+    contextMessage += `   - If the region is very broad (continent, country, or large economic zone):\n`;
+    contextMessage += `     * IDENTIFY the most strategic locations within that region for finding clients\n`;
+    contextMessage += `     * SELECT major business hubs, economic centers, or capital cities\n`;
+    contextMessage += `     * PRIORITIZE locations with high business density and strategic accounts\n`;
+    contextMessage += `     * FOCUS on cities/areas known for business concentration and growth\n\n`;
+    
+    contextMessage += `   📍 STRATEGIC LOCATION SELECTION EXAMPLES:\n`;
+    contextMessage += `   • If region = "España" → Focus on Madrid (financial center) or Barcelona (industrial/tech)\n`;
+    contextMessage += `   • If region = "México" → Focus on Ciudad de México (capital) or Monterrey (industrial)\n`;
+    contextMessage += `   • If region = "Europa" → Focus on Madrid, Barcelona, Milan, Frankfurt (business centers)\n`;
+    contextMessage += `   • If region = "América Latina" → Focus on CDMX, São Paulo, Buenos Aires (economic hubs)\n`;
+    contextMessage += `   • If region = "Estados Unidos" → Focus on New York, Los Angeles, Chicago (major markets)\n\n`;
+    
+    contextMessage += `3. STRATEGIC ACCOUNT TARGETING:\n`;
+    contextMessage += `   - For broad regions, select locations that maximize strategic account potential\n`;
+    contextMessage += `   - Prioritize business districts, financial centers, and corporate headquarters areas\n`;
+    contextMessage += `   - Consider locations with high-value business concentration\n`;
+    contextMessage += `   - Focus on areas where decision-makers and key accounts are likely located\n\n`;
+    
+    contextMessage += `4. LOCATION REFINEMENT REQUIREMENTS:\n`;
+    contextMessage += `   - If the specified region is broader than a city, you MUST determine a specific target city\n`;
+    contextMessage += `   - Set target_city to the most strategic business location within the region\n`;
+    contextMessage += `   - Set target_region to a specific business district/area within that city\n`;
+    contextMessage += `   - Provide clear reasoning for the location selection in your response\n\n`;
   }
   
   if (businessType && businessType.trim() !== '') {

@@ -3,6 +3,31 @@
  * Clase para construir el texto de background del agente de manera estructurada
  */
 
+import { z } from 'zod';
+
+// Esquema base para direcciones/locaciones (estructura común)
+const BaseLocationSchema = z.object({
+  zip: z.string().optional(),
+  city: z.string().optional(),
+  name: z.string().optional(),
+  state: z.string().optional(),
+  address: z.string().optional(),
+  country: z.string().optional(),
+});
+
+// Esquema de validación para el objeto restrictions
+// Las direcciones excluidas/incluidas usan la misma estructura que las locaciones principales
+const RestrictionsSchema = z.object({
+  enabled: z.boolean().default(false),
+  excluded_addresses: z.array(BaseLocationSchema).default([]),
+  included_addresses: z.array(BaseLocationSchema).default([]),
+});
+
+// Esquema de validación para cada location (extiende la estructura base + restrictions)
+const LocationSchema = BaseLocationSchema.extend({
+  restrictions: RestrictionsSchema.optional(),
+});
+
 export class BackgroundBuilder {
   /**
    * Construye el prompt del agente incorporando todas las fuentes de información disponibles
@@ -372,10 +397,48 @@ export class BackgroundBuilder {
         }
       }
       
-      // Ubicaciones
+      // Ubicaciones con procesamiento de restrictions
       if (siteInfo.settings.locations) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo locations`);
-        siteSection += `\n## Locations\n${JSON.stringify(siteInfo.settings.locations)}\n`;
+        
+        try {
+          // Parsear locations si es string
+          const locationsData = typeof siteInfo.settings.locations === 'string'
+            ? JSON.parse(siteInfo.settings.locations)
+            : siteInfo.settings.locations;
+          
+          // Validar y procesar cada location
+          const processedLocations = Array.isArray(locationsData) 
+            ? locationsData.map((location, index) => {
+                try {
+                  // Validar la estructura de la location usando el schema
+                  const validatedLocation = LocationSchema.parse(location);
+                  
+                  // Procesar restrictions si existe
+                  if (validatedLocation.restrictions) {
+                    console.log(`✅ [BackgroundBuilder] Location ${index + 1} tiene restrictions válidas:`, {
+                      enabled: validatedLocation.restrictions.enabled,
+                      excludedCount: validatedLocation.restrictions.excluded_addresses.length,
+                      includedCount: validatedLocation.restrictions.included_addresses.length
+                    });
+                  }
+                  
+                  return validatedLocation;
+                } catch (validationError) {
+                  console.warn(`⚠️ [BackgroundBuilder] Error validando location ${index + 1}:`, validationError);
+                  // Si la validación falla, retornamos la location original pero sin restrictions
+                  const { restrictions, ...locationWithoutRestrictions } = location;
+                  return locationWithoutRestrictions;
+                }
+              })
+            : locationsData;
+          
+          siteSection += `\n## Locations\n${JSON.stringify(processedLocations, null, 2)}\n`;
+          
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando locations:`, error);
+          siteSection += `\n## Locations\n${JSON.stringify(siteInfo.settings.locations)}\n`;
+        }
       }
       
       if (siteInfo.settings.marketing_channels) {

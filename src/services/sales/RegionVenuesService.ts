@@ -455,35 +455,11 @@ export class RegionVenuesService {
   }
 
   /**
-   * Limpia el searchTerm removiendo información de ubicación que pueda estar incluida
+   * Normaliza el searchTerm (solo limpieza básica de espacios)
    */
-  private cleanSearchTerm(searchTerm: string, city: string, region: string, country?: string): string {
-    let cleaned = searchTerm.trim();
-    
-    // Patrones a remover del searchTerm
-    const locationPatterns = [
-      // Patrones en español
-      /\s+en\s+.*$/i,
-      /\s+in\s+.*$/i,
-      /\s+de\s+.*$/i,
-      // Remover menciones específicas de la ciudad
-      new RegExp(`\\s+${city.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i'),
-      new RegExp(`\\s+${region.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i'),
-    ];
-    
-    if (country) {
-      locationPatterns.push(new RegExp(`\\s+${country.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}.*$`, 'i'));
-    }
-    
-    // Aplicar cada patrón
-    for (const pattern of locationPatterns) {
-      cleaned = cleaned.replace(pattern, '');
-    }
-    
-    // Limpiar espacios extra
-    cleaned = cleaned.replace(/\s+/g, ' ').trim();
-    
-    return cleaned;
+  private cleanSearchTerm(searchTerm: string): string {
+    // Solo limpieza básica de espacios - sin extracción de texto
+    return searchTerm.trim().replace(/\s+/g, ' ');
   }
 
   /**
@@ -630,8 +606,8 @@ export class RegionVenuesService {
     country?: string
   ): Promise<VenueSearchResult> {
     try {
-      // Limpiar el searchTerm para quitar información de ubicación que pueda estar incluida
-      const cleanSearchTerm = this.cleanSearchTerm(searchTerm, city, region, country);
+      // Normalizar el searchTerm (solo limpieza básica)
+      const cleanSearchTerm = this.cleanSearchTerm(searchTerm);
       
       console.log(`🔍 Starting Places API search for: "${searchTerm}" in ${city}, ${region}${country ? `, ${country}` : ''}`);
       console.log(`🧹 Cleaned searchTerm: "${cleanSearchTerm}" (was: "${searchTerm}")`);
