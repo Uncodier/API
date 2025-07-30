@@ -474,7 +474,14 @@ export class RegionVenuesService {
     excludeVenues?: { placeIds?: string[]; names?: string[] }
   ): Promise<VenueSearchResult> {
     try {
-      // Construir query de texto directo
+      // Siempre incluir país para evitar ambigüedad en ciudades con nombres comunes
+      // Si no se proporciona país, mostrar advertencia y continuar sin él
+      if (!country) {
+        console.warn(`⚠️ [Text Search] No country provided for search: "${searchTerm}" in ${city}, ${region}`);
+        console.warn(`   This may cause ambiguous results for cities with common names`);
+        console.warn(`   Consider making 'country' a required parameter`);
+      }
+      
       const locationPart = country ? `${city}, ${region}, ${country}` : `${city}, ${region}`;
       const query = `${searchTerm} ${locationPart}`;
       
@@ -627,6 +634,11 @@ export class RegionVenuesService {
       console.log(`📍 [Method 2] Trying Nearby Search (with geocoding)...`);
       
       // Obtener coordenadas de la ubicación
+      if (!country) {
+        console.warn(`⚠️ [Nearby Search] No country provided for geocoding: ${city}, ${region}`);
+        console.warn(`   This may cause ambiguous geocoding results`);
+      }
+      
       const coordinates = await this.geocodeLocation(city, region, country);
       if (!coordinates) {
         const locationString = country ? `${city}, ${region}, ${country}` : `${city}, ${region}`;
