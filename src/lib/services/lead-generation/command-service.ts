@@ -145,56 +145,14 @@ export async function createBusinessTypeResearchCommand(
 ): Promise<string> {
   
   const targetConfig = {
-    target_city: null,
+    target_city: "Current objective city",
     target_region: region === "to be determined by agent" ? null : region,
-    target_country: null,
+    target_country: "Current objective country",
     business_type: businessType,
     keywords: keywords,
     business_research_topic: businessResearchTopic,
     business_types_count: maxBusinessTypes,
-    business_types: [], // MANDATORY: This array must be populated with business type objects
-    research_focus: {
-      objective: "identify_business_types",
-      scope: "regional_market_analysis", 
-      priority: "lead_generation_potential"
-    },
-    location_guidance: {
-      instruction: "CRITICAL: ALWAYS prioritize business locations defined in the background/context. First check if the business has specific locations, cities, or regions mentioned in the background. Only use other regions if the business location is not specified.",
-      priority_rules: [
-        "1. Analyze business background for location references (headquarters, offices, operational areas)",
-        "2. Use exact business location or nearby major city if found in context", 
-        "3. Stay within reasonable proximity to business location when mentioned",
-        "4. Only expand to major business hubs (Madrid, Barcelona) if NO location specified in background"
-      ],
-      note: "Location determination must prioritize business context over general market analysis",
-      region_specification: {
-        requirement: "Use SPECIFIC CITY SUBSECTIONS, not broad commercial regions",
-        correct_examples: [
-          "Zona Centro (city center area)",
-          "Colonia Roma (specific neighborhood/colony)",
-          "Distrito Financiero (specific district)",
-          "Barrio Gótico (specific neighborhood)",
-          "Zona Industrial (specific industrial area)",
-          "Centro Histórico (historic city center)"
-        ],
-        incorrect_examples: [
-          "Bajío (too broad, commercial region)",
-          "Norte (too vague, directional region)",
-          "Sur (too vague, directional region)",
-          "Región Metropolitana (too broad)",
-          "Área Metropolitana (too broad)"
-        ],
-        strategy: "For large cities (>500k population): Always specify a city subsection. Use local naming conventions (Colonia in Mexico, Barrio in Spain, etc.)"
-      }
-    },
-    output_requirements: {
-      mandatory_fields: ["target_city", "target_region", "target_country", "business_research_topic", "business_types"],
-      business_types_format: {
-        required_fields: ["name", "description", "relevance", "market_potential"],
-        count: maxBusinessTypes,
-        note: "Each business type must be a detailed object with all required fields populated"
-      }
-    }
+    business_types: [] // MANDATORY: This array must be populated with business type objects
   };
   
   const command = CommandFactory.createCommand({

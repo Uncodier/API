@@ -311,49 +311,14 @@ export async function POST(request: Request) {
       return NextResponse.json({
         success: true,
         data: {
-          command_id: internalCommandId,
-          site_id: effectiveSiteId,
-          agent_id: effectiveAgentId,
-          agent_auto_assigned: !agent_id && !!effectiveAgentId,
-          status: executedCommand.status || "completed_with_warnings",
-          completed_at: new Date().toISOString(),
+          target_country: determinedCountry,
           target_city: determinedCity,
           target_region: determinedRegion,
-          target_country: determinedCountry,
-          target_segment_id: determinedSegmentId,
-          initial_region_input: region || null,
-          business_types_requested: maxBusinessTypes,
+          business_type: businessType,
+          keywords: keywords,
           business_research_topic: determinedTopic,
-          business_types: [], // Array vacío pero estructura válida
-          region_insights: regionInsights,
-          search_context: {
-            initial_business_type: businessType,
-            keywords_provided: keywords,
-            region_provided: region || null,
-            region_determined: determinedRegion,
-            segments_available: availableSegments.length,
-            segments_previously_used: usedSegments.length
-          },
-          location_strategy: {
-            method: "agent_determined_from_background",
-            determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedRegion ? `${determinedRegion}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedCountry,
-            previously_searched_cities: usedCities,
-            note: "Location determined by agent based on business background/context or market analysis"
-          },
-          segment_strategy: {
-            method: "agent_determined_from_available_segments",
-            determined_segment_id: determinedSegmentId,
-            available_segments: availableSegments.map(s => ({ id: s.id, name: s.name })),
-            previously_used_segments: usedSegments,
-            previously_used_segments_by_region: usedSegmentsByRegion,
-            segments_used_in_target_region: determinedRegion ? (usedSegmentsByRegion[determinedRegion] || []) : [],
-            note: "Segment determined by agent based on available segments and business context, prioritizing segments not used in target region"
-          },
-          process_info: {
-            stage: "completed_with_warnings",
-            progress_percentage: 100,
-            warning: "No business types were extracted from the results"
-          }
+          business_types_count: maxBusinessTypes,
+          business_types: [] // Array vacío pero estructura válida
         }
       });
     }
@@ -387,48 +352,14 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       data: {
-        command_id: internalCommandId,
-        site_id: effectiveSiteId,
-        agent_id: effectiveAgentId,
-        agent_auto_assigned: !agent_id && !!effectiveAgentId,
-        status: executedCommand?.status || "completed",
-        completed_at: new Date().toISOString(),
+        target_country: determinedCountry,
         target_city: determinedCity,
         target_region: determinedRegion,
-        target_country: determinedCountry,
-        target_segment_id: determinedSegmentId,
-        initial_region_input: region || null,
-        business_types_requested: maxBusinessTypes,
+        business_type: businessType,
+        keywords: keywords,
         business_research_topic: determinedTopic,
-        business_types: businessTypes,
-        region_insights: regionInsights,
-        search_context: {
-          initial_business_type: businessType,
-          keywords_provided: keywords,
-          region_provided: region || null,
-          region_determined: determinedRegion,
-          segments_available: availableSegments.length,
-          segments_previously_used: usedSegments.length
-        },
-        location_strategy: {
-          method: "agent_determined_from_background",
-          determined_location: determinedCity ? `${determinedCity}${determinedRegion ? `, ${determinedRegion}` : ''}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedRegion ? `${determinedRegion}${determinedCountry ? `, ${determinedCountry}` : ''}` : determinedCountry,
-          previously_searched_cities: usedCities,
-          note: "Location determined by agent based on business background/context or market analysis"
-        },
-        segment_strategy: {
-          method: "agent_determined_from_available_segments",
-          determined_segment_id: determinedSegmentId,
-          available_segments: availableSegments.map(s => ({ id: s.id, name: s.name })),
-          previously_used_segments: usedSegments,
-          previously_used_segments_by_region: usedSegmentsByRegion,
-          segments_used_in_target_region: determinedRegion ? (usedSegmentsByRegion[determinedRegion] || []) : [],
-          note: "Segment determined by agent based on available segments and business context, prioritizing segments not used in target region"
-        },
-        process_info: {
-          stage: "completed",
-          progress_percentage: 100
-        }
+        business_types_count: maxBusinessTypes,
+        business_types: businessTypes
       }
     });
     
