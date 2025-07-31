@@ -93,6 +93,7 @@ export async function POST(request: Request) {
       .from('segments')
       .select('id, name, description, site_id, analysis')
       .eq('site_id', siteId)
+      .eq('is_active', true)
       .in('id', segmentIds);
     
     if (segmentsError) {

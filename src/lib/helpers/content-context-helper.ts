@@ -58,6 +58,7 @@ export async function getSegmentInfo(segmentId: string): Promise<SegmentInfo | n
       .from('segments')
       .select('*')
       .eq('id', segmentId)
+      .eq('is_active', true)
       .single();
     
     if (error) {

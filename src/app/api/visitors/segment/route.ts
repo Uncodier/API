@@ -114,6 +114,7 @@ export async function POST(request: NextRequest) {
         .from('segments')
         .select('*')
         .eq('id', validatedData.segment_id)
+        .eq('is_active', true)
         .single();
 
       segment = segmentResult.data;

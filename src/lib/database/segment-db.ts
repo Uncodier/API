@@ -180,6 +180,7 @@ export async function getSegmentsBySite(siteId: string, userId: string): Promise
       .select('*')
       .eq('site_id', siteId)
       .eq('user_id', userId)
+      .eq('is_active', true)
       .order('created_at', { ascending: false });
     
     if (error) {
