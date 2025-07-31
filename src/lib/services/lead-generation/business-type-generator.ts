@@ -191,6 +191,15 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `3. For SMALL CITIES (<100k): City name alone may be sufficient\n`;
     contextMessage += `4. ALWAYS prefer specific neighborhoods, districts, or zones within the city\n`;
     contextMessage += `5. Use local naming conventions (Colonia in Mexico, Barrio in Spain, etc.)\n\n`;
+    
+    contextMessage += `🚫 REGIONAL RESTRICTIONS:\n`;
+    contextMessage += `CRITICAL: Consider regional restrictions available in your background settings.channels.locations.\n`;
+    contextMessage += `MANDATORY LOCATION COMPLIANCE:\n`;
+    contextMessage += `1. ONLY consider cities from ALLOWED locations (settings.channels.locations.allowed)\n`;
+    contextMessage += `2. AVOID cities from RESTRICTED locations (settings.channels.locations.restricted)\n`;
+    contextMessage += `3. If business context location conflicts with restrictions, prioritize ALLOWED locations nearby\n`;
+    contextMessage += `4. If no business location found, select from ALLOWED locations only\n`;
+    contextMessage += `5. NEVER select cities from restricted areas regardless of business context\n\n`;
   } else {
     contextMessage += `TARGET REGION: ${region}\n\n`;
     
@@ -229,6 +238,15 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `   - Set target_city to the most strategic business location within the region\n`;
     contextMessage += `   - Set target_region to a specific business district/area within that city\n`;
     contextMessage += `   - Provide clear reasoning for the location selection in your response\n\n`;
+    
+    contextMessage += `🚫 REGIONAL RESTRICTIONS FOR SPECIFIED REGIONS:\n`;
+    contextMessage += `CRITICAL: Even with a specified region, respect location restrictions from settings.channels.locations.\n`;
+    contextMessage += `MANDATORY COMPLIANCE:\n`;
+    contextMessage += `1. If specified region is in RESTRICTED locations → Find nearest ALLOWED location instead\n`;
+    contextMessage += `2. If specified region is in ALLOWED locations → Proceed with that region\n`;
+    contextMessage += `3. If specified region is broader (country/continent) → Select cities ONLY from ALLOWED locations\n`;
+    contextMessage += `4. NEVER compromise location restrictions for any reason\n`;
+    contextMessage += `5. Always prioritize ALLOWED locations over specified regions if conflict exists\n\n`;
   }
   
   if (businessType && businessType.trim() !== '') {
@@ -350,26 +368,33 @@ export function generateBusinessTypeContextMessage(
     contextMessage += `   - Cities or regions mentioned in business description\n`;
     contextMessage += `   - Target market geographical areas\n`;
     contextMessage += `   - Any geographical context in the background information\n`;
-    contextMessage += `2. MANDATORY: Set target_city and target_region based on business location found in step 1\n`;
-    contextMessage += `   - If business location found: Use that exact location or nearby major city\n`;
-    contextMessage += `   - If NO business location in context: Use major Spanish business hub (Madrid, Barcelona)\n`;
+    contextMessage += `2. CRITICAL: Check location restrictions (settings.channels.locations) BEFORE setting target location\n`;
+    contextMessage += `   - ONLY select from ALLOWED locations\n`;
+    contextMessage += `   - NEVER select from RESTRICTED locations\n`;
+    contextMessage += `3. MANDATORY: Set target_city and target_region based on business location found in step 1 + restrictions\n`;
+    contextMessage += `   - If business location found AND in allowed areas: Use that exact location or nearby major city\n`;
+    contextMessage += `   - If business location found BUT in restricted areas: Use nearest allowed location\n`;
+    contextMessage += `   - If NO business location in context: Use major allowed business hub\n`;
     contextMessage += `   - CRITICAL: target_region must be a specific city subsection (Zona, Colonia, Distrito, Barrio)\n`;
-    contextMessage += `3. Generate ${maxBusinessTypes} distinct business types relevant to the determined region\n`;
+    contextMessage += `4. Generate ${maxBusinessTypes} distinct business types relevant to the determined region\n`;
   } else {
-    contextMessage += `1. Generate ${maxBusinessTypes} distinct business types relevant to ${region}\n`;
+    contextMessage += `1. CRITICAL: Verify specified region compliance with location restrictions (settings.channels.locations)\n`;
+    contextMessage += `   - If ${region} is in allowed locations: Proceed with region\n`;
+    contextMessage += `   - If ${region} is in restricted locations: Select nearest allowed location instead\n`;
+    contextMessage += `2. Generate ${maxBusinessTypes} distinct business types relevant to the compliant region\n`;
   }
-  contextMessage += `${region === "to be determined by agent" ? '4' : '2'}. Focus on business types that would have publicly available contact information\n`;
-  contextMessage += `${region === "to be determined by agent" ? '5' : '3'}. Include both established and emerging business categories\n`;
-  contextMessage += `${region === "to be determined by agent" ? '6' : '4'}. Consider the regional economic context and demographics\n`;
-  contextMessage += `${region === "to be determined by agent" ? '7' : '5'}. Ensure diversity in business types (avoid too many similar businesses)\n`;
-  contextMessage += `${region === "to be determined by agent" ? '8' : '6'}. Include business-to-business services that support other businesses\n`;
-  contextMessage += `${region === "to be determined by agent" ? '9' : '7'}. Consider seasonal or event-based business opportunities\n`;
+  contextMessage += `${region === "to be determined by agent" ? '5' : '3'}. Focus on business types that would have publicly available contact information\n`;
+  contextMessage += `${region === "to be determined by agent" ? '6' : '4'}. Include both established and emerging business categories\n`;
+  contextMessage += `${region === "to be determined by agent" ? '7' : '5'}. Consider the regional economic context and demographics\n`;
+  contextMessage += `${region === "to be determined by agent" ? '8' : '6'}. Ensure diversity in business types (avoid too many similar businesses)\n`;
+  contextMessage += `${region === "to be determined by agent" ? '9' : '7'}. Include business-to-business services that support other businesses\n`;
+  contextMessage += `${region === "to be determined by agent" ? '10' : '8'}. Consider seasonal or event-based business opportunities\n`;
   
   // Instrucciones específicas para incluir segment_id en el output
   if (availableSegments && availableSegments.length > 0) {
-    contextMessage += `${region === "to be determined by agent" ? '10' : '8'}. CRITICAL: Include 'target_segment_id' in your response with the ID of the selected segment\n`;
+    contextMessage += `${region === "to be determined by agent" ? '11' : '9'}. CRITICAL: Include 'target_segment_id' in your response with the ID of the selected segment\n`;
   }
-  contextMessage += `${region === "to be determined by agent" ? '10' : '8'}. Include businesses that serve both local and regional markets\n\n`;
+  contextMessage += `${region === "to be determined by agent" ? '12' : '10'}. Include businesses that serve both local and regional markets\n\n`;
   
   contextMessage += `EXPECTED OUTPUT:\n`;
   if (region === "to be determined by agent") {
