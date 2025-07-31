@@ -299,24 +299,30 @@ export class RegionVenuesService {
         }
       }
       
-      // 3. Verificar memorias de búsquedas en la misma ciudad (cualquier región)
-      const citySearchPattern = `%:${city.toLowerCase().trim()}:%`;
-      console.log(`🧠 [NoResults-Nivel 3] Verificando búsquedas en la misma ciudad (otras regiones)`);
-      const cityNoResultsResult = await systemMemoryService.findMemoriesGlobalByPattern(
+      // 3. Verificar memorias del MISMO TÉRMINO de búsqueda en otras regiones de la misma ciudad
+      const sameTermOtherRegionsPattern = `${searchTerm.toLowerCase().trim()}:${city.toLowerCase().trim()}:%`;
+      console.log(`🧠 [NoResults-Nivel 3] Verificando MISMO término de búsqueda en otras regiones de la misma ciudad`);
+      const sameTermNoResultsResult = await systemMemoryService.findMemoriesGlobalByPattern(
         'venue_search_no_results',
-        citySearchPattern
+        sameTermOtherRegionsPattern
       );
       
-      if (cityNoResultsResult.success && cityNoResultsResult.memories) {
-        console.log(`🧠 [NoResults-Nivel 3] Encontradas ${cityNoResultsResult.memories.length} memorias para la misma ciudad`);
-        for (const memory of cityNoResultsResult.memories) {
+      if (sameTermNoResultsResult.success && sameTermNoResultsResult.memories) {
+        console.log(`🧠 [NoResults-Nivel 3] Encontradas ${sameTermNoResultsResult.memories.length} memorias para el mismo término en la misma ciudad`);
+        for (const memory of sameTermNoResultsResult.memories) {
           console.log(`   - Memoria: siteId=${memory.siteId}, key="${memory.key}", noResults=${memory.data.noResults}`);
-          // Solo verificar memorias de otros sitios y otras regiones
+          // Solo verificar memorias de otros sitios y otras regiones, pero con el MISMO término de búsqueda
           if (memory.siteId !== siteId && memory.key !== memoryKey && memory.data.noResults === true) {
-            console.log(`🧠 [NoResults-Nivel 3] MATCH! Búsqueda similar marcada como sin resultados en otra región: ${memory.key}`);
-            console.log(`   - Búsqueda actual: "${memoryKey}"`);
-            console.log(`   - Memoria encontrada: "${memory.key}"`);
-            return true;
+            // Verificar que sea exactamente el mismo término de búsqueda
+            const memorySearchTerm = memory.data.searchConditions?.searchTerm || memory.key.split(':')[0];
+            if (memorySearchTerm === searchTerm.toLowerCase().trim()) {
+              console.log(`🧠 [NoResults-Nivel 3] MATCH! Mismo término marcado como sin resultados en otra región: ${memory.key}`);
+              console.log(`   - Búsqueda actual: "${memoryKey}"`);
+              console.log(`   - Memoria encontrada: "${memory.key}"`);
+              return true;
+            } else {
+              console.log(`🧠 [NoResults-Nivel 3] Término diferente, no bloquear: "${memorySearchTerm}" vs "${searchTerm.toLowerCase().trim()}"`);
+            }
           }
         }
       }
