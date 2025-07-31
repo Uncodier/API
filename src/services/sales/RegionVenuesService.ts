@@ -107,7 +107,9 @@ export class RegionVenuesService {
    * Genera una clave única para las memorias del sistema
    */
   private generateMemoryKey(searchTerm: string, city: string, region: string): string {
-    return `${searchTerm.toLowerCase().trim()}:${city.toLowerCase().trim()}:${region.toLowerCase().trim()}`;
+    const key = `${searchTerm.toLowerCase().trim()}:${city.toLowerCase().trim()}:${region.toLowerCase().trim()}`;
+    console.log(`🔑 [MEMORY KEY] Generando clave: "${key}" desde "${searchTerm}" + "${city}" + "${region}"`);
+    return key;
   }
 
   /**
@@ -255,6 +257,13 @@ export class RegionVenuesService {
     try {
       const memoryKey = this.generateMemoryKey(searchTerm, city, region);
       
+      console.log(`🔍 [MEMORY CHECK] Parámetros recibidos:`);
+      console.log(`   - searchTerm: "${searchTerm}"`);
+      console.log(`   - city: "${city}"`);
+      console.log(`   - region: "${region}"`);
+      console.log(`   - siteId: "${siteId}"`);
+      console.log(`   - memoryKey generada: "${memoryKey}"`);
+      
       // 1. Verificar memorias del sitio específico
       console.log(`🧠 [NoResults-Nivel 1] Verificando sitio específico: ${siteId}`);
       const siteMemoryResult = await systemMemoryService.findMemory({
@@ -279,10 +288,12 @@ export class RegionVenuesService {
       );
       
       if (regionNoResultsResult.success && regionNoResultsResult.memories) {
+        console.log(`🧠 [NoResults-Nivel 2] Encontradas ${regionNoResultsResult.memories.length} memorias para la misma región exacta`);
         for (const memory of regionNoResultsResult.memories) {
+          console.log(`   - Memoria: siteId=${memory.siteId}, key="${memory.key}", noResults=${memory.data.noResults}`);
           // Solo verificar memorias de otros sitios
           if (memory.siteId !== siteId && memory.data.noResults === true) {
-            console.log(`🧠 [NoResults-Nivel 2] Búsqueda marcada como sin resultados en otro sitio: ${searchTerm} in ${city}, ${region}`);
+            console.log(`🧠 [NoResults-Nivel 2] MATCH! Búsqueda marcada como sin resultados en otro sitio: ${searchTerm} in ${city}, ${region}`);
             return true;
           }
         }
@@ -297,10 +308,14 @@ export class RegionVenuesService {
       );
       
       if (cityNoResultsResult.success && cityNoResultsResult.memories) {
+        console.log(`🧠 [NoResults-Nivel 3] Encontradas ${cityNoResultsResult.memories.length} memorias para la misma ciudad`);
         for (const memory of cityNoResultsResult.memories) {
+          console.log(`   - Memoria: siteId=${memory.siteId}, key="${memory.key}", noResults=${memory.data.noResults}`);
           // Solo verificar memorias de otros sitios y otras regiones
           if (memory.siteId !== siteId && memory.key !== memoryKey && memory.data.noResults === true) {
-            console.log(`🧠 [NoResults-Nivel 3] Búsqueda similar marcada como sin resultados en otra región: ${memory.key}`);
+            console.log(`🧠 [NoResults-Nivel 3] MATCH! Búsqueda similar marcada como sin resultados en otra región: ${memory.key}`);
+            console.log(`   - Búsqueda actual: "${memoryKey}"`);
+            console.log(`   - Memoria encontrada: "${memory.key}"`);
             return true;
           }
         }
@@ -987,6 +1002,14 @@ export class RegionVenuesService {
    */
   async searchRegionVenues(params: VenueSearchParams): Promise<VenueSearchResult> {
     try {
+      console.log(`🎯 [SEARCH REQUEST] Parámetros recibidos en searchRegionVenues:`);
+      console.log(`   - siteId: "${params.siteId}"`);
+      console.log(`   - searchTerm: "${params.searchTerm}"`);
+      console.log(`   - city: "${params.city}"`);
+      console.log(`   - region: "${params.region}"`);
+      console.log(`   - country: "${params.country || 'undefined'}"`);
+      console.log(`   - limit: ${params.limit || 1}`);
+      
       // Validar parámetros
       const validation = this.validateSearchParams(params);
       if (!validation.valid) {
@@ -1010,7 +1033,11 @@ export class RegionVenuesService {
       );
 
       if (isMarkedAsNoResults) {
-        console.log(`🧠 Search already marked as no-results in memory, skipping API call`);
+        console.log(`🚫 [SKIP SEARCH] La búsqueda "${params.searchTerm}" en "${params.city}, ${params.region}" ya está marcada como sin resultados, saltando llamada a API`);
+        console.log(`   - searchTerm: "${params.searchTerm}"`);
+        console.log(`   - city: "${params.city}"`);
+        console.log(`   - region: "${params.region}"`);
+        console.log(`   - siteId: "${params.siteId}"`);
         return {
           success: true,
           venues: []
