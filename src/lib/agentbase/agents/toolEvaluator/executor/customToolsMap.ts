@@ -765,7 +765,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
     responseMapping: {
       // Propiedades del objeto de respuesta
       success: 'success',                  // Indicador de éxito de la operación
-      task_id: 'task.id',                 // ID único de la tarea creada
+      id: 'task.id',                      // ID único de la tarea creada
       title: 'task.title',                // Título de la tarea
       type: 'task.type',                  // Tipo de tarea
       status: 'task.status',              // Estado de la tarea
@@ -932,7 +932,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
     responseMapping: {
       // Propiedades del objeto de respuesta
       success: 'success',                  // Indicador de éxito de la operación
-      task_id: 'task.id',                 // ID único de la tarea actualizada
+      id: 'task.id',                      // ID único de la tarea actualizada
       title: 'task.title',                // Título de la tarea
       type: 'task.type',                  // Tipo de tarea
       status: 'task.status',              // Estado de la tarea

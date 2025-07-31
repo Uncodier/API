@@ -109,9 +109,12 @@ export class RegionLeadsService {
       // Realizamos la búsqueda utilizando los tipos correctos
       try {
         // Realizar la búsqueda de texto en Google Places
+        const searchQuery = `${query} in ${region}`;
+        console.log(`🎯 [FINAL SEARCH PATH] Google Maps Text Search: https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&key=[API_KEY_HIDDEN]`);
+        
         const searchResponse = await googleMapsClient.textSearch({
           params: {
-            query: `${query} in ${region}`,
+            query: searchQuery,
             key: apiKey,
           },
           timeout: 10000, // 10 segundos de timeout
@@ -132,6 +135,8 @@ export class RegionLeadsService {
           console.log('No results found with text search, trying nearby search...');
           
           // Para nearby search necesitamos coordenadas, así que primero geocodificamos la región
+          console.log(`🎯 [FINAL SEARCH PATH] Google Maps Geocoding: https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(region)}&key=[API_KEY_HIDDEN]`);
+          
           const geocodeResponse = await googleMapsClient.geocode({
             params: {
               address: region,
@@ -150,11 +155,14 @@ export class RegionLeadsService {
           const location = geocodeResponse.data.results[0].geometry.location;
           
           // Ahora hacemos la búsqueda cercana
+          const nearbyKeyword = keywords.join(' ') || undefined;
+          console.log(`🎯 [FINAL SEARCH PATH] Google Maps Nearby Search: https://maps.googleapis.com/maps/api/place/nearbysearch/json?location=${location.lat},${location.lng}&radius=50000&keyword=${encodeURIComponent(nearbyKeyword || '')}&key=[API_KEY_HIDDEN]`);
+          
           const nearbyResponse = await googleMapsClient.placesNearby({
             params: {
               location: location,
               radius: 50000, // 50km radio
-              keyword: keywords.join(' ') || undefined,
+              keyword: nearbyKeyword,
               key: apiKey,
             }
           });

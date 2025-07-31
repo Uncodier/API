@@ -365,7 +365,7 @@ export class RegionVenuesService {
         const query = queries[i];
         const url = `${this.geocodingApiUrl}?address=${encodeURIComponent(query)}&key=${this.googleApiKey}`;
         
-        console.log(`🌍 [Attempt ${i + 1}/${queries.length}] GEOCODING URL: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
+        console.log(`🎯 [FINAL SEARCH PATH] Geocoding: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
         
         try {
           const response = await fetch(url);
@@ -487,8 +487,7 @@ export class RegionVenuesService {
       
       const url = `${this.placesApiUrl}/textsearch/json?query=${encodeURIComponent(query)}&key=${this.googleApiKey}`;
       
-      console.log(`📝 [Text Search] Query: "${query}"`);
-      console.log(`📝 [Text Search] URL: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
+      console.log(`🎯 [FINAL SEARCH PATH] Text Search: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
       
       const response = await fetch(url);
       
@@ -652,8 +651,7 @@ export class RegionVenuesService {
       // Usar Nearby Search como fallback
       const url = `${this.placesApiUrl}/nearbysearch/json?location=${coordinates.lat},${coordinates.lng}&radius=10000&type=establishment&keyword=${encodeURIComponent(cleanSearchTerm)}&key=${this.googleApiKey}`;
       
-      console.log(`🚀 [Method 2] Places API Nearby Search request for: "${cleanSearchTerm}" near ${coordinates.lat},${coordinates.lng}`);
-      console.log(`📍 [Method 2] EXACT MAPS SEARCH URL: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
+      console.log(`🎯 [FINAL SEARCH PATH] Nearby Search: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
       
       const response = await fetch(url);
       
@@ -797,6 +795,8 @@ export class RegionVenuesService {
       ].join(',');
       
       const url = `${this.placesApiUrl}/details/json?place_id=${placeId}&fields=${fields}&key=${this.googleApiKey}`;
+      
+      console.log(`🎯 [FINAL SEARCH PATH] Place Details: ${url.replace(this.googleApiKey || '', '[API_KEY_HIDDEN]')}`);
       
       const response = await fetch(url);
       

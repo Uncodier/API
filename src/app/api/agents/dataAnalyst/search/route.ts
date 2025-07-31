@@ -53,9 +53,7 @@ async function searchWithTavily(query: string, options: {
       country: null
     };
 
-    console.log(`🔍 DEBUG - Realizando búsqueda con Tavily: "${query}"`);
-    console.log(`🔍 DEBUG - Payload:`, JSON.stringify(searchPayload, null, 2));
-    console.log(`🔍 DEBUG - API Key length:`, tavilyApiKey?.length || 0);
+    console.log(`🎯 [FINAL SEARCH PATH] Tavily Search: https://api.tavily.com/search`);
 
     const response = await fetch('https://api.tavily.com/search', {
       method: 'POST',

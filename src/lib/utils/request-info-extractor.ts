@@ -165,7 +165,10 @@ export async function getLocationFromIP(ip: string): Promise<LocationInfo> {
       return {};
     }
 
-    const response = await fetch(`https://ipapi.co/${ip}/json/`, {
+    const geoApiUrl = `https://ipapi.co/${ip}/json/`;
+    console.log(`🎯 [FINAL SEARCH PATH] IP Geolocation: ${geoApiUrl}`);
+    
+    const response = await fetch(geoApiUrl, {
       headers: {
         'User-Agent': 'Uncodie-API/1.0'
       },
