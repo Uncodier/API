@@ -179,18 +179,28 @@ export class EmailService {
         // Search for emails with conservative approach to avoid server conflicts
         const messages = [];
         try {
-          for await (const message of client.fetch(searchQuery, {
-            envelope: true,
-            bodyStructure: true,
-            flags: true,
-            // Start with basic fetch, we'll get content separately if needed
-            bodyParts: ['TEXT'] // Only request text part for now
-          })) {
-            messages.push(message);
-            
-            // Limit results
-            if (messages.length >= limit) {
-              break;
+          // First, search to get UIDs
+          const searchResults = await client.search(searchQuery);
+          console.log(`[EmailService] 🔍 Búsqueda encontró ${searchResults.length} emails matching criterios`);
+          
+          // Sort UIDs in descending order to get newest first
+          const sortedUIDs = searchResults.sort((a, b) => b - a);
+          console.log(`[EmailService] 📊 UIDs ordenados (más recientes primero): ${sortedUIDs.slice(0, 5).join(', ')}${sortedUIDs.length > 5 ? '...' : ''}`);
+          
+          // Take only the newest emails up to the limit
+          const limitedUIDs = sortedUIDs.slice(0, limit);
+          console.log(`[EmailService] 🎯 Procesando ${limitedUIDs.length} emails más recientes (límite: ${limit})`);
+          
+          // Fetch the selected emails
+          if (limitedUIDs.length > 0) {
+            for await (const message of client.fetch(limitedUIDs, {
+              envelope: true,
+              bodyStructure: true,
+              flags: true,
+              // Start with basic fetch, we'll get content separately if needed
+              bodyParts: ['TEXT'] // Only request text part for now
+            })) {
+              messages.push(message);
             }
           }
           
@@ -303,7 +313,7 @@ export class EmailService {
                 bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
               }
               email.body = bodyContent;
-              console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
+                              console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
             } else {
               console.log(`[EmailService] ❌ DIAGNOSTICO - No se pudo obtener body content para email ${email.id}`);
               email.body = null;
@@ -781,18 +791,28 @@ export class EmailService {
         // Search for emails with conservative approach to avoid server conflicts
         const messages = [];
         try {
-          for await (const message of client.fetch(searchQuery, {
-            envelope: true,
-            bodyStructure: true,
-            flags: true,
-            // Start with basic fetch, we'll get content separately if needed
-            bodyParts: ['TEXT'] // Only request text part for now
-          })) {
-            messages.push(message);
-            
-            // Limit results
-            if (messages.length >= limit) {
-              break;
+          // First, search to get UIDs
+          const searchResults = await client.search(searchQuery);
+          console.log(`[EmailService] 🔍 Búsqueda de enviados encontró ${searchResults.length} emails matching criterios`);
+          
+          // Sort UIDs in descending order to get newest first
+          const sortedUIDs = searchResults.sort((a, b) => b - a);
+          console.log(`[EmailService] 📊 UIDs enviados ordenados (más recientes primero): ${sortedUIDs.slice(0, 5).join(', ')}${sortedUIDs.length > 5 ? '...' : ''}`);
+          
+          // Take only the newest emails up to the limit
+          const limitedUIDs = sortedUIDs.slice(0, limit);
+          console.log(`[EmailService] 🎯 Procesando ${limitedUIDs.length} emails enviados más recientes (límite: ${limit})`);
+          
+          // Fetch the selected emails
+          if (limitedUIDs.length > 0) {
+            for await (const message of client.fetch(limitedUIDs, {
+              envelope: true,
+              bodyStructure: true,
+              flags: true,
+              // Start with basic fetch, we'll get content separately if needed
+              bodyParts: ['TEXT'] // Only request text part for now
+            })) {
+              messages.push(message);
             }
           }
           

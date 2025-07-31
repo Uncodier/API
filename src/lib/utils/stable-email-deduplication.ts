@@ -1,4 +1,5 @@
 import crypto from 'crypto';
+import { cleanHtmlContent } from './html-content-cleaner';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export interface StableEmailFingerprint {
@@ -68,13 +69,8 @@ export class StableEmailDeduplicationService {
    * Convierte HTML a texto plano de manera robusta
    */
   private static htmlToPlainText(html: string): string {
-    return html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '') // Remover scripts
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')   // Remover CSS
-      .replace(/<[^>]*>/g, ' ')                      // Remover todas las tags
-      .replace(/&[a-z]+;/gi, ' ')                   // Remover entidades HTML
-      .replace(/\s+/g, ' ')                         // Normalizar espacios
-      .trim();
+    // Usar limpieza comprehensiva para mejor deduplicación
+    return cleanHtmlContent(html);
   }
 
   /**

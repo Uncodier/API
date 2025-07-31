@@ -132,10 +132,10 @@ export class SentEmailDuplicationService {
         return null;
       }
       
-      // Redondear a minuto para crear ventana temporal estable
+      // Redondear a DÍA para crear ventana temporal MÁS estable (emails del mismo día con mismo contenido = duplicados)
       const roundedTime = new Date(timestamp);
-      roundedTime.setSeconds(0, 0);
-      const timeWindow = roundedTime.toISOString().substring(0, 16); // YYYY-MM-DDTHH:MM
+      roundedTime.setHours(0, 0, 0, 0); // Reset a medianoche
+      const timeWindow = roundedTime.toISOString().substring(0, 10); // YYYY-MM-DD
       
       // 🔧 NORMALIZAR CAMPOS - Extraer solo direcciones de email para consistencia
       const normalizedTo = this.extractEmailAddress(to).toLowerCase().trim();
@@ -163,10 +163,10 @@ export class SentEmailDuplicationService {
         hash = hash & hash; // Convert to 32-bit integer
       }
       
-      // Crear ID con formato recognizable
+      // Crear ID con formato recognizable (usando día para estabilidad)
       const envelopeId = `env-${Math.abs(hash).toString(16)}-${timeWindow.replace(/[:-]/g, '')}`;
       
-      console.log(`[SENT_EMAIL_DEDUP] ✅ ID envelope generado: "${envelopeId}"`);
+      console.log(`[SENT_EMAIL_DEDUP] ✅ ID envelope generado: "${envelopeId}" (ventana diaria: ${timeWindow})`);
       console.log(`[SENT_EMAIL_DEDUP] 📊 String hash usado: "${dataString.substring(0, 100)}..."`);
       
       return envelopeId;

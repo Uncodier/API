@@ -189,5 +189,67 @@ describe('Email Filtering by Aliases', () => {
         'With spaces'
       ]);
     });
+
+    it('should NOT filter email from cleqos@gmail.com to hola@uncodie.com when hola@uncodie.com is in aliases', () => {
+      // Test específico para verificar que emails a hola@uncodie.com se respondan
+      const emailFromCleqos = [
+        { 
+          to: 'hola@uncodie.com', 
+          subject: 'Consulta sobre servicios', 
+          from: 'cleqos@gmail.com',
+          body: 'Hola, me gustaría conocer más sobre sus servicios.'
+        }
+      ];
+      
+      // hola@uncodie.com debe estar configurado como alias
+      const aliases = ['hola@uncodie.com'];
+      const result = filterEmailsByAliases(emailFromCleqos, aliases);
+      
+      // El email NO debe ser filtrado (debe incluirse para respuesta)
+      expect(result).toHaveLength(1);
+      expect(result[0].from).toBe('cleqos@gmail.com');
+      expect(result[0].to).toBe('hola@uncodie.com');
+      expect(result[0].subject).toBe('Consulta sobre servicios');
+    });
+
+    it('should handle hola@uncodie.com with different capitalizations', () => {
+      const emailVariations = [
+        { to: 'hola@uncodie.com', subject: 'Lowercase', from: 'cleqos@gmail.com' },
+        { to: 'HOLA@UNCODIE.COM', subject: 'Uppercase', from: 'cleqos@gmail.com' },
+        { to: 'Hola@Uncodie.Com', subject: 'Mixed case', from: 'cleqos@gmail.com' },
+        { to: '  hola@uncodie.com  ', subject: 'With spaces', from: 'cleqos@gmail.com' }
+      ];
+      
+      const aliases = ['hola@uncodie.com'];
+      const result = filterEmailsByAliases(emailVariations, aliases);
+      
+      // Todos los emails deben pasar el filtro
+      expect(result).toHaveLength(4);
+      expect(result.map(e => e.subject)).toEqual([
+        'Lowercase',
+        'Uppercase',
+        'Mixed case',
+        'With spaces'
+      ]);
+    });
+
+    it('should handle hola@uncodie.com in complex formats', () => {
+      const complexFormats = [
+        { to: 'Equipo Uncodie <hola@uncodie.com>', subject: 'With name', from: 'cleqos@gmail.com' },
+        { to: 'info@client.com, hola@uncodie.com', subject: 'Multiple recipients', from: 'cleqos@gmail.com' },
+        { to: '"Soporte Uncodie" <hola@uncodie.com>', subject: 'Quoted name', from: 'cleqos@gmail.com' }
+      ];
+      
+      const aliases = ['hola@uncodie.com'];
+      const result = filterEmailsByAliases(complexFormats, aliases);
+      
+      // Todos deben pasar el filtro ya que contienen hola@uncodie.com
+      expect(result).toHaveLength(3);
+      expect(result.map(e => e.subject)).toEqual([
+        'With name',
+        'Multiple recipients',
+        'Quoted name'
+      ]);
+    });
   });
 }); 

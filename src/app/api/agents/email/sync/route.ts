@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
+import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
 import { ConversationService } from '@/lib/services/conversation-service';
@@ -827,10 +828,10 @@ async function addSentMessageToConversation(
         fallbackContent = email.text.trim();
         console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
       }
-      // 3. Intentar con email.html (extraer texto básico)
+      // 3. Intentar con email.html (extraer texto comprehensivo)
       else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-        console.log(`[EMAIL_SYNC] 📝 Usando email.html (sin tags): ${fallbackContent.length} caracteres`);
+        fallbackContent = cleanHtmlContent(email.html);
+        console.log(`[EMAIL_SYNC] 📝 Usando email.html (limpieza comprehensiva): ${fallbackContent.length} caracteres`);
       }
       // 4. Verificar si body es un objeto con propiedades anidadas
       else if (email.body && typeof email.body === 'object') {
@@ -840,8 +841,8 @@ async function addSentMessageToConversation(
           fallbackContent = email.body.text.trim();
           console.log(`[EMAIL_SYNC] 📝 Usando email.body.text: ${fallbackContent.length} caracteres`);
         } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
-          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
-          console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (sin tags): ${fallbackContent.length} caracteres`);
+          fallbackContent = cleanHtmlContent(email.body.html);
+          console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (limpieza comprehensiva): ${fallbackContent.length} caracteres`);
         }
       }
       
@@ -1431,12 +1432,12 @@ async function addReceivedMessageToConversation(
       } else if (email.text && typeof email.text === 'string' && email.text.trim()) {
         fallbackContent = email.text.trim();
       } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = email.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        fallbackContent = cleanHtmlContent(email.html);
       } else if (email.body && typeof email.body === 'object') {
         if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
           fallbackContent = email.body.text.trim();
         } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
-          fallbackContent = email.body.html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+          fallbackContent = cleanHtmlContent(email.body.html);
         }
       }
       

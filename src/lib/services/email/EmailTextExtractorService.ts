@@ -6,6 +6,7 @@
  */
 
 import * as cheerio from 'cheerio';
+import { cleanHtmlBasic } from '@/lib/utils/html-content-cleaner';
 
 export interface EmailTextContent {
   subject: string;
@@ -143,7 +144,7 @@ export class EmailTextExtractorService {
       return text.replace(/\s+/g, ' ').trim();
     } catch (error) {
       console.error('[EmailTextExtractor] Error extracting text from HTML:', error);
-      return html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+      return cleanHtmlBasic(html);
     }
   }
 
