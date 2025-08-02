@@ -578,6 +578,240 @@ export class EmailService {
   }
 
   /**
+   * Elimina bounces específicos por UID en la misma conexión
+   */
+  static async deleteSpecificBounces(
+    emailConfig: EmailConfig,
+    uids: string[]
+  ): Promise<{ success: number; failed: number; results: Array<{ uid: string; success: boolean; error?: string }> }> {
+    let client: ImapFlow | undefined;
+    const results: Array<{ uid: string; success: boolean; error?: string }> = [];
+    let successCount = 0;
+    let failedCount = 0;
+
+    try {
+      console.log(`[EmailService] 🔍 Eliminando ${uids.length} bounces específicos por UID...`);
+      
+      // Configurar conexión IMAP
+      const imapPort = parseInt(String(emailConfig.imapPort || emailConfig.port || '993'));
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: {
+          rejectUnauthorized: false
+        }
+      };
+
+      // Configurar autenticación
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        imapConfig.auth = {
+          user: emailConfig.email,
+          accessToken: emailConfig.accessToken
+        };
+      } else {
+        imapConfig.auth = {
+          user: emailConfig.email,
+          pass: emailConfig.password
+        };
+      }
+
+      // Crear conexión IMAP
+      client = new ImapFlow(imapConfig);
+
+      await client.connect();
+      console.log(`[EmailService] ✅ Conexión IMAP establecida para eliminación específica`);
+
+      // Abrir bandeja de entrada
+      await client.mailboxOpen('INBOX');
+
+      // Eliminar cada UID específico
+      for (const uid of uids) {
+        try {
+          // Buscar el email por UID
+          const searchResult = await client.search({ uid: uid });
+          
+          if (searchResult.length > 0) {
+            // Marcar como eliminado y expunge inmediatamente
+            await client.messageFlagsAdd(searchResult, ['\\Deleted']);
+            
+            // Usar mailboxClose con expunge para eliminar definitivamente
+            await client.mailboxClose();
+            await client.mailboxOpen('INBOX'); // Reabrir para la siguiente iteración
+            
+            console.log(`[EmailService] ✅ Bounce ${uid} eliminado exitosamente`);
+            results.push({ uid, success: true });
+            successCount++;
+          } else {
+            console.log(`[EmailService] ⚠️ Bounce ${uid} no encontrado`);
+            results.push({ uid, success: false, error: 'UID no encontrado' });
+            failedCount++;
+          }
+        } catch (uidError) {
+          console.log(`[EmailService] ❌ Error eliminando bounce ${uid}:`, uidError);
+          results.push({ uid, success: false, error: uidError instanceof Error ? uidError.message : String(uidError) });
+          failedCount++;
+        }
+      }
+
+      console.log(`[EmailService] ✅ Eliminación específica completada: ${successCount} exitosos, ${failedCount} fallidos`);
+      
+      return { success: successCount, failed: failedCount, results };
+
+    } catch (error) {
+      console.error(`[EmailService] ❌ Error en eliminación específica:`, error);
+      return { success: 0, failed: uids.length, results: uids.map(uid => ({ uid, success: false, error: error instanceof Error ? error.message : String(error) })) };
+    } finally {
+      if (client) {
+        try {
+          await client.logout();
+        } catch (logoutError) {
+          // Ignorar errores de logout
+        }
+      }
+    }
+  }
+
+  /**
+   * Elimina bounces usando criterios de búsqueda IMAP (más confiable que UIDs)
+   */
+  static async deleteBouncesBySearch(
+    emailConfig: EmailConfig
+  ): Promise<{ success: number; failed: number; results: Array<{ criteria: string; success: boolean; error?: string }> }> {
+    let client: ImapFlow | undefined;
+    const results: Array<{ criteria: string; success: boolean; error?: string }> = [];
+    let successCount = 0;
+    let failedCount = 0;
+
+    try {
+      console.log(`[EmailService] 🔍 Eliminando bounces usando criterios de búsqueda...`);
+
+      // Configuración IMAP (copiada del código existente)
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') {
+        imapPort = parseInt(imapPort, 10);
+      }
+
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: { rejectUnauthorized: false }
+      };
+
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        imapConfig.auth = {
+          user: emailConfig.user || emailConfig.email,
+          accessToken: emailConfig.accessToken
+        };
+      } else {
+        imapConfig.auth = {
+          user: emailConfig.user || emailConfig.email,
+          pass: emailConfig.password
+        };
+      }
+
+      client = new ImapFlow(imapConfig);
+      await client.connect();
+      console.log(`[EmailService] ✅ Conexión IMAP establecida para eliminación de bounces`);
+
+      const lock = await client.getMailboxLock('INBOX');
+      
+      try {
+        await client.mailboxOpen('INBOX');
+
+        // Criterios de búsqueda para bounces específicos
+        const bounceSearchCriteria = [
+          { from: 'mailer-daemon@googlemail.com' },
+          { 
+            from: 'mailer-daemon',
+            since: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) // Últimos 7 días
+          }
+        ];
+
+        for (const criteria of bounceSearchCriteria) {
+          try {
+            console.log(`[EmailService] 🔍 Buscando bounces con criterios:`, criteria);
+            
+            // Buscar emails que coincidan con los criterios
+            const searchResults = await client.search(criteria);
+            console.log(`[EmailService] 📊 Encontrados ${searchResults.length} bounces con criterios especificados`);
+
+            if (searchResults.length === 0) {
+              results.push({
+                criteria: JSON.stringify(criteria),
+                success: true,
+                error: 'No se encontraron emails con estos criterios'
+              });
+              continue;
+            }
+
+            // Marcar todos como eliminados
+            try {
+              await client.messageFlagsAdd(searchResults, ['\\Deleted'], { uid: true });
+              console.log(`[EmailService] 🏷️ ${searchResults.length} bounces marcados para eliminación`);
+              
+              // Hacer expunge para eliminar permanentemente
+              await client.mailboxClose();
+              await client.mailboxOpen('INBOX'); // Reabrir para continuar
+              
+              successCount += searchResults.length;
+              results.push({
+                criteria: JSON.stringify(criteria),
+                success: true,
+                error: `${searchResults.length} emails eliminados exitosamente`
+              });
+              
+              console.log(`[EmailService] ✅ ${searchResults.length} bounces eliminados con criterios: ${JSON.stringify(criteria)}`);
+              
+            } catch (deleteError) {
+              console.error(`[EmailService] ❌ Error eliminando bounces:`, deleteError);
+              failedCount += searchResults.length;
+              results.push({
+                criteria: JSON.stringify(criteria),
+                success: false,
+                error: deleteError instanceof Error ? deleteError.message : String(deleteError)
+              });
+            }
+            
+          } catch (searchError) {
+            console.error(`[EmailService] ❌ Error buscando con criterios:`, searchError);
+            results.push({
+              criteria: JSON.stringify(criteria),
+              success: false,
+              error: searchError instanceof Error ? searchError.message : String(searchError)
+            });
+          }
+        }
+
+      } finally {
+        lock.release();
+      }
+
+    } catch (error) {
+      console.error(`[EmailService] 💥 Error general en eliminación de bounces:`, error);
+      results.push({
+        criteria: 'general',
+        success: false,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } finally {
+      if (client) {
+        try {
+          await client.logout();
+        } catch (logoutError) {
+          console.warn(`[EmailService] ⚠️ Error en logout:`, logoutError);
+        }
+      }
+    }
+
+    console.log(`[EmailService] ✅ Eliminación de bounces completada: ${successCount} exitosos, ${failedCount} fallidos`);
+    return { success: successCount, failed: failedCount, results };
+  }
+
+  /**
    * Elimina múltiples emails del servidor IMAP
    * @param emailConfig Configuración del servidor de email
    * @param emailIds Array de IDs de emails a eliminar

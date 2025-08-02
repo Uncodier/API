@@ -11,6 +11,7 @@ import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtract
 import { WorkflowService } from '@/lib/services/workflow-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
+import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
 
 // Configuración de timeout extendido para Vercel
 export const maxDuration = 300; // 5 minutos en segundos (máximo para plan Pro)
@@ -154,26 +155,7 @@ async function findLeadsByEmails(emails: string[], siteId: string): Promise<{ema
   }
 }
 
-/**
- * Elimina un email del servidor IMAP
- */
-async function deleteEmailFromServer(emailConfig: any, emailId: string): Promise<boolean> {
-  try {
-    console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email ${emailId} del servidor`);
-    const success = await EmailService.deleteEmail(emailConfig, emailId, false);
-    
-    if (success) {
-      console.log(`[DELIVERY_STATUS] ✅ Email ${emailId} eliminado exitosamente`);
-    } else {
-      console.log(`[DELIVERY_STATUS] ⚠️ Email ${emailId} no pudo ser eliminado`);
-    }
-    
-    return success;
-  } catch (error) {
-    console.error(`[DELIVERY_STATUS] ❌ Error eliminando email ${emailId}:`, error);
-    return false;
-  }
-}
+// Función deleteEmailFromServer removida - ahora usamos eliminación en lote
 
 /**
  * Main POST endpoint para procesar delivery status
@@ -254,6 +236,8 @@ export async function POST(request: NextRequest) {
       // Filter for bounce emails
       console.log(`[DELIVERY_STATUS] 🔍 Filtrando emails de bounce/delivery failure...`);
       const bounceEmails = [];
+      let emailsDeleted = 0;
+      let workflowsTriggered = 0;
       
       for (let i = 0; i < sizeFilteredEmails.length; i++) {
         const email = sizeFilteredEmails[i];
@@ -280,6 +264,47 @@ export async function POST(request: NextRequest) {
           filteredBySize: originalEmailCount > sizeFilteredEmails.length
         });
       }
+
+      // Filtrar bounces ya procesados usando synced_objects
+      console.log(`[DELIVERY_STATUS] 🔍 Filtrando bounces ya procesados...`);
+      const { unprocessed: unprocessedBounces, alreadyProcessed: processedBounces } = 
+        await SyncedObjectsService.filterUnprocessedEmails(bounceEmails, siteId, 'bounce');
+      
+      console.log(`[DELIVERY_STATUS] 📊 Filtro synced_objects: ${unprocessedBounces.length} nuevos, ${processedBounces.length} ya procesados`);
+      
+      if (unprocessedBounces.length === 0) {
+        return NextResponse.json({
+          success: true,
+          message: "Todos los bounces ya fueron procesados anteriormente",
+          totalEmails: originalEmailCount,
+          sizeFilteredEmails: sizeFilteredEmails.length,
+          bounceEmails: bounceEmails.length,
+          newBounces: 0,
+          alreadyProcessedBounces: processedBounces.length,
+          processedBounces: 0,
+          workflowsTriggered: 0,
+          emailsDeleted: 0,
+          filteredBySize: originalEmailCount > sizeFilteredEmails.length
+        });
+      }
+
+      // Usar solo bounces no procesados para eliminación
+      bounceEmails.length = 0; // Limpiar array original
+      bounceEmails.push(...unprocessedBounces); // Solo procesar bounces nuevos
+
+      // Eliminar los bounces específicos detectados usando UIDs
+      console.log(`[DELIVERY_STATUS] 🗑️ Eliminando ${unprocessedBounces.length} bounces específicos detectados...`);
+      const bounceUIDs = unprocessedBounces.map(email => email.id);
+      console.log(`[DELIVERY_STATUS] 📋 UIDs a eliminar: ${bounceUIDs.join(', ')}`);
+      
+      try {
+        const deleteResult = await EmailService.deleteSpecificBounces(emailConfig, bounceUIDs);
+        console.log(`[DELIVERY_STATUS] ✅ Eliminación específica: ${deleteResult.success}/${bounceUIDs.length} bounces eliminados`);
+        console.log(`[DELIVERY_STATUS] 📊 Resultados detallados:`, deleteResult.results);
+        emailsDeleted = deleteResult.success;
+      } catch (deleteError) {
+        console.log(`[DELIVERY_STATUS] ⚠️ Error en eliminación específica (continuando): ${deleteError instanceof Error ? deleteError.message : String(deleteError)}`);
+      }
       
       // Process each bounce email
       const maxBouncesToProcess = Math.min(bounceEmails.length, 10);
@@ -287,8 +312,6 @@ export async function POST(request: NextRequest) {
       
       console.log(`[DELIVERY_STATUS] 🔄 Procesando ${bouncesToProcess.length} bounce emails (de ${bounceEmails.length} encontrados)...`);
       const results = [];
-      let workflowsTriggered = 0;
-      let emailsDeleted = 0;
       
       for (const bounceEmail of bouncesToProcess) {
         try {
@@ -369,12 +392,33 @@ export async function POST(request: NextRequest) {
             });
           }
           
-          // Delete the bounce email from server
-          console.log(`[DELIVERY_STATUS] 🗑️ Eliminando bounce email del servidor...`);
-          const bounceDeleted = await deleteEmailFromServer(emailConfig, bounceEmail.id);
+          // Los bounces ya fueron eliminados en lote al principio para evitar problemas de UID
+          console.log(`[DELIVERY_STATUS] ✅ Bounce email ya eliminado en lote`);
+          const bounceDeleted = true; // Ya se eliminó en lote
           
-          if (bounceDeleted) {
-            emailsDeleted++;
+          // Marcar bounce como procesado en synced_objects
+          try {
+            const bounceEmailId = bounceEmail.messageId || bounceEmail.id || bounceEmail.uid;
+            if (bounceEmailId) {
+              await SyncedObjectsService.markAsProcessed(
+                bounceEmailId,
+                siteId,
+                {
+                  processed_at: new Date().toISOString(),
+                  bounce_details: {
+                    extracted_emails: extractedEmails,
+                    leads_found: leadsFound.length,
+                    workflows_triggered: leadResults.filter(r => r.workflowTriggered).length
+                  }
+                },
+                'bounce'
+              );
+              console.log(`[DELIVERY_STATUS] ✅ Bounce marcado como procesado en synced_objects`);
+            } else {
+              console.log(`[DELIVERY_STATUS] ⚠️ No se pudo extraer ID válido del bounce para synced_objects`);
+            }
+          } catch (syncError) {
+            console.log(`[DELIVERY_STATUS] ⚠️ Error marcando bounce como procesado: ${syncError instanceof Error ? syncError.message : String(syncError)}`);
           }
           
           results.push({
@@ -403,6 +447,8 @@ export async function POST(request: NextRequest) {
         totalEmails: originalEmailCount,
         sizeFilteredEmails: sizeFilteredEmails.length,
         bounceEmails: bounceEmails.length,
+        newBounces: unprocessedBounces.length,
+        alreadyProcessedBounces: processedBounces?.length || 0,
         processedBounces: results.length,
         workflowsTriggered,
         emailsDeleted,
