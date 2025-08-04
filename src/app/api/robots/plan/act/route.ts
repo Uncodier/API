@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
+import { anthropic } from 'scrapybara/anthropic';
+import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
+import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/act
@@ -50,11 +53,18 @@ export async function POST(request: NextRequest) {
     // @ts-ignore
     const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
 
-    // 3. Ejecutar paso simple: obtener listado de procesos como prueba -------------
+    // 3. Preparar herramientas para la instancia ------------------------------------
+    const tools = [
+      bashTool(remoteInstance),
+      computerTool(remoteInstance),
+      editTool(remoteInstance),
+    ];
+
+    // 4. Ejecutar paso del plan usando el SDK --------------------------------------
     const { steps } = await client.act({
-      model: undefined, // Se usará la configuración por defecto (Anthropic)
-      tools: [],
-      system: 'Execute plan step',
+      model: anthropic(),
+      tools,
+      system: UBUNTU_SYSTEM_PROMPT,
       prompt: `Ejecuta el siguiente paso del plan "${plan.title}" y reporta progreso.`,
       onStep: async (step: any) => {
         await supabaseAdmin.from('instance_logs').insert({
@@ -71,7 +81,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 4. Actualizar métricas mínimas ----------------------------------------------
+    // 5. Actualizar métricas mínimas ----------------------------------------------
     await supabaseAdmin.from('instance_plans').update({
       steps_completed: (plan.steps_completed ?? 0) + steps.length,
       progress_percentage: Math.min(100, (plan.steps_completed ?? 0) + steps.length),

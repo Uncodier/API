@@ -27,6 +27,25 @@ async function searchWithTavily(query: string, options: {
       };
     }
 
+    // Limitar query a 400 caracteres máximo para Tavily API
+    let processedQuery = query;
+    const MAX_QUERY_LENGTH = 400;
+    
+    if (query.length > MAX_QUERY_LENGTH) {
+      // Buscar el último espacio antes del límite para no cortar palabras
+      let cutPoint = MAX_QUERY_LENGTH;
+      const lastSpaceIndex = query.lastIndexOf(' ', MAX_QUERY_LENGTH - 1);
+      
+      if (lastSpaceIndex > MAX_QUERY_LENGTH * 0.8) { // Si el espacio está dentro del 80% del límite
+        cutPoint = lastSpaceIndex;
+      }
+      
+      processedQuery = query.substring(0, cutPoint).trim();
+      console.log(`⚠️ Query truncada de ${query.length} a ${processedQuery.length} caracteres para Tavily API`);
+      console.log(`🔍 Query original: "${query}"`);
+      console.log(`🔍 Query procesada: "${processedQuery}"`);
+    }
+
     // Mapear search_depth a valores válidos para Tavily
     let validSearchDepth = 'basic';
     if (options.search_depth === 'advanced') {
@@ -37,7 +56,7 @@ async function searchWithTavily(query: string, options: {
 
     // Seguir exactamente el formato de la documentación oficial de Tavily
     const searchPayload = {
-      query: query,
+      query: processedQuery,
       topic: "general",
       search_depth: validSearchDepth,
       max_results: options.max_results || 10,
