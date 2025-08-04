@@ -49,7 +49,6 @@ export async function POST(request: NextRequest) {
 
     // NOTA: La SDK no expone un método documentado para adjuntar una instancia existente.
     // Supondremos que `client.resumeInstance` existe; si no, este bloque deberá ajustarse.
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
 

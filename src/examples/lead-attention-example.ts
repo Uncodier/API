@@ -438,7 +438,7 @@ export async function runAllLeadAttentionExamples() {
 }
 
 // Export por defecto para usar fácilmente
-export default {
+const leadAttentionExamples = {
   notifyLeadAttention,
   basicLeadAttentionExample,
   multipleLeadsAttentionExample,
@@ -451,4 +451,6 @@ export default {
   LeadAttentionService,
   serviceUsageExample,
   runAllLeadAttentionExamples
-}; 
+};
+
+export default leadAttentionExamples; 

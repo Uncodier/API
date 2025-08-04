@@ -44,7 +44,6 @@ export async function POST(request: NextRequest) {
 
     // 2. Conectar Scrapybara y tomar screenshot -------------------------------------------
     const client = new ScrapybaraClient({ apiKey: process.env.SCRAPYBARA_API_KEY || '' });
-    // eslint-disable-next-line @typescript-eslint/ban-ts-comment
     // @ts-ignore
     const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
 

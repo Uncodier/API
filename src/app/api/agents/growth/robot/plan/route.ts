@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
         title: `Plan para actividad: ${activity}`,
         description: 'Plan generado automáticamente para la actividad solicitada',
         plan_type: 'objective',
-        status: 'generating',
+        status: 'pending',
         instance_id,
         site_id,
         user_id,
@@ -113,11 +113,32 @@ export async function POST(request: NextRequest) {
         command_id: planningCommandUuid,
         title: planData.title || `Plan para actividad: ${activity}`,
         description: planData.description || 'Plan generado automáticamente para la actividad solicitada',
-        plan_data: planData, // Guardar todo el plan generado
-        objectives: planData.objectives || [],
-        success_metrics: planData.success_metrics || [],
-        estimated_timeline: planData.estimated_timeline,
-        priority_level: planData.priority_level || 'medium',
+        results: planData, // Guardar todo el plan generado
+        success_criteria: planData.success_metrics || planData.success_criteria || [],
+        estimated_duration_minutes: (() => {
+          // Intentar extraer números del timeline o duration
+          const timelineValue = planData.estimated_timeline || planData.estimated_duration_minutes;
+          if (typeof timelineValue === 'number') return timelineValue;
+          if (typeof timelineValue === 'string') {
+            // Buscar números en el string y convertir
+            const match = timelineValue.match(/(\d+)/);
+            if (match) {
+              const num = parseInt(match[1]);
+              // Convertir semanas a minutos si encuentra "week" en el string
+              if (timelineValue.toLowerCase().includes('week')) {
+                return num * 7 * 24 * 60; // semanas a minutos
+              }
+              // Convertir días a minutos si encuentra "day"
+              if (timelineValue.toLowerCase().includes('day')) {
+                return num * 24 * 60; // días a minutos
+              }
+              // Si no especifica unidad, asumir que son minutos
+              return num;
+            }
+          }
+          return null; // Si no se puede parsear, dejar como null
+        })(),
+        priority: typeof planData.priority_level === 'string' ? 5 : (planData.priority_level || planData.priority || 5),
       })
       .eq('id', newPlan.id);
 
