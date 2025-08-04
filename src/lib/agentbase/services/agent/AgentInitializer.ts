@@ -202,13 +202,14 @@ export class AgentInitializer {
     };
     
     // Definir timeout y límite de intentos
-    const timeout = 30000; // 30 segundos máximo
+    const timeout = 120000; // 120 segundos máximo para tareas complejas
     const maxAttempts = 100;
     const checkInterval = 500; // 500ms entre verificaciones
     
     return new Promise(async (resolve, reject) => {
       const timeoutId = setTimeout(() => {
-        reject(new Error('Timeout: El comando no se completó en el tiempo esperado'));
+        console.error(`⏰ [AgentInitializer] TIMEOUT: El comando ${commandId} no se completó en ${timeout/1000} segundos`);
+        reject(new Error(`Timeout: El comando no se completó en ${timeout/1000} segundos`));
       }, timeout);
       
       try {

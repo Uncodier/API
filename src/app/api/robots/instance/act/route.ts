@@ -8,7 +8,7 @@ import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/act
-// Ejecuta una acción directa en la instancia usando un mensaje/prompt del usuario
+// Ejecuta una acción en una instancia existente usando client.get() del SDK
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 300; // 5 minutos en Vercel
@@ -19,9 +19,12 @@ const ActSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  let instance_id: string | undefined;
+  
   try {
     const rawBody = await request.json();
-    const { instance_id, message } = ActSchema.parse(rawBody);
+    const { instance_id: parsedInstanceId, message } = ActSchema.parse(rawBody);
+    instance_id = parsedInstanceId;
 
     // 1. Obtener la instancia ------------------------------------------------------
     const { data: instance, error: instanceError } = await supabaseAdmin
@@ -34,12 +37,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
 
-    // 2. Verificar que la instancia esté activa ------------------------------------
-    if (instance.status !== 'running') {
-      return NextResponse.json({ 
-        error: 'La instancia debe estar en estado running para ejecutar acciones' 
-      }, { status: 400 });
-    }
+    // 2. Nota: Usamos instance para logs pero creamos instancia temporal para ejecución
 
     // 3. Guardar el log del mensaje del usuario -----------------------------------
     await supabaseAdmin.from('instance_logs').insert({
@@ -54,36 +52,49 @@ export async function POST(request: NextRequest) {
       command_id: instance.command_id,
     });
 
-    // 4. Conectar a la instancia vía Scrapybara -----------------------------------
+    // 4. Conectar con instancia existente usando client.get() ---------------------
     const client = new ScrapybaraClient({ apiKey: process.env.SCRAPYBARA_API_KEY || '' });
-
-    // Reanudar la instancia existente
-    // @ts-ignore
-    const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
-
-    // Asegurar que el navegador esté iniciado si está disponible
-    try {
-      await remoteInstance.browser.start();
-    } catch (error) {
-      // Si falla el navegador, continuamos sin él (puede ser una instancia que no lo soporte)
-      console.log('Browser no disponible o ya iniciado:', error);
+    
+    // ✅ Conectar con instancia existente (¡por fin!)
+    const remoteInstance = await client.get(instance.provider_instance_id);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Connected to existing instance: [${instance.provider_instance_id}]`);
+    
+    // Verificar que es una instancia Ubuntu para las herramientas
+    if (!('browser' in remoteInstance)) {
+      return NextResponse.json({ 
+        error: 'La instancia debe ser de tipo Ubuntu para usar las herramientas completas' 
+      }, { status: 400 });
     }
-
-    // 5. Preparar las herramientas disponibles ------------------------------------
+    
+    // Preparar herramientas (ahora sabemos que es UbuntuInstance)
+    const ubuntuInstance = remoteInstance as any; // Cast temporal para resolver tipos
     const tools = [
-      bashTool(remoteInstance),
-      computerTool(remoteInstance),
-      editTool(remoteInstance),
+      bashTool(ubuntuInstance),
+      computerTool(ubuntuInstance),
+      editTool(ubuntuInstance),
     ];
 
-    // 6. Ejecutar la acción usando el SDK -----------------------------------------
+    // 5. Ejecutar acción usando el SDK act() --------------------------------------
     const { steps, text, usage } = await client.act({
       model: anthropic(),
       tools,
       system: UBUNTU_SYSTEM_PROMPT,
       prompt: message,
       onStep: async (step: any) => {
-        // Guardar cada step como instance log
+        // Handle step siguiendo el patrón de Python
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: ${step.text}`);
+        
+        // Mostrar tool calls como en Python
+        if (step.toolCalls) {
+          for (const call of step.toolCalls) {
+            const args = Object.entries(call.args || {})
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ');
+            console.log(`${call.toolName} [${remoteInstance.id}] → ${args}`);
+          }
+        }
+
+        // Guardar en BD con referencia a la instancia existente
         await supabaseAdmin.from('instance_logs').insert({
           log_type: 'instance_step',
           level: 'info',
@@ -93,8 +104,9 @@ export async function POST(request: NextRequest) {
             tool_calls: step.toolCalls,
             tool_results: step.toolResults,
             usage: step.usage,
+            remote_instance_id: remoteInstance.id, // ✅ ID de instancia existente
           },
-          instance_id: instance_id,
+          instance_id: instance_id, // ID original para logs
           site_id: instance.site_id,
           user_id: instance.user_id,
           agent_id: instance.agent_id,
@@ -103,7 +115,7 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 7. Guardar el resultado final -----------------------------------------------
+    // 6. Guardar el resultado final -----------------------------------------------
     await supabaseAdmin.from('instance_logs').insert({
       log_type: 'agent_response',
       level: 'info',
@@ -112,6 +124,7 @@ export async function POST(request: NextRequest) {
         final_text: text,
         total_steps: steps.length,
         usage: usage,
+        remote_instance_id: remoteInstance.id, // ✅ ID de instancia existente
       },
       instance_id: instance_id,
       site_id: instance.site_id,
@@ -120,21 +133,24 @@ export async function POST(request: NextRequest) {
       command_id: instance.command_id,
     });
 
+    // 7. Nota: No limpiamos la instancia ya que es persistente -----------------
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: Action completed on existing instance`);
+
     return NextResponse.json({ 
       message: 'Acción ejecutada exitosamente',
       response: text,
       steps_executed: steps.length,
       token_usage: usage,
+      remote_instance_id: remoteInstance.id, // ✅ ID de instancia existente
     }, { status: 200 });
 
   } catch (err: any) {
     console.error('Error en POST /robots/instance/act:', err);
     
+    
     // Guardar el error como log si tenemos instance_id
-    try {
-      const rawBody = await request.json();
-      const { instance_id } = rawBody;
-      if (instance_id) {
+    if (instance_id) {
+      try {
         await supabaseAdmin.from('instance_logs').insert({
           log_type: 'error',
           level: 'error',
@@ -142,9 +158,9 @@ export async function POST(request: NextRequest) {
           details: { error: err.message, stack: err.stack },
           instance_id: instance_id,
         });
+      } catch (logError) {
+        console.error('Error guardando log de error:', logError);
       }
-    } catch (logError) {
-      console.error('Error guardando log de error:', logError);
     }
 
     return NextResponse.json({ error: err.message }, { status: 500 });

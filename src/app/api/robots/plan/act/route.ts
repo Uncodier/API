@@ -8,7 +8,7 @@ import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/act
-// Ejecuta acciones del plan durante un periodo limitado (máx 5 min) y almacena logs
+// Ejecuta el último step pendiente del plan usando instancia existente con client.get()
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 300; // 5 minutos en Vercel
@@ -19,9 +19,13 @@ const ActSchema = z.object({
 });
 
 export async function POST(request: NextRequest) {
+  let instance_id: string | undefined;
+  let currentStep: any = null;
+  
   try {
     const rawBody = await request.json();
-    const { instance_id, instance_plan_id } = ActSchema.parse(rawBody);
+    const { instance_id: parsedInstanceId, instance_plan_id } = ActSchema.parse(rawBody);
+    instance_id = parsedInstanceId;
 
     // 1. Obtener registros principales --------------------------------------------
     const { data: instance, error: instanceError } = await supabaseAdmin
@@ -44,33 +48,94 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Plan no encontrado' }, { status: 404 });
     }
 
-    // 2. Conectar a la instancia vía Scrapybara ------------------------------------
+    // 2.1. Buscar el último step pendiente del plan --------------------------------
+    const { data: pendingSteps, error: stepsError } = await supabaseAdmin
+      .from('instance_plan_steps')
+      .select('*')
+      .eq('instance_plan_id', instance_plan_id)
+      .eq('status', 'pending')
+      .order('order', { ascending: true })
+      .limit(1);
+
+    if (stepsError) {
+      return NextResponse.json({ error: 'Error obteniendo steps del plan' }, { status: 500 });
+    }
+
+    if (!pendingSteps || pendingSteps.length === 0) {
+      return NextResponse.json({ 
+        message: 'No hay steps pendientes en este plan',
+        plan_completed: true 
+      }, { status: 200 });
+    }
+
+    currentStep = pendingSteps[0];
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing plan step: "${currentStep.title}"`);
+
+    // 2.2. Marcar el step como en progreso ----------------------------------------
+    await supabaseAdmin
+      .from('instance_plan_steps')
+      .update({ status: 'in_progress', started_at: new Date().toISOString() })
+      .eq('id', currentStep.id);
+
+    // 3. Conectar con instancia existente usando client.get() ---------------------
     const client = new ScrapybaraClient({ apiKey: process.env.SCRAPYBARA_API_KEY || '' });
+    
+    // ✅ Conectar con instancia existente usando el método oficial
+    const remoteInstance = await client.get(instance.provider_instance_id);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Connected to existing instance: [${instance.provider_instance_id}]`);
+    
+    // Verificar que es una instancia Ubuntu para las herramientas
+    if (!('browser' in remoteInstance)) {
+      return NextResponse.json({ 
+        error: 'La instancia debe ser de tipo Ubuntu para ejecutar el plan' 
+      }, { status: 400 });
+    }
 
-    // NOTA: La SDK no expone un método documentado para adjuntar una instancia existente.
-    // Supondremos que `client.resumeInstance` existe; si no, este bloque deberá ajustarse.
-    // @ts-ignore
-    const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
-
-    // 3. Preparar herramientas para la instancia ------------------------------------
+    // 4. Preparar herramientas (ahora sabemos que es UbuntuInstance) ---------------
+    const ubuntuInstance = remoteInstance as any; // Cast temporal para resolver tipos
     const tools = [
-      bashTool(remoteInstance),
-      computerTool(remoteInstance),
-      editTool(remoteInstance),
+      bashTool(ubuntuInstance),
+      computerTool(ubuntuInstance),
+      editTool(ubuntuInstance),
     ];
 
-    // 4. Ejecutar paso del plan usando el SDK --------------------------------------
-    const { steps } = await client.act({
+    // 5. Ejecutar el step específico del plan usando el SDK ----------------------
+    const stepPrompt = currentStep.description || `Ejecuta el step "${currentStep.title}" del plan "${plan.title}"`;
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing step with prompt: "${stepPrompt}"`);
+    
+    const { steps, text, usage } = await client.act({
       model: anthropic(),
       tools,
       system: UBUNTU_SYSTEM_PROMPT,
-      prompt: `Ejecuta el siguiente paso del plan "${plan.title}" y reporta progreso.`,
+      prompt: stepPrompt,
       onStep: async (step: any) => {
+        // Handle step siguiendo el patrón de Python
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: ${step.text}`);
+        
+        // Mostrar tool calls como en Python
+        if (step.toolCalls) {
+          for (const call of step.toolCalls) {
+            const args = Object.entries(call.args || {})
+              .map(([k, v]) => `${k}=${v}`)
+              .join(', ');
+            console.log(`${call.toolName} [${remoteInstance.id}] → ${args}`);
+          }
+        }
+
+        // Guardar en BD con referencia al step del plan
         await supabaseAdmin.from('instance_logs').insert({
-          log_type: 'agent_action',
+          log_type: 'plan_step',
           level: 'info',
-          message: step.text ?? 'step',
-          details: step,
+          message: step.text || 'Executing plan step',
+          details: {
+            step: step,
+            tool_calls: step.toolCalls,
+            tool_results: step.toolResults,
+            usage: step.usage,
+            remote_instance_id: remoteInstance.id,
+            plan_step_id: currentStep.id,
+            plan_step_title: currentStep.title,
+          },
           instance_id: instance_id,
           site_id: plan.site_id,
           user_id: plan.user_id,
@@ -80,15 +145,94 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // 5. Actualizar métricas mínimas ----------------------------------------------
+    // 6. Marcar el step como completado y guardar resultado final -----------------
+    await supabaseAdmin
+      .from('instance_plan_steps')
+      .update({ 
+        status: 'completed', 
+        completed_at: new Date().toISOString(),
+        result: text || 'Step completed successfully'
+      })
+      .eq('id', currentStep.id);
+
+    // 7. Guardar el resultado final del step --------------------------------------
+    await supabaseAdmin.from('instance_logs').insert({
+      log_type: 'plan_step_result',
+      level: 'info',
+      message: text || 'Plan step completed',
+      details: {
+        final_text: text,
+        total_steps: steps.length,
+        usage: usage,
+        remote_instance_id: remoteInstance.id,
+        plan_step_id: currentStep.id,
+        plan_step_title: currentStep.title,
+        plan_step_status: 'completed'
+      },
+      instance_id: instance_id,
+      site_id: plan.site_id,
+      user_id: plan.user_id,
+      agent_id: plan.agent_id,
+      command_id: plan.command_id,
+    });
+
+    // 8. Actualizar métricas del plan --------------------------------------------
+    const newStepsCompleted = (plan.steps_completed ?? 0) + 1;
     await supabaseAdmin.from('instance_plans').update({
-      steps_completed: (plan.steps_completed ?? 0) + steps.length,
-      progress_percentage: Math.min(100, (plan.steps_completed ?? 0) + steps.length),
+      steps_completed: newStepsCompleted,
+      progress_percentage: Math.min(100, newStepsCompleted * 10), // Asumiendo 10 steps max
+      last_executed_at: new Date().toISOString(),
     }).eq('id', instance_plan_id);
 
-    return NextResponse.json({ message: 'Ejecución finalizada y logs almacenados' }, { status: 200 });
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: Plan step completed successfully`);
+
+    return NextResponse.json({ 
+      message: 'Plan step ejecutado exitosamente',
+      step_completed: currentStep.title,
+      response: text,
+      steps_executed: steps.length,
+      token_usage: usage,
+      remote_instance_id: remoteInstance.id,
+      plan_progress: newStepsCompleted
+    }, { status: 200 });
   } catch (err: any) {
     console.error('Error en POST /robots/plan/act:', err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    
+    // Marcar el step como fallido si tenemos referencia a él
+    if (currentStep && currentStep.id) {
+      try {
+        await supabaseAdmin
+          .from('instance_plan_steps')
+          .update({ 
+            status: 'failed', 
+            completed_at: new Date().toISOString(),
+            result: `Error: ${err.message}`
+          })
+          .eq('id', currentStep.id);
+
+        // Guardar el error como log si tenemos instance_id
+        if (instance_id) {
+          await supabaseAdmin.from('instance_logs').insert({
+            log_type: 'plan_step_error',
+            level: 'error',
+            message: `Error ejecutando step del plan: ${err.message}`,
+            details: { 
+              error: err.message, 
+              stack: err.stack,
+              plan_step_id: currentStep.id,
+              plan_step_title: currentStep.title,
+            },
+            instance_id: instance_id,
+          });
+        }
+      } catch (logError) {
+        console.error('Error guardando log de error:', logError);
+      }
+    }
+
+    return NextResponse.json({ 
+      error: err.message,
+      step_failed: currentStep?.title || 'Unknown step'
+    }, { status: 500 });
   }
 }

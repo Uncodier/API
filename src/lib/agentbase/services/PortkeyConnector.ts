@@ -138,8 +138,11 @@ export class PortkeyConnector {
       let response;
       let content;
       let usage;
+      const startTime = Date.now();
       
       try {
+        console.log(`[PortkeyConnector] Iniciando llamada al LLM con modelo ${usedModel} a las ${new Date().toISOString()}`);
+        
         // Si streaming está habilitado, manejar de forma diferente
         if (stream === true) {
           console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
@@ -148,8 +151,8 @@ export class PortkeyConnector {
             ...modelOptions
           });
 
-          // En caso de streaming, devolvemos directamente el stream para procesarlo en el nivel superior
-          console.log(`[PortkeyConnector] Stream iniciado correctamente, devolviendo para procesamiento`);
+          const duration = Date.now() - startTime;
+          console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo para procesamiento`);
           return streamResponse;
         } else {
           // Modo sin streaming (comportamiento actual)
@@ -209,6 +212,9 @@ export class PortkeyConnector {
             }
           }
           
+          const duration = Date.now() - startTime;
+          console.log(`[PortkeyConnector] LLM respondió exitosamente en ${duration}ms con ${content?.length || 0} caracteres`);
+          
           // Return standardized response format with model information
           return {
             content,
@@ -220,7 +226,15 @@ export class PortkeyConnector {
           };
         }
       } catch (apiCallError: any) {
-        console.error('[PortkeyConnector] Error calling provider API:', apiCallError);
+        const duration = Date.now() - startTime;
+        console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
+        
+        // Check if it's a timeout error
+        if (apiCallError.message?.includes('timeout') || apiCallError.code === 'timeout') {
+          console.error(`⏰ [PortkeyConnector] TIMEOUT ERROR: LLM no respondió en tiempo esperado (${duration}ms)`);
+          throw new Error(`LLM Timeout: El modelo ${usedModel} no respondió en tiempo esperado (${duration}ms)`);
+        }
+        
         throw new Error(`Error calling ${provider} API: ${apiCallError.message}`);
       }
     } catch (error: any) {
