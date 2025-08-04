@@ -83,6 +83,48 @@ export async function findTaskManagerAgent(siteId: string): Promise<{agentId: st
   }
 }
 
+// Function to find Growth Robot agent for a site
+export async function findGrowthRobotAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
+  try {
+    if (!siteId || !isValidUUID(siteId)) {
+      console.error(`❌ Invalid site_id for growth robot agent search: ${siteId}`);
+      return null;
+    }
+    
+    console.log(`🔍 Buscando agente con rol "Growth Robot" para el sitio: ${siteId}`);
+    
+    // Buscar un agente activo con el rol adecuado
+    const { data, error } = await supabaseAdmin
+      .from('agents')
+      .select('id, user_id')
+      .eq('site_id', siteId)
+      .eq('status', 'active')
+      .eq('role', 'Growth Robot')
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (error) {
+      console.error('Error al buscar agente con rol "Growth Robot":', error);
+      return null;
+    }
+    
+    if (!data || data.length === 0) {
+      console.log(`⚠️ No se encontró ningún agente con rol "Growth Robot" activo para el sitio: ${siteId}. Intentando con Growth Marketer...`);
+      // Fallback to Growth Marketer if no Growth Robot found
+      return await findGrowthMarketerAgent(siteId);
+    }
+    
+    console.log(`✅ Agente con rol "Growth Robot" encontrado: ${data[0].id} (user_id: ${data[0].user_id})`);
+    return {
+      agentId: data[0].id,
+      userId: data[0].user_id
+    };
+  } catch (error) {
+    console.error('Error al buscar agente de tipo Growth Robot:', error);
+    return null;
+  }
+}
+
 // Function to get pending campaigns for a site
 export async function getPendingCampaigns(siteId: string): Promise<any[]> {
   try {

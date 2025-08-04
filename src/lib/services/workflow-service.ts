@@ -12,7 +12,8 @@ import type {
   EmailWorkflowArgs,
   WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
-  AgentMessageWorkflowArgs
+  AgentMessageWorkflowArgs,
+  StartRobotWorkflowArgs
 } from './workflow/business-workflow-service';
 
 /**
@@ -64,6 +65,10 @@ export class WorkflowService extends BaseWorkflowService {
 
   public async agentMessage(args: AgentMessageWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.businessService.agentMessage(args, options);
+  }
+
+  public async startRobot(args: StartRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.businessService.startRobot(args, options);
   }
 
   // Métodos delegados al DataWorkflowService
@@ -263,5 +268,6 @@ export type {
   WorkflowExecutionOptions,
   EmailWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
-  AgentMessageWorkflowArgs
+  AgentMessageWorkflowArgs,
+  StartRobotWorkflowArgs
 }; 

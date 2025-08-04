@@ -257,4 +257,130 @@ ${campaignsContext}`;
     console.error('❌ Error executing Task Manager requirements generation:', error);
     return { requirementsResults: null, requirementsCommandUuid: null };
   }
+}
+
+// Function to execute Robot Activity Planning
+export async function executeRobotActivityPlanning(
+  siteId: string,
+  agentId: string,
+  userId: string,
+  activity: string,
+  previousSessions: any[]
+): Promise<{activityPlanResults: any[] | null, planningCommandUuid: string | null}> {
+  try {
+    console.log(`🤖 Ejecutando comando de planificación de actividad con Robot: ${agentId}`);
+    
+    // Build context for robot activity planning
+    const robotPrompt = `Create a comprehensive activity plan for: ${activity}
+
+ROLE: Growth Robot - Focus on systematic and automated execution of growth activities
+OBJECTIVE: Develop a detailed plan for the specified activity with clear steps and automation opportunities
+
+ACTIVITY PLANNING REQUIREMENTS:
+- Create a structured plan with clear phases and steps
+- Define specific actions and tasks for the activity
+- Include automation opportunities and tools needed
+- Set realistic timelines and milestones
+- Consider previous authentication sessions for integrations
+- Plan for measurement and optimization
+- Include risk assessment and contingency plans
+
+PLAN STRUCTURE ELEMENTS TO DEFINE:
+1. Activity overview and objectives
+2. Detailed step-by-step execution plan
+3. Required tools and integrations
+4. Timeline and scheduling requirements
+5. Success metrics and KPIs
+6. Automation opportunities
+7. Dependencies and prerequisites
+8. Risk mitigation strategies
+
+OUTPUT FORMAT:
+Provide a comprehensive activity plan with the following structure:
+- Clear activity title and description
+- Strategic objectives and expected outcomes
+- Detailed execution phases with specific steps
+- Required resources and tools
+- Timeline with milestones
+- Success metrics and tracking plan
+- Automation recommendations
+- Integration requirements
+
+CONTEXT:
+Activity: ${activity}
+Previous Sessions: ${JSON.stringify(previousSessions, null, 2)}`;
+
+    // Create command for robot activity planning
+    const planningCommand = CommandFactory.createCommand({
+      task: 'create growth activity plan',
+      userId: userId,
+      agentId: agentId,
+      site_id: siteId,
+      description: `Generate detailed activity plan for: ${activity}`,
+      targets: [
+        {
+          deep_thinking: "Analyze the activity requirements and create strategic reasoning for the planning approach",
+        },
+        {
+          activity_plan: {
+            title: "Activity plan title",
+            description: "Comprehensive description of the activity plan",
+            activity_type: activity,
+            objectives: ["List of specific objectives"],
+            phases: [{
+              phase_name: "Phase name",
+              description: "Phase description",
+              steps: [{
+                step_number: 1,
+                title: "Step title",
+                description: "Step description",
+                estimated_duration: "Duration estimate",
+                tools_needed: ["List of required tools"],
+                automation_level: "manual/semi-automated/automated"
+              }],
+              timeline: "Phase timeline",
+              success_criteria: ["Success criteria for this phase"]
+            }],
+            success_metrics: ["KPIs and metrics to track"],
+            required_integrations: ["List of needed integrations"],
+            automation_opportunities: ["Areas for automation"],
+            risks_and_mitigation: ["Risk factors and solutions"],
+            estimated_timeline: "Overall timeline estimate",
+            priority_level: "high/medium/low"
+          }
+        }
+      ],
+      context: robotPrompt
+    });
+
+    // Execute planning command
+    const planningCommandId = await commandService.submitCommand(planningCommand);
+    console.log(`🤖 Robot activity planning command created: ${planningCommandId}`);
+
+    // Wait for planning completion
+    const { command: planningResult, completed: planningCompleted, dbUuid } = await waitForCommandCompletion(planningCommandId);
+
+    if (!planningCompleted || !planningResult) {
+      console.error('❌ Robot activity planning command failed or timed out');
+      return { activityPlanResults: null, planningCommandUuid: dbUuid };
+    }
+
+    // Extract planning results
+    let planData = [];
+    if (planningResult.results && Array.isArray(planningResult.results)) {
+      for (const result of planningResult.results) {
+        if (result.activity_plan) {
+          planData.push(result.activity_plan);
+          break;
+        }
+      }
+    }
+
+    console.log(`✅ Robot activity planning completed with ${planData.length} plan(s)`);
+    return { activityPlanResults: planData, planningCommandUuid: dbUuid };
+
+  } catch (error) {
+    console.error('❌ Error executing Robot activity planning:', error);
+    return { activityPlanResults: null, planningCommandUuid: null };
+  }
 } 

@@ -47,6 +47,7 @@ LIMIT 1;
 - [Sites JSONb Fields](#sites-jsonb-fields)
 - [Task Comments JSONb Fields](#task-comments-jsonb-fields)
 - [Other JSONb Fields](#other-jsonb-fields)
+- [Remote Automation JSONb Fields](#remote-automation-jsonb-fields)
 
 ---
 
@@ -2117,6 +2118,452 @@ Waitlist metadata and user information.
 
 ---
 
+## Remote Automation JSONb Fields
+
+### remote_instances.configuration
+
+Configuration settings for remote desktop instances.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "display": {
+    "width": 1920,
+    "height": 1080,
+    "dpi": 96
+  },
+  "memory_limit": "4GB",
+  "cpu_cores": 2,
+  "disk_space": "20GB",
+  "network": {
+    "bandwidth_limit": "1Gbps",
+    "allowed_ports": [80, 443, 22]
+  },
+  "security": {
+    "firewall_enabled": true,
+    "vpn_required": false,
+    "access_restrictions": ["ip_whitelist"]
+  },
+  "provider_settings": {
+    "region": "us-east-1",
+    "instance_size": "medium",
+    "auto_scaling": false
+  }
+}
+```
+
+### remote_instances.environment_variables
+
+Environment variables for the remote instance.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "NODE_ENV": "production",
+  "API_BASE_URL": "https://api.example.com",
+  "BROWSER_HEADLESS": "false",
+  "TIMEOUT_SECONDS": "30",
+  "LOG_LEVEL": "info",
+  "WORKSPACE_PATH": "/home/agent/workspace"
+}
+```
+
+### remote_instances.tools_enabled
+
+List of tools/capabilities enabled for the instance.
+
+**Default:** `["bash", "computer", "edit"]`
+
+**Structure:**
+```json
+[
+  "bash",
+  "computer", 
+  "edit",
+  "browser",
+  "screenshot",
+  "file_upload",
+  "file_download"
+]
+```
+
+### automation_auth_sessions.auth_data
+
+Authentication data for browser sessions.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "cookies": [
+    {
+      "name": "session_id",
+      "value": "abc123...",
+      "domain": ".example.com",
+      "path": "/",
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax",
+      "expires": "2024-12-31T23:59:59Z"
+    }
+  ],
+  "localStorage": {
+    "auth_token": "eyJhbGciOiJIUzI1NiIs...",
+    "user_preferences": "{\"theme\":\"dark\"}"
+  },
+  "sessionStorage": {
+    "csrf_token": "xyz789..."
+  },
+  "credentials": {
+    "username": "user@example.com",
+    "password_hash": "encrypted_password",
+    "two_factor_secret": "encrypted_2fa_secret"
+  },
+  "oauth": {
+    "access_token": "ya29.a0Ae4lv...",
+    "refresh_token": "1//04...",
+    "token_type": "Bearer",
+    "expires_in": 3600,
+    "scope": "https://www.googleapis.com/auth/userinfo.email"
+  }
+}
+```
+
+### automation_auth_sessions.viewport
+
+Browser viewport configuration.
+
+**Default:** `{"width": 1920, "height": 1080}`
+
+**Structure:**
+```json
+{
+  "width": 1920,
+  "height": 1080,
+  "deviceScaleFactor": 1,
+  "isMobile": false,
+  "hasTouch": false,
+  "isLandscape": true
+}
+```
+
+### instance_logs.details
+
+Detailed information about log entries.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "context": {
+    "session_id": "sess_123",
+    "workflow_id": "workflow_456",
+    "step_number": 5
+  },
+  "performance": {
+    "memory_usage": "256MB",
+    "cpu_usage": "45%",
+    "network_latency": "12ms"
+  },
+  "error": {
+    "code": "TIMEOUT_ERROR",
+    "stack_trace": "Error: Timeout...",
+    "retry_count": 2
+  },
+  "metadata": {
+    "browser_version": "Chrome/120.0.0.0",
+    "os_version": "Ubuntu 22.04",
+    "timestamp_precise": "2024-01-15T10:30:45.123Z"
+  }
+}
+```
+
+### instance_logs.tool_args
+
+Arguments passed to automation tools.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "command": "click",
+  "coordinates": [500, 300],
+  "button": "left",
+  "wait_time": 1000,
+  "screenshot_before": true,
+  "screenshot_after": true
+}
+```
+
+### instance_logs.tool_result
+
+Results returned from automation tools.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "success": true,
+  "output": "Command executed successfully",
+  "exit_code": 0,
+  "execution_time": 1250,
+  "screenshots": {
+    "before": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+    "after": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA..."
+  },
+  "changes_detected": true,
+  "error": null
+}
+```
+
+### instance_logs.tokens_used
+
+Token usage tracking for AI models.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "promptTokens": 150,
+  "completionTokens": 75,
+  "totalTokens": 225,
+  "model": "claude-3-sonnet",
+  "cost_usd": 0.00045
+}
+```
+
+### instance_logs.artifacts
+
+Files, images, and data generated during automation.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "type": "screenshot",
+    "name": "page_capture.png",
+    "url": "https://storage.example.com/artifacts/abc123.png",
+    "size": 245760,
+    "created_at": "2024-01-15T10:30:45Z"
+  },
+  {
+    "type": "file",
+    "name": "scraped_data.json",
+    "content": "{\"results\": [...]}",
+    "size": 1024,
+    "created_at": "2024-01-15T10:31:12Z"
+  },
+  {
+    "type": "log",
+    "name": "execution.log",
+    "url": "https://storage.example.com/logs/def456.log",
+    "size": 2048,
+    "created_at": "2024-01-15T10:32:00Z"
+  }
+]
+```
+
+### instance_plans.success_criteria
+
+Criteria for determining plan success.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "type": "element_present",
+    "selector": "#success-message",
+    "description": "Success message appears on page"
+  },
+  {
+    "type": "url_contains",
+    "value": "/dashboard",
+    "description": "User is redirected to dashboard"
+  },
+  {
+    "type": "data_extracted",
+    "min_records": 10,
+    "description": "At least 10 records were extracted"
+  },
+  {
+    "type": "file_created",
+    "path": "/output/results.csv",
+    "min_size": 1024,
+    "description": "Results file created with data"
+  }
+]
+```
+
+### instance_plans.validation_rules
+
+Rules for validating plan execution.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "field": "email",
+    "rule": "format",
+    "pattern": "^[^@]+@[^@]+\\.[^@]+$",
+    "message": "Must be valid email format"
+  },
+  {
+    "field": "price",
+    "rule": "range",
+    "min": 0,
+    "max": 10000,
+    "message": "Price must be between 0 and 10000"
+  },
+  {
+    "field": "status",
+    "rule": "enum",
+    "values": ["active", "inactive", "pending"],
+    "message": "Status must be active, inactive, or pending"
+  }
+]
+```
+
+### instance_plans.tools_required
+
+Tools required for plan execution.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "name": "browser",
+    "version": "latest",
+    "required": true,
+    "config": {
+      "headless": false,
+      "download_path": "/downloads"
+    }
+  },
+  {
+    "name": "bash",
+    "version": "5.0+",
+    "required": true
+  },
+  {
+    "name": "python",
+    "version": "3.9+",
+    "required": false,
+    "packages": ["pandas", "requests", "beautifulsoup4"]
+  }
+]
+```
+
+### instance_plans.results
+
+Results from plan execution.
+
+**Default:** `{}`
+
+**Structure:**
+```json
+{
+  "status": "completed",
+  "execution_time": 45000,
+  "data_extracted": {
+    "records_count": 150,
+    "records": [
+      {
+        "id": "1",
+        "name": "Product A",
+        "price": "$29.99"
+      }
+    ]
+  },
+  "files_created": [
+    "/output/products.csv",
+    "/output/summary.json"
+  ],
+  "screenshots": [
+    "https://storage.example.com/screenshots/step1.png",
+    "https://storage.example.com/screenshots/step2.png"
+  ],
+  "metrics": {
+    "success_rate": 96.7,
+    "avg_response_time": 1250,
+    "errors_count": 2
+  }
+}
+```
+
+### instance_plans.artifacts
+
+Artifacts generated during plan execution.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  {
+    "type": "data_file",
+    "name": "extracted_products.csv",
+    "url": "https://storage.example.com/artifacts/products_20240115.csv",
+    "size": 52428,
+    "records_count": 150,
+    "created_at": "2024-01-15T10:45:30Z"
+  },
+  {
+    "type": "report",
+    "name": "execution_report.pdf",
+    "url": "https://storage.example.com/reports/exec_20240115.pdf",
+    "size": 1048576,
+    "created_at": "2024-01-15T10:46:15Z"
+  }
+]
+```
+
+### instance_plans.depends_on
+
+Plan dependencies (array of plan IDs).
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  "550e8400-e29b-41d4-a716-446655440001",
+  "550e8400-e29b-41d4-a716-446655440002"
+]
+```
+
+### instance_plans.blocks
+
+Plans blocked by this plan (array of plan IDs).
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  "550e8400-e29b-41d4-a716-446655440003",
+  "550e8400-e29b-41d4-a716-446655440004"
+]
+```
+
+---
+
 ## Usage Guidelines
 
 ### Best Practices
@@ -2142,4 +2589,4 @@ Waitlist metadata and user information.
 
 ---
 
-*Last updated: 2024-01-15* 
+*Last updated: 2024-12-24* 

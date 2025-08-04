@@ -48,6 +48,14 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+
+    // Validar que el research_topic no exceda 400 caracteres
+    if (research_topic.length > 400) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'research_topic must not exceed 400 characters' } },
+        { status: 400 }
+      );
+    }
     
     // Procesar deliverables: convertir objeto a string o mantener string
     let processedDeliverables = deliverables;

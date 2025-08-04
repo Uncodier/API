@@ -7,7 +7,7 @@
   {
     "info_type": "SCHEMA_SUMMARY",
     "object_type": "TABLES",
-    "count": 84
+    "count": 88
   },
   {
     "info_type": "SCHEMA_SUMMARY",
@@ -1042,6 +1042,150 @@ CREATE TABLE public.whatsapp_templates (
   CONSTRAINT whatsapp_templates_unique_sid UNIQUE (template_sid),
   CONSTRAINT whatsapp_templates_unique_name_site UNIQUE (template_name, site_id),
   CONSTRAINT whatsapp_templates_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+
+-- ============================================================================
+-- REMOTE AUTOMATION TABLES
+-- Provider-agnostic infrastructure for remote desktop instance management
+-- ============================================================================
+
+-- Remote desktop instances (Ubuntu, Browser, Windows) for AI agent automation
+CREATE TABLE public.remote_instances (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  instance_type text NOT NULL CHECK (instance_type = ANY (ARRAY['ubuntu'::text, 'browser'::text, 'windows'::text])),
+  status text NOT NULL DEFAULT 'pending' CHECK (status = ANY (ARRAY['pending'::text, 'starting'::text, 'running'::text, 'paused'::text, 'stopping'::text, 'stopped'::text, 'error'::text])),
+  provider_instance_id text,
+  cdp_url text,
+  timeout_hours integer DEFAULT 1,
+  configuration jsonb DEFAULT '{}'::jsonb,
+  environment_variables jsonb DEFAULT '{}'::jsonb,
+  tools_enabled jsonb DEFAULT '["bash", "computer", "edit"]'::jsonb,
+  last_screenshot_at timestamp with time zone,
+  last_activity_at timestamp with time zone,
+  total_commands_executed integer DEFAULT 0,
+  estimated_cost numeric(10,4) DEFAULT 0.0000,
+  actual_cost numeric(10,4) DEFAULT 0.0000,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  agent_id uuid,
+  command_id uuid,
+  created_by uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  started_at timestamp with time zone,
+  stopped_at timestamp with time zone,
+  CONSTRAINT remote_instances_pkey PRIMARY KEY (id),
+  CONSTRAINT remote_instances_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id) ON DELETE CASCADE,
+  CONSTRAINT remote_instances_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT remote_instances_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id) ON DELETE SET NULL,
+  CONSTRAINT fk_command_remote_instances FOREIGN KEY (command_id) REFERENCES public.commands(id) ON DELETE SET NULL,
+  CONSTRAINT remote_instances_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE
+);
+-- Browser authentication sessions for reuse across automation instances
+CREATE TABLE public.automation_auth_sessions (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  name text NOT NULL,
+  description text,
+  provider_auth_state_id text,
+  domain text NOT NULL,
+  auth_type text NOT NULL CHECK (auth_type = ANY (ARRAY['cookies'::text, 'localStorage'::text, 'sessionStorage'::text, 'credentials'::text, 'oauth'::text])),
+  auth_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+  browser_type text DEFAULT 'chrome',
+  user_agent text,
+  viewport jsonb DEFAULT '{"width": 1920, "height": 1080}'::jsonb,
+  last_used_at timestamp with time zone,
+  usage_count integer DEFAULT 0,
+  is_valid boolean DEFAULT true,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  instance_id uuid,
+  created_by uuid NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  expires_at timestamp with time zone,
+  CONSTRAINT automation_auth_sessions_pkey PRIMARY KEY (id),
+  CONSTRAINT automation_auth_sessions_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id) ON DELETE CASCADE,
+  CONSTRAINT automation_auth_sessions_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT automation_auth_sessions_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.remote_instances(id) ON DELETE SET NULL,
+  CONSTRAINT automation_auth_sessions_created_by_fkey FOREIGN KEY (created_by) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT automation_auth_sessions_site_domain_name_unique UNIQUE (site_id, domain, name)
+);
+-- Detailed logs of all actions, tool calls, and results within instances
+CREATE TABLE public.instance_logs (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  log_type text NOT NULL CHECK (log_type = ANY (ARRAY['system'::text, 'user_action'::text, 'agent_action'::text, 'tool_call'::text, 'tool_result'::text, 'error'::text, 'performance'::text])),
+  level text NOT NULL DEFAULT 'info' CHECK (level = ANY (ARRAY['debug'::text, 'info'::text, 'warn'::text, 'error'::text, 'critical'::text])),
+  message text NOT NULL,
+  details jsonb DEFAULT '{}'::jsonb,
+  step_id text,
+  tool_name text,
+  tool_call_id text,
+  tool_args jsonb DEFAULT '{}'::jsonb,
+  tool_result jsonb DEFAULT '{}'::jsonb,
+  is_error boolean DEFAULT false,
+  duration_ms integer,
+  tokens_used jsonb DEFAULT '{}'::jsonb,
+  screenshot_base64 text,
+  artifacts jsonb DEFAULT '[]'::jsonb,
+  instance_id uuid NOT NULL,
+  site_id uuid NOT NULL,
+  user_id uuid,
+  agent_id uuid,
+  command_id uuid,
+  parent_log_id uuid,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT instance_logs_pkey PRIMARY KEY (id),
+  CONSTRAINT instance_logs_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.remote_instances(id) ON DELETE CASCADE,
+  CONSTRAINT instance_logs_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id) ON DELETE CASCADE,
+  CONSTRAINT instance_logs_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE SET NULL,
+  CONSTRAINT instance_logs_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id) ON DELETE SET NULL,
+  CONSTRAINT fk_command_instance_logs FOREIGN KEY (command_id) REFERENCES public.commands(id) ON DELETE SET NULL,
+  CONSTRAINT instance_logs_parent_log_id_fkey FOREIGN KEY (parent_log_id) REFERENCES public.instance_logs(id) ON DELETE SET NULL
+);
+-- Objectives, tasks, and verification steps for instance execution
+CREATE TABLE public.instance_plans (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  title text NOT NULL,
+  description text,
+  plan_type text NOT NULL CHECK (plan_type = ANY (ARRAY['objective'::text, 'task'::text, 'verification'::text, 'milestone'::text])),
+  priority integer DEFAULT 5 CHECK (priority >= 1 AND priority <= 10),
+  status text NOT NULL DEFAULT 'pending' CHECK (status = ANY (ARRAY['pending'::text, 'in_progress'::text, 'completed'::text, 'failed'::text, 'cancelled'::text, 'blocked'::text])),
+  instructions text,
+  expected_output text,
+  success_criteria jsonb DEFAULT '[]'::jsonb,
+  validation_rules jsonb DEFAULT '[]'::jsonb,
+  tools_required jsonb DEFAULT '[]'::jsonb,
+  estimated_duration_minutes integer,
+  actual_duration_minutes integer,
+  retry_count integer DEFAULT 0,
+  max_retries integer DEFAULT 3,
+  results jsonb DEFAULT '{}'::jsonb,
+  artifacts jsonb DEFAULT '[]'::jsonb,
+  error_message text,
+  progress_percentage integer DEFAULT 0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),
+  steps_completed integer DEFAULT 0,
+  steps_total integer DEFAULT 1,
+  instance_id uuid NOT NULL,
+  site_id uuid NOT NULL,
+  user_id uuid NOT NULL,
+  agent_id uuid,
+  command_id uuid,
+  parent_plan_id uuid,
+  depends_on jsonb DEFAULT '[]'::jsonb,
+  blocks jsonb DEFAULT '[]'::jsonb,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  started_at timestamp with time zone,
+  completed_at timestamp with time zone,
+  due_at timestamp with time zone,
+  CONSTRAINT instance_plans_pkey PRIMARY KEY (id),
+  CONSTRAINT instance_plans_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.remote_instances(id) ON DELETE CASCADE,
+  CONSTRAINT instance_plans_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id) ON DELETE CASCADE,
+  CONSTRAINT instance_plans_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id) ON DELETE CASCADE,
+  CONSTRAINT instance_plans_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agents(id) ON DELETE SET NULL,
+  CONSTRAINT fk_command_instance_plans FOREIGN KEY (command_id) REFERENCES public.commands(id) ON DELETE SET NULL,
+  CONSTRAINT instance_plans_parent_plan_id_fkey FOREIGN KEY (parent_plan_id) REFERENCES public.instance_plans(id) ON DELETE CASCADE
 );
 
 | object_type | object_name                                      | table_name            |

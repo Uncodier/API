@@ -101,6 +101,12 @@ interface AgentMessageWorkflowArgs {
   origin?: string;
 }
 
+interface StartRobotWorkflowArgs {
+  site_id: string;
+  activity: string;
+  user_id?: string;
+}
+
 export class BusinessWorkflowService extends BaseWorkflowService {
   private static instance: BusinessWorkflowService;
 
@@ -496,6 +502,60 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para iniciar un robot automatizado
+   */
+  public async startRobot(args: StartRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.site_id || !args.activity) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren site_id y activity para iniciar el robot'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `start-robot-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🤖 Iniciando workflow de robot: ${workflowId}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`⚙️ Actividad: ${args.activity}`);
+      if (args.user_id) {
+        console.log(`👤 Usuario: ${args.user_id}`);
+      }
+
+      const result = await client.workflow.execute('startRobotWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de robot completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de robot:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de robot'
+        }
+      };
+    }
+  }
 }
 
 // Exportar interfaces para uso externo
@@ -506,5 +566,6 @@ export type {
   EmailWorkflowArgs,
   WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
-  AgentMessageWorkflowArgs
+  AgentMessageWorkflowArgs,
+  StartRobotWorkflowArgs
 }; 
