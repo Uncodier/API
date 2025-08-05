@@ -105,6 +105,12 @@ export class CommandConverter {
       }
     }
     
+    // Incluir agent_background si está presente
+    if (command.agent_background !== undefined && command.agent_background !== null) {
+      (dbCommand as any).agent_background = command.agent_background;
+      console.log(`✅ [CommandConverter] agent_background incluido en BD (${command.agent_background.length} caracteres)`);
+    }
+    
     console.log("Comando convertido:", JSON.stringify(dbCommand));
     
     return dbCommand as DbCreateCommandParams;

@@ -256,6 +256,8 @@ async function getSupportData(siteId: string) {
 async function waitForCommandCompletion(commandService: any, commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
+  let consecutiveNotFoundAttempts = 0;
+  let stuckInPendingAttempts = 0;
   
   console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
   
@@ -267,30 +269,65 @@ async function waitForCommandCompletion(commandService: any, commandId: string, 
         executedCommand = await commandService.getCommandById(commandId);
         
         if (!executedCommand) {
-          console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
-          clearInterval(checkInterval);
-          resolve({command: null, completed: false});
-          return;
+          consecutiveNotFoundAttempts++;
+          console.log(`⚠️ No se pudo encontrar el comando ${commandId} (intento ${consecutiveNotFoundAttempts}/10)`);
+          
+          // Si no encontramos el comando 10 veces seguidas, algo está mal
+          if (consecutiveNotFoundAttempts >= 10) {
+            console.error(`❌ Comando ${commandId} no encontrado después de 10 intentos consecutivos`);
+            clearInterval(checkInterval);
+            resolve({command: null, completed: false});
+            return;
+          }
+        } else {
+          consecutiveNotFoundAttempts = 0; // Reset counter si encontramos el comando
         }
         
-        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
+        if (executedCommand && (executedCommand.status === 'completed' || executedCommand.status === 'failed')) {
           console.log(`✅ Comando ${commandId} completado con estado: ${executedCommand.status}`);
           clearInterval(checkInterval);
           resolve({command: executedCommand, completed: executedCommand.status === 'completed'});
           return;
         }
         
-        console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
+        // Detectar si el comando está estancado en 'pending'
+        if (executedCommand && executedCommand.status === 'pending') {
+          stuckInPendingAttempts++;
+          console.log(`⏳ Comando ${commandId} en estado 'pending' (${stuckInPendingAttempts}/${Math.floor(maxAttempts * 0.7)} intentos)`);
+          
+          // Si está en pending por más del 70% del tiempo máximo, puede estar estancado
+          if (stuckInPendingAttempts >= Math.floor(maxAttempts * 0.7)) {
+            console.warn(`⚠️ Comando ${commandId} posiblemente estancado en 'pending', verificando si tiene agent_background...`);
+            
+            if (!executedCommand.agent_background) {
+              console.error(`❌ Comando ${commandId} sin agent_background - posible problema de sincronización`);
+              clearInterval(checkInterval);
+              resolve({command: executedCommand, completed: false});
+              return;
+            }
+          }
+        } else {
+          stuckInPendingAttempts = 0; // Reset si no está en pending
+        }
+        
+        if (executedCommand) {
+          console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
+        }
         
         if (attempts >= maxAttempts) {
-          console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
+          console.error(`⏰ Tiempo de espera agotado para el comando ${commandId} después de ${maxAttempts} intentos`);
+          console.error(`📊 Estadísticas finales: pending=${stuckInPendingAttempts}, not_found=${consecutiveNotFoundAttempts}`);
           clearInterval(checkInterval);
           resolve({command: executedCommand, completed: false});
         }
       } catch (error) {
-        console.error(`Error al verificar estado del comando ${commandId}:`, error);
-        clearInterval(checkInterval);
-        resolve({command: null, completed: false});
+        console.error(`❌ Error al verificar estado del comando ${commandId}:`, error);
+        
+        // En caso de error, intentar unas cuantas veces más antes de abandonar
+        if (attempts >= 5) {
+          clearInterval(checkInterval);
+          resolve({command: null, completed: false});
+        }
       }
     }, delayMs);
   });
@@ -302,16 +339,30 @@ processorInitializer.initialize();
 const commandService = processorInitializer.getCommandService();
 
 export async function POST(request: Request) {
+  const startTime = Date.now();
+  const GLOBAL_TIMEOUT = 120000; // 2 minutos timeout global
+  
+  // Crear una promesa de timeout global
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      reject(new Error(`Operación cancelada: timeout global de ${GLOBAL_TIMEOUT/1000} segundos excedido`));
+    }, GLOBAL_TIMEOUT);
+  });
+  
   try {
-    const body = await request.json();
-    const { site_id, command_id } = body;
-    
-    if (!site_id || !isValidUUID(site_id)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required and must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
+    // Envolver toda la operación en Promise.race para timeout global
+    const result = await Promise.race([
+      timeoutPromise,
+      (async () => {
+        const body = await request.json();
+        const { site_id, command_id } = body;
+        
+        if (!site_id || !isValidUUID(site_id)) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required and must be a valid UUID' } },
+            { status: 400 }
+          );
+        }
     
     // Buscar agente de CMO activo
     const agent = await findActiveCmoAgent(site_id);
@@ -409,21 +460,35 @@ Please analyze these support aspects and provide a comprehensive summary focusin
     const internalCommandId = await commandService.submitCommand(command);
     console.log(`📝 Comando support analysis creado con ID: ${internalCommandId}`);
     
-    // Esperar a que el comando se complete
-    const { command: executedCommand, completed } = await waitForCommandCompletion(commandService, internalCommandId);
-    
-    if (!completed || !executedCommand) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'COMMAND_EXECUTION_FAILED', 
-            message: 'The support analysis command did not complete successfully' 
-          }
-        },
-        { status: 500 }
-      );
-    }
+        // Esperar a que el comando se complete con timeout reducido
+        const remainingTime = GLOBAL_TIMEOUT - (Date.now() - startTime);
+        const commandTimeout = Math.min(remainingTime - 10000, 90000); // Reservar 10s para cleanup
+        const maxCommandAttempts = Math.max(10, Math.floor(commandTimeout / 1000));
+        
+        console.log(`⏰ Tiempo restante: ${remainingTime}ms, timeout comando: ${commandTimeout}ms, intentos: ${maxCommandAttempts}`);
+        
+        const { command: executedCommand, completed } = await waitForCommandCompletion(
+          commandService, 
+          internalCommandId, 
+          maxCommandAttempts, 
+          1000
+        );
+        
+        if (!completed || !executedCommand) {
+          const duration = Date.now() - startTime;
+          console.error(`❌ Comando no completado después de ${duration}ms`);
+          
+          return NextResponse.json(
+            { 
+              success: false, 
+              error: { 
+                code: 'COMMAND_EXECUTION_FAILED', 
+                message: `The support analysis command did not complete successfully after ${Math.round(duration/1000)}s` 
+              }
+            },
+            { status: 500 }
+          );
+        }
     
     // Extraer el resumen del análisis
     let summary = "Support analysis completed";
@@ -475,37 +540,69 @@ Please analyze these support aspects and provide a comprehensive summary focusin
       }
     }
     
-    // Guardar en agent_memories si tenemos análisis
-    if (supportAnalysis) {
-      const memoryResult = await saveToAgentMemory(agent.agentId, agent.userId, executedCommand.id, supportAnalysis, site_id);
-      
-      if (!memoryResult.success) {
-        console.warn(`⚠️ No se pudo guardar memoria de soporte: ${memoryResult.error}`);
-      }
+        // Guardar en agent_memories si tenemos análisis
+        if (supportAnalysis) {
+          const memoryResult = await saveToAgentMemory(agent.agentId, agent.userId, executedCommand.id, supportAnalysis, site_id);
+          
+          if (!memoryResult.success) {
+            console.warn(`⚠️ No se pudo guardar memoria de soporte: ${memoryResult.error}`);
+          }
+        }
+        
+        const duration = Date.now() - startTime;
+        console.log(`✅ Daily standup support completado en ${duration}ms`);
+        
+        return NextResponse.json(
+          { 
+            success: true, 
+            data: { 
+              command_id: executedCommand.id,
+              summary: summary,
+              analysis_type: "support",
+              support_data: {
+                open_tasks_count: supportData.openTasksCount,
+                conversations_count: supportData.conversationsCount,
+                active_commands_count: supportData.activeCommandsCount,
+                pending_requirements_count: supportData.pendingRequirementsCount,
+                support_agent_active: !!supportData.supportAgent
+              },
+              duration_ms: duration
+            } 
+          },
+          { status: 200 }
+        );
+      })()
+    ]);
+    
+    return result;
+  } catch (error) {
+    const duration = Date.now() - startTime;
+    console.error(`❌ Error en daily standup support analysis después de ${duration}ms:`, error);
+    
+    // Manejar específicamente errores de timeout
+    if (error instanceof Error && error.message.includes('timeout global')) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'TIMEOUT_ERROR', 
+            message: `Request timeout: operation exceeded ${GLOBAL_TIMEOUT/1000} seconds`,
+            duration_ms: duration
+          } 
+        },
+        { status: 408 }
+      );
     }
     
     return NextResponse.json(
       { 
-        success: true, 
-        data: { 
-          command_id: executedCommand.id,
-          summary: summary,
-          analysis_type: "support",
-          support_data: {
-            open_tasks_count: supportData.openTasksCount,
-            conversations_count: supportData.conversationsCount,
-            active_commands_count: supportData.activeCommandsCount,
-            pending_requirements_count: supportData.pendingRequirementsCount,
-            support_agent_active: !!supportData.supportAgent
-          }
+        success: false, 
+        error: { 
+          code: 'INTERNAL_SERVER_ERROR', 
+          message: 'An error occurred while processing the support analysis',
+          duration_ms: duration
         } 
       },
-      { status: 200 }
-    );
-  } catch (error) {
-    console.error('Error en daily standup support analysis:', error);
-    return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the support analysis' } },
       { status: 500 }
     );
   }

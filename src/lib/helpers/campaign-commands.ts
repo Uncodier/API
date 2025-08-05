@@ -270,82 +270,160 @@ export async function executeRobotActivityPlanning(
   try {
     console.log(`🤖 Ejecutando comando de planificación de actividad con Robot: ${agentId}`);
     
+    // Get comprehensive company context
+    const { getSegmentsSummaryForCampaigns, formatSegmentsContextForCampaigns } = await import('@/lib/helpers/segment-context');
+    const { getLatestContent } = await import('@/lib/helpers/lead-context-helper');
+    const { DataFetcher } = await import('@/lib/agentbase/services/agent/BackgroundServices/DataFetcher');
+    
+    // Get segments context
+    const segmentsSummary = await getSegmentsSummaryForCampaigns(siteId);
+    const segmentsContext = formatSegmentsContextForCampaigns(segmentsSummary);
+    
+    // Get active campaigns
+    const activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
+    
+    // Get approved content (last 10 items)
+    const approvedContent = await getLatestContent(siteId, 10);
+    const approvedContentFiltered = approvedContent.filter(content => 
+      content.status === 'approved' || content.status === 'published'
+    );
+    
+    // Format campaigns context
+    const campaignsContext = activeCampaigns.length > 0 
+      ? `ACTIVE CAMPAIGNS (${activeCampaigns.length} total):\n` +
+        activeCampaigns.map((campaign, index) => 
+          `${index + 1}. **${campaign.title}**\n` +
+          (campaign.description ? `   Description: ${campaign.description}\n` : '')
+        ).join('\n') + '\n'
+      : 'No active campaigns found for this site.\n\n';
+    
+    // Format approved content context
+    const contentContext = approvedContentFiltered.length > 0
+      ? `APPROVED CONTENT (Recent ${approvedContentFiltered.length} items):\n` +
+        approvedContentFiltered.map((content, index) => 
+          `${index + 1}. **${content.title}** (${content.type})\n` +
+          (content.description ? `   Description: ${content.description}\n` : '') +
+          `   Status: ${content.status}\n` +
+          (content.segment_id ? `   Segment ID: ${content.segment_id}\n` : '') +
+          (content.campaign_id ? `   Campaign ID: ${content.campaign_id}\n` : '')
+        ).join('\n') + '\n'
+      : 'No approved content found for this site.\n\n';
+    
+    // Combine all context
+    const companyContext = `${segmentsContext}\n${campaignsContext}${contentContext}`;
+    
     // Build context for robot activity planning
     const robotPrompt = `Create a comprehensive activity plan for: ${activity}
 
-ROLE: Growth Robot - Focus on systematic and automated execution of growth activities
-OBJECTIVE: Develop a detailed plan for the specified activity with clear steps and automation opportunities
+ROLE: Growth Robot - Focus on automated browser execution of growth activities
+OBJECTIVE: Generate browser automation steps to EXECUTE the specified activity (NO PLANNING - only execution steps)
 
-ACTIVITY PLANNING REQUIREMENTS:
-- Create a structured plan with clear phases and steps
-- Define specific actions and tasks for the activity
-- Include automation opportunities and tools needed
-- Set realistic timelines and milestones
-- Consider previous authentication sessions for integrations
-- Plan for measurement and optimization
-- Include risk assessment and contingency plans
+🚨 CRITICAL INSTRUCTIONS - BROWSER EXECUTION ONLY:
+- DO NOT include planning steps - all planning was done previously in campaigns/requirements
+- DO NOT include strategy development or research steps
+- Focus ONLY on executable browser automation steps
+- Each step must be a specific action that can be automated in a browser
+- Use existing campaigns and content as the foundation for execution
+- Reference specific URLs, platforms, tools, and interfaces for automation
+- All steps must be actionable through browser automation/scripting
 
-PLAN STRUCTURE ELEMENTS TO DEFINE:
-1. Activity overview and objectives
-2. Detailed step-by-step execution plan
-3. Required tools and integrations
-4. Timeline and scheduling requirements
-5. Success metrics and KPIs
-6. Automation opportunities
-7. Dependencies and prerequisites
-8. Risk mitigation strategies
+BROWSER EXECUTION REQUIREMENTS:
+- Generate specific browser automation steps using PROVIDED CONTEXT
+- Each step must specify the platform/tool where the action occurs
+- Include exact actions: click, type, upload, submit, navigate, etc.
+- Reference specific campaigns, content pieces, and segments for targeting
+- Use authentication sessions for platform integrations
+- Focus on measurable execution actions only
+- All steps must be automatable through browser interactions
+
+EXECUTION PLAN ELEMENTS TO DEFINE:
+1. Activity execution overview (using provided campaigns/content context)
+2. Detailed browser automation steps (with specific platform actions)
+3. Required platform integrations and authentication
+4. Execution timeline and sequence
+5. Success metrics and tracking actions
+6. Platform-specific automation details
+7. Dependencies and prerequisites for execution
+8. Error handling and retry strategies
+
+BROWSER EXECUTION STEP FORMAT:
+Each step must be a specific browser automation action like:
+- "Navigate to LinkedIn.com and login using stored session for [Campaign Name]"
+- "Upload content '[Content Title]' to Facebook Business Manager for [Campaign Name]"
+- "Submit post '[Content Title]' to Twitter targeting [Segment Name] hashtags"
+- "Click 'Create Campaign' button in Google Ads for [Campaign Name]"
+- "Fill form fields with [Segment Name] targeting data on [Platform]"
+- "Copy content from '[Content Title]' and paste into Instagram post composer"
+- "Navigate to analytics dashboard and extract metrics for [Campaign Name]"
+- "Set budget to $X for [Campaign Name] in Facebook Ads Manager"
+- "Schedule post '[Content Title]' for [time] on [Platform] using content scheduler"
+- "Click 'Publish' button to launch [Campaign Name] on [Platform]"
 
 OUTPUT FORMAT:
-Provide a comprehensive activity plan with the following structure:
-- Clear activity title and description
-- Strategic objectives and expected outcomes
-- Detailed execution phases with specific steps
-- Required resources and tools
-- Timeline with milestones
-- Success metrics and tracking plan
-- Automation recommendations
-- Integration requirements
+Provide a comprehensive browser execution plan with the following structure:
+- Clear activity execution title and description
+- Execution objectives using existing campaigns/content
+- Detailed browser automation phases with specific steps
+- Required platform integrations and authentication
+- Execution timeline with step sequence
+- Success metrics and automated tracking actions
+- Platform-specific automation requirements
+- Error handling and retry mechanisms
 
-CONTEXT:
+COMPLETE COMPANY CONTEXT (Use this information directly in your steps):
+
+${companyContext}
+
+ACTIVITY CONTEXT:
 Activity: ${activity}
-Previous Sessions: ${JSON.stringify(previousSessions, null, 2)}`;
+Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
 
-    // Create command for robot activity planning
+CRITICAL EXECUTION REMINDERS:
+- Each step must be a browser automation action (click, type, navigate, upload, submit)
+- Reference specific campaign names and content titles from the context above
+- Use existing campaigns and approved content as the foundation for execution
+- Include specific platform URLs and interface elements for automation
+- Specify exact targeting data from segments for platform configuration
+- All steps must be executable through browser automation tools
+- NO strategic planning or high-level tasks - only specific browser actions`;
+
+    // Create command for robot activity execution
     const planningCommand = CommandFactory.createCommand({
-      task: 'create growth activity plan',
+      task: 'create browser execution plan',
       userId: userId,
       agentId: agentId,
       site_id: siteId,
-      description: `Generate detailed activity plan for: ${activity}`,
+      description: `Generate browser automation steps for: ${activity}`,
       targets: [
         {
-          deep_thinking: "Analyze the activity requirements and create strategic reasoning for the planning approach",
+          deep_thinking: "Analyze the activity requirements and create browser automation steps using existing campaigns and content",
         },
         {
           activity_plan: {
-            title: "Activity plan title",
-            description: "Comprehensive description of the activity plan",
+            title: "Browser execution plan title",
+            description: "Comprehensive description of browser automation execution",
             activity_type: activity,
-            objectives: ["List of specific objectives"],
+            execution_objectives: ["List of specific execution objectives using existing campaigns/content"],
             phases: [{
-              phase_name: "Phase name",
-              description: "Phase description",
+              phase_name: "Execution phase name",
+              description: "Browser automation phase description",
               steps: [{
                 step_number: 1,
-                title: "Step title",
-                description: "Step description",
-                estimated_duration: "Duration estimate",
-                tools_needed: ["List of required tools"],
-                automation_level: "manual/semi-automated/automated"
+                title: "Browser action title",
+                description: "Specific browser automation step (click, type, navigate, etc.)",
+                platform: "Platform/website where action occurs",
+                estimated_duration: "Duration estimate for browser action",
+                required_authentication: "Authentication session needed",
+                automation_level: "automated"
               }],
-              timeline: "Phase timeline",
-              success_criteria: ["Success criteria for this phase"]
+              timeline: "Execution timeline",
+              success_criteria: ["Measurable success criteria for automation"]
             }],
-            success_metrics: ["KPIs and metrics to track"],
-            required_integrations: ["List of needed integrations"],
-            automation_opportunities: ["Areas for automation"],
-            risks_and_mitigation: ["Risk factors and solutions"],
-            estimated_timeline: "Overall timeline estimate",
+            success_metrics: ["Automated tracking metrics"],
+            required_integrations: ["Platform integrations and authentication sessions"],
+            browser_requirements: ["Browser automation requirements"],
+            error_handling: ["Error scenarios and retry strategies"],
+            estimated_timeline: "Overall execution timeline",
             priority_level: "high/medium/low"
           }
         }
@@ -353,19 +431,19 @@ Previous Sessions: ${JSON.stringify(previousSessions, null, 2)}`;
       context: robotPrompt
     });
 
-    // Execute planning command
+    // Execute browser automation command
     const planningCommandId = await commandService.submitCommand(planningCommand);
-    console.log(`🤖 Robot activity planning command created: ${planningCommandId}`);
+    console.log(`🤖 Robot browser execution command created: ${planningCommandId}`);
 
-    // Wait for planning completion
+    // Wait for execution planning completion
     const { command: planningResult, completed: planningCompleted, dbUuid } = await waitForCommandCompletion(planningCommandId);
 
     if (!planningCompleted || !planningResult) {
-      console.error('❌ Robot activity planning command failed or timed out');
+      console.error('❌ Robot browser execution command failed or timed out');
       return { activityPlanResults: null, planningCommandUuid: dbUuid };
     }
 
-    // Extract planning results
+    // Extract execution results
     let planData = [];
     if (planningResult.results && Array.isArray(planningResult.results)) {
       for (const result of planningResult.results) {
@@ -376,11 +454,11 @@ Previous Sessions: ${JSON.stringify(previousSessions, null, 2)}`;
       }
     }
 
-    console.log(`✅ Robot activity planning completed with ${planData.length} plan(s)`);
+    console.log(`✅ Robot browser execution plan completed with ${planData.length} plan(s)`);
     return { activityPlanResults: planData, planningCommandUuid: dbUuid };
 
   } catch (error) {
-    console.error('❌ Error executing Robot activity planning:', error);
+    console.error('❌ Error executing Robot browser automation planning:', error);
     return { activityPlanResults: null, planningCommandUuid: null };
   }
 } 

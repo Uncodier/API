@@ -14,6 +14,7 @@ import { ToolEvaluator } from '../../agents/ToolEvaluator';
 import { TargetProcessor } from '../../agents/TargetProcessor';
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandCache } from './CommandCache';
+import { CommandStore } from './CommandStore';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
 
 // Importar utilidades de Composio
@@ -124,8 +125,40 @@ export class CommandProcessor {
       }
       // Marcar como completado si no hay errores
       else if (command.status !== 'failed') {
-        await this.commandService.updateStatus(command.id, 'completed');
-        command.status = 'completed';
+        console.log(`🎯 [CommandProcessor] Actualizando estado final a 'completed' para comando: ${command.id}`);
+        
+        try {
+          await this.commandService.updateStatus(command.id, 'completed');
+          command.status = 'completed';
+          console.log(`✅ [CommandProcessor] Estado actualizado exitosamente a 'completed' para comando: ${command.id}`);
+          
+          // Verificar que la actualización se persistió correctamente
+          const verificationCommand = await this.commandService.getCommandById(command.id);
+          if (verificationCommand && verificationCommand.status === 'completed') {
+            console.log(`✅ [CommandProcessor] Verificación exitosa: comando ${command.id} está marcado como 'completed' en BD`);
+          } else {
+            console.warn(`⚠️ [CommandProcessor] Posible problema: comando ${command.id} no se verifica como 'completed' después de actualización`);
+            // Intentar actualización directa como fallback
+            const dbUuid = CommandStore.getMappedId(command.id);
+            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+              await DatabaseAdapter.updateCommand(dbUuid, { status: 'completed' });
+              console.log(`🔧 [CommandProcessor] Fallback: Estado actualizado directamente en BD para UUID: ${dbUuid}`);
+            }
+          }
+        } catch (statusUpdateError) {
+          console.error(`❌ [CommandProcessor] Error crítico al actualizar estado:`, statusUpdateError);
+          // Intentar actualización directa como último recurso
+          try {
+            const dbUuid = CommandStore.getMappedId(command.id);
+            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+              await DatabaseAdapter.updateCommand(dbUuid, { status: 'completed' });
+              command.status = 'completed';
+              console.log(`🔧 [CommandProcessor] Último recurso: Estado actualizado directamente para UUID: ${dbUuid}`);
+            }
+          } catch (fallbackError) {
+            console.error(`❌ [CommandProcessor] Error en último recurso:`, fallbackError);
+          }
+        }
       }
       
       // Asegurar que el agent_background se mantiene al final del procesamiento

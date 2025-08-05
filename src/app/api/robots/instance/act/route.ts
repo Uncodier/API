@@ -4,6 +4,33 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
 import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
+
+// Custom system prompt that includes route verification before navigation
+const BROWSER_NAVIGATION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
+
+CRITICAL INSTRUCTIONS FOR WEB NAVIGATION:
+
+**BEFORE ANY NAVIGATION ACTION, ALWAYS:**
+1. Execute 'bash -c "pgrep -f firefox || pgrep -f chrome || pgrep -f chromium"' to verify browser is open
+2. If browser is open, take a screenshot to see the current page
+3. Check the current URL using browser tools or bash
+4. Mentally note which page/application is currently active
+
+**MANDATORY RULES:**
+- NEVER change pages, tabs, or applications without FIRST verifying where you currently are
+- ALWAYS report the current URL/route before proceeding with any navigation
+- If you detect the browser is not open, open one before continuing
+- Maintain awareness of navigation context at all times
+
+**ACTIONS THAT REQUIRE PRIOR VERIFICATION:**
+- Opening new tabs or windows
+- Navigating to new URLs
+- Switching between applications
+- Reloading pages
+- Using navigation buttons (back, forward)
+- Switching between existing tabs
+
+These verifications are CRITICAL to maintain context and avoid getting lost during navigation.`;
 import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 
 // ------------------------------------------------------------------------------------
@@ -41,7 +68,7 @@ export async function POST(request: NextRequest) {
 
     // 3. Guardar el log del mensaje del usuario -----------------------------------
     await supabaseAdmin.from('instance_logs').insert({
-      log_type: 'user',
+      log_type: 'user_action',
       level: 'info',
       message: message,
       details: { user_message: message },
@@ -52,7 +79,21 @@ export async function POST(request: NextRequest) {
       command_id: instance.command_id,
     });
 
-    // 4. Conectar con instancia existente usando client.get() ---------------------
+    // 4. Obtener logs históricos para contexto ----------------------------------
+    const { data: historicalLogs } = await supabaseAdmin
+      .from('instance_logs')
+      .select('log_type, message, created_at, details')
+      .eq('instance_id', instance_id)
+      .in('log_type', ['agent_action', 'user_action'])
+      .order('created_at', { ascending: true })
+      .limit(20); // Últimos 20 logs para contexto
+
+    // Formatear logs como contexto histórico
+    const logContext = historicalLogs
+      ?.map(log => `[${log.created_at}] ${log.log_type === 'agent_action' ? 'AGENT' : 'USER'}: ${log.message}`)
+      .join('\n') || 'No previous logs available.';
+
+    // 5. Conectar con instancia existente usando client.get() ---------------------
     const client = new ScrapybaraClient({ apiKey: process.env.SCRAPYBARA_API_KEY || '' });
     
     // ✅ Conectar con instancia existente (¡por fin!)
@@ -74,11 +115,23 @@ export async function POST(request: NextRequest) {
       editTool(ubuntuInstance),
     ];
 
-    // 5. Ejecutar acción usando el SDK act() --------------------------------------
+    // 6. Crear system prompt con contexto histórico ----------------------------
+    const systemPromptWithContext = `${BROWSER_NAVIGATION_SYSTEM_PROMPT}
+
+HISTORICAL CONTEXT:
+Here is the conversation history for this instance (agent and user interactions):
+
+${logContext}
+
+END OF HISTORICAL CONTEXT
+
+The current user message (not shown above) will be provided separately. Use this historical context to maintain continuity and understand previous actions taken.`;
+
+    // 7. Ejecutar acción usando el SDK act() --------------------------------------
     const { steps, text, usage } = await client.act({
       model: anthropic(),
       tools,
-      system: UBUNTU_SYSTEM_PROMPT,
+      system: systemPromptWithContext,
       prompt: message,
       onStep: async (step: any) => {
         // Handle step siguiendo el patrón de Python
@@ -96,7 +149,7 @@ export async function POST(request: NextRequest) {
 
         // Guardar en BD con referencia a la instancia existente
         await supabaseAdmin.from('instance_logs').insert({
-          log_type: 'instance_step',
+          log_type: 'tool_call',
           level: 'info',
           message: step.text || 'Executing step',
           details: {
@@ -117,7 +170,7 @@ export async function POST(request: NextRequest) {
 
     // 6. Guardar el resultado final -----------------------------------------------
     await supabaseAdmin.from('instance_logs').insert({
-      log_type: 'agent_response',
+      log_type: 'agent_action',
       level: 'info',
       message: text || 'Acción completada',
       details: {
