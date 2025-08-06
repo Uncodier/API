@@ -265,7 +265,12 @@ export async function executeRobotActivityPlanning(
   agentId: string,
   userId: string,
   activity: string,
-  previousSessions: any[]
+  previousSessions: any[],
+  activityContext?: {
+    additionalContext: string;
+    specificInstructions: string;
+    requiredData: string[];
+  }
 ): Promise<{activityPlanResults: any[] | null, planningCommandUuid: string | null}> {
   try {
     console.log(`🤖 Ejecutando comando de planificación de actividad con Robot: ${agentId}`);
@@ -309,68 +314,72 @@ export async function executeRobotActivityPlanning(
         ).join('\n') + '\n'
       : 'No approved content found for this site.\n\n';
     
-    // Combine all context
-    const companyContext = `${segmentsContext}\n${campaignsContext}${contentContext}`;
+    // Combine all context including activity-specific context
+    const companyContext = `${segmentsContext}\n${campaignsContext}${contentContext}${activityContext?.additionalContext || ''}`;
     
     // Build context for robot activity planning
-    const robotPrompt = `Create a comprehensive activity plan for: ${activity}
+    const robotPrompt = `Create a SIMPLE, FOCUSED activity plan for: ${activity}
 
 ROLE: Growth Robot - Focus on automated browser execution of growth activities
-OBJECTIVE: Generate browser automation steps to EXECUTE the specified activity (NO PLANNING - only execution steps)
+OBJECTIVE: Generate a SIMPLE plan that can be executed in 1-2 HOURS maximum
 
-🚨 CRITICAL INSTRUCTIONS - BROWSER EXECUTION ONLY:
-- DO NOT include planning steps - all planning was done previously in campaigns/requirements
-- DO NOT include strategy development or research steps
-- Focus ONLY on executable browser automation steps
-- Each step must be a specific action that can be automated in a browser
-- Use existing campaigns and content as the foundation for execution
-- Reference specific URLs, platforms, tools, and interfaces for automation
-- All steps must be actionable through browser automation/scripting
+${activityContext?.specificInstructions || ''}
 
-BROWSER EXECUTION REQUIREMENTS:
-- Generate specific browser automation steps using PROVIDED CONTEXT
-- Each step must specify the platform/tool where the action occurs
-- Include exact actions: click, type, upload, submit, navigate, etc.
-- Reference specific campaigns, content pieces, and segments for targeting
-- Use authentication sessions for platform integrations
-- Focus on measurable execution actions only
-- All steps must be automatable through browser interactions
+🚨 CRITICAL SIMPLICITY REQUIREMENTS:
+- Keep plans SIMPLE and FOCUSED - executable within 1-2 hours
+- Select ONLY ONE channel/platform/strategy to focus on
+- Use existing campaigns and content as foundation
+- Maximum 5-8 automation steps total
+- Focus on ONE customer journey stage at a time
+- Prioritize quick wins over comprehensive coverage
 
-EXECUTION PLAN ELEMENTS TO DEFINE:
-1. Activity execution overview (using provided campaigns/content context)
-2. Detailed browser automation steps (with specific platform actions)
-3. Required platform integrations and authentication
-4. Execution timeline and sequence
-5. Success metrics and tracking actions
-6. Platform-specific automation details
-7. Dependencies and prerequisites for execution
-8. Error handling and retry strategies
+⚠️ CRITICAL VALIDATION REQUIREMENTS:
+- ALWAYS verify system data matches reality before executing actions
+- If content/posts/ads appear "published" in system, validate they're actually visible online
+- Check authentication sessions are still valid before using them
+- If discrepancies found, include steps to recreate/republish missing elements
+- Validate platform access and permissions before proceeding with any action
+- Test all functionality works as expected rather than assuming from system status
 
-BROWSER EXECUTION STEP FORMAT:
-Each step must be a specific browser automation action like:
-- "Navigate to LinkedIn.com and login using stored session for [Campaign Name]"
-- "Upload content '[Content Title]' to Facebook Business Manager for [Campaign Name]"
-- "Submit post '[Content Title]' to Twitter targeting [Segment Name] hashtags"
-- "Click 'Create Campaign' button in Google Ads for [Campaign Name]"
-- "Fill form fields with [Segment Name] targeting data on [Platform]"
-- "Copy content from '[Content Title]' and paste into Instagram post composer"
-- "Navigate to analytics dashboard and extract metrics for [Campaign Name]"
-- "Set budget to $X for [Campaign Name] in Facebook Ads Manager"
-- "Schedule post '[Content Title]' for [time] on [Platform] using content scheduler"
-- "Click 'Publish' button to launch [Campaign Name] on [Platform]"
+📋 PLAN SIMPLIFICATION GUIDELINES:
+- Choose the SINGLE most effective channel based on customer journey context
+- Focus on ONE specific campaign or content piece from existing context
+- Target ONE primary segment/audience
+- Limit scope to achievable actions within 2-hour timeframe
+- Avoid multi-platform or complex integration plans
+- Select tactics that align with current customer journey stage
 
-OUTPUT FORMAT:
-Provide a comprehensive browser execution plan with the following structure:
-- Clear activity execution title and description
-- Execution objectives using existing campaigns/content
-- Detailed browser automation phases with specific steps
-- Required platform integrations and authentication
-- Execution timeline with step sequence
-- Success metrics and automated tracking actions
-- Platform-specific automation requirements
-- Error handling and retry mechanisms
+🎯 SINGLE CHANNEL SELECTION:
+Based on the provided context, choose ONLY ONE channel/platform:
+- LinkedIn (for B2B awareness/consideration stages)
+- Facebook/Instagram (for broader awareness/retention)
+- Email (for consideration/decision stages)
+- Google Ads (for decision/purchase stages)
+- Website optimization (for conversion optimization)
+- Content creation (for awareness/retention)
 
-COMPLETE COMPANY CONTEXT (Use this information directly in your steps):
+SIMPLE EXECUTION STEPS (Maximum 5-8 steps):
+Each step must be a specific, quick browser automation action:
+- "VERIFY authentication and access to [Single Platform]"
+- "CHECK if content/campaign already exists and is visible online"
+- "If missing or outdated, recreate: Login to [Single Platform] using stored session"
+- "Navigate to [Specific Tool/Section] for [One Campaign]"
+- "Upload/Edit [One Content Piece] with [Simple Targeting]"
+- "Configure basic settings for [One Campaign Element]"
+- "Publish/Schedule [One Action] for [Specific Time]"
+- "VALIDATE execution results are visible online and capture basic metrics"
+
+OUTPUT FORMAT - KEEP SIMPLE:
+Provide a FOCUSED execution plan with:
+- Simple activity title (one sentence)
+- Selected channel/platform (ONLY ONE)
+- Customer journey stage focus (ONLY ONE)
+- Quick execution steps (5-8 maximum)
+- Simple timeline (1-2 hours total)
+- Basic success metrics (1-3 key metrics)
+- Single integration requirement
+
+COMPLETE COMPANY CONTEXT (Choose the BEST single option from this):
 
 ${companyContext}
 
@@ -378,14 +387,21 @@ ACTIVITY CONTEXT:
 Activity: ${activity}
 Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
 
-CRITICAL EXECUTION REMINDERS:
-- Each step must be a browser automation action (click, type, navigate, upload, submit)
-- Reference specific campaign names and content titles from the context above
-- Use existing campaigns and approved content as the foundation for execution
-- Include specific platform URLs and interface elements for automation
-- Specify exact targeting data from segments for platform configuration
-- All steps must be executable through browser automation tools
-- NO strategic planning or high-level tasks - only specific browser actions`;
+⚠️ SIMPLICITY REMINDERS:
+- ONE channel, ONE strategy, ONE focus area
+- Maximum 2 hours execution time
+- Use existing content and campaigns (don't create new ones)
+- Focus on immediate, measurable actions
+- Avoid complex multi-step workflows
+- Select the highest-impact, lowest-effort approach
+- Align with ONE customer journey stage based on current context
+
+⚠️ VALIDATION REMINDERS:
+- NEVER assume system status reflects reality
+- ALWAYS include verification steps in execution plan
+- If something appears published/completed, check it's actually visible/working
+- Include troubleshooting steps for when system data doesn't match reality
+- Validate before executing, execute with verification, verify after completion`;
 
     // Create command for robot activity execution
     const planningCommand = CommandFactory.createCommand({

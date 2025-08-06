@@ -119,6 +119,11 @@ async function getLeadInfo(leadId: string): Promise<any | null> {
       .single();
     
     if (error) {
+      // PGRST116 significa que no se encontraron filas - esto es esperado cuando el lead no existe
+      if (error.code === 'PGRST116') {
+        console.log(`⚠️ No se encontró el lead con ID: ${leadId}`);
+        return null;
+      }
       console.error('Error al obtener información del lead:', error);
       return null;
     }
@@ -270,10 +275,52 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
   });
 }
 
+// Función para validar que un lead existe en la base de datos
+async function validateLeadExists(leadId: string): Promise<boolean> {
+  try {
+    if (!isValidUUID(leadId)) {
+      console.log(`⚠️ Lead ID no válido: ${leadId}`);
+      return false;
+    }
+    
+    const { data, error } = await supabaseAdmin
+      .from('leads')
+      .select('id')
+      .eq('id', leadId)
+      .single();
+    
+    if (error) {
+      if (error.code === 'PGRST116') {
+        console.log(`⚠️ Lead no encontrado en la base de datos: ${leadId}`);
+        return false;
+      }
+      console.error(`❌ Error al validar lead ${leadId}:`, error);
+      return false;
+    }
+    
+    return !!data;
+  } catch (error) {
+    console.error(`❌ Error al validar lead ${leadId}:`, error);
+    return false;
+  }
+}
+
 // Función para guardar mensajes en la base de datos
 async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string) {
   try {
     console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}`);
+    
+    // Validar que el lead existe si se proporciona un leadId
+    let validatedLeadId: string | undefined = leadId;
+    if (leadId) {
+      const leadExists = await validateLeadExists(leadId);
+      if (!leadExists) {
+        console.log(`⚠️ Lead ${leadId} no existe en la base de datos. Continuando sin lead_id para evitar error de foreign key.`);
+        validatedLeadId = undefined;
+      } else {
+        console.log(`✅ Lead ${leadId} validado correctamente.`);
+      }
+    }
     
     let effectiveConversationId: string | undefined = conversationId;
     
@@ -310,10 +357,12 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       if (agentId) conversationData.agent_id = agentId;
       if (siteId) conversationData.site_id = siteId;
       
-      // Añadir lead_id si está presente (independientemente de si hay agentId o no)
-      if (leadId) {
-        conversationData.lead_id = leadId;
-        console.log(`✅ Agregando lead_id ${leadId} a la nueva conversación`);
+      // Añadir lead_id solo si está validado (existe en la base de datos)
+      if (validatedLeadId) {
+        conversationData.lead_id = validatedLeadId;
+        console.log(`✅ Agregando lead_id validado ${validatedLeadId} a la nueva conversación`);
+      } else if (leadId) {
+        console.log(`⚠️ Lead ID ${leadId} no se agregará a la conversación porque no existe en la base de datos`);
       }
       
       // Añadir el título si está presente
@@ -343,12 +392,12 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
-    } else if (conversationTitle || siteId || leadId || origin) {
+    } else if (conversationTitle || siteId || validatedLeadId || origin) {
       // Actualizar la conversación existente si se proporciona un nuevo título, site_id, lead_id o origin
       const updateData: any = {};
       if (conversationTitle) updateData.title = conversationTitle;
       if (siteId) updateData.site_id = siteId;
-      if (leadId) updateData.lead_id = leadId;
+      if (validatedLeadId) updateData.lead_id = validatedLeadId;
       
       // Actualizar custom_data con channel si origin está presente
       if (origin) {
@@ -390,8 +439,8 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         if (siteId) {
           console.log(`🔗 Site ID de conversación actualizado: "${siteId}"`);
         }
-        if (leadId) {
-          console.log(`👤 Lead ID de conversación actualizado: "${leadId}"`);
+        if (validatedLeadId) {
+          console.log(`👤 Lead ID de conversación actualizado: "${validatedLeadId}"`);
         }
         if (origin) {
           console.log(`📺 Channel de conversación actualizado: "${origin}"`);
@@ -410,10 +459,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar visitor_id si está presente
     if (visitorId) userMessageObj.visitor_id = visitorId;
     
-    // Agregar lead_id si está presente (independientemente del agentId)
-    if (leadId) {
-      userMessageObj.lead_id = leadId;
-      console.log(`👤 Agregando lead_id ${leadId} al mensaje del usuario`);
+    // Agregar lead_id si está validado (independientemente del agentId)
+    if (validatedLeadId) {
+      userMessageObj.lead_id = validatedLeadId;
+      console.log(`👤 Agregando lead_id validado ${validatedLeadId} al mensaje del usuario`);
     }
     
     // Agregar agent_id si está presente
@@ -450,10 +499,10 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar visitor_id si está presente
     if (visitorId) assistantMessageObj.visitor_id = visitorId;
     
-    // Agregar lead_id si está presente (independientemente del agentId)
-    if (leadId) {
-      assistantMessageObj.lead_id = leadId;
-      console.log(`👤 Agregando lead_id ${leadId} al mensaje del asistente`);
+    // Agregar lead_id si está validado (independientemente del agentId)
+    if (validatedLeadId) {
+      assistantMessageObj.lead_id = validatedLeadId;
+      console.log(`👤 Agregando lead_id validado ${validatedLeadId} al mensaje del asistente`);
     }
     
     // Agregar agent_id si está presente
@@ -598,7 +647,11 @@ async function createTaskForLead(leadId: string, siteId?: string, userId?: strin
       .single();
     
     if (leadError || !lead) {
-      console.error(`❌ Error al obtener información del lead para la tarea:`, leadError || 'Lead no encontrado');
+      if (leadError && leadError.code === 'PGRST116') {
+        console.log(`⚠️ Lead ${leadId} no encontrado para crear tarea. Saltando creación de tarea.`);
+      } else {
+        console.error(`❌ Error al obtener información del lead para la tarea:`, leadError || 'Lead no encontrado');
+      }
       return null;
     }
     
@@ -1648,6 +1701,8 @@ export async function POST(request: Request) {
       
       // Obtener resultados si existen
       if (executedCommand.results && Array.isArray(executedCommand.results)) {
+        console.log(`🔍 Analizando resultados del comando - Total de resultados: ${executedCommand.results.length}`);
+        
         // Extraer el título de la conversación de los resultados
         const conversationResults = executedCommand.results.find((r: any) => 
           r.conversation && r.conversation.title
@@ -1673,12 +1728,37 @@ export async function POST(request: Request) {
           }
         }
         
-        // Buscar mensajes en los resultados - la estructura real es { message: { content: string } }
-        const messageResults = executedCommand.results.filter((r: any) => r.message && r.message.content);
+        // Buscar mensajes en los resultados - enfocado específicamente en la estructura de customer support
+        console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
         
-        if (messageResults.length > 0 && messageResults[0].message.content) {
+        // Formato específico para customer support: { message: { content: string } }
+        const messageResults = executedCommand.results.filter((r: any) => 
+          r.message && typeof r.message === 'object' && r.message.content && typeof r.message.content === 'string'
+        );
+        console.log(`📝 Resultados con estructura message.content: ${messageResults.length}`);
+        
+        if (messageResults.length > 0) {
           assistantMessage = messageResults[0].message.content;
+          console.log(`✅ Mensaje extraído: ${assistantMessage.substring(0, 100)}...`);
+        } else {
+          // Log para debugging si no se encuentra la estructura esperada
+          console.log(`⚠️ No se encontró la estructura esperada { message: { content: string } }`);
+          console.log(`📋 Estructuras encontradas:`, executedCommand.results.map((r: any, i: number) => {
+            return `Resultado ${i}: ${Object.keys(r).join(',')}`
+          }).join(' | '));
+          
+          // Fallback muy conservador: solo si hay exactamente 1 resultado y es un string directo
+          if (executedCommand.results.length === 1 && typeof executedCommand.results[0] === 'string') {
+            assistantMessage = executedCommand.results[0];
+            console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 100)}...`);
+          } else {
+            console.log(`❌ No se pudo extraer mensaje - estructura no reconocida para customer support`);
+            console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+          }
         }
+      } else {
+        console.log(`⚠️ No hay resultados disponibles en el comando ejecutado`);
+        console.log(`📋 executedCommand.results:`, executedCommand.results);
       }
       
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
@@ -1819,11 +1899,33 @@ export async function POST(request: Request) {
         }
       }
       
-      // Buscar mensajes en los resultados - la estructura real es { message: { content: string } }
-      const messageResults = executedCommand.results.filter((r: any) => r.message && r.message.content);
+      // Buscar mensajes en los resultados - enfocado específicamente en la estructura de customer support
+      console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
       
-      if (messageResults.length > 0 && messageResults[0].message.content) {
+      // Formato específico para customer support: { message: { content: string } }
+      const messageResults = executedCommand.results.filter((r: any) => 
+        r.message && typeof r.message === 'object' && r.message.content && typeof r.message.content === 'string'
+      );
+      console.log(`📝 Resultados con estructura message.content: ${messageResults.length}`);
+      
+      if (messageResults.length > 0) {
         assistantMessage = messageResults[0].message.content;
+        console.log(`✅ Mensaje extraído: ${assistantMessage.substring(0, 100)}...`);
+      } else {
+        // Log para debugging si no se encuentra la estructura esperada
+        console.log(`⚠️ No se encontró la estructura esperada { message: { content: string } }`);
+        console.log(`📋 Estructuras encontradas:`, executedCommand.results.map((r: any, i: number) => {
+          return `Resultado ${i}: ${Object.keys(r).join(',')}`
+        }).join(' | '));
+        
+        // Fallback muy conservador: solo si hay exactamente 1 resultado y es un string directo
+        if (executedCommand.results.length === 1 && typeof executedCommand.results[0] === 'string') {
+          assistantMessage = executedCommand.results[0];
+          console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 100)}...`);
+        } else {
+          console.log(`❌ No se pudo extraer mensaje - estructura no reconocida para customer support`);
+          console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
+        }
       }
     }
     
