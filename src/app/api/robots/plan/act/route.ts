@@ -5,10 +5,10 @@ import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
 import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
 
-// Custom system prompt that includes route verification before navigation
-const BROWSER_NAVIGATION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
+// Custom system prompt for plan execution with step completion tracking
+const PLAN_EXECUTION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
 
-CRITICAL INSTRUCTIONS FOR WEB NAVIGATION:
+CRITICAL INSTRUCTIONS FOR PLAN EXECUTION:
 
 **BEFORE ANY NAVIGATION ACTION, ALWAYS:**
 1. Execute 'bash -c "pgrep -f firefox || pgrep -f chrome || pgrep -f chromium"' to verify browser is open
@@ -30,12 +30,32 @@ CRITICAL INSTRUCTIONS FOR WEB NAVIGATION:
 - Using navigation buttons (back, forward)
 - Switching between existing tabs
 
-These verifications are CRITICAL to maintain context and avoid getting lost during navigation.`;
+**PLAN STEP EXECUTION RULES:**
+- Focus ONLY on completing the current step in the plan
+- DO NOT execute multiple steps or jump ahead
+- Work systematically through the current step requirements
+- When you determine a step is completed, clearly state: "STEP_COMPLETED: [brief description of what was accomplished]"
+- If a step cannot be completed, state: "STEP_BLOCKED: [reason why step cannot proceed]"
+- If you need clarification or additional information, state: "STEP_NEEDS_INPUT: [what information or action is needed]"
+
+**STEP COMPLETION INDICATORS:**
+You must explicitly indicate when a step is complete by using one of these phrases:
+- "STEP_COMPLETED: Successfully [action taken]"
+- "STEP_BLOCKED: Cannot proceed because [reason]" 
+- "STEP_NEEDS_INPUT: Require [specific need] to continue"
+
+These verifications and step tracking are CRITICAL to maintain plan progress and context.`;
 import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/act
 // Ejecuta el último step pendiente del plan usando instancia existente con client.get()
+// 
+// Funcionalidades adicionales:
+// - Si se proporciona user_instruction, la inserta como nuevo paso en el plan
+// - El nuevo paso se inserta después del paso actual (ej: si vamos en paso 8 de 20, pasa a ser 8 de 21)
+// - Actualiza automáticamente el ordering de todos los pasos subsecuentes
+// - Actualiza el total de pasos en el plan (steps_total)
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 300; // 5 minutos en Vercel
@@ -43,6 +63,7 @@ export const maxDuration = 300; // 5 minutos en Vercel
 const ActSchema = z.object({
   instance_id: z.string().uuid('instance_id inválido'),
   instance_plan_id: z.string().uuid('instance_plan_id inválido'),
+  user_instruction: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -51,7 +72,7 @@ export async function POST(request: NextRequest) {
   
   try {
     const rawBody = await request.json();
-    const { instance_id: parsedInstanceId, instance_plan_id } = ActSchema.parse(rawBody);
+    const { instance_id: parsedInstanceId, instance_plan_id, user_instruction } = ActSchema.parse(rawBody);
     instance_id = parsedInstanceId;
 
     // 1. Obtener registros principales --------------------------------------------
@@ -98,7 +119,61 @@ export async function POST(request: NextRequest) {
     currentStep = pendingSteps[0];
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing plan step: "${currentStep.title}"`);
 
-    // 2.2. Marcar el step como en progreso ----------------------------------------
+    // 2.2. Si hay instrucción del usuario, insertar como nuevo paso ---------------
+    if (user_instruction && user_instruction.trim()) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ User instruction provided: "${user_instruction}"`);
+      
+      // Primero obtener todos los steps que necesitan reordenarse
+      const { data: stepsToUpdate, error: fetchError } = await supabaseAdmin
+        .from('instance_plan_steps')
+        .select('id, order')
+        .eq('instance_plan_id', instance_plan_id)
+        .gte('order', currentStep.order + 1)
+        .order('order', { ascending: true });
+
+      if (!fetchError && stepsToUpdate) {
+        // Actualizar cada step individualmente para incrementar su order
+        for (const step of stepsToUpdate) {
+          await supabaseAdmin
+            .from('instance_plan_steps')
+            .update({ order: step.order + 1 })
+            .eq('id', step.id);
+        }
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Updated order for ${stepsToUpdate.length} subsequent steps`);
+      }
+
+      // Insertar el nuevo paso con order = currentStep.order + 1
+      const { data: newStep, error: insertError } = await supabaseAdmin
+        .from('instance_plan_steps')
+        .insert({
+          instance_plan_id: instance_plan_id,
+          title: `User Instruction: ${user_instruction.substring(0, 50)}${user_instruction.length > 50 ? '...' : ''}`,
+          description: user_instruction,
+          order: currentStep.order + 1,
+          status: 'pending',
+          step_type: 'user_instruction',
+        })
+        .select()
+        .single();
+
+      if (insertError) {
+        console.error('Error inserting user instruction step:', insertError);
+        // Continuar sin fallar completamente
+      } else {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Inserted new step at position ${currentStep.order + 1}`);
+        
+        // Actualizar el total de steps en el plan
+        await supabaseAdmin
+          .from('instance_plans')
+          .update({ 
+            steps_total: (plan.steps_total || 1) + 1,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', instance_plan_id);
+      }
+    }
+
+    // 2.3. Marcar el step actual como en progreso ----------------------------------
     await supabaseAdmin
       .from('instance_plan_steps')
       .update({ status: 'in_progress', started_at: new Date().toISOString() })
@@ -141,7 +216,7 @@ export async function POST(request: NextRequest) {
     ];
 
     // 6. Crear system prompt con contexto histórico ----------------------------
-    const systemPromptWithContext = `${BROWSER_NAVIGATION_SYSTEM_PROMPT}
+    const systemPromptWithContext = `${PLAN_EXECUTION_SYSTEM_PROMPT}
 
 HISTORICAL CONTEXT:
 Here is the conversation history for this instance (agent and user interactions):
@@ -150,11 +225,18 @@ ${logContext}
 
 END OF HISTORICAL CONTEXT
 
-The current step instructions (not shown above) will be provided separately. Use this historical context to maintain continuity and understand previous actions taken.`;
+CURRENT PLAN STEP:
+You are executing step "${currentStep.title}" (order: ${currentStep.order}) from the plan "${plan.title}".
+Step Description: ${currentStep.description || 'No description provided'}
+
+Focus ONLY on this specific step. Do not move to the next step until you clearly indicate completion with "STEP_COMPLETED", "STEP_BLOCKED", or "STEP_NEEDS_INPUT" as specified in the system instructions.`;
 
     // 7. Ejecutar el step específico del plan usando el SDK ----------------------
-    const stepPrompt = currentStep.description || `Ejecuta el step "${currentStep.title}" del plan "${plan.title}"`;
+    const stepPrompt = `Continue working on the current step. Current context: ${currentStep.description || currentStep.title}`;
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing step with prompt: "${stepPrompt}"`);
+    
+    let stepStatus = 'in_progress';
+    let stepResult = '';
     
     const { steps, text, usage } = await client.act({
       model: anthropic(),
@@ -164,6 +246,23 @@ The current step instructions (not shown above) will be provided separately. Use
       onStep: async (step: any) => {
         // Handle step siguiendo el patrón de Python
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: ${step.text}`);
+        
+        // Detectar indicadores de estado del paso
+        if (step.text) {
+          if (step.text.includes('STEP_COMPLETED:')) {
+            stepStatus = 'completed';
+            stepResult = step.text;
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step completion detected: ${step.text}`);
+          } else if (step.text.includes('STEP_BLOCKED:')) {
+            stepStatus = 'blocked';
+            stepResult = step.text;
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step blocked detected: ${step.text}`);
+          } else if (step.text.includes('STEP_NEEDS_INPUT:')) {
+            stepStatus = 'needs_input';
+            stepResult = step.text;
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step needs input detected: ${step.text}`);
+          }
+        }
         
         // Mostrar tool calls como en Python
         if (step.toolCalls) {
@@ -188,6 +287,7 @@ The current step instructions (not shown above) will be provided separately. Use
             remote_instance_id: remoteInstance.id,
             plan_step_id: currentStep.id,
             plan_step_title: currentStep.title,
+            detected_status: stepStatus,
           },
           instance_id: instance_id,
           site_id: plan.site_id,
@@ -198,21 +298,52 @@ The current step instructions (not shown above) will be provided separately. Use
       },
     });
 
-    // 6. Marcar el step como completado y guardar resultado final -----------------
+    // 8. Detectar estado final si no se detectó durante la ejecución --------------
+    if (stepStatus === 'in_progress' && text) {
+      if (text.includes('STEP_COMPLETED:')) {
+        stepStatus = 'completed';
+        stepResult = text;
+      } else if (text.includes('STEP_BLOCKED:')) {
+        stepStatus = 'blocked';
+        stepResult = text;
+      } else if (text.includes('STEP_NEEDS_INPUT:')) {
+        stepStatus = 'needs_input';
+        stepResult = text;
+      }
+    }
+
+    // Usar el resultado detectado o el texto final
+    const finalResult = stepResult || text || 'Step execution completed';
+    
+    // 9. Actualizar el step según el estado detectado ------------------------------
+    const updateData: any = {
+      result: finalResult,
+    };
+
+    if (stepStatus === 'completed') {
+      updateData.status = 'completed';
+      updateData.completed_at = new Date().toISOString();
+    } else if (stepStatus === 'blocked') {
+      updateData.status = 'blocked';
+      updateData.completed_at = new Date().toISOString();
+    } else if (stepStatus === 'needs_input') {
+      updateData.status = 'waiting_for_input';
+      updateData.completed_at = new Date().toISOString();
+    } else {
+      // Si no se detectó ningún indicador específico, mantener como in_progress
+      updateData.status = 'in_progress';
+    }
+
     await supabaseAdmin
       .from('instance_plan_steps')
-      .update({ 
-        status: 'completed', 
-        completed_at: new Date().toISOString(),
-        result: text || 'Step completed successfully'
-      })
+      .update(updateData)
       .eq('id', currentStep.id);
 
-    // 7. Guardar el resultado final del step --------------------------------------
+    // 10. Guardar el resultado final del step --------------------------------------
     await supabaseAdmin.from('instance_logs').insert({
       log_type: 'agent_action',
       level: 'info',
-      message: text || 'Plan step completed',
+      message: finalResult,
       details: {
         final_text: text,
         total_steps: steps.length,
@@ -220,7 +351,8 @@ The current step instructions (not shown above) will be provided separately. Use
         remote_instance_id: remoteInstance.id,
         plan_step_id: currentStep.id,
         plan_step_title: currentStep.title,
-        plan_step_status: 'completed'
+        plan_step_status: stepStatus,
+        detected_result: stepResult
       },
       instance_id: instance_id,
       site_id: plan.site_id,
@@ -229,24 +361,38 @@ The current step instructions (not shown above) will be provided separately. Use
       command_id: plan.command_id,
     });
 
-    // 8. Actualizar métricas del plan --------------------------------------------
-    const newStepsCompleted = (plan.steps_completed ?? 0) + 1;
-    await supabaseAdmin.from('instance_plans').update({
-      steps_completed: newStepsCompleted,
-      progress_percentage: Math.min(100, newStepsCompleted * 10), // Asumiendo 10 steps max
-      last_executed_at: new Date().toISOString(),
-    }).eq('id', instance_plan_id);
+    // 11. Actualizar métricas del plan solo si el step está completado ------------
+    let newStepsCompleted = plan.steps_completed ?? 0;
+    if (stepStatus === 'completed') {
+      newStepsCompleted = newStepsCompleted + 1;
+      await supabaseAdmin.from('instance_plans').update({
+        steps_completed: newStepsCompleted,
+        progress_percentage: Math.min(100, newStepsCompleted * 10), // Asumiendo 10 steps max
+        last_executed_at: new Date().toISOString(),
+      }).eq('id', instance_plan_id);
+    } else {
+      // Solo actualizar timestamp sin cambiar steps completados
+      await supabaseAdmin.from('instance_plans').update({
+        last_executed_at: new Date().toISOString(),
+      }).eq('id', instance_plan_id);
+    }
 
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: Plan step completed successfully`);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: Plan step executed with status: ${stepStatus}`);
 
     return NextResponse.json({ 
-      message: 'Plan step ejecutado exitosamente',
-      step_completed: currentStep.title,
-      response: text,
+      message: `Plan step executed with status: ${stepStatus}`,
+      step_title: currentStep.title,
+      step_status: stepStatus,
+      response: finalResult,
       steps_executed: steps.length,
       token_usage: usage,
       remote_instance_id: remoteInstance.id,
-      plan_progress: newStepsCompleted
+      plan_progress: newStepsCompleted,
+      requires_continuation: stepStatus === 'in_progress',
+      requires_input: stepStatus === 'needs_input',
+      is_blocked: stepStatus === 'blocked',
+      user_instruction_added: !!user_instruction,
+      updated_plan_total: user_instruction ? (plan.steps_total || 1) + 1 : (plan.steps_total || 1)
     }, { status: 200 });
   } catch (err: any) {
     console.error('Error en POST /robots/plan/act:', err);
@@ -285,7 +431,8 @@ The current step instructions (not shown above) will be provided separately. Use
 
     return NextResponse.json({ 
       error: err.message,
-      step_failed: currentStep?.title || 'Unknown step'
+      step_failed: currentStep?.title || 'Unknown step',
+      step_status: 'failed'
     }, { status: 500 });
   }
 }

@@ -152,8 +152,17 @@ export class PortkeyConnector {
           });
 
           const duration = Date.now() - startTime;
-          console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo para procesamiento`);
-          return streamResponse;
+          console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
+          
+          // Return the stream directly - caller must handle iteration
+          return {
+            stream: streamResponse,
+            isStream: true,
+            modelInfo: {
+              model: usedModel,
+              provider: provider
+            }
+          };
         } else {
           // Modo sin streaming (comportamiento actual)
           if (modelType === 'gemini') {

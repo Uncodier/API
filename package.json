@@ -51,6 +51,7 @@
     "imapflow": "^1.0.188",
     "ioredis": "^5.6.0",
     "mailparser": "^3.7.2",
+    "neverbounce": "5.0.5",
     "next": "^15.2.4",
     "nextra": "^4.2.16",
     "nextra-theme-docs": "^4.2.16",
