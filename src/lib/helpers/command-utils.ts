@@ -79,6 +79,11 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
       attempts++;
       
       try {
+        // Primero intentar obtener desde la caché para obtener agent_background
+        const { CommandCache } = await import('@/lib/agentbase/services/command/CommandCache');
+        const cachedCommand = CommandCache.getCachedCommand(commandId);
+        
+        // Luego obtener desde BD para estado actualizado
         executedCommand = await commandService.getCommandById(commandId);
         
         if (!executedCommand) {
@@ -86,6 +91,12 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
           clearInterval(checkInterval);
           resolve({command: null, dbUuid: null, completed: false});
           return;
+        }
+        
+        // Si hay comando en caché con agent_background, fusionar con el de BD
+        if (cachedCommand?.agent_background && !executedCommand.agent_background) {
+          console.log(`🔄 [waitForCommandCompletion] Restaurando agent_background desde caché (${cachedCommand.agent_background.length} caracteres)`);
+          executedCommand.agent_background = cachedCommand.agent_background;
         }
         
         // Guardar el UUID de la base de datos si está disponible

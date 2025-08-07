@@ -46,13 +46,17 @@ export class CommandQueryService {
             resultCommand.id = commandId; // Usar el ID solicitado (formato antiguo)
           }
           
+          // CRUCIAL: Si hay comando en caché con agent_background, preservarlo
+          if (cachedCommand?.agent_background && !resultCommand.agent_background) {
+            console.log(`🔄 [CommandQueryService] Preservando agent_background desde caché (${cachedCommand.agent_background.length} caracteres)`);
+            resultCommand.agent_background = cachedCommand.agent_background;
+          }
+          
           // Update memory store with latest data
           CommandStore.setCommand(commandId, resultCommand);
           
           // Guardar en caché para futuras consultas en este flujo
           CommandCache.cacheCommand(commandId, resultCommand);
-          
-
           
           return resultCommand;
         }

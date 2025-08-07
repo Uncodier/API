@@ -25,6 +25,7 @@ export interface DbCommand {
   duration?: number | null;
   model?: string | null;
   agent_id?: string | null;
+  agent_background?: string | null;  // Agent background information
   user_id: string;
   input_tokens?: number | null;  // Tokens de entrada acumulados
   output_tokens?: number | null; // Tokens de salida acumulados
@@ -47,6 +48,7 @@ export interface CreateCommandParams {
   supervisor?: any[];
   model?: string;
   agent_id?: string;
+  agent_background?: string;  // Agent background information
   user_id: string;
   input_tokens?: number;  // Tokens de entrada acumulados
   output_tokens?: number; // Tokens de salida acumulados
@@ -61,6 +63,13 @@ export interface CreateCommandParams {
  */
 export async function createCommand(command: CreateCommandParams): Promise<DbCommand> {
   try {
+    // Log detallado del comando antes de enviarlo a Supabase
+    console.log(`[command-db] Creando comando con agent_background: ${command.agent_background ? 'SÍ' : 'NO'}`);
+    if (command.agent_background) {
+      console.log(`[command-db] Longitud de agent_background: ${command.agent_background.length} caracteres`);
+      console.log(`[command-db] Primeros 100 caracteres: ${command.agent_background.substring(0, 100)}...`);
+    }
+    
     const { data, error } = await supabaseAdmin
       .from('commands')
       .insert(command)
@@ -68,13 +77,20 @@ export async function createCommand(command: CreateCommandParams): Promise<DbCom
       .single();
     
     if (error) {
-      console.error('Error creating command:', error);
+      console.error('[command-db] Error creating command:', error);
       throw new Error(`Error creating command: ${error.message}`);
+    }
+    
+    // Verificar si el comando creado tiene agent_background
+    console.log(`[command-db] Comando creado exitosamente: ${data.id}`);
+    console.log(`[command-db] Agent_background en respuesta: ${data.agent_background ? 'SÍ' : 'NO'}`);
+    if (data.agent_background) {
+      console.log(`[command-db] Longitud en respuesta: ${data.agent_background.length} caracteres`);
     }
     
     return data;
   } catch (error: any) {
-    console.error('Error in createCommand:', error);
+    console.error('[command-db] Error in createCommand:', error);
     throw new Error(`Error creating command: ${error.message}`);
   }
 }
