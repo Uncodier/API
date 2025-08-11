@@ -29,6 +29,7 @@ import DataAnalystLeadSegmentationApi from './DataAnalystLeadSegmentationApi';
 import CmoDailyStandupSystemApi from './CmoDailyStandupSystemApi';
 import UxAnalysisApi from './UxAnalysisApi';
 import LeadAttentionApi from './LeadAttentionApi';
+import deepResearchOperationConfig from './deep-research-operation';
 
 // Registrar todas las APIs
 apiRegistry.register(GeneralApi);
@@ -61,5 +62,6 @@ apiRegistry.register(DataAnalystLeadSegmentationApi);
 apiRegistry.register(CmoDailyStandupSystemApi);
 apiRegistry.register(UxAnalysisApi);
 apiRegistry.register(LeadAttentionApi);
+apiRegistry.register(deepResearchOperationConfig);
 
 export default apiRegistry; 

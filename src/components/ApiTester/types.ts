@@ -52,7 +52,8 @@ export type ApiType =
   | 'data-analyst-analysis'
   | 'data-analyst-lead-segmentation'
   | 'cmo-daily-standup-system'
-  | 'ux-analysis';
+  | 'ux-analysis'
+  | 'deep-research-operation';
 
 // Interfaz base para todos los tipos de API
 export interface BaseApiConfig {

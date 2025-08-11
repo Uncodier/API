@@ -59,6 +59,20 @@ export class PortkeyConnector {
       // Set model ID based on provider
       if (modelType === 'openai') {
         modelOptions.model = modelId || 'gpt-4.1-nano';
+        
+        // Handle gpt-5 models specific parameters
+        if (modelId === 'gpt-5-mini' || modelId === 'gpt-5' || modelId === 'gpt-5.1') {
+          // Set appropriate max tokens based on model
+          let maxCompletionTokens = modelOptions.max_tokens;
+          if (modelId === 'gpt-5') {
+            // gpt-5 has a 16k limit
+            maxCompletionTokens = Math.min(maxCompletionTokens || 4096, 16384);
+          }
+          
+          modelOptions.max_completion_tokens = maxCompletionTokens;
+          delete modelOptions.max_tokens;
+          console.log(`[PortkeyConnector] Using max_completion_tokens for ${modelId}: ${modelOptions.max_completion_tokens}`);
+        }
       } else if (modelType === 'anthropic') {
         modelOptions.model = modelId || 'claude-3-5-sonnet-20240620';
       } else if (modelType === 'gemini') {
@@ -78,9 +92,14 @@ export class PortkeyConnector {
         }
       }
       
-      // Set temperature if provided
+      // Set temperature if provided (but skip for gpt-5 models which only support default value of 1)
       if (temperature !== undefined) {
-        modelOptions.temperature = temperature;
+        const isGpt5Model = modelType === 'openai' && (modelId === 'gpt-5' || modelId === 'gpt-5-mini' || modelId === 'gpt-5.1');
+        if (!isGpt5Model) {
+          modelOptions.temperature = temperature;
+        } else {
+          console.log(`[PortkeyConnector] Skipping temperature parameter for ${modelId} (only supports default value of 1)`);
+        }
       }
       
       // Set top_p if provided

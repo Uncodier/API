@@ -444,7 +444,10 @@ Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
           }
         }
       ],
-      context: robotPrompt
+      context: robotPrompt,
+      // Set model for growth robot planning
+      model: 'gpt-5',
+      modelType: 'openai'
     });
 
     // Execute browser automation command

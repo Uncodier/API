@@ -1,0 +1,324 @@
+# Deep Research Operation
+
+Realiza operaciones de investigación especializadas utilizando **Google Custom Search API** como método principal, con SerpAPI y Tavily AI como fallbacks inteligentes. Perfecto para extraer noticias sobre LLMs, tendencias de IA, y análisis de mercado con rangos temporales específicos.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+POST /api/deepResearch/operation
+```
+
+## Tipos de Operación
+
+### 1. **LLM News** (`llm_news`)
+Búsqueda especializada de noticias sobre Large Language Models en Hacker News y otras fuentes de tecnología.
+
+### 2. **General News** (`general_news`) 
+Búsqueda general de noticias con filtros personalizables de fuentes y fechas.
+
+### 3. **Custom Search** (`custom_search`)
+Búsqueda completamente personalizable con control total sobre parámetros.
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `operation_type` | string | Yes | Tipo de operación: `llm_news`, `general_news`, `custom_search` |
+| `query` | string | Conditional | Query de búsqueda. Requerido para `general_news` y `custom_search` |
+| `date_from` | string | No | Fecha de inicio en formato YYYY-MM-DD |
+| `date_to` | string | No | Fecha de fin en formato YYYY-MM-DD |
+| `sources` | array | No | Dominios a incluir en la búsqueda (ej: ["news.ycombinator.com"]) |
+| `keywords` | array | No | Palabras clave adicionales para refinar la búsqueda |
+| `max_results` | number | No | Máximo número de resultados (1-100, default: 30) |
+| `include_content_analysis` | boolean | No | Si incluir análisis de contenido con Tavily (default: false) |
+| `analysis_depth` | string | No | Profundidad del análisis: `basic` o `advanced` (default: basic) |
+
+## Ejemplos de Request
+
+### Búsqueda de Noticias LLM
+
+```json
+{
+  "operation_type": "llm_news",
+  "date_from": "2024-01-01",
+  "date_to": "2024-12-31",
+  "keywords": ["ChatGPT", "Claude", "OpenAI", "Anthropic"],
+  "max_results": 50,
+  "include_content_analysis": true,
+  "analysis_depth": "advanced"
+}
+```
+
+### Búsqueda General de Noticias
+
+```json
+{
+  "operation_type": "general_news",
+  "query": "artificial intelligence startups funding",
+  "date_from": "2024-06-01",
+  "date_to": "2024-12-31",
+  "sources": ["techcrunch.com", "venturebeat.com", "theverge.com"],
+  "max_results": 30,
+  "include_content_analysis": false
+}
+```
+
+### Búsqueda Personalizada
+
+```json
+{
+  "operation_type": "custom_search",
+  "query": "machine learning breakthrough OR neural networks advancement",
+  "date_from": "2024-09-01",
+  "date_to": "2024-12-31",
+  "sources": ["arxiv.org"],
+  "max_results": 20,
+  "include_content_analysis": true,
+  "analysis_depth": "basic"
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "operation_type": "llm_news",
+  "query": "LLM and AI news",
+  "date_range": {
+    "from": "2024-01-01",
+    "to": "2024-12-31"
+  },
+  "results": [
+    {
+      "title": "ChatGPT-4 Shows Remarkable Improvements in Mathematical Reasoning",
+      "url": "https://news.ycombinator.com/item?id=38234567",
+      "snippet": "Discussion about the latest improvements in ChatGPT-4's mathematical capabilities and reasoning abilities...",
+      "domain": "news.ycombinator.com",
+      "publishedDate": "2024-03-15",
+      "content_analysis": {
+        "summary": "The article discusses significant improvements in ChatGPT-4's mathematical reasoning capabilities, with benchmarks showing 40% better performance on complex mathematical problems.",
+        "key_points": [
+          "ChatGPT-4 shows 40% improvement in mathematical reasoning",
+          "New training techniques focus on step-by-step problem solving",
+          "Benchmarks include advanced calculus and discrete mathematics",
+          "Implications for educational technology and research"
+        ],
+        "sentiment": "positive",
+        "relevance_score": 8.5
+      }
+    }
+  ],
+  "total_results": 25,
+  "processing_time_ms": 3450,
+  "analysis_included": true
+}
+```
+
+### Error Response
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Invalid request data",
+    "details": [
+      {
+        "code": "invalid_type",
+        "expected": "string",
+        "received": "number",
+        "path": ["operation_type"]
+      }
+    ]
+  },
+  "processing_time_ms": 150
+}
+```
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `VALIDATION_ERROR` | Datos de request inválidos o mal formateados |
+| `MISSING_QUERY` | Query requerido para el tipo de operación especificado |
+| `INVALID_OPERATION` | Tipo de operación no válido |
+| `SEARCH_FAILED` | La operación de búsqueda falló |
+| `SYSTEM_ERROR` | Error interno del sistema |
+
+## Estrategia Híbrida Inteligente
+
+La API utiliza un enfoque de múltiples capas para garantizar resultados óptimos:
+
+### 🎯 **Método Principal: Google Custom Search API**
+- **API oficial de Google** - máxima confiabilidad
+- **Filtros de fecha nativos** con `dateRestrict`
+- **100 búsquedas gratuitas/día** por proyecto
+- **Metadatos ricos** incluyendo snippets y fechas de publicación
+- **Sin bloqueos** ni limitaciones de rate
+
+### 🐍 **Alternativa Premium: SerpAPI**
+- **Más volumen** para uso intensivo
+- **Resultados en tiempo real** de Google
+- **Sin límites de API** (plan de pago)
+- **Metadatos extendidos** y resultados estructurados
+
+### 🔄 **Fallback: Tavily AI**
+- **Último recurso** cuando Google APIs no están disponibles
+- **Siempre funcional** como respaldo
+- **Búsquedas inteligentes** con IA
+- **Sin configuración adicional** requerida
+
+## Filtros de Fecha
+
+La API optimiza filtros de fecha según el método utilizado:
+
+- **`after:YYYY-MM-DD`** - Buscar contenido después de la fecha especificada
+- **`before:YYYY-MM-DD`** - Buscar contenido antes de la fecha especificada
+- **Combinación** - Usar ambos para crear rangos de fechas específicos
+
+### Ejemplos de Filtros
+
+```javascript
+// Último mes
+{
+  "date_from": "2024-12-01",
+  "date_to": "2024-12-31"
+}
+
+// Último año
+{
+  "date_from": "2024-01-01",
+  "date_to": "2024-12-31"
+}
+
+// Rango específico
+{
+  "date_from": "2024-06-15",
+  "date_to": "2024-07-15"
+}
+```
+
+## Análisis de Contenido
+
+Cuando `include_content_analysis` está habilitado, la API utiliza Tavily para proporcionar:
+
+### Componentes del Análisis
+
+- **Summary**: Resumen del contenido del artículo
+- **Key Points**: Puntos clave extraídos del contenido
+- **Sentiment**: Análisis básico de sentimiento (positive, negative, neutral)
+- **Relevance Score**: Puntuación de relevancia (0-10)
+
+### Profundidad del Análisis
+
+- **Basic**: Análisis rápido con puntos clave esenciales
+- **Advanced**: Análisis profundo con mayor contexto y detalles
+
+## Casos de Uso
+
+### 🤖 Inteligencia Competitiva en IA
+```json
+{
+  "operation_type": "general_news",
+  "query": "OpenAI OR Anthropic OR Google AI OR Microsoft AI",
+  "date_from": "2024-10-01",
+  "sources": ["techcrunch.com", "theverge.com", "arstechnica.com"],
+  "include_content_analysis": true
+}
+```
+
+### 📊 Tendencias de Investigación
+```json
+{
+  "operation_type": "custom_search",
+  "query": "multimodal AI OR vision language models OR reasoning",
+  "sources": ["arxiv.org", "paperswithcode.com"],
+  "include_content_analysis": true,
+  "analysis_depth": "advanced"
+}
+```
+
+### 💰 Análisis de Mercado
+```json
+{
+  "operation_type": "general_news",
+  "query": "AI startup funding OR artificial intelligence investment",
+  "sources": ["crunchbase.com", "venturebeat.com"],
+  "date_from": "2024-01-01",
+  "max_results": 50
+}
+```
+
+### 🔍 Monitoreo de Tecnología
+```json
+{
+  "operation_type": "llm_news",
+  "keywords": ["model release", "API update", "new features"],
+  "date_from": "2024-12-01",
+  "include_content_analysis": true
+}
+```
+
+## Optimización y Mejores Prácticas
+
+### ⚡ Rendimiento
+- Usar `max_results` apropiados para tu caso de uso
+- Habilitar `include_content_analysis` solo cuando necesites insights profundos
+- Usar rangos de fechas específicos para mejorar relevancia
+
+### 🎯 Precisión
+- Combinar términos generales y específicos en queries
+- Usar `sources` para enfocar búsquedas en dominios relevantes
+- Agregar `keywords` específicos para búsquedas de LLM
+
+### 📈 Casos de Uso Avanzados
+- **Monitoreo continuo**: Usar fechas recientes para tendencias actuales
+- **Investigación histórica**: Usar rangos amplios para análisis temporal
+- **Análisis competitivo**: Combinar múltiples sources con keywords específicos
+
+## Configuración
+
+### Variables de Entorno Requeridas
+
+```bash
+# Google Custom Search API (Método principal)
+GOOGLE_CLOUD_API_KEY=your_google_api_key_here
+GOOGLE_CSE_ID=your_custom_search_engine_id
+
+# SerpAPI (Alternativa premium - opcional)
+SERPAPI_KEY=your_serpapi_key_here
+
+# Tavily API (Fallback - ya configurado)
+TAVILY_API_KEY=your_tavily_key_here
+```
+
+### Cómo Obtener Google API Key
+
+1. **Google Cloud Console**: Ve a [console.cloud.google.com](https://console.cloud.google.com/)
+2. **Habilita Custom Search API**: En APIs & Services
+3. **Crea credenciales**: Genera una API Key
+4. **Configura Custom Search Engine**: En [programmablesearchengine.google.com](https://programmablesearchengine.google.com/)
+
+### Límites y Costos
+
+- **Google Custom Search**: 100 búsquedas gratuitas/día
+- **SerpAPI**: Planes desde $50/mes para uso comercial
+- **Tavily**: Límites según tu plan actual
+
+## Try It
+
+Test the Deep Research Operation API using our interactive API tester. Explora diferentes tipos de operación y ve cómo funcionan los filtros de fecha con Google Search.
+
+**Ejemplos Rápidos:**
+
+1. **LLM News**: Buscar las últimas noticias sobre modelos de lenguaje
+2. **Tech Trends**: Investigar tendencias específicas en tecnología
+3. **Market Research**: Analizar el mercado de IA con análisis de contenido
+4. **Academic Research**: Buscar papers y investigación reciente
+
+<UnifiedApiTester apiId="deep-research-operation" />

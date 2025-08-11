@@ -263,6 +263,33 @@ export class BackgroundBuilder {
       siteSection += `Company Size: ${siteInfo.settings.company_size || 'Not specified'}\n`;
       siteSection += `Industry: ${siteInfo.settings.industry || 'Not specified'}\n`;
       
+      // Business Model si está disponible
+      if (siteInfo.settings.business_model) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo business_model`);
+        try {
+          const businessModelData = typeof siteInfo.settings.business_model === 'string'
+            ? JSON.parse(siteInfo.settings.business_model)
+            : siteInfo.settings.business_model;
+          
+          siteSection += `\n## Business Model\n`;
+          
+          // Formatear el business model de manera legible
+          const activeModels = [];
+          if (businessModelData.b2b === true) activeModels.push('B2B (Business to Business)');
+          if (businessModelData.b2c === true) activeModels.push('B2C (Business to Consumer)');
+          if (businessModelData.b2b2c === true) activeModels.push('B2B2C (Business to Business to Consumer)');
+          
+          if (activeModels.length > 0) {
+            siteSection += `Active Business Models: ${activeModels.join(', ')}\n`;
+          } else {
+            siteSection += `Business Model Configuration: ${JSON.stringify(businessModelData)}\n`;
+          }
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando business_model:`, error);
+          siteSection += `\nBusiness Model: ${JSON.stringify(siteInfo.settings.business_model)}\n`;
+        }
+      }
+      
       // Interpretar el focus_mode si está disponible (ahora en settings)
       if (siteInfo.settings.focus_mode !== undefined && siteInfo.settings.focus_mode !== null) {
         let focusInterpretation = '';
@@ -859,6 +886,10 @@ export class BackgroundBuilder {
       
       if (siteInfo.settings.branding && !finalPrompt.includes('## Brand Identity')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Brand Identity pero no se encontró en el prompt final`);
+      }
+      
+      if (siteInfo.settings.business_model && !finalPrompt.includes('## Business Model')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Business Model pero no se encontró en el prompt final`);
       }
       
       // Verificar customer journey tactics si están disponibles

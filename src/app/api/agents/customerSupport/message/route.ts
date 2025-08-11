@@ -1646,7 +1646,10 @@ export async function POST(request: Request) {
           agent_role: 'manager',
           status: 'not_initialized'
         }
-      ]
+      ],
+      // Set model for customer support
+      model: 'gpt-4.1',
+      modelType: 'openai'
     });
     
     // Submit the command for processing

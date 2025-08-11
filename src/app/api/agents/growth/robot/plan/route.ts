@@ -21,6 +21,70 @@ async function getActivitySpecificContext(
   const activityTypeNormalized = activityType.toLowerCase().trim();
   
   switch (activityTypeNormalized) {
+    case 'free agent':
+    case 'free-agent':
+      // Obtener las últimas sesiones de autenticación disponibles
+      const { data: recentSessions } = await supabaseAdmin
+        .from('automation_auth_sessions')
+        .select('id, name, domain, auth_type, last_used_at, usage_count, created_at')
+        .eq('site_id', siteId)
+        .eq('is_valid', true)
+        .order('last_used_at', { ascending: false })
+        .limit(10);
+
+      // ✅ LÓGICA CORREGIDA: Free Agent mode puede funcionar con o sin sesiones
+      // Si hay sesiones, las incluimos en el contexto. Si no hay, el agente trabajará sin ellas.
+      const sessionsContext = (!recentSessions || recentSessions.length === 0) 
+        ? `\n⚠️ NO SESSIONS AVAILABLE:\nNo hay sesiones de autenticación disponibles actualmente. El agente trabajará en modo limitado sin acceso a plataformas autenticadas.\n`
+        : `\n🔑 AVAILABLE SESSIONS (${recentSessions.length} sessions):\n` +
+          recentSessions.map((session, index) => 
+            `${index + 1}. **${session.name}** (${session.domain})\n` +
+            `   Session ID: ${session.id}\n` +
+            `   Type: ${session.auth_type}\n` +
+            `   Last used: ${session.last_used_at ? new Date(session.last_used_at).toLocaleString() : 'Never used'}\n` +
+            `   Usage count: ${session.usage_count || 0}\n`
+          ).join('\n');
+
+      return {
+        additionalContext: sessionsContext,
+        specificInstructions: `
+🤖 FREE AGENT MODE - GOOGLE NAVIGATION ONLY:
+
+⚠️ IMPORTANT CONTEXT: Este agente está configurado específicamente para navegar únicamente a Google y realizar tareas relacionadas.
+
+Create a SIMPLE plan focused exclusively on Google navigation and tasks.
+
+🎯 BASIC OBJECTIVES:
+- Navigate ONLY to Google (google.com)
+- Perform basic Google searches
+- Use Google services (Search, News, etc.)
+- Maximum 3-5 simple steps
+- No other websites or platforms allowed
+
+📋 SIMPLE PLAN STRUCTURE:
+1. Open web browser and navigate to Google.com
+2. Perform a basic search query related to the user's business/industry
+3. Review search results on the first page
+4. Optionally check Google News for relevant updates
+5. Document findings and close browser
+
+🔍 BASIC REQUIREMENTS:
+- ONLY navigate to google.com and its subdomains (news.google.com, etc.)
+- Create simple, direct navigation steps
+- No authentication required for basic Google searches
+- Maximum 30-minute execution time total
+- Focus on information gathering through Google search
+
+⚠️ STRICT RESTRICTIONS:
+- Do NOT navigate to any website other than Google
+- Do NOT access social media platforms
+- Do NOT use any authentication sessions
+- Do NOT create complex workflows
+- Do NOT suggest visiting other websites
+- ONLY use Google's public search functionality`,
+        requiredData: ['search_terms']
+      };
+
     case 'channel market fit':
       return {
         additionalContext: '',
@@ -312,47 +376,195 @@ export async function POST(request: NextRequest) {
 
     // 5. Obtener contexto específico para el tipo de actividad ------------------------
     console.log(`🎯 OBTENIENDO: Contexto específico para actividad: ${activity}`);
-    const activityContext = await getActivitySpecificContext(activity, site_id);
     
-    // 6. Ejecutar el comando de planificación -----------------------------------------
-    console.log(`🤖 INICIANDO: Ejecutando planificación de actividad con Robot...`);
-    
-    const { activityPlanResults, planningCommandUuid } = await executeRobotActivityPlanning(
-      site_id,
-      robotAgent.agentId,
-      robotAgent.userId,
-      activity,
-      previousSessions || [],
-      activityContext
-    );
+    let activityContext;
+    try {
+      activityContext = await getActivitySpecificContext(activity, site_id);
+    } catch (error: any) {
+      // Manejar el caso específico de autenticación requerida
+      if (error.message?.startsWith('AUTHENTICATION_REQUIRED:')) {
+        const errorMessage = error.message.replace('AUTHENTICATION_REQUIRED:', '');
+        
+        console.log(`🔐 AUTENTICACIÓN REQUERIDA: ${errorMessage}`);
+        
+        // Actualizar el plan como fallido por falta de autenticación
+        await supabaseAdmin
+          .from('instance_plans')
+          .update({
+            status: 'requires_auth',
+            error: errorMessage,
+          })
+          .eq('id', newPlan.id);
 
-    if (!activityPlanResults || activityPlanResults.length === 0) {
-      console.log(`❌ FALLO: Robot activity planning falló - actualizando plan como fallido`);
+        return NextResponse.json(
+          { 
+            error: 'AUTHENTICATION_REQUIRED',
+            message: errorMessage,
+            instance_plan_id: newPlan.id,
+            action_required: {
+              type: 'LOGIN_REQUIRED',
+              message: 'Se requiere iniciar sesión en las plataformas necesarias',
+              login_url: '/auth/platforms', // URL donde el usuario puede iniciar sesión
+              platforms_needed: ['social_media', 'google', 'linkedin'], // Plataformas sugeridas
+              instructions: 'Por favor, inicia sesión en al menos una plataforma para usar el modo Free Agent'
+            }
+          },
+          { status: 403 }, // 403 Forbidden - autenticación requerida
+        );
+      }
       
-      // Actualizar el plan como fallido
-      await supabaseAdmin
-        .from('instance_plans')
-        .update({
-          status: 'failed',
-          command_id: planningCommandUuid,
-        })
-        .eq('id', newPlan.id);
-
-      return NextResponse.json(
-        { 
-          error: 'No se pudo generar el plan de actividad con el robot',
-          instance_plan_id: newPlan.id,
-        },
-        { status: 500 },
+      // Si es otro tipo de error, relanzarlo
+      throw error;
+    }
+    
+    // 6. Manejo especial para Free Agent vs otras actividades ------------------------
+    let planData;
+    let planningCommandUuid = null;
+    
+    if (activity.toLowerCase().trim() === 'free agent' || activity.toLowerCase().trim() === 'free-agent') {
+      console.log(`🆓 FREE AGENT MODE: Creando plan básico sin ejecutar comando robot`);
+      
+      // Crear plan básico para Free Agent sin ejecutar comando
+      planData = {
+        title: "Plan básico Free Agent - Navegación DuckDuckGo",
+        description: "Plan simple para navegación básica en DuckDuckGo sin requerir autenticación",
+        phases: [
+          {
+            phase_name: "Navegación Web Básica",
+            description: "Fase enfocada en navegación básica web sin autenticación",
+            timeline: "30-45 minutos",
+            success_criteria: [
+              "Navegador abierto exitosamente",
+              "DuckDuckGo accesible",
+              "Búsqueda realizada sin errores",
+              "Resultados obtenidos"
+            ],
+            steps: [
+              {
+                title: "Abrir navegador web",
+                platform: "Browser",
+                description: "Iniciar el navegador y verificar conectividad",
+                step_number: 1,
+                automation_level: "automated",
+                estimated_duration: "5 minutos",
+                required_authentication: "none"
+              },
+              {
+                title: "Navegar a DuckDuckGo",
+                platform: "DuckDuckGo",
+                description: "Ir a duckduckgo.com para realizar búsquedas",
+                step_number: 2,
+                automation_level: "automated",
+                estimated_duration: "5 minutos",
+                required_authentication: "none"
+              },
+              {
+                title: "Realizar búsqueda básica",
+                platform: "DuckDuckGo",
+                description: "Hacer una búsqueda simple relacionada con el negocio",
+                step_number: 3,
+                automation_level: "automated",
+                estimated_duration: "10 minutos",
+                required_authentication: "none"
+              },
+              {
+                title: "Revisar resultados",
+                platform: "DuckDuckGo",
+                description: "Examinar los primeros resultados de búsqueda",
+                step_number: 4,
+                automation_level: "automated",
+                estimated_duration: "15 minutos",
+                required_authentication: "none"
+              },
+              {
+                title: "Completar navegación",
+                platform: "Browser",
+                description: "Finalizar la sesión de navegación",
+                step_number: 5,
+                automation_level: "automated",
+                estimated_duration: "10 minutos",
+                required_authentication: "none"
+              }
+            ]
+          }
+        ],
+        activity_type: "free-agent",
+        error_handling: [
+          "Si DuckDuckGo no carga, intentar recargar la página",
+          "Si la búsqueda no funciona, verificar conectividad a internet",
+          "Si los resultados no aparecen, probar con términos de búsqueda alternativos"
+        ],
+        priority_level: "medium",
+        success_metrics: [
+          "Navegador abierto exitosamente",
+          "DuckDuckGo accesible",
+          "Búsqueda realizada sin errores",
+          "Resultados obtenidos"
+        ],
+        estimated_timeline: "45 minutos",
+        browser_requirements: [
+          "Chrome o Firefox browser",
+          "Conexión estable a internet"
+        ],
+        execution_objectives: [
+          "Validar conectividad web básica",
+          "Realizar búsqueda simple sin autenticación",
+          "Documentar resultados encontrados"
+        ],
+        required_integrations: [
+          "none"
+        ]
+      };
+      
+    } else {
+      console.log(`🤖 INICIANDO: Ejecutando planificación de actividad con Robot...`);
+      
+      const { activityPlanResults, planningCommandUuid: commandUuid } = await executeRobotActivityPlanning(
+        site_id,
+        robotAgent.agentId,
+        robotAgent.userId,
+        activity,
+        previousSessions || [],
+        activityContext
       );
+
+      planningCommandUuid = commandUuid;
+
+      if (!activityPlanResults || activityPlanResults.length === 0) {
+        console.log(`❌ FALLO: Robot activity planning falló - actualizando plan como fallido`);
+        
+        // Actualizar el plan como fallido
+        await supabaseAdmin
+          .from('instance_plans')
+          .update({
+            status: 'failed',
+            command_id: planningCommandUuid,
+          })
+          .eq('id', newPlan.id);
+
+        return NextResponse.json(
+          { 
+            error: 'No se pudo generar el plan de actividad con el robot',
+            instance_plan_id: newPlan.id,
+          },
+          { status: 500 },
+        );
+      }
+
+      console.log(`✅ COMPLETADO: Planificación de actividad completada con ${activityPlanResults.length} plan(s)`);
+      console.log(`🔑 Planning Command UUID: ${planningCommandUuid}`);
+      
+      planData = activityPlanResults[0]; // Tomar el primer plan generado
     }
 
-    console.log(`✅ COMPLETADO: Planificación de actividad completada con ${activityPlanResults.length} plan(s)`);
-    console.log(`🔑 Planning Command UUID: ${planningCommandUuid}`);
-
     // 7. Actualizar el plan con los resultados ----------------------------------------
-    const planData = activityPlanResults[0]; // Tomar el primer plan generado
     
+    // Calcular el total de steps del plan
+    const stepsTotal = planData.phases ? 
+      planData.phases.reduce((total: number, phase: any) => 
+        total + (phase.steps?.length || 0), 0
+      ) : 0;
+
     const { error: updateError } = await supabaseAdmin
       .from('instance_plans')
       .update({
@@ -362,6 +574,9 @@ export async function POST(request: NextRequest) {
         description: planData.description || 'Plan simple y enfocado generado automáticamente para ejecución en 1-2 horas máximo',
         results: planData, // Guardar todo el plan generado
         success_criteria: planData.success_metrics || planData.success_criteria || [],
+        steps_total: stepsTotal,
+        steps_completed: 0,
+        progress_percentage: 0,
         estimated_duration_minutes: (() => {
           // Intentar extraer números del timeline o duration
           const timelineValue = planData.estimated_timeline || planData.estimated_duration_minutes;

@@ -88,6 +88,7 @@ export function generateBusinessTypePrompts(
   }
   
   prompts += `BUSINESS TYPE GENERATION GUIDELINES:\n`;
+  prompts += `🎯 CRITICAL FOCUS: BUSINESS MODEL & AWARENESS TACTICS\n`;
   prompts += `1. Focus on business types that would have publicly available contact information\n`;
   prompts += `2. Include both established and emerging business categories\n`;
   prompts += `3. Consider business-to-business (B2B) services that support other businesses\n`;
@@ -96,6 +97,26 @@ export function generateBusinessTypePrompts(
   prompts += `6. Include franchise opportunities and multi-location business types\n`;
   prompts += `7. Consider technology-enabled service businesses\n`;
   prompts += `8. Include businesses that serve the local community and region\n\n`;
+  
+  prompts += `💼 SPECIAL ATTENTION: BUSINESS MODEL ANALYSIS\n`;
+  prompts += `For each business type, pay special attention to:\n`;
+  prompts += `- Revenue generation models (subscription, one-time, commission, hybrid)\n`;
+  prompts += `- Customer acquisition strategies and channels\n`;
+  prompts += `- Scalability potential and growth models\n`;
+  prompts += `- Operational structure and cost models\n`;
+  prompts += `- Market positioning and competitive advantages\n`;
+  prompts += `- Digital transformation opportunities\n\n`;
+  
+  prompts += `📢 SPECIAL ATTENTION: AWARENESS TACTICS\n`;
+  prompts += `For each business type, consider their awareness generation tactics:\n`;
+  prompts += `- Local marketing and community engagement strategies\n`;
+  prompts += `- Digital marketing approaches (SEO, social media, content marketing)\n`;
+  prompts += `- Traditional advertising channels they typically use\n`;
+  prompts += `- Networking and partnership strategies\n`;
+  prompts += `- Brand building and reputation management tactics\n`;
+  prompts += `- Customer referral and word-of-mouth strategies\n`;
+  prompts += `- Event marketing and trade show participation\n`;
+  prompts += `- Content creation and thought leadership approaches\n\n`;
   
   prompts += `EXAMPLES OF BUSINESS TYPE VARIATIONS:\n`;
   prompts += `Instead of just "restaurant" → "fine dining restaurant", "fast-casual restaurant", "catering service", "food truck business"\n`;
@@ -114,6 +135,8 @@ export function generateBusinessTypePrompts(
   prompts += `- Clear business type name\n`;
   prompts += `- Brief description of what they do\n`;
   prompts += `- Why they're relevant to ${region}\n`;
+  prompts += `- Business model characteristics and revenue strategies\n`;
+  prompts += `- Typical awareness and marketing tactics they use\n`;
   prompts += `- Potential for having discoverable contact information\n`;
   
   return prompts;
@@ -394,7 +417,10 @@ export function generateBusinessTypeContextMessage(
   if (availableSegments && availableSegments.length > 0) {
     contextMessage += `${region === "to be determined by agent" ? '11' : '9'}. CRITICAL: Include 'target_segment_id' in your response with the ID of the selected segment\n`;
   }
-  contextMessage += `${region === "to be determined by agent" ? '12' : '10'}. Include businesses that serve both local and regional markets\n\n`;
+  contextMessage += `${region === "to be determined by agent" ? '12' : '10'}. Include businesses that serve both local and regional markets\n`;
+  contextMessage += `${region === "to be determined by agent" ? '13' : '11'}. 🎯 PRIORITIZE analysis of business models and awareness tactics for each business type\n`;
+  contextMessage += `${region === "to be determined by agent" ? '14' : '12'}. 💼 Analyze revenue models, customer acquisition, and scalability for each type\n`;
+  contextMessage += `${region === "to be determined by agent" ? '15' : '13'}. 📢 Consider how each business type generates awareness and attracts customers\n\n`;
   
   contextMessage += `EXPECTED OUTPUT:\n`;
   if (region === "to be determined by agent") {
