@@ -156,17 +156,73 @@ export async function GET(request: Request) {
 
 export async function POST(request: Request) {
   try {
+    console.log('📥 POST request received - parsing body...');
+    
+    // Verificar Content-Type
+    const contentType = request.headers.get('content-type');
+    console.log('📋 Content-Type:', contentType);
+    
     // Obtener parámetros del cuerpo
-    const params = await request.json();
+    let params;
+    try {
+      params = await request.json();
+      console.log('✅ JSON parsed successfully:', Object.keys(params));
+    } catch (jsonError) {
+      console.error('❌ JSON parsing failed:', jsonError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_JSON', 
+            message: 'Invalid JSON format in request body',
+            details: jsonError instanceof Error ? jsonError.message : 'Unknown JSON error'
+          } 
+        },
+        { status: 400 }
+      );
+    }
+
+    // Normalizar parámetros - soportar tanto snake_case como camelCase
+    const siteId = params.siteId || params.site_id;
+    const userId = params.userId || params.user_id;
+    const city = params.city;
+    const region = params.region;
+    const country = params.country;
+    
+    // Generar searchTerm automáticamente si no se proporciona
+    let searchTerm = params.searchTerm || params.search_term;
+    if (!searchTerm && params.businessTypes && Array.isArray(params.businessTypes)) {
+      // Extraer los nombres de los business types para crear el searchTerm
+      const businessNames = params.businessTypes.map((bt: any) => bt.name).join(', ');
+      searchTerm = businessNames;
+      console.log('🔄 Generated searchTerm from businessTypes:', searchTerm);
+    }
+    
+    console.log('🔍 Normalized parameters:', {
+      siteId,
+      userId,
+      searchTerm,
+      city,
+      region,
+      country,
+      businessTypesCount: params.businessTypes?.length || 0
+    });
     
     // Validar parámetros requeridos
-    if (!params.siteId || !params.searchTerm || !params.city || !params.region) {
+    if (!siteId || !searchTerm || !city || !region) {
+      console.error('❌ Missing required parameters:', {
+        siteId: !!siteId,
+        searchTerm: !!searchTerm,
+        city: !!city,
+        region: !!region
+      });
+      
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'INVALID_REQUEST', 
-            message: 'siteId, searchTerm, city, and region are required' 
+            message: 'siteId (or site_id), searchTerm (or business types), city, and region are required' 
           } 
         },
         { status: 400 }
@@ -174,7 +230,7 @@ export async function POST(request: Request) {
     }
     
     // Validar maxVenues
-    const maxVenues = params.maxVenues || 1;
+    const maxVenues = params.maxVenues || params.max_venues || 1;
     if (maxVenues < 1 || maxVenues > 50) {
       return NextResponse.json(
         { 
@@ -207,13 +263,15 @@ export async function POST(request: Request) {
     });
     
     // Buscar venues en la región
+    console.log('🚀 Starting venue search with Google Maps API...');
+    
     const searchResult = await regionVenuesService.searchRegionVenues({
-      siteId: params.siteId,
-      userId: params.userId,
-      searchTerm: params.searchTerm,
-      city: params.city,
-      region: params.region,
-      country: params.country,
+      siteId,
+      userId,
+      searchTerm,
+      city,
+      region,
+      country,
       limit: maxVenues,
       excludeVenues: (excludeVenues.placeIds || excludeVenues.names) ? excludeVenues : undefined
     });
@@ -238,29 +296,38 @@ export async function POST(request: Request) {
     return NextResponse.json({
       success: true,
       data: {
-        searchTerm: params.searchTerm,
-        city: params.city,
-        region: params.region,
-        country: params.country,
+        searchTerm,
+        city,
+        region,
+        country,
         venueCount: limitedVenues.length,
         venues: limitedVenues,
         // Incluir datos adicionales si se proporcionaron
         ...(params.targetAudience && { targetAudience: params.targetAudience }),
         ...(params.eventInfo && { eventInfo: params.eventInfo }),
         ...(params.contactPreferences && { contactPreferences: params.contactPreferences }),
+        ...(params.businessTypes && { businessTypes: params.businessTypes }),
         timestamp: new Date().toISOString()
       }
     });
     
   } catch (error) {
-    console.error('General error in region venues POST route:', error);
+    console.error('💥 General error in region venues POST route:', {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+      type: typeof error,
+      name: error instanceof Error ? error.name : undefined
+    });
     
     return NextResponse.json(
       { 
         success: false, 
         error: { 
           code: 'SYSTEM_ERROR', 
-          message: 'An internal system error occurred' 
+          message: 'An internal system error occurred',
+          ...(process.env.NODE_ENV === 'development' && {
+            details: error instanceof Error ? error.message : String(error)
+          })
         } 
       },
       { status: 500 }
