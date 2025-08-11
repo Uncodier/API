@@ -152,7 +152,13 @@ export async function createBusinessTypeResearchCommand(
     keywords: keywords,
     business_research_topic: businessResearchTopic,
     business_types_count: maxBusinessTypes,
-    business_types: [] // MANDATORY: This array must be populated with business type objects
+    business_types: [
+      {
+        segment_id: "unique_segment_identifier",
+        description: "Detailed description of the business type", 
+        name: "Business Type Name"
+      }
+    ]
   };
   
   const command = CommandFactory.createCommand({
@@ -163,7 +169,7 @@ export async function createBusinessTypeResearchCommand(
     description: `Research and identify ${maxBusinessTypes} business types ${region && region !== "to be determined by agent" ? `in ${region}` : 'in optimal target region'} based on ${businessResearchTopic}. Determine location from business background and focus on businesses with lead generation potential. CRITICAL: Return results in the exact format specified in the targets configuration with business_types array.`,
     targets: [targetConfig],
     tools,
-    context: contextMessage + `\n\nCRITICAL OUTPUT FORMAT REQUIREMENT:\nYou MUST return your results in this exact JSON structure:\n{\n  "target_city": "determined_city_name",\n  "target_region": "determined_region_name",\n  "target_country": "determined_country_name", \n  "business_research_topic": "your_refined_topic",\n  "business_types": [\n    {\n      "segment_id": "unique_segment_identifier",\n      "commercial_tactics": "How this segment respects the company's commercial strategy",\n      "business_model": "Revenue model, customer acquisition strategy, scalability analysis, and competitive positioning",\n      "awareness_tactics": "Marketing strategies, brand building approaches, customer acquisition channels, and market awareness methods",\n      "market_potential": "Assessment of market potential and opportunities, explaining why this region has this type of business",\n      "description": "Detailed description of the business type",\n      "name": "Business Type Name"\n    }\n  ]\n}\n\n🏙️ REGION SPECIFICATION CRITICAL REQUIREMENT:\nThe "target_region" field MUST be a SPECIFIC CITY SUBSECTION, not a broad commercial region.\n\nCORRECT REGION EXAMPLES:\n✅ "Zona Centro" (city center area)\n✅ "Colonia Roma" (specific neighborhood/colony)\n✅ "Distrito Financiero" (specific district)\n✅ "Barrio Gótico" (specific neighborhood)\n✅ "Centro Histórico" (historic city center)\n\nINCORRECT REGION EXAMPLES (DO NOT USE):\n❌ "Bajío" (too broad, commercial region)\n❌ "Norte" (too vague, directional region)\n❌ "Sur" (too vague, directional region)\n❌ "Región Metropolitana" (too broad)\n\nFor large cities (>500k population), ALWAYS specify a city subsection using local naming conventions.\n\nDO NOT return business types in any other format or field name. The business_types array is MANDATORY and must contain exactly ${maxBusinessTypes} business type objects.`,
+    context: contextMessage + `\n\nCRITICAL OUTPUT FORMAT REQUIREMENT:\nYou MUST return your results in this exact JSON structure:\n{\n  "target_city": "determined_city_name",\n  "target_region": "determined_region_name",\n  "target_country": "determined_country_name", \n  "business_research_topic": "your_refined_topic",\n  "business_types": [\n    {\n      "segment_id": "unique_segment_identifier",\n      "description": "Detailed description of the business type",\n      "name": "Business Type Name"\n    }\n  ]\n}\n\n🏙️ REGION SPECIFICATION CRITICAL REQUIREMENT:\nThe "target_region" field MUST be a SPECIFIC CITY SUBSECTION, not a broad commercial region.\n\nCORRECT REGION EXAMPLES:\n✅ "Zona Centro" (city center area)\n✅ "Colonia Roma" (specific neighborhood/colony)\n✅ "Distrito Financiero" (specific district)\n✅ "Barrio Gótico" (specific neighborhood)\n✅ "Centro Histórico" (historic city center)\n\nINCORRECT REGION EXAMPLES (DO NOT USE):\n❌ "Bajío" (too broad, commercial region)\n❌ "Norte" (too vague, directional region)\n❌ "Sur" (too vague, directional region)\n❌ "Región Metropolitana" (too broad)\n\nFor large cities (>500k population), ALWAYS specify a city subsection using local naming conventions.\n\nDO NOT return business types in any other format or field name. The business_types array is MANDATORY and must contain exactly ${maxBusinessTypes} business type objects.`,
     supervisor: [
       {
         agent_role: "business_market_analyst",
@@ -318,15 +324,11 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   // Normalizar business types para asegurar estructura consistente
   businessTypes = businessTypes.map((bt: any) => {
     if (typeof bt === 'string') {
-      return { name: bt, description: '', relevance: '', market_potential: '', business_model: '', awareness_tactics: '' };
+      return { name: bt, description: '' };
     } else if (typeof bt === 'object' && bt !== null) {
       return {
         name: bt.name || bt.business_name || bt.business_type_name || bt.type || 'Unknown Business Type',
-        description: bt.description || bt.desc || bt.summary || '',
-        relevance: bt.relevance || bt.relevance_to_region || bt.why_relevant || bt.region_fit || '',
-        market_potential: bt.market_potential || bt.market_potential_indicators || bt.potential || bt.opportunity || '',
-        business_model: bt.business_model || bt.businessModel || bt.revenue_model || '',
-        awareness_tactics: bt.awareness_tactics || bt.awarenessTactics || bt.marketing_tactics || bt.marketing_strategies || ''
+        description: bt.description || bt.desc || bt.summary || ''
       };
     }
     return bt;
@@ -334,15 +336,7 @@ export function extractBusinessTypeResults(executedCommand: any, businessResearc
   
   // Post-procesamiento para campos que pueden venir como array
   businessTypes = businessTypes.map((bt: any) => {
-    if (Array.isArray(bt.market_potential)) {
-      bt.market_potential = bt.market_potential.join(', ');
-    }
-    if (Array.isArray(bt.business_model)) {
-      bt.business_model = bt.business_model.join(', ');
-    }
-    if (Array.isArray(bt.awareness_tactics)) {
-      bt.awareness_tactics = bt.awareness_tactics.join(', ');
-    }
+    // No post-processing needed for current fields
     return bt;
   });
   
