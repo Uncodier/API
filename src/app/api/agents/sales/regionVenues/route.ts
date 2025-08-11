@@ -10,11 +10,23 @@ export async function GET(request: Request) {
     const url = new URL(request.url);
     const siteId = url.searchParams.get('siteId');
     const searchTerm = url.searchParams.get('searchTerm');
+    const businessTypes = url.searchParams.get('businessTypes'); // Para debug
     const city = url.searchParams.get('city');
     const region = url.searchParams.get('region');
     const country = url.searchParams.get('country');
     const maxVenuesParam = url.searchParams.get('maxVenues');
     const maxVenues = parseInt(maxVenuesParam || '1');
+    
+    // 🔍 LOGS DETALLADOS DE LA URL Y PARÁMETROS
+    console.log('🔍 [GET] URL COMPLETA:', request.url);
+    console.log('🔍 [GET] PARÁMETROS INDIVIDUALES:');
+    console.log('   - siteId:', JSON.stringify(siteId), '(present:', !!siteId, ')');
+    console.log('   - searchTerm:', JSON.stringify(searchTerm), '(present:', !!searchTerm, ')');
+    console.log('   - businessTypes:', JSON.stringify(businessTypes), '(present:', !!businessTypes, ')');
+    console.log('   - city:', JSON.stringify(city), '(present:', !!city, ')');
+    console.log('   - region:', JSON.stringify(region), '(present:', !!region, ')');
+    console.log('   - country:', JSON.stringify(country), '(present:', !!country, ')');
+    console.log('   - maxVenues:', JSON.stringify(maxVenues), '(from:', JSON.stringify(maxVenuesParam), ')');
     
     // Parámetros de exclusión
     const excludePlaceIds = url.searchParams.get('excludePlaceIds');
@@ -158,6 +170,19 @@ export async function POST(request: Request) {
   try {
     // Obtener parámetros del cuerpo
     const params = await request.json();
+    
+    // 🔍 LOGS DETALLADOS DEL BODY COMPLETO
+    console.log('🔍 [POST] BODY COMPLETO RECIBIDO:', JSON.stringify(params, null, 2));
+    console.log('🔍 [POST] KEYS DEL BODY:', Object.keys(params));
+    console.log('🔍 [POST] PARÁMETROS INDIVIDUALES:');
+    console.log('   - siteId:', JSON.stringify(params.siteId), '(type:', typeof params.siteId, ')');
+    console.log('   - searchTerm:', JSON.stringify(params.searchTerm), '(type:', typeof params.searchTerm, ')');
+    console.log('   - businessTypes:', JSON.stringify(params.businessTypes), '(type:', typeof params.businessTypes, ')');
+    console.log('   - city:', JSON.stringify(params.city), '(type:', typeof params.city, ')');
+    console.log('   - region:', JSON.stringify(params.region), '(type:', typeof params.region, ')');
+    console.log('   - country:', JSON.stringify(params.country), '(type:', typeof params.country, ')');
+    console.log('   - maxVenues:', JSON.stringify(params.maxVenues), '(type:', typeof params.maxVenues, ')');
+    console.log('   - userId:', JSON.stringify(params.userId), '(type:', typeof params.userId, ')');
     
     // Validar parámetros requeridos
     if (!params.siteId || !params.searchTerm || !params.city || !params.region) {
