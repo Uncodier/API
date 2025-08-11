@@ -436,13 +436,26 @@ export class CommandProcessor {
           console.log(`✅ [CommandProcessor] Comando actualizado tiene ${targetProcessorResults.updatedCommand.results?.length || 0} resultados`);
         } else {
           console.warn(`⚠️ [CommandProcessor] TargetProcessor no retornó comando actualizado!`);
+          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults keys: ${Object.keys(targetProcessorResults).join(', ')}`);
+          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults.updatedCommand type: ${typeof targetProcessorResults.updatedCommand}`);
+          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults.updatedCommand value: ${JSON.stringify(targetProcessorResults.updatedCommand)?.substring(0, 200)}...`);
         }
       } else {
         console.error(`❌ [CommandProcessor] Procesamiento de targets falló: ${targetProcessorResults.error}`);
       }
       
       // Actualizar el comando con los resultados
-      const updatedCommand = targetProcessorResults.updatedCommand || command;
+      let updatedCommand = targetProcessorResults.updatedCommand || command;
+      
+      // Si TargetProcessor no devolvió updatedCommand pero sí hay resultados, crear uno manualmente
+      if (!targetProcessorResults.updatedCommand && targetProcessorResults.results && targetProcessorResults.results.length > 0) {
+        console.log(`🔧 [CommandProcessor] Creando updatedCommand manualmente con ${targetProcessorResults.results.length} resultados`);
+        updatedCommand = {
+          ...command,
+          results: targetProcessorResults.results,
+          updated_at: new Date().toISOString()
+        };
+      }
       
       // Preservar explícitamente el agent_background
       if (command.agent_background && (!updatedCommand.agent_background || updatedCommand.agent_background.length < command.agent_background.length)) {

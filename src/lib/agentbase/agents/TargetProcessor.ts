@@ -329,14 +329,30 @@ export class TargetProcessor extends Base {
         console.log(`[TargetProcessor] ${defaultResults.length} resultados mínimos creados preservando estructura de targets`);
       }
       
-      // Return result
-      return {
-        status: 'completed',
+      // Final verification before returning
+      console.log(`[TargetProcessor] PREPARANDO RETORNO:`);
+      console.log(`[TargetProcessor] - status: completed`);
+      console.log(`[TargetProcessor] - results length: ${resultsCopy.length}`);
+      console.log(`[TargetProcessor] - updatedCommand exists: ${!!updatedCommand}`);
+      console.log(`[TargetProcessor] - updatedCommand.results length: ${updatedCommand?.results?.length || 0}`);
+      console.log(`[TargetProcessor] - inputTokens: ${tokenUsage.inputTokens}`);
+      console.log(`[TargetProcessor] - outputTokens: ${tokenUsage.outputTokens}`);
+      
+      const finalResult = {
+        status: 'completed' as const,
         results: resultsCopy,
         updatedCommand: updatedCommand,
         inputTokens: tokenUsage.inputTokens,
         outputTokens: tokenUsage.outputTokens
       };
+      
+      // Verificación final del objeto que se va a retornar
+      console.log(`[TargetProcessor] OBJETO FINAL A RETORNAR:`);
+      console.log(`[TargetProcessor] - Object keys: ${Object.keys(finalResult).join(', ')}`);
+      console.log(`[TargetProcessor] - updatedCommand in final result: ${!!finalResult.updatedCommand}`);
+      
+      // Return result
+      return finalResult;
     } catch (error: any) {
       console.error(`[TargetProcessor] Error processing target: ${error.message}`);
       return {
