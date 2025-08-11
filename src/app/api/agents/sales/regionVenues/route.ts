@@ -84,13 +84,13 @@ export async function GET(request: Request) {
     }
     
     // Validar maxVenues
-    if (maxVenues < 1 || maxVenues > 50) {
+    if (maxVenues < 1 || maxVenues > 60) {
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'INVALID_REQUEST', 
-            message: 'maxVenues must be between 1 and 50' 
+            message: 'maxVenues must be between 1 and 60' 
           } 
         },
         { status: 400 }
@@ -185,7 +185,35 @@ export async function POST(request: Request) {
     console.log('   - userId:', JSON.stringify(params.userId), '(type:', typeof params.userId, ')');
     
     // Validar parámetros requeridos
-    if (!params.siteId || !params.searchTerm || !params.city || !params.region) {
+    console.log('🔍 [POST] VALIDACIÓN DE PARÁMETROS REQUERIDOS:');
+    console.log('   - siteId check:', !!params.siteId, '| value:', JSON.stringify(params.siteId), '| length:', params.siteId?.length);
+    console.log('   - searchTerm check:', !!params.searchTerm, '| value:', JSON.stringify(params.searchTerm), '| length:', params.searchTerm?.length);
+    console.log('   - city check:', !!params.city, '| value:', JSON.stringify(params.city), '| length:', params.city?.length);
+    console.log('   - region check:', !!params.region, '| value:', JSON.stringify(params.region), '| length:', params.region?.length);
+    
+    const validationFails = !params.siteId || !params.searchTerm || !params.city || !params.region;
+    console.log('🔍 [POST] VALIDATION RESULT:', {
+      validationFails,
+      individual_checks: {
+        siteId_fail: !params.siteId,
+        searchTerm_fail: !params.searchTerm,
+        city_fail: !params.city,
+        region_fail: !params.region
+      }
+    });
+    
+    if (validationFails) {
+      console.error('❌ [POST] VALIDATION FAILED - Missing required parameters:', {
+        siteId: !!params.siteId,
+        searchTerm: !!params.searchTerm,
+        city: !!params.city,
+        region: !!params.region,
+        siteId_value: params.siteId,
+        searchTerm_value: params.searchTerm,
+        city_value: params.city,
+        region_value: params.region
+      });
+      
       return NextResponse.json(
         { 
           success: false, 
@@ -198,20 +226,38 @@ export async function POST(request: Request) {
       );
     }
     
+    console.log('✅ [POST] Validation passed - all required parameters present');
+    
     // Validar maxVenues
     const maxVenues = params.maxVenues || 1;
-    if (maxVenues < 1 || maxVenues > 50) {
+    console.log('🔍 [POST] VALIDACIÓN DE maxVenues:');
+    console.log('   - maxVenues value:', maxVenues, '| type:', typeof maxVenues);
+    console.log('   - original params.maxVenues:', params.maxVenues, '| type:', typeof params.maxVenues);
+    console.log('   - check < 1:', maxVenues < 1);
+    console.log('   - check > 60:', maxVenues > 60);
+    console.log('   - validation fails:', maxVenues < 1 || maxVenues > 60);
+    
+    if (maxVenues < 1 || maxVenues > 60) {
+      console.error('❌ [POST] maxVenues validation failed:', {
+        maxVenues,
+        original: params.maxVenues,
+        lessThan1: maxVenues < 1,
+        greaterThan60: maxVenues > 60
+      });
+      
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'INVALID_REQUEST', 
-            message: 'maxVenues must be between 1 and 50' 
+            message: 'maxVenues must be between 1 and 60' 
           } 
         },
         { status: 400 }
       );
     }
+    
+    console.log('✅ [POST] maxVenues validation passed:', maxVenues);
     
     // Procesar parámetros de exclusión del body
     const excludeVenues = params.excludeVenues || {};
