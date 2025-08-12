@@ -421,7 +421,13 @@ export async function POST(request: NextRequest) {
     let planData;
     let planningCommandUuid = null;
     
-    if (activity.toLowerCase().trim() === 'free agent' || activity.toLowerCase().trim() === 'free-agent') {
+    // Check for free agent variations more thoroughly to prevent unwanted command execution
+    const normalizedActivity = activity.toLowerCase().trim().replace(/[\s-_]+/g, '');
+    const isFreeAgent = normalizedActivity === 'freeagent' || 
+                       activity.toLowerCase().trim() === 'free agent' || 
+                       activity.toLowerCase().trim() === 'free-agent';
+    
+    if (isFreeAgent) {
       console.log(`🆓 FREE AGENT MODE: Creando plan básico sin ejecutar comando robot`);
       
       // Crear plan básico para Free Agent sin ejecutar comando
@@ -446,8 +452,11 @@ export async function POST(request: NextRequest) {
                 description: "Iniciar el navegador y verificar conectividad",
                 step_number: 1,
                 automation_level: "automated",
-                estimated_duration: "5 minutos",
-                required_authentication: "none"
+                estimated_duration: "2 minutos",
+                estimated_duration_minutes: 2,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
               },
               {
                 title: "Navegar a DuckDuckGo",
@@ -455,8 +464,11 @@ export async function POST(request: NextRequest) {
                 description: "Ir a duckduckgo.com para realizar búsquedas",
                 step_number: 2,
                 automation_level: "automated",
-                estimated_duration: "5 minutos",
-                required_authentication: "none"
+                estimated_duration: "2 minutos",
+                estimated_duration_minutes: 2,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
               },
               {
                 title: "Realizar búsqueda básica",
@@ -464,8 +476,11 @@ export async function POST(request: NextRequest) {
                 description: "Hacer una búsqueda simple relacionada con el negocio",
                 step_number: 3,
                 automation_level: "automated",
-                estimated_duration: "10 minutos",
-                required_authentication: "none"
+                estimated_duration: "3 minutos",
+                estimated_duration_minutes: 3,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
               },
               {
                 title: "Revisar resultados",
@@ -473,8 +488,11 @@ export async function POST(request: NextRequest) {
                 description: "Examinar los primeros resultados de búsqueda",
                 step_number: 4,
                 automation_level: "automated",
-                estimated_duration: "15 minutos",
-                required_authentication: "none"
+                estimated_duration: "4 minutos",
+                estimated_duration_minutes: 4,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
               },
               {
                 title: "Completar navegación",
@@ -482,8 +500,11 @@ export async function POST(request: NextRequest) {
                 description: "Finalizar la sesión de navegación",
                 step_number: 5,
                 automation_level: "automated",
-                estimated_duration: "10 minutos",
-                required_authentication: "none"
+                estimated_duration: "2 minutos",
+                estimated_duration_minutes: 2,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
               }
             ]
           }
@@ -559,11 +580,80 @@ export async function POST(request: NextRequest) {
 
     // 7. Actualizar el plan con los resultados ----------------------------------------
     
-    // Calcular el total de steps del plan
-    const stepsTotal = planData.phases ? 
-      planData.phases.reduce((total: number, phase: any) => 
-        total + (phase.steps?.length || 0), 0
-      ) : 0;
+    // Extraer y formatear steps del plan generado
+    let planSteps: any[] = [];
+    if (planData.phases && Array.isArray(planData.phases)) {
+      // Extraer steps de todas las fases y aplanar
+      planSteps = planData.phases.flatMap((phase: any, phaseIndex: number) => {
+        if (!phase.steps || !Array.isArray(phase.steps)) return [];
+        
+        return phase.steps.map((step: any, stepIndex: number) => ({
+          id: step.id || `phase_${phaseIndex + 1}_step_${stepIndex + 1}`,
+          title: step.title || step.name || `Step ${stepIndex + 1}`,
+          description: step.description || step.details || '',
+          status: 'pending',
+          order: (phaseIndex * 100) + stepIndex + 1, // Para mantener orden entre fases
+          type: step.type || 'task',
+          instructions: step.instructions || step.description || step.details || '',
+          expected_output: step.expected_output || step.outcome || '',
+          expected_response_type: step.expected_response_type || 'step_completed',
+          human_intervention_reason: step.human_intervention_reason || null,
+          estimated_duration_minutes: (() => {
+            const duration = step.estimated_duration || step.estimated_duration_minutes;
+            if (typeof duration === 'number') return Math.min(duration, 4);
+            if (typeof duration === 'string') {
+              const match = duration.match(/(\d+)/);
+              return match ? Math.min(parseInt(match[1]), 4) : 4;
+            }
+            return 4; // Default máximo 4 minutos
+          })(),
+          automation_level: step.automation_level || 'automated',
+          required_authentication: step.required_authentication || 'none',
+          actual_output: null,
+          started_at: null,
+          completed_at: null,
+          duration_seconds: null,
+          retry_count: 0,
+          error_message: null,
+          artifacts: [],
+          phase: phase.title || phase.name || `Phase ${phaseIndex + 1}`
+        }));
+      });
+    } else if (planData.steps && Array.isArray(planData.steps)) {
+      // Si el plan ya tiene steps directamente
+      planSteps = planData.steps.map((step: any, index: number) => ({
+        id: step.id || `step_${index + 1}`,
+        title: step.title || step.name || `Step ${index + 1}`,
+        description: step.description || step.details || '',
+        status: 'pending',
+        order: index + 1,
+        type: step.type || 'task',
+        instructions: step.instructions || step.description || step.details || '',
+        expected_output: step.expected_output || step.outcome || '',
+        expected_response_type: step.expected_response_type || 'step_completed',
+        human_intervention_reason: step.human_intervention_reason || null,
+        estimated_duration_minutes: (() => {
+          const duration = step.estimated_duration || step.estimated_duration_minutes;
+          if (typeof duration === 'number') return Math.min(duration, 4);
+          if (typeof duration === 'string') {
+            const match = duration.match(/(\d+)/);
+            return match ? Math.min(parseInt(match[1]), 4) : 4;
+          }
+          return 4; // Default máximo 4 minutos
+        })(),
+        automation_level: step.automation_level || 'automated',
+        required_authentication: step.required_authentication || 'none',
+        actual_output: null,
+        started_at: null,
+        completed_at: null,
+        duration_seconds: null,
+        retry_count: 0,
+        error_message: null,
+        artifacts: []
+      }));
+    }
+
+    const stepsTotal = planSteps.length;
 
     const { error: updateError } = await supabaseAdmin
       .from('instance_plans')
@@ -572,7 +662,7 @@ export async function POST(request: NextRequest) {
         command_id: planningCommandUuid,
         title: planData.title || `Plan simple para actividad: ${activity}`,
         description: planData.description || 'Plan simple y enfocado generado automáticamente para ejecución en 1-2 horas máximo',
-        results: planData, // Guardar todo el plan generado
+        steps: planSteps, // Guardar steps en el nuevo formato
         success_criteria: planData.success_metrics || planData.success_criteria || [],
         steps_total: stepsTotal,
         steps_completed: 0,

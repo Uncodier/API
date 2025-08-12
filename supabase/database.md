@@ -1160,7 +1160,7 @@ CREATE TABLE public.instance_plans (
   actual_duration_minutes integer,
   retry_count integer DEFAULT 0,
   max_retries integer DEFAULT 3,
-  results jsonb DEFAULT '{}'::jsonb,
+  steps jsonb DEFAULT '[]'::jsonb,
   artifacts jsonb DEFAULT '[]'::jsonb,
   error_message text,
   progress_percentage integer DEFAULT 0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),

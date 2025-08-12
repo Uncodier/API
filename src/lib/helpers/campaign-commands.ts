@@ -273,6 +273,17 @@ export async function executeRobotActivityPlanning(
   }
 ): Promise<{activityPlanResults: any[] | null, planningCommandUuid: string | null}> {
   try {
+    // Prevent execution for free agent activities
+    const normalizedActivity = activity.toLowerCase().trim().replace(/[\s-_]+/g, '');
+    const isFreeAgent = normalizedActivity === 'freeagent' || 
+                       activity.toLowerCase().trim() === 'free agent' || 
+                       activity.toLowerCase().trim() === 'free-agent';
+    
+    if (isFreeAgent) {
+      console.log(`🚫 EVITANDO: Comando de planificación para free agent - retornando null`);
+      return { activityPlanResults: null, planningCommandUuid: null };
+    }
+    
     console.log(`🤖 Ejecutando comando de planificación de actividad con Robot: ${agentId}`);
     
     // Get comprehensive company context
@@ -333,6 +344,12 @@ ${activityContext?.specificInstructions || ''}
 - Focus on ONE customer journey stage at a time
 - Prioritize quick wins over comprehensive coverage
 
+⏱️ CRITICAL TIMING REQUIREMENTS:
+- EACH STEP must be completable within 4 MINUTES maximum
+- If a step requires more than 4 minutes, break it into smaller sub-steps
+- Include realistic time estimates for each step (1-4 minutes each)
+- Total plan execution should not exceed 120 minutes
+
 ⚠️ CRITICAL VALIDATION REQUIREMENTS:
 - ALWAYS verify system data matches reality before executing actions
 - If content/posts/ads appear "published" in system, validate they're actually visible online
@@ -340,6 +357,26 @@ ${activityContext?.specificInstructions || ''}
 - If discrepancies found, include steps to recreate/republish missing elements
 - Validate platform access and permissions before proceeding with any action
 - Test all functionality works as expected rather than assuming from system status
+
+🎭 STEP RESPONSE COORDINATION:
+For EACH step in your plan, you MUST specify the expected_response_type that the robot will use during execution:
+
+AVAILABLE RESPONSE TYPES:
+- "step_completed" - Normal step that should complete successfully
+- "step_failed" - Step that might fail due to technical issues
+- "session_needed" - Step that requires authentication/login
+- "user_attention_required" - Step that needs human intervention (CAPTCHAs, manual verification, etc.)
+- "session_acquired" - Step that successfully establishes authentication
+- "step_canceled" - Step that might be skipped if conditions aren't met
+
+MANDATORY: Predict which steps will likely need human intervention and mark them as "user_attention_required" in advance.
+
+EXAMPLES OF STEPS REQUIRING HUMAN INTERVENTION:
+- Login steps with 2FA/CAPTCHA
+- Manual verification of published content
+- Approval of campaign settings before publishing
+- Resolution of platform-specific errors
+- Manual data entry for sensitive information
 
 📋 PLAN SIMPLIFICATION GUIDELINES:
 - Choose the SINGLE most effective channel based on customer journey context
@@ -359,25 +396,37 @@ Based on the provided context, choose ONLY ONE channel/platform:
 - Content creation (for awareness/retention)
 
 SIMPLE EXECUTION STEPS (Maximum 5-8 steps):
-Each step must be a specific, quick browser automation action:
-- "VERIFY authentication and access to [Single Platform]"
-- "CHECK if content/campaign already exists and is visible online"
-- "If missing or outdated, recreate: Login to [Single Platform] using stored session"
-- "Navigate to [Specific Tool/Section] for [One Campaign]"
-- "Upload/Edit [One Content Piece] with [Simple Targeting]"
-- "Configure basic settings for [One Campaign Element]"
-- "Publish/Schedule [One Action] for [Specific Time]"
-- "VALIDATE execution results are visible online and capture basic metrics"
+Each step must be a specific, quick browser automation action with coordinated response:
+
+STEP FORMAT EXAMPLE:
+{
+  "title": "Login to Facebook",
+  "description": "Navigate to Facebook and authenticate using stored session",
+  "step_number": 1,
+  "automation_level": "automated",
+  "estimated_duration": "3 minutes",
+  "expected_response_type": "session_needed",
+  "human_intervention_reason": "May require 2FA or CAPTCHA verification",
+  "required_authentication": "facebook"
+}
+
+COORDINATION EXAMPLES:
+- Authentication steps → expected_response_type: "session_needed" or "session_acquired"
+- Content validation → expected_response_type: "user_attention_required" 
+- Technical operations → expected_response_type: "step_completed" or "step_failed"
+- Platform navigation → expected_response_type: "step_completed"
+- Publishing actions → expected_response_type: "user_attention_required" (for approval)
 
 OUTPUT FORMAT - KEEP SIMPLE:
 Provide a FOCUSED execution plan with:
 - Simple activity title (one sentence)
 - Selected channel/platform (ONLY ONE)
 - Customer journey stage focus (ONLY ONE)
-- Quick execution steps (5-8 maximum)
-- Simple timeline (1-2 hours total)
+- Quick execution steps (5-8 maximum) with expected_response_type for each
+- Simple timeline (1-2 hours total, 1-4 minutes per step)
 - Basic success metrics (1-3 key metrics)
 - Single integration requirement
+- Human intervention points clearly identified
 
 COMPLETE COMPANY CONTEXT (Choose the BEST single option from this):
 

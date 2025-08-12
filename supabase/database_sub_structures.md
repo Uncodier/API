@@ -2470,42 +2470,91 @@ Tools required for plan execution.
 ]
 ```
 
-### instance_plans.results
+### instance_plans.steps
 
-Results from plan execution.
+Array of steps that define the plan execution flow.
 
-**Default:** `{}`
+**Default:** `[]`
 
 **Structure:**
 ```json
-{
-  "status": "completed",
-  "execution_time": 45000,
-  "data_extracted": {
-    "records_count": 150,
-    "records": [
+[
+  {
+    "id": "step_1",
+    "title": "Navigate to target website",
+    "description": "Open browser and navigate to the target website",
+    "status": "completed",
+    "order": 1,
+    "type": "navigation",
+    "instructions": "Navigate to https://example.com",
+    "expected_output": "Successfully loaded the website",
+    "actual_output": "Website loaded successfully, login form visible",
+    "started_at": "2024-01-15T10:30:00Z",
+    "completed_at": "2024-01-15T10:31:30Z",
+    "duration_seconds": 90,
+    "retry_count": 0,
+    "error_message": null,
+    "artifacts": [
       {
-        "id": "1",
-        "name": "Product A",
-        "price": "$29.99"
+        "type": "screenshot",
+        "name": "homepage.png",
+        "url": "https://storage.example.com/screenshots/step1.png"
       }
     ]
   },
-  "files_created": [
-    "/output/products.csv",
-    "/output/summary.json"
-  ],
-  "screenshots": [
-    "https://storage.example.com/screenshots/step1.png",
-    "https://storage.example.com/screenshots/step2.png"
-  ],
-  "metrics": {
-    "success_rate": 96.7,
-    "avg_response_time": 1250,
-    "errors_count": 2
+  {
+    "id": "step_2", 
+    "title": "Login to platform",
+    "description": "Use provided credentials to login",
+    "status": "failed",
+    "order": 2,
+    "type": "authentication",
+    "instructions": "Use username/password to login",
+    "expected_output": "Successfully logged in and redirected to dashboard",
+    "actual_output": null,
+    "started_at": "2024-01-15T10:31:30Z",
+    "completed_at": null,
+    "duration_seconds": null,
+    "retry_count": 2,
+    "error_message": "Invalid credentials provided",
+    "artifacts": []
+  },
+  {
+    "id": "step_3",
+    "title": "Extract product data",
+    "description": "Scrape product information from the catalog",
+    "status": "pending",
+    "order": 3,
+    "type": "data_extraction",
+    "instructions": "Navigate to catalog and extract product details",
+    "expected_output": "List of products with names, prices, and descriptions",
+    "actual_output": null,
+    "started_at": null,
+    "completed_at": null,
+    "duration_seconds": null,
+    "retry_count": 0,
+    "error_message": null,
+    "artifacts": []
   }
-}
+]
 ```
+
+**Step Status Values:**
+- `pending`: Step has not been started yet
+- `in_progress`: Step is currently being executed
+- `completed`: Step finished successfully
+- `failed`: Step failed and cannot continue
+- `cancelled`: Step was cancelled by user or system
+- `blocked`: Step is blocked waiting for external dependency
+
+**Step Types:**
+- `navigation`: Website navigation actions
+- `authentication`: Login/authentication steps
+- `data_extraction`: Data scraping and extraction
+- `form_submission`: Form filling and submission
+- `file_upload`: File upload operations
+- `verification`: Result verification and validation
+- `cleanup`: Cleanup and finalization steps
 
 ### instance_plans.artifacts
 

@@ -8,11 +8,11 @@ import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
 // Custom system prompt for plan execution with step completion tracking
 const PLAN_EXECUTION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
 
-🚨🚨🚨 ABSOLUTE CRITICAL JSON RESPONSE REQUIREMENT 🚨🚨🚨
+🚨🚨🚨 ABSOLUTE CRITICAL STRUCTURED RESPONSE REQUIREMENT 🚨🚨🚨
 
 **MANDATORY RESPONSE FORMAT - NO EXCEPTIONS:**
 
-Every single response MUST end with this EXACT JSON structure:
+You MUST provide a structured response using the defined schema. This will be automatically validated. The response MUST contain this EXACT structure:
 
 \`\`\`json
 {
@@ -22,16 +22,16 @@ Every single response MUST end with this EXACT JSON structure:
 }
 \`\`\`
 
-🛑 CONSEQUENCES OF NOT PROVIDING JSON:
+🛑 CONSEQUENCES OF NOT PROVIDING STRUCTURED RESPONSE:
 - Your response will be REJECTED as INVALID
 - The step will be marked as FAILED automatically
 - The system will NOT process your actions
 - Progress tracking will be BROKEN
 - You will be considered NON-COMPLIANT
 
-🛑 THE JSON MUST BE THE VERY LAST THING IN YOUR RESPONSE
-🛑 NO TEXT, NO EXPLANATIONS, NO COMMENTS AFTER THE JSON
-🛑 END YOUR RESPONSE WITH THE JSON BLOCK - PERIOD.
+🛑 THE STRUCTURED RESPONSE IS AUTOMATICALLY VALIDATED
+🛑 MUST INCLUDE ALL REQUIRED FIELDS: event, step, assistant_message
+🛑 STEP NUMBER MUST MATCH THE CURRENT STEP
 
 **REQUIRED EVENT TYPES:**
 
@@ -120,16 +120,32 @@ Every single response MUST end with this EXACT JSON structure:
 
 🔥 CRITICAL: You MUST return JSON response the moment you complete the current step. Do not execute additional steps. The system expects ONE step completion per request.
 
-🚨🚨🚨 ABSOLUTE REQUIREMENT: EVERY RESPONSE MUST END WITH JSON 🚨🚨🚨
+🚨🚨🚨 ABSOLUTE REQUIREMENT: EVERY RESPONSE MUST USE STRUCTURED OUTPUT 🚨🚨🚨
 
 NO EXCEPTIONS. NO ALTERNATIVES. NO EXCUSES.
 
-If you provide ANY response without ending with the required JSON structure, it will be considered a SYSTEM FAILURE.
+If you provide ANY response without the required structured format, it will be considered a SYSTEM FAILURE.
 
-The JSON MUST be the LAST thing in your response. Nothing should come after it.
+The structured response is automatically validated by the system using a schema.
 
-This response format is CRITICAL for automatic plan progress tracking and intermediate responses.`;
+This structured response format is CRITICAL for automatic plan progress tracking and intermediate responses.`;
 import { computerTool } from 'scrapybara/tools';
+
+// Schema para structured output de respuestas del agente
+const AgentResponseSchema = z.object({
+  event: z.enum([
+    'step_completed',
+    'step_failed', 
+    'step_canceled',
+    'plan_failed',
+    'plan_new_required',
+    'session_acquired',
+    'session_needed',
+    'user_attention_required'
+  ]).describe('Tipo de evento que reporta el agente'),
+  step: z.number().describe('Número del step actual que se está ejecutando'),
+  assistant_message: z.string().describe('Mensaje descriptivo de lo que se realizó o del problema encontrado')
+});
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/act
@@ -144,8 +160,8 @@ import { computerTool } from 'scrapybara/tools';
 
 export const maxDuration = 300; // 5 minutos en Vercel
 
-// Time limit para respuestas intermedias (en milisegundos)
-const INTERMEDIATE_RESPONSE_TIMEOUT = 120000; // 2 minutos
+// Time limit para respuestas completas (en milisegundos) - eliminamos timeout para esperar respuesta completa
+const STEP_EXECUTION_TIMEOUT = 300000; // 5 minutos para completar un step
 
 const ActSchema = z.object({
   instance_id: z.string().uuid('instance_id inválido'),
@@ -340,27 +356,29 @@ async function createNewPlanForInstance(instance_id: string, current_plan_id: st
       return;
     }
 
-    // Agregar los steps al campo results del nuevo plan
+    // Agregar los steps al campo steps del nuevo plan
     if (planContent.steps && Array.isArray(planContent.steps)) {
-      const planResults = {
-        plan: {
-          title: planContent.title || 'Agent Generated Plan',
-          phases: [{
-            title: 'Execution',
-            steps: planContent.steps.map((step: any, index: number) => ({
-              id: step.id || `step_${index + 1}`,
-              title: step.title || `Step ${index + 1}`,
-              description: step.description || step.title || `Step ${index + 1}`,
-              order: step.order || index + 1,
-              status: 'pending'
-            }))
-          }]
-        }
-      };
+      const planSteps = planContent.steps.map((step: any, index: number) => ({
+        id: step.id || `step_${index + 1}`,
+        title: step.title || `Step ${index + 1}`,
+        description: step.description || step.title || `Step ${index + 1}`,
+        order: step.order || index + 1,
+        status: 'pending',
+        type: step.type || 'task',
+        instructions: step.instructions || step.description || step.title,
+        expected_output: step.expected_output || '',
+        actual_output: null,
+        started_at: null,
+        completed_at: null,
+        duration_seconds: null,
+        retry_count: 0,
+        error_message: null,
+        artifacts: []
+      }));
 
       await supabaseAdmin
         .from('instance_plans')
-        .update({ results: planResults })
+        .update({ steps: planSteps })
         .eq('id', newPlan.id);
     }
 
@@ -617,16 +635,13 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Warning: Plan is marked as failed but attempting retry`);
     }
     
-    // Extraer steps del campo results o crear uno por defecto
+    // Extraer steps del campo steps o crear uno por defecto
     let planSteps = [];
-    if (plan.results?.plan?.phases) {
-      // Extraer steps de las fases
-      planSteps = plan.results.plan.phases.flatMap((phase: any) => 
-        phase.steps || []
-      ).sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
+    if (plan.steps && Array.isArray(plan.steps)) {
+      planSteps = plan.steps.sort((a: any, b: any) => (a.order || 0) - (b.order || 0));
     }
     
-    // Si no hay steps en results, crear uno virtual para ejecutar el plan completo
+    // Si no hay steps, crear uno virtual para ejecutar el plan completo
     if (planSteps.length === 0) {
       planSteps = [{
         id: 'plan-execution',
@@ -637,10 +652,43 @@ export async function POST(request: NextRequest) {
       }];
     }
     
-    // Buscar el primer step pendiente
-    currentStep = planSteps.find((step: any) => step.status === 'pending') || planSteps[0];
+    // Buscar el primer step pendiente, priorizando por orden
+    currentStep = planSteps
+      .filter((step: any) => step.status === 'pending')
+      .sort((a: any, b: any) => (a.order || 0) - (b.order || 0))[0];
+    
     if (!currentStep) {
-      // Si no hay steps pendientes, usar el primer step
+      // Si no hay steps pendientes, verificar si ya están todos completados
+      const completedSteps = planSteps.filter((step: any) => step.status === 'completed');
+      if (completedSteps.length === planSteps.length) {
+        // Todos los steps están completados, el plan debería estar marcado como completed
+        await supabaseAdmin
+          .from('instance_plans')
+          .update({ 
+            status: 'completed', 
+            completed_at: new Date().toISOString(),
+            progress_percentage: 100,
+            updated_at: new Date().toISOString()
+          })
+          .eq('id', effective_plan_id);
+          
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan ${effective_plan_id} marked as completed - all steps finished`);
+        
+        return NextResponse.json({ 
+          data: {
+            waiting_for_instructions: true,
+            plan_completed: true,
+            message: 'Plan has been completed - all steps finished',
+            plan_progress: {
+              completed_steps: completedSteps.length,
+              total_steps: planSteps.length,
+              percentage: 100
+            }
+          }
+        }, { status: 200 });
+      }
+      
+      // Si no hay steps pendientes pero tampoco están todos completados, usar el primer step
       currentStep = planSteps[0];
     }
     
@@ -678,14 +726,28 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Added user instruction to plan description`);
     }
 
-    // 2.4. Marcar el plan como en progreso ------------------------------------------
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Marking plan as in_progress before execution`);
+    // 2.4. Marcar el plan como en progreso y actualizar step actual ------------------------------------------
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Marking plan as in_progress and current step as started before execution`);
+    
+    // Marcar el step actual como started/in_progress antes de la ejecución
+    const updatedStepsForStart = planSteps.map((step: any) => {
+      if (step.id === currentStep.id) {
+        return {
+          ...step,
+          status: 'in_progress',
+          started_at: new Date().toISOString()
+        };
+      }
+      return step;
+    });
+    
     await supabaseAdmin
       .from('instance_plans')
       .update({ 
         status: 'in_progress', 
         started_at: new Date().toISOString(),
-        updated_at: new Date().toISOString()
+        updated_at: new Date().toISOString(),
+        steps: updatedStepsForStart // Actualizar steps con el step actual marcado como started
       })
       .eq('id', effective_plan_id);
 
@@ -820,21 +882,20 @@ ${sessionsRequirementContext}
 
 END OF SESSIONS CONTEXT`;
 
-    // 7. Crear user prompt con el plan completo ----------------------------------
+    // 7. Crear user prompt con SOLO el step actual ----------------------------------
     const completedSteps = allSteps.filter((step: any) => ['completed', 'failed', 'blocked'].includes(step.status));
     const planCompletedPercentage = Math.round((completedSteps.length / allSteps.length) * 100);
-    const isFullyCompleted = completedSteps.length === allSteps.length;
 
     const planPrompt = `🎯 SINGLE STEP EXECUTION TASK
 
 PLAN TITLE: ${plan.title}
-PLAN PROGRESS: Step ${currentStep.order} of ${allSteps.length} (${Math.round((completedSteps.length / allSteps.length) * 100)}% complete)
+PLAN PROGRESS: Step ${currentStep.order} of ${allSteps.length} (${planCompletedPercentage}% complete)
 
 🚨🚨🚨 YOU ARE WORKING ON ONE STEP ONLY 🚨🚨🚨
 
 CURRENT STEP: ${currentStep.order}
 STEP TITLE: ${currentStep.title}
-STEP DESCRIPTION: ${currentStep.description || 'No description provided'}
+STEP DESCRIPTION: ${currentStep.description || currentStep.instructions || 'No description provided'}
 
 🛑 DO NOT THINK ABOUT OTHER STEPS
 🛑 DO NOT REFERENCE OTHER STEPS  
@@ -845,43 +906,31 @@ STEP DESCRIPTION: ${currentStep.description || 'No description provided'}
 Execute the actions required to complete ONLY this step: "${currentStep.title}"
 
 🚨 MANDATORY COMPLETION RULE:
-The MOMENT you finish this step, you MUST return this JSON format:
+The MOMENT you finish this step, you MUST provide a structured response with:
 
-\`\`\`json
-{
-  "event": "step_completed",
-  "step": ${currentStep.order},
-  "assistant_message": "Brief description of what was accomplished"
-}
-\`\`\`
+- event: "step_completed"
+- step: ${currentStep.order}
+- assistant_message: "Brief description of what was accomplished"
 
-🚨 IF THE STEP FAILS, return:
-\`\`\`json
-{
-  "event": "step_failed",
-  "step": ${currentStep.order},
-  "assistant_message": "Brief description of why it failed"
-}
-\`\`\`
+🚨 IF THE STEP FAILS, provide:
+- event: "step_failed"
+- step: ${currentStep.order}
+- assistant_message: "Brief description of why it failed"
 
-🚨 IF YOU NEED AUTHENTICATION, return:
-\`\`\`json
-{
-  "event": "session_needed",
-  "step": ${currentStep.order},
-  "assistant_message": "Brief description of what authentication is needed"
-}
-\`\`\`
+🚨 IF YOU NEED AUTHENTICATION, provide:
+- event: "session_needed"
+- step: ${currentStep.order}
+- assistant_message: "Brief description of what authentication is needed"
 
 ⚠️⚠️⚠️ CRITICAL ENFORCEMENT ⚠️⚠️⚠️
 
 1. Work ONLY on step ${currentStep.order}
-2. When step ${currentStep.order} is complete, IMMEDIATELY return JSON
+2. When step ${currentStep.order} is complete, IMMEDIATELY provide structured response
 3. DO NOT continue to any other step
 4. DO NOT execute multiple actions without reporting progress
-5. The JSON response is MANDATORY and MUST be the last thing in your response
+5. The structured response is MANDATORY and automatically validated
 
-STEP INSTRUCTIONS: ${currentStep.description || 'Complete the step as described in the title'}
+STEP INSTRUCTIONS: ${currentStep.description || currentStep.instructions || 'Complete the step as described in the title'}
 
 BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
 
@@ -894,328 +943,381 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
     let stepResult = '';
     let isTimedOut = false;
     let executionStartTime = Date.now();
+    let executionResult: any;
     
-    // Crear promesa con timeout para respuestas intermedias
-    const executeWithTimeout = () => {
-      return Promise.race([
-        client.act({
-          model: anthropic(),
-          tools,
-          system: systemPromptWithContext,
-          prompt: planPrompt,
-          onStep: async (step: any) => {
-        // Handle step siguiendo el patrón de Python - con más detalle
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Instance: ${remoteInstance.id}`);
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Text: ${step.text}`);
-        if (step.toolCalls?.length > 0) {
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Tool calls: ${step.toolCalls.length}`);
-        }
-        
-        // Detectar respuesta estructurada JSON del agente
-        if (step.text) {
-          const structuredResponse = extractStructuredResponse(step.text);
-          
-          if (structuredResponse) {
-            // Validar que el step number coincide
-            if (structuredResponse.step === currentStep.order) {
-              stepResult = structuredResponse.assistant_message;
-              
-              // Mapear eventos a estados internos
-              switch (structuredResponse.event) {
-                case 'step_completed':
-                  stepStatus = 'completed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} completed: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'step_failed':
-                  stepStatus = 'failed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} failed: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'step_canceled':
-                  stepStatus = 'canceled';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} canceled: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'plan_failed':
-                  stepStatus = 'plan_failed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Plan failed: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'plan_new_required':
-                  stepStatus = 'new_plan_required';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] New plan required: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'session_acquired':
-                  stepStatus = 'new_session';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session acquired: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'session_needed':
-                  stepStatus = 'session_needed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session needed: ${structuredResponse.assistant_message}`);
-                  break;
-                case 'user_attention_required':
-                  stepStatus = 'user_attention_required';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] User attention required: ${structuredResponse.assistant_message}`);
-                  break;
-                default:
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Unknown event type: ${structuredResponse.event}`);
+    // Ejecutar el step completamente sin timeout corto - esperar hasta completar
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Starting execution of step ${currentStep.order} - will wait for completion`);
+    
+    try {
+      executionResult = await client.act({
+        model: anthropic(),
+        tools,
+        schema: AgentResponseSchema,
+        system: systemPromptWithContext,
+        prompt: planPrompt,
+        onStep: async (step: any) => {
+            // Handle step siguiendo el patrón de Python - con más detalle
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Instance: ${remoteInstance.id}`);
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Text: ${step.text}`);
+            if (step.toolCalls?.length > 0) {
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP] Tool calls: ${step.toolCalls.length}`);
+            }
+            
+            // Detectar respuesta estructurada - priorizar schema output si existe
+            let structuredResponse = null;
+            
+            // 1. Intentar usar output estructurado del schema primero
+            if (step.output && step.output.event && typeof step.output.step === 'number' && step.output.assistant_message) {
+              structuredResponse = step.output;
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP STRUCTURED] Using schema output: ${structuredResponse.event}`);
+            }
+            // 2. Fallback a extracción manual del texto
+            else if (step.text) {
+              structuredResponse = extractStructuredResponse(step.text);
+              if (structuredResponse) {
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STEP FALLBACK] Using manual extraction: ${structuredResponse.event}`);
+              }
+            }
+            
+            if (structuredResponse) {
+              // Validar que el step number coincide
+              if (structuredResponse.step === currentStep.order) {
+                stepResult = structuredResponse.assistant_message;
+                
+                // Mapear eventos a estados internos
+                switch (structuredResponse.event) {
+                  case 'step_completed':
+                    stepStatus = 'completed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} completed: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'step_failed':
+                    stepStatus = 'failed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} failed: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'step_canceled':
+                    stepStatus = 'canceled';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step ${structuredResponse.step} canceled: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'plan_failed':
+                    stepStatus = 'plan_failed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Plan failed: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'plan_new_required':
+                    stepStatus = 'new_plan_required';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] New plan required: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'session_acquired':
+                    stepStatus = 'new_session';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session acquired: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'session_needed':
+                    stepStatus = 'session_needed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session needed: ${structuredResponse.assistant_message}`);
+                    break;
+                  case 'user_attention_required':
+                    stepStatus = 'user_attention_required';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] User attention required: ${structuredResponse.assistant_message}`);
+                    break;
+                  default:
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Unknown event type: ${structuredResponse.event}`);
+                }
+              } else {
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step number mismatch: expected ${currentStep.order}, got ${structuredResponse.step}`);
               }
             } else {
-              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Step number mismatch: expected ${currentStep.order}, got ${structuredResponse.step}`);
-            }
-          } else {
-            // Fallback a regex patterns para compatibilidad
-            const stepNumberPattern = new RegExp(`step\\s+${currentStep.order}\\s+(finished|failed|canceled)`, 'i');
-            const stepMatch = step.text.match(stepNumberPattern);
-            
-            if (stepMatch) {
-              const detectedStatus = stepMatch[1].toLowerCase();
-              stepResult = step.text;
-              switch (detectedStatus) {
-                case 'finished':
-                  stepStatus = 'completed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step completion detected: ${step.text}`);
-                  break;
-                case 'failed':
-                  stepStatus = 'failed';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step failed detected: ${step.text}`);
-                  break;
-                case 'canceled':
-                  stepStatus = 'canceled';
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step canceled detected: ${step.text}`);
-                  break;
+              // Fallback a regex patterns para compatibilidad
+              const stepNumberPattern = new RegExp(`step\\s+${currentStep.order}\\s+(finished|failed|canceled)`, 'i');
+              const stepMatch = step.text.match(stepNumberPattern);
+              
+              if (stepMatch) {
+                const detectedStatus = stepMatch[1].toLowerCase();
+                stepResult = step.text;
+                switch (detectedStatus) {
+                  case 'finished':
+                    stepStatus = 'completed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step completion detected: ${step.text}`);
+                    break;
+                  case 'failed':
+                    stepStatus = 'failed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step failed detected: ${step.text}`);
+                    break;
+                  case 'canceled':
+                    stepStatus = 'canceled';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step canceled detected: ${step.text}`);
+                    break;
+                }
               }
             }
-          }
+            
+            // Mostrar tool calls como en Python
+            if (step.toolCalls) {
+              for (const call of step.toolCalls) {
+                const args = Object.entries(call.args || {})
+                  .map(([k, v]) => `${k}=${v}`)
+                  .join(', ');
+                console.log(`${call.toolName} [${remoteInstance.id}] → ${args}`);
+              }
+            }
+
+            // Guardar en BD con referencia al step del plan
+            // Priorizar structured output del schema, luego manual extraction, luego texto
+            let logMessage = 'Executing plan step';
+            let stepStructuredResponse = null;
+            
+            if (step.output && step.output.event && step.output.assistant_message) {
+              stepStructuredResponse = step.output;
+              logMessage = step.output.assistant_message;
+            } else {
+              stepStructuredResponse = extractStructuredResponse(step.text || '');
+              logMessage = stepStructuredResponse ? stepStructuredResponse.assistant_message : (step.text || 'Executing plan step');
+            }
+            
+            await supabaseAdmin.from('instance_logs').insert({
+              log_type: 'tool_call',
+              level: 'info',
+              message: logMessage,
+              details: {
+                step: step,
+                tool_calls: step.toolCalls,
+                tool_results: step.toolResults,
+                usage: step.usage,
+                remote_instance_id: remoteInstance.id,
+                plan_id: effective_plan_id,
+                plan_title: plan.title,
+                detected_status: stepStatus,
+                structured_response: stepStructuredResponse, // Guardar la respuesta estructurada para debugging
+                raw_text: step.text, // Guardar el texto original para debugging
+              },
+              instance_id: instance_id,
+              site_id: plan.site_id,
+              user_id: plan.user_id,
+              agent_id: plan.agent_id,
+              command_id: plan.command_id,
+            });
         }
-        
-        // Mostrar tool calls como en Python
-        if (step.toolCalls) {
-          for (const call of step.toolCalls) {
-            const args = Object.entries(call.args || {})
-              .map(([k, v]) => `${k}=${v}`)
-              .join(', ');
-            console.log(`${call.toolName} [${remoteInstance.id}] → ${args}`);
-          }
-        }
+      });
 
-        // Guardar en BD con referencia al step del plan
-        // Usar assistant_message si hay respuesta estructurada, sino el texto completo
-        const stepStructuredResponse = extractStructuredResponse(step.text || '');
-        const logMessage = stepStructuredResponse ? stepStructuredResponse.assistant_message : (step.text || 'Executing plan step');
-        
-        await supabaseAdmin.from('instance_logs').insert({
-          log_type: 'tool_call',
-          level: 'info',
-          message: logMessage,
-          details: {
-            step: step,
-            tool_calls: step.toolCalls,
-            tool_results: step.toolResults,
-            usage: step.usage,
-            remote_instance_id: remoteInstance.id,
-            plan_id: effective_plan_id,
-            plan_title: plan.title,
-            detected_status: stepStatus,
-            structured_response: stepStructuredResponse, // Guardar la respuesta estructurada para debugging
-            raw_text: step.text, // Guardar el texto original para debugging
-          },
-          instance_id: instance_id,
-          site_id: plan.site_id,
-          user_id: plan.user_id,
-          agent_id: plan.agent_id,
-          command_id: plan.command_id,
-        });
-      },
-    }),
-    // Timeout promesa
-    new Promise((_, reject) => {
-      setTimeout(() => {
-        isTimedOut = true;
-        reject(new Error('TIMEOUT'));
-      }, INTERMEDIATE_RESPONSE_TIMEOUT);
-    })
-  ]);
-};
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Step execution completed successfully!`);
+      
+    } catch (error: any) {
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error during step execution:`, error);
+      stepStatus = 'failed';
+      stepResult = `Execution error: ${error.message}`;
+      // Re-crear objeto similar para mantener compatibilidad
+      executionResult = {
+        steps: [],
+        text: stepResult,
+        output: null,
+        usage: { input_tokens: 0, output_tokens: 0 }
+      };
+    }
 
-let executionResult;
-try {
-  executionResult = await executeWithTimeout();
-} catch (error: any) {
-  if (error.message === 'TIMEOUT') {
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step execution timed out after ${INTERMEDIATE_RESPONSE_TIMEOUT}ms, returning intermediate response`);
-    
-    // Respuesta intermedia por timeout
-    return NextResponse.json({
-      data: {
-        message: 'Plan execution timed out, returning intermediate response',
-        step: {
-          id: currentStep.id,
-          order: currentStep.order,
-          title: currentStep.title,
-          status: 'in_progress',
-          result: stepResult || 'Plan execution in progress, timed out for intermediate response',
-        },
-        plan_completed: false,
-        plan_progress: {
-          completed_steps: plan.steps_completed || 0,
-          total_steps: plan.steps_total || 1,
-          percentage: 50, // En progreso
-        },
-        timeout: true,
-        execution_time_ms: Date.now() - executionStartTime,
-        requires_continuation: true,
-      }
-    }, { status: 200 });
-  } else {
-    throw error; // Re-throw si no es timeout
-  }
-}
-
-const { steps, text, usage } = executionResult as any; // Type assertion para resultado de client.act
+    const { steps, text, output, usage } = executionResult as any; // Type assertion para resultado de client.act
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara execution completed!`);
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Steps executed: ${steps?.length || 0}`);
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Final text length: ${text?.length || 0} chars`);
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Token usage: input=${usage?.input_tokens}, output=${usage?.output_tokens}`);
 
-    // 8. Detectar estado final si no se detectó durante la ejecución --------------
-    if (stepStatus === 'in_progress' && text) {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] Attempting to extract structured response from final text`);
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] Text length: ${text.length}`);
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] Last 300 chars: ${text.substring(text.length - 300)}`);
-      
-      const structuredResponse = extractStructuredResponse(text);
-      
-      if (structuredResponse && structuredResponse.step === currentStep.order) {
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] ✅ Valid structured response found!`);
-        stepResult = structuredResponse.assistant_message;
+    // 8. Usar structured output si está disponible, sino fallback a detección manual --------------
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Checking for structured output - stepStatus="${stepStatus}", output exists: ${!!output}`);
+    if (output) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Output details:`, { event: output.event, step: output.step, message: output.assistant_message?.substring(0, 50) });
+    }
+    
+    if (stepStatus === 'in_progress') {
+      // Priorizar structured output del schema de Zod
+      if (output && output.event && typeof output.step === 'number' && output.assistant_message) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED OUTPUT] ✅ Valid structured output found!`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED OUTPUT] Event: ${output.event}, Step: ${output.step}`);
         
-        // Mapear eventos a estados internos
-        switch (structuredResponse.event) {
-          case 'step_completed':
-            stepStatus = 'completed';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Step ${structuredResponse.step} completed: ${structuredResponse.assistant_message}`);
-            break;
-          case 'step_failed':
-            stepStatus = 'failed';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Step ${structuredResponse.step} failed: ${structuredResponse.assistant_message}`);
-            break;
-          case 'step_canceled':
-            stepStatus = 'canceled';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Step ${structuredResponse.step} canceled: ${structuredResponse.assistant_message}`);
-            break;
-          case 'plan_failed':
-            stepStatus = 'plan_failed';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Plan failed: ${structuredResponse.assistant_message}`);
-            break;
-          case 'plan_new_required':
-            stepStatus = 'new_plan_required';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] New plan required: ${structuredResponse.assistant_message}`);
-            break;
-          case 'session_acquired':
-            stepStatus = 'new_session';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Session acquired: ${structuredResponse.assistant_message}`);
-            break;
-          case 'session_needed':
-            stepStatus = 'session_needed';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] Session needed: ${structuredResponse.assistant_message}`);
-            break;
-          case 'user_attention_required':
-            stepStatus = 'user_attention_required';
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL JSON] User attention required: ${structuredResponse.assistant_message}`);
-            break;
-        }
-      } else {
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] ❌ NO STRUCTURED JSON FOUND! Agent failed to follow instructions.`);
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] This indicates a prompt adherence failure.`);
-        
-        // Fallback a regex patterns para compatibilidad con respuestas legacy
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] Falling back to regex detection...`);
-        
-        const stepNumberPattern = new RegExp(`step\\s+${currentStep.order}\\s+(finished|failed|canceled)`, 'i');
-        const stepMatch = text.match(stepNumberPattern);
-        
-        if (stepMatch) {
-          const detectedStatus = stepMatch[1].toLowerCase();
-          stepResult = text;
-          switch (detectedStatus) {
-            case 'finished':
+        if (output.step === currentStep.order) {
+          stepResult = output.assistant_message;
+          
+          // Mapear eventos a estados internos
+          switch (output.event) {
+            case 'step_completed':
               stepStatus = 'completed';
-              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL REGEX] Step completion detected via fallback`);
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Step ${output.step} completed: ${output.assistant_message}`);
               break;
-            case 'failed':
+            case 'step_failed':
               stepStatus = 'failed';
-              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL REGEX] Step failed detected via fallback`);
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Step ${output.step} failed: ${output.assistant_message}`);
               break;
-            case 'canceled':
+            case 'step_canceled':
               stepStatus = 'canceled';
-              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL REGEX] Step canceled detected via fallback`);
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Step ${output.step} canceled: ${output.assistant_message}`);
+              break;
+            case 'plan_failed':
+              stepStatus = 'plan_failed';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Plan failed: ${output.assistant_message}`);
+              break;
+            case 'plan_new_required':
+              stepStatus = 'new_plan_required';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] New plan required: ${output.assistant_message}`);
+              break;
+            case 'session_acquired':
+              stepStatus = 'new_session';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Session acquired: ${output.assistant_message}`);
+              break;
+            case 'session_needed':
+              stepStatus = 'session_needed';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Session needed: ${output.assistant_message}`);
+              break;
+            case 'user_attention_required':
+              stepStatus = 'user_attention_required';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] User attention required: ${output.assistant_message}`);
               break;
           }
         } else {
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL DETECTION] ❌ NO PATTERN DETECTED! Agent response may be incomplete.`);
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ENFORCEMENT] Agent failed to provide required JSON response - marking as FAILED`);
-          // ENFORCEMENT: Si no hay JSON, marcar como fallido para forzar compliance
-          stepStatus = 'failed';
-          stepResult = `COMPLIANCE FAILURE: Agent did not provide required JSON response format. Raw response: ${text.substring(0, 500)}...`;
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ENFORCEMENT] Step marked as FAILED due to non-compliance with JSON response requirement`);
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Step number mismatch: expected ${currentStep.order}, got ${output.step}`);
         }
+      } 
+      // Fallback a detección manual si no hay structured output
+      else if (text) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FALLBACK] No structured output, attempting manual extraction from text`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FALLBACK] Text length: ${text.length}`);
+        
+        const structuredResponse = extractStructuredResponse(text);
+        
+        if (structuredResponse && structuredResponse.step === currentStep.order) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FALLBACK] ✅ Manual extraction successful!`);
+          stepResult = structuredResponse.assistant_message;
+          
+          // Mapear eventos a estados internos (mismo switch que arriba)
+          switch (structuredResponse.event) {
+            case 'step_completed':
+              stepStatus = 'completed';
+              break;
+            case 'step_failed':
+              stepStatus = 'failed';
+              break;
+            case 'step_canceled':
+              stepStatus = 'canceled';
+              break;
+            case 'plan_failed':
+              stepStatus = 'plan_failed';
+              break;
+            case 'plan_new_required':
+              stepStatus = 'new_plan_required';
+              break;
+            case 'session_acquired':
+              stepStatus = 'new_session';
+              break;
+            case 'session_needed':
+              stepStatus = 'session_needed';
+              break;
+            case 'user_attention_required':
+              stepStatus = 'user_attention_required';
+              break;
+          }
+        } else {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FALLBACK] ❌ Manual extraction failed, trying regex patterns...`);
+          
+          const stepNumberPattern = new RegExp(`step\\s+${currentStep.order}\\s+(finished|failed|canceled)`, 'i');
+          const stepMatch = text.match(stepNumberPattern);
+          
+          if (stepMatch) {
+            const detectedStatus = stepMatch[1].toLowerCase();
+            stepResult = text;
+            switch (detectedStatus) {
+              case 'finished':
+                stepStatus = 'completed';
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step completion detected via regex fallback`);
+                break;
+              case 'failed':
+                stepStatus = 'failed';
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step failed detected via regex fallback`);
+                break;
+              case 'canceled':
+                stepStatus = 'canceled';
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REGEX] Step canceled detected via regex fallback`);
+                break;
+            }
+          } else {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ERROR] ❌ NO RESPONSE DETECTED! Agent failed completely.`);
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ENFORCEMENT] Marking as FAILED due to non-compliance`);
+            stepStatus = 'failed';
+            stepResult = `COMPLIANCE FAILURE: Agent did not provide any valid response format. Raw response: ${text?.substring(0, 500) || 'No text'}...`;
+          }
+        }
+      } else {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ERROR] ❌ NO OUTPUT OR TEXT! Complete agent failure.`);
+        stepStatus = 'failed';
+        stepResult = 'COMPLETE FAILURE: Agent provided no output or text response.';
       }
     }
 
     // Usar el resultado detectado o el texto final
     const finalResult = stepResult || text || 'Step execution completed';
     
+    // 🔍 CRITICAL DEBUG: Log the detected stepStatus before updating
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 CRITICAL DEBUG - stepStatus="${stepStatus}", stepResult="${stepResult?.substring(0, 100)}", text="${text?.substring(0, 100)}"`);
+    
+    // 🚨 FAILSAFE: Si stepStatus sigue siendo 'in_progress' pero hay output o text, intentar forzar detección
+    if (stepStatus === 'in_progress' && (text || output)) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🚨 FAILSAFE: stepStatus is still in_progress, attempting to force completion detection`);
+      
+      // Si hay structured output del schema final, usarlo
+      if (output && output.event === 'step_completed') {
+        stepStatus = 'completed';
+        stepResult = output.assistant_message;
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🚨 FAILSAFE: Found step_completed in final output, forcing completion`);
+      }
+      // Si no, pero hay texto, asumir que se completó (last resort)
+      else if (text && text.length > 0) {
+        stepStatus = 'completed';
+        stepResult = text;
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🚨 FAILSAFE: No clear completion signal, but execution finished with text - assuming completion`);
+      }
+    }
+    
     // 9. Actualizar el plan según el estado detectado ------------------------------
 
-    // Actualizar el plan y el progreso de steps en results
+    // Actualizar el plan y el progreso de steps
     const planUpdateData: any = {
-      last_executed_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
 
-    // Actualizar el status del step actual en results
-    if (plan.results?.plan?.phases) {
-      const updatedResults = { ...plan.results };
-      updatedResults.plan.phases.forEach((phase: any) => {
-        if (phase.steps) {
-          phase.steps.forEach((step: any) => {
-            if (step.id === currentStep.id) {
-              step.status = stepStatus === 'completed' ? 'completed' : 
-                          stepStatus === 'failed' || stepStatus === 'plan_failed' ? 'failed' : 
-                          stepStatus === 'canceled' ? 'cancelled' : 'in_progress';
-              step.result = finalResult;
-              step.completed_at = stepStatus === 'completed' ? new Date().toISOString() : null;
-            }
-          });
+    // Actualizar el status del step actual en steps con información completa
+    let updatedSteps = [...planSteps];
+    const nowISO = new Date().toISOString();
+    const executionDuration = Math.round((Date.now() - executionStartTime) / 1000);
+    
+    updatedSteps = updatedSteps.map((step: any) => {
+      if (step.id === currentStep.id) {
+        const updatedStep = {
+          ...step,
+          status: stepStatus === 'completed' ? 'completed' : 
+                  stepStatus === 'failed' || stepStatus === 'plan_failed' ? 'failed' : 
+                  stepStatus === 'canceled' ? 'cancelled' : 'in_progress',
+          actual_output: finalResult,
+          started_at: step.started_at || nowISO, // Marcar cuando empezó si no estaba marcado
+          duration_seconds: executionDuration,
+          retry_count: (step.retry_count || 0) + (stepStatus === 'failed' ? 1 : 0),
+          error_message: stepStatus === 'failed' || stepStatus === 'plan_failed' ? finalResult : null
+        };
+        
+        // Solo marcar completed_at si realmente se completó
+        if (stepStatus === 'completed') {
+          updatedStep.completed_at = nowISO;
+        } else if (stepStatus === 'failed' || stepStatus === 'plan_failed') {
+          updatedStep.completed_at = null; // Limpiar si falló
         }
-      });
-      planUpdateData.results = updatedResults;
-    } else {
-      // Si no hay structure de results, crear una básica
-      planUpdateData.results = {
-        plan: {
-          title: plan.title,
-          phases: [{
-            title: "Execution",
-            steps: [{
-              id: currentStep.id,
-              title: currentStep.title,
-              description: currentStep.description,
-              status: stepStatus === 'completed' ? 'completed' : 
-                      stepStatus === 'failed' || stepStatus === 'plan_failed' ? 'failed' : 
-                      stepStatus === 'canceled' ? 'cancelled' : 'in_progress',
-              order: 1,
-              result: finalResult,
-              completed_at: stepStatus === 'completed' ? new Date().toISOString() : null
-            }]
-          }]
-        }
-      };
-    }
+        
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step ${step.id} updated: status=${updatedStep.status}, duration=${executionDuration}s`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step ${step.id} details: stepStatus=${stepStatus}, finalResult=${finalResult.substring(0, 100)}...`);
+        return updatedStep;
+      }
+      return step;
+    });
+    
+    planUpdateData.steps = updatedSteps;
 
     // Calcular progreso basado en steps completados
-    const allStepsInResults = planUpdateData.results.plan.phases.flatMap((phase: any) => phase.steps || []);
-    const completedStepsCount = allStepsInResults.filter((step: any) => step.status === 'completed').length;
-    const totalStepsCount = allStepsInResults.length;
+    const allStepsInPlan = updatedSteps;
+    const completedStepsCount = allStepsInPlan.filter((step: any) => step.status === 'completed').length;
+    const totalStepsCount = allStepsInPlan.length;
     
     planUpdateData.steps_completed = completedStepsCount;
     planUpdateData.steps_total = totalStepsCount;
@@ -1223,26 +1325,116 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
 
     // Determinar status del plan basado en steps
     const allCompleted = completedStepsCount === totalStepsCount;
-    const anyFailed = allStepsInResults.some((step: any) => step.status === 'failed');
+    const anyFailed = allStepsInPlan.some((step: any) => step.status === 'failed');
     
-    if (stepStatus === 'completed' && allCompleted) {
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan status check: stepStatus=${stepStatus}, allCompleted=${allCompleted}, completedStepsCount=${completedStepsCount}, totalStepsCount=${totalStepsCount}`);
+    
+    // 🎯 LÓGICA SIMPLIFICADA: Si todos los steps están completados, el plan está completado
+    if (allCompleted) {
       planUpdateData.status = 'completed';
       planUpdateData.completed_at = new Date().toISOString();
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Plan marked as COMPLETED - all ${totalStepsCount} steps finished`);
     } else if (stepStatus === 'failed' || stepStatus === 'plan_failed' || anyFailed) {
       planUpdateData.status = 'failed';
       planUpdateData.failed_at = new Date().toISOString();
       planUpdateData.failure_reason = finalResult;
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Plan marked as FAILED - reason: ${finalResult}`);
     } else if (stepStatus === 'canceled') {
       planUpdateData.status = 'cancelled';
       planUpdateData.completed_at = new Date().toISOString();
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⏸️ Plan marked as CANCELLED`);
     } else {
       planUpdateData.status = 'in_progress';
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔄 Plan continues as IN_PROGRESS - ${completedStepsCount}/${totalStepsCount} steps completed`);
     }
 
-    await supabaseAdmin
+    // 🔄 FETCH LATEST VERSION: Obtener la versión más reciente del plan antes de actualizar
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Fetching latest version of plan ${effective_plan_id} before updating...`);
+    
+    const { data: latestPlan, error: fetchError } = await supabaseAdmin
+      .from('instance_plans')
+      .select('*')
+      .eq('id', effective_plan_id)
+      .single();
+    
+    if (fetchError || !latestPlan) {
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ Error fetching latest plan:`, fetchError);
+      throw new Error(`Failed to fetch latest plan version: ${fetchError?.message}`);
+    }
+    
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Latest plan status: ${latestPlan.status}, steps: ${latestPlan.steps?.length || 0}`);
+    
+    // Merge con la versión más reciente - usar los steps más actuales de la DB
+    const latestSteps = latestPlan.steps || [];
+    
+    // Actualizar solo el step actual en la versión más reciente
+    const finalUpdatedSteps = latestSteps.map((step: any) => {
+      if (step.id === currentStep.id) {
+        // Usar la actualización que preparamos
+        const updatedStep = updatedSteps.find(s => s.id === currentStep.id);
+        return updatedStep || step;
+      }
+      return step;
+    });
+    
+    // Recalcular métricas basadas en la versión más reciente
+    const latestCompletedSteps = finalUpdatedSteps.filter((step: any) => step.status === 'completed');
+    const latestTotalSteps = finalUpdatedSteps.length;
+    const latestAllCompleted = latestCompletedSteps.length === latestTotalSteps;
+    
+    // Actualizar planUpdateData con métricas recalculadas
+    planUpdateData.steps = finalUpdatedSteps;
+    planUpdateData.steps_completed = latestCompletedSteps.length;
+    planUpdateData.steps_total = latestTotalSteps;
+    planUpdateData.progress_percentage = Math.round((latestCompletedSteps.length / latestTotalSteps) * 100);
+    
+    // Recalcular status del plan basado en la versión más reciente
+    const latestAnyFailed = finalUpdatedSteps.some((step: any) => step.status === 'failed');
+    
+    if (latestAllCompleted) {
+      planUpdateData.status = 'completed';
+      planUpdateData.completed_at = new Date().toISOString();
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Plan marked as COMPLETED - all ${latestTotalSteps} steps finished (latest version)`);
+    } else if (stepStatus === 'failed' || stepStatus === 'plan_failed' || latestAnyFailed) {
+      planUpdateData.status = 'failed';
+      planUpdateData.failed_at = new Date().toISOString();
+      planUpdateData.failure_reason = finalResult;
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Plan marked as FAILED - reason: ${finalResult}`);
+    } else if (stepStatus === 'canceled') {
+      planUpdateData.status = 'cancelled';
+      planUpdateData.completed_at = new Date().toISOString();
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⏸️ Plan marked as CANCELLED`);
+    } else {
+      planUpdateData.status = 'in_progress';
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔄 Plan continues as IN_PROGRESS - ${latestCompletedSteps.length}/${latestTotalSteps} steps completed (latest version)`);
+    }
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ About to update plan ${effective_plan_id} with latest version:`, {
+      status: planUpdateData.status,
+      steps_completed: planUpdateData.steps_completed,
+      steps_total: planUpdateData.steps_total,
+      progress_percentage: planUpdateData.progress_percentage,
+      updated_steps_count: finalUpdatedSteps.length
+    });
+    
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Current step update summary (latest version):`, {
+      step_id: currentStep.id,
+      old_status: currentStep.status,
+      new_status: finalUpdatedSteps.find((s: any) => s.id === currentStep.id)?.status,
+      stepStatus: stepStatus,
+      finalResult: finalResult.substring(0, 200)
+    });
+
+    const updateResult = await supabaseAdmin
       .from('instance_plans')
       .update(planUpdateData)
       .eq('id', effective_plan_id);
+      
+    if (updateResult.error) {
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ Error updating plan:`, updateResult.error);
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan updated successfully`);
+    }
 
     // 9.1. Manejar estados especiales ----------------------------------------
     if (stepStatus === 'plan_failed') {
@@ -1331,9 +1523,17 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
     }
 
     // 10. Guardar el resultado final del step --------------------------------------
-    // Para el log final, usar siempre el assistant_message si está disponible
-    const finalStructuredResponse = extractStructuredResponse(text || '');
-    const finalLogMessage = finalStructuredResponse ? finalStructuredResponse.assistant_message : finalResult;
+    // Para el log final, priorizar structured output del schema
+    let finalLogMessage = finalResult;
+    let finalStructuredResponse = null;
+    
+    if (output && output.event && output.assistant_message) {
+      finalStructuredResponse = output;
+      finalLogMessage = output.assistant_message;
+    } else {
+      finalStructuredResponse = extractStructuredResponse(text || '');
+      finalLogMessage = finalStructuredResponse ? finalStructuredResponse.assistant_message : finalResult;
+    }
     
     await supabaseAdmin.from('instance_logs').insert({
       log_type: 'agent_action',
@@ -1358,7 +1558,7 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
       command_id: plan.command_id,
     });
 
-    // 11. Usar las métricas ya calculadas del plan ----------------------------
+    // 11. Usar las métricas ya calculadas del plan (basadas en la versión más reciente) ----------------------------
     const newStepsCompleted = planUpdateData.steps_completed || 0;
     const totalSteps = planUpdateData.steps_total || 1;
     const progressPercentage = planUpdateData.progress_percentage || 0;
@@ -1366,14 +1566,17 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan progress: ${progressPercentage}% (${newStepsCompleted}/${totalSteps} steps, status: ${stepStatus})`);
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [${remoteInstance.id}]: Plan step executed with status: ${stepStatus}`);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Step "${currentStep.title}" (${currentStep.id}) completed with result: ${finalResult.substring(0, 100)}...`);
 
-    // Verificar si el plan está completado o en estados especiales
-    const isPlanCompleted = stepStatus === 'completed';
+    // Verificar si el plan está completado o en estados especiales - usar métricas de la versión más reciente
+    const isPlanCompleted = (planUpdateData.status === 'completed'); // 🎯 Basado en el status calculado de la versión más reciente
     const isPlanFailed = stepStatus === 'plan_failed' || stepStatus === 'failed';
     const isNewPlanRequired = stepStatus === 'new_plan_required';
     const isNewSession = stepStatus === 'new_session';
     const isUserAttentionRequired = stepStatus === 'user_attention_required';
     const isSessionNeeded = stepStatus === 'session_needed';
+    
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Final plan status evaluation: isPlanCompleted=${isPlanCompleted} (${completedStepsCount}/${totalSteps}), stepStatus=${stepStatus}`);
 
     // Extraer información de sesión si es necesaria
     let sessionRequest = null;
@@ -1432,8 +1635,14 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
           id: currentStep.id,
           order: currentStep.order,
           title: currentStep.title,
-          status: stepStatus,
+          status: stepStatus === 'completed' ? 'completed' : 
+                  stepStatus === 'failed' || stepStatus === 'plan_failed' ? 'failed' : 
+                  stepStatus === 'canceled' ? 'cancelled' : 'in_progress',
           result: finalResult,
+          actual_output: finalResult,
+          duration_seconds: Math.round((Date.now() - executionStartTime) / 1000),
+          completed_at: stepStatus === 'completed' ? new Date().toISOString() : null,
+          started_at: new Date().toISOString(),
         },
         plan_completed: isPlanCompleted,
         plan_failed: isPlanFailed,
@@ -1514,6 +1723,10 @@ const { steps, text, usage } = executionResult as any; // Type assertion para re
           title: currentStep.title,
           status: 'failed',
           result: `Error: ${err.message}`,
+          actual_output: `Error: ${err.message}`,
+          error_message: err.message,
+          completed_at: null,
+          started_at: new Date().toISOString(),
         } : null,
         plan_completed: false,
         plan_failed: true,
