@@ -121,6 +121,21 @@ export class DeepResearchService {
         };
       }
 
+      // Validar y ajustar el objetivo si es demasiado largo
+      if (operation.objective && operation.objective.length > 300) {
+        console.log(`⚠️ [executeSearchOperation] Truncando objetivo de ${operation.objective.length} a 300 caracteres`);
+        operation.objective = operation.objective.substring(0, 297) + '...';
+      }
+
+      // Validar y ajustar search_queries si son demasiado largas
+      operation.search_queries = operation.search_queries.map((query: string, index: number) => {
+        if (query.length > 200) {
+          console.log(`⚠️ [executeSearchOperation] Truncando query ${index + 1} de ${query.length} a 200 caracteres`);
+          return query.substring(0, 197) + '...';
+        }
+        return query;
+      });
+
       console.log(`🔍 Ejecutando operación de búsqueda con ${operation.search_queries.length} consultas`);
 
       // Usar función directa en lugar de llamada HTTP
@@ -227,7 +242,28 @@ export class DeepResearchService {
       const dataAnalystAgent = await this.findDataAnalystAgent(siteId);
       
       if (!dataAnalystAgent) {
-        throw new Error('No se encontró un agente con role "Data Analyst" para este sitio');
+        const endTime = Date.now();
+        const executionTime = `${((endTime - startTime) / 1000).toFixed(2)}s`;
+        
+        return {
+          success: false,
+          siteId,
+          researchTopic,
+          siteName: 'Unknown',
+          siteUrl: '',
+          operations: [],
+          operationResults: [],
+          analysis: null,
+          insights: [],
+          recommendations: [],
+          commandId: undefined,
+          status: 'failed',
+          message: 'No se encontró un agente con role "Data Analyst" para este sitio',
+          agent_id: undefined,
+          errors: ['No se encontró un agente con role "Data Analyst" para este sitio'],
+          executionTime,
+          completedAt: new Date().toISOString()
+        };
       }
 
       // Construir el contexto del comando sin deliverables
@@ -235,7 +271,16 @@ export class DeepResearchService {
       commandContext += `\nMAKE A RESEARCH PLAN FOR THE TOPIC, BE SURE TU INCLUDE A SEARCH QUERY FOR EACH DELIVERABLE, OR A SEARCH OPERATION FOR EACH DELIVERABLE WHEN REQUIERED
       \nEXAMPLE: A DELIVERABLE IS A COMPLEX TOPIC THAT WILL REQUIERE SEVERAL CONSULTS AND A SPECIFIC PLAN TO GET RELEVANT INFORMATION, THEN YOU WILL BUILD A SPECIFIC SEARCH OPERATION FOR THAT DELIVERABLE OR INFO.
       
-      IMPORTANT: Each operation's objective field MUST NOT exceed 400 characters. Keep operation descriptions concise and focused while maintaining clarity about the research goals.
+      CRITICAL LIMITS: 
+      - Each operation's objective field MUST NOT exceed 300 characters (strict limit for API compatibility)
+      - Keep search queries concise and focused (max 200 characters each)
+      - Use clear, direct language in objectives without unnecessary elaboration
+      - Focus on the core research question, not implementation details
+      
+      OBJECTIVE EXAMPLES:
+      - "Find latest AI industry trends in 2024" (42 chars)
+      - "Research competitor pricing strategies for SaaS" (48 chars)
+      - "Analyze market demand for sustainable products" (46 chars)
       `;
       if (context) {
         commandContext += `\nAdditional Context: ${context}`;

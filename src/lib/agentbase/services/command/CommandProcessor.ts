@@ -433,12 +433,9 @@ export class CommandProcessor {
         
         // Log del updatedCommand si existe
         if (targetProcessorResults.updatedCommand) {
-          console.log(`✅ [CommandProcessor] Comando actualizado tiene ${targetProcessorResults.updatedCommand.results?.length || 0} resultados`);
+          console.log(`✅ [CommandProcessor] Comando actualizado recibido correctamente`);
         } else {
           console.warn(`⚠️ [CommandProcessor] TargetProcessor no retornó comando actualizado!`);
-          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults keys: ${Object.keys(targetProcessorResults).join(', ')}`);
-          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults.updatedCommand type: ${typeof targetProcessorResults.updatedCommand}`);
-          console.log(`🔍 [CommandProcessor] DEBUG: targetProcessorResults.updatedCommand value: ${JSON.stringify(targetProcessorResults.updatedCommand)?.substring(0, 200)}...`);
         }
       } else {
         console.error(`❌ [CommandProcessor] Procesamiento de targets falló: ${targetProcessorResults.error}`);
@@ -449,7 +446,7 @@ export class CommandProcessor {
       
       // Si TargetProcessor no devolvió updatedCommand pero sí hay resultados, crear uno manualmente
       if (!targetProcessorResults.updatedCommand && targetProcessorResults.results && targetProcessorResults.results.length > 0) {
-        console.log(`🔧 [CommandProcessor] Creando updatedCommand manualmente con ${targetProcessorResults.results.length} resultados`);
+        console.log(`🔧 [CommandProcessor] Creando updatedCommand manualmente`);
         updatedCommand = {
           ...command,
           results: targetProcessorResults.results,
@@ -463,11 +460,9 @@ export class CommandProcessor {
         updatedCommand.agent_background = command.agent_background;
       }
       
-      // MODIFICACIÓN: No duplicar o mezclar resultados, usar directamente los del TargetProcessor
+      // Usar directamente los resultados del TargetProcessor
       if (targetProcessorResults.results && targetProcessorResults.results.length > 0) {
-        // Usar directamente los resultados del TargetProcessor
         updatedCommand.results = targetProcessorResults.results;
-        console.log(`🔄 [CommandProcessor] Usando directamente los ${targetProcessorResults.results.length} resultados de TargetProcessor`);
       }
       
       // Actualizar tokens
@@ -477,14 +472,12 @@ export class CommandProcessor {
       // Actualizar los resultados en base de datos a través del CommandService
       try {
         if (updatedCommand.results && updatedCommand.results.length > 0) {
-          // MODIFICACIÓN: Actualizar directamente el comando completo en lugar de solo los resultados
-          // MODIFICACIÓN: NO incluir agent_background en la actualización para evitar sobrescribir resultados
           await this.commandService.updateCommand(command.id, {
             results: updatedCommand.results,
             input_tokens: updatedCommand.input_tokens,
             output_tokens: updatedCommand.output_tokens
           });
-          console.log(`💾 [CommandProcessor] ${updatedCommand.results.length} resultados actualizados en base de datos`);
+          console.log(`💾 [CommandProcessor] Resultados actualizados en base de datos`);
         }
       } catch (error) {
         console.error(`❌ [CommandProcessor] Error al actualizar resultados en BD:`, error);

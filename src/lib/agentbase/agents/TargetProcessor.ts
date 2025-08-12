@@ -264,25 +264,21 @@ export class TargetProcessor extends Base {
       // Crear una copia independiente de los resultados para el comando
       const resultsCopy = JSON.parse(JSON.stringify(results));
       
-      // Log de estructura de resultados copiados
-      console.log(`[TargetProcessor] ESTRUCTURA DE RESULTADOS COPIADOS: ${resultsCopy.map((r: any, i: number) => {
-        return `Resultado ${i}: ${Object.keys(r).join(',')}`;
-      }).join(' | ')}`);
+
       
       // Asegurar que el agent_background se mantenga en el comando actualizado si existe
+      // Crear una copia limpia del comando para evitar referencias circulares
       const updatedCommand = {
         ...command,
-        results: resultsCopy
+        results: resultsCopy,
+        updated_at: new Date().toISOString()
       };
       
-      console.log(`[TargetProcessor] Asignando resultados para comando ${command.id}: ${resultsCopy.length} resultados`);
-      console.log(`[TargetProcessor] Comando ahora tiene ${updatedCommand.results?.length || 0} resultados total`);
+
       
       // Verificar si el comando actualizado tiene resultados
       if (!updatedCommand.results || updatedCommand.results.length === 0) {
-        console.error(`[TargetProcessor] ⚠️ ALERTA: EL COMANDO ACTUALIZADO NO TIENE RESULTADOS. Original tenía ${command.results?.length || 0} y se añadieron ${resultsCopy.length}`);
-      } else {
-        console.log(`[TargetProcessor] ✅ El comando tiene ${updatedCommand.results.length} resultados después de la actualización`);
+        console.error(`[TargetProcessor] ⚠️ ALERTA: EL COMANDO ACTUALIZADO NO TIENE RESULTADOS`);
       }
       
       // Guardar en caché para futuras consultas
@@ -292,20 +288,10 @@ export class TargetProcessor extends Base {
         results: resultsCopy
       });
       
-      console.log(`[TargetProcessor] Resultados actualizados en caché: ${resultsCopy.length} resultados totales`);
-      
-      // Verificar que se guardaron en caché
-      const cachedCmd = CommandCache.getCachedCommand(command.id);
-      if (cachedCmd && cachedCmd.results) {
-        console.log(`[TargetProcessor] ✅ Verificación: Caché tiene ${cachedCmd.results.length} resultados`);
-      } else {
-        console.error(`[TargetProcessor] ⚠️ ALERTA: NO SE GUARDARON RESULTADOS EN CACHÉ`);
-      }
+
       
       
-      // Verificación final de estructura de resultados en la respuesta
-      console.log(`[TargetProcessor] VERIFICACIÓN FINAL - RESULTADOS EN RESPUESTA: ${resultsCopy.length} elementos`);
-      console.log(`[TargetProcessor] VERIFICACIÓN FINAL - UPDATEDCOMMAND: ${updatedCommand.results?.length || 0} elementos`);
+
       
       // Asegurar que los resultados no estén vacíos antes de retornarlos
       if (resultsCopy.length === 0) {
@@ -329,15 +315,9 @@ export class TargetProcessor extends Base {
         console.log(`[TargetProcessor] ${defaultResults.length} resultados mínimos creados preservando estructura de targets`);
       }
       
-      // Final verification before returning
-      console.log(`[TargetProcessor] PREPARANDO RETORNO:`);
-      console.log(`[TargetProcessor] - status: completed`);
-      console.log(`[TargetProcessor] - results length: ${resultsCopy.length}`);
-      console.log(`[TargetProcessor] - updatedCommand exists: ${!!updatedCommand}`);
-      console.log(`[TargetProcessor] - updatedCommand.results length: ${updatedCommand?.results?.length || 0}`);
-      console.log(`[TargetProcessor] - inputTokens: ${tokenUsage.inputTokens}`);
-      console.log(`[TargetProcessor] - outputTokens: ${tokenUsage.outputTokens}`);
+
       
+      // Crear el resultado final
       const finalResult = {
         status: 'completed' as const,
         results: resultsCopy,
@@ -346,10 +326,7 @@ export class TargetProcessor extends Base {
         outputTokens: tokenUsage.outputTokens
       };
       
-      // Verificación final del objeto que se va a retornar
-      console.log(`[TargetProcessor] OBJETO FINAL A RETORNAR:`);
-      console.log(`[TargetProcessor] - Object keys: ${Object.keys(finalResult).join(', ')}`);
-      console.log(`[TargetProcessor] - updatedCommand in final result: ${!!finalResult.updatedCommand}`);
+
       
       // Return result
       return finalResult;

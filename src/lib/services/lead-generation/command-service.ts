@@ -27,39 +27,17 @@ export async function createLeadGenerationCommand(
   webhook?: { url: string; secret?: string; metadata?: any }
 ): Promise<string> {
   
+  // ESTRUCTURA SIMPLIFICADA: Solo los campos que realmente necesitamos en el resultado
+  // Esto evita confusión y asegura consistencia entre target y results
   const targetConfig = {
-    target_city: null,
-    target_region: null,
-    target_country: null,
+    target_city: "to be determined by agent",
+    target_region: "to be determined by agent", 
+    target_country: "to be determined by agent",
     search_topic: searchTopic,
-    leads_count: maxLeads,
-    segment_analysis: {
-      total_segments: 0,
-      converted_leads_analyzed: 0,
-      non_converted_leads_analyzed: 0
-    },
-    location_guidance: {
-      instruction: "Determine target location from business background/context. If no specific location mentioned, use best judgment for business type.",
-      previously_searched_cities: usedCities,
-      previously_searched_regions: usedRegions,
-      region_specification: {
-        requirement: "Use SPECIFIC CITY SUBSECTIONS, not broad commercial regions",
-        correct_examples: [
-          "Zona Centro (city center area)",
-          "Colonia Roma (specific neighborhood/colony)",
-          "Distrito Financiero (specific district)",
-          "Barrio Gótico (specific neighborhood)"
-        ],
-        incorrect_examples: [
-          "Bajío (too broad, commercial region)",
-          "Norte (too vague, directional region)",
-          "Sur (too vague, directional region)",
-          "Región Metropolitana (too broad)"
-        ],
-        strategy: "For large cities (>500k population): Always specify a city subsection. Use local naming conventions."
-      }
-    }
+    leads_count: maxLeads
   };
+  
+
   
   const command = CommandFactory.createCommand({
     task: "generate qualified sales leads",
@@ -69,7 +47,34 @@ export async function createLeadGenerationCommand(
     description: `Generate a lead reserach plan for ${maxLeads} qualified leads focusing on ${searchTopic}. Determine location from business background.`,
     targets: [targetConfig],
     tools,
-    context: contextMessage,
+    context: contextMessage + `
+
+🎯 LOCATION DETERMINATION INSTRUCTIONS:
+- Determine target_city, target_region, and target_country from business background/context
+- If no specific location mentioned, use best judgment for business type
+- Use SPECIFIC CITY SUBSECTIONS, not broad commercial regions
+- Correct examples: "Zona Centro", "Colonia Roma", "Distrito Financiero", "Barrio Gótico"
+- Incorrect examples: "Bajío", "Norte", "Sur", "Región Metropolitana"
+- For large cities (>500k population): Always specify a city subsection using local naming conventions
+- Previously searched cities: ${JSON.stringify(usedCities)}
+- Previously searched regions: ${JSON.stringify(usedRegions)}
+
+📊 EXPECTED OUTPUT STRUCTURE:
+Return exactly the target structure with real values filled in:
+{
+  "target_city": "actual determined city name",
+  "target_region": "actual determined region/subsection name", 
+  "target_country": "actual determined country name",
+  "search_topic": "refined search topic based on analysis",
+  "leads_count": ${maxLeads},
+  "segment_analysis": {
+    "total_segments": actual number,
+    "converted_leads_analyzed": actual number,
+    "non_converted_leads_analyzed": actual number,
+    "insights": "detailed insights from analysis"
+  },
+  "location_guidance": "explanation of location choice and strategy"
+}`,
     supervisor: [
       {
         agent_role: "lead_quality_analyst",
@@ -109,21 +114,67 @@ export async function createLeadGenerationCommand(
 export function extractCommandResults(executedCommand: any, searchTopic: string): {
   determinedCity: string | null,
   determinedRegion: string | null,
-  determinedTopic: string
+  determinedTopic: string,
+  determinedCountry: string | null,
+  determinedLeadsCount: number | null
 } {
   const results = executedCommand.results || [];
-  const targetResult = results.find((r: any) => r.target_city !== undefined || r.target_region !== undefined) || results[0];
   
-  const determinedCity = targetResult?.target_city || null;
-  const determinedRegion = targetResult?.target_region || null;
+
+  
+  // Buscar el resultado que contenga los campos de ubicación
+  const targetResult = results.find((r: any) => 
+    r.target_city !== undefined || r.target_region !== undefined || r.target_country !== undefined
+  ) || results[0];
+  
+  if (!targetResult) {
+    return {
+      determinedCity: null,
+      determinedRegion: null,
+      determinedTopic: searchTopic,
+      determinedCountry: null,
+      determinedLeadsCount: null
+    };
+  }
+  
+  // Extraer valores, manejando tanto strings como valores "to be determined"
+  let determinedCity = targetResult?.target_city || null;
+  let determinedRegion = targetResult?.target_region || null;
+  let determinedCountry = targetResult?.target_country || null;
   const determinedTopic = targetResult?.search_topic || searchTopic;
+  let determinedLeadsCount = targetResult?.leads_count || null;
   
-  console.log(`🎯 Valores determinados por el agente: city=${determinedCity}, region=${determinedRegion}, topic=${determinedTopic}`);
+  // Limpiar valores placeholder que el agente no pudo determinar
+  if (determinedCity && (typeof determinedCity === 'string' && 
+      (determinedCity.includes('to be determined') || determinedCity.includes('placeholder')))) {
+    determinedCity = null;
+  }
+  
+  if (determinedRegion && (typeof determinedRegion === 'string' && 
+      (determinedRegion.includes('to be determined') || determinedRegion.includes('placeholder')))) {
+    determinedRegion = null;
+  }
+  
+  if (determinedCountry && (typeof determinedCountry === 'string' && 
+      (determinedCountry.includes('to be determined') || determinedCountry.includes('placeholder')))) {
+    determinedCountry = null;
+  }
+  
+  // Validar leads_count como número
+  if (determinedLeadsCount && typeof determinedLeadsCount === 'number' && determinedLeadsCount > 0) {
+    // Mantener el valor si es válido
+  } else {
+    determinedLeadsCount = null;
+  }
+  
+  console.log(`🎯 Valores determinados por el agente: city=${determinedCity}, region=${determinedRegion}, country=${determinedCountry}, topic=${determinedTopic}, leadsCount=${determinedLeadsCount}`);
   
   return {
     determinedCity,
     determinedRegion,
-    determinedTopic
+    determinedTopic,
+    determinedCountry,
+    determinedLeadsCount
   };
 }
 

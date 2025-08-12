@@ -24,11 +24,16 @@ function extractUrls(text: string): string[] {
 
 export async function POST(request: Request) {
   try {
+    console.log('🚀 [deepResearch] Iniciando procesamiento de request');
+    
     const body = await request.json();
+    console.log('📋 [deepResearch] Body recibido:', JSON.stringify(body, null, 2));
+    
     const { site_id, research_topic, research_depth = 'comprehensive', context, deliverables } = body;
     
     // Validar parámetros requeridos
     if (!site_id) {
+      console.log('❌ [deepResearch] Error: site_id faltante');
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required' } },
         { status: 400 }
@@ -36,6 +41,7 @@ export async function POST(request: Request) {
     }
     
     if (!isValidUUID(site_id)) {
+      console.log('❌ [deepResearch] Error: site_id no es un UUID válido:', site_id);
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } },
         { status: 400 }
@@ -43,19 +49,17 @@ export async function POST(request: Request) {
     }
     
     if (!research_topic) {
+      console.log('❌ [deepResearch] Error: research_topic faltante');
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'research_topic is required' } },
         { status: 400 }
       );
     }
 
-    // Validar que el research_topic no exceda 400 caracteres
-    if (research_topic.length > 400) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'research_topic must not exceed 400 characters' } },
-        { status: 400 }
-      );
-    }
+    // El research_topic puede ser largo, no hay límite en el input
+    
+    console.log('✅ [deepResearch] Validaciones iniciales pasadas');
+    console.log('📝 [deepResearch] Parámetros:', { site_id, research_topic: research_topic.substring(0, 100) + '...', research_depth });
     
     // Procesar deliverables: convertir objeto a string o mantener string
     let processedDeliverables = deliverables;
@@ -115,6 +119,20 @@ Evaluate each URL's importance to the research goals before creating dedicated s
       processedDeliverables
     );
     
+    // Si el servicio devuelve un error específico sobre el agente, devolver 404
+    if (!result.success && result.message && result.message.includes('No se encontró un agente con role "Data Analyst"')) {
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'DATA_ANALYST_NOT_FOUND', 
+            message: result.message 
+          } 
+        },
+        { status: 404 }
+      );
+    }
+    
     // Retornar respuesta simplificada con estructura estándar como otras rutas de agentes
     return NextResponse.json({
       success: result.success,
@@ -136,7 +154,23 @@ Evaluate each URL's importance to the research goals before creating dedicated s
     });
     
   } catch (error) {
-    console.error('Error en ruta deepResearch:', error);
+    console.error('❌ [deepResearch] Error en ruta deepResearch:', error);
+    
+    // Si es un error de parsing JSON, devolver 400
+    if (error instanceof SyntaxError && error.message.includes('JSON')) {
+      console.error('❌ [deepResearch] Error de parsing JSON:', error.message);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_JSON', 
+            message: 'Invalid JSON in request body' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
     return NextResponse.json(
       { 
         success: false, 

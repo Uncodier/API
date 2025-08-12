@@ -258,7 +258,7 @@ export async function POST(request: Request) {
     
     // 10. Extraer los valores determinados por el agente
     console.log(`🎯 Extrayendo resultados del comando. Estado: ${executedCommand?.status || 'unknown'}, Resultados: ${executedCommand?.results?.length || 0}`);
-    const { determinedCity, determinedRegion, determinedTopic } = extractCommandResults(executedCommand, searchTopic);
+    const { determinedCity, determinedRegion, determinedTopic, determinedCountry, determinedLeadsCount } = extractCommandResults(executedCommand, searchTopic);
     
     // 11. Retornar respuesta con valores determinados por el agente
     console.log(`✅ Proceso completado exitosamente para ${companyData.name}. Enviando respuesta con city: ${determinedCity}, region: ${determinedRegion}, topic: ${determinedTopic}`);
@@ -275,7 +275,9 @@ export async function POST(request: Request) {
         job_priority: priority,
         target_city: determinedCity,
         target_region: determinedRegion,
+        target_country: determinedCountry,
         search_topic: determinedTopic,
+        leads_count_determined: determinedLeadsCount,
         personalized_for_company: {
           name: companyData.name,
           industry: companyData.industry,
