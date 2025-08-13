@@ -369,6 +369,22 @@ AVAILABLE RESPONSE TYPES:
 - "session_acquired" - Step that successfully establishes authentication
 - "step_canceled" - Step that might be skipped if conditions aren't met
 
+🔐 CRITICAL SESSION SAVE REQUIREMENT:
+MANDATORY: After ANY authentication/login step (type: "authentication" or expected_response_type: "session_acquired"), you MUST automatically include a session save step immediately after.
+
+SESSION SAVE STEP FORMAT:
+{
+  "title": "Save authentication session",
+  "description": "Automatically save the current authentication session to database and Scrapybara for future use",
+  "step_number": [next_number],
+  "automation_level": "automated",
+  "estimated_duration": "1 minute",
+  "expected_response_type": "step_completed",
+  "type": "session_save",
+  "required_authentication": "current_session",
+  "human_intervention_reason": null
+}
+
 MANDATORY: Predict which steps will likely need human intervention and mark them as "user_attention_required" in advance.
 
 EXAMPLES OF STEPS REQUIRING HUMAN INTERVENTION:

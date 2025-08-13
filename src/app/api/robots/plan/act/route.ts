@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
 import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
+import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 
 // Custom system prompt for plan execution with step completion tracking
 const PLAN_EXECUTION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
@@ -42,6 +43,7 @@ You MUST provide a structured response using the defined schema. This will be au
 🔄 **plan_new_required** - When you need a completely different approach
 🔐 **session_acquired** - When you successfully get authentication
 🔐 **session_needed** - When you need authentication that doesn't exist
+💾 **session_saved** - When authentication session is successfully saved
 ⚠️ **user_attention_required** - When human intervention is needed
 
 **EXAMPLE JSON OUTPUTS:**
@@ -79,6 +81,13 @@ You MUST provide a structured response using the defined schema. This will be au
   "event": "user_attention_required",
   "step": 3,
   "assistant_message": "A CAPTCHA has appeared on the login page that requires human verification. Please solve the CAPTCHA manually to continue."
+}
+
+💾 Session saved:
+{
+  "event": "session_saved",
+  "step": 4,
+  "assistant_message": "Authentication session has been successfully saved to database and Scrapybara for future use. Session ID: auth_session_12345"
 }
 
 **CRITICAL INSTRUCTIONS FOR PLAN EXECUTION:**
@@ -120,6 +129,54 @@ You MUST provide a structured response using the defined schema. This will be au
 
 🔥 CRITICAL: You MUST return JSON response the moment you complete the current step. Do not execute additional steps. The system expects ONE step completion per request.
 
+**🔐 SPECIAL HANDLING FOR SESSION SAVE STEPS:**
+
+When you encounter a step with type: "session_save", you MUST:
+1. Verify that there is an active authentication session in the current browser
+2. Call the session save API endpoint: /api/robots/auth
+3. Provide the required parameters: site_id, remote_instance_id, auth_type
+4. Wait for successful response from the API
+5. Return "session_saved" event type with the session details
+
+SESSION SAVE STEP EXECUTION:
+- Use bash commands to call the API endpoint with curl
+- Extract site_id and instance_id from the current context
+- Use 'cookies' as default auth_type unless specified otherwise
+- Handle API errors gracefully and return "step_failed" if save fails
+
+EXAMPLE SESSION SAVE EXECUTION:
+Use bash tool to execute curl command:
+curl -X POST "http://localhost:3000/api/robots/auth" -H "Content-Type: application/json" -d '{"site_id": "uuid-here", "remote_instance_id": "instance-id", "auth_type": "cookies"}'
+
+**🔐 CRITICAL LOGIN VERIFICATION REQUIREMENTS:**
+
+After ANY login/authentication step, you MUST:
+1. **VERIFY LOGIN SUCCESS:** Take a screenshot and examine the page to confirm you are successfully logged in
+2. **CHECK FOR LOGIN INDICATORS:** Look for user profile elements, dashboard elements, or other clear signs of successful authentication
+3. **WAIT FOR USER CONFIRMATION:** If login verification is unclear or fails, use "user_attention_required" event and wait for user confirmation before proceeding to the next step
+4. **INCLUDE PREVIOUS STEPS CONTEXT:** Reference what authentication steps have been attempted previously to avoid repeating failed approaches
+
+LOGIN VERIFICATION CHECKLIST:
+- ✅ Screenshot shows logged-in state (no login forms visible)
+- ✅ User-specific elements are visible (profile, dashboard, navigation menu)
+- ✅ No error messages or login failures detected
+- ✅ URL indicates successful login (dashboard, home, etc.)
+- ❌ If any verification fails, STOP and request user attention
+
+PREVIOUS STEPS CONTEXT:
+You have access to previous steps attempted in this plan. Before executing any step, review:
+- What authentication methods have been tried before
+- Which platforms have been accessed previously
+- What errors or failures occurred in previous attempts
+- Current authentication status from previous steps
+
+**MANDATORY LOGIN FLOW:**
+1. Attempt login using provided method
+2. IMMEDIATELY verify login success visually
+3. If verification unclear: use "user_attention_required" and wait
+4. Only proceed to next step after confirmed successful login
+5. Reference previous authentication attempts to avoid repetition
+
 🚨🚨🚨 ABSOLUTE REQUIREMENT: EVERY RESPONSE MUST USE STRUCTURED OUTPUT 🚨🚨🚨
 
 NO EXCEPTIONS. NO ALTERNATIVES. NO EXCUSES.
@@ -141,6 +198,7 @@ const AgentResponseSchema = z.object({
     'plan_new_required',
     'session_acquired',
     'session_needed',
+    'session_saved',
     'user_attention_required'
   ]).describe('Tipo de evento que reporta el agente'),
   step: z.number().describe('Número del step actual que se está ejecutando'),
@@ -584,6 +642,99 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
 
+    // ✅ VERIFICAR ESTADO DE INSTANCIA REMOTA ANTES DE CONTINUAR
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Verificando estado de instancia remota: ${instance.status}`);
+    
+    // Si la instancia no está en running, verificar el estado del plan antes de decidir qué hacer
+    if (instance.status !== 'running') {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Instancia no está en running (estado: ${instance.status})`);
+      
+      // Obtener el plan para determinar si está completo o no
+      let planForStatusCheck;
+      if (instance_plan_id) {
+        const planResult = await supabaseAdmin
+          .from('instance_plans')
+          .select('*')
+          .eq('id', instance_plan_id)
+          .single();
+        planForStatusCheck = planResult.data;
+      } else {
+        // Buscar el plan más reciente para esta instancia
+        const planResult = await supabaseAdmin
+          .from('instance_plans')
+          .select('*')
+          .eq('instance_id', instance_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        planForStatusCheck = planResult.data;
+      }
+      
+      if (planForStatusCheck) {
+        // Verificar si el plan ya estaba completo
+        if (planForStatusCheck.status === 'completed') {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Plan ya estaba completo, devolviendo estado actual`);
+          return NextResponse.json({ 
+            data: {
+              waiting_for_instructions: true,
+              plan_completed: true,
+              message: `Plan already completed. Instance is ${instance.status}.`,
+              plan_progress: {
+                completed_steps: planForStatusCheck.steps_completed || 0,
+                total_steps: planForStatusCheck.steps_total || 0,
+                percentage: planForStatusCheck.progress_percentage || 100
+              },
+              instance_status: instance.status,
+              plan_status: planForStatusCheck.status
+            }
+          }, { status: 200 });
+        } else {
+          // Plan no estaba completo e instancia está apagada - marcar plan como failed
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Plan incompleto e instancia apagada, marcando plan como failed`);
+          
+          await supabaseAdmin
+            .from('instance_plans')
+            .update({ 
+              status: 'failed',
+              failed_at: new Date().toISOString(),
+              failure_reason: `Instance is ${instance.status}, cannot continue plan execution`,
+              updated_at: new Date().toISOString()
+            })
+            .eq('id', planForStatusCheck.id);
+          
+          return NextResponse.json({ 
+            data: {
+              waiting_for_instructions: false,
+              plan_completed: false,
+              plan_failed: true,
+              message: `Plan marked as failed. Instance is ${instance.status} and plan was incomplete.`,
+              failure_reason: `Instance is ${instance.status}, cannot continue plan execution`,
+              plan_progress: {
+                completed_steps: planForStatusCheck.steps_completed || 0,
+                total_steps: planForStatusCheck.steps_total || 0,
+                percentage: planForStatusCheck.progress_percentage || 0
+              },
+              instance_status: instance.status,
+              plan_status: 'failed'
+            }
+          }, { status: 200 });
+        }
+      } else {
+        // No hay plan, pero instancia no está running
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ No hay plan e instancia no está running`);
+        return NextResponse.json({ 
+          data: {
+            waiting_for_instructions: true,
+            plan_completed: false,
+            message: `No plan found and instance is ${instance.status}`,
+            instance_status: instance.status
+          }
+        }, { status: 200 });
+      }
+    }
+    
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Instancia verificada en estado running, continuando con ejecución`);
+
     // Si no se proporciona instance_plan_id, buscar el plan más reciente activo
     let planError;
     
@@ -778,7 +929,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Formatear sesiones como contexto
-    const sessionsContext = existingSessions && existingSessions.length > 0
+    let sessionsContext = existingSessions && existingSessions.length > 0
       ? `\n🔐 AVAILABLE AUTHENTICATION SESSIONS (${existingSessions.length} total):\n` +
         existingSessions.map((session, index) => 
           `${index + 1}. **${session.name}** (${session.domain})\n` +
@@ -838,10 +989,30 @@ export async function POST(request: NextRequest) {
     if (existingSessions && existingSessions.length > 0) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${existingSessions.length} existing authentication sessions for agent context`);
       
-      // TODO: Implementar carga automática de sesiones cuando se conozca el método correcto
-      // await remoteInstance.browser.loadAuth() or similar
+      // 🔐 Aplicar autenticación automáticamente con la sesión más reciente
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Attempting auto-authentication for site_id: ${plan.site_id}`);
+      const authResult = await autoAuthenticateInstance(instance.provider_instance_id, plan.site_id);
+      
+      if (authResult.success) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Browser authenticated successfully using session: ${authResult.session?.name}`);
+        
+        // Actualizar contexto de sesiones para incluir información de autenticación aplicada
+        sessionsContext += `\n🔐 AUTHENTICATION APPLIED: Successfully authenticated using "${authResult.session?.name}" (${authResult.session?.domain})\n`;
+      } else {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Auto-authentication failed: ${authResult.error}`);
+        // Continuar sin bloquear - el agente puede manejar la autenticación manualmente
+      }
     } else {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ No authentication sessions available - agent will handle auth as needed`);
+      
+      // Aún intentar autenticación automática por si hay sesiones disponibles
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Attempting auto-authentication anyway for site_id: ${plan.site_id}`);
+      const authResult = await autoAuthenticateInstance(instance.provider_instance_id, plan.site_id);
+      
+      if (authResult.success) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Unexpected authentication success using session: ${authResult.session?.name}`);
+        sessionsContext = `\n🔐 AUTHENTICATION APPLIED: Successfully authenticated using "${authResult.session?.name}" (${authResult.session?.domain})\n`;
+      }
     }
 
     // 4. Preparar herramientas (ahora sabemos que es UbuntuInstance) ---------------
@@ -882,14 +1053,28 @@ ${sessionsRequirementContext}
 
 END OF SESSIONS CONTEXT`;
 
-    // 7. Crear user prompt con SOLO el step actual ----------------------------------
+    // 7. Crear user prompt con contexto de pasos previos y step actual ----------------------------------
     const completedSteps = allSteps.filter((step: any) => ['completed', 'failed', 'blocked'].includes(step.status));
     const planCompletedPercentage = Math.round((completedSteps.length / allSteps.length) * 100);
+
+    // Preparar contexto de pasos previos para evitar repetición y proporcionar contexto
+    const previousStepsContext = allSteps
+      .filter((step: any) => step.order < currentStep.order)
+      .map((step: any) => {
+        const statusIcon = step.status === 'completed' ? '✅' : 
+                          step.status === 'failed' ? '❌' : 
+                          step.status === 'in_progress' ? '🔄' : '⏸️';
+        return `${statusIcon} Step ${step.order}: ${step.title} (${step.status})${step.actual_output ? ` - Result: ${step.actual_output.substring(0, 100)}...` : ''}`;
+      })
+      .join('\n');
 
     const planPrompt = `🎯 SINGLE STEP EXECUTION TASK
 
 PLAN TITLE: ${plan.title}
 PLAN PROGRESS: Step ${currentStep.order} of ${allSteps.length} (${planCompletedPercentage}% complete)
+
+📋 PREVIOUS STEPS CONTEXT:
+${previousStepsContext || 'No previous steps completed yet.'}
 
 🚨🚨🚨 YOU ARE WORKING ON ONE STEP ONLY 🚨🚨🚨
 
@@ -897,13 +1082,20 @@ CURRENT STEP: ${currentStep.order}
 STEP TITLE: ${currentStep.title}
 STEP DESCRIPTION: ${currentStep.description || currentStep.instructions || 'No description provided'}
 
-🛑 DO NOT THINK ABOUT OTHER STEPS
-🛑 DO NOT REFERENCE OTHER STEPS  
-🛑 DO NOT EXECUTE OTHER STEPS
-🛑 FOCUS ONLY ON THIS ONE STEP
+🧠 CONTEXT AWARENESS:
+- Review the previous steps above to understand what has been accomplished
+- Avoid repeating failed authentication attempts from previous steps
+- Build upon successful actions from previous steps
+- If previous login attempts failed, consider alternative approaches or request user attention
+
+🛑 DO NOT THINK ABOUT FUTURE STEPS
+🛑 DO NOT EXECUTE MULTIPLE STEPS
+🛑 FOCUS ONLY ON CURRENT STEP ${currentStep.order}
+🛑 BUT CONSIDER PREVIOUS STEPS CONTEXT
 
 📋 YOUR TASK:
 Execute the actions required to complete ONLY this step: "${currentStep.title}"
+Use the previous steps context to inform your approach and avoid repeating failures.
 
 🚨 MANDATORY COMPLETION RULE:
 The MOMENT you finish this step, you MUST provide a structured response with:
@@ -925,10 +1117,11 @@ The MOMENT you finish this step, you MUST provide a structured response with:
 ⚠️⚠️⚠️ CRITICAL ENFORCEMENT ⚠️⚠️⚠️
 
 1. Work ONLY on step ${currentStep.order}
-2. When step ${currentStep.order} is complete, IMMEDIATELY provide structured response
-3. DO NOT continue to any other step
-4. DO NOT execute multiple actions without reporting progress
-5. The structured response is MANDATORY and automatically validated
+2. Consider previous steps context to avoid repetition
+3. When step ${currentStep.order} is complete, IMMEDIATELY provide structured response
+4. DO NOT continue to any other step
+5. DO NOT execute multiple actions without reporting progress
+6. The structured response is MANDATORY and automatically validated
 
 STEP INSTRUCTIONS: ${currentStep.description || currentStep.instructions || 'Complete the step as described in the title'}
 
@@ -1014,6 +1207,10 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
                     stepStatus = 'session_needed';
                     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session needed: ${structuredResponse.assistant_message}`);
                     break;
+                  case 'session_saved':
+                    stepStatus = 'completed';
+                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] Session saved: ${structuredResponse.assistant_message}`);
+                    break;
                   case 'user_attention_required':
                     stepStatus = 'user_attention_required';
                     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [JSON] User attention required: ${structuredResponse.assistant_message}`);
@@ -1060,40 +1257,141 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
             }
 
             // Guardar en BD con referencia al step del plan
-            // Priorizar structured output del schema, luego manual extraction, luego texto
+            // PRIORIDAD: Siempre extraer assistant_message del structured output
             let logMessage = 'Executing plan step';
             let stepStructuredResponse = null;
             
+            // 1. Prioridad: Structured output del schema de Zod
             if (step.output && step.output.event && step.output.assistant_message) {
               stepStructuredResponse = step.output;
-              logMessage = step.output.assistant_message;
-            } else {
-              stepStructuredResponse = extractStructuredResponse(step.text || '');
-              logMessage = stepStructuredResponse ? stepStructuredResponse.assistant_message : (step.text || 'Executing plan step');
+              logMessage = step.output.assistant_message.trim();
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT_MESSAGE] From schema: ${logMessage.substring(0, 100)}...`);
+            } 
+            // 2. Fallback: Extracción manual del texto
+            else if (step.text) {
+              stepStructuredResponse = extractStructuredResponse(step.text);
+              if (stepStructuredResponse && stepStructuredResponse.assistant_message) {
+                logMessage = stepStructuredResponse.assistant_message.trim();
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT_MESSAGE] From extraction: ${logMessage.substring(0, 100)}...`);
+              } else {
+                // Si no hay structured response, usar el texto pero limitado
+                logMessage = step.text.trim().substring(0, 500) || 'Executing plan step';
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT_MESSAGE] Fallback to text: ${logMessage.substring(0, 100)}...`);
+              }
             }
             
-            await supabaseAdmin.from('instance_logs').insert({
-              log_type: 'tool_call',
+            // Primero crear un log principal del step (parent log)
+            const { data: parentLogData } = await supabaseAdmin.from('instance_logs').insert({
+              log_type: 'agent_action',
               level: 'info',
               message: logMessage,
+              step_id: `step_${currentStep.order}`,
+              tokens_used: step.usage ? {
+                promptTokens: step.usage.promptTokens || step.usage.input_tokens,
+                completionTokens: step.usage.completionTokens || step.usage.output_tokens,
+                totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
+              } : {},
               details: {
-                step: step,
-                tool_calls: step.toolCalls,
-                tool_results: step.toolResults,
-                usage: step.usage,
                 remote_instance_id: remoteInstance.id,
                 plan_id: effective_plan_id,
                 plan_title: plan.title,
                 detected_status: stepStatus,
-                structured_response: stepStructuredResponse, // Guardar la respuesta estructurada para debugging
-                raw_text: step.text, // Guardar el texto original para debugging
+                structured_response: stepStructuredResponse,
+                raw_text: step.text,
+                total_tool_calls: step.toolCalls?.length || 0,
               },
               instance_id: instance_id,
               site_id: plan.site_id,
               user_id: plan.user_id,
               agent_id: plan.agent_id,
               command_id: plan.command_id,
-            });
+            }).select().single();
+            
+            const parentLogId = parentLogData?.id;
+            
+            // Luego crear logs individuales para cada tool call, vinculados al parent
+            if (step.toolCalls && step.toolCalls.length > 0 && parentLogId) {
+              for (const toolCall of step.toolCalls) {
+                // Buscar el resultado correspondiente
+                const toolResult = step.toolResults?.find((result: any) => 
+                  result.toolCallId === toolCall.id || result.toolCallId === toolCall.toolCallId
+                );
+                
+                // Debug: Verificar estructura de toolResult para identificar dónde viene la imagen
+                if (toolResult) {
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_RESULT_STRUCTURE] Tool: ${toolCall.toolName}`, {
+                    hasBase64Image: !!toolResult.base64Image,
+                    hasOutputBase64Image: !!(toolResult.output?.base64Image),
+                    hasResultBase64Image: !!(toolResult.result?.base64Image),
+                    keys: Object.keys(toolResult)
+                  });
+                }
+                
+                // Extraer imagen base64 de cualquier ubicación posible
+                let screenshotBase64 = null;
+                if (toolResult) {
+                  screenshotBase64 = 
+                    toolResult.base64Image ||           // Directo en toolResult
+                    toolResult.output?.base64Image ||   // En toolResult.output
+                    toolResult.result?.base64Image ||   // En toolResult.result
+                    null;
+                }
+                
+                await supabaseAdmin.from('instance_logs').insert({
+                  log_type: 'tool_call',
+                  level: 'info',
+                  message: `${toolCall.toolName}: ${toolCall.args ? Object.entries(toolCall.args).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
+                  step_id: `step_${currentStep.order}`,
+                  tool_name: toolCall.toolName,
+                  tool_call_id: toolCall.id || toolCall.toolCallId,
+                  tool_args: toolCall.args || {},
+                  tool_result: toolResult ? {
+                    success: !toolResult.isError,
+                    output: (() => {
+                      // Limpiar el output de cualquier base64 image
+                      const rawOutput = toolResult.result || toolResult.content || '';
+                      if (typeof rawOutput === 'string') {
+                        // Si es un string que contiene base64, extraer solo el texto útil
+                        if (rawOutput.includes('base64,')) {
+                          return 'Screenshot captured successfully'; // Texto limpio en lugar de base64
+                        }
+                        return rawOutput;
+                      }
+                      // Si es un objeto, remover cualquier campo base64Image
+                      if (typeof rawOutput === 'object' && rawOutput !== null) {
+                        const cleanOutput = { ...rawOutput };
+                        delete cleanOutput.base64Image;
+                        return cleanOutput;
+                      }
+                      return rawOutput;
+                    })(),
+                    error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
+                    // ❌ NO incluir ninguna referencia a base64 aquí
+                  } : {},
+                  screenshot_base64: screenshotBase64, // ✅ Solo aquí
+                  parent_log_id: parentLogId, // 🔗 Vincular al log principal
+                  duration_ms: step.usage?.duration_ms || null,
+                  tokens_used: step.usage ? {
+                    promptTokens: step.usage.promptTokens || step.usage.input_tokens,
+                    completionTokens: step.usage.completionTokens || step.usage.output_tokens,
+                    totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
+                  } : {},
+                  details: {
+                    remote_instance_id: remoteInstance.id,
+                    plan_id: effective_plan_id,
+                    plan_title: plan.title,
+                    detected_status: stepStatus,
+                    tool_sequence_number: step.toolCalls.indexOf(toolCall) + 1,
+                    total_tool_calls: step.toolCalls.length,
+                  },
+                  instance_id: instance_id,
+                  site_id: plan.site_id,
+                  user_id: plan.user_id,
+                  agent_id: plan.agent_id,
+                  command_id: plan.command_id,
+                });
+              }
+            }
         }
       });
 
@@ -1164,6 +1462,10 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
               stepStatus = 'session_needed';
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Session needed: ${output.assistant_message}`);
               break;
+            case 'session_saved':
+              stepStatus = 'completed';
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] Session saved: ${output.assistant_message}`);
+              break;
             case 'user_attention_required':
               stepStatus = 'user_attention_required';
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STRUCTURED] User attention required: ${output.assistant_message}`);
@@ -1206,6 +1508,9 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
               break;
             case 'session_needed':
               stepStatus = 'session_needed';
+              break;
+            case 'session_saved':
+              stepStatus = 'completed';
               break;
             case 'user_attention_required':
               stepStatus = 'user_attention_required';
@@ -1467,6 +1772,7 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
           log_type: 'session_acquired',
           level: 'info',
           message: `New ${platform} session successfully acquired`,
+          step_id: `step_${currentStep.order}`,
           details: {
             platform: platform,
             agent_message: finalResult,
@@ -1495,6 +1801,7 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
           log_type: 'user_attention_required',
           level: 'warning',
           message: `User attention required: ${attentionReason}`,
+          step_id: `step_${currentStep.order}`,
           details: {
             attention_reason: attentionReason,
             agent_message: finalResult,
@@ -1523,33 +1830,50 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
     }
 
     // 10. Guardar el resultado final del step --------------------------------------
-    // Para el log final, priorizar structured output del schema
+    // FINAL LOG: Priorizar SIEMPRE assistant_message del structured output
     let finalLogMessage = finalResult;
     let finalStructuredResponse = null;
     
+    // 1. Prioridad: Structured output del schema final
     if (output && output.event && output.assistant_message) {
       finalStructuredResponse = output;
-      finalLogMessage = output.assistant_message;
-    } else {
-      finalStructuredResponse = extractStructuredResponse(text || '');
-      finalLogMessage = finalStructuredResponse ? finalStructuredResponse.assistant_message : finalResult;
+      finalLogMessage = output.assistant_message.trim();
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL_LOG] Using schema assistant_message: ${finalLogMessage.substring(0, 100)}...`);
+    } 
+    // 2. Fallback: Extracción manual del texto final
+    else if (text) {
+      finalStructuredResponse = extractStructuredResponse(text);
+      if (finalStructuredResponse && finalStructuredResponse.assistant_message) {
+        finalLogMessage = finalStructuredResponse.assistant_message.trim();
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL_LOG] Using extracted assistant_message: ${finalLogMessage.substring(0, 100)}...`);
+      } else {
+        // Último fallback: usar finalResult pero limitado
+        finalLogMessage = finalResult.substring(0, 1000);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [FINAL_LOG] Using finalResult fallback: ${finalLogMessage.substring(0, 100)}...`);
+      }
     }
     
     await supabaseAdmin.from('instance_logs').insert({
       log_type: 'agent_action',
       level: 'info',
       message: finalLogMessage,
+      step_id: `step_${currentStep.order}`,
+      tokens_used: usage ? {
+        promptTokens: usage.promptTokens || usage.input_tokens,
+        completionTokens: usage.completionTokens || usage.output_tokens,
+        totalTokens: usage.totalTokens || usage.total_tokens || (usage.input_tokens + usage.output_tokens),
+      } : {},
+      duration_ms: Math.round(Date.now() - executionStartTime),
       details: {
         final_text: text,
         total_steps: steps.length,
-        usage: usage,
         remote_instance_id: remoteInstance.id,
         plan_id: effective_plan_id,
         plan_title: plan.title,
         plan_status: stepStatus,
         detected_result: stepResult,
-        final_structured_response: finalStructuredResponse, // Para debugging
-        raw_final_text: text, // Para debugging
+        final_structured_response: finalStructuredResponse,
+        raw_final_text: text,
       },
       instance_id: instance_id,
       site_id: plan.site_id,
@@ -1699,13 +2023,18 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
             log_type: 'error',
             level: 'error',
             message: `Error ejecutando step del plan: ${err.message}`,
+            step_id: currentStep ? `step_${currentStep.order}` : null,
             details: { 
               error: err.message, 
               stack: err.stack,
               plan_id: effective_plan_id,
-              plan_title: plan.title,
+              plan_title: plan?.title,
             },
             instance_id: instance_id,
+            site_id: plan?.site_id,
+            user_id: plan?.user_id,
+            agent_id: plan?.agent_id,
+            command_id: plan?.command_id,
           });
         }
       } catch (logError) {

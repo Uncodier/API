@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
+import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance
@@ -68,6 +69,17 @@ export async function POST(request: NextRequest) {
     const browserStartResult = await remoteInstance.browser.start();
     const cdpUrl = browserStartResult.cdpUrl;
 
+    // 3.1. Buscar y aplicar autenticación automáticamente ---------------------------
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Attempting auto-authentication for site_id: ${site_id}`);
+    const authResult = await autoAuthenticateInstance(remoteInstance.id, site_id);
+    
+    if (authResult.success) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Browser authenticated successfully using session: ${authResult.session?.name}`);
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Auto-authentication not available: ${authResult.error}`);
+      // Continuar sin bloquear - el agente manejará la autenticación cuando sea necesaria
+    }
+
     // 4. Registrar instancia en la base de datos ----------------------------------
     const { data: instanceRecord, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
@@ -99,6 +111,12 @@ export async function POST(request: NextRequest) {
         status: instanceRecord.status,
         message: 'Instancia creada correctamente',
         is_existing: false,
+        authentication: {
+          applied: authResult.success,
+          session_name: authResult.session?.name,
+          auth_state_id: authResult.auth_state_id,
+          error: authResult.error
+        }
       },
       { status: 200 },
     );

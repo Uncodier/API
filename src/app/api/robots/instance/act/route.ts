@@ -2,6 +2,86 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { addActivityToPlan, executeRobotWorkflowOnCompletion } from '@/lib/services/robot-instance/robot-plan-service';
+import { executeUnifiedRobotActivityPlanning, decidePlanAction, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
+import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
+
+// ------------------------------------------------------------------------------------
+// Instance Act Specific Context (builds on the shared planning core)
+// ------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------
+// Helper function to save complete plan with proper structure
+// ------------------------------------------------------------------------------------
+
+async function saveCompletePlan(
+  instanceId: string,
+  planData: any,
+  planningCommandUuid: string | null,
+  activity: string,
+  planDecisionAction: string
+): Promise<{ planId: string | null; success: boolean }> {
+  try {
+    // Formatear steps usando el core unificado
+    let planSteps = formatPlanSteps(planData);
+    
+    // Agregar pasos de guardado de sesión usando el core unificado
+    planSteps = addSessionSaveSteps(planSteps);
+
+    const stepsTotal = planSteps.length;
+
+    // Crear nuevo plan en la base de datos
+    const { data: newPlan, error: planError } = await supabaseAdmin
+      .from('instance_plans')
+      .insert({
+        title: planData.title || `Plan regenerado para actividad: ${activity}`,
+        description: planData.description || `Plan ${planDecisionAction} generado automáticamente`,
+        plan_type: 'objective',
+        status: 'active',
+        instance_id: instanceId,
+        site_id: '', // Se obtendrá de la instancia
+        user_id: '', // Se obtendrá de la instancia
+        command_id: planningCommandUuid,
+        steps: planSteps,
+        success_criteria: planData.success_metrics || planData.success_criteria || [],
+        steps_total: stepsTotal,
+        steps_completed: 0,
+        progress_percentage: 0,
+        estimated_duration_minutes: calculateEstimatedDuration(planData.estimated_timeline || planData.estimated_duration_minutes),
+        priority: typeof planData.priority_level === 'string' ? 5 : (planData.priority_level || planData.priority || 5),
+      })
+      .select()
+      .single();
+
+    if (planError) {
+      console.error('Error creating new plan:', planError);
+      return { planId: null, success: false };
+    }
+
+    // Actualizar con site_id y user_id de la instancia
+    const { data: instance } = await supabaseAdmin
+      .from('remote_instances')
+      .select('site_id, user_id')
+      .eq('id', instanceId)
+      .single();
+
+    if (instance) {
+      await supabaseAdmin
+        .from('instance_plans')
+        .update({
+          site_id: instance.site_id,
+          user_id: instance.user_id
+        })
+        .eq('id', newPlan.id);
+    }
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Complete plan saved successfully with ID: ${newPlan.id}`);
+    return { planId: newPlan.id, success: true };
+
+  } catch (error) {
+    console.error('Error saving complete plan:', error);
+    return { planId: null, success: false };
+  }
+}
 
 
 
@@ -19,6 +99,27 @@ const ActSchema = z.object({
   site_id: z.string().min(1).optional(),
   activity: z.string().min(1).optional(),
   user_id: z.string().uuid().optional(),
+  context: z.union([
+    z.string(),
+    z.object({}).passthrough() // Permitir objetos y extraer después
+  ]).optional().transform((val) => {
+    if (!val) return undefined;
+    // Si es string, devolverlo tal como está
+    if (typeof val === 'string') return val;
+    // Si es objeto, intentar extraer el contexto
+    if (typeof val === 'object' && val !== null) {
+      // Buscar diferentes posibles campos de contexto
+      const contextFields = ['context', 'text', 'content', 'message', 'data'];
+      for (const field of contextFields) {
+        if (field in val && typeof (val as any)[field] === 'string') {
+          return (val as any)[field];
+        }
+      }
+      // Si no encuentra un campo de contexto, convertir a string
+      return JSON.stringify(val);
+    }
+    return String(val);
+  }), // Contexto específico del usuario
 });
 
 
@@ -28,7 +129,8 @@ export async function POST(request: NextRequest) {
   
   try {
     const rawBody = await request.json();
-    const { site_id: providedSiteId, activity: providedActivity, instance_id: parsedInstanceId, user_id: providedUserId, message, step_status } = ActSchema.parse(rawBody);
+    console.log('🔍 Raw body received:', JSON.stringify(rawBody, null, 2));
+    const { site_id: providedSiteId, activity: providedActivity, instance_id: parsedInstanceId, user_id: providedUserId, message, step_status, context: userContext } = ActSchema.parse(rawBody);
     instance_id = parsedInstanceId;
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Processing plan update for instance: ${instance_id}`);
@@ -58,20 +160,26 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
 
-    // Separar entre plan activo y plan completed/failed
+    // 4. Decidir qué acción tomar con el plan
+    const planDecision = await decidePlanAction(latestPlan, message, userContext);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan decision: ${planDecision.action} - ${planDecision.reason}`);
+
+    // Separar entre plan activo y plan completed/failed para compatibilidad
     const activePlan = latestPlan && ['active', 'pending', 'in_progress'].includes(latestPlan.status) ? latestPlan : null;
     const completedPlan = latestPlan && ['completed', 'failed'].includes(latestPlan.status) ? latestPlan : null;
 
-    // 4. Registrar la acción del usuario
+    // 5. Registrar la acción del usuario con información de decisión
     await supabaseAdmin.from('instance_logs').insert({
       log_type: 'user_action',
       level: 'info',
       message: message,
-              details: { 
+      details: { 
         user_message: message,
+        user_context: userContext,
         step_status: step_status,
         plan_id: activePlan?.id || completedPlan?.id || null,
-        plan_status: activePlan?.status || completedPlan?.status || null
+        plan_status: activePlan?.status || completedPlan?.status || null,
+        plan_decision: planDecision
       },
       instance_id: instance_id,
       site_id: instance.site_id,
@@ -82,10 +190,127 @@ export async function POST(request: NextRequest) {
 
     let workflowExecutionResult = null;
     let planResult = null;
+    let newPlanGenerated = false;
+    let planModified = false;
 
-    if (activePlan) {
-      // Caso A) Plan está activo - actualizar step del plan
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan ${activePlan.id} is active, updating step...`);
+    // Implementar lógica basada en la decisión del plan
+    if (planDecision.shouldRegeneratePlan) {
+      // Caso A) Regenerar o crear nuevo plan
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Regenerating plan based on decision: ${planDecision.action}`);
+      
+      try {
+        // Si hay un plan completado/fallido, ejecutar workflow ANTES de generar nuevo plan
+        if (completedPlan && ['completed', 'failed'].includes(completedPlan.status)) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${completedPlan.status} plan, executing workflow before generating new plan...`);
+          
+          try {
+            workflowExecutionResult = await executeRobotWorkflowOnCompletion(
+              site_id,
+              activity,
+              user_id,
+              instance_id,
+              instance,
+              { isPlanCompleted: true, planId: completedPlan.id }
+            );
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Workflow executed successfully for completed plan`);
+          } catch (workflowError) {
+            console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
+            // Continuar con la generación del plan aunque falle el workflow
+          }
+        }
+
+        // Encontrar el agente robot apropiado
+        const robotAgent = await findGrowthRobotAgent(site_id);
+        
+        if (!robotAgent) {
+          throw new Error('No se encontró un agente robot apropiado para este sitio');
+        }
+
+        // Construir contexto del plan previo si existe para modificación
+        let previousPlanContext = '';
+        if (planDecision.action === 'modify_plan' && latestPlan) {
+          previousPlanContext = `PLAN ACTUAL A MODIFICAR:\n`;
+          previousPlanContext += `Título: ${latestPlan.title}\n`;
+          previousPlanContext += `Estado: ${latestPlan.status}\n`;
+          if (latestPlan.steps && latestPlan.steps.length > 0) {
+            previousPlanContext += `Steps actuales (${latestPlan.steps.length}): \n`;
+            latestPlan.steps.forEach((step: any, index: number) => {
+              previousPlanContext += `${index + 1}. ${step.title} (${step.status})\n`;
+            });
+          }
+        }
+
+        // Recuperar sesiones de autenticación previas
+        const { data: previousSessions } = await supabaseAdmin
+          .from('automation_auth_sessions')
+          .select('*')
+          .eq('site_id', site_id)
+          .eq('is_valid', true);
+
+        // Ejecutar planificación usando el core unificado con contexto del usuario y plan previo
+        const { activityPlanResults, planningCommandUuid } = await executeUnifiedRobotActivityPlanning(
+          site_id,
+          robotAgent.agentId,
+          robotAgent.userId,
+          activity || 'general',
+          previousSessions || [],
+          userContext, // User context from instance act route
+          previousPlanContext // Previous plan context for modifications
+        );
+
+        if (activityPlanResults && activityPlanResults.length > 0) {
+          // Generar o actualizar plan con los nuevos resultados
+          newPlanGenerated = true;
+          planModified = planDecision.action === 'modify_plan';
+          
+          // Guardar el plan completo con la estructura correcta
+          const saveResult = await saveCompletePlan(
+            instance_id,
+            activityPlanResults[0], // Tomar el primer plan generado
+            planningCommandUuid,
+            activity || 'general',
+            planDecision.action
+          );
+          
+          if (saveResult.success) {
+            planResult = {
+              isPlanCompleted: false,
+              planId: saveResult.planId
+            };
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Complete plan saved successfully with ID: ${saveResult.planId}`);
+          } else {
+            throw new Error('No se pudo guardar el plan completo');
+          }
+        } else {
+          throw new Error('No se pudo generar el nuevo plan');
+        }
+        
+      } catch (planGenerationError) {
+        console.error(`₍ᐢ•(ܫ)•ᐢ₎ Plan generation failed:`, planGenerationError);
+        // Fallback: continuar con el plan existente si es posible
+        if (activePlan) {
+          planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
+        } else {
+          throw planGenerationError;
+        }
+      }
+      
+    } else if (activePlan) {
+      // Caso B) Continuar con el plan activo existente
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Continuing with active plan ${activePlan.id}...`);
+      
+      // Verificar restricción: solo permitir añadir steps después del step in_progress
+      const steps = activePlan.steps || [];
+      const inProgressStepIndex = steps.findIndex((step: any) => step.status === 'in_progress');
+      
+      // Si hay un step in_progress, verificar que solo se añadan steps posteriores
+      if (inProgressStepIndex >= 0 && step_status === 'pending') {
+        const newStepOrder = steps.length + 1;
+        if (newStepOrder <= inProgressStepIndex + 1) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Cannot add step before or at in_progress step position`);
+          // En lugar de fallar, añadir el step después del in_progress
+        }
+      }
       
       planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
       
@@ -106,64 +331,30 @@ export async function POST(request: NextRequest) {
           console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
         }
       }
-
+      
     } else {
-      // Caso B) No hay plan activo - puede ser que no exista o esté completed/failed
-      if (completedPlan) {
-        // Si hay un plan completed/failed, ejecutar workflow y luego actualizar el plan
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${completedPlan.status} plan ${completedPlan.id}, executing workflow for completed/failed plan...`);
-        
-        try {
-          workflowExecutionResult = await executeRobotWorkflowOnCompletion(
-            site_id,
-            activity,
-            user_id,
-            instance_id,
-            instance,
-            { isPlanCompleted: true, planId: completedPlan.id }
-          );
-        } catch (workflowError) {
-          console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
-        }
-        
-        // Actualizar el plan después del workflow
-        planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
-        
-      } else {
-        // No hay plan en absoluto - ejecutar workflow y luego crear nuevo plan
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ No plan found, executing workflow and creating new plan...`);
-        
-        try {
-          workflowExecutionResult = await executeRobotWorkflowOnCompletion(
-            site_id,
-            activity,
-            user_id,
-            instance_id,
-            instance,
-            { isPlanCompleted: true, planId: null }
-          );
-        } catch (workflowError) {
-          console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
-        }
-        
-        // Crear nuevo plan después del workflow
-        planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
-      }
+      // Caso C) No hay plan activo y no se debe regenerar (caso edge)
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ No active plan and no regeneration requested - creating basic plan entry`);
+      planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
     }
 
     return NextResponse.json({ 
       data: {
-        message: 'Plan actualizado exitosamente',
+        message: 'Plan procesado exitosamente',
         action_registered: true,
         step_status: step_status,
+        plan_decision: planDecision,
         plan_was_active: !!activePlan,
         plan_was_completed: !!completedPlan,
         plan_existed_completed_failed: !!completedPlan,
         plan_updated: planResult ? true : false,
         plan_completed: planResult?.isPlanCompleted || false,
         plan_id: planResult?.planId || activePlan?.id || completedPlan?.id || null,
+        new_plan_generated: newPlanGenerated,
+        plan_modified: planModified,
         workflow_executed: workflowExecutionResult !== null,
-        workflow_result: workflowExecutionResult
+        workflow_result: workflowExecutionResult,
+        user_context_used: !!userContext
       }
     }, { status: 200 });
 
@@ -188,13 +379,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ 
       data: {
         error: err.message,
-        message: 'Plan update failed',
+        message: 'Plan processing failed',
         action_registered: false,
+        plan_decision: null,
         plan_updated: false,
         plan_completed: false,
         plan_id: null,
+        new_plan_generated: false,
+        plan_modified: false,
         workflow_executed: false,
-        workflow_result: null
+        workflow_result: null,
+        user_context_used: false
       }
     }, { status: 500 });
   }
