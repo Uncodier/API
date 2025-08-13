@@ -10,6 +10,7 @@ import { prepareMessagesForTarget } from './targetEvaluator/formatters/target-me
 import { extractTokenUsage } from './toolEvaluator/tokenUtils';
 import { CommandCache } from '../services/command/CommandCache';
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
+import { StreamingResponseProcessor } from './streaming/StreamingResponseProcessor';
 // Importamos la función de validación como JavaScript
 import { validateResults } from './targetEvaluator/validateResults.js';
 
@@ -153,7 +154,12 @@ export class TargetProcessor extends Base {
       // Handle streaming response
       if (llmResponse.isStream) {
         console.log(`[TargetProcessor] Processing streaming response...`);
-        return await this.processStreamingResponse(llmResponse.stream, command, llmResponse.modelInfo);
+        return await StreamingResponseProcessor.processStreamingResponse(
+          llmResponse.stream, 
+          command, 
+          llmResponse.modelInfo,
+          this.fillTargetWithContent.bind(this)
+        );
       }
       
       // Extract token usage
@@ -388,117 +394,5 @@ export class TargetProcessor extends Base {
     return result;
   }
 
-  /**
-   * Procesa una respuesta streaming del LLM
-   * @param stream El stream de respuesta del LLM
-   * @param command El comando original
-   * @param modelInfo Información del modelo usado
-   * @returns El resultado del comando procesado
-   */
-  private async processStreamingResponse(stream: any, command: DbCommand, modelInfo: any): Promise<CommandExecutionResult> {
-    let fullContent = '';
-    let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
-    
-    try {
-      console.log(`[TargetProcessor] Iniciando procesamiento de stream...`);
-      
-      // Iterar sobre el stream y acumular contenido
-      for await (const chunk of stream) {
-        if (chunk.choices?.[0]?.delta?.content) {
-          const deltaContent = chunk.choices[0].delta.content;
-          fullContent += deltaContent;
-          
-          // Log progress to show streaming is working
-          if (fullContent.length % 100 === 0) {
-            console.log(`[TargetProcessor] Stream progress: ${fullContent.length} characters received...`);
-          }
-        }
-        
-        // Extract usage if available in final chunk
-        if (chunk.usage) {
-          tokenUsage = {
-            prompt_tokens: chunk.usage.prompt_tokens || 0,
-            completion_tokens: chunk.usage.completion_tokens || 0,
-            total_tokens: chunk.usage.total_tokens || (chunk.usage.prompt_tokens || 0) + (chunk.usage.completion_tokens || 0)
-          };
-          console.log(`[TargetProcessor] Token usage from stream: ${JSON.stringify(tokenUsage)}`);
-        }
-      }
-      
-      console.log(`[TargetProcessor] Stream completed. Total content length: ${fullContent.length}`);
-      console.log(`[TargetProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
-      
-      // Process the accumulated content same as non-streaming response
-      let results;
-      
-      try {
-        if (typeof fullContent === 'string') {
-          if (fullContent.trim().startsWith('[') && fullContent.trim().endsWith(']')) {
-            try {
-              results = JSON.parse(fullContent);
-              console.log(`[TargetProcessor] Stream response parsed as JSON array: ${results.length} elements`);
-            } catch (e) {
-              console.log(`[TargetProcessor] Error parsing stream array JSON, preserving target structure`);
-              results = (command.targets || []).map((target, index) => {
-                const targetCopy = JSON.parse(JSON.stringify(target));
-                return this.fillTargetWithContent(targetCopy, fullContent);
-              });
-            }
-          } else {
-            try {
-              const parsedContent = JSON.parse(fullContent);
-              if (Array.isArray(parsedContent)) {
-                results = parsedContent;
-                console.log(`[TargetProcessor] Stream response parsed as valid JSON array: ${results.length} elements`);
-              } else if (typeof parsedContent === 'object' && parsedContent !== null) {
-                results = [parsedContent];
-                console.log(`[TargetProcessor] Stream response parsed as valid JSON object and wrapped in array`);
-              } else {
-                results = (command.targets || []).map((target, index) => {
-                  const targetCopy = JSON.parse(JSON.stringify(target));
-                  return this.fillTargetWithContent(targetCopy, parsedContent);
-                });
-              }
-            } catch (parseError) {
-              console.log(`[TargetProcessor] Error parsing stream JSON, using as raw text in target structure`);
-              results = (command.targets || []).map((target, index) => {
-                const targetCopy = JSON.parse(JSON.stringify(target));
-                return this.fillTargetWithContent(targetCopy, fullContent);
-              });
-            }
-          }
-        } else {
-          console.log(`[TargetProcessor] Stream response is not a string, using target structure`);
-          results = (command.targets || []).map((target, index) => {
-            const targetCopy = JSON.parse(JSON.stringify(target));
-            return this.fillTargetWithContent(targetCopy, fullContent);
-          });
-        }
-      } catch (processingError) {
-        console.error(`[TargetProcessor] Error processing stream content:`, processingError);
-        results = [{
-          error: `Error processing streamed response: ${processingError instanceof Error ? processingError.message : 'Unknown error'}`
-        }];
-      }
-      
-      return {
-        status: 'completed',
-        results,
-        inputTokens: tokenUsage.prompt_tokens,
-        outputTokens: tokenUsage.completion_tokens
-      };
-      
-    } catch (error) {
-      console.error(`[TargetProcessor] Error processing streaming response:`, error);
-      return {
-        status: 'failed',
-        results: [{
-          error: `Stream processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-        }],
-        inputTokens: tokenUsage.prompt_tokens,
-        outputTokens: tokenUsage.completion_tokens,
-        error: `Stream processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
-      };
-    }
-  }
+
 } 
