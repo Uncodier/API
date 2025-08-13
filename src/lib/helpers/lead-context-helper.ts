@@ -48,12 +48,13 @@ export async function getLatestContent(siteId: string, limit = 5): Promise<any[]
       return [];
     }
     
-    console.log(`🔍 Obteniendo últimos ${limit} contenidos del sitio: ${siteId}`);
+    console.log(`🔍 Obteniendo últimos ${limit} contenidos publicados del sitio: ${siteId}`);
     
     const { data, error } = await supabaseAdmin
       .from('content')
       .select('*')
       .eq('site_id', siteId)
+      .eq('status', 'published')
       .order('created_at', { ascending: false })
       .limit(limit);
     
@@ -63,7 +64,7 @@ export async function getLatestContent(siteId: string, limit = 5): Promise<any[]
     }
     
     if (!data || data.length === 0) {
-      console.log(`⚠️ No se encontraron contenidos para el sitio: ${siteId}`);
+      console.log(`⚠️ No se encontraron contenidos publicados para el sitio: ${siteId}`);
       return [];
     }
     
