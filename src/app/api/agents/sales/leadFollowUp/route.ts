@@ -235,7 +235,8 @@ async function executeCopywriterRefinement(
       copywriterContext += `8. Write final content ready to send without additional editing\n`;
       copywriterContext += `9. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off\n`;
       copywriterContext += `10. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
-      copywriterContext += `11. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n\n`;
+      copywriterContext += `11. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
+      copywriterContext += `12. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n\n`;
       
       console.log(`📝 PHASE 2: Structured context prepared with ${copywriterContext.length} characters`);
     } else {
@@ -589,6 +590,15 @@ export async function POST(request: Request) {
     } else {
       console.log(`⚠️ Could not get enriched context`);
     }
+    
+    // Add copywriting guidelines
+    contextMessage += `\n\n=== COPYWRITING GUIDELINES ===\n`;
+    contextMessage += `🎯 IMPORTANT: If there are approved copywritings available for this lead or campaign, respect them as much as possible.\n`;
+    contextMessage += `- Only personalize approved copywritings with lead-specific information to increase conversion\n`;
+    contextMessage += `- Maintain the core message, tone, and structure of approved content\n`;
+    contextMessage += `- Use lead data (name, company, pain points, etc.) to customize approved messages\n`;
+    contextMessage += `- Focus on lead-specific personalization rather than completely rewriting approved content\n`;
+    contextMessage += `=== END OF COPYWRITING GUIDELINES ===\n`;
     
 
     // Determine which communication channels are available
