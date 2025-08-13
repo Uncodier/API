@@ -232,12 +232,14 @@ export class DataFetcher {
   public static async getSiteInfo(siteId: string): Promise<{
     site: any | null;
     settings: any | null;
+    copywriting?: any[] | null;
   }> {
     console.log(`🔍 [DataFetcher] Obteniendo información completa del sitio: ${siteId}`);
     
     const result = {
       site: null as any | null,
-      settings: null as any | null
+      settings: null as any | null,
+      copywriting: null as any[] | null
     };
     
     // Si no es un UUID válido, retornar resultado vacío
@@ -282,6 +284,21 @@ export class DataFetcher {
       }
     } catch (settingsError) {
       console.error(`❌ [DataFetcher] Error al obtener configuración del sitio:`, settingsError);
+    }
+    
+    // Obtener copywriting del sitio (de la tabla 'copywriting')
+    try {
+      const copywritingData = await DatabaseAdapter.getCopywritingBySiteId(siteId);
+      if (copywritingData && copywritingData.length > 0) {
+        console.log(`✅ [DataFetcher] Encontrado copywriting del sitio: ${siteId} (${copywritingData.length} elementos)`);
+        result.copywriting = copywritingData;
+      } else {
+        console.log(`⚠️ [DataFetcher] No se encontró copywriting para el sitio: ${siteId}`);
+        result.copywriting = [];
+      }
+    } catch (copywritingError) {
+      console.error(`❌ [DataFetcher] Error al obtener copywriting del sitio:`, copywritingError);
+      result.copywriting = [];
     }
     
     return result;

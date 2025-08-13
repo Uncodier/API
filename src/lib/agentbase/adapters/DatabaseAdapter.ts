@@ -140,4 +140,12 @@ export class DatabaseAdapter {
     console.log(`🔍 [DatabaseAdapter] Obteniendo configuración del sitio ${siteId}`);
     return AgentService.getSiteSettingsById(siteId);
   }
+
+  /**
+   * Obtener copywriting de un sitio desde la base de datos
+   */
+  static async getCopywritingBySiteId(siteId: string): Promise<any[] | null> {
+    console.log(`🔍 [DatabaseAdapter] Obteniendo copywriting del sitio ${siteId}`);
+    return AgentService.getCopywritingBySiteId(siteId);
+  }
 } 

@@ -107,6 +107,7 @@ export class BackgroundBuilder {
     siteInfo?: {
       site: any | null;
       settings: any | null;
+      copywriting?: any[] | null;
     },
     activeCampaigns?: Array<{
       title: string;
@@ -147,8 +148,8 @@ export class BackgroundBuilder {
       this.createInstructionsSection(name),
       this.createSystemSection(systemPrompt),
       this.createCustomInstructionsSection(agentPrompt),
-      // No incluimos siteInfo si es null o los dos campos son null
-      (!siteInfo || (!siteInfo.site && !siteInfo.settings)) ? '' : this.createSiteInfoSection(siteInfo),
+      // No incluimos siteInfo si es null o todos los campos son null/vacíos
+      (!siteInfo || (!siteInfo.site && !siteInfo.settings && (!siteInfo.copywriting || siteInfo.copywriting.length === 0))) ? '' : this.createSiteInfoSection(siteInfo),
       // Incluir campañas activas si están disponibles
       (!activeCampaigns || activeCampaigns.length === 0) ? '' : this.createActiveCampaignsSection(activeCampaigns)
     ];
@@ -194,8 +195,8 @@ export class BackgroundBuilder {
   /**
    * Crea la sección de información del sitio si está disponible
    */
-  private static createSiteInfoSection(siteInfo?: { site: any | null; settings: any | null }): string {
-    if (!siteInfo || (!siteInfo.site && !siteInfo.settings)) return '';
+  private static createSiteInfoSection(siteInfo?: { site: any | null; settings: any | null; copywriting?: any[] | null }): string {
+    if (!siteInfo || (!siteInfo.site && !siteInfo.settings && (!siteInfo.copywriting || siteInfo.copywriting.length === 0))) return '';
     
     console.log(`🔍 [BackgroundBuilder] Iniciando creación de sección de sitio`);
     let siteSection = '# Site Information\n';
@@ -248,6 +249,76 @@ export class BackgroundBuilder {
           console.error(`❌ [BackgroundBuilder] Error procesando business_hours desde site:`, error);
           siteSection += `${JSON.stringify(siteInfo.site.business_hours)}\n`;
         }
+      }
+    }
+    
+    // Copywriting (contenido de copywriting desde tabla separada)
+    if (siteInfo.copywriting && siteInfo.copywriting.length > 0) {
+      console.log(`🔍 [BackgroundBuilder] Procesando copywriting (${siteInfo.copywriting.length} elementos)`);
+      try {
+        // Los datos ya vienen procesados desde la base de datos
+        const copywritingData = siteInfo.copywriting;
+        
+        // Verificar si hay contenido válido y filtrar solo contenido aprobado
+        const approvedCopywriting = Array.isArray(copywritingData) 
+          ? copywritingData.filter((item: any) => item && item.status === 'approved') 
+          : [];
+          
+        console.log(`🔍 [BackgroundBuilder] Añadiendo copywriting aprobado (${approvedCopywriting.length} elementos aprobados de ${copywritingData.length} totales)`);
+          
+        if (approvedCopywriting.length > 0) {
+          siteSection += `\n## Copywriting Content\n`;
+          siteSection += `This section contains approved copywriting content for reference and consistency.\n\n`;
+          
+          // Organizar por tipo de contenido
+          const organizedContent: Record<string, any[]> = {};
+          approvedCopywriting.forEach((item: any) => {
+            if (item && item.copy_type && item.title && item.content) {
+              if (!organizedContent[item.copy_type]) {
+                organizedContent[item.copy_type] = [];
+              }
+              organizedContent[item.copy_type].push({
+                title: item.title,
+                content: item.content,
+                target_audience: item.target_audience || null,
+                use_case: item.use_case || null,
+                status: item.status || 'draft',
+                tags: item.tags || []
+              });
+            }
+          });
+          
+          // Mostrar contenido organizado por tipo
+          Object.entries(organizedContent).forEach(([copyType, items]) => {
+            const formattedType = copyType.replace('_', ' ').replace(/\b\w/g, l => l.toUpperCase());
+            siteSection += `### ${formattedType}\n`;
+            
+            items.forEach((item: any, index: number) => {
+              siteSection += `${index + 1}. **${item.title}**\n`;
+              siteSection += `   Content: ${item.content}\n`;
+              
+              if (item.target_audience) {
+                siteSection += `   Target Audience: ${item.target_audience}\n`;
+              }
+              
+              if (item.use_case) {
+                siteSection += `   Use Case: ${item.use_case}\n`;
+              }
+              
+              if (item.tags && item.tags.length > 0) {
+                siteSection += `   Tags: ${item.tags.join(', ')}\n`;
+              }
+              
+              siteSection += `\n`; // Solo agregar espacio, no mostrar status ya que todos son 'approved'
+            });
+          });
+        } else {
+          // Si copywriting no es un array válido, mostrar como JSON
+          siteSection += `\n## Copywriting Content\n${JSON.stringify(copywritingData)}\n`;
+        }
+      } catch (error) {
+        console.error(`❌ [BackgroundBuilder] Error procesando copywriting:`, error);
+        siteSection += `\n## Copywriting Content\n${JSON.stringify(siteInfo.copywriting)}\n`;
       }
     }
     
@@ -808,7 +879,7 @@ export class BackgroundBuilder {
     systemPrompt?: string, 
     agentPrompt?: string, 
     backstory?: string,
-    siteInfo?: { site: any | null; settings: any | null }
+    siteInfo?: { site: any | null; settings: any | null; copywriting?: any[] | null }
   ): void {
     if (systemPrompt && !finalPrompt.includes('# System Instructions')) {
       console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir systemPrompt pero no se encontró en el prompt final`);
@@ -838,6 +909,14 @@ export class BackgroundBuilder {
       
       if (siteInfo.settings.services && !finalPrompt.includes('## Services')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Servicios pero no se encontró en el prompt final`);
+      }
+      
+      // Verificar copywriting aprobado
+      if (siteInfo.copywriting && siteInfo.copywriting.length > 0) {
+        const approvedCopywriting = siteInfo.copywriting.filter((item: any) => item && item.status === 'approved');
+        if (approvedCopywriting.length > 0 && !finalPrompt.includes('## Copywriting Content')) {
+          console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Copywriting Content aprobado pero no se encontró en el prompt final`);
+        }
       }
       
       // Verificar business_hours desde cualquier fuente

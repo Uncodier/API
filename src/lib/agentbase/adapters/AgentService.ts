@@ -424,4 +424,46 @@ export class AgentService {
       return null;
     }
   }
+
+  /**
+   * Obtener contenido de copywriting de un sitio desde la base de datos
+   * 
+   * Este método consulta la tabla 'copywriting' para obtener todo el contenido
+   * de copywriting asociado a un sitio específico.
+   */
+  static async getCopywritingBySiteId(siteId: string): Promise<any[] | null> {
+    try {
+      if (!isValidUUID(siteId)) {
+        console.log(`[AgentService] ID de sitio no válido para obtener copywriting: ${siteId}`);
+        return null;
+      }
+      
+      console.log(`[AgentService] Obteniendo copywriting del sitio: ${siteId}`);
+      
+      // Consultar el copywriting del sitio en la base de datos (solo approved)
+      const { data, error } = await supabaseAdmin
+        .from('copywriting')
+        .select('*')
+        .eq('site_id', siteId)
+        .eq('status', 'approved') // Solo incluir contenido aprobado
+        .order('created_at', { ascending: false }); // Ordenar por más reciente primero
+      
+      if (error) {
+        console.error('[AgentService] Error al obtener copywriting del sitio:', error);
+        return null;
+      }
+      
+      if (!data || data.length === 0) {
+        console.log(`[AgentService] No se encontró copywriting para el sitio con ID: ${siteId}`);
+        return [];
+      }
+      
+      console.log(`[AgentService] Copywriting aprobado del sitio recuperado correctamente: ${siteId} (${data.length} elementos aprobados)`);
+      
+      return data;
+    } catch (error) {
+      console.error('[AgentService] Error al obtener copywriting del sitio:', error);
+      return null;
+    }
+  }
 } 
