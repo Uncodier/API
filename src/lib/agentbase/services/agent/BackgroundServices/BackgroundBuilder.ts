@@ -660,6 +660,115 @@ export class BackgroundBuilder {
         siteSection += `\n## Marketing Channels\n${JSON.stringify(siteInfo.settings.marketing_channels)}\n`;
       }
       
+      // Channels - información pública de canales de comunicación
+      if (siteInfo.settings.channels) {
+        console.log(`🔍 [BackgroundBuilder] Añadiendo channels`);
+        try {
+          const channelsData = typeof siteInfo.settings.channels === 'string'
+            ? JSON.parse(siteInfo.settings.channels)
+            : siteInfo.settings.channels;
+          
+          if (channelsData && typeof channelsData === 'object') {
+            siteSection += `\n## Communication Channels\n`;
+            
+            // Email channel
+            if (channelsData.email && typeof channelsData.email === 'object') {
+              const emailChannel = channelsData.email;
+              siteSection += `### Email\n`;
+              
+              if (emailChannel.email) {
+                siteSection += `Primary Email: ${emailChannel.email}\n`;
+              }
+              
+              if (emailChannel.aliases) {
+                siteSection += `Email Aliases: ${emailChannel.aliases}\n`;
+              }
+              
+              if (emailChannel.status) {
+                siteSection += `Status: ${emailChannel.status}\n`;
+              }
+              
+              if (emailChannel.enabled !== undefined) {
+                siteSection += `Enabled: ${emailChannel.enabled ? 'Yes' : 'No'}\n`;
+              }
+              
+              siteSection += `\n`;
+            }
+            
+            // WhatsApp channel
+            if (channelsData.whatsapp && typeof channelsData.whatsapp === 'object') {
+              const whatsappChannel = channelsData.whatsapp;
+              siteSection += `### WhatsApp\n`;
+              
+              if (whatsappChannel.status) {
+                siteSection += `Status: ${whatsappChannel.status}\n`;
+              }
+              
+              if (whatsappChannel.enabled !== undefined) {
+                siteSection += `Enabled: ${whatsappChannel.enabled ? 'Yes' : 'No'}\n`;
+              }
+              
+              if (whatsappChannel.existingNumber) {
+                siteSection += `Phone Number: ${whatsappChannel.existingNumber}\n`;
+              }
+              
+              siteSection += `\n`;
+            }
+            
+            // Web channel
+            if (channelsData.web && typeof channelsData.web === 'object') {
+              const webChannel = channelsData.web;
+              siteSection += `### Web\n`;
+              
+              if (webChannel.status) {
+                siteSection += `Status: ${webChannel.status}\n`;
+              }
+              
+              if (webChannel.enabled !== undefined) {
+                siteSection += `Enabled: ${webChannel.enabled ? 'Yes' : 'No'}\n`;
+              }
+              
+              if (webChannel.url) {
+                siteSection += `URL: ${webChannel.url}\n`;
+              }
+              
+              siteSection += `\n`;
+            }
+            
+            // Otros canales si existen
+            const handledChannels = ['email', 'whatsapp', 'web'];
+            Object.keys(channelsData).forEach(channelName => {
+              if (!handledChannels.includes(channelName)) {
+                const channelData = channelsData[channelName];
+                if (channelData && typeof channelData === 'object') {
+                  const formattedName = channelName.charAt(0).toUpperCase() + channelName.slice(1);
+                  siteSection += `### ${formattedName}\n`;
+                  
+                  // Solo mostrar información pública básica
+                  const publicFields = ['status', 'enabled'];
+                  
+                  Object.entries(channelData).forEach(([key, value]) => {
+                    if (publicFields.includes(key) && value !== null && value !== undefined && value !== '') {
+                      const formattedKey = key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+                      if (key === 'enabled') {
+                        siteSection += `${formattedKey}: ${value ? 'Yes' : 'No'}\n`;
+                      } else {
+                        siteSection += `${formattedKey}: ${value}\n`;
+                      }
+                    }
+                  });
+                  
+                  siteSection += `\n`;
+                }
+              }
+            });
+          }
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error procesando channels:`, error);
+          siteSection += `\n## Communication Channels\n${JSON.stringify(siteInfo.settings.channels)}\n`;
+        }
+      }
+      
       if (siteInfo.settings.social_media) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
         
@@ -974,6 +1083,11 @@ export class BackgroundBuilder {
       
       if (siteInfo.settings.business_model && !finalPrompt.includes('## Business Model')) {
         console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Business Model pero no se encontró en el prompt final`);
+      }
+      
+      // Verificar channels si están disponibles
+      if (siteInfo.settings.channels && !finalPrompt.includes('## Communication Channels')) {
+        console.error(`⚠️ [BackgroundBuilder] ADVERTENCIA: Se esperaba incluir Communication Channels pero no se encontró en el prompt final`);
       }
       
       // Verificar customer journey tactics si están disponibles
