@@ -22,31 +22,32 @@ export class StreamingResponseProcessor {
     let fullContent = '';
     let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     
+    // Timeout específico para el procesamiento del stream (10 minutos)
+    const STREAM_PROCESSING_TIMEOUT = 10 * 60 * 1000; // 10 minutos
+    const CHUNK_TIMEOUT = 30 * 1000; // 30 segundos entre chunks
+    
     try {
-      console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream...`);
+      console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
       
-      // Iterar sobre el stream y acumular contenido
-      for await (const chunk of stream) {
-        if (chunk.choices?.[0]?.delta?.content) {
-          const deltaContent = chunk.choices[0].delta.content;
-          fullContent += deltaContent;
-          
-          // Log progress to show streaming is working
-          if (fullContent.length % 100 === 0) {
-            console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received...`);
-          }
-        }
-        
-        // Extract usage if available in final chunk
-        if (chunk.usage) {
-          tokenUsage = {
-            prompt_tokens: chunk.usage.prompt_tokens || 0,
-            completion_tokens: chunk.usage.completion_tokens || 0,
-            total_tokens: chunk.usage.total_tokens || (chunk.usage.prompt_tokens || 0) + (chunk.usage.completion_tokens || 0)
-          };
-          console.log(`[StreamingResponseProcessor] Token usage from stream: ${JSON.stringify(tokenUsage)}`);
-        }
-      }
+      // Crear un timeout general para todo el procesamiento del stream
+      const streamTimeout = new Promise((_, reject) => {
+        setTimeout(() => {
+          reject(new Error(`Stream processing timeout after ${STREAM_PROCESSING_TIMEOUT}ms`));
+        }, STREAM_PROCESSING_TIMEOUT);
+      });
+      
+      // Procesar el stream con timeout
+      const streamProcessing = this.processStreamWithChunkTimeout(
+        stream, 
+        fullContent, 
+        tokenUsage, 
+        CHUNK_TIMEOUT
+      );
+      
+      // Usar Promise.race para aplicar el timeout
+      const result = await Promise.race([streamProcessing, streamTimeout]);
+      fullContent = result.fullContent;
+      tokenUsage = result.tokenUsage;
       
       console.log(`[StreamingResponseProcessor] Stream completed. Total content length: ${fullContent.length}`);
       console.log(`[StreamingResponseProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
@@ -76,11 +77,78 @@ export class StreamingResponseProcessor {
       };
       
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[StreamingResponseProcessor] Error processing streaming response:`, error);
       
-      // Crear un comando actualizado incluso en caso de error
+      // Determinar si es un error de timeout específico
+      let errorType = 'STREAM_ERROR';
+      let isRecoverable = false;
+      
+      if (errorMessage.includes('UND_ERR_BODY_TIMEOUT') || errorMessage.includes('Body Timeout Error')) {
+        errorType = 'BODY_TIMEOUT';
+        isRecoverable = true;
+        console.warn(`[StreamingResponseProcessor] ⏰ Body timeout detectado - contenido parcial puede ser válido`);
+      } else if (errorMessage.includes('timeout') || errorMessage.includes('TIMEOUT')) {
+        errorType = 'GENERAL_TIMEOUT';
+        isRecoverable = fullContent.length > 100; // Si tenemos contenido parcial substancial
+        console.warn(`[StreamingResponseProcessor] ⏰ Timeout general - contenido parcial: ${fullContent.length} chars`);
+      } else if (errorMessage.includes('terminated')) {
+        errorType = 'STREAM_TERMINATED';
+        isRecoverable = fullContent.length > 50; // Contenido parcial mínimo
+        console.warn(`[StreamingResponseProcessor] 🔌 Stream terminado prematuramente - contenido parcial: ${fullContent.length} chars`);
+      }
+      
+      // Si tenemos contenido parcial válido y el error es recuperable, intentar procesarlo
+      if (isRecoverable && fullContent.trim().length > 0) {
+        console.log(`[StreamingResponseProcessor] 🔄 Intentando procesar contenido parcial (${fullContent.length} chars)...`);
+        
+        try {
+          const partialResults = StreamingResponseProcessor.processStreamContent(
+            fullContent, 
+            command, 
+            fillTargetWithContent
+          );
+          
+          // Agregar metadata sobre el error al resultado
+          const enhancedResults = partialResults.map(result => ({
+            ...result,
+            _metadata: {
+              partial: true,
+              error_type: errorType,
+              error_message: errorMessage,
+              content_length: fullContent.length,
+              recovered_at: new Date().toISOString()
+            }
+          }));
+          
+          const updatedCommand = {
+            ...command,
+            results: enhancedResults,
+            updated_at: new Date().toISOString()
+          };
+          
+          console.log(`[StreamingResponseProcessor] ✅ Recuperación exitosa con contenido parcial`);
+          
+          return {
+            status: 'completed', // Marcar como completado ya que recuperamos contenido
+            results: enhancedResults,
+            updatedCommand: updatedCommand,
+            inputTokens: tokenUsage.prompt_tokens,
+            outputTokens: tokenUsage.completion_tokens,
+            warning: `Partial content recovered after ${errorType}: ${errorMessage}`
+          };
+          
+        } catch (recoveryError) {
+          console.error(`[StreamingResponseProcessor] ❌ Error en recuperación de contenido parcial:`, recoveryError);
+        }
+      }
+      
+      // Si no se puede recuperar, devolver error estándar
       const errorResults = [{
-        error: `Stream processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Stream processing failed: ${errorMessage}`,
+        error_type: errorType,
+        content_length: fullContent.length,
+        partial_content: fullContent.length > 0 ? fullContent.substring(0, 200) + '...' : null
       }];
       
       const updatedCommand = {
@@ -95,15 +163,75 @@ export class StreamingResponseProcessor {
         updatedCommand: updatedCommand,
         inputTokens: tokenUsage.prompt_tokens,
         outputTokens: tokenUsage.completion_tokens,
-        error: `Stream processing failed: ${error instanceof Error ? error.message : 'Unknown error'}`
+        error: `Stream processing failed: ${errorMessage}`
       };
+    }
+  }
+
+  /**
+   * Procesa el stream con timeout entre chunks para detectar streams colgados
+   */
+  private static async processStreamWithChunkTimeout(
+    stream: any,
+    initialContent: string,
+    initialTokenUsage: any,
+    chunkTimeout: number
+  ): Promise<{ fullContent: string, tokenUsage: any }> {
+    let fullContent = initialContent;
+    let tokenUsage = { ...initialTokenUsage };
+    let lastChunkTime = Date.now();
+    
+    console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms`);
+    
+    try {
+      for await (const chunk of stream) {
+        const currentTime = Date.now();
+        const timeSinceLastChunk = currentTime - lastChunkTime;
+        
+        // Verificar timeout entre chunks
+        if (timeSinceLastChunk > chunkTimeout && fullContent.length > 0) {
+          console.warn(`[StreamingResponseProcessor] ⚠️ Chunk timeout detectado: ${timeSinceLastChunk}ms > ${chunkTimeout}ms`);
+          throw new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms`);
+        }
+        
+        lastChunkTime = currentTime;
+        
+        if (chunk.choices?.[0]?.delta?.content) {
+          const deltaContent = chunk.choices[0].delta.content;
+          fullContent += deltaContent;
+          
+          // Log progress más frecuente para detectar problemas
+          if (fullContent.length % 100 === 0) {
+            console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received...`);
+          }
+        }
+        
+        // Extract usage if available in final chunk
+        if (chunk.usage) {
+          tokenUsage = {
+            prompt_tokens: chunk.usage.prompt_tokens || 0,
+            completion_tokens: chunk.usage.completion_tokens || 0,
+            total_tokens: chunk.usage.total_tokens || (chunk.usage.prompt_tokens || 0) + (chunk.usage.completion_tokens || 0)
+          };
+          console.log(`[StreamingResponseProcessor] Token usage from stream: ${JSON.stringify(tokenUsage)}`);
+        }
+      }
+      
+      console.log(`[StreamingResponseProcessor] Stream completed successfully. Total content length: ${fullContent.length}`);
+      console.log(`[StreamingResponseProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
+      
+      return { fullContent, tokenUsage };
+      
+    } catch (error) {
+      console.error(`[StreamingResponseProcessor] Error en procesamiento de chunks:`, error);
+      throw error;
     }
   }
 
   /**
    * Procesa el contenido acumulado del stream
    */
-  private static processStreamContent(
+  static processStreamContent(
     fullContent: string, 
     command: DbCommand, 
     fillTargetWithContent: (target: any, content: any) => any

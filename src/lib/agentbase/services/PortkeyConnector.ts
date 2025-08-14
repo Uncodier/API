@@ -44,10 +44,16 @@ export class PortkeyConnector {
       console.log(`[PortkeyConnector] Using Portkey with ${provider} model and virtual key: ${virtualKey.substring(0, 5)}...`);
       
       // Create Portkey client using direct import - using any type to avoid typing issues
+      // Configurar timeouts más generosos para evitar UND_ERR_BODY_TIMEOUT
       const portkey: any = new Portkey({
         apiKey: this.portkeyConfig.apiKey,
         virtualKey,
-        baseURL: this.portkeyConfig.baseURL || 'https://api.portkey.ai/v1'
+        baseURL: this.portkeyConfig.baseURL || 'https://api.portkey.ai/v1',
+        // Configuraciones de timeout para evitar body timeouts
+        timeout: 10 * 60 * 1000, // 10 minutos para requests largos
+        bodyTimeout: 10 * 60 * 1000, // 10 minutos para recibir el body completo
+        headersTimeout: 60 * 1000, // 1 minuto para headers
+        connectTimeout: 30 * 1000 // 30 segundos para establecer conexión
       });
       
       // Determine model options based on provider

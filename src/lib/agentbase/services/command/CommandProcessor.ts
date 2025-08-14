@@ -438,7 +438,21 @@ export class CommandProcessor {
           console.warn(`⚠️ [CommandProcessor] TargetProcessor no retornó comando actualizado!`);
         }
       } else {
-        console.error(`❌ [CommandProcessor] Procesamiento de targets falló: ${targetProcessorResults.error}`);
+        // Analizar el tipo de error para determinar si es recuperable
+        const errorMessage = targetProcessorResults.error || 'Unknown error';
+        console.error(`❌ [CommandProcessor] Procesamiento de targets falló: ${errorMessage}`);
+        
+        // Verificar si es un error de timeout recuperable
+        if (errorMessage.includes('UND_ERR_BODY_TIMEOUT') || 
+            errorMessage.includes('Body Timeout Error') ||
+            errorMessage.includes('Stream processing failed: terminated')) {
+          console.warn(`⚠️ [CommandProcessor] Error de timeout detectado - verificando contenido parcial...`);
+          
+          // Si hay resultados parciales, el sistema ya los habría procesado en StreamingResponseProcessor
+          if (targetProcessorResults.results && targetProcessorResults.results.length > 0) {
+            console.log(`🔄 [CommandProcessor] Contenido parcial recuperado exitosamente`);
+          }
+        }
       }
       
       // Actualizar el comando con los resultados

@@ -42,7 +42,11 @@ export class ProcessorConfigurationService {
         modelType: 'openai',
         modelId: 'gpt-4.1',
         maxTokens: 32000,
-        temperature: 0.7
+        temperature: 0.7,
+        stream: true, // Habilitar streaming para mejor manejo de timeouts
+        streamOptions: {
+          includeUsage: true
+        }
       }
     );
     
@@ -78,12 +82,16 @@ export class ProcessorConfigurationService {
       baseURL: 'https://api.portkey.ai/v1'
     };
     
-    // Opciones por defecto para el modelo
+    // Opciones por defecto para el modelo con streaming habilitado
     const defaultModelOptions: PortkeyModelOptions = {
       modelType: 'openai',
       modelId: 'gpt-4.1-nano',
       maxTokens: 32000,
-      temperature: 0.7
+      temperature: 0.7,
+      stream: true, // Habilitar streaming por defecto para mejor manejo de timeouts
+      streamOptions: {
+        includeUsage: true
+      }
     };
     
     // Crear el conector con la configuración
