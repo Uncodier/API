@@ -24,7 +24,7 @@ export class StreamingResponseProcessor {
     
     // Timeout específico para el procesamiento del stream (10 minutos)
     const STREAM_PROCESSING_TIMEOUT = 10 * 60 * 1000; // 10 minutos
-    const CHUNK_TIMEOUT = 30 * 1000; // 30 segundos entre chunks
+    const CHUNK_TIMEOUT = 120 * 1000; // 2 minutos entre chunks - más generoso para streams lentos
     
     try {
       console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
@@ -180,50 +180,85 @@ export class StreamingResponseProcessor {
     let fullContent = initialContent;
     let tokenUsage = { ...initialTokenUsage };
     let lastChunkTime = Date.now();
+    let chunkCount = 0;
     
     console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms`);
     
     try {
-      for await (const chunk of stream) {
-        const currentTime = Date.now();
-        const timeSinceLastChunk = currentTime - lastChunkTime;
+      // Use an approach that properly handles the async iterator with timeout
+      const streamProcessingPromise = (async () => {
+        const streamIterator = stream[Symbol.asyncIterator]();
         
-        // Verificar timeout entre chunks
-        if (timeSinceLastChunk > chunkTimeout && fullContent.length > 0) {
-          console.warn(`[StreamingResponseProcessor] ⚠️ Chunk timeout detectado: ${timeSinceLastChunk}ms > ${chunkTimeout}ms`);
-          throw new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms`);
-        }
-        
-        lastChunkTime = currentTime;
-        
-        if (chunk.choices?.[0]?.delta?.content) {
-          const deltaContent = chunk.choices[0].delta.content;
-          fullContent += deltaContent;
+        while (true) {
+          // Create a timeout for each chunk
+          const chunkTimeoutPromise = new Promise<never>((_, reject) => {
+            setTimeout(() => {
+              const timeSinceLastChunk = Date.now() - lastChunkTime;
+              reject(new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms`));
+            }, chunkTimeout);
+          });
           
-          // Log progress más frecuente para detectar problemas
-          if (fullContent.length % 100 === 0) {
-            console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received...`);
+          // Race between getting next chunk and timeout
+          let chunkResult: IteratorResult<any>;
+          try {
+            chunkResult = await Promise.race([
+              streamIterator.next(),
+              chunkTimeoutPromise
+            ]);
+          } catch (timeoutError) {
+            // Timeout occurred
+            throw timeoutError;
+          }
+          
+          // Check if stream is done
+          if (chunkResult.done) {
+            break;
+          }
+          
+          const chunk = chunkResult.value;
+          const currentTime = Date.now();
+          chunkCount++;
+          lastChunkTime = currentTime;
+          
+          // Process chunk content
+          if (chunk.choices?.[0]?.delta?.content) {
+            const deltaContent = chunk.choices[0].delta.content;
+            fullContent += deltaContent;
+            
+            // Log progress más frecuente para detectar problemas
+            if (fullContent.length % 500 === 0) {
+              console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received in ${chunkCount} chunks...`);
+            }
+          }
+          
+          // Extract usage if available in final chunk
+          if (chunk.usage) {
+            tokenUsage = {
+              prompt_tokens: chunk.usage.prompt_tokens || 0,
+              completion_tokens: chunk.usage.completion_tokens || 0,
+              total_tokens: chunk.usage.total_tokens || (chunk.usage.prompt_tokens || 0) + (chunk.usage.completion_tokens || 0)
+            };
+            console.log(`[StreamingResponseProcessor] Token usage from stream: ${JSON.stringify(tokenUsage)}`);
           }
         }
         
-        // Extract usage if available in final chunk
-        if (chunk.usage) {
-          tokenUsage = {
-            prompt_tokens: chunk.usage.prompt_tokens || 0,
-            completion_tokens: chunk.usage.completion_tokens || 0,
-            total_tokens: chunk.usage.total_tokens || (chunk.usage.prompt_tokens || 0) + (chunk.usage.completion_tokens || 0)
-          };
-          console.log(`[StreamingResponseProcessor] Token usage from stream: ${JSON.stringify(tokenUsage)}`);
-        }
-      }
+        console.log(`[StreamingResponseProcessor] Stream completed successfully. Total content length: ${fullContent.length}, chunks: ${chunkCount}`);
+        console.log(`[StreamingResponseProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
+        
+        return { fullContent, tokenUsage };
+      })();
       
-      console.log(`[StreamingResponseProcessor] Stream completed successfully. Total content length: ${fullContent.length}`);
-      console.log(`[StreamingResponseProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
-      
-      return { fullContent, tokenUsage };
+      // Execute the stream processing
+      const result = await streamProcessingPromise;
+      return result;
       
     } catch (error) {
       console.error(`[StreamingResponseProcessor] Error en procesamiento de chunks:`, error);
+      
+      // Log additional context for debugging
+      const timeSinceStart = Date.now() - (lastChunkTime - (chunkCount > 0 ? 0 : Date.now()));
+      console.error(`[StreamingResponseProcessor] Debug info: chunks received: ${chunkCount}, content length: ${fullContent.length}, time since start: ${timeSinceStart}ms`);
+      
       throw error;
     }
   }

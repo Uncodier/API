@@ -445,7 +445,8 @@ export class CommandProcessor {
         // Verificar si es un error de timeout recuperable
         if (errorMessage.includes('UND_ERR_BODY_TIMEOUT') || 
             errorMessage.includes('Body Timeout Error') ||
-            errorMessage.includes('Stream processing failed: terminated')) {
+            errorMessage.includes('Stream processing failed: terminated') ||
+            errorMessage.includes('Chunk timeout: No data received')) {
           console.warn(`⚠️ [CommandProcessor] Error de timeout detectado - verificando contenido parcial...`);
           
           // Si hay resultados parciales, el sistema ya los habría procesado en StreamingResponseProcessor

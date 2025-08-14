@@ -439,7 +439,7 @@ async function getAvailableTeamMembers(siteId: string): Promise<any[]> {
     
     // Buscar usuarios que tengan acceso al sitio
     const { data: siteMembers, error } = await supabaseAdmin
-      .from('site_memberships')
+      .from('site_members')
       .select('user_id, role')
       .eq('site_id', siteId)
       .eq('status', 'active')
