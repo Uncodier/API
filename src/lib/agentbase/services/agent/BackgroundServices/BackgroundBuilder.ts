@@ -253,6 +253,11 @@ export class BackgroundBuilder {
     }
     
     // Copywriting (contenido de copywriting desde tabla separada)
+    console.log(`🔍 [BackgroundBuilder] Verificando copywriting en siteInfo`);
+    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting exists:`, !!siteInfo.copywriting);
+    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting type:`, typeof siteInfo.copywriting);
+    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting value:`, siteInfo.copywriting);
+    
     if (siteInfo.copywriting && siteInfo.copywriting.length > 0) {
       console.log(`🔍 [BackgroundBuilder] Procesando copywriting (${siteInfo.copywriting.length} elementos)`);
       try {

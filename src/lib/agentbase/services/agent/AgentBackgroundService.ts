@@ -77,32 +77,43 @@ export class AgentBackgroundService {
           }
         }
         
-        // Usar siteInfo si ya viene del agentData, o intentar obtenerlo si no existe
-        let siteInfo = agentData.siteInfo;
+        // Siempre obtener siteInfo fresco para incluir copywriting actualizado
+        let siteInfo = null;
         
-        // Si no hay siteInfo en agentData pero hay alguna indicación de que debería tenerlo
-        if (!siteInfo) {
-          console.log(`🔍 [AgentBackgroundService] No se encontró siteInfo en los datos del agente, intentando obtenerlo`);
-          
-          if (processor.getId() && typeof processor.getId() === 'string' && processor.getId().startsWith('site_')) {
-            // Para agentes de tipo "site_*" intentar obtener información del sitio directamente
-            const siteId = processor.getId().replace('site_', '');
-            console.log(`🔍 [AgentBackgroundService] Detectado agente de sitio, obteniendo información para sitio: ${siteId}`);
-            if (DatabaseAdapter.isValidUUID(siteId)) {
-              siteInfo = await DataFetcher.getSiteInfo(siteId);
-            }
-          } else if ((agentData as any).site_id) {
-            // Para cualquier agente con site_id explícito
-            const siteId = (agentData as any).site_id;
-            console.log(`🔍 [AgentBackgroundService] Obteniendo información para sitio: ${siteId}`);
-            if (DatabaseAdapter.isValidUUID(siteId)) {
-              siteInfo = await DataFetcher.getSiteInfo(siteId);
+        // Intentar obtener siteId de múltiples fuentes
+        let siteId = null;
+        if (processor.getId() && typeof processor.getId() === 'string' && processor.getId().startsWith('site_')) {
+          siteId = processor.getId().replace('site_', '');
+          console.log(`🔍 [AgentBackgroundService] Detectado agente de sitio, obteniendo información para sitio: ${siteId}`);
+        } else if ((agentData as any).site_id) {
+          siteId = (agentData as any).site_id;
+          console.log(`🔍 [AgentBackgroundService] Obteniendo información para sitio: ${siteId}`);
+        } else if (agentData.siteInfo?.site?.id) {
+          siteId = agentData.siteInfo.site.id;
+          console.log(`🔍 [AgentBackgroundService] Usando site_id desde siteInfo existente: ${siteId}`);
+        }
+        
+        // Obtener siteInfo fresco si tenemos un siteId válido
+        if (siteId && DatabaseAdapter.isValidUUID(siteId)) {
+          console.log(`🔍 [AgentBackgroundService] Obteniendo siteInfo fresco con copywriting para sitio: ${siteId}`);
+          siteInfo = await DataFetcher.getSiteInfo(siteId);
+          if (siteInfo) {
+            console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
+            console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
+            console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting disponible: ${siteInfo.copywriting ? 'SÍ' : 'NO'}`);
+            if (siteInfo.copywriting) {
+              console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting elementos: ${siteInfo.copywriting.length}`);
             }
           }
         } else {
-          console.log(`🔍 [AgentBackgroundService] Usando siteInfo existente en los datos del agente`);
-          console.log(`🔍 [AgentBackgroundService] Site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
-          console.log(`🔍 [AgentBackgroundService] Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
+          // Fallback al siteInfo existente si no hay manera de obtener uno fresco
+          siteInfo = agentData.siteInfo;
+          if (siteInfo) {
+            console.log(`🔍 [AgentBackgroundService] Usando siteInfo existente como fallback`);
+            console.log(`🔍 [AgentBackgroundService] Site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
+            console.log(`🔍 [AgentBackgroundService] Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
+            console.log(`🔍 [AgentBackgroundService] Copywriting disponible: ${siteInfo.copywriting ? 'SÍ' : 'NO'}`);
+          }
         }
         
         // Obtener campañas activas si hay información del sitio
@@ -118,6 +129,9 @@ export class AgentBackgroundService {
         // Construir el background con toda la información
         // Nota: Pasamos la información del sitio directamente a BackgroundBuilder
         // quien se encargará de formatearla correctamente
+        console.log(`🔍 [AgentBackgroundService] *** LLAMANDO A BackgroundBuilder.buildAgentPrompt ***`);
+        console.log(`🔍 [AgentBackgroundService] SiteInfo antes de BackgroundBuilder:`, siteInfo);
+        console.log(`🔍 [AgentBackgroundService] SiteInfo.copywriting:`, siteInfo?.copywriting);
         let background = BackgroundBuilder.buildAgentPrompt(
           agentId,
           agentData.name,

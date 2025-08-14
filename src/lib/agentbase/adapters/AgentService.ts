@@ -441,12 +441,19 @@ export class AgentService {
       console.log(`[AgentService] Obteniendo copywriting del sitio: ${siteId}`);
       
       // Consultar el copywriting del sitio en la base de datos (solo approved)
+      console.log(`[AgentService] 🔍 Ejecutando query: SELECT * FROM copywriting WHERE site_id = '${siteId}' AND status = 'approved'`);
       const { data, error } = await supabaseAdmin
         .from('copywriting')
         .select('*')
         .eq('site_id', siteId)
         .eq('status', 'approved') // Solo incluir contenido aprobado
         .order('created_at', { ascending: false }); // Ordenar por más reciente primero
+      
+      console.log(`[AgentService] 📊 Query response - Error:`, error);
+      console.log(`[AgentService] 📊 Query response - Data length:`, data?.length || 0);
+      if (data && data.length > 0) {
+        console.log(`[AgentService] 📊 Primera fila:`, data[0]);
+      }
       
       if (error) {
         console.error('[AgentService] Error al obtener copywriting del sitio:', error);

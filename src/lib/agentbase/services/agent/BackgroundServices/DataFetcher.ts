@@ -287,13 +287,20 @@ export class DataFetcher {
     }
     
     // Obtener copywriting del sitio (de la tabla 'copywriting')
+    console.log(`🔍 [DataFetcher] Iniciando obtención de copywriting para sitio: ${siteId}`);
     try {
       const copywritingData = await DatabaseAdapter.getCopywritingBySiteId(siteId);
+      console.log(`🔍 [DataFetcher] Copywriting obtenido:`, copywritingData);
+      console.log(`🔍 [DataFetcher] Tipo de datos:`, typeof copywritingData);
+      console.log(`🔍 [DataFetcher] Es array:`, Array.isArray(copywritingData));
+      
       if (copywritingData && copywritingData.length > 0) {
         console.log(`✅ [DataFetcher] Encontrado copywriting del sitio: ${siteId} (${copywritingData.length} elementos)`);
+        console.log(`✅ [DataFetcher] Estados en los datos:`, Array.from(new Set(copywritingData.map(item => item.status))));
         result.copywriting = copywritingData;
       } else {
         console.log(`⚠️ [DataFetcher] No se encontró copywriting para el sitio: ${siteId}`);
+        console.log(`⚠️ [DataFetcher] Valor de copywritingData:`, copywritingData);
         result.copywriting = [];
       }
     } catch (copywritingError) {
