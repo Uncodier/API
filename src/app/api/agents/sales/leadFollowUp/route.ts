@@ -222,21 +222,24 @@ async function executeCopywriterRefinement(
       copywriterContext += `└─ Message: ${salesFollowUpContent.message || 'Not specified'}\n\n`;
       
       copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
-      copywriterContext += `Your task is to refine, improve, and enhance the selected content above with your copywriting expertise.\n`;
+      copywriterContext += `Your task is to IMPROVE and ENHANCE the sales content above, not to replace it completely.\n`;
+      copywriterContext += `The sales team has already done excellent strategic work selecting the right channel and approach.\n`;
       copywriterContext += `IMPORTANT: The sales team has already selected the most effective channel (${salesFollowUpContent.channel}) to avoid overwhelming the lead.\n`;
-      copywriterContext += `For the selected content, you must:\n`;
-      copywriterContext += `1. Maintain the original CHANNEL (${salesFollowUpContent.channel})\n`;
-      copywriterContext += `2. Preserve the core STRATEGY\n`;
-      copywriterContext += `3. Improve the TITLE to make it more attractive and persuasive\n`;
-      copywriterContext += `4. Perfect the MESSAGE with better copywriting and persuasion techniques\n`;
-      copywriterContext += `5. Ensure the content resonates with the audience while maintaining sales objectives\n`;
-      copywriterContext += `6. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
-      copywriterContext += `7. Use ONLY the real information provided in the lead context\n`;
-      copywriterContext += `8. Write final content ready to send without additional editing\n`;
-      copywriterContext += `9. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off\n`;
-      copywriterContext += `10. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
-      copywriterContext += `11. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
-      copywriterContext += `12. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n\n`;
+      copywriterContext += `Your role is to POLISH and REFINE what they've created. For the selected content, you must:\n`;
+      copywriterContext += `1. PRESERVE the original CHANNEL (${salesFollowUpContent.channel}) and overall strategy\n`;
+      copywriterContext += `2. MAINTAIN the core sales message and intent - don't change the fundamental approach\n`;
+      copywriterContext += `3. ENHANCE the TITLE to make it more engaging while keeping the same purpose\n`;
+      copywriterContext += `4. IMPROVE the MESSAGE with better copywriting flow, clarity, and persuasion techniques\n`;
+      copywriterContext += `5. OPTIMIZE language for better emotional connection while preserving sales objectives\n`;
+      copywriterContext += `6. STRENGTHEN calls-to-action without changing the intended next step\n`;
+      copywriterContext += `7. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
+      copywriterContext += `8. Use ONLY the real information provided in the lead context\n`;
+      copywriterContext += `9. Write final content ready to send without additional editing\n`;
+      copywriterContext += `10. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off\n`;
+      copywriterContext += `11. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
+      copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
+      copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
+      copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n\n`;
       
       console.log(`📝 PHASE 2: Structured context prepared with ${copywriterContext.length} characters`);
     } else {
@@ -298,10 +301,10 @@ async function executeCopywriterRefinement(
       userId: userId,
       agentId: agentId,
       site_id: siteId,
-      description: 'Refine and enhance the carefully selected follow-up content created by the sales team. The sales team has already chosen the most effective channel to avoid overwhelming the lead. Improve the title and message copy while preserving the channel, strategy, and sales intent. Focus on delighting the lead and nurturing them for long term.',
+      description: 'Polish and improve the follow-up content created by the sales team without changing the core strategy. Act as a writing coach to enhance clarity, flow, and persuasion while preserving the sales team approach, channel selection, and fundamental messaging. Focus on making the existing content more engaging and effective.',
       targets: [
         {
-          deep_thinking: "Analyze the sales team's strategically selected follow-up content and create a refined approach for copywriting enhancement. Respect the channel selection made by the sales team."
+          deep_thinking: "Analyze the sales team's strategically selected follow-up content and identify specific areas for copywriting improvement. Focus on enhancing clarity, flow, and persuasion while respecting and preserving the core sales strategy, channel selection, and messaging approach."
         },
         {
           refined_content: refinementTarget
