@@ -127,6 +127,183 @@ async function findActiveCopywriter(siteId: string): Promise<{agentId: string, u
   return await findActiveAgentByRole(siteId, 'Content Creator & Copywriter');
 }
 
+// Function to get site channel configuration
+async function getSiteChannelsConfiguration(siteId: string): Promise<{
+  hasChannels: boolean,
+  configuredChannels: string[],
+  channelsDetails: Record<string, any>,
+  warning?: string
+}> {
+  try {
+    console.log(`📡 Getting channel configuration for site: ${siteId}`);
+    
+    const { data, error } = await supabaseAdmin
+      .from('settings')
+      .select('channels')
+      .eq('site_id', siteId)
+      .single();
+    
+    if (error || !data?.channels) {
+      const warning = `⚠️ Site ${siteId} has NO channels configured in settings. Cannot process message without channels.`;
+      console.warn(warning);
+      
+      return {
+        hasChannels: false,
+        configuredChannels: [],
+        channelsDetails: {},
+        warning: 'No channels configured'
+      };
+    }
+    
+    const channels = data.channels;
+    const configuredChannels: string[] = [];
+    const channelsDetails: Record<string, any> = {};
+    
+    // Check each available channel type
+    if (channels.email && (channels.email.email || channels.email.aliases)) {
+      configuredChannels.push('email');
+      channelsDetails.email = {
+        type: 'email',
+        email: channels.email.email || null,
+        aliases: channels.email.aliases || [],
+        description: 'Email marketing and outreach'
+      };
+    }
+    
+    if (channels.whatsapp && channels.whatsapp.phone_number) {
+      configuredChannels.push('whatsapp');
+      channelsDetails.whatsapp = {
+        type: 'whatsapp',
+        phone_number: channels.whatsapp.phone_number,
+        description: 'WhatsApp Business messaging'
+      };
+    }
+    
+    return {
+      hasChannels: configuredChannels.length > 0,
+      configuredChannels,
+      channelsDetails
+    };
+    
+  } catch (error) {
+    console.error('Error getting site channel configuration:', error);
+    return {
+      hasChannels: false,
+      configuredChannels: [],
+      channelsDetails: {},
+      warning: 'Error retrieving channel configuration'
+    };
+  }
+}
+
+// Function to trigger channels setup required notification
+async function triggerChannelsSetupNotification(siteId: string): Promise<void> {
+  try {
+    console.log(`📧 CHANNELS SETUP: Triggering notification for site: ${siteId}`);
+    
+    // Make internal API call to channels setup notification endpoint
+    const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/channelsSetupRequired`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        site_id: siteId
+      })
+    });
+    
+    if (response.ok) {
+      const result = await response.json();
+      console.log(`✅ CHANNELS SETUP: Notification triggered successfully for site: ${siteId}`);
+      console.log(`📊 CHANNELS SETUP: Result:`, result);
+    } else {
+      const error = await response.json();
+      console.error(`❌ CHANNELS SETUP: Failed to trigger notification for site: ${siteId}`, error);
+    }
+  } catch (error) {
+    console.error(`❌ CHANNELS SETUP: Error triggering notification for site: ${siteId}:`, error);
+  }
+}
+
+// Function to manually filter and correct channel based on site configuration
+function filterAndCorrectMessageChannel(
+  messages: any,
+  configuredChannels: string[]
+): { correctedMessages: any, corrections: string[] } {
+  console.log(`🔧 CHANNEL FILTER: Starting manual channel filtering...`);
+  console.log(`🔧 CHANNEL FILTER: Configured channels: [${configuredChannels.join(', ')}]`);
+  console.log(`🔧 CHANNEL FILTER: Original messages channels: [${Object.keys(messages).join(', ')}]`);
+  
+  const corrections: string[] = [];
+  const correctedMessages: any = {};
+  
+  // Process each message channel
+  for (const [originalChannel, messageData] of Object.entries(messages)) {
+    console.log(`🔧 CHANNEL FILTER: Processing channel: ${originalChannel}`);
+    
+    let targetChannel = originalChannel;
+    let needsCorrection = false;
+    
+    // Manual filtering logic
+    if (originalChannel === 'whatsapp' && !configuredChannels.includes('whatsapp')) {
+      // WhatsApp message but no WhatsApp configured -> try email
+      if (configuredChannels.includes('email')) {
+        targetChannel = 'email';
+        needsCorrection = true;
+        corrections.push(`Changed ${originalChannel} → ${targetChannel} (WhatsApp not configured)`);
+        console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp → Email (WhatsApp not configured)`);
+      } else {
+        console.log(`🔧 CHANNEL FILTER: ❌ WhatsApp not configured and no email alternative`);
+        continue; // Skip this message if no alternative
+      }
+    } 
+    else if (originalChannel === 'email' && !configuredChannels.includes('email')) {
+      // Email message but no email configured -> try WhatsApp
+      if (configuredChannels.includes('whatsapp')) {
+        targetChannel = 'whatsapp';
+        needsCorrection = true;
+        corrections.push(`Changed ${originalChannel} → ${targetChannel} (Email not configured)`);
+        console.log(`🔧 CHANNEL FILTER: ✅ Email → WhatsApp (Email not configured)`);
+      } else {
+        console.log(`🔧 CHANNEL FILTER: ❌ Email not configured and no WhatsApp alternative`);
+        continue; // Skip this message if no alternative
+      }
+    }
+    else if (configuredChannels.includes(originalChannel)) {
+      // Channel is properly configured
+      console.log(`🔧 CHANNEL FILTER: ✅ ${originalChannel} is properly configured`);
+    }
+    else {
+      // Channel not supported or not configured, skip
+      console.log(`🔧 CHANNEL FILTER: ⚠️ Skipping ${originalChannel} (not configured)`);
+      continue;
+    }
+    
+    // Add message to corrected messages
+    correctedMessages[targetChannel] = {
+      ...(typeof messageData === 'object' && messageData !== null ? messageData : {}),
+      channel: targetChannel
+    };
+    
+    // Add correction metadata if needed
+    if (needsCorrection) {
+      correctedMessages[targetChannel].original_channel = originalChannel;
+      correctedMessages[targetChannel].correction_reason = `Original channel '${originalChannel}' not configured, switched to '${targetChannel}'`;
+    }
+    
+    console.log(`🔧 CHANNEL FILTER: Message added for channel: ${targetChannel}`);
+  }
+  
+  console.log(`🔧 CHANNEL FILTER: Filtering completed`);
+  console.log(`🔧 CHANNEL FILTER: Final channels: [${Object.keys(correctedMessages).join(', ')}]`);
+  console.log(`🔧 CHANNEL FILTER: Corrections applied: ${corrections.length}`);
+  
+  return {
+    correctedMessages,
+    corrections
+  };
+}
+
 // Function to wait for command completion
 async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
@@ -919,6 +1096,74 @@ export async function POST(request: Request) {
     console.log(`📦 Messages structured by channel:`, Object.keys(messages));
     console.log(`📦 Messages content:`, JSON.stringify(messages, null, 2));
     
+    // ===== MANUAL CHANNEL FILTERING =====
+    console.log(`🔧 STARTING MANUAL CHANNEL FILTERING FOR SITE: ${siteId}`);
+    
+    // Get site channel configuration
+    const channelConfig = await getSiteChannelsConfiguration(siteId);
+    console.log(`📡 Channel configuration result:`, channelConfig);
+    
+    // Check if site has no channels configured at all
+    if (!channelConfig.hasChannels) {
+      console.error(`❌ CHANNEL FILTER ERROR: Site ${siteId} has no channels configured`);
+      
+      // Trigger channels setup notification to alert team members
+      console.log(`📧 TRIGGERING CHANNELS SETUP NOTIFICATION for site: ${siteId}`);
+      try {
+        await triggerChannelsSetupNotification(siteId);
+        console.log(`✅ Channels setup notification triggered successfully`);
+      } catch (notificationError) {
+        console.error(`⚠️ Failed to trigger channels setup notification, but continuing with error response:`, notificationError);
+      }
+      
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'NO_CHANNELS_CONFIGURED', 
+            message: 'Site has no communication channels configured. Please configure at least email or WhatsApp channels in site settings before sending messages. Team members have been notified to set up channels.',
+            details: channelConfig.warning,
+            action_taken: 'Channels setup notification sent to team members'
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Apply manual channel filtering
+    const { correctedMessages, corrections } = filterAndCorrectMessageChannel(
+      messages, 
+      channelConfig.configuredChannels
+    );
+    
+    // Check if no messages remain after filtering
+    if (Object.keys(correctedMessages).length === 0) {
+      console.error(`❌ CHANNEL FILTER ERROR: No valid messages remain after channel filtering`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'NO_VALID_CHANNELS', 
+            message: 'No valid communication channels available for this message. The generated message channels are not configured for this site.',
+            details: {
+              available_channels: channelConfig.configuredChannels,
+              original_channels: Object.keys(messages),
+              corrections_applied: corrections
+            }
+          } 
+        },
+        { status: 400 }
+      );
+    }
+    
+    console.log(`✅ CHANNEL FILTERING COMPLETED`);
+    console.log(`📋 Final messages after filtering:`, Object.keys(correctedMessages));
+    if (corrections.length > 0) {
+      console.log(`🔄 Channel corrections applied:`, corrections);
+    }
+    
+    // ===== END MANUAL CHANNEL FILTERING =====
+    
     // 🔧 CORRECCIÓN: Usar UUIDs de la base de datos en lugar de IDs internos
     const finalCommandIds = {
       sales: salesDbUuid || salesCommandId, // Priorizar UUID de DB
@@ -930,13 +1175,24 @@ export async function POST(request: Request) {
       copywriter: finalCommandIds.copywriter + (copywriterDbUuid ? ' (DB UUID)' : ' (internal ID)')
     });
     
+    const responseData: any = {
+      messages: correctedMessages, // Return filtered messages instead of original
+      lead: effectiveLeadData || {},
+      command_ids: finalCommandIds
+    };
+    
+    // Add channel corrections if any were applied
+    if (corrections.length > 0) {
+      responseData.channel_corrections = {
+        applied: corrections,
+        configured_channels: channelConfig.configuredChannels,
+        original_channels: Object.keys(messages)
+      };
+    }
+    
     return NextResponse.json({
       success: true,
-      data: {
-        messages: messages,
-        lead: effectiveLeadData || {},
-        command_ids: finalCommandIds
-      }
+      data: responseData
     });
     
   } catch (error) {
