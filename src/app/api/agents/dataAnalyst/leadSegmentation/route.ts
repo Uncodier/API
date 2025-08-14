@@ -51,28 +51,79 @@ async function findDataAnalystAgent(siteId: string): Promise<{agentId: string, u
   }
 }
 
-// Función para actualizar el segment_id del lead
-async function updateLeadSegment(leadId: string, segmentId: string): Promise<boolean> {
-  try {
-    const { error } = await supabaseAdmin
-      .from('leads')
-      .update({ 
-        segment_id: segmentId,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', leadId);
-    
-    if (error) {
-      console.error('Error al actualizar segmento del lead:', error);
-      return false;
+// Función para actualizar el segment_id del lead con retry mechanism
+async function updateLeadSegment(leadId: string, segmentId: string, maxRetries: number = 3): Promise<boolean> {
+  const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      console.log(`🔄 Intento ${attempt}/${maxRetries} - Validando segmento ${segmentId}...`);
+      
+      // 1. Primero validar que el segmento existe con retry
+      const { data: segment, error: segmentError } = await supabaseAdmin
+        .from('segments')
+        .select('id, name, is_active')
+        .eq('id', segmentId)
+        .single();
+      
+      if (segmentError || !segment) {
+        if (attempt < maxRetries) {
+          console.warn(`⚠️ Intento ${attempt}: El segmento ${segmentId} no existe aún. Reintentando en ${attempt * 1000}ms...`);
+          console.warn('Segment validation error:', segmentError);
+          await sleep(attempt * 1000); // Exponential backoff: 1s, 2s, 3s
+          continue;
+        } else {
+          console.error(`❌ Error después de ${maxRetries} intentos: El segmento ${segmentId} no existe en la base de datos`);
+          console.error('Final segment validation error:', segmentError);
+          return false;
+        }
+      }
+      
+      if (!segment.is_active) {
+        console.error(`❌ Error: El segmento ${segmentId} (${segment.name}) está inactivo`);
+        return false;
+      }
+      
+      console.log(`✅ Segmento validado en intento ${attempt}: ${segmentId} (${segment.name})`);
+      
+      // 2. Actualizar el lead con el segment_id validado
+      const { error } = await supabaseAdmin
+        .from('leads')
+        .update({ 
+          segment_id: segmentId,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', leadId);
+      
+      if (error) {
+        // Si es un error de foreign key constraint, es probable que sea timing
+        if (error.code === '23503' && attempt < maxRetries) {
+          console.warn(`⚠️ Intento ${attempt}: Error de foreign key, posible problema de timing. Reintentando...`);
+          console.warn('Foreign key error:', error);
+          await sleep(attempt * 1000);
+          continue;
+        } else {
+          console.error('Error al actualizar segmento del lead:', error);
+          return false;
+        }
+      }
+      
+      console.log(`✅ Lead ${leadId} asignado al segmento ${segmentId} (${segment.name}) en intento ${attempt}`);
+      return true;
+      
+    } catch (error) {
+      if (attempt < maxRetries) {
+        console.warn(`⚠️ Intento ${attempt}: Error inesperado, reintentando...`, error);
+        await sleep(attempt * 1000);
+        continue;
+      } else {
+        console.error('Error final al actualizar segmento del lead:', error);
+        return false;
+      }
     }
-    
-    console.log(`✅ Lead ${leadId} asignado al segmento ${segmentId}`);
-    return true;
-  } catch (error) {
-    console.error('Error al actualizar segmento del lead:', error);
-    return false;
   }
+  
+  return false;
 }
 
 // Inicializar el sistema de comandos
@@ -360,6 +411,11 @@ Please analyze the lead information against all available segments and determine
               console.log(`✅ Lead ${lead_id} automáticamente asignado al segmento ${segmentationResult.recommended_segment_id}`);
             } else {
               console.error(`❌ Error al asignar automáticamente el lead ${lead_id} al segmento ${segmentationResult.recommended_segment_id}`);
+              responseData.assignment_error = {
+                code: 'SEGMENT_ASSIGNMENT_FAILED',
+                message: `El segmento recomendado ${segmentationResult.recommended_segment_id} no existe o está inactivo`,
+                recommended_segment_id: segmentationResult.recommended_segment_id
+              };
             }
           }
         }

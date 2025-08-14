@@ -586,7 +586,7 @@ function groupLeadsByCompany(leadsData: any[]): Map<string, any[]> {
   for (const leadData of leadsData) {
     if (!leadData || !leadData.lead) continue;
     
-    const company = leadData.lead.company || 'Unknown Company';
+    const company = String(leadData.lead.company || 'Unknown Company');
     const companyKey = company.toLowerCase().trim();
     
     if (!companiesMap.has(companyKey)) {
@@ -725,7 +725,7 @@ export async function POST(request: Request) {
     
          let companyIndex = 1;
      for (const [companyName, companyLeads] of Array.from(companiesMap.entries())) {
-       contextMessage += `COMPANY ${companyIndex}: ${companyName.toUpperCase()}\n`;
+       contextMessage += `COMPANY ${companyIndex}: ${String(companyName).toUpperCase()}\n`;
        contextMessage += `├─ Total Leads: ${companyLeads.length}\n\n`;
        
        companyLeads.forEach((leadData: any, index: number) => {
@@ -795,7 +795,7 @@ export async function POST(request: Request) {
     // Añadir información de leads convertidos y perdidos por segmento
     contextMessage += `=== CONVERTED LEADS BY SEGMENT ===\n\n`;
     for (const [segmentName, leads] of Object.entries(convertedLeadsBySegment)) {
-      contextMessage += `Segment: ${segmentName.toUpperCase()}\n`;
+      contextMessage += `Segment: ${String(segmentName).toUpperCase()}\n`;
       contextMessage += `├─ Total Converted: ${leads.length}\n`;
       if (leads.length > 0) {
         leads.slice(0, 3).forEach((lead: any, index: number) => {
@@ -810,7 +810,7 @@ export async function POST(request: Request) {
 
     contextMessage += `=== LOST LEADS BY SEGMENT ===\n\n`;
     for (const [segmentName, leads] of Object.entries(lostLeadsBySegment)) {
-      contextMessage += `Segment: ${segmentName.toUpperCase()}\n`;
+      contextMessage += `Segment: ${String(segmentName).toUpperCase()}\n`;
       contextMessage += `├─ Total Lost: ${leads.length}\n`;
       if (leads.length > 0) {
         leads.slice(0, 3).forEach((lead: any, index: number) => {
@@ -826,7 +826,7 @@ export async function POST(request: Request) {
     // Añadir información de atribuciones de team members por segmento
     contextMessage += `=== TEAM MEMBER ATTRIBUTIONS BY SEGMENT ===\n\n`;
     for (const [segmentName, assigneeData] of Object.entries(teamMemberAttributionsBySegment)) {
-      contextMessage += `Segment: ${segmentName.toUpperCase()}\n`;
+      contextMessage += `Segment: ${String(segmentName).toUpperCase()}\n`;
       contextMessage += `├─ Best Assignee: ${assigneeData.name || 'N/A'} (ID: ${assigneeData.assignee_id}, Score: ${assigneeData.score})\n`;
       contextMessage += `│  ├─ Conversions: ${assigneeData.conversions}\n`;
       contextMessage += `│  └─ Total Sales: ${assigneeData.total_sales.toLocaleString()}\n`;

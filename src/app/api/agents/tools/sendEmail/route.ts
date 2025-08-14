@@ -18,8 +18,21 @@ import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObject
  * - site_id: (Requerido) ID del sitio para obtener configuración SMTP
  */
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
+    console.log(`[SEND_EMAIL] 🚀 Iniciando proceso de envío de email`);
+    
     const body = await request.json();
+    
+    // Log inicial con información básica de la request
+    console.log(`[SEND_EMAIL] 📋 Request recibida:`, {
+      url: request.url,
+      method: request.method,
+      hasBody: !!body,
+      bodySize: JSON.stringify(body).length,
+      timestamp: new Date().toISOString()
+    });
     
     // Extraer parámetros de la solicitud
     const { 
@@ -33,7 +46,21 @@ export async function POST(request: NextRequest) {
       site_id
     } = body;
     
+    // Log detallado de los parámetros recibidos
+    console.log(`[SEND_EMAIL] 📝 Parámetros recibidos:`, {
+      email: email ? `${email.substring(0, 3)}***${email.includes('@') ? email.substring(email.indexOf('@')) : ''}` : 'undefined',
+      from: from || 'no-especificado',
+      subject: subject ? `${subject.substring(0, 50)}${subject.length > 50 ? '...' : ''}` : 'undefined',
+      messageLength: message?.length || 0,
+      agent_id: agent_id || 'no-especificado',
+      conversation_id: conversation_id || 'no-especificado',
+      lead_id: lead_id || 'no-especificado',
+      site_id: site_id || 'undefined'
+    });
+    
     // Validar parámetros requeridos
+    console.log(`[SEND_EMAIL] 🔍 Iniciando validación de parámetros requeridos`);
+    
     const requiredFields = [
       { field: 'email', value: email },
       { field: 'subject', value: subject },
@@ -42,7 +69,15 @@ export async function POST(request: NextRequest) {
     ];
 
     for (const { field, value } of requiredFields) {
+      console.log(`[SEND_EMAIL] 🔍 Validando campo '${field}':`, {
+        hasValue: !!value,
+        valueType: typeof value,
+        valueLength: value?.length || 0,
+        isEmpty: value === '' || value === null || value === undefined
+      });
+      
       if (!value) {
+        console.log(`[SEND_EMAIL] ❌ Error de validación: Campo '${field}' requerido no proporcionado`);
         return NextResponse.json(
           { 
             success: false, 
@@ -56,14 +91,37 @@ export async function POST(request: NextRequest) {
       }
     }
     
+    console.log(`[SEND_EMAIL] ✅ Validación de parámetros requeridos completada exitosamente`);
+    
     // Obtener configuración del sitio para validar el email del remitente
+    console.log(`[SEND_EMAIL] 🔍 Obteniendo configuración del sitio para site_id: ${site_id}`);
+    
     const { data: siteSettings, error: settingsError } = await supabaseAdmin
       .from('settings')
       .select('channels')
       .eq('site_id', site_id)
       .single();
+    
+    console.log(`[SEND_EMAIL] 📊 Resultado de consulta de configuración:`, {
+      hasData: !!siteSettings,
+      hasError: !!settingsError,
+      errorCode: settingsError?.code,
+      errorMessage: settingsError?.message,
+      errorDetails: settingsError?.details,
+      dataStructure: siteSettings ? {
+        hasChannels: !!siteSettings.channels,
+        hasEmailConfig: !!siteSettings.channels?.email,
+        emailConfigKeys: siteSettings.channels?.email ? Object.keys(siteSettings.channels.email) : []
+      } : null
+    });
       
     if (settingsError || !siteSettings) {
+      console.log(`[SEND_EMAIL] ❌ Error obteniendo configuración del sitio:`, {
+        site_id,
+        error: settingsError,
+        hasData: !!siteSettings
+      });
+      
       return NextResponse.json(
         { 
           success: false, 
@@ -77,7 +135,15 @@ export async function POST(request: NextRequest) {
     }
     
     const configuredEmail = siteSettings.channels?.email?.email;
+    console.log(`[SEND_EMAIL] 📧 Email configurado encontrado:`, {
+      hasConfiguredEmail: !!configuredEmail,
+      emailMask: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'no-encontrado',
+      channelsStructure: siteSettings.channels ? Object.keys(siteSettings.channels) : []
+    });
+    
     if (!configuredEmail) {
+      console.log(`[SEND_EMAIL] ❌ Email no configurado para el sitio ${site_id}`);
+      
       return NextResponse.json(
         { 
           success: false, 
@@ -91,7 +157,17 @@ export async function POST(request: NextRequest) {
     }
     
     // Validar formato del email configurado
-    if (!EmailSendService.isValidEmail(configuredEmail)) {
+    console.log(`[SEND_EMAIL] 🔍 Validando formato del email configurado`);
+    const isConfiguredEmailValid = EmailSendService.isValidEmail(configuredEmail);
+    
+    console.log(`[SEND_EMAIL] 📧 Validación de email configurado:`, {
+      email: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'null',
+      isValid: isConfiguredEmailValid
+    });
+    
+    if (!isConfiguredEmailValid) {
+      console.log(`[SEND_EMAIL] ❌ Email configurado tiene formato inválido: ${configuredEmail}`);
+      
       return NextResponse.json(
         { 
           success: false, 
@@ -106,8 +182,20 @@ export async function POST(request: NextRequest) {
     
     // Validar formato del email destinatario
     const targetEmail = email === 'no-email@example.com' ? email : email;
+    console.log(`[SEND_EMAIL] 🔍 Validando formato del email destinatario`);
     
-    if (targetEmail !== 'no-email@example.com' && !EmailSendService.isValidEmail(targetEmail)) {
+    const isTargetEmailValid = targetEmail === 'no-email@example.com' || EmailSendService.isValidEmail(targetEmail);
+    
+    console.log(`[SEND_EMAIL] 📧 Validación de email destinatario:`, {
+      originalEmail: email ? `${email.substring(0, 3)}***${email.includes('@') ? email.substring(email.indexOf('@')) : ''}` : 'null',
+      targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
+      isSpecialCase: targetEmail === 'no-email@example.com',
+      isValid: isTargetEmailValid
+    });
+    
+    if (!isTargetEmailValid) {
+      console.log(`[SEND_EMAIL] ❌ Email destinatario tiene formato inválido: ${targetEmail}`);
+      
       return NextResponse.json(
         { 
           success: false, 
@@ -121,18 +209,30 @@ export async function POST(request: NextRequest) {
     }
 
     // Generar firma del agente basada en la información del sitio
+    console.log(`[SEND_EMAIL] 🖋️ Generando firma del agente para site_id: ${site_id}, from: ${from || 'no-especificado'}`);
     let signatureHtml = '';
     try {
       const signature = await EmailSignatureService.generateAgentSignature(site_id, from);
       // Solo usar la versión HTML de la firma, no agregarla al texto plano
       signatureHtml = signature.formatted;
+      
+      console.log(`[SEND_EMAIL] ✅ Firma del agente generada exitosamente:`, {
+        hasSignature: !!signatureHtml,
+        signatureLength: signatureHtml?.length || 0,
+        signaturePreview: signatureHtml ? signatureHtml.substring(0, 100) + '...' : 'vacía'
+      });
     } catch (signatureError) {
-      console.warn('No se pudo generar la firma del agente:', signatureError);
+      console.warn(`[SEND_EMAIL] ⚠️ No se pudo generar la firma del agente:`, {
+        site_id,
+        from,
+        error: (signatureError as Error)?.message || String(signatureError),
+        errorType: signatureError?.constructor?.name
+      });
       // Continuar sin firma si hay error
     }
 
-    // Enviar el email usando el servicio
-    const result = await EmailSendService.sendEmail({
+    // Preparar parámetros para EmailSendService
+    const emailParams = {
       email: targetEmail,
       from: from || '', // Nombre del remitente (opcional)
       fromEmail: configuredEmail, // Email del remitente desde configuración
@@ -143,6 +243,35 @@ export async function POST(request: NextRequest) {
       conversation_id,
       lead_id,
       site_id
+    };
+    
+    console.log(`[SEND_EMAIL] 📤 Llamando a EmailSendService con parámetros:`, {
+      targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
+      fromName: from || 'sin-nombre',
+      fromEmail: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'null',
+      subjectLength: subject?.length || 0,
+      messageLength: message?.length || 0,
+      hasSignature: !!signatureHtml,
+      agent_id: agent_id || 'no-especificado',
+      conversation_id: conversation_id || 'no-especificado',
+      lead_id: lead_id || 'no-especificado',
+      site_id: site_id || 'undefined'
+    });
+
+    // Enviar el email usando el servicio
+    const result = await EmailSendService.sendEmail(emailParams);
+    
+    console.log(`[SEND_EMAIL] 📨 Resultado de EmailSendService:`, {
+      success: result.success,
+      status: result.status,
+      hasEmailId: !!result.email_id,
+      hasEnvelopeId: !!result.envelope_id,
+      hasError: !!result.error,
+      errorCode: result.error?.code,
+      errorMessage: result.error?.message,
+      recipient: result.recipient,
+      sender: result.sender,
+      sentAt: result.sent_at
     });
 
     // 🔍 DEBUG: Verificar qué IDs están disponibles en el resultado
@@ -157,6 +286,15 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
+      console.log(`[SEND_EMAIL] ❌ Error en EmailSendService:`, {
+        errorCode: result.error?.code,
+        errorMessage: result.error?.message,
+        errorDetails: (result.error as any)?.details || result.error,
+        site_id,
+        targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
+        agent_id: agent_id || 'no-especificado'
+      });
+      
       const statusCode = result.error?.code === 'EMAIL_CONFIG_NOT_FOUND' ? 404 : 500;
       return NextResponse.json(
         { 
@@ -241,10 +379,28 @@ export async function POST(request: NextRequest) {
     };
 
     const statusCode = result.status === 'skipped' ? 200 : 201;
+    
+    console.log(`[SEND_EMAIL] ✅ Proceso completado exitosamente:`, {
+      status: result.status,
+      statusCode,
+      hasExternalMessageId: !!(result.envelope_id || result.email_id),
+      externalMessageId: (result.envelope_id || result.email_id) ? `${(result.envelope_id || result.email_id)!.substring(0, 8)}...` : 'no-disponible',
+      recipient: result.recipient,
+      duration: `${Date.now() - startTime}ms`
+    });
+    
     return NextResponse.json(responseData, { status: statusCode });
     
   } catch (error) {
-    console.error('Error en endpoint send_email_from_agent:', error);
+    console.error(`[SEND_EMAIL] 💥 Error crítico en endpoint send_email_from_agent:`, {
+      error: (error as Error)?.message || String(error),
+      errorType: (error as Error)?.constructor?.name,
+      stack: (error as Error)?.stack,
+      timestamp: new Date().toISOString(),
+      // Información de contexto disponible en este punto
+      requestUrl: request?.url,
+      requestMethod: request?.method
+    });
     
     return NextResponse.json(
       { 
