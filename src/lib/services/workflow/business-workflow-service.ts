@@ -107,6 +107,14 @@ interface StartRobotWorkflowArgs {
   user_id?: string;
 }
 
+interface PromptRobotWorkflowArgs {
+  instance_id: string;
+  message: string;
+  step_status: string;
+  site_id: string;
+  context: string;
+}
+
 export class BusinessWorkflowService extends BaseWorkflowService {
   private static instance: BusinessWorkflowService;
 
@@ -556,6 +564,60 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para procesar mensajes de robots automatizados
+   */
+  public async promptRobot(args: PromptRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.instance_id || !args.message || !args.step_status || !args.site_id || !args.context) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren instance_id, message, step_status, site_id y context para el prompt robot'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `prompt-robot-${args.instance_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🤖 Iniciando workflow de prompt robot: ${workflowId}`);
+      console.log(`🆔 Instance ID: ${args.instance_id}`);
+      console.log(`💬 Mensaje: ${args.message}`);
+      console.log(`📊 Estado del paso: ${args.step_status}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+      console.log(`📝 Contexto: ${args.context}`);
+
+      const result = await client.workflow.execute('promptRobotWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId,
+      });
+
+      console.log(`✅ Workflow de prompt robot completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de prompt robot:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de prompt robot'
+        }
+      };
+    }
+  }
 }
 
 // Exportar interfaces para uso externo
@@ -567,5 +629,6 @@ export type {
   WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,
-  StartRobotWorkflowArgs
+  StartRobotWorkflowArgs,
+  PromptRobotWorkflowArgs
 }; 

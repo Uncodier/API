@@ -31,14 +31,14 @@ export async function getActivitySpecificContext(
   
   // Base context with user input and previous plan context if provided
   const baseContext = [
-    userContext ? `\n🎯 CONTEXTO DEL USUARIO:\n${userContext}\n` : '',
-    previousPlanContext ? `\n📋 CONTEXTO DEL PLAN PREVIO:\n${previousPlanContext}\n` : ''
+    userContext ? `\n🎯 USER CONTEXT:\n${userContext}\n` : '',
+    previousPlanContext ? `\n📋 PREVIOUS PLAN CONTEXT:\n${previousPlanContext}\n` : ''
   ].filter(Boolean).join('');
   
   switch (activityTypeNormalized) {
     case 'free agent':
     case 'free-agent':
-      // Obtener las últimas sesiones de autenticación disponibles
+      // Get the latest available authentication sessions
       const { data: recentSessions } = await supabaseAdmin
         .from('automation_auth_sessions')
         .select('id, name, domain, auth_type, last_used_at, usage_count, created_at')
@@ -47,10 +47,10 @@ export async function getActivitySpecificContext(
         .order('last_used_at', { ascending: false })
         .limit(10);
 
-      // ✅ LÓGICA CORREGIDA: Free Agent mode puede funcionar con o sin sesiones
-      // Si hay sesiones, las incluimos en el contexto. Si no hay, el agente trabajará sin ellas.
+      // ✅ CORRECTED LOGIC: Free Agent mode can work with or without sessions
+      // If there are sessions, include them in context. If not, the agent will work without them.
       const sessionsContext = (!recentSessions || recentSessions.length === 0) 
-        ? `\n⚠️ NO SESSIONS AVAILABLE:\nNo hay sesiones de autenticación disponibles actualmente. El agente trabajará en modo limitado sin acceso a plataformas autenticadas.\n`
+        ? `\n⚠️ NO SESSIONS AVAILABLE:\nNo authentication sessions are currently available. The agent will work in limited mode without access to authenticated platforms.\n`
         : `\n🔑 AVAILABLE SESSIONS (${recentSessions.length} sessions):\n` +
           recentSessions.map((session, index) => 
             `${index + 1}. **${session.name}** (${session.domain})\n` +
@@ -69,23 +69,40 @@ export async function getActivitySpecificContext(
 
 Create a SIMPLE plan focused exclusively on Google navigation and tasks.
 
+🔧 MANDATORY STEP DECOMPOSITION:
+Break down ALL tasks into specific, executable browser actions:
+
+✅ GOOD STEP EXAMPLES:
+- "Open Chrome browser"
+- "Navigate to google.com"
+- "Click on the search bar"
+- "Type '[search query]' in the search field"
+- "Press Enter to search"
+- "Click on the first search result"
+- "Scroll down to read more content"
+
+❌ AVOID VAGUE STEPS:
+- "Search for information" (too vague)
+- "Research the topic" (not specific)
+- "Find relevant content" (not actionable)
+
 🎯 BASIC OBJECTIVES:
 - Navigate ONLY to Google (google.com)
-- Perform basic Google searches
+- Perform basic Google searches with specific steps
 - Use Google services (Search, News, etc.)
-- Maximum 3-5 simple steps
+- Maximum 3-5 simple, specific steps
 - No other websites or platforms allowed
 
 📋 SIMPLE PLAN STRUCTURE:
 1. Open web browser and navigate to Google.com
-2. Perform a basic search query related to the user's business/industry
-3. Review search results on the first page
-4. Optionally check Google News for relevant updates
-5. Document findings and close browser
+2. Click on the search bar at the top of the page
+3. Type specific search query related to the user's business/industry
+4. Press Enter to execute the search
+5. Click on the first relevant search result to review
 
 🔍 BASIC REQUIREMENTS:
 - ONLY navigate to google.com and its subdomains (news.google.com, etc.)
-- Create simple, direct navigation steps
+- Create simple, direct navigation steps with specific actions
 - No authentication required for basic Google searches
 - Maximum 30-minute execution time total
 - Focus on information gathering through Google search
@@ -98,7 +115,7 @@ Create a SIMPLE plan focused exclusively on Google navigation and tasks.
 - Do NOT suggest visiting other websites
 - ONLY use Google's public search functionality
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['search_terms']
       };
 
@@ -119,7 +136,7 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Validate channel performance data against actual platform analytics
 - If data is missing or outdated, include steps to gather current information
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['segments', 'customer_behavior', 'channel_performance']
       };
 
@@ -134,6 +151,28 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Prioritize platforms where previous sessions exist for authentication
 - Create simple engagement actions: reply, share, post using existing content
 
+🔧 MANDATORY STEP DECOMPOSITION FOR SOCIAL ENGAGEMENT:
+Break down ALL social media tasks into specific browser actions:
+
+✅ GOOD STEP EXAMPLES:
+- "Navigate to linkedin.com"
+- "Click on the search bar at the top"
+- "Type 'target user name' in search field"
+- "Press Enter to search"
+- "Click on the first profile result"
+- "Scroll down to view recent posts"
+- "Click on the first post to open it"
+- "Click the 'Like' button below the post"
+- "Click the 'Comment' button"
+- "Type a positive comment in the comment field"
+- "Click 'Post' to submit the comment"
+
+❌ AVOID VAGUE SOCIAL STEPS:
+- "Engage with followers" (too vague)
+- "Create social presence" (not specific)
+- "Build relationships" (not actionable)
+- "Interact with content" (not specific enough)
+
 🔍 VALIDATION REQUIREMENTS:
 - VERIFY authentication sessions are still active and valid
 - Check if social profiles/pages exist and are accessible
@@ -142,7 +181,26 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - If posts appear published in system but aren't visible online, recreate them
 - Verify social platform API access and permissions before executing actions
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+🎯 MANDATORY SOCIAL MEDIA FOCUS AND VALIDATION STEPS:
+ALWAYS include these step types in your social engagement plan:
+
+FOCUS STEPS (at start):
+1. "Focus on platform: [specific social platform] - navigate to main interface"
+2. "Verify authentication session is active and profile is accessible"
+3. "Confirm target audience/content for engagement is identified"
+
+VALIDATION CHECKPOINTS (throughout):
+- "Validate platform loaded correctly and user is logged in"
+- "Confirm target profiles/posts are accessible and current"
+- "Verify engagement actions (likes, comments, shares) are working"
+- "Check that interactions are being recorded and visible"
+
+VERIFICATION STEPS (at end):
+- "Validate all engagement actions were completed successfully"
+- "Confirm interactions appear in activity feed and are public"
+- "Verify engagement metrics updated correctly in analytics"
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['approved_content', 'social_sessions', 'segments']
       };
 
@@ -165,7 +223,26 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - If system shows content as optimized but SEO tools show otherwise, re-implement changes
 - Test website accessibility and loading speed before claiming SEO completion
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+🎯 MANDATORY SEO FOCUS AND VALIDATION STEPS:
+ALWAYS include these step types in your SEO optimization plan:
+
+FOCUS STEPS (at start):
+1. "Focus on target page/content: [specific URL] - navigate and load page"
+2. "Verify page loads correctly and content is accessible"
+3. "Confirm target keyword: [keyword] - identify optimization opportunities"
+
+VALIDATION CHECKPOINTS (throughout):
+- "Validate page source shows updated meta tags correctly"
+- "Confirm content changes are visible in browser and saved"
+- "Verify keyword density and placement are optimized"
+- "Check that internal/external links are working properly"
+
+VERIFICATION STEPS (at end):
+- "Validate page is indexed by search engines (site:domain.com check)"
+- "Confirm SEO changes are reflected in page source code"
+- "Verify page loading speed and accessibility scores improved"
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['approved_content', 'current_rankings', 'target_keywords']
       };
 
@@ -198,6 +275,27 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Focus on proper formatting and scheduling for maximum impact
 - Ensure content aligns with existing campaigns if campaign_id is present
 
+🔧 MANDATORY STEP DECOMPOSITION FOR CONTENT PUBLISHING:
+Break down ALL publishing tasks into specific browser actions:
+
+✅ GOOD STEP EXAMPLES:
+- "Navigate to facebook.com/pages"
+- "Click on 'Create Post' button"
+- "Click in the post text area"
+- "Copy approved content text from system"
+- "Paste content into the post text area"
+- "Click 'Add Photo/Video' if content includes media"
+- "Select and upload the content image"
+- "Click 'Schedule' button to set publish time"
+- "Select date and time for publishing"
+- "Click 'Schedule Post' to confirm"
+
+❌ AVOID VAGUE PUBLISHING STEPS:
+- "Publish content" (too vague)
+- "Share on social media" (not specific)
+- "Create marketing post" (not actionable)
+- "Distribute content" (not specific enough)
+
 🔍 VALIDATION REQUIREMENTS:
 - VERIFY content piece actually exists and is accessible in the system
 - Check if content is already published online - if system shows "published" but content isn't visible, republish it
@@ -207,7 +305,26 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Test all links, images, and media in content before marking as published
 - Verify content appears in correct campaign/section if associated with campaign_id
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+🎯 MANDATORY CONTENT FOCUS AND VALIDATION STEPS:
+ALWAYS include these step types in your content publishing plan:
+
+FOCUS STEPS (at start):
+1. "Focus on content piece: [specific title] - locate and open in system"
+2. "Verify content is approved and ready for publishing"
+3. "Confirm target platform: [platform] - navigate to publishing interface"
+
+VALIDATION CHECKPOINTS (throughout):
+- "Validate content loaded correctly in publishing interface"
+- "Confirm all media/images are properly attached and visible"
+- "Verify content formatting appears correctly in preview"
+- "Check scheduling settings are configured as intended"
+
+VERIFICATION STEPS (at end):
+- "Validate published content is live and publicly accessible"
+- "Confirm content appears in correct feed/section"
+- "Verify all links and media work correctly in published version"
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['approved_content', 'publishing_channels', 'scheduling_preferences']
       };
 
@@ -249,7 +366,7 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Verify target audience settings match between system and platform
 - Test ad creative displays correctly before launching
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['active_campaigns', 'ad_platforms', 'campaign_budgets']
       };
 
@@ -273,7 +390,7 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Test all interactive elements and forms before analyzing their performance
 - Verify A/B tests are running correctly if system shows them as active
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['user_behavior', 'conversion_data', 'page_performance']
       };
 
@@ -316,7 +433,7 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Verify technical feasibility before committing to implementation plans
 - Check if requirements dependencies are actually available and working
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['pending_requirements', 'current_resources', 'priority_matrix']
       };
 
@@ -324,12 +441,12 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
       return {
         additionalContext: baseContext,
         specificInstructions: `
-🤖 PLAN CONTEXTUALIZADO:
-- Considerar el contexto específico proporcionado por el usuario
-- Crear plan enfocado en las necesidades expresadas
-- Mantener simplicidad y eficiencia en la ejecución
-- Máximo 3-5 steps principales
-- Tiempo de ejecución máximo: 2 horas
+🤖 CONTEXTUALIZED PLAN:
+- Consider the specific context provided by the user
+- Create plan focused on expressed needs
+- Maintain simplicity and efficiency in execution
+- Maximum 3-5 main steps
+- Maximum execution time: 2 hours
 
 🔄 GENERAL ACTIVITY FOCUS:
 - Focus on ONE specific action within the activity scope
@@ -343,93 +460,319 @@ ${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto e
 - Validate authentication and access to platforms before proceeding
 - If discrepancies found between system and reality, include steps to fix them
 - Test all functionality before marking activities as complete
-- Verificar que todas las acciones sean viables con los recursos disponibles
-- Confirmar que el plan se alinea con el contexto proporcionado
-- Asegurar que cada step sea ejecutable en el tiempo estimado
+- Verify that all actions are viable with available resources
+- Confirm that the plan aligns with the provided context
+- Ensure that each step is executable within the estimated time
 
-${userContext ? `\n⚠️ CONTEXTO ADICIONAL: Incorporar el siguiente contexto en todas las decisiones:\n${userContext}\n` : ''}`,
+🎯 MANDATORY GENERAL FOCUS AND VALIDATION STEPS:
+For ANY activity type, ALWAYS include these step patterns:
+
+FOCUS STEPS (at start):
+1. "Focus on primary objective: [specific goal] - identify exact target"
+2. "Verify all required resources/data are available and accessible"
+3. "Confirm working environment is ready for task execution"
+
+VALIDATION CHECKPOINTS (throughout):
+- "Validate each action completed successfully before proceeding"
+- "Confirm data/content changes are saved and persistent"
+- "Verify system responses match expected outcomes"
+- "Check that progress aligns with original objective"
+
+VERIFICATION STEPS (at end):
+- "Validate final outcome matches the intended goal"
+- "Confirm all changes are persistent and properly saved"
+- "Verify task completion can be independently verified"
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context in all decisions:\n${userContext}\n` : ''}`,
         requiredData: ['general_context', 'user_context', 'activity_type']
       };
   }
 }
 
 /**
- * Core function to decide what action to take with existing plans
+ * Core function to decide what action to take with existing plans using AI
  */
 export async function decidePlanAction(
   currentPlan: any | null,
   userMessage: string,
-  userContext?: string
+  userContext?: string,
+  siteId?: string
 ): Promise<PlanDecision> {
-  // Si no hay plan actual, crear uno nuevo
+  // If there's no current plan, create a new one
   if (!currentPlan) {
     return {
       action: 'new_plan',
-      reason: 'No existe plan activo, generando plan nuevo',
+      reason: 'No active plan exists, generating new plan',
       shouldRegeneratePlan: true
     };
   }
 
-  // Si el plan está completado o falló, generar nuevo plan
+  // If the plan is completed or failed, generate new plan
   if (['completed', 'failed'].includes(currentPlan.status)) {
     return {
       action: 'new_plan',
-      reason: `Plan anterior ${currentPlan.status}, ejecutando workflow y generando plan nuevo`,
+      reason: `Previous plan ${currentPlan.status}, executing workflow and generating new plan`,
       shouldRegeneratePlan: true
     };
   }
 
-  // Verificar si el usuario solicita explícitamente un cambio de plan
+  // Use AI to decide what to do with the plan (even with steps in_progress)
+  try {
+    const aiDecision = await decideWithAI(currentPlan, userMessage, userContext, siteId);
+    return aiDecision;
+  } catch (error) {
+    console.error('Error in AI decision, using fallback logic:', error);
+    
+    // Fallback to simple logic if AI fails
+    const userText = (userMessage + ' ' + (userContext || '')).toLowerCase();
+    
+    // Check if there are steps in_progress as critical fallback rule
+    const steps = currentPlan.steps || [];
+    const inProgressStep = steps.find((step: any) => step.status === 'in_progress');
+    
+    // Explicit keywords for new plan
   const regenerationKeywords = [
     'nuevo plan', 'new plan', 'cambiar plan', 'change plan',
     'diferente plan', 'otro plan', 'plan diferente',
     'empezar de nuevo', 'start over', 'reiniciar'
   ];
   
-  const userText = (userMessage + ' ' + (userContext || '')).toLowerCase();
-  const requestsNewPlan = regenerationKeywords.some(keyword => userText.includes(keyword));
-  
-  if (requestsNewPlan) {
+    if (regenerationKeywords.some(keyword => userText.includes(keyword))) {
     return {
       action: 'new_plan',
-      reason: 'Usuario solicita explícitamente un nuevo plan',
+        reason: 'User explicitly requests a new plan (fallback)',
       shouldRegeneratePlan: true
     };
   }
 
-  // Verificar si hay steps in_progress - si es así, continuar el plan
-  const steps = currentPlan.steps || [];
-  const inProgressStep = steps.find((step: any) => step.status === 'in_progress');
-  
-  if (inProgressStep) {
+    // If there's a step in_progress, continue by default (conservative fallback)
+    if (inProgressStep) {
+      return {
+        action: 'continue_plan',
+        reason: `There's a step in progress (${inProgressStep.title}), continuing current plan (fallback)`,
+        shouldRegeneratePlan: false
+      };
+    }
+
+    // By default, continue with current plan
     return {
       action: 'continue_plan',
-      reason: `Hay un step en progreso (${inProgressStep.title}), continuando plan actual`,
+      reason: 'Continuing with existing active plan (fallback)',
       shouldRegeneratePlan: false
     };
   }
+}
 
-  // Verificar si el contexto del usuario sugiere modificación del plan existente
-  const modificationKeywords = [
-    'modificar', 'modify', 'ajustar', 'adjust', 'cambiar', 'change',
-    'agregar', 'add', 'añadir', 'incluir', 'include'
-  ];
+/**
+ * Use AI to intelligently decide what to do with the current plan
+ */
+async function decideWithAI(
+  currentPlan: any,
+  userMessage: string,
+  userContext?: string,
+  siteId?: string
+): Promise<PlanDecision> {
+  const { ProcessorInitializer } = await import('@/lib/agentbase/services/processor/ProcessorInitializer');
+  const { CommandFactory } = await import('@/lib/agentbase/services/command/CommandFactory');
+  const { waitForCommandCompletion } = await import('@/lib/helpers/command-utils');
+
+  // Prepare current plan context
+  let planContext = `CURRENT PLAN:
+Title: ${currentPlan.title}
+Status: ${currentPlan.status}
+Description: ${currentPlan.description || 'No description'}
+Progress: ${currentPlan.steps_completed || 0}/${currentPlan.steps_total || 0} steps completed`;
+
+  // Identify steps in_progress
+  const steps = currentPlan.steps || [];
+  const inProgressSteps = steps.filter((step: any) => step.status === 'in_progress');
   
-  const requestsModification = modificationKeywords.some(keyword => userText.includes(keyword));
-  
-  if (requestsModification) {
-    return {
-      action: 'modify_plan',
-      reason: 'Usuario solicita modificación del plan actual',
-      shouldRegeneratePlan: true // Regenerar con contexto del plan existente
-    };
+  if (inProgressSteps.length > 0) {
+    planContext += `\n\n⚠️ IMPORTANT: There are ${inProgressSteps.length} step(s) IN PROGRESS:`;
+    inProgressSteps.forEach((step: any, index: number) => {
+      planContext += `\n- ${step.title} (IN PROGRESS)`;
+      if (step.description) {
+        planContext += ` - ${step.description}`;
+      }
+    });
   }
 
-  // Por defecto, continuar con el plan actual
+  if (currentPlan.steps && currentPlan.steps.length > 0) {
+    planContext += `\n\nALL STEPS:`;
+    currentPlan.steps.forEach((step: any, index: number) => {
+      const statusEmoji = step.status === 'in_progress' ? '🔄' : 
+                         step.status === 'completed' ? '✅' : 
+                         step.status === 'failed' ? '❌' : '⏳';
+      planContext += `\n${index + 1}. ${statusEmoji} ${step.title} (${step.status})`;
+      if (step.description) {
+        planContext += ` - ${step.description}`;
+      }
+    });
+  }
+
+  const fullContext = `${planContext}
+
+USER MESSAGE: ${userMessage}
+
+${userContext ? `ADDITIONAL CONTEXT: ${userContext}` : ''}
+
+Analyze the user message in the context of the current plan and decide what action to take.
+
+IMPORTANT: ALWAYS BREAK DOWN TASKS INTO SIMPLE AND EXECUTABLE STEPS
+- Each step should be a specific action that the robot can execute in 1-4 minutes
+- Divide complex tasks into multiple sequential steps
+- Each step should have a clear and measurable objective
+- Use specific action verbs: "Navigate to", "Click on", "Write", "Search", "Select"
+- Avoid vague steps like "Research" or "Analyze" - be specific about WHAT and HOW
+
+🎯 MANDATORY FOCUS AND VALIDATION PATTERN:
+EVERY plan MUST follow this pattern to simplify agent execution:
+
+STEP 1 - ALWAYS START WITH FOCUS:
+- "Focus on [specific target] - navigate to exact URL/location"
+- "Verify [target] loaded correctly and is accessible"
+- "Confirm we are working with the correct [item/content/page]"
+
+THROUGHOUT PLAN - ADD VALIDATION CHECKPOINTS:
+- After navigation: "Validate page loaded successfully"
+- After clicks: "Confirm [element] responded as expected" 
+- After data entry: "Verify [data] was entered correctly"
+- After saves: "Check [content] was saved successfully"
+
+FINAL STEP - ALWAYS END WITH VERIFICATION:
+- "Validate final result is visible and correct"
+- "Confirm all changes are persistent and saved"
+- "Verify task completion meets the original objective"
+
+DECOMPOSITION EXAMPLES:
+❌ Bad: "Search for information about Santiago Zavala on LinkedIn"
+✅ Good: 
+  1. "Navigate to linkedin.com"
+  2. "Click on the search bar"
+  3. "Type 'Santiago Zavala' in the search field"
+  4. "Press Enter to search"
+  5. "Review the first 3 search results"
+  6. "Click on the most relevant profile"
+
+AVAILABLE OPTIONS:
+1. "continue_plan" - Continue with current plan by adding the message as a new step
+2. "modify_plan" - Modify existing plan keeping some elements but regenerating with new context
+3. "new_plan" - Create a completely new plan ignoring the current plan
+
+CRITICAL DECISION CRITERIA:
+
+🔄 USE "continue_plan" ONLY when:
+- User is reporting progress/results from existing steps
+- User wants to add a step VERY RELATED to the current plan objective
+- Message is a status update or confirmation
+- User is responding to a question from the current plan
+
+🔧 USE "modify_plan" when:
+- User wants to change direction but maintain general context
+- Wants to adjust existing plan with new requirements
+- Objective is similar but with important modifications
+
+🆕 USE "new_plan" when:
+- User requests to do something COMPLETELY DIFFERENT from current plan
+- New objective has no relation to the plan in progress
+- Wants to start a new task even if there are steps in progress
+- Message describes a new and independent activity
+
+SPECIAL RULES FOR STEPS IN PROGRESS:
+- If there are steps in progress but user wants to do something UNRELATED → new_plan
+- If user wants to do something that requires interrupting current steps → new_plan
+- Only continue if message is directly related to steps in progress
+
+EXAMPLES:
+- "Navigate to LinkedIn" when current plan is "Open DuckDuckGo" → new_plan (different activity)
+- "I finished step 1" when there are steps in progress → continue_plan (progress report)
+- "Change search to Google" when in DuckDuckGo → modify_plan (same type, different platform)
+
+Respond ONLY with the JSON in this exact format:
+{
+  "action": "continue_plan|modify_plan|new_plan",
+  "reason": "Clear explanation of why you made this decision",
+  "shouldRegeneratePlan": true|false
+}`;
+
+  // Initialize command system
+  const processorInitializer = ProcessorInitializer.getInstance();
+  processorInitializer.initialize();
+  const commandService = processorInitializer.getCommandService();
+
+  // Create command for AI decision
+  const command = CommandFactory.createCommand({
+    task: 'plan decision analysis',
+    userId: 'system',
+    agentId: 'tool_evaluator', // Use tool evaluator for decisions
+    description: 'Analyze user message and current plan to decide the best action',
+    context: fullContext,
+    targets: [{
+      plan_decision: {
+        action: "continue_plan|modify_plan|new_plan",
+        reason: "explanation",
+        shouldRegeneratePlan: true
+      }
+    }],
+    tools: [], // Explicitly no tools - text analysis only
+    model: 'gpt-4.1-mini',
+    modelType: 'openai',
+    responseFormat: 'json'
+  });
+
+  // Execute command
+  const commandId = await commandService.submitCommand(command);
+  
+  // Wait for result with short timeout (maximum 30 seconds)
+  const { command: completedCommand, completed } = await waitForCommandCompletion(commandId, 15, 2000);
+
+  if (!completed || !completedCommand?.results) {
+    throw new Error('AI decision command did not complete successfully');
+  }
+
+  // Extract decision from result
+  let aiDecision = null;
+  
+  if (completedCommand.results && Array.isArray(completedCommand.results)) {
+    for (const result of completedCommand.results) {
+      if (result.plan_decision) {
+        aiDecision = result.plan_decision;
+        break;
+      }
+    }
+  }
+
+  // If we didn't find the decision in targets, search in response text
+  if (!aiDecision && completedCommand.results?.[0]?.text) {
+    try {
+      const responseText = completedCommand.results[0].text;
+      // Try to extract JSON from text
+      const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        aiDecision = JSON.parse(jsonMatch[0]);
+      }
+    } catch (parseError) {
+      console.error('Error parsing AI decision from text:', parseError);
+    }
+  }
+
+  if (!aiDecision || !aiDecision.action) {
+    throw new Error('AI did not provide a valid decision');
+  }
+
+  // Validate AI decision
+  const validActions = ['continue_plan', 'modify_plan', 'new_plan'];
+  if (!validActions.includes(aiDecision.action)) {
+    throw new Error(`AI provided invalid action: ${aiDecision.action}`);
+  }
+
+  // Map action to shouldRegeneratePlan
+  const shouldRegeneratePlan = aiDecision.action !== 'continue_plan';
+
   return {
-    action: 'continue_plan',
-    reason: 'Continuando con el plan activo existente',
-    shouldRegeneratePlan: false
+    action: aiDecision.action,
+    reason: aiDecision.reason || `AI decided: ${aiDecision.action}`,
+    shouldRegeneratePlan
   };
 }
 
@@ -476,7 +819,7 @@ export function formatPlanSteps(planData: any): any[] {
   let planSteps: any[] = [];
   
   if (planData.phases && Array.isArray(planData.phases)) {
-    // Extraer steps de todas las fases y aplanar
+    // Extract steps from all phases and flatten
     planSteps = planData.phases.flatMap((phase: any, phaseIndex: number) => {
       if (!phase.steps || !Array.isArray(phase.steps)) return [];
       
@@ -485,7 +828,7 @@ export function formatPlanSteps(planData: any): any[] {
         title: step.title || step.name || `Step ${stepIndex + 1}`,
         description: step.description || step.details || '',
         status: 'pending',
-        order: (phaseIndex * 100) + stepIndex + 1, // Para mantener orden entre fases
+        order: (phaseIndex * 100) + stepIndex + 1, // To maintain order between phases
         type: step.type || 'task',
         instructions: step.instructions || step.description || step.details || '',
         expected_output: step.expected_output || step.outcome || '',
@@ -498,7 +841,7 @@ export function formatPlanSteps(planData: any): any[] {
             const match = duration.match(/(\d+)/);
             return match ? Math.min(parseInt(match[1]), 4) : 4;
           }
-          return 4; // Default máximo 4 minutos
+          return 4; // Default maximum 4 minutes
         })(),
         automation_level: step.automation_level || 'automated',
         required_authentication: step.required_authentication || 'none',
@@ -513,7 +856,7 @@ export function formatPlanSteps(planData: any): any[] {
       }));
     });
   } else if (planData.steps && Array.isArray(planData.steps)) {
-    // Si el plan ya tiene steps directamente
+    // If the plan already has steps directly
     planSteps = planData.steps.map((step: any, index: number) => ({
       id: step.id || `step_${index + 1}`,
       title: step.title || step.name || `Step ${index + 1}`,
@@ -532,7 +875,7 @@ export function formatPlanSteps(planData: any): any[] {
           const match = duration.match(/(\d+)/);
           return match ? Math.min(parseInt(match[1]), 4) : 4;
         }
-        return 4; // Default máximo 4 minutos
+        return 4; // Default maximum 4 minutes
       })(),
       automation_level: step.automation_level || 'automated',
       required_authentication: step.required_authentication || 'none',
@@ -561,7 +904,7 @@ export function addSessionSaveSteps(planSteps: any[]): any[] {
     step.order = currentOrder++;
     stepsWithSessionSave.push(step);
     
-    // Verificar si este paso es de autenticación (más preciso)
+    // Check if this step is authentication (more precise)
     const isAuthStep = step.type === 'authentication' || 
                       step.expected_response_type === 'session_acquired' ||
                       (step.title?.toLowerCase().includes('login') && !step.title?.toLowerCase().includes('navigate')) ||
@@ -571,16 +914,16 @@ export function addSessionSaveSteps(planSteps: any[]): any[] {
                       (step.description?.toLowerCase().includes('authenticate') && step.description?.toLowerCase().includes('credentials'));
     
     if (isAuthStep) {
-      // Insertar paso de guardado de sesión inmediatamente después
+      // Insert session save step immediately after
       const sessionSaveStep = {
         id: `session_save_after_step_${step.order}`,
-        title: "Guardar sesión de autenticación",
-        description: "Guardar automáticamente la sesión de autenticación actual en la base de datos y Scrapybara para uso futuro",
+        title: "Save authentication session",
+        description: "Automatically save current authentication session to database and Scrapybara for future use",
         status: 'pending',
         order: currentOrder++,
         type: 'session_save',
-        instructions: "Llamar al endpoint /api/robots/auth para guardar la sesión actual después del login exitoso",
-        expected_output: "Sesión guardada exitosamente con ID de sesión y estado de autenticación",
+        instructions: "Call /api/robots/auth endpoint to save current session after successful login",
+        expected_output: "Session saved successfully with session ID and authentication status",
         expected_response_type: 'step_completed',
         human_intervention_reason: null,
         estimated_duration_minutes: 1,
@@ -597,7 +940,7 @@ export function addSessionSaveSteps(planSteps: any[]): any[] {
       };
       
       stepsWithSessionSave.push(sessionSaveStep);
-      console.log(`🔐 AGREGADO: Paso de guardado de sesión después del paso de autenticación: ${step.title}`);
+      console.log(`🔐 ADDED: Session save step after authentication step: ${step.title}`);
     }
   }
   
@@ -609,25 +952,25 @@ export function addSessionSaveSteps(planSteps: any[]): any[] {
  */
 export function calculateEstimatedDuration(timelineValue: any): number {
   if (typeof timelineValue === 'number') {
-    // Asegurar que no exceda 120 minutos (2 horas)
+    // Ensure it doesn't exceed 120 minutes (2 hours)
     return Math.min(timelineValue, 120);
   }
   if (typeof timelineValue === 'string') {
-    // Buscar números en el string y convertir
+    // Search for numbers in string and convert
     const match = timelineValue.match(/(\d+)/);
     if (match) {
       const num = parseInt(match[1]);
-      // Convertir semanas a minutos si encuentra "week" en el string
+      // Convert weeks to minutes if "week" found in string
       if (timelineValue.toLowerCase().includes('week')) {
-        return Math.min(num * 7 * 24 * 60, 120); // máximo 2 horas
+        return Math.min(num * 7 * 24 * 60, 120); // maximum 2 hours
       }
-      // Convertir días a minutos si encuentra "day"
+      // Convert days to minutes if "day" found
       if (timelineValue.toLowerCase().includes('day')) {
-        return Math.min(num * 24 * 60, 120); // máximo 2 horas
+        return Math.min(num * 24 * 60, 120); // maximum 2 hours
       }
-      // Si no especifica unidad, asumir que son minutos
-      return Math.min(num, 120); // máximo 2 horas
+      // If no unit specified, assume minutes
+      return Math.min(num, 120); // maximum 2 hours
     }
   }
-  return 120; // Default a 2 horas máximo para planes simples
+  return 120; // Default to 2 hours maximum for simple plans
 }

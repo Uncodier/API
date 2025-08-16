@@ -1,0 +1,282 @@
+# Lead Contact Email Generation
+
+Generates a comprehensive list of 15 potential email addresses for a lead contact based on their name, domain, and additional context. This API uses AI-powered analysis to create intelligent email variations that follow common corporate email patterns, structured as **10 personal emails** (ordered from most probable to least probable) **+ 5 department-specific emails** (when role is detected).
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+POST /api/agents/dataAnalyst/leadContactGeneration
+```
+
+## Request Body
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `name` | string | Yes | Full name of the contact person |
+| `domain` | string | Yes | Company domain (e.g., "company.com") |
+| `context` | string | No | Additional context about the lead (position, company info, department, role, etc.) |
+| `site_id` | string | Yes | ID of the site for which the analysis is performed |
+
+### Example Request
+
+```json
+{
+  "name": "Juan Carlos Pérez",
+  "domain": "techcorp.com",
+  "context": "CEO of TechCorp, Spanish technology company specializing in AI solutions",
+  "site_id": "123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+## Response
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "commandId": "123e4567-e89b-12d3-a456-426614174000",
+    "status": "completed",
+    "message": "Lead contact email generation completed",
+    "agent_id": "agent_123",
+    "contact_name": "Juan Carlos Pérez",
+    "domain": "techcorp.com",
+    "context": "CEO of TechCorp, Spanish technology company specializing in AI solutions",
+    "site_id": "123e4567-e89b-12d3-a456-426614174000",
+    "basic_patterns_generated": [
+      "juancarlos.perez@techcorp.com",
+      "j.perez@techcorp.com", 
+      "jperez@techcorp.com",
+      "juancarlosperez@techcorp.com",
+      "juancarlos_perez@techcorp.com",
+      "juancarlos@techcorp.com",
+      "juancarlos.p@techcorp.com",
+      "juancarlos-perez@techcorp.com",
+      "perez.juancarlos@techcorp.com",
+      "perez_juancarlos@techcorp.com",
+      "juancarlos.perez@ceo.techcorp.com",
+      "ceo.juancarlos@techcorp.com",
+      "juancarlos@ceo.techcorp.com",
+      "ceo.perez@techcorp.com",
+      "j.ceo@techcorp.com"
+    ],
+    "email_generation_analysis": {
+      "contact_name": "Juan Carlos Pérez",
+      "domain": "techcorp.com",
+      "generated_emails": [
+        {
+          "email": "juancarlos.perez@techcorp.com",
+          "confidence": 0.95,
+          "pattern": "firstname.lastname",
+          "reasoning": "Most common corporate email pattern"
+        },
+        {
+          "email": "jperez@techcorp.com",
+          "confidence": 0.85,
+          "pattern": "first_initial.lastname",
+          "reasoning": "Common pattern for executives"
+        },
+        {
+          "email": "juan.perez@techcorp.com",
+          "confidence": 0.80,
+          "pattern": "short_firstname.lastname",
+          "reasoning": "Simplified first name usage"
+        }
+      ],
+      "email_patterns_analysis": {
+        "most_likely_pattern": "firstname.lastname",
+        "pattern_confidence": 0.95,
+        "pattern_reasoning": "Dot-separated firstname and lastname is the most widely adopted corporate email pattern",
+        "cultural_considerations": "Spanish naming conventions often include compound first names",
+        "industry_considerations": "Technology companies typically use standardized email formats"
+      },
+      "recommendations": [
+        "Try the dot-separated pattern first",
+        "Consider shortened first name variations",
+        "Test both formal and informal name versions"
+      ],
+      "confidence_scores": [0.95, 0.85, 0.80, 0.75, 0.70, 0.65, 0.60, 0.55, 0.50, 0.45]
+    },
+    "timestamp": "2024-01-20T12:00:00.000Z"
+  }
+}
+```
+
+### Error Responses
+
+#### Missing Required Parameters
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "name, domain, and site_id are required"
+  }
+}
+```
+
+#### Invalid Domain Format
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "domain must be a valid domain format (e.g., company.com)"
+  }
+}
+```
+
+#### Data Analyst Agent Not Found
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "DATA_ANALYST_NOT_FOUND",
+    "message": "No se encontró un agente con role \"Data Analyst\" para este sitio"
+  }
+}
+```
+
+#### Command Execution Failed
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "COMMAND_EXECUTION_FAILED",
+    "message": "Lead contact email generation command failed to execute",
+    "commandId": "cmd_123456789"
+  }
+}
+```
+
+## Features
+
+### Email Pattern Generation
+
+The API generates email patterns using multiple strategies:
+
+1. **Personal Patterns (10 emails)**: Standard email formats **ordered by probability**
+2. **Department Patterns (5 emails)**: Role-specific emails when department is detected in context  
+3. **AI-Enhanced Analysis**: Intelligent analysis considering cultural and industry factors
+4. **Department/Role Detection**: Automatically detects roles and departments from context to generate targeted emails
+5. **Confidence Scoring**: Each generated email includes a confidence score (0-1)
+6. **Pattern Recognition**: Identifies the most likely email pattern for the domain
+7. **Structured Output**: 15 total emails (10 personal + 5 departmental)
+
+### Pattern Types (Ordered by Probability)
+
+1. **firstname.lastname@domain.com** - Dot-separated full name (90% of companies)
+2. **f.lastname@domain.com** - First initial with lastname (common for executives)
+3. **flastname@domain.com** - First initial concatenated 
+4. **firstnamelastname@domain.com** - Concatenated full name
+5. **firstname_lastname@domain.com** - Underscore-separated (tech companies)
+6. **firstname@domain.com** - Simple first name (small companies)
+7. **firstname.l@domain.com** - Firstname with last initial
+8. **firstname-lastname@domain.com** - Hyphen-separated (less common)
+9. **lastname.firstname@domain.com** - Reverse order (European companies)
+10. **firstname.middle.lastname@domain.com** - With middle name/initial (formal)
+
+### Department/Role-Specific Patterns
+
+When context includes role or department information, additional patterns are generated:
+
+- **firstname.lastname@department.domain.com** - Department subdomain
+- **department.firstname@domain.com** - Department prefix
+- **firstname@department.domain.com** - Name at department subdomain
+
+### Supported Departments/Roles
+
+The system automatically detects and generates patterns for:
+
+**Executive Roles**: CEO, CTO, CFO, CMO, Director, Manager
+**Departments**: Marketing, Sales, Finance, HR, Technology, Operations, Legal, Support
+**Languages**: Supports both English and Spanish role/department names
+
+### Cultural and Regional Analysis
+
+The API automatically detects and considers:
+
+**Supported Languages/Regions:**
+- **Spanish/Hispanic**: Handles compound first names (María José) and both paternal/maternal surnames (García López)
+- **German**: Prioritizes lastname.firstname order in business contexts
+- **Dutch**: Properly handles tussenvoegsel (van, de, der, van der)
+- **French**: Manages hyphenated names and formal address patterns
+- **Italian**: Considers multiple surnames and regional variations
+- **Portuguese**: Adapts patterns for Brazilian and Portuguese contexts
+- **English**: International standard patterns with regional adaptations
+
+**Cultural Email Patterns:**
+- **Hispanic names**: firstname.paternalsurname@domain.com, compoundfirstname@domain.com
+- **German names**: lastname.firstname@domain.com (business formal)
+- **Dutch names**: firstname.lastname@domain.com (excluding tussenvoegsel)
+- **French names**: hyphenated-name@domain.com
+
+**Detection Methods:**
+- Name analysis using cultural naming patterns
+- Context keywords (country, language mentions)
+- Domain TLD hints (.es, .de, .nl, etc.)
+- Cultural business practices integration
+
+## Usage Examples
+
+### Basic Usage
+
+<UnifiedApiTester
+  apiKey="dataAnalyst-leadContactGeneration"
+  apiName="Lead Contact Email Generation"
+  method="POST"
+  endpoint="/api/agents/dataAnalyst/leadContactGeneration"
+  description="Generate potential email addresses for a lead contact"
+  defaultBody={{
+    name: "Maria Rodriguez",
+    domain: "example.com",
+    context: "Marketing Director at a mid-size company",
+    site_id: "your-site-id"
+  }}
+  responseExample={{
+    success: true,
+    data: {
+      commandId: "123e4567-e89b-12d3-a456-426614174000",
+      status: "completed",
+      message: "Lead contact email generation completed",
+      contact_name: "Maria Rodriguez",
+      domain: "example.com",
+      basic_patterns_generated: [
+        "maria@example.com",
+        "maria.rodriguez@example.com",
+        "maria_rodriguez@example.com"
+      ]
+    }
+  }}
+/>
+
+## Notes
+
+- The API returns up to 10 email variations ranked by likelihood
+- Response includes both basic pattern generation and AI-enhanced analysis
+- Processing time typically ranges from 10-60 seconds depending on complexity
+- Fallback email patterns are provided even if AI analysis fails
+- All generated emails follow RFC 5322 email address standards
+
+## Best Practices
+
+1. **Provide Rich Context**: Include role, company, country/region information for better cultural analysis
+2. **Verify Domains**: Ensure the domain is valid and properly formatted
+3. **Test Multiple Patterns**: Use the confidence scores to prioritize testing order
+4. **Cultural Awareness**: The API automatically adapts to cultural naming conventions
+5. **Order by Priority**: Test the first 10 personal emails before departmental ones
+6. **Regional Considerations**: Context mentioning countries helps with cultural pattern detection
+7. **Validate Results**: Always verify email addresses before using them for outreach
+
+### Example Contexts for Better Results:
+- "Marketing Director in Spain" → Detects Spanish cultural patterns
+- "Hans Müller, CEO in Germany" → Prioritizes lastname.firstname patterns  
+- "Jan van der Berg from Amsterdam" → Handles Dutch tussenvoegsel correctly
+- "María José working for a company in Mexico" → Uses compound name patterns

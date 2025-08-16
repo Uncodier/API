@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { addActivityToPlan, executeRobotWorkflowOnCompletion } from '@/lib/services/robot-instance/robot-plan-service';
+import { addActivityToPlan } from '@/lib/services/robot-instance/robot-plan-service';
 import { executeUnifiedRobotActivityPlanning, decidePlanAction, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 
@@ -21,6 +21,18 @@ async function saveCompletePlan(
   planDecisionAction: string
 ): Promise<{ planId: string | null; success: boolean }> {
   try {
+    // Obtener información de la instancia ANTES de crear el plan
+    const { data: instance, error: instanceError } = await supabaseAdmin
+      .from('remote_instances')
+      .select('site_id, user_id')
+      .eq('id', instanceId)
+      .single();
+
+    if (instanceError || !instance) {
+      console.error('Error getting instance data for plan creation:', instanceError);
+      return { planId: null, success: false };
+    }
+
     // Formatear steps usando el core unificado
     let planSteps = formatPlanSteps(planData);
     
@@ -29,25 +41,17 @@ async function saveCompletePlan(
 
     const stepsTotal = planSteps.length;
 
-    // Crear nuevo plan en la base de datos
+    // Crear nuevo plan en la base de datos siguiendo el patrón de growth/robot/plan
     const { data: newPlan, error: planError } = await supabaseAdmin
       .from('instance_plans')
       .insert({
-        title: planData.title || `Plan regenerado para actividad: ${activity}`,
-        description: planData.description || `Plan ${planDecisionAction} generado automáticamente`,
+        title: `Plan regenerado para actividad: ${activity}`,
+        description: `Plan ${planDecisionAction} generado automáticamente`,
         plan_type: 'objective',
-        status: 'active',
+        status: 'pending',
         instance_id: instanceId,
-        site_id: '', // Se obtendrá de la instancia
-        user_id: '', // Se obtendrá de la instancia
-        command_id: planningCommandUuid,
-        steps: planSteps,
-        success_criteria: planData.success_metrics || planData.success_criteria || [],
-        steps_total: stepsTotal,
-        steps_completed: 0,
-        progress_percentage: 0,
-        estimated_duration_minutes: calculateEstimatedDuration(planData.estimated_timeline || planData.estimated_duration_minutes),
-        priority: typeof planData.priority_level === 'string' ? 5 : (planData.priority_level || planData.priority || 5),
+        site_id: instance.site_id,
+        user_id: instance.user_id,
       })
       .select()
       .single();
@@ -57,21 +61,27 @@ async function saveCompletePlan(
       return { planId: null, success: false };
     }
 
-    // Actualizar con site_id y user_id de la instancia
-    const { data: instance } = await supabaseAdmin
-      .from('remote_instances')
-      .select('site_id, user_id')
-      .eq('id', instanceId)
-      .single();
+    // Actualizar el plan con los resultados siguiendo el patrón de growth/robot/plan
+    const { error: updateError } = await supabaseAdmin
+      .from('instance_plans')
+      .update({
+        status: 'pending',
+        command_id: planningCommandUuid,
+        title: planData.title || `Plan regenerado para actividad: ${activity}`,
+        description: planData.description || `Plan ${planDecisionAction} generado automáticamente`,
+        steps: planSteps,
+        success_criteria: planData.success_metrics || planData.success_criteria || [],
+        steps_total: stepsTotal,
+        steps_completed: 0,
+        progress_percentage: 0,
+        estimated_duration_minutes: calculateEstimatedDuration(planData.estimated_timeline || planData.estimated_duration_minutes),
+        priority: typeof planData.priority_level === 'string' ? 5 : (planData.priority_level || planData.priority || 5),
+      })
+      .eq('id', newPlan.id);
 
-    if (instance) {
-      await supabaseAdmin
-        .from('instance_plans')
-        .update({
-          site_id: instance.site_id,
-          user_id: instance.user_id
-        })
-        .eq('id', newPlan.id);
+    if (updateError) {
+      console.error('Error updating plan with results:', updateError);
+      return { planId: null, success: false };
     }
 
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Complete plan saved successfully with ID: ${newPlan.id}`);
@@ -87,7 +97,7 @@ async function saveCompletePlan(
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/act
-// Actualiza el plan de una instancia y ejecuta workflow si es necesario
+// Actualiza el plan de una instancia de robot
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 60; // 1 minuto
@@ -160,13 +170,26 @@ export async function POST(request: NextRequest) {
       .limit(1)
       .single();
 
-    // 4. Decidir qué acción tomar con el plan
-    const planDecision = await decidePlanAction(latestPlan, message, userContext);
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan decision: ${planDecision.action} - ${planDecision.reason}`);
+    // 4. Decidir qué acción tomar con el plan usando IA
+    const planDecision = await decidePlanAction(latestPlan, message, userContext, site_id);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ AI Plan decision: ${planDecision.action} - ${planDecision.reason}`);
 
     // Separar entre plan activo y plan completed/failed para compatibilidad
     const activePlan = latestPlan && ['active', 'pending', 'in_progress'].includes(latestPlan.status) ? latestPlan : null;
     const completedPlan = latestPlan && ['completed', 'failed'].includes(latestPlan.status) ? latestPlan : null;
+
+    // Verificar si el plan activo está realmente completado (todos los steps completados)
+    let actuallyCompletedPlan = completedPlan;
+    if (activePlan && !actuallyCompletedPlan) {
+      const steps = activePlan.steps || [];
+      const completedSteps = steps.filter((step: any) => step.status === 'completed');
+      const totalSteps = steps.length;
+      
+      if (totalSteps > 0 && completedSteps.length === totalSteps) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan activo ${activePlan.id} está realmente completado (${completedSteps.length}/${totalSteps} steps), tratándolo como completado`);
+        actuallyCompletedPlan = activePlan;
+      }
+    }
 
     // 5. Registrar la acción del usuario con información de decisión
     await supabaseAdmin.from('instance_logs').insert({
@@ -179,6 +202,7 @@ export async function POST(request: NextRequest) {
         step_status: step_status,
         plan_id: activePlan?.id || completedPlan?.id || null,
         plan_status: activePlan?.status || completedPlan?.status || null,
+        actually_completed_plan_id: actuallyCompletedPlan?.id || null,
         plan_decision: planDecision
       },
       instance_id: instance_id,
@@ -188,7 +212,7 @@ export async function POST(request: NextRequest) {
       command_id: instance.command_id,
     });
 
-    let workflowExecutionResult = null;
+
     let planResult = null;
     let newPlanGenerated = false;
     let planModified = false;
@@ -199,26 +223,6 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Regenerating plan based on decision: ${planDecision.action}`);
       
       try {
-        // Si hay un plan completado/fallido, ejecutar workflow ANTES de generar nuevo plan
-        if (completedPlan && ['completed', 'failed'].includes(completedPlan.status)) {
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${completedPlan.status} plan, executing workflow before generating new plan...`);
-          
-          try {
-            workflowExecutionResult = await executeRobotWorkflowOnCompletion(
-              site_id,
-              activity,
-              user_id,
-              instance_id,
-              instance,
-              { isPlanCompleted: true, planId: completedPlan.id }
-            );
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ Workflow executed successfully for completed plan`);
-          } catch (workflowError) {
-            console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
-            // Continuar con la generación del plan aunque falle el workflow
-          }
-        }
-
         // Encontrar el agente robot apropiado
         const robotAgent = await findGrowthRobotAgent(site_id);
         
@@ -248,11 +252,12 @@ export async function POST(request: NextRequest) {
           .eq('is_valid', true);
 
         // Ejecutar planificación usando el core unificado con contexto del usuario y plan previo
+        // Usar el mensaje del usuario como la actividad para que el plan sea específico
         const { activityPlanResults, planningCommandUuid } = await executeUnifiedRobotActivityPlanning(
           site_id,
           robotAgent.agentId,
           robotAgent.userId,
-          activity || 'general',
+          message, // Usar el mensaje del usuario como actividad específica
           previousSessions || [],
           userContext, // User context from instance act route
           previousPlanContext // Previous plan context for modifications
@@ -268,7 +273,7 @@ export async function POST(request: NextRequest) {
             instance_id,
             activityPlanResults[0], // Tomar el primer plan generado
             planningCommandUuid,
-            activity || 'general',
+            message, // Usar el mensaje del usuario como actividad específica
             planDecision.action
           );
           
@@ -315,22 +320,6 @@ export async function POST(request: NextRequest) {
       planResult = await addActivityToPlan(instance_id, message, `Step ${step_status}`, instance, step_status);
       
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan updated. Completed: ${planResult?.isPlanCompleted}`);
-
-      // Si el plan se completó con esta acción, ejecutar workflow
-      if (planResult?.isPlanCompleted) {
-        try {
-          workflowExecutionResult = await executeRobotWorkflowOnCompletion(
-            site_id,
-            activity,
-            user_id,
-            instance_id,
-            instance,
-            planResult
-          );
-        } catch (workflowError) {
-          console.error(`₍ᐢ•(ܫ)•ᐢ₎ Workflow execution failed:`, workflowError);
-        }
-      }
       
     } else {
       // Caso C) No hay plan activo y no se debe regenerar (caso edge)
@@ -347,13 +336,12 @@ export async function POST(request: NextRequest) {
         plan_was_active: !!activePlan,
         plan_was_completed: !!completedPlan,
         plan_existed_completed_failed: !!completedPlan,
+        plan_actually_completed: !!actuallyCompletedPlan,
         plan_updated: planResult ? true : false,
         plan_completed: planResult?.isPlanCompleted || false,
         plan_id: planResult?.planId || activePlan?.id || completedPlan?.id || null,
         new_plan_generated: newPlanGenerated,
         plan_modified: planModified,
-        workflow_executed: workflowExecutionResult !== null,
-        workflow_result: workflowExecutionResult,
         user_context_used: !!userContext
       }
     }, { status: 200 });
@@ -387,8 +375,6 @@ export async function POST(request: NextRequest) {
         plan_id: null,
         new_plan_generated: false,
         plan_modified: false,
-        workflow_executed: false,
-        workflow_result: null,
         user_context_used: false
       }
     }, { status: 500 });

@@ -2,12 +2,61 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
+import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 import { anthropic } from 'scrapybara/anthropic';
 import { UBUNTU_SYSTEM_PROMPT } from 'scrapybara/prompts';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 
 // Custom system prompt for plan execution with step completion tracking
 const PLAN_EXECUTION_SYSTEM_PROMPT = `${UBUNTU_SYSTEM_PROMPT}
+
+🖥️ VIEWPORT CONFIGURATION:
+Always start by going to Chrome browser options and doing zoom out until reaching 75%. This ensures optimal resolution and better visibility of web content across different screen sizes.
+
+🎯 SCREEN POSITIONING:
+Always center content on the screen for optimal visibility and interaction. When navigating to websites or working with applications, ensure the main content area is centered and fully visible within the viewport.
+
+🖥️ UBUNTU VM ENVIRONMENT CONTEXT:
+You have access to an Ubuntu VM with internet connectivity. You can install Ubuntu applications using the bash tool (prefer curl over wget).  
+
+### Running GUI Applications  
+- To run GUI applications with the bash tool, use a subshell: (DISPLAY=:1 xterm &)  
+- GUI apps may take time to load; confirm their appearance with an extra screenshot.  
+- Chromium is the default browser. Start it using (DISPLAY=:1 chromium &) via the bash tool, but interact with it visually via the computer tool.  
+
+### Handling HTML and Large Text Output  
+- To read an HTML file, open it in Chromium using the address bar.  
+- For commands with large text output:  
+  - Redirect output to a temp file.  
+  - Use str_replace_editor or grep with context flags (-B and -A) to extract relevant sections.  
+
+### Interacting with Web Pages and Forms  
+- Zoom out or scroll to ensure all content is visible.  
+- When interacting with input fields:  
+  - Clear the field first using Ctrl+A and Delete.  
+  - Take an extra screenshot after pressing Enter to confirm the input was submitted correctly.  
+  - Move the mouse to the next field after submission.  
+
+### Efficiency and Authentication  
+- Computer function calls take time; optimize by stringing together related actions when possible.  
+- You are allowed to take actions on authenticated sites on behalf of the user.  
+- Assume the user has already authenticated if they request access to a site.  
+- For logging into additional sites, ask the user to use Auth Contexts or the Interactive Desktop.  
+
+### Handling Black Screens  
+- If the first screenshot shows a black screen:  
+  - Click the center of the screen.  
+  - Take another screenshot.  
+
+### Best Practices  
+- If given a complex task, break it down into smaller steps and ask for details only when necessary.  
+- Read web pages thoroughly by scrolling down until sufficient information is gathered.  
+- Explain each action you take and why.  
+- Avoid asking for confirmation on routine actions (e.g., pressing Enter after typing a URL). Seek clarification only for ambiguous or critical actions (e.g., deleting files or submitting sensitive information).  
+- If a user's request implies the need for external information, assume they want you to search for it and provide the answer directly.  
+
+### Date Context  
+Today's date is [DATE_PLACEHOLDER]
 
 🚨🚨🚨 ABSOLUTE CRITICAL STRUCTURED RESPONSE REQUIREMENT 🚨🚨🚨
 
@@ -163,12 +212,11 @@ LOGIN VERIFICATION CHECKLIST:
 - ✅ URL indicates successful login (dashboard, home, etc.)
 - ❌ If any verification fails, STOP and request user attention
 
-PREVIOUS STEPS CONTEXT:
-You have access to previous steps attempted in this plan. Before executing any step, review:
-- What authentication methods have been tried before
-- Which platforms have been accessed previously
-- What errors or failures occurred in previous attempts
-- Current authentication status from previous steps
+AUTHENTICATION CONTEXT:
+Before executing any step, consider:
+- What authentication methods are available
+- Which platforms need to be accessed
+- Current authentication status
 
 **MANDATORY LOGIN FLOW:**
 1. Attempt login using provided method
@@ -186,7 +234,6 @@ If you provide ANY response without the required structured format, it will be c
 The structured response is automatically validated by the system using a schema.
 
 This structured response format is CRITICAL for automatic plan progress tracking and intermediate responses.`;
-import { computerTool } from 'scrapybara/tools';
 
 // Schema para structured output de respuestas del agente
 const AgentResponseSchema = z.object({
@@ -738,7 +785,10 @@ export async function POST(request: NextRequest) {
     // Si no se proporciona instance_plan_id, buscar el plan más reciente activo
     let planError;
     
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Buscando plan - instance_plan_id: ${instance_plan_id || 'no proporcionado'}, instance_id: ${instance_id}`);
+    
     if (instance_plan_id) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Buscando plan específico por ID: ${instance_plan_id}`);
       const planResult = await supabaseAdmin
         .from('instance_plans')
         .select('*')
@@ -746,8 +796,10 @@ export async function POST(request: NextRequest) {
         .single();
       plan = planResult.data;
       planError = planResult.error;
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Resultado búsqueda por ID - plan encontrado: ${!!plan}, error: ${planError?.message || 'ninguno'}`);
     } else {
       // Buscar el plan más reciente activo para esta instancia
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Buscando plan más reciente activo para instance_id: ${instance_id}`);
       const planResult = await supabaseAdmin
         .from('instance_plans')
         .select('*')
@@ -758,16 +810,76 @@ export async function POST(request: NextRequest) {
         .single();
       plan = planResult.data;
       planError = planResult.error;
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Resultado búsqueda activa - plan encontrado: ${!!plan}, error: ${planError?.message || 'ninguno'}`);
+      
+      // Si no encuentra plan activo, buscar cualquier plan para diagnóstico
+      if (!plan) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 No se encontró plan activo, buscando CUALQUIER plan para diagnóstico...`);
+        const allPlansResult = await supabaseAdmin
+          .from('instance_plans')
+          .select('id, status, title, created_at')
+          .eq('instance_id', instance_id)
+          .order('created_at', { ascending: false });
+        
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Planes encontrados para instance_id ${instance_id}:`, allPlansResult.data);
+      }
     }
 
     if (planError || !plan) {
-      return NextResponse.json({ 
-        data: {
-          waiting_for_instructions: true,
-          plan_completed: false,
-          message: 'No plan found for this instance'
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ No se encontró plan activo, intentando búsqueda amplia...`);
+      
+      // Búsqueda de fallback: buscar cualquier plan para esta instancia (incluso completed/failed)
+      const fallbackResult = await supabaseAdmin
+        .from('instance_plans')
+        .select('*')
+        .eq('instance_id', instance_id)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (fallbackResult.data) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔍 Plan encontrado en búsqueda amplia: ${fallbackResult.data.id}, status: ${fallbackResult.data.status}`);
+        
+        // Si el plan está completed, informar al usuario
+        if (fallbackResult.data.status === 'completed') {
+          return NextResponse.json({ 
+            data: {
+              waiting_for_instructions: true,
+              plan_completed: true,
+              message: `Plan "${fallbackResult.data.title}" was already completed`,
+              plan_id: fallbackResult.data.id,
+              plan_status: fallbackResult.data.status
+            }
+          }, { status: 200 });
         }
-      }, { status: 200 });
+        
+        // Si el plan está failed, informar al usuario
+        if (fallbackResult.data.status === 'failed') {
+          return NextResponse.json({ 
+            data: {
+              waiting_for_instructions: true,
+              plan_completed: false,
+              plan_failed: true,
+              message: `Plan "${fallbackResult.data.title}" has failed. Reason: ${fallbackResult.data.failure_reason || 'Unknown'}`,
+              plan_id: fallbackResult.data.id,
+              plan_status: fallbackResult.data.status
+            }
+          }, { status: 200 });
+        }
+        
+        // Si el plan tiene otro status, intentar reactivarlo
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🔄 Intentando reactivar plan con status: ${fallbackResult.data.status}`);
+        plan = fallbackResult.data;
+      } else {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ No se encontró NINGÚN plan para instance_id: ${instance_id}`);
+        return NextResponse.json({ 
+          data: {
+            waiting_for_instructions: true,
+            plan_completed: false,
+            message: 'No plan found for this instance'
+          }
+        }, { status: 200 });
+      }
     }
 
     // Usar el ID del plan encontrado para el resto de la lógica
@@ -824,6 +936,28 @@ export async function POST(request: NextRequest) {
           .eq('id', effective_plan_id);
           
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan ${effective_plan_id} marked as completed - all steps finished`);
+        
+        // Ejecutar workflow de robot cuando el plan se completa
+        try {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🚀 Plan completed! Executing robotWorkflow...`);
+          
+          const { executeRobotWorkflowOnCompletion } = await import('@/lib/services/robot-instance/robot-plan-service');
+          
+          const workflowResult = await executeRobotWorkflowOnCompletion(
+            plan.site_id,
+            'plan_execution', // activity type
+            plan.user_id || null,
+            instance_id,
+            instance,
+            { isPlanCompleted: true, planId: effective_plan_id || null }
+          );
+          
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Robot workflow executed successfully after plan completion`);
+          
+        } catch (workflowError) {
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing robot workflow after plan completion:`, workflowError);
+          // No fallar la respuesta por error de workflow
+        }
         
         return NextResponse.json({ 
           data: {
@@ -1018,11 +1152,16 @@ export async function POST(request: NextRequest) {
     // 4. Preparar herramientas (ahora sabemos que es UbuntuInstance) ---------------
     const ubuntuInstance = remoteInstance as any; // Cast temporal para resolver tipos
     const tools = [
-      computerTool(ubuntuInstance), // Solo herramienta de navegación/UI
+      bashTool(ubuntuInstance),
+      computerTool(ubuntuInstance),
+      editTool(ubuntuInstance),
     ];
 
     // 6. Crear system prompt con contexto histórico y sesiones ----------------
-    const systemPromptWithContext = `${PLAN_EXECUTION_SYSTEM_PROMPT}
+    const currentDate = new Date().toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const promptWithDate = PLAN_EXECUTION_SYSTEM_PROMPT.replace('[DATE_PLACEHOLDER]', currentDate);
+    
+    const systemPromptWithContext = `${promptWithDate}
 
 HISTORICAL CONTEXT:
 Here is the conversation history for this instance (agent and user interactions):
@@ -1053,28 +1192,16 @@ ${sessionsRequirementContext}
 
 END OF SESSIONS CONTEXT`;
 
-    // 7. Crear user prompt con contexto de pasos previos y step actual ----------------------------------
+    // 7. Crear user prompt con contexto del step actual ----------------------------------
     const completedSteps = allSteps.filter((step: any) => ['completed', 'failed', 'blocked'].includes(step.status));
     const planCompletedPercentage = Math.round((completedSteps.length / allSteps.length) * 100);
 
-    // Preparar contexto de pasos previos para evitar repetición y proporcionar contexto
-    const previousStepsContext = allSteps
-      .filter((step: any) => step.order < currentStep.order)
-      .map((step: any) => {
-        const statusIcon = step.status === 'completed' ? '✅' : 
-                          step.status === 'failed' ? '❌' : 
-                          step.status === 'in_progress' ? '🔄' : '⏸️';
-        return `${statusIcon} Step ${step.order}: ${step.title} (${step.status})${step.actual_output ? ` - Result: ${step.actual_output.substring(0, 100)}...` : ''}`;
-      })
-      .join('\n');
+    // Contexto simplificado sin pasos previos para evitar confusión
 
     const planPrompt = `🎯 SINGLE STEP EXECUTION TASK
 
 PLAN TITLE: ${plan.title}
 PLAN PROGRESS: Step ${currentStep.order} of ${allSteps.length} (${planCompletedPercentage}% complete)
-
-📋 PREVIOUS STEPS CONTEXT:
-${previousStepsContext || 'No previous steps completed yet.'}
 
 🚨🚨🚨 YOU ARE WORKING ON ONE STEP ONLY 🚨🚨🚨
 
@@ -1083,19 +1210,16 @@ STEP TITLE: ${currentStep.title}
 STEP DESCRIPTION: ${currentStep.description || currentStep.instructions || 'No description provided'}
 
 🧠 CONTEXT AWARENESS:
-- Review the previous steps above to understand what has been accomplished
-- Avoid repeating failed authentication attempts from previous steps
-- Build upon successful actions from previous steps
-- If previous login attempts failed, consider alternative approaches or request user attention
+- Focus on completing the current step efficiently
+- Use available authentication sessions when needed
+- If authentication is required, use the provided session information
 
 🛑 DO NOT THINK ABOUT FUTURE STEPS
 🛑 DO NOT EXECUTE MULTIPLE STEPS
 🛑 FOCUS ONLY ON CURRENT STEP ${currentStep.order}
-🛑 BUT CONSIDER PREVIOUS STEPS CONTEXT
 
 📋 YOUR TASK:
 Execute the actions required to complete ONLY this step: "${currentStep.title}"
-Use the previous steps context to inform your approach and avoid repeating failures.
 
 🚨 MANDATORY COMPLETION RULE:
 The MOMENT you finish this step, you MUST provide a structured response with:
@@ -1117,11 +1241,10 @@ The MOMENT you finish this step, you MUST provide a structured response with:
 ⚠️⚠️⚠️ CRITICAL ENFORCEMENT ⚠️⚠️⚠️
 
 1. Work ONLY on step ${currentStep.order}
-2. Consider previous steps context to avoid repetition
-3. When step ${currentStep.order} is complete, IMMEDIATELY provide structured response
-4. DO NOT continue to any other step
-5. DO NOT execute multiple actions without reporting progress
-6. The structured response is MANDATORY and automatically validated
+2. When step ${currentStep.order} is complete, IMMEDIATELY provide structured response
+3. DO NOT continue to any other step
+4. DO NOT execute multiple actions without reporting progress
+5. The structured response is MANDATORY and automatically validated
 
 STEP INSTRUCTIONS: ${currentStep.description || currentStep.instructions || 'Complete the step as described in the title'}
 
@@ -1143,7 +1266,7 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
     
     try {
       executionResult = await client.act({
-        model: anthropic(),
+        model: anthropic(), // TODO: Configurar claude-sonnet-4-20250514 cuando esté disponible en la API
         tools,
         schema: AgentResponseSchema,
         system: systemPromptWithContext,
@@ -1739,6 +1862,30 @@ BEGIN STEP ${currentStep.order} EXECUTION NOW:`;
       console.error(`₍ᐢ•(ܫ)•ᐢ₎ Error updating plan:`, updateResult.error);
     } else {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Plan updated successfully`);
+      
+      // Si el plan se marcó como completado, ejecutar workflow
+      if (planUpdateData.status === 'completed') {
+        try {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ 🚀 Plan completed! Executing robotWorkflow...`);
+          
+          const { executeRobotWorkflowOnCompletion } = await import('@/lib/services/robot-instance/robot-plan-service');
+          
+          const workflowResult = await executeRobotWorkflowOnCompletion(
+            plan.site_id,
+            'plan_execution', // activity type
+            plan.user_id || null,
+            instance_id,
+            instance,
+            { isPlanCompleted: true, planId: effective_plan_id || null }
+          );
+          
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Robot workflow executed successfully after plan completion`);
+          
+        } catch (workflowError) {
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing robot workflow after plan completion:`, workflowError);
+          // No fallar la respuesta por error de workflow
+        }
+      }
     }
 
     // 9.1. Manejar estados especiales ----------------------------------------

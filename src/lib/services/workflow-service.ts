@@ -13,7 +13,8 @@ import type {
   WhatsAppWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,
-  StartRobotWorkflowArgs
+  StartRobotWorkflowArgs,
+  PromptRobotWorkflowArgs
 } from './workflow/business-workflow-service';
 
 /**
@@ -69,6 +70,10 @@ export class WorkflowService extends BaseWorkflowService {
 
   public async startRobot(args: StartRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.businessService.startRobot(args, options);
+  }
+
+  public async promptRobot(args: PromptRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.businessService.promptRobot(args, options);
   }
 
   // Métodos delegados al DataWorkflowService
@@ -269,5 +274,6 @@ export type {
   EmailWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,
-  StartRobotWorkflowArgs
+  StartRobotWorkflowArgs,
+  PromptRobotWorkflowArgs
 }; 

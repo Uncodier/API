@@ -358,6 +358,38 @@ ${activityContext?.specificInstructions || ''}
 - Validate platform access and permissions before proceeding with any action
 - Test all functionality works as expected rather than assuming from system status
 
+🎯 MANDATORY FOCUS AND VALIDATION STEPS:
+For EVERY plan, you MUST include these types of steps to simplify agent tasks:
+
+1. CONTENT FOCUS STEPS (at the beginning):
+   - "Focus on [specific content/campaign/platform] - ignore all other distractions"
+   - "Verify the target [content/campaign/platform] is loaded and visible"
+   - "Confirm we are working with the correct [item] before proceeding"
+
+2. VALIDATION CHECKPOINTS (throughout the plan):
+   - "Validate that [expected content] loaded successfully"
+   - "Confirm [action] was completed as expected"
+   - "Verify [result] is visible and correct before continuing"
+   - "Check that [data/content] was saved/published correctly"
+
+3. CONTENT VERIFICATION STEPS (after major actions):
+   - "Refresh page to confirm changes are persistent"
+   - "Navigate away and back to verify content is saved"
+   - "Check that published content appears in the expected location"
+   - "Validate all links/images/media are working correctly"
+
+EXAMPLES OF FOCUS AND VALIDATION INTEGRATION:
+✅ Good Step Sequence:
+1. "Focus on LinkedIn company page - navigate to linkedin.com/company/[name]"
+2. "Verify company page loaded correctly and shows current branding"
+3. "Click on 'Create a post' button"
+4. "Validate post creation dialog opened successfully"
+5. "Paste approved content into post text area"
+6. "Confirm content appears correctly formatted in preview"
+7. "Click 'Post' to publish"
+8. "Validate post appears in company feed and is publicly visible"
+9. "Refresh page to confirm post is persistent and properly saved"
+
 🎭 STEP RESPONSE COORDINATION:
 For EACH step in your plan, you MUST specify the expected_response_type that the robot will use during execution:
 
@@ -410,6 +442,34 @@ Based on the provided context, choose ONLY ONE channel/platform:
 - Google Ads (for decision/purchase stages)
 - Website optimization (for conversion optimization)
 - Content creation (for awareness/retention)
+
+🔧 CRITICAL STEP DECOMPOSITION REQUIREMENTS:
+ALWAYS break down complex tasks into simple, executable steps:
+
+✅ GOOD STEP EXAMPLES:
+- "Navigate to linkedin.com"
+- "Click on the search bar at the top of the page"
+- "Type 'Santiago Zavala' in the search field"
+- "Press Enter to execute the search"
+- "Click on the first profile result"
+- "Scroll down to view recent posts"
+- "Click on the first post to open it"
+- "Click the comment button below the post"
+- "Type a positive comment about the post content"
+- "Click 'Post' to submit the comment"
+
+❌ AVOID VAGUE STEPS:
+- "Research Santiago Zavala" (too vague)
+- "Find and comment on posts" (too complex)
+- "Engage with content" (not specific)
+- "Analyze profile" (not actionable)
+
+🎯 STEP DECOMPOSITION RULES:
+- Each step = ONE specific browser action (click, type, navigate, scroll)
+- Use action verbs: Navigate, Click, Type, Select, Scroll, Press
+- Include specific targets: "search bar", "first result", "comment button"
+- Maximum 1-4 minutes per step
+- If a task takes longer, break it into smaller sub-steps
 
 SIMPLE EXECUTION STEPS (Maximum 5-8 steps):
 Each step must be a specific, quick browser automation action with coordinated response:

@@ -105,76 +105,26 @@ export async function POST(request: NextRequest) {
       
       // Crear plan básico para Free Agent sin ejecutar comando
       planData = {
-        title: "Plan básico Free Agent - Navegación DuckDuckGo",
-        description: "Plan simple para navegación básica en DuckDuckGo sin requerir autenticación",
+        title: "Plan Free Agent - Abrir DuckDuckGo",
+        description: "Plan simple para abrir únicamente DuckDuckGo",
         phases: [
           {
-            phase_name: "Navegación Web Básica",
-            description: "Fase enfocada en navegación básica web sin autenticación",
-            timeline: "30-45 minutos",
+            phase_name: "Abrir DuckDuckGo",
+            description: "Abrir DuckDuckGo en el navegador",
+            timeline: "5 minutos",
             success_criteria: [
-              "Navegador abierto exitosamente",
-              "DuckDuckGo accesible",
-              "Búsqueda realizada sin errores",
-              "Resultados obtenidos"
+              "DuckDuckGo abierto exitosamente",
+              "Elementos de la página completamente visibles o centrados en pantalla"
             ],
             steps: [
               {
-                title: "Abrir navegador web",
-                platform: "Browser",
-                description: "Iniciar el navegador y verificar conectividad",
+                title: "Abrir DuckDuckGo",
+                platform: "DuckDuckGo",
+                description: "Ir a duckduckgo.com y asegurar que todos los elementos (buscador, botones, contenido) estén completamente visibles en pantalla o centrados para mejorar la usabilidad",
                 step_number: 1,
-                automation_level: "automated",
-                estimated_duration: "2 minutos",
-                estimated_duration_minutes: 2,
-                required_authentication: "none",
-                expected_response_type: "step_completed",
-                human_intervention_reason: null
-              },
-              {
-                title: "Navegar a DuckDuckGo",
-                platform: "DuckDuckGo",
-                description: "Ir a duckduckgo.com para realizar búsquedas",
-                step_number: 2,
-                automation_level: "automated",
-                estimated_duration: "2 minutos",
-                estimated_duration_minutes: 2,
-                required_authentication: "none",
-                expected_response_type: "step_completed",
-                human_intervention_reason: null
-              },
-              {
-                title: "Realizar búsqueda básica",
-                platform: "DuckDuckGo",
-                description: "Hacer una búsqueda simple relacionada con el negocio",
-                step_number: 3,
                 automation_level: "automated",
                 estimated_duration: "3 minutos",
                 estimated_duration_minutes: 3,
-                required_authentication: "none",
-                expected_response_type: "step_completed",
-                human_intervention_reason: null
-              },
-              {
-                title: "Revisar resultados",
-                platform: "DuckDuckGo",
-                description: "Examinar los primeros resultados de búsqueda",
-                step_number: 4,
-                automation_level: "automated",
-                estimated_duration: "4 minutos",
-                estimated_duration_minutes: 4,
-                required_authentication: "none",
-                expected_response_type: "step_completed",
-                human_intervention_reason: null
-              },
-              {
-                title: "Completar navegación",
-                platform: "Browser",
-                description: "Finalizar la sesión de navegación",
-                step_number: 5,
-                automation_level: "automated",
-                estimated_duration: "2 minutos",
-                estimated_duration_minutes: 2,
                 required_authentication: "none",
                 expected_response_type: "step_completed",
                 human_intervention_reason: null
@@ -185,25 +135,21 @@ export async function POST(request: NextRequest) {
         activity_type: "free-agent",
         error_handling: [
           "Si DuckDuckGo no carga, intentar recargar la página",
-          "Si la búsqueda no funciona, verificar conectividad a internet",
-          "Si los resultados no aparecen, probar con términos de búsqueda alternativos"
+          "Si hay problemas de conectividad, verificar la conexión a internet"
         ],
         priority_level: "medium",
         success_metrics: [
-          "Navegador abierto exitosamente",
-          "DuckDuckGo accesible",
-          "Búsqueda realizada sin errores",
-          "Resultados obtenidos"
+          "DuckDuckGo abierto exitosamente",
+          "Elementos de la página completamente visibles o centrados en pantalla"
         ],
-        estimated_timeline: "45 minutos",
+        estimated_timeline: "5 minutos",
         browser_requirements: [
           "Chrome o Firefox browser",
           "Conexión estable a internet"
         ],
         execution_objectives: [
-          "Validar conectividad web básica",
-          "Realizar búsqueda simple sin autenticación",
-          "Documentar resultados encontrados"
+          "Abrir DuckDuckGo",
+          "Asegurar visibilidad completa de elementos en pantalla para mejor usabilidad"
         ],
         required_integrations: [
           "none"
@@ -265,7 +211,7 @@ export async function POST(request: NextRequest) {
     const { error: updateError } = await supabaseAdmin
       .from('instance_plans')
       .update({
-        status: 'completed',
+        status: 'pending',
         command_id: planningCommandUuid,
         title: planData.title || `Plan simple para actividad: ${activity}`,
         description: planData.description || 'Plan simple y enfocado generado automáticamente para ejecución en 1-2 horas máximo',
