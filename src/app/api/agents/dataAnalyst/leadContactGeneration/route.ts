@@ -677,6 +677,12 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
         
         if (resultWithEmailGeneration) {
           emailGenerationResult = resultWithEmailGeneration.email_generation_analysis;
+          
+          // Filter to return only the first email from generated_emails array
+          if (emailGenerationResult.generated_emails && Array.isArray(emailGenerationResult.generated_emails) && emailGenerationResult.generated_emails.length > 0) {
+            emailGenerationResult.generated_emails = [emailGenerationResult.generated_emails[0]];
+          }
+          
           responseData.email_generation_analysis = emailGenerationResult;
         }
       } catch (error) {
@@ -684,10 +690,10 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
       }
     }
     
-    // Si no hay resultados de IA, usar los patrones básicos generados
+    // Si no hay resultados de IA, usar los patrones básicos generados (solo el primero)
     if (!emailGenerationResult && basicEmailPatterns.length > 0) {
-      responseData.fallback_emails = basicEmailPatterns;
-      responseData.message += ' - Using basic pattern generation as fallback';
+      responseData.fallback_emails = [basicEmailPatterns[0]]; // Only return the first email
+      responseData.message += ' - Using basic pattern generation as fallback (first option only)';
     }
     
     return NextResponse.json({

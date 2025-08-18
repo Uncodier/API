@@ -28,6 +28,7 @@ import ChatApi from './ChatApi';
 import CreateTaskApi from './CreateTaskApi';
 import GetTaskApi from './GetTaskApi';
 import UpdateTaskApi from './UpdateTaskApi';
+import ValidateEmailApi from './ValidateEmailApi';
 
 // ApiRegistry class
 class ApiRegistry {
@@ -78,6 +79,7 @@ apiRegistry.register(ChatApi);
 apiRegistry.register(CreateTaskApi);
 apiRegistry.register(GetTaskApi);
 apiRegistry.register(UpdateTaskApi);
+apiRegistry.register(ValidateEmailApi);
 
 export default apiRegistry;
 
@@ -111,5 +113,6 @@ export {
   ChatApi,
   CreateTaskApi,
   GetTaskApi,
-  UpdateTaskApi
+  UpdateTaskApi,
+  ValidateEmailApi
 }; 

@@ -1,0 +1,315 @@
+---
+title: 'Validate Email'
+description: 'Validates email addresses using SMTP protocol and MX record lookup'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+# Validate Email
+
+This tool allows agents to validate email addresses using SMTP protocol validation by checking MX records and connecting to mail servers to verify if an email address actually exists and can receive emails.
+
+## Description
+
+Performs comprehensive email validation using SMTP protocol by:
+- Checking email format with regex validation
+- Looking up MX records for the domain
+- Connecting to the primary mail server
+- Executing SMTP commands (HELO/EHLO, MAIL FROM, RCPT TO)
+- Supporting TLS/STARTTLS connections
+- Detecting disposable email providers
+- Handling anti-spam policies and server responses
+
+## Parameters
+
+| Name  | Type   | Required | Description                                    |
+|-------|--------|----------|------------------------------------------------|
+| email | string | Yes      | Email address to validate                      |
+
+## Test API
+
+Use the integrated API Tester to test this endpoint interactively:
+
+<UnifiedApiTester apiId="validate-email" />
+
+### API Tester Features:
+
+- **Pre-configured fields**: Includes all necessary parameters with realistic examples
+- **Automatic validation**: Verifies email format before sending request
+- **Real-time SMTP testing**: Connects to actual mail servers for validation
+- **Code generation**: Automatic examples in cURL, JavaScript, Python and PHP
+- **Response analysis**: Shows detailed validation results and flags
+
+### Form fields:
+
+**Required:**
+- `email`: Email address to validate
+
+## Response
+
+```json
+{
+  "success": true,
+  "data": {
+    "email": "user@example.com",
+    "isValid": true,
+    "result": "valid",
+    "flags": [],
+    "suggested_correction": null,
+    "execution_time": 1250,
+    "message": "Email address is valid",
+    "timestamp": "2024-01-01T12:00:00.000Z"
+  }
+}
+```
+
+| Field               | Type    | Description                                           |
+|--------------------|---------|-------------------------------------------------------|
+| success            | boolean | Indicates if the validation was completed successfully |
+| email              | string  | The email address that was validated                  |
+| isValid            | boolean | Whether the email address is valid                    |
+| result             | string  | Validation result (valid, invalid, disposable, catchall, unknown) |
+| flags              | array   | Additional validation flags and indicators            |
+| suggested_correction | string/null | Suggested correction if available                |
+| execution_time     | number  | Time taken to validate in milliseconds               |
+| message            | string  | Human readable validation message                     |
+| timestamp          | string  | ISO timestamp of when validation was performed       |
+
+## Validation Results
+
+### Valid Results
+
+- **`valid`**: Email address exists and can receive emails
+- **`catchall`**: Domain accepts all emails sent to it (may or may not exist)
+
+### Invalid Results
+
+- **`invalid`**: Email address does not exist or has invalid format
+- **`disposable`**: Email is from a temporary/disposable email provider
+
+### Unknown Results
+
+- **`unknown`**: Validation was inconclusive due to server policies or errors
+
+## Validation Flags
+
+The `flags` array may contain the following indicators:
+
+### Format Flags
+- `invalid_format`: Email format is invalid
+- `no_mx_record`: Domain has no MX records
+
+### Server Response Flags
+- `user_unknown`: Server reported user does not exist
+- `temporary_failure`: Temporary server error occurred
+- `service_unavailable`: Mail server temporarily unavailable
+- `connection_error`: Failed to connect to mail server
+- `timeout`: Connection or response timeout
+- `connection_refused`: Mail server refused connection
+- `server_not_found`: Mail server not found
+
+### Policy Flags
+- `anti_spam_policy`: Server has anti-spam policies affecting validation
+- `catchall_domain`: Domain accepts all emails (catchall)
+- `disposable_email`: Email is from a known disposable provider
+
+### Technical Flags
+- `unexpected_response`: Server returned unexpected response
+
+## Response Codes
+
+| Code | Status          | Description                                      |
+|------|-----------------|--------------------------------------------------|
+| 200  | OK              | Validation completed successfully                |
+| 400  | Bad Request     | Invalid parameters or email format              |
+| 500  | Server Error    | Internal server error during validation         |
+
+## Error Responses
+
+### EMAIL_REQUIRED (400)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "EMAIL_REQUIRED",
+    "message": "Email is required",
+    "details": "Please provide an email address to validate"
+  }
+}
+```
+
+### INTERNAL_ERROR (500)
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INTERNAL_ERROR",
+    "message": "Internal server error",
+    "details": "An error occurred while validating the email"
+  }
+}
+```
+
+## Validation Process
+
+### 1. Format Validation
+First, the tool validates the email format using regex:
+```regex
+/^[^\s@]+@[^\s@]+\.[^\s@]+$/
+```
+
+### 2. Disposable Email Detection
+Checks against a list of known disposable email providers:
+- 10minutemail.com
+- tempmail.org
+- guerrillamail.com
+- mailinator.com
+- yopmail.com
+- And many more...
+
+### 3. MX Record Lookup
+Performs DNS lookup to find MX records for the domain:
+```javascript
+const mxRecords = await dns.resolveMx(domain);
+```
+
+### 4. SMTP Validation
+Connects to the primary MX server and executes SMTP commands:
+
+1. **Connection**: Connect to mail server on port 25
+2. **Greeting**: Wait for server greeting (220 response)
+3. **EHLO**: Send EHLO command to identify client
+4. **STARTTLS**: Upgrade to TLS if supported
+5. **MAIL FROM**: Send sender address
+6. **RCPT TO**: Send recipient address (validation step)
+7. **QUIT**: Close connection gracefully
+
+### 5. Response Analysis
+Analyzes the RCPT TO response:
+- **250**: Email accepted (valid)
+- **550-559**: Permanent failure (invalid)
+- **450-459**: Temporary failure (unknown)
+- **421**: Service unavailable (unknown)
+
+## Usage Example
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "validateEmail",
+    input: {
+      email: "user@example.com"
+    }
+  }
+]);
+
+if (result.success && result.data.isValid) {
+  console.log(`Email ${result.data.email} is valid!`);
+} else {
+  console.log(`Email validation failed: ${result.data.message}`);
+  console.log(`Flags: ${result.data.flags.join(', ')}`);
+}
+```
+
+## Service Information
+
+You can get information about the validation service using the GET endpoint:
+
+### GET /api/agents/tools/validateEmail
+
+Returns service information including:
+- Service name and version
+- Description of capabilities
+- Available endpoints
+- Supported features
+- Current timestamp
+
+```json
+{
+  "success": true,
+  "data": {
+    "service": "SMTP Email Validation",
+    "version": "1.0.0",
+    "description": "Validate email addresses using SMTP protocol and MX record lookup",
+    "features": [
+      "MX record lookup",
+      "SMTP connection testing",
+      "TLS/STARTTLS support",
+      "Disposable email detection",
+      "Catchall domain detection",
+      "Anti-spam policy detection"
+    ]
+  }
+}
+```
+
+## Limitations and Considerations
+
+### Server Policies
+- Some mail servers implement anti-spam policies that may affect validation accuracy
+- Servers may respond with generic messages to prevent email harvesting
+- Rate limiting may apply for bulk validation attempts
+
+### Network Dependencies
+- Requires outbound connections to mail servers on port 25
+- DNS resolution must be available for MX record lookup
+- Some networks may block SMTP connections
+
+### Accuracy
+- Validation is not 100% guaranteed due to server policies
+- Some servers accept all emails but bounce them later
+- Temporary failures may indicate valid emails that are temporarily unavailable
+
+### Performance
+- Validation involves network requests and may take several seconds
+- Timeout is set to 10 seconds for SMTP connections
+- DNS lookups add additional latency
+
+## Best Practices
+
+1. **Batch Processing**: For multiple emails, implement delays between requests
+2. **Caching**: Cache results for recently validated emails
+3. **Fallback**: Have fallback validation methods for critical applications
+4. **Error Handling**: Always handle timeout and connection errors gracefully
+5. **Rate Limiting**: Implement rate limiting to avoid being blocked by mail servers
+
+## Security Considerations
+
+- The tool connects to external mail servers
+- No sensitive data is transmitted during validation
+- Connections use standard SMTP protocol
+- TLS encryption is used when available
+- No authentication credentials are required or stored
+
+## Comparison with NeverBounce
+
+This tool provides similar functionality to commercial services like NeverBounce but with some differences:
+
+### Advantages
+- **Free to use**: No API costs or quotas
+- **Real-time validation**: Direct SMTP validation
+- **Full control**: Complete control over validation process
+- **Privacy**: No data sent to third-party services
+
+### Disadvantages
+- **Network dependencies**: Requires outbound SMTP connections
+- **Performance**: May be slower than specialized services
+- **Accuracy**: May be less accurate due to anti-spam policies
+- **Maintenance**: Requires maintaining disposable email lists
+
+## Technical Details
+
+### Supported Protocols
+- **SMTP**: Standard SMTP protocol on port 25
+- **TLS/STARTTLS**: Encrypted connections when supported
+- **DNS**: MX record resolution using system DNS
+
+### Timeouts
+- **Connection timeout**: 10 seconds
+- **Response timeout**: 5 seconds per SMTP command
+- **Overall timeout**: Varies based on server response times
+
+### Error Recovery
+- Automatic fallback from TLS to plain SMTP
+- Graceful handling of connection failures
+- Detailed error reporting with specific failure reasons
