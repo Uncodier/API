@@ -111,8 +111,12 @@ async function attemptFallbackValidation(domain: string): Promise<{
     for (const port of emailPorts) {
       try {
         // Try to connect to the domain on email ports
-        const socket = await createSocketWithTimeout(domain, port, 3000);
-        socket.destroy();
+        const connectionResult = await createSocketWithTimeout(domain, port, 3000);
+        if (connectionResult.success && connectionResult.socket) {
+          connectionResult.socket.destroy();
+        } else {
+          continue; // Try next port
+        }
         
         return {
           canReceiveEmail: true,
@@ -208,59 +212,133 @@ async function getMXRecords(domain: string): Promise<MXRecord[]> {
 }
 
 /**
- * Creates a socket connection with timeout
+ * Creates a socket connection with controlled timeout (no exceptions)
  */
-function createSocketWithTimeout(host: string, port: number, timeout: number = 8000): Promise<net.Socket> {
-  return new Promise((resolve, reject) => {
+function createSocketWithTimeout(host: string, port: number, timeout: number = 6000): Promise<{
+  success: boolean;
+  socket?: net.Socket;
+  error?: string;
+  errorCode?: string;
+}> {
+  return new Promise((resolve) => {
     const socket = new net.Socket();
+    let isResolved = false;
     
     const timeoutId = setTimeout(() => {
-      socket.destroy();
-      reject(new Error(`Connection timeout to ${host}:${port}`));
+      if (!isResolved) {
+        isResolved = true;
+        socket.destroy();
+        resolve({
+          success: false,
+          error: `Connection timeout to ${host}:${port} after ${timeout}ms`,
+          errorCode: 'TIMEOUT'
+        });
+      }
     }, timeout);
     
     socket.connect(port, host, () => {
-      clearTimeout(timeoutId);
-      resolve(socket);
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeoutId);
+        resolve({
+          success: true,
+          socket
+        });
+      }
     });
     
-    socket.on('error', (error) => {
-      clearTimeout(timeoutId);
-      reject(error);
+    socket.on('error', (error: any) => {
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeoutId);
+        resolve({
+          success: false,
+          error: error.message || 'Connection error',
+          errorCode: error.code || 'CONNECTION_ERROR'
+        });
+      }
     });
   });
 }
 
 /**
- * Reads SMTP response from socket
+ * Reads SMTP response from socket with controlled timeout (no exceptions)
  */
-function readSMTPResponse(socket: net.Socket): Promise<SMTPResponse> {
-  return new Promise((resolve, reject) => {
+function readSMTPResponse(socket: net.Socket): Promise<{
+  success: boolean;
+  response?: SMTPResponse;
+  error?: string;
+  errorCode?: string;
+}> {
+  return new Promise((resolve) => {
+    let isResolved = false;
+    
     const timeout = setTimeout(() => {
-      reject(new Error('SMTP response timeout'));
-    }, 4000);
+      if (!isResolved) {
+        isResolved = true;
+        resolve({
+          success: false,
+          error: 'SMTP response timeout after 3000ms',
+          errorCode: 'RESPONSE_TIMEOUT'
+        });
+      }
+    }, 3000);
     
     socket.once('data', (data) => {
-      clearTimeout(timeout);
-      const response = data.toString().trim();
-      const code = parseInt(response.substring(0, 3));
-      const message = response.substring(4);
-      resolve({ code, message });
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeout);
+        try {
+          const response = data.toString().trim();
+          const code = parseInt(response.substring(0, 3));
+          const message = response.substring(4);
+          resolve({
+            success: true,
+            response: { code, message }
+          });
+        } catch (error: any) {
+          resolve({
+            success: false,
+            error: 'Failed to parse SMTP response',
+            errorCode: 'PARSE_ERROR'
+          });
+        }
+      }
     });
     
-    socket.once('error', (error) => {
-      clearTimeout(timeout);
-      reject(error);
+    socket.once('error', (error: any) => {
+      if (!isResolved) {
+        isResolved = true;
+        clearTimeout(timeout);
+        resolve({
+          success: false,
+          error: error.message || 'Socket error',
+          errorCode: error.code || 'SOCKET_ERROR'
+        });
+      }
     });
   });
 }
 
 /**
- * Sends SMTP command and waits for response
+ * Sends SMTP command and waits for response (controlled, no exceptions)
  */
-async function sendSMTPCommand(socket: net.Socket, command: string): Promise<SMTPResponse> {
-  socket.write(command + '\r\n');
-  return await readSMTPResponse(socket);
+async function sendSMTPCommand(socket: net.Socket, command: string): Promise<{
+  success: boolean;
+  response?: SMTPResponse;
+  error?: string;
+  errorCode?: string;
+}> {
+  try {
+    socket.write(command + '\r\n');
+    return await readSMTPResponse(socket);
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || 'Failed to send SMTP command',
+      errorCode: 'SEND_ERROR'
+    };
+  }
 }
 
 /**
@@ -278,18 +356,56 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     console.log(`[VALIDATE_EMAIL] Connecting to SMTP server: ${mxRecord.exchange}:25`);
     
     // Create socket connection
-    socket = await createSocketWithTimeout(mxRecord.exchange, 25, 8000);
+    const connectionResult = await createSocketWithTimeout(mxRecord.exchange, 25, 6000);
+    
+    if (!connectionResult.success) {
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['connection_failed', connectionResult.errorCode?.toLowerCase() || 'connection_error'],
+        message: connectionResult.error || 'Failed to connect to SMTP server'
+      };
+    }
+    
+    socket = connectionResult.socket!;
     
     // Read initial greeting
-    const greeting = await readSMTPResponse(socket);
+    const greetingResult = await readSMTPResponse(socket);
+    
+    if (!greetingResult.success) {
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['greeting_failed', greetingResult.errorCode?.toLowerCase() || 'response_error'],
+        message: greetingResult.error || 'Failed to read server greeting'
+      };
+    }
+    
+    const greeting = greetingResult.response!;
     console.log(`[VALIDATE_EMAIL] Server greeting: ${greeting.code} ${greeting.message}`);
     
     if (greeting.code !== 220) {
-      throw new Error(`SMTP server not ready: ${greeting.code} ${greeting.message}`);
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['server_not_ready'],
+        message: `SMTP server not ready: ${greeting.code} ${greeting.message}`
+      };
     }
     
     // Send EHLO command
-    const ehloResponse = await sendSMTPCommand(socket, 'EHLO validateemail.local');
+    const ehloResult = await sendSMTPCommand(socket, 'EHLO validateemail.local');
+    
+    if (!ehloResult.success) {
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['ehlo_failed', ehloResult.errorCode?.toLowerCase() || 'command_error'],
+        message: ehloResult.error || 'EHLO command failed'
+      };
+    }
+    
+    const ehloResponse = ehloResult.response!;
     console.log(`[VALIDATE_EMAIL] EHLO response: ${ehloResponse.code} ${ehloResponse.message}`);
     
     // Check if STARTTLS is supported and required
@@ -297,9 +413,9 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     if (ehloResponse.message.includes('STARTTLS')) {
       try {
         console.log(`[VALIDATE_EMAIL] Starting TLS connection`);
-        const startTlsResponse = await sendSMTPCommand(socket, 'STARTTLS');
+        const startTlsResult = await sendSMTPCommand(socket, 'STARTTLS');
         
-        if (startTlsResponse.code === 220) {
+        if (startTlsResult.success && startTlsResult.response!.code === 220) {
           // Upgrade to TLS
           tlsSocket = tls.connect({
             socket: socket,
@@ -322,8 +438,12 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
           
           // Send EHLO again after TLS
           tlsSocket.write('EHLO validateemail.local\r\n');
-          const tlsEhloResponse = await readSMTPResponse(tlsSocket);
-          console.log(`[VALIDATE_EMAIL] TLS EHLO response: ${tlsEhloResponse.code} ${tlsEhloResponse.message}`);
+          const tlsEhloResult = await readSMTPResponse(tlsSocket);
+          if (tlsEhloResult.success) {
+            console.log(`[VALIDATE_EMAIL] TLS EHLO response: ${tlsEhloResult.response!.code} ${tlsEhloResult.response!.message}`);
+          } else {
+            console.log(`[VALIDATE_EMAIL] TLS EHLO failed: ${tlsEhloResult.error}`);
+          }
         }
       } catch (tlsError) {
         console.log(`[VALIDATE_EMAIL] TLS upgrade failed, continuing without TLS:`, tlsError);
@@ -333,22 +453,48 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     const activeSocket = tlsSocket || socket;
     
     // Send MAIL FROM command
-    const mailFromResponse = await sendSMTPCommand(activeSocket, 'MAIL FROM:<test@validateemail.local>');
+    const mailFromResult = await sendSMTPCommand(activeSocket, 'MAIL FROM:<test@validateemail.local>');
+    
+    if (!mailFromResult.success) {
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['mail_from_failed', mailFromResult.errorCode?.toLowerCase() || 'command_error'],
+        message: mailFromResult.error || 'MAIL FROM command failed'
+      };
+    }
+    
+    const mailFromResponse = mailFromResult.response!;
     console.log(`[VALIDATE_EMAIL] MAIL FROM response: ${mailFromResponse.code} ${mailFromResponse.message}`);
     
     if (mailFromResponse.code !== 250) {
-      throw new Error(`MAIL FROM rejected: ${mailFromResponse.code} ${mailFromResponse.message}`);
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['mail_from_rejected'],
+        message: `MAIL FROM rejected: ${mailFromResponse.code} ${mailFromResponse.message}`
+      };
     }
     
     // Send RCPT TO command - this is the key validation step
-    const rcptToResponse = await sendSMTPCommand(activeSocket, `RCPT TO:<${email}>`);
+    const rcptToResult = await sendSMTPCommand(activeSocket, `RCPT TO:<${email}>`);
+    
+    if (!rcptToResult.success) {
+      return {
+        isValid: false,
+        result: 'unknown',
+        flags: ['rcpt_to_failed', rcptToResult.errorCode?.toLowerCase() || 'command_error'],
+        message: rcptToResult.error || 'RCPT TO command failed'
+      };
+    }
+    
+    const rcptToResponse = rcptToResult.response!;
     console.log(`[VALIDATE_EMAIL] RCPT TO response: ${rcptToResponse.code} ${rcptToResponse.message}`);
     
-    // Send QUIT command
-    try {
-      await sendSMTPCommand(activeSocket, 'QUIT');
-    } catch (error) {
-      console.log(`[VALIDATE_EMAIL] QUIT command failed (non-critical):`, error);
+    // Send QUIT command (non-critical)
+    const quitResult = await sendSMTPCommand(activeSocket, 'QUIT');
+    if (!quitResult.success) {
+      console.log(`[VALIDATE_EMAIL] QUIT command failed (non-critical):`, quitResult.error);
     }
     
     // Analyze RCPT TO response
@@ -422,43 +568,14 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     };
     
   } catch (error: any) {
-    console.error(`[VALIDATE_EMAIL] SMTP validation error:`, error);
-    
-    const flags: string[] = ['connection_error'];
-    let message = 'Failed to validate email via SMTP';
-    let result: 'invalid' | 'unknown' | 'risky' = 'unknown';
-    
-    if (error.message.includes('timeout') || error.message.includes('Connection timeout')) {
-      flags.push('smtp_timeout');
-      message = `SMTP server connection timeout (${mxRecord.exchange}:25)`;
-      result = 'unknown'; // Timeout doesn't mean invalid, just inconclusive
-    } else if (error.message.includes('ECONNREFUSED')) {
-      flags.push('connection_refused');
-      message = `SMTP server refused connection (${mxRecord.exchange}:25)`;
-      result = 'unknown'; // Server exists but not accepting connections
-    } else if (error.message.includes('ENOTFOUND')) {
-      flags.push('server_not_found');
-      message = `SMTP server not found (${mxRecord.exchange})`;
-      result = 'invalid'; // MX record points to non-existent server
-    } else if (error.message.includes('EHOSTUNREACH')) {
-      flags.push('host_unreachable');
-      message = `SMTP server unreachable (${mxRecord.exchange})`;
-      result = 'unknown'; // Network issues
-    } else if (error.message.includes('ECONNRESET')) {
-      flags.push('connection_reset');
-      message = `SMTP server reset connection (${mxRecord.exchange})`;
-      result = 'unknown'; // Server issues
-    } else if (error.message.includes('TLS')) {
-      flags.push('tls_error');
-      message = `TLS/SSL error with SMTP server (${mxRecord.exchange})`;
-      result = 'unknown'; // TLS issues don't mean email is invalid
-    }
+    // This catch block should rarely be reached now since we handle errors gracefully above
+    console.error(`[VALIDATE_EMAIL] Unexpected SMTP validation error:`, error);
     
     return {
       isValid: false,
-      result,
-      flags,
-      message
+      result: 'unknown',
+      flags: ['unexpected_error'],
+      message: `Unexpected error during SMTP validation: ${error.message || 'Unknown error'}`
     };
   } finally {
     // Clean up connections
