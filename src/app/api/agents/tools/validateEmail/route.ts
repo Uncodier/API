@@ -26,15 +26,184 @@ interface SMTPResponse {
 }
 
 /**
- * Performs MX record lookup for a domain
+ * Checks if a domain exists by performing a basic DNS lookup
+ */
+async function checkDomainExists(domain: string): Promise<{
+  exists: boolean;
+  hasARecord: boolean;
+  errorCode?: string;
+  errorMessage?: string;
+}> {
+  try {
+    // Try to resolve A records first (most basic domain check)
+    const addresses = await dns.resolve4(domain);
+    return {
+      exists: true,
+      hasARecord: addresses.length > 0
+    };
+  } catch (error: any) {
+    console.log(`[VALIDATE_EMAIL] Domain existence check failed for ${domain}:`, error.code);
+    
+    if (error.code === 'ENOTFOUND') {
+      return {
+        exists: false,
+        hasARecord: false,
+        errorCode: 'DOMAIN_NOT_FOUND',
+        errorMessage: `Domain does not exist: ${domain}`
+      };
+    }
+    
+    // Try AAAA records (IPv6) as fallback
+    try {
+      const ipv6Addresses = await dns.resolve6(domain);
+      return {
+        exists: true,
+        hasARecord: false // No IPv4 but has IPv6
+      };
+    } catch (ipv6Error: any) {
+      return {
+        exists: false,
+        hasARecord: false,
+        errorCode: error.code || 'DNS_ERROR',
+        errorMessage: `Domain validation failed: ${error.message}`
+      };
+    }
+  }
+}
+
+/**
+ * Attempts fallback validation when MX lookup fails
+ */
+async function attemptFallbackValidation(domain: string): Promise<{
+  canReceiveEmail: boolean;
+  fallbackMethod: string;
+  confidence: number;
+  flags: string[];
+  message: string;
+}> {
+  const flags: string[] = [];
+  
+  try {
+    // Method 1: Check for common mail subdomains
+    const commonMailSubdomains = ['mail', 'smtp', 'mx', 'mx1', 'mx2'];
+    
+    for (const subdomain of commonMailSubdomains) {
+      try {
+        const mailDomain = `${subdomain}.${domain}`;
+        await dns.resolve4(mailDomain);
+        
+        // If mail subdomain exists, domain likely supports email
+        return {
+          canReceiveEmail: true,
+          fallbackMethod: 'mail_subdomain_detection',
+          confidence: 60,
+          flags: ['mail_subdomain_found', 'fallback_validation'],
+          message: `Mail subdomain detected: ${mailDomain}`
+        };
+      } catch (error) {
+        // Continue to next subdomain
+      }
+    }
+    
+    // Method 2: Check for common email ports (25, 587, 465)
+    const emailPorts = [25, 587, 465];
+    
+    for (const port of emailPorts) {
+      try {
+        // Try to connect to the domain on email ports
+        const socket = await createSocketWithTimeout(domain, port, 3000);
+        socket.destroy();
+        
+        return {
+          canReceiveEmail: true,
+          fallbackMethod: 'email_port_detection',
+          confidence: 70,
+          flags: [`port_${port}_open`, 'fallback_validation'],
+          message: `Email port ${port} is accessible on domain`
+        };
+      } catch (error) {
+        // Continue to next port
+      }
+    }
+    
+    // Method 3: Check for TXT records that might indicate email service
+    try {
+      const txtRecords = await dns.resolveTxt(domain);
+      const emailRelatedTxt = txtRecords.some(record => 
+        record.some(txt => 
+          txt.toLowerCase().includes('v=spf') || 
+          txt.toLowerCase().includes('v=dmarc') ||
+          txt.toLowerCase().includes('v=dkim') ||
+          txt.toLowerCase().includes('mail') ||
+          txt.toLowerCase().includes('smtp')
+        )
+      );
+      
+      if (emailRelatedTxt) {
+        return {
+          canReceiveEmail: true,
+          fallbackMethod: 'email_txt_records',
+          confidence: 50,
+          flags: ['email_txt_records', 'fallback_validation'],
+          message: 'Email-related TXT records found (SPF/DMARC/DKIM)'
+        };
+      }
+    } catch (error) {
+      // TXT lookup failed, continue
+    }
+    
+    // No fallback methods succeeded
+    return {
+      canReceiveEmail: false,
+      fallbackMethod: 'none',
+      confidence: 10,
+      flags: ['no_fallback_success'],
+      message: 'No fallback validation methods succeeded'
+    };
+    
+  } catch (error) {
+    return {
+      canReceiveEmail: false,
+      fallbackMethod: 'error',
+      confidence: 5,
+      flags: ['fallback_error'],
+      message: 'Fallback validation failed with error'
+    };
+  }
+}
+
+/**
+ * Performs MX record lookup for a domain with enhanced error handling
  */
 async function getMXRecords(domain: string): Promise<MXRecord[]> {
   try {
     const records = await dns.resolveMx(domain);
     return records.sort((a, b) => a.priority - b.priority);
-  } catch (error) {
+  } catch (error: any) {
     console.error(`[VALIDATE_EMAIL] Error resolving MX records for ${domain}:`, error);
-    throw new Error(`Failed to resolve MX records for domain: ${domain}`);
+    
+    // Classify different DNS errors for better error handling
+    let errorType = 'DNS_ERROR';
+    let errorMessage = `Failed to resolve MX records for domain: ${domain}`;
+    
+    if (error.code === 'ENOTFOUND') {
+      errorType = 'DOMAIN_NOT_FOUND';
+      errorMessage = `Domain does not exist: ${domain}`;
+    } else if (error.code === 'ENODATA') {
+      errorType = 'NO_MX_RECORDS';
+      errorMessage = `Domain exists but has no MX records: ${domain}`;
+    } else if (error.code === 'ETIMEOUT') {
+      errorType = 'DNS_TIMEOUT';
+      errorMessage = `DNS lookup timeout for domain: ${domain}`;
+    } else if (error.code === 'ESERVFAIL') {
+      errorType = 'DNS_SERVER_FAILURE';
+      errorMessage = `DNS server failure for domain: ${domain}`;
+    }
+    
+    const enhancedError = new Error(errorMessage);
+    (enhancedError as any).code = errorType;
+    (enhancedError as any).originalError = error;
+    throw enhancedError;
   }
 }
 
@@ -418,6 +587,21 @@ function calculateValidationConfidence(
     reasoning.push('MX lookup failed (-30)');
   }
   
+  if (riskFactors.includes('domain_not_found')) {
+    confidence -= 50;
+    reasoning.push('Domain does not exist (-50)');
+  }
+  
+  if (riskFactors.includes('no_mx_records')) {
+    confidence -= 40;
+    reasoning.push('No mail servers configured (-40)');
+  }
+  
+  if (riskFactors.includes('dns_issues')) {
+    confidence -= 25;
+    reasoning.push('DNS reliability issues (-25)');
+  }
+  
   if (riskFactors.includes('simple_mx_setup')) {
     confidence -= 5;
     reasoning.push('Simple MX setup (-5)');
@@ -444,10 +628,14 @@ function calculateValidationConfidence(
     flags.includes('invalid_format') ||
     // No MX records - always override
     flags.includes('no_mx_record') ||
+    // Domain doesn't exist - always override
+    flags.includes('domain_not_found') ||
     // High bounce risk + catchall + SMTP accepted = likely false positive
     (bounceRisk === 'high' && flags.includes('catchall_domain') && smtpAccepted) ||
     // User unknown with high confidence
-    (flags.includes('user_unknown') && confidence <= 25)
+    (flags.includes('user_unknown') && confidence <= 25) ||
+    // DNS issues with very low confidence
+    (riskFactors.includes('domain_not_found') && confidence <= 20)
   );
   
   return {
@@ -502,9 +690,29 @@ async function checkDomainReputation(domain: string): Promise<{
     if (mxRecords.length === 1 && mxRecords[0].exchange.includes('mail.')) {
       riskFactors.push('simple_mx_setup');
     }
-  } catch (error) {
-    riskFactors.push('mx_lookup_failed');
-    bounceRisk = 'high';
+  } catch (error: any) {
+    // Handle different types of DNS errors appropriately
+    switch (error.code) {
+      case 'DOMAIN_NOT_FOUND':
+        riskFactors.push('domain_not_found');
+        reputationFlags.push('non_existent_domain');
+        bounceRisk = 'high';
+        break;
+      case 'NO_MX_RECORDS':
+        riskFactors.push('no_mx_records');
+        reputationFlags.push('no_mail_service');
+        bounceRisk = 'high';
+        break;
+      case 'DNS_TIMEOUT':
+      case 'DNS_SERVER_FAILURE':
+        riskFactors.push('dns_issues');
+        reputationFlags.push('dns_unreliable');
+        bounceRisk = 'medium';
+        break;
+      default:
+        riskFactors.push('mx_lookup_failed');
+        bounceRisk = 'high';
+    }
   }
   
   return {
@@ -721,6 +929,45 @@ export async function POST(request: NextRequest) {
     const domain = extractDomain(email);
     console.log(`[VALIDATE_EMAIL] 🌐 Domain extracted: ${domain}`);
     
+    // Check if domain exists before proceeding with other validations
+    console.log(`[VALIDATE_EMAIL] 🔍 Checking domain existence: ${domain}`);
+    const domainCheck = await checkDomainExists(domain);
+    
+    if (!domainCheck.exists) {
+      const executionTime = Date.now() - startTime;
+      console.log(`[VALIDATE_EMAIL] ❌ Domain does not exist: ${domain}`);
+      
+      return NextResponse.json({
+        success: true,
+        data: {
+          email,
+          isValid: false,
+          deliverable: false,
+          result: 'invalid',
+          flags: ['domain_not_found', 'no_dns_records'],
+          suggested_correction: null,
+          execution_time: executionTime,
+          message: domainCheck.errorMessage || 'Domain does not exist',
+          timestamp: new Date().toISOString(),
+          bounceRisk: 'high',
+          reputationFlags: ['non_existent_domain'],
+          riskFactors: ['domain_not_found'],
+          confidence: 95,
+          confidenceLevel: 'very_high',
+          reasoning: [
+            'Domain does not exist in DNS (-95)',
+            `Error: ${domainCheck.errorCode || 'DOMAIN_NOT_FOUND'}`
+          ],
+          aggressiveMode: aggressiveMode
+        }
+      }, {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    console.log(`[VALIDATE_EMAIL] ✅ Domain exists: ${domain} (IPv4: ${domainCheck.hasARecord})`);
+    
     // Check for disposable email domains
     if (isDisposableEmail(domain)) {
       const executionTime = Date.now() - startTime;
@@ -751,23 +998,155 @@ export async function POST(request: NextRequest) {
     try {
       mxRecords = await getMXRecords(domain);
       console.log(`[VALIDATE_EMAIL] 📋 Found ${mxRecords.length} MX records:`, mxRecords);
-    } catch (error) {
+    } catch (error: any) {
       const executionTime = Date.now() - startTime;
       console.error(`[VALIDATE_EMAIL] ❌ Failed to get MX records:`, error);
+      
+      // Determine appropriate response based on error type
+      let result: 'invalid' | 'unknown' | 'risky' = 'invalid';
+      let flags: string[] = [];
+      let message = 'Domain validation failed';
+      let bounceRisk: 'low' | 'medium' | 'high' = 'high';
+      let reputationFlags: string[] = [];
+      let confidence = 25;
+      let confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = 'low';
+      let reasoning: string[] = [];
+      let isValid = false;
+      let deliverable = false;
+      
+      // Try fallback validation for certain error types
+      let fallbackResult = null;
+      if (error.code === 'NO_MX_RECORDS' || error.code === 'DNS_TIMEOUT' || error.code === 'DNS_SERVER_FAILURE') {
+        console.log(`[VALIDATE_EMAIL] 🔄 Attempting fallback validation for ${domain}`);
+        try {
+          fallbackResult = await attemptFallbackValidation(domain);
+          console.log(`[VALIDATE_EMAIL] 📋 Fallback result:`, fallbackResult);
+        } catch (fallbackError) {
+          console.log(`[VALIDATE_EMAIL] ❌ Fallback validation failed:`, fallbackError);
+        }
+      }
+      
+      switch (error.code) {
+        case 'DOMAIN_NOT_FOUND':
+          result = 'invalid';
+          flags = ['domain_not_found', 'no_mx_record'];
+          message = 'Domain does not exist';
+          bounceRisk = 'high';
+          reputationFlags = ['non_existent_domain'];
+          confidence = 95;
+          confidenceLevel = 'very_high';
+          reasoning = ['Domain does not exist (-95)', 'Error: DOMAIN_NOT_FOUND'];
+          break;
+          
+        case 'NO_MX_RECORDS':
+          if (fallbackResult?.canReceiveEmail) {
+            result = 'risky';
+            isValid = true;
+            deliverable = false;
+            flags = ['no_mx_record', ...fallbackResult.flags];
+            message = `No MX records but ${fallbackResult.message}`;
+            bounceRisk = 'high';
+            reputationFlags = ['no_mx_but_mail_capable'];
+            confidence = fallbackResult.confidence;
+            confidenceLevel = confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+            reasoning = [
+              'No MX records found (-40)',
+              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+            ];
+          } else {
+            result = 'invalid';
+            flags = ['no_mx_record'];
+            message = 'Domain exists but has no mail servers configured';
+            bounceRisk = 'high';
+            reputationFlags = ['no_mail_service'];
+            confidence = 90;
+            confidenceLevel = 'very_high';
+            reasoning = ['No MX records and no fallback methods succeeded (-90)'];
+          }
+          break;
+          
+        case 'DNS_TIMEOUT':
+          if (fallbackResult?.canReceiveEmail) {
+            result = 'risky';
+            isValid = true;
+            deliverable = false;
+            flags = ['dns_timeout', ...fallbackResult.flags];
+            message = `DNS timeout but ${fallbackResult.message}`;
+            bounceRisk = 'medium';
+            reputationFlags = ['dns_issues_but_mail_capable'];
+            confidence = Math.max(fallbackResult.confidence - 20, 10);
+            confidenceLevel = confidence >= 50 ? 'medium' : 'low';
+            reasoning = [
+              'DNS timeout issues (-30)',
+              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+            ];
+          } else {
+            result = 'unknown';
+            flags = ['dns_timeout'];
+            message = 'DNS lookup timeout - domain validation inconclusive';
+            bounceRisk = 'medium';
+            reputationFlags = ['dns_issues'];
+            confidence = 25;
+            reasoning = ['DNS timeout prevents validation (-75)'];
+          }
+          break;
+          
+        case 'DNS_SERVER_FAILURE':
+          if (fallbackResult?.canReceiveEmail) {
+            result = 'risky';
+            isValid = true;
+            deliverable = false;
+            flags = ['dns_server_failure', ...fallbackResult.flags];
+            message = `DNS server failure but ${fallbackResult.message}`;
+            bounceRisk = 'medium';
+            reputationFlags = ['dns_issues_but_mail_capable'];
+            confidence = Math.max(fallbackResult.confidence - 20, 10);
+            confidenceLevel = confidence >= 50 ? 'medium' : 'low';
+            reasoning = [
+              'DNS server failure (-30)',
+              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+            ];
+          } else {
+            result = 'unknown';
+            flags = ['dns_server_failure'];
+            message = 'DNS server failure - domain validation inconclusive';
+            bounceRisk = 'medium';
+            reputationFlags = ['dns_issues'];
+            confidence = 25;
+            reasoning = ['DNS server failure prevents validation (-75)'];
+          }
+          break;
+          
+        default:
+          result = 'unknown';
+          flags = ['dns_error'];
+          message = 'DNS resolution failed - domain validation inconclusive';
+          bounceRisk = 'high';
+          reputationFlags = ['dns_error'];
+          confidence = 15;
+          reasoning = ['DNS resolution failed (-85)', `Error type: ${error.code || 'DNS_ERROR'}`];
+      }
       
       return NextResponse.json({
         success: true,
         data: {
           email,
-          isValid: false,
-          result: 'invalid',
-          flags: ['no_mx_record'],
+          isValid,
+          deliverable,
+          result,
+          flags,
           suggested_correction: null,
           execution_time: executionTime,
-          message: 'Domain has no MX records',
+          message,
           timestamp: new Date().toISOString(),
-          bounceRisk: 'high',
-          reputationFlags: ['no_mx_record']
+          bounceRisk,
+          reputationFlags,
+          riskFactors: [error.code?.toLowerCase() || 'dns_error'],
+          confidence,
+          confidenceLevel,
+          reasoning,
+          aggressiveMode: aggressiveMode,
+          ...(fallbackResult && { fallbackValidation: fallbackResult })
         }
       }, {
         status: 200,
