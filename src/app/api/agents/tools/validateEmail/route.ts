@@ -210,7 +210,7 @@ async function getMXRecords(domain: string): Promise<MXRecord[]> {
 /**
  * Creates a socket connection with timeout
  */
-function createSocketWithTimeout(host: string, port: number, timeout: number = 10000): Promise<net.Socket> {
+function createSocketWithTimeout(host: string, port: number, timeout: number = 8000): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const socket = new net.Socket();
     
@@ -238,7 +238,7 @@ function readSMTPResponse(socket: net.Socket): Promise<SMTPResponse> {
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       reject(new Error('SMTP response timeout'));
-    }, 5000);
+    }, 4000);
     
     socket.once('data', (data) => {
       clearTimeout(timeout);
@@ -278,7 +278,7 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     console.log(`[VALIDATE_EMAIL] Connecting to SMTP server: ${mxRecord.exchange}:25`);
     
     // Create socket connection
-    socket = await createSocketWithTimeout(mxRecord.exchange, 25, 10000);
+    socket = await createSocketWithTimeout(mxRecord.exchange, 25, 8000);
     
     // Read initial greeting
     const greeting = await readSMTPResponse(socket);
@@ -426,21 +426,37 @@ async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Pro
     
     const flags: string[] = ['connection_error'];
     let message = 'Failed to validate email via SMTP';
+    let result: 'invalid' | 'unknown' | 'risky' = 'unknown';
     
-    if (error.message.includes('timeout')) {
-      flags.push('timeout');
-      message = 'SMTP server connection timeout';
+    if (error.message.includes('timeout') || error.message.includes('Connection timeout')) {
+      flags.push('smtp_timeout');
+      message = `SMTP server connection timeout (${mxRecord.exchange}:25)`;
+      result = 'unknown'; // Timeout doesn't mean invalid, just inconclusive
     } else if (error.message.includes('ECONNREFUSED')) {
       flags.push('connection_refused');
-      message = 'SMTP server refused connection';
+      message = `SMTP server refused connection (${mxRecord.exchange}:25)`;
+      result = 'unknown'; // Server exists but not accepting connections
     } else if (error.message.includes('ENOTFOUND')) {
       flags.push('server_not_found');
-      message = 'SMTP server not found';
+      message = `SMTP server not found (${mxRecord.exchange})`;
+      result = 'invalid'; // MX record points to non-existent server
+    } else if (error.message.includes('EHOSTUNREACH')) {
+      flags.push('host_unreachable');
+      message = `SMTP server unreachable (${mxRecord.exchange})`;
+      result = 'unknown'; // Network issues
+    } else if (error.message.includes('ECONNRESET')) {
+      flags.push('connection_reset');
+      message = `SMTP server reset connection (${mxRecord.exchange})`;
+      result = 'unknown'; // Server issues
+    } else if (error.message.includes('TLS')) {
+      flags.push('tls_error');
+      message = `TLS/SSL error with SMTP server (${mxRecord.exchange})`;
+      result = 'unknown'; // TLS issues don't mean email is invalid
     }
     
     return {
       isValid: false,
-      result: 'unknown',
+      result,
       flags,
       message
     };
@@ -1176,10 +1192,74 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // Try SMTP validation with the primary MX record
-    console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with primary MX: ${mxRecords[0].exchange}`);
+    // Try SMTP validation with MX records (try multiple if first fails with timeout)
+    console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with ${mxRecords.length} MX record(s)`);
     
-    const smtpResult = await performSMTPValidation(email, mxRecords[0], aggressiveMode);
+    let smtpResult = null;
+    let lastError = null;
+    
+    for (let i = 0; i < Math.min(mxRecords.length, 3); i++) { // Try up to 3 MX records
+      const mxRecord = mxRecords[i];
+      console.log(`[VALIDATE_EMAIL] 🔌 Trying MX record ${i + 1}/${mxRecords.length}: ${mxRecord.exchange} (priority: ${mxRecord.priority})`);
+      
+      try {
+        smtpResult = await performSMTPValidation(email, mxRecord, aggressiveMode);
+        
+        // If we get a definitive result (valid/invalid), use it
+        if (smtpResult.result === 'valid' || smtpResult.result === 'invalid' || smtpResult.result === 'catchall') {
+          console.log(`[VALIDATE_EMAIL] ✅ Got definitive result from ${mxRecord.exchange}: ${smtpResult.result}`);
+          break;
+        }
+        
+        // If we get 'unknown' but it's not a timeout, use it
+        if (smtpResult.result === 'unknown' && !smtpResult.flags.includes('smtp_timeout')) {
+          console.log(`[VALIDATE_EMAIL] ⚠️ Got inconclusive result from ${mxRecord.exchange}: ${smtpResult.result}`);
+          break;
+        }
+        
+        // If it's a timeout or risky result, try next MX record if available
+        if (i < Math.min(mxRecords.length, 3) - 1) {
+          console.log(`[VALIDATE_EMAIL] ⏱️ Timeout/risky result from ${mxRecord.exchange}, trying next MX record...`);
+          lastError = smtpResult;
+          continue;
+        }
+        
+      } catch (error) {
+        console.log(`[VALIDATE_EMAIL] ❌ Error with MX record ${mxRecord.exchange}:`, error);
+        lastError = error;
+        
+        // If this is the last MX record, we'll use the error
+        if (i === Math.min(mxRecords.length, 3) - 1) {
+          // Create a fallback result for the error
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          smtpResult = {
+            isValid: false,
+            deliverable: false,
+            result: 'unknown' as const,
+            flags: ['smtp_error'],
+            message: `All MX servers failed: ${errorMessage}`,
+            confidence: 20,
+            confidenceLevel: 'low' as const,
+            reasoning: [`SMTP validation failed for all ${i + 1} MX servers`]
+          };
+        }
+      }
+    }
+    
+    // If we still don't have a result, use the last error
+    if (!smtpResult) {
+      smtpResult = {
+        isValid: false,
+        deliverable: false,
+        result: 'unknown' as const,
+        flags: ['all_mx_failed'],
+        message: 'All MX servers failed validation',
+        confidence: 15,
+        confidenceLevel: 'low' as const,
+        reasoning: ['All available MX servers failed to respond']
+      };
+    }
+    
     const executionTime = Date.now() - startTime;
     
     console.log(`[VALIDATE_EMAIL] ✅ SMTP validation completed:`, {
