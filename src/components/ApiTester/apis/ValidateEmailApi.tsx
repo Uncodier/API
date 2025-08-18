@@ -25,8 +25,7 @@ const ValidateEmailApi: BaseApiConfig = {
   id: 'validate-email' as ApiType,
   name: 'Validate Email',
   description: 'Validates email addresses using SMTP protocol and MX record lookup',
-  method: 'POST',
-  endpoint: '/api/agents/tools/validateEmail',
+  defaultEndpoint: '/api/agents/tools/validateEmail',
   
   // Estado inicial
   getInitialState: (props: ValidateEmailApiProps = {}): ValidateEmailApiState => ({
@@ -71,7 +70,7 @@ const ValidateEmailApi: BaseApiConfig = {
         <FormField
           label="Email Address *"
           id="email"
-          type="email"
+          type="text"
           value={state.email}
           onChange={(value: string) => handleChange('email', value)}
           placeholder="user@example.com"

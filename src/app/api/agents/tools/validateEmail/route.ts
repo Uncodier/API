@@ -10,8 +10,9 @@ interface MXRecord {
 
 interface EmailValidationResult {
   email: string;
-  isValid: boolean;
-  result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall';
+  isValid: boolean; // Technical validity (SMTP accepts)
+  deliverable: boolean; // Practical deliverability (considering bounce risk)
+  result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall' | 'risky';
   flags: string[];
   suggested_correction: string | null;
   execution_time: number;
@@ -94,11 +95,11 @@ async function sendSMTPCommand(socket: net.Socket, command: string): Promise<SMT
 }
 
 /**
- * Performs SMTP validation for an email address
+ * Core SMTP validation logic (extracted for reuse)
  */
-async function performSMTPValidation(email: string, mxRecord: MXRecord): Promise<{
+async function performSMTPValidationCore(email: string, mxRecord: MXRecord): Promise<{
   isValid: boolean;
-  result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall';
+  result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall' | 'risky';
   flags: string[];
   message: string;
 }> {
@@ -183,7 +184,7 @@ async function performSMTPValidation(email: string, mxRecord: MXRecord): Promise
     
     // Analyze RCPT TO response
     const flags: string[] = [];
-    let result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall' = 'unknown';
+    let result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall' | 'risky' = 'unknown';
     let isValid = false;
     let message = '';
     
@@ -220,11 +221,21 @@ async function performSMTPValidation(email: string, mxRecord: MXRecord): Promise
       flags.push('unexpected_response');
     }
     
-    // Check for catchall indicators
-    if (rcptToResponse.message.toLowerCase().includes('catch') || 
-        rcptToResponse.message.toLowerCase().includes('accept all')) {
+    // Check for catchall indicators in response message
+    const responseMsg = rcptToResponse.message.toLowerCase();
+    if (responseMsg.includes('catch') || 
+        responseMsg.includes('accept all') ||
+        responseMsg.includes('accepts all') ||
+        responseMsg.includes('wildcard') ||
+        (rcptToResponse.code === 250 && (
+          responseMsg.includes('ok') && 
+          (responseMsg.includes('any') || responseMsg.includes('all'))
+        ))) {
       result = 'catchall';
       flags.push('catchall_domain');
+      // Catchall domains accept emails but delivery is uncertain
+      isValid = true; // Server accepts it, but mark as catchall for client decision
+      message = 'Email accepted by catchall domain - delivery uncertain';
     }
     
     // Check for anti-spam responses
@@ -277,6 +288,323 @@ async function performSMTPValidation(email: string, mxRecord: MXRecord): Promise
 }
 
 /**
+ * Tests if a domain is catchall by trying multiple random emails
+ */
+async function detectCatchallDomain(domain: string, mxRecord: MXRecord): Promise<{
+  isCatchall: boolean;
+  confidence: number;
+  testResults: string[];
+}> {
+  const testEmails = [
+    `nonexistent-${Date.now()}@${domain}`,
+    `invalid-user-${Math.random().toString(36).substring(7)}@${domain}`,
+    `test-catchall-${Date.now()}@${domain}`
+  ];
+  
+  const results: boolean[] = [];
+  const testResults: string[] = [];
+  
+  for (const testEmail of testEmails) {
+    try {
+      console.log(`[CATCHALL_TEST] Testing: ${testEmail}`);
+      const result = await performSMTPValidationCore(testEmail, mxRecord);
+      results.push(result.isValid);
+      testResults.push(`${testEmail}: ${result.isValid ? 'ACCEPTED' : 'REJECTED'}`);
+      
+      // Small delay between tests to be respectful
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (error) {
+      results.push(false);
+      testResults.push(`${testEmail}: ERROR`);
+    }
+  }
+  
+  const acceptedCount = results.filter(r => r).length;
+  const confidence = acceptedCount / results.length;
+  
+  // If 2 or more random emails are accepted, likely catchall
+  const isCatchall = acceptedCount >= 2;
+  
+  console.log(`[CATCHALL_TEST] Results for ${domain}:`, {
+    acceptedCount,
+    totalTests: results.length,
+    confidence,
+    isCatchall
+  });
+  
+  return {
+    isCatchall,
+    confidence,
+    testResults
+  };
+}
+
+/**
+ * Calculates confidence score for validation decision
+ */
+function calculateValidationConfidence(
+  smtpAccepted: boolean,
+  bounceRisk: 'low' | 'medium' | 'high',
+  flags: string[],
+  riskFactors: string[]
+): {
+  confidence: number; // 0-100
+  confidenceLevel: 'low' | 'medium' | 'high' | 'very_high';
+  shouldOverrideToInvalid: boolean;
+  reasoning: string[];
+} {
+  let confidence = 50; // Base confidence
+  const reasoning: string[] = [];
+  
+  // SMTP acceptance gives strong positive signal
+  if (smtpAccepted) {
+    confidence += 30;
+    reasoning.push('SMTP server accepts email (+30)');
+  } else {
+    confidence -= 40;
+    reasoning.push('SMTP server rejects email (-40)');
+  }
+  
+  // Bounce risk adjustments
+  switch (bounceRisk) {
+    case 'high':
+      confidence -= 35;
+      reasoning.push('High bounce risk domain (-35)');
+      break;
+    case 'medium':
+      confidence -= 15;
+      reasoning.push('Medium bounce risk domain (-15)');
+      break;
+    case 'low':
+      confidence += 10;
+      reasoning.push('Low bounce risk domain (+10)');
+      break;
+  }
+  
+  // Flag-based adjustments
+  if (flags.includes('catchall_domain')) {
+    confidence -= 25;
+    reasoning.push('Catchall domain detected (-25)');
+  }
+  
+  if (flags.includes('disposable_email')) {
+    confidence -= 40;
+    reasoning.push('Disposable email provider (-40)');
+  }
+  
+  if (flags.includes('user_unknown')) {
+    confidence -= 30;
+    reasoning.push('User unknown response (-30)');
+  }
+  
+  if (flags.includes('anti_spam_policy')) {
+    confidence -= 20;
+    reasoning.push('Anti-spam policy detected (-20)');
+  }
+  
+  if (flags.includes('invalid_format')) {
+    confidence -= 50;
+    reasoning.push('Invalid email format (-50)');
+  }
+  
+  // Risk factor adjustments
+  if (riskFactors.includes('high_bounce_provider')) {
+    confidence -= 20;
+    reasoning.push('Known high-bounce provider (-20)');
+  }
+  
+  if (riskFactors.includes('mx_lookup_failed')) {
+    confidence -= 30;
+    reasoning.push('MX lookup failed (-30)');
+  }
+  
+  if (riskFactors.includes('simple_mx_setup')) {
+    confidence -= 5;
+    reasoning.push('Simple MX setup (-5)');
+  }
+  
+  // Ensure confidence is within bounds
+  confidence = Math.max(0, Math.min(100, confidence));
+  
+  // Determine confidence level
+  let confidenceLevel: 'low' | 'medium' | 'high' | 'very_high';
+  if (confidence >= 85) confidenceLevel = 'very_high';
+  else if (confidence >= 70) confidenceLevel = 'high';
+  else if (confidence >= 50) confidenceLevel = 'medium';
+  else confidenceLevel = 'low';
+  
+  // Decide if we should override to invalid
+  // Override when we have high confidence that email will bounce/fail
+  const shouldOverrideToInvalid = (
+    // Very high confidence it's invalid
+    (confidence <= 15 && confidenceLevel === 'low') ||
+    // Disposable emails - always override
+    flags.includes('disposable_email') ||
+    // Invalid format - always override
+    flags.includes('invalid_format') ||
+    // No MX records - always override
+    flags.includes('no_mx_record') ||
+    // High bounce risk + catchall + SMTP accepted = likely false positive
+    (bounceRisk === 'high' && flags.includes('catchall_domain') && smtpAccepted) ||
+    // User unknown with high confidence
+    (flags.includes('user_unknown') && confidence <= 25)
+  );
+  
+  return {
+    confidence,
+    confidenceLevel,
+    shouldOverrideToInvalid,
+    reasoning
+  };
+}
+
+/**
+ * Checks domain reputation and bounce prediction
+ */
+async function checkDomainReputation(domain: string): Promise<{
+  bounceRisk: 'low' | 'medium' | 'high';
+  reputationFlags: string[];
+  riskFactors: string[];
+}> {
+  const reputationFlags: string[] = [];
+  const riskFactors: string[] = [];
+  let bounceRisk: 'low' | 'medium' | 'high' = 'low';
+  
+  // Check for common high-bounce domains
+  const highBounceDomains = [
+    'hotmail.com', 'outlook.com', 'live.com', // Microsoft domains with strict policies
+    'aol.com', 'yahoo.com' // Known for aggressive spam filtering
+  ];
+  
+  const mediumBounceDomains = [
+    'gmail.com', 'googlemail.com' // Google has good delivery but strict policies
+  ];
+  
+  if (highBounceDomains.includes(domain.toLowerCase())) {
+    bounceRisk = 'high';
+    riskFactors.push('high_bounce_provider');
+    reputationFlags.push('strict_spam_policy');
+  } else if (mediumBounceDomains.includes(domain.toLowerCase())) {
+    bounceRisk = 'medium';
+    riskFactors.push('medium_bounce_provider');
+    reputationFlags.push('moderate_spam_policy');
+  }
+  
+  // Check for corporate domains (usually lower bounce risk)
+  if (domain.includes('.edu') || domain.includes('.gov') || domain.includes('.org')) {
+    bounceRisk = 'low';
+    reputationFlags.push('institutional_domain');
+  }
+  
+  // Check for new domains (higher bounce risk)
+  try {
+    const mxRecords = await getMXRecords(domain);
+    if (mxRecords.length === 1 && mxRecords[0].exchange.includes('mail.')) {
+      riskFactors.push('simple_mx_setup');
+    }
+  } catch (error) {
+    riskFactors.push('mx_lookup_failed');
+    bounceRisk = 'high';
+  }
+  
+  return {
+    bounceRisk,
+    reputationFlags,
+    riskFactors
+  };
+}
+
+/**
+ * Performs SMTP validation for an email address with advanced detection
+ */
+async function performSMTPValidation(email: string, mxRecord: MXRecord, aggressiveMode: boolean = false): Promise<{
+  isValid: boolean;
+  deliverable: boolean;
+  result: 'valid' | 'invalid' | 'unknown' | 'disposable' | 'catchall' | 'risky';
+  flags: string[];
+  message: string;
+  confidence: number;
+  confidenceLevel: 'low' | 'medium' | 'high' | 'very_high';
+  reasoning: string[];
+}> {
+  const domain = extractDomain(email);
+  
+  // Check domain reputation first
+  const reputationCheck = await checkDomainReputation(domain);
+  
+  // First, validate the actual email
+  const emailResult = await performSMTPValidationCore(email, mxRecord);
+  
+  // Calculate deliverable based on technical validity and bounce risk
+  let deliverable = emailResult.isValid;
+  let finalResult = emailResult.result;
+  let finalFlags = [...emailResult.flags];
+  let finalMessage = emailResult.message;
+  let finalIsValid = emailResult.isValid;
+  
+  // If email is technically valid but high bounce risk, mark as risky
+  if (emailResult.isValid && reputationCheck.bounceRisk === 'high') {
+    deliverable = false;
+    finalResult = 'risky';
+    finalFlags.push('high_bounce_risk');
+    finalMessage = `Email technically valid but high bounce risk due to ${reputationCheck.riskFactors.join(', ')}`;
+  }
+  
+  // If email is valid, test for catchall domain
+  if (emailResult.isValid && emailResult.result === 'valid') {
+    console.log(`[VALIDATE_EMAIL] Testing for catchall domain: ${domain}`);
+    
+    try {
+      const catchallTest = await detectCatchallDomain(domain, mxRecord);
+      
+      if (catchallTest.isCatchall) {
+        deliverable = false; // Catchall domains are not reliably deliverable
+        finalResult = 'catchall';
+        finalFlags = [...emailResult.flags, 'catchall_domain', 'catchall_detected', `confidence_${Math.round(catchallTest.confidence * 100)}%`];
+        finalMessage = `Email accepted but domain is catchall (${Math.round(catchallTest.confidence * 100)}% confidence) - delivery uncertain`;
+      }
+    } catch (error) {
+      console.log(`[VALIDATE_EMAIL] Catchall test failed, treating as regular validation:`, error);
+      // Continue with original result if catchall test fails
+    }
+  }
+  
+  // Calculate confidence and decide on aggressive validation
+  const confidenceAnalysis = calculateValidationConfidence(
+    emailResult.isValid,
+    reputationCheck.bounceRisk,
+    finalFlags,
+    reputationCheck.riskFactors
+  );
+  
+  // Apply aggressive mode if enabled
+  if (aggressiveMode && confidenceAnalysis.shouldOverrideToInvalid) {
+    finalIsValid = false;
+    deliverable = false;
+    finalResult = 'invalid';
+    finalFlags.push('aggressive_override');
+    finalMessage = `Marked as invalid due to high confidence of delivery failure: ${confidenceAnalysis.reasoning.join(', ')}`;
+    
+    console.log(`[VALIDATE_EMAIL] 🔥 Aggressive override applied:`, {
+      originalValid: emailResult.isValid,
+      confidence: confidenceAnalysis.confidence,
+      reasoning: confidenceAnalysis.reasoning
+    });
+  }
+  
+  return {
+    isValid: finalIsValid,
+    deliverable,
+    result: finalResult,
+    flags: finalFlags,
+    message: finalMessage,
+    confidence: confidenceAnalysis.confidence,
+    confidenceLevel: confidenceAnalysis.confidenceLevel,
+    reasoning: confidenceAnalysis.reasoning
+  };
+}
+
+/**
  * Validates email format using regex
  */
 function isValidEmailFormat(email: string): boolean {
@@ -309,25 +637,34 @@ function isDisposableEmail(domain: string): boolean {
 /**
  * POST /api/agents/tools/validateEmail
  * 
- * Validates an email address using SMTP validation
+ * Validates an email address using SMTP validation with catchall detection
  * 
  * Body:
  * {
- *   "email": "email@example.com"
+ *   "email": "email@example.com",
+ *   "aggressiveMode": false  // Optional: Enable aggressive validation
  * }
  * 
- * Response format matches neverbounce integration:
+ * Response format with enhanced validation:
  * {
  *   "success": true,
  *   "data": {
  *     "email": "email@example.com",
- *     "isValid": true,
- *     "result": "valid",
- *     "flags": [],
+ *     "isValid": true,        // Technical validity (SMTP accepts)
+ *     "deliverable": false,   // Practical deliverability (considering bounce risk)
+ *     "result": "risky",      // valid, invalid, disposable, catchall, risky, unknown
+ *     "flags": ["high_bounce_risk"],
  *     "suggested_correction": null,
  *     "execution_time": 123,
- *     "message": "Email is valid",
- *     "timestamp": "2024-01-01T00:00:00.000Z"
+ *     "message": "Email technically valid but high bounce risk",
+ *     "timestamp": "2024-01-01T00:00:00.000Z",
+ *     "bounceRisk": "high",
+ *     "reputationFlags": ["strict_spam_policy"],
+ *     "riskFactors": ["high_bounce_provider"],
+ *     "confidence": 25,
+ *     "confidenceLevel": "low",
+ *     "reasoning": ["SMTP server accepts email (+30)", "High bounce risk domain (-35)"],
+ *     "aggressiveMode": true
  *   }
  * }
  */
@@ -339,7 +676,7 @@ export async function POST(request: NextRequest) {
     
     // Parse request body
     const body = await request.json();
-    const { email } = body;
+    const { email, aggressiveMode = false } = body;
     
     // Validate that email is provided
     if (!email) {
@@ -356,7 +693,7 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    console.log(`[VALIDATE_EMAIL] 📧 Validating email: ${email}`);
+    console.log(`[VALIDATE_EMAIL] 📧 Validating email: ${email} (aggressive: ${aggressiveMode})`);
     
     // Basic format validation
     if (!isValidEmailFormat(email)) {
@@ -371,7 +708,9 @@ export async function POST(request: NextRequest) {
           suggested_correction: null,
           execution_time: executionTime,
           message: 'Invalid email format',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          bounceRisk: 'high',
+          reputationFlags: ['invalid_format']
         }
       }, {
         status: 200,
@@ -395,7 +734,9 @@ export async function POST(request: NextRequest) {
           suggested_correction: null,
           execution_time: executionTime,
           message: 'Email is from a disposable email provider',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          bounceRisk: 'high',
+          reputationFlags: ['disposable_provider']
         }
       }, {
         status: 200,
@@ -424,7 +765,9 @@ export async function POST(request: NextRequest) {
           suggested_correction: null,
           execution_time: executionTime,
           message: 'Domain has no MX records',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          bounceRisk: 'high',
+          reputationFlags: ['no_mx_record']
         }
       }, {
         status: 200,
@@ -444,7 +787,9 @@ export async function POST(request: NextRequest) {
           suggested_correction: null,
           execution_time: executionTime,
           message: 'Domain has no MX records',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          bounceRisk: 'high',
+          reputationFlags: ['no_mx_record']
         }
       }, {
         status: 200,
@@ -455,27 +800,39 @@ export async function POST(request: NextRequest) {
     // Try SMTP validation with the primary MX record
     console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with primary MX: ${mxRecords[0].exchange}`);
     
-    const smtpResult = await performSMTPValidation(email, mxRecords[0]);
+    const smtpResult = await performSMTPValidation(email, mxRecords[0], aggressiveMode);
     const executionTime = Date.now() - startTime;
     
     console.log(`[VALIDATE_EMAIL] ✅ SMTP validation completed:`, {
       isValid: smtpResult.isValid,
+      deliverable: smtpResult.deliverable,
       result: smtpResult.result,
       flags: smtpResult.flags,
       executionTime
     });
+    
+    // Extract reputation info from the result (already included in performSMTPValidation)
+    const reputationCheck = await checkDomainReputation(domain);
     
     const response = {
       success: true,
       data: {
         email,
         isValid: smtpResult.isValid,
+        deliverable: smtpResult.deliverable,
         result: smtpResult.result,
-        flags: smtpResult.flags,
+        flags: [...smtpResult.flags, ...reputationCheck.reputationFlags],
         suggested_correction: null,
         execution_time: executionTime,
         message: smtpResult.message,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        bounceRisk: reputationCheck.bounceRisk,
+        reputationFlags: reputationCheck.reputationFlags,
+        riskFactors: reputationCheck.riskFactors,
+        confidence: smtpResult.confidence,
+        confidenceLevel: smtpResult.confidenceLevel,
+        reasoning: smtpResult.reasoning,
+        aggressiveMode: aggressiveMode
       }
     };
     
@@ -511,28 +868,37 @@ export async function GET() {
   return NextResponse.json({
     success: true,
     data: {
-      service: 'SMTP Email Validation',
-      version: '1.0.0',
-      description: 'Validate email addresses using SMTP protocol and MX record lookup',
+      service: 'Advanced SMTP Email Validation',
+      version: '2.0.0',
+      description: 'Validate email addresses using SMTP protocol with catchall detection and bounce prediction',
       endpoints: {
         validate: {
           method: 'POST',
           path: '/api/agents/tools/validateEmail',
-          description: 'Validate a single email address using SMTP',
+          description: 'Validate a single email address using advanced SMTP validation',
           body: {
-            email: 'string (required) - Email address to validate'
+            email: 'string (required) - Email address to validate',
+            aggressiveMode: 'boolean (optional) - Enable aggressive validation that marks high-confidence bounces as invalid'
           },
           response: {
             success: 'boolean - Operation success status',
             data: {
               email: 'string - The validated email',
-              isValid: 'boolean - Whether the email is valid',
-              result: 'string - Validation result (valid, invalid, disposable, catchall, unknown)',
+              isValid: 'boolean - Technical validity (SMTP accepts)',
+              deliverable: 'boolean - Practical deliverability (considering bounce risk)',
+              result: 'string - Validation result (valid, invalid, disposable, catchall, risky, unknown)',
               flags: 'array - Additional validation flags',
               suggested_correction: 'string|null - Suggested correction if available',
               execution_time: 'number - Time taken to validate in milliseconds',
               message: 'string - Human readable message',
-              timestamp: 'string - ISO timestamp of validation'
+              timestamp: 'string - ISO timestamp of validation',
+              bounceRisk: 'string - Predicted bounce risk (low, medium, high)',
+              reputationFlags: 'array - Domain reputation indicators',
+              riskFactors: 'array - Factors that increase bounce risk',
+              confidence: 'number - Confidence score (0-100)',
+              confidenceLevel: 'string - Confidence level (low, medium, high, very_high)',
+              reasoning: 'array - Detailed reasoning for confidence score',
+              aggressiveMode: 'boolean - Whether aggressive mode was enabled'
             }
           }
         }
@@ -542,8 +908,12 @@ export async function GET() {
         'SMTP connection testing',
         'TLS/STARTTLS support',
         'Disposable email detection',
-        'Catchall domain detection',
-        'Anti-spam policy detection'
+        'Advanced catchall domain detection',
+        'Bounce risk prediction',
+        'Domain reputation analysis',
+        'Anti-spam policy detection',
+        'Confidence scoring system',
+        'Aggressive validation mode'
       ],
       timestamp: new Date().toISOString()
     }

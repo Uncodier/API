@@ -204,6 +204,37 @@ function generateCulturalEmailPatterns(name: string, domain: string, language: s
   return patterns;
 }
 
+// Función para detectar si es un puesto directivo
+function isExecutivePosition(context: string): boolean {
+  const contextLower = context.toLowerCase();
+  
+  // Puestos directivos en español
+  const executiveRoles = [
+    // C-Level
+    'ceo', 'cto', 'cfo', 'cmo', 'coo', 'chief executive', 'chief technology', 'chief financial', 'chief marketing', 'chief operating',
+    
+    // Directores
+    'director', 'directora', 'director general', 'directora general', 'director ejecutivo', 'directora ejecutiva',
+    'director de', 'directora de', 'managing director', 'executive director',
+    
+    // Gerentes senior
+    'gerente general', 'gerenta general', 'general manager', 'country manager',
+    'regional manager', 'gerente regional', 'gerenta regional',
+    
+    // Presidentes y VPs
+    'presidente', 'presidenta', 'president', 'vicepresidente', 'vicepresidenta', 'vice president', 'vp ',
+    
+    // Fundadores y propietarios
+    'fundador', 'fundadora', 'founder', 'co-founder', 'cofundador', 'cofundadora',
+    'propietario', 'propietaria', 'owner', 'socio', 'socia', 'partner',
+    
+    // Otros ejecutivos
+    'executive', 'ejecutivo', 'ejecutiva', 'senior manager', 'gerente senior', 'gerenta senior'
+  ];
+  
+  return executiveRoles.some(role => contextLower.includes(role));
+}
+
 // Función para extraer departamento/rol del contexto
 function extractDepartmentFromContext(context: string): string[] {
   const departments = [];
@@ -367,8 +398,9 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
     }
   }
   
-  // SEGUNDA PARTE: 5 PATRONES DEPARTAMENTALES (si se detectó departamento)
+  // SEGUNDA PARTE: 5 PATRONES DEPARTAMENTALES O GENÉRICOS DE CONTACTO
   if (departments.length > 0 && firstName) {
+    // Si se detectó departamento, generar patrones departamentales
     const primaryDept = departments[0]; // Usar el primer departamento detectado
     
     if (lastName) {
@@ -394,9 +426,25 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
       departmentalPatterns.push(`${firstName}.${primaryDept}@${domain}`);
       departmentalPatterns.push(`info.${primaryDept}@${domain}`);
     }
+  } else {
+    // Si NO se detectó departamento, generar emails genéricos de contacto
+    // Considerar idioma/región para emails genéricos apropiados
+    if (language === 'spanish' || region === 'hispanic') {
+      departmentalPatterns.push(`info@${domain}`);
+      departmentalPatterns.push(`contacto@${domain}`);
+      departmentalPatterns.push(`ventas@${domain}`);
+      departmentalPatterns.push(`hola@${domain}`);
+      departmentalPatterns.push(`admin@${domain}`);
+    } else {
+      departmentalPatterns.push(`info@${domain}`);
+      departmentalPatterns.push(`contact@${domain}`);
+      departmentalPatterns.push(`admin@${domain}`);
+      departmentalPatterns.push(`support@${domain}`);
+      departmentalPatterns.push(`hello@${domain}`);
+    }
   }
   
-  // Combinar patrones: 10 personales + 5 departamentales
+  // Combinar patrones: 10 personales + 5 departamentales/genéricos
   const allPatterns = [...personalPatterns.slice(0, 10), ...departmentalPatterns.slice(0, 5)];
   
   // Eliminar duplicados manteniendo el orden
@@ -409,7 +457,106 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
     return true;
   });
   
-  return uniquePatterns.slice(0, 15);
+  // Asegurar que siempre tengamos exactamente 15 emails
+  if (uniquePatterns.length < 15) {
+    // Si necesitamos más emails, generar variaciones adicionales
+    const additionalPatterns = [];
+    
+    if (firstName && lastName) {
+      // Generar más variaciones si es necesario
+      const extraVariations = [
+        `${lastName}.${firstName}@${domain}`,
+        `${firstName}${lastName.charAt(0)}@${domain}`,
+        `${firstName.charAt(0)}${lastName.charAt(0)}@${domain}`,
+        `${firstName}1@${domain}`,
+        `${firstName}2@${domain}`,
+        `${lastName}@${domain}`,
+        `${firstName.charAt(0)}.${lastName.charAt(0)}@${domain}`,
+        `${firstName}_${lastName.charAt(0)}@${domain}`,
+        `${firstName}.${lastName}1@${domain}`,
+        `${firstName}-${lastName.charAt(0)}@${domain}`
+      ];
+      
+      for (const pattern of extraVariations) {
+        if (!seen.has(pattern) && uniquePatterns.length < 15) {
+          uniquePatterns.push(pattern);
+          seen.add(pattern);
+        }
+      }
+    }
+    
+    // Si aún necesitamos más, agregar emails genéricos adicionales
+    if (uniquePatterns.length < 15) {
+      const moreGenericEmails = [
+        `sales@${domain}`,
+        `marketing@${domain}`,
+        `office@${domain}`,
+        `team@${domain}`,
+        `general@${domain}`,
+        `reception@${domain}`,
+        `mail@${domain}`,
+        `help@${domain}`,
+        `service@${domain}`,
+        `business@${domain}`
+      ];
+      
+      for (const pattern of moreGenericEmails) {
+        if (!seen.has(pattern) && uniquePatterns.length < 15) {
+          uniquePatterns.push(pattern);
+          seen.add(pattern);
+        }
+      }
+    }
+  }
+  
+  // Verificar si es un puesto directivo para agregar emails genéricos adicionales
+  const isExecutive = isExecutivePosition(context);
+  let finalPatterns = uniquePatterns.slice(0, 15);
+  
+  if (isExecutive) {
+    // Para puestos directivos, agregar 5 emails genéricos adicionales
+    const executiveGenericEmails = [];
+    const { language, region } = detectLanguageAndRegion(name, context);
+    
+    if (language === 'spanish' || region === 'hispanic') {
+      // Emails genéricos en español para ejecutivos
+      const spanishExecutiveEmails = [
+        `direccion@${domain}`,
+        `gerencia@${domain}`,
+        `presidencia@${domain}`,
+        `ejecutivos@${domain}`,
+        `administracion@${domain}`,
+        `gestion@${domain}`,
+        `corporativo@${domain}`,
+        `directorio@${domain}`
+      ];
+      executiveGenericEmails.push(...spanishExecutiveEmails);
+    } else {
+      // Emails genéricos en inglés para ejecutivos
+      const englishExecutiveEmails = [
+        `management@${domain}`,
+        `executive@${domain}`,
+        `leadership@${domain}`,
+        `board@${domain}`,
+        `corporate@${domain}`,
+        `executives@${domain}`,
+        `administration@${domain}`,
+        `governance@${domain}`
+      ];
+      executiveGenericEmails.push(...englishExecutiveEmails);
+    }
+    
+    // Agregar emails genéricos que no estén duplicados
+    const executiveSeen = new Set(finalPatterns);
+    for (const email of executiveGenericEmails) {
+      if (!executiveSeen.has(email) && finalPatterns.length < 20) {
+        finalPatterns.push(email);
+        executiveSeen.add(email);
+      }
+    }
+  }
+  
+  return finalPatterns;
 }
 
 // Inicializar el sistema de comandos
@@ -507,9 +654,24 @@ BASIC EMAIL PATTERNS GENERATED (${basicEmailPatterns.length} patterns):
 ${basicEmailPatterns.map((email, index) => `${index + 1}. ${email}`).join('\n')}
 
 TASK REQUIREMENTS:
-Please analyze the provided name, domain, and context to generate a comprehensive list of 15 email addresses for this contact in this specific structure:
+Please analyze the provided name, domain, and context to generate a comprehensive list of email addresses for this contact:
+
+**EXECUTIVE POSITIONS** (CEO, Director, President, Founder, VP, etc.): Generate EXACTLY 20 emails
+**NON-EXECUTIVE POSITIONS**: Generate EXACTLY 15 emails
+
+EMAIL STRUCTURE:
 - FIRST 10 EMAILS: Personal email patterns (ordered from most probable to least probable)
-- LAST 5 EMAILS: Department/role-specific email patterns (if role detected in context)
+- NEXT 5 EMAILS: Department/role-specific email patterns OR generic contact emails
+- LAST 5 EMAILS (EXECUTIVES ONLY): Additional generic executive contact emails
+
+MANDATORY EMAIL STRUCTURE:
+1. **Personal Patterns (10 emails)**: Use name variations with cultural considerations
+2. **Departmental/Generic Patterns (5 emails)**: 
+   - IF role/department detected in context: Use department-specific patterns (e.g., sales.firstname@domain.com, firstname@marketing.domain.com)
+   - IF NO clear role/department: Use generic contact patterns (e.g., info@domain.com, contact@domain.com, admin@domain.com, support@domain.com, hello@domain.com)
+3. **Executive Generic Patterns (5 emails - ONLY for executive positions)**:
+   - Spanish/Hispanic: direccion@domain.com, gerencia@domain.com, presidencia@domain.com, ejecutivos@domain.com, administracion@domain.com
+   - English/Other: management@domain.com, executive@domain.com, leadership@domain.com, board@domain.com, corporate@domain.com
 
 Consider:
 
@@ -522,18 +684,31 @@ Consider:
    - French names: Consider hyphenated names and formal address patterns
 4. Common email naming conventions (firstname.lastname is most common ~90% globally)
 5. Industry-specific email formats considering regional business culture
-6. Department-specific email patterns (e.g., firstname@marketing.domain.com, sales.firstname@domain.com)
-7. Role-based email prefixes (e.g., ceo.firstname@domain.com, tech.firstname@domain.com)
+6. **Department-specific email patterns**: 
+   - With subdomain: firstname@sales.domain.com, firstname@marketing.domain.com
+   - With prefix: sales.firstname@domain.com, marketing.firstname@domain.com
+   - Role-based: manager.firstname@domain.com, director.firstname@domain.com
+7. **Generic contact emails** (when no department detected):
+   - info@domain.com, contact@domain.com, admin@domain.com
+   - support@domain.com, hello@domain.com, ventas@domain.com (for Spanish)
+   - hola@domain.com, contacto@domain.com (for Hispanic regions)
 8. Cultural variations in separators and ordering
 9. Use of initials vs full names (varies by culture and hierarchy)
 10. Regional business communication preferences
 11. Company size influence adapted to regional business practices
 12. Language-specific character handling (accents, special characters)
 
-SPECIAL FOCUS: 
-- If the context contains role or department information, prioritize email patterns that include department subdomain or prefixes
+CRITICAL REQUIREMENTS: 
+- EXECUTIVE POSITIONS: Generate EXACTLY 20 emails (15 standard + 5 executive generic)
+- NON-EXECUTIVE POSITIONS: Generate EXACTLY 15 emails
+- If role/department detected: Include department-specific patterns in emails 11-15
+- If NO role/department detected: Include generic contact emails in emails 11-15
+- For EXECUTIVES: Include executive generic emails in emails 16-20
 - Apply cultural naming conventions based on detected language/region
 - Consider regional business email etiquette and formality levels
+
+EXECUTIVE POSITION DETECTION:
+Consider these roles as executive positions requiring 20 emails: CEO, CTO, CFO, CMO, COO, Director, President, VP, Vice President, Founder, Co-founder, Owner, Partner, General Manager, Country Manager, Regional Manager, Executive, Senior Manager, Managing Director, Executive Director.
 
 IMPORTANT: Return the emails in strict order of probability considering both universal patterns and cultural context. Provide confidence scores (0-1) for each email and reasoning for the pattern selection including cultural considerations.`;
     
@@ -677,12 +852,6 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
         
         if (resultWithEmailGeneration) {
           emailGenerationResult = resultWithEmailGeneration.email_generation_analysis;
-          
-          // Filter to return only the first email from generated_emails array
-          if (emailGenerationResult.generated_emails && Array.isArray(emailGenerationResult.generated_emails) && emailGenerationResult.generated_emails.length > 0) {
-            emailGenerationResult.generated_emails = [emailGenerationResult.generated_emails[0]];
-          }
-          
           responseData.email_generation_analysis = emailGenerationResult;
         }
       } catch (error) {
@@ -690,10 +859,10 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
       }
     }
     
-    // Si no hay resultados de IA, usar los patrones básicos generados (solo el primero)
+    // Si no hay resultados de IA, usar los patrones básicos generados
     if (!emailGenerationResult && basicEmailPatterns.length > 0) {
-      responseData.fallback_emails = [basicEmailPatterns[0]]; // Only return the first email
-      responseData.message += ' - Using basic pattern generation as fallback (first option only)';
+      responseData.fallback_emails = basicEmailPatterns;
+      responseData.message += ' - Using basic pattern generation as fallback';
     }
     
     return NextResponse.json({
