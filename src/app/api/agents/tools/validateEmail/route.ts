@@ -36,7 +36,7 @@ async function checkDomainExists(domain: string): Promise<{
 }> {
   try {
     // Try to resolve A records first (most basic domain check)
-    const addresses = await dns.resolve4(domain);
+    const addresses = await withDNSTimeout(dns.resolve4(domain), 5000);
     return {
       exists: true,
       hasARecord: addresses.length > 0
@@ -55,7 +55,7 @@ async function checkDomainExists(domain: string): Promise<{
     
     // Try AAAA records (IPv6) as fallback
     try {
-      const ipv6Addresses = await dns.resolve6(domain);
+      const ipv6Addresses = await withDNSTimeout(dns.resolve6(domain), 5000);
       return {
         exists: true,
         hasARecord: false // No IPv4 but has IPv6
@@ -90,7 +90,7 @@ async function attemptFallbackValidation(domain: string): Promise<{
     for (const subdomain of commonMailSubdomains) {
       try {
         const mailDomain = `${subdomain}.${domain}`;
-        await dns.resolve4(mailDomain);
+        await withDNSTimeout(dns.resolve4(mailDomain), 3000);
         
         // If mail subdomain exists, domain likely supports email
         return {
@@ -132,7 +132,7 @@ async function attemptFallbackValidation(domain: string): Promise<{
     
     // Method 3: Check for TXT records that might indicate email service
     try {
-      const txtRecords = await dns.resolveTxt(domain);
+      const txtRecords = await withDNSTimeout(dns.resolveTxt(domain), 3000);
       const emailRelatedTxt = txtRecords.some(record => 
         record.some(txt => 
           txt.toLowerCase().includes('v=spf') || 
@@ -177,11 +177,32 @@ async function attemptFallbackValidation(domain: string): Promise<{
 }
 
 /**
- * Performs MX record lookup for a domain with enhanced error handling
+ * Creates a timeout wrapper for DNS operations
+ */
+function withDNSTimeout<T>(operation: Promise<T>, timeout: number = 5000): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      reject(new Error(`DNS operation timeout after ${timeout}ms`));
+    }, timeout);
+
+    operation
+      .then((result) => {
+        clearTimeout(timeoutId);
+        resolve(result);
+      })
+      .catch((error) => {
+        clearTimeout(timeoutId);
+        reject(error);
+      });
+  });
+}
+
+/**
+ * Performs MX record lookup for a domain with enhanced error handling and timeout
  */
 async function getMXRecords(domain: string): Promise<MXRecord[]> {
   try {
-    const records = await dns.resolveMx(domain);
+    const records = await withDNSTimeout(dns.resolveMx(domain), 5000);
     return records.sort((a, b) => a.priority - b.priority);
   } catch (error: any) {
     console.error(`[VALIDATE_EMAIL] Error resolving MX records for ${domain}:`, error);
@@ -196,7 +217,7 @@ async function getMXRecords(domain: string): Promise<MXRecord[]> {
     } else if (error.code === 'ENODATA') {
       errorType = 'NO_MX_RECORDS';
       errorMessage = `Domain exists but has no MX records: ${domain}`;
-    } else if (error.code === 'ETIMEOUT') {
+    } else if (error.code === 'ETIMEOUT' || error.message?.includes('timeout')) {
       errorType = 'DNS_TIMEOUT';
       errorMessage = `DNS lookup timeout for domain: ${domain}`;
     } else if (error.code === 'ESERVFAIL') {
