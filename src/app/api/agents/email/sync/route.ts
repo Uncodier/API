@@ -16,6 +16,7 @@ import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObject
 import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtractorService';
 import { StableEmailDeduplicationService } from '@/lib/utils/stable-email-deduplication';
 import { SentEmailDuplicationService } from '@/lib/services/email/SentEmailDuplicationService';
+import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
 
 // Configuración de timeout extendido para Vercel
 export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
@@ -2037,97 +2038,7 @@ function extractContactName(email: any, emailAddress?: string): string | null {
   }
 }
 
-/**
- * Handle email sync failure by updating settings.channels
- */
-async function handleEmailSyncFailure(siteId: string, errorMessage: string): Promise<void> {
-  try {
-    console.log(`[EMAIL_SYNC] 🔧 Updating settings.channels for email sync failure`);
-    
-    // Get current settings
-    const { data: settings, error: getError } = await supabaseAdmin
-      .from('settings')
-      .select('channels')
-      .eq('site_id', siteId)
-      .single();
-    
-    if (getError) {
-      console.error('[EMAIL_SYNC] Error getting settings:', getError);
-      return;
-    }
-    
-    const currentChannels = settings?.channels || {};
-    
-    // Update email channel status
-    const updatedChannels = {
-      ...currentChannels,
-      email: {
-        ...currentChannels.email,
-        synced: 'failed',
-        enabled: false,
-        last_sync_error: errorMessage,
-        last_sync_attempt: new Date().toISOString(),
-        sync_failure_count: (currentChannels.email?.sync_failure_count || 0) + 1
-      }
-    };
-    
-    // Update settings
-    const { error: updateError } = await supabaseAdmin
-      .from('settings')
-      .update({ 
-        channels: updatedChannels,
-        updated_at: new Date().toISOString()
-      })
-      .eq('site_id', siteId);
-    
-    if (updateError) {
-      console.error('[EMAIL_SYNC] Error updating settings.channels:', updateError);
-      return;
-    }
-    
-    console.log(`[EMAIL_SYNC] ✅ Settings.channels updated: email marked as failed and disabled`);
-  } catch (error) {
-    console.error('[EMAIL_SYNC] Error in handleEmailSyncFailure:', error);
-  }
-}
 
-/**
- * Send email sync failure notification
- */
-async function sendEmailSyncFailureNotification(siteId: string, errorMessage: string): Promise<void> {
-  try {
-    console.log(`[EMAIL_SYNC] 📧 Sending email sync failure notification`);
-    
-    const notificationPayload = {
-      site_id: siteId,
-      error_message: errorMessage,
-      failure_timestamp: new Date().toISOString(),
-      priority: 'high'
-    };
-    
-    // Call the notification endpoint
-    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const notificationUrl = `${baseUrl}/api/notifications/emailSyncFailure`;
-    
-    const response = await fetch(notificationUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(notificationPayload)
-    });
-    
-    if (!response.ok) {
-      console.error(`[EMAIL_SYNC] Failed to send notification: ${response.status} ${response.statusText}`);
-      return;
-    }
-    
-    const result = await response.json();
-    console.log(`[EMAIL_SYNC] ✅ Email sync failure notification sent successfully:`, result);
-  } catch (error) {
-    console.error('[EMAIL_SYNC] Error sending email sync failure notification:', error);
-  }
-}
 
 /**
  * Función para actualizar el nombre de un lead si encontramos uno mejor
@@ -2464,35 +2375,20 @@ export async function POST(request: NextRequest) {
         stack: error instanceof Error ? error.stack : 'No stack trace'
       });
       
-      const isConfigError = error instanceof Error && (
-        error.message.includes('settings') || 
-        error.message.includes('token')
-      );
-      
-      const isConnectionError = error instanceof Error && (
-        error.message.includes('connect') ||
-        error.message.includes('timeout') ||
-        error.message.includes('ECONNREFUSED') ||
-        error.message.includes('ENOTFOUND') ||
-        error.message.includes('authentication') ||
-        error.message.includes('login')
-      );
-        
-      const errorCode = isConfigError ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR;
+      // Determine error type and code using the service
+      const errorType = error instanceof Error ? EmailSyncErrorService.determineErrorType(error) : 'fetch';
+      const errorCode = errorType === 'configuration' ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR;
       const errorMessage = error instanceof Error ? error.message : "Error procesando emails enviados";
       
-      // Handle connection failures
-      if (isConnectionError) {
-        console.error(`[EMAIL_SYNC] 🔌 Connection failure detected, updating channel status and sending notification`);
-        
+      // Handle failures that require channel update and notification
+      if (EmailSyncErrorService.shouldHandleAsFailure(errorType)) {
         try {
-          // Update settings.channels to mark email as failed and disabled
-          await handleEmailSyncFailure(siteId, errorMessage);
-          
-          // Send notification about the failure
-          await sendEmailSyncFailureNotification(siteId, errorMessage);
-          
-          console.log(`[EMAIL_SYNC] ✅ Email sync failure handled: channel disabled and notification sent`);
+          await EmailSyncErrorService.handleEmailSyncFailure({
+            siteId,
+            errorMessage,
+            errorType,
+            errorCode
+          });
         } catch (failureHandlingError) {
           console.error(`[EMAIL_SYNC] ❌ Error handling sync failure:`, failureHandlingError);
         }
@@ -2508,7 +2404,7 @@ export async function POST(request: NextRequest) {
             message: errorMessage,
           },
         },
-        { status: isConfigError ? 404 : 500 }
+        { status: errorType === 'configuration' ? 404 : 500 }
       );
     }
   } catch (error: unknown) {
