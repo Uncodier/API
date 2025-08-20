@@ -443,12 +443,14 @@ export async function POST(request: Request) {
         }
       ],
       tools: [],
-      supervisor: [
+              supervisor: [
         {
           agent_role: 'research_manager',
           status: 'not_initialized'
         }
       ],
+      model: "gpt-5-mini",
+      modelType: "openai"
     });
     
     console.log(`🔧 Creando comando de análisis de investigación`);

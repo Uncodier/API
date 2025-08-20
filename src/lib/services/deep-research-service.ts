@@ -324,6 +324,8 @@ export class DeepResearchService {
             status: 'not_initialized'
           }
         ],
+        model: "gpt-5-nano",
+        modelType: "openai"
       });
       
       console.log(`🔧 Creando comando de plan de investigación para topic: ${researchTopic}`);

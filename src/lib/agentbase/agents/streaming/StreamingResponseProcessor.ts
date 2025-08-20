@@ -22,6 +22,11 @@ export class StreamingResponseProcessor {
   private static readonly FAILURE_WINDOW = 5 * 60 * 1000; // 5 minutes
   private static readonly CIRCUIT_BREAKER_TIMEOUT = 2 * 60 * 1000; // 2 minutes
 
+  // Socket error retry tracking
+  private static socketRetryCount = new Map<string, number>();
+  private static readonly MAX_SOCKET_RETRIES = 2;
+  private static readonly SOCKET_RETRY_DELAY = 1000; // 1 second
+
   /**
    * Check if circuit breaker should prevent new streams
    */
@@ -59,6 +64,41 @@ export class StreamingResponseProcessor {
   }
 
   /**
+   * Check if a socket error should be retried
+   */
+  private static shouldRetrySocketError(commandId: string, error: any): boolean {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+    const isSocketError = errorMessage.includes('terminated') || 
+                         errorMessage.includes('UND_ERR_SOCKET') || 
+                         errorMessage.includes('other side closed') ||
+                         errorMessage.includes('socket hang up') ||
+                         errorMessage.includes('ECONNRESET') ||
+                         errorMessage.includes('EPIPE') ||
+                         error.code === 'UND_ERR_SOCKET';
+
+    if (!isSocketError) return false;
+
+    const currentRetries = this.socketRetryCount.get(commandId) || 0;
+    return currentRetries < this.MAX_SOCKET_RETRIES;
+  }
+
+  /**
+   * Record a socket retry attempt
+   */
+  private static recordSocketRetry(commandId: string): void {
+    const currentRetries = this.socketRetryCount.get(commandId) || 0;
+    this.socketRetryCount.set(commandId, currentRetries + 1);
+    console.warn(`[StreamingResponseProcessor] Socket retry ${currentRetries + 1}/${this.MAX_SOCKET_RETRIES} for command ${commandId}`);
+  }
+
+  /**
+   * Clear socket retry count for a command
+   */
+  private static clearSocketRetries(commandId: string): void {
+    this.socketRetryCount.delete(commandId);
+  }
+
+  /**
    * Acquire a stream slot with concurrency control
    */
   private static async acquireStreamSlot(commandId: string): Promise<void> {
@@ -84,6 +124,7 @@ export class StreamingResponseProcessor {
    */
   private static releaseStreamSlot(commandId: string): void {
     this.activeStreams.delete(commandId);
+    this.clearSocketRetries(commandId); // Clean up retry tracking
     console.log(`[StreamingResponseProcessor] Stream slot released for ${commandId}. Active: ${this.activeStreams.size}/${this.MAX_CONCURRENT_STREAMS}`);
     
     // Process next in queue
@@ -194,6 +235,13 @@ export class StreamingResponseProcessor {
       // Record failure for circuit breaker
       this.recordFailure();
       
+      // CRITICAL FIX: Extract preserved partial content from custom error
+      if ((error as any).partialContent) {
+        fullContent = (error as any).partialContent;
+        tokenUsage = (error as any).partialTokenUsage || tokenUsage;
+        console.log(`[StreamingResponseProcessor] 🔄 Extracted preserved content: ${fullContent.length} chars from error`);
+      }
+      
       // Determinar si es un error de timeout específico
       let errorType = 'STREAM_ERROR';
       let isRecoverable = false;
@@ -206,10 +254,17 @@ export class StreamingResponseProcessor {
         errorType = 'GENERAL_TIMEOUT';
         isRecoverable = fullContent.length > 100; // Si tenemos contenido parcial substancial
         console.warn(`[StreamingResponseProcessor] ⏰ Timeout general - contenido parcial: ${fullContent.length} chars`);
-      } else if (errorMessage.includes('terminated')) {
+      } else if (errorMessage.includes('terminated') || 
+                 errorMessage.includes('UND_ERR_SOCKET') || 
+                 errorMessage.includes('other side closed') ||
+                 errorMessage.includes('socket hang up') ||
+                 errorMessage.includes('ECONNRESET') ||
+                 errorMessage.includes('EPIPE') ||
+                 (error as any).code === 'UND_ERR_SOCKET' ||
+                 (error as any).isSocketError) {
         errorType = 'STREAM_TERMINATED';
         isRecoverable = fullContent.length > 50; // Contenido parcial mínimo
-        console.warn(`[StreamingResponseProcessor] 🔌 Stream terminado prematuramente - contenido parcial: ${fullContent.length} chars`);
+        console.warn(`[StreamingResponseProcessor] 🔌 Stream terminado prematuramente por error de socket - contenido parcial: ${fullContent.length} chars`);
       }
       
       // Si tenemos contenido parcial válido y el error es recuperable, intentar procesarlo
@@ -398,6 +453,28 @@ export class StreamingResponseProcessor {
       // Log additional context for debugging
       const timeSinceStart = Date.now() - (lastChunkTime - (chunkCount > 0 ? 0 : Date.now()));
       console.error(`[StreamingResponseProcessor] Debug info: chunks received: ${chunkCount}, content length: ${fullContent.length}, time since start: ${timeSinceStart}ms`);
+      
+      // CRITICAL FIX: Preserve partial content for socket errors and stream terminations
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      const isSocketError = errorMessage.includes('terminated') || 
+                           errorMessage.includes('UND_ERR_SOCKET') || 
+                           errorMessage.includes('other side closed') ||
+                           errorMessage.includes('socket hang up') ||
+                           errorMessage.includes('ECONNRESET') ||
+                           errorMessage.includes('EPIPE') ||
+                           (error as any).code === 'UND_ERR_SOCKET';
+      
+      if (isSocketError && fullContent.length > 0) {
+        console.warn(`[StreamingResponseProcessor] 🔄 Preserving ${fullContent.length} chars of partial content from socket error: ${errorMessage}`);
+        
+        // Create a custom error that includes the partial content
+        const preservedContentError = new Error(errorMessage);
+        (preservedContentError as any).partialContent = fullContent;
+        (preservedContentError as any).partialTokenUsage = tokenUsage;
+        (preservedContentError as any).chunkCount = chunkCount;
+        (preservedContentError as any).isSocketError = true;
+        throw preservedContentError;
+      }
       
       throw error;
     }
