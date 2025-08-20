@@ -469,6 +469,18 @@ export class CommandProcessor {
         };
       }
       
+      // CRITICAL FIX: Update command status based on TargetProcessor result
+      if (targetProcessorResults.status === 'completed') {
+        console.log(`🎯 [CommandProcessor] TargetProcessor completado exitosamente, actualizando estado del comando a 'completed'`);
+        updatedCommand.status = 'completed';
+        updatedCommand.updated_at = new Date().toISOString();
+      } else if (targetProcessorResults.status === 'failed') {
+        console.log(`❌ [CommandProcessor] TargetProcessor falló, actualizando estado del comando a 'failed'`);
+        updatedCommand.status = 'failed';
+        updatedCommand.error = targetProcessorResults.error;
+        updatedCommand.updated_at = new Date().toISOString();
+      }
+      
       // Preservar explícitamente el agent_background
       if (command.agent_background && (!updatedCommand.agent_background || updatedCommand.agent_background.length < command.agent_background.length)) {
         console.log(`🔄 [CommandProcessor] Restaurando agent_background en comando actualizado`);
@@ -484,18 +496,37 @@ export class CommandProcessor {
       updatedCommand.input_tokens = (command.input_tokens || 0) + (targetProcessorResults.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (targetProcessorResults.outputTokens || 0);
       
-      // Actualizar los resultados en base de datos a través del CommandService
+      // Actualizar los resultados y estado en base de datos a través del CommandService
       try {
         if (updatedCommand.results && updatedCommand.results.length > 0) {
           await this.commandService.updateCommand(command.id, {
             results: updatedCommand.results,
             input_tokens: updatedCommand.input_tokens,
-            output_tokens: updatedCommand.output_tokens
+            output_tokens: updatedCommand.output_tokens,
+            status: updatedCommand.status, // CRITICAL FIX: Include status in database update
+            error: updatedCommand.error // Include error if present
           });
-          console.log(`💾 [CommandProcessor] Resultados actualizados en base de datos`);
+          console.log(`💾 [CommandProcessor] Resultados y estado (${updatedCommand.status}) actualizados en base de datos`);
         }
       } catch (error) {
         console.error(`❌ [CommandProcessor] Error al actualizar resultados en BD:`, error);
+        
+        // FALLBACK: If database update fails but we have a completed status, try to update status separately
+        if (updatedCommand.status === 'completed' || updatedCommand.status === 'failed') {
+          try {
+            console.log(`🔧 [CommandProcessor] Fallback: Intentando actualizar solo el estado a '${updatedCommand.status}'`);
+            await this.commandService.updateStatus(command.id, updatedCommand.status, updatedCommand.error);
+            console.log(`✅ [CommandProcessor] Fallback exitoso: Estado actualizado a '${updatedCommand.status}'`);
+          } catch (statusError) {
+            console.error(`❌ [CommandProcessor] Fallback falló al actualizar estado:`, statusError);
+          }
+        }
+      }
+      
+      // SAFETY: Ensure the updated command is stored in CommandStore with the correct status
+      if (updatedCommand.status === 'completed' || updatedCommand.status === 'failed') {
+        console.log(`🔒 [CommandProcessor] Asegurando que el comando esté almacenado en CommandStore con estado '${updatedCommand.status}'`);
+        CommandStore.setCommand(command.id, updatedCommand);
       }
       
       return updatedCommand;
