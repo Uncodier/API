@@ -545,7 +545,7 @@ export async function structuredAnalyzerAgent(request: ExtendedAnalyzeRequest): 
     
          // Preparar el mensaje para la API
      const provider = request.options?.provider || 'openai';
-     const modelId = request.options?.modelId || (provider === 'openai' ? 'gpt-4.1' : 'claude-3-sonnet-20240229');
+     const modelId = request.options?.modelId || (provider === 'openai' ? 'gpt-5' : 'claude-3-sonnet-20240229');
      const systemPrompt = STRUCTURED_ANALYZER_SYSTEM_PROMPT;
      
      const apiMessage = prepareApiMessage(enhancedUserMessage, processedImage, systemPrompt, provider);

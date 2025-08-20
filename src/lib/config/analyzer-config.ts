@@ -11,7 +11,7 @@ export const AVAILABLE_MODELS = {
     { id: 'claude-instant-1.2', name: 'Claude Instant' }
   ],
   openai: [
-    { id: 'gpt-4.1', name: 'GPT-4.1' },
+    { id: 'gpt-5', name: 'GPT-4.1' },
     { id: 'gpt-4o', name: 'GPT-4o' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
@@ -102,7 +102,7 @@ export function getRequestOptions(provider = 'openai', modelId?: string) {
   
   // Opciones para OpenAI (Azure OpenAI)
   const openaiOptions = {
-    model: modelId || 'gpt-4.1',
+    model: modelId || 'gpt-5',
     max_tokens: 32768 // Límite máximo de Azure OpenAI
   };
   

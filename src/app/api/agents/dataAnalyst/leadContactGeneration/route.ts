@@ -745,7 +745,7 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
         }
       ],
       // Set model to GPT-4o nano
-      model: 'gpt-4o-nano',
+      model: 'gpt-5-nano',
       modelType: 'openai'
     });
     

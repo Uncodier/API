@@ -60,7 +60,7 @@ export class AgentConnector extends Base {
       // Configure model options for portkey
       const modelOptions: PortkeyModelOptions = {
         modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-        modelId: command.model_id || command.model || this.defaultOptions.modelId || 'gpt-4.1-nano',
+        modelId: command.model_id || command.model || this.defaultOptions.modelId || 'gpt-5-nano',
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',

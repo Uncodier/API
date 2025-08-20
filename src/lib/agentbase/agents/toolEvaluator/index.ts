@@ -132,7 +132,7 @@ export class ToolEvaluator extends Base {
         // Configurar opciones del modelo
         const modelOptions = {
           modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-          modelId: command.model_id || this.defaultOptions.modelId || 'gpt-4.1-nano',
+          modelId: command.model_id || this.defaultOptions.modelId || 'gpt-5-nano',
           maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 32768,
           temperature: command.temperature || this.defaultOptions.temperature || 0.7,
           responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'

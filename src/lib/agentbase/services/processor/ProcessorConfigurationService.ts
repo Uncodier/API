@@ -26,7 +26,7 @@ export class ProcessorConfigurationService {
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1-nano',
+        modelId: 'gpt-5-nano',
         maxTokens: 32000,
         temperature: 0.6
       }
@@ -40,7 +40,7 @@ export class ProcessorConfigurationService {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1',
+        modelId: 'gpt-5',
         maxTokens: 32000,
         temperature: 0.7,
         stream: true, // Habilitar streaming para mejor manejo de timeouts
@@ -58,7 +58,7 @@ export class ProcessorConfigurationService {
       ['copywriting', 'content_creation', 'marketing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1',
+        modelId: 'gpt-5',
         maxTokens: 32000,
         temperature: 0.7
       }
@@ -85,7 +85,7 @@ export class ProcessorConfigurationService {
     // Opciones por defecto para el modelo con streaming habilitado
     const defaultModelOptions: PortkeyModelOptions = {
       modelType: 'openai',
-      modelId: 'gpt-4.1-nano',
+      modelId: 'gpt-5-nano',
       maxTokens: 32000,
       temperature: 0.7,
       stream: true, // Habilitar streaming por defecto para mejor manejo de timeouts

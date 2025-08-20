@@ -164,7 +164,7 @@ async function processMessageWithAgent(
       // No need for tools for basic message response
       // Context includes the current message and conversation ID
       context: `WhatsApp message from user: ${message}\nConversation ID: ${conversationId}`,
-      model: 'gpt-4.1-mini',
+      model: 'gpt-5-mini',
       modelType: 'openai'
     });
     

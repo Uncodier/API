@@ -98,7 +98,7 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1-mini',
+        modelId: 'gpt-5-mini',
         maxTokens: 32000,
         temperature: .7
       },
@@ -117,7 +117,7 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4.1',
+        modelId: 'gpt-5',
         maxTokens: 32000,
         temperature: 0.7
       },

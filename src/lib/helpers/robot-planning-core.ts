@@ -715,7 +715,7 @@ Respond ONLY with the JSON in this exact format:
       }
     }],
     tools: [], // Explicitly no tools - text analysis only
-    model: 'gpt-4.1-mini',
+    model: 'gpt-5-mini',
     modelType: 'openai',
     responseFormat: 'json'
   });

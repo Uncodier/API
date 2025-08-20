@@ -64,7 +64,7 @@ export class PortkeyConnector {
       
       // Set model ID based on provider
       if (modelType === 'openai') {
-        modelOptions.model = modelId || 'gpt-4.1-nano';
+        modelOptions.model = modelId || 'gpt-5-nano';
         
         // Handle gpt-5 models specific parameters
         if (modelId === 'gpt-5-mini' || modelId === 'gpt-5' || modelId === 'gpt-5.1') {
