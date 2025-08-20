@@ -47,8 +47,6 @@ export async function searchWithTavily(query: string, options: {
       include_domains: options.include_domains || [],
       exclude_domains: options.exclude_domains || [],
       time_range: null,
-      days: 7,
-      chunks_per_source: 3,
       country: null
     };
 

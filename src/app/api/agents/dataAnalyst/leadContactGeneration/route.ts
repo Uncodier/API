@@ -744,6 +744,9 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
           status: 'not_initialized'
         }
       ],
+      // Set model to GPT-4o nano
+      model: 'gpt-4o-nano',
+      modelType: 'openai'
     });
     
     console.log(`🔧 Creando comando de generación de emails de contacto`);
