@@ -5,6 +5,95 @@ import { DbCommand, CommandExecutionResult } from '../../models/types';
 import { CommandCache } from '../../services/command/CommandCache';
 
 export class StreamingResponseProcessor {
+  // Concurrency control to prevent resource exhaustion
+  private static activeStreams = new Set<string>();
+  private static readonly MAX_CONCURRENT_STREAMS = 3;
+  private static readonly STREAM_QUEUE: Array<{
+    resolve: (value: any) => void;
+    reject: (error: any) => void;
+    commandId: string;
+    processor: () => Promise<any>;
+  }> = [];
+
+  // Circuit breaker for streaming failures
+  private static failureCount = 0;
+  private static lastFailureTime = 0;
+  private static readonly MAX_FAILURES = 5;
+  private static readonly FAILURE_WINDOW = 5 * 60 * 1000; // 5 minutes
+  private static readonly CIRCUIT_BREAKER_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+
+  /**
+   * Check if circuit breaker should prevent new streams
+   */
+  private static shouldBlockStream(): boolean {
+    const now = Date.now();
+    
+    // Reset failure count if window has passed
+    if (now - this.lastFailureTime > this.FAILURE_WINDOW) {
+      this.failureCount = 0;
+    }
+    
+    // Block if too many failures recently
+    if (this.failureCount >= this.MAX_FAILURES) {
+      const timeSinceLastFailure = now - this.lastFailureTime;
+      if (timeSinceLastFailure < this.CIRCUIT_BREAKER_TIMEOUT) {
+        console.warn(`[StreamingResponseProcessor] Circuit breaker OPEN: ${this.failureCount} failures in window. Blocking for ${Math.round((this.CIRCUIT_BREAKER_TIMEOUT - timeSinceLastFailure) / 1000)}s more`);
+        return true;
+      } else {
+        // Reset after timeout
+        console.log(`[StreamingResponseProcessor] Circuit breaker RESET: Timeout expired, allowing streams again`);
+        this.failureCount = 0;
+      }
+    }
+    
+    return false;
+  }
+
+  /**
+   * Record a streaming failure for circuit breaker
+   */
+  private static recordFailure(): void {
+    this.failureCount++;
+    this.lastFailureTime = Date.now();
+    console.warn(`[StreamingResponseProcessor] Failure recorded: ${this.failureCount}/${this.MAX_FAILURES} in current window`);
+  }
+
+  /**
+   * Acquire a stream slot with concurrency control
+   */
+  private static async acquireStreamSlot(commandId: string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      if (this.activeStreams.size < this.MAX_CONCURRENT_STREAMS) {
+        this.activeStreams.add(commandId);
+        console.log(`[StreamingResponseProcessor] Stream slot acquired for ${commandId}. Active: ${this.activeStreams.size}/${this.MAX_CONCURRENT_STREAMS}`);
+        resolve();
+      } else {
+        console.log(`[StreamingResponseProcessor] Stream slot queued for ${commandId}. Queue size: ${this.STREAM_QUEUE.length + 1}`);
+        this.STREAM_QUEUE.push({
+          resolve,
+          reject,
+          commandId,
+          processor: () => Promise.resolve()
+        });
+      }
+    });
+  }
+
+  /**
+   * Release a stream slot and process next in queue
+   */
+  private static releaseStreamSlot(commandId: string): void {
+    this.activeStreams.delete(commandId);
+    console.log(`[StreamingResponseProcessor] Stream slot released for ${commandId}. Active: ${this.activeStreams.size}/${this.MAX_CONCURRENT_STREAMS}`);
+    
+    // Process next in queue
+    if (this.STREAM_QUEUE.length > 0) {
+      const next = this.STREAM_QUEUE.shift()!;
+      this.activeStreams.add(next.commandId);
+      console.log(`[StreamingResponseProcessor] Processing queued stream for ${next.commandId}. Queue remaining: ${this.STREAM_QUEUE.length}`);
+      next.resolve();
+    }
+  }
   /**
    * Procesa una respuesta streaming del LLM
    * @param stream El stream de respuesta del LLM
@@ -19,6 +108,28 @@ export class StreamingResponseProcessor {
     modelInfo: any,
     fillTargetWithContent: (target: any, content: any) => any
   ): Promise<CommandExecutionResult> {
+    const commandId = command.id || 'unknown';
+    
+    // Check circuit breaker
+    if (this.shouldBlockStream()) {
+      return {
+        status: 'failed',
+        results: [{
+          error: 'Circuit breaker is OPEN due to recent streaming failures. Please try again later.',
+          error_type: 'CIRCUIT_BREAKER_OPEN',
+          content_length: 0,
+          partial_content: null
+        }],
+        updatedCommand: command,
+        inputTokens: 0,
+        outputTokens: 0,
+        error: 'Circuit breaker is OPEN'
+      };
+    }
+    
+    // Acquire stream slot with concurrency control
+    await this.acquireStreamSlot(commandId);
+    
     let fullContent = '';
     let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     
@@ -79,6 +190,9 @@ export class StreamingResponseProcessor {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[StreamingResponseProcessor] Error processing streaming response:`, error);
+      
+      // Record failure for circuit breaker
+      this.recordFailure();
       
       // Determinar si es un error de timeout específico
       let errorType = 'STREAM_ERROR';
@@ -165,6 +279,9 @@ export class StreamingResponseProcessor {
         outputTokens: tokenUsage.completion_tokens,
         error: `Stream processing failed: ${errorMessage}`
       };
+    } finally {
+      // Always release the stream slot
+      this.releaseStreamSlot(commandId);
     }
   }
 
@@ -181,6 +298,7 @@ export class StreamingResponseProcessor {
     let tokenUsage = { ...initialTokenUsage };
     let lastChunkTime = Date.now();
     let chunkCount = 0;
+    let currentTimeoutId: NodeJS.Timeout | null = null;
     
     console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms`);
     
@@ -190,9 +308,15 @@ export class StreamingResponseProcessor {
         const streamIterator = stream[Symbol.asyncIterator]();
         
         while (true) {
-          // Create a timeout for each chunk
+          // Clear any existing timeout
+          if (currentTimeoutId) {
+            clearTimeout(currentTimeoutId);
+            currentTimeoutId = null;
+          }
+          
+          // Create a timeout for this chunk with proper cleanup
           const chunkTimeoutPromise = new Promise<never>((_, reject) => {
-            setTimeout(() => {
+            currentTimeoutId = setTimeout(() => {
               const timeSinceLastChunk = Date.now() - lastChunkTime;
               reject(new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms`));
             }, chunkTimeout);
@@ -205,8 +329,18 @@ export class StreamingResponseProcessor {
               streamIterator.next(),
               chunkTimeoutPromise
             ]);
+            
+            // Clear timeout on successful chunk reception
+            if (currentTimeoutId) {
+              clearTimeout(currentTimeoutId);
+              currentTimeoutId = null;
+            }
           } catch (timeoutError) {
-            // Timeout occurred
+            // Clean up timeout on error
+            if (currentTimeoutId) {
+              clearTimeout(currentTimeoutId);
+              currentTimeoutId = null;
+            }
             throw timeoutError;
           }
           
@@ -253,6 +387,12 @@ export class StreamingResponseProcessor {
       return result;
       
     } catch (error) {
+      // Ensure timeout is cleaned up on any error
+      if (currentTimeoutId) {
+        clearTimeout(currentTimeoutId);
+        currentTimeoutId = null;
+      }
+      
       console.error(`[StreamingResponseProcessor] Error en procesamiento de chunks:`, error);
       
       // Log additional context for debugging
