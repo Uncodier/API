@@ -344,11 +344,45 @@ window.MarketFit.init(config)
 #### Parámetros
 - **config** `object` (requerido): Configuración completa del sistema
 
-#### Ejemplo
+#### Parámetros de Configuración
+
+##### Configuración Principal
+- **siteId** `string` (requerido): Identificador único de tu sitio
+- **apiEndpoint** `string` (requerido): URL del endpoint de la API
+- **chatHidden** `boolean` (opcional): Inicia el chat oculto. Por defecto: `false`
+- **chat** `object` (opcional): Configuración específica del chat
+
+##### Configuración del Chat
+- **enabled** `boolean`: Habilita/deshabilita el chat
+- **agentName** `string`: Nombre del agente por defecto
+- **welcomeMessage** `string`: Mensaje de bienvenida inicial
+- **title** `string`: Título del widget de chat
+- **position** `string`: Posición del widget ('bottom-right' | 'bottom-left')
+- **theme** `object`: Configuración de colores y apariencia
+- **allowAnonymousMessages** `boolean`: Permite mensajes sin identificación
+
+#### Ejemplos
+
+**Inicialización básica:**
 ```javascript
 window.MarketFit.init({
   siteId: 'tu-site-id',
   apiEndpoint: 'https://api.tu-dominio.com',
+  chat: {
+    enabled: true,
+    agentName: 'Soporte',
+    welcomeMessage: '¡Hola! ¿En qué puedo ayudarte?',
+    title: 'Chat con nosotros'
+  }
+});
+```
+
+**Inicialización con chat oculto:**
+```javascript
+window.MarketFit.init({
+  siteId: 'tu-site-id',
+  apiEndpoint: 'https://api.tu-dominio.com',
+  chatHidden: true, // El chat se iniciará oculto
   chat: {
     enabled: true,
     agentName: 'Soporte',
@@ -769,6 +803,39 @@ function technicalSupport() {
 }
 ```
 
+### Chat Oculto Inicialmente
+
+```javascript
+// Inicializar con chat oculto y mostrarlo bajo condiciones específicas
+window.MarketFit.init({
+  siteId: 'tu-site-id',
+  apiEndpoint: 'https://api.tu-dominio.com',
+  chatHidden: true, // Chat inicia oculto
+  chat: {
+    enabled: true,
+    agentName: 'Soporte',
+    welcomeMessage: '¡Hola! ¿En qué puedo ayudarte?'
+  }
+});
+
+// Mostrar chat después de cierto tiempo o acción
+setTimeout(() => {
+  window.MarketFit.showWidget();
+  window.MarketFit.openChatWithWelcomeMessage(
+    "¡Hola! He notado que has estado navegando. ¿Necesitas ayuda?"
+  );
+}, 30000); // 30 segundos
+
+// O mostrar chat cuando el usuario hace scroll
+let chatShown = false;
+window.addEventListener('scroll', () => {
+  if (!chatShown && window.scrollY > 500) {
+    chatShown = true;
+    window.MarketFit.showWidget();
+  }
+});
+```
+
 ### Triggers Automáticos
 
 ```javascript
@@ -812,6 +879,13 @@ window.addEventListener('scroll', () => {
 ### Configuración del Chat
 
 ```typescript
+interface InitConfig {
+  siteId: string;                      // ID único del sitio (requerido)
+  apiEndpoint: string;                 // URL del endpoint API (requerido)
+  chatHidden?: boolean;                // Iniciar chat oculto (default: false)
+  chat?: ChatConfig;                   // Configuración del chat
+}
+
 interface ChatConfig {
   enabled: boolean;                    // Habilitar/deshabilitar chat
   position?: 'bottom-right' | 'bottom-left'; // Posición del widget

@@ -26,6 +26,7 @@
     "test:chat-message": "jest --verbose src/tests/api/agents-chat-message.test.ts"
   },
   "dependencies": {
+    "@ai-sdk/openai": "2.0.17",
     "@googlemaps/google-maps-services-js": "^3.4.1",
     "@mdx-js/loader": "^3.1.0",
     "@mdx-js/mdx": "^3.1.0",
@@ -41,6 +42,7 @@
     "@types/node-fetch": "^2.6.12",
     "@types/ws": "^8.18.1",
     "@vapi-ai/server-sdk": "^0.6.4",
+    "ai": "5.0.19",
     "axios": "^1.8.1",
     "cheerio": "^1.0.0",
     "composio-core": "^0.5.31",

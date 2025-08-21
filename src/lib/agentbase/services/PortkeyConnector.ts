@@ -3,10 +3,12 @@
  */
 import { PortkeyModelOptions, PortkeyConfig } from '../models/types';
 import Portkey from 'portkey-ai';
+import { AIGatewayService } from './AIGatewayService';
 
 export class PortkeyConnector {
   private portkeyConfig: PortkeyConfig;
   private defaultOptions: Partial<PortkeyModelOptions>;
+  private aiGateway: AIGatewayService;
   
   constructor(config: PortkeyConfig, defaultOptions?: Partial<PortkeyModelOptions>) {
     this.portkeyConfig = config;
@@ -20,6 +22,7 @@ export class PortkeyConnector {
         includeUsage: true
       }
     };
+    this.aiGateway = new AIGatewayService();
   }
   
   /**
@@ -168,100 +171,165 @@ export class PortkeyConnector {
       try {
         console.log(`[PortkeyConnector] Iniciando llamada al LLM con modelo ${usedModel} a las ${new Date().toISOString()}`);
         
-        // Si streaming está habilitado, manejar de forma diferente
-        if (stream === true) {
-          console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
-          const streamResponse = await portkey.chat.completions.create({
-            messages,
-            ...modelOptions
-          });
+        // Retry logic with exponential backoff
+        const maxRetries = 3;
+        let lastError;
+        
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+          try {
+            console.log(`[PortkeyConnector] Intento ${attempt}/${maxRetries} para llamada al LLM`);
+            
+            // Si streaming está habilitado, manejar de forma diferente
+            if (stream === true) {
+              console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
+              const streamResponse = await portkey.chat.completions.create({
+                messages,
+                ...modelOptions
+              });
 
-          const duration = Date.now() - startTime;
-          console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
-          
-          // Return the stream directly - caller must handle iteration
-          return {
-            stream: streamResponse,
-            isStream: true,
-            modelInfo: {
-              model: usedModel,
-              provider: provider
-            }
-          };
-        } else {
-          // Modo sin streaming (comportamiento actual)
-          if (modelType === 'gemini') {
-            // Gemini requires special format
-            response = await portkey.gemini.generateContent({
-              contents: messages.map(msg => ({
-                role: msg.role === 'system' ? 'user' : msg.role,
-                parts: [{ text: msg.content }]
-              })),
-              ...modelOptions
-            });
-            
-            // Extract content and usage from Gemini response
-            content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
-            if (response.usageMetadata) {
-              console.log(`[PortkeyConnector] Datos de uso (Gemini): promptTokenCount=${response.usageMetadata?.promptTokenCount}, candidatesTokenCount=${response.usageMetadata?.candidatesTokenCount}`);
-              usage = {
-                prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
-                completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
-                total_tokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0)
+              const duration = Date.now() - startTime;
+              console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
+              
+              // Return the stream directly - caller must handle iteration
+              return {
+                stream: streamResponse,
+                isStream: true,
+                modelInfo: {
+                  model: usedModel,
+                  provider: provider
+                }
               };
-              console.log(`[PortkeyConnector] Total tokens (Gemini): ${usage.total_tokens}`);
-            }
-          } else {
-            // Use unified chat completions API for OpenAI and Anthropic
-            response = await portkey.chat.completions.create({
-              messages,
-              ...modelOptions
-            });
-            
-            // Extract content and usage based on model type
-            if (modelType === 'anthropic') {
-              content = response.content?.[0]?.text || '';
             } else {
-              // Default to OpenAI format
-              content = response.choices?.[0]?.message?.content || '';
+              // Modo sin streaming (comportamiento actual)
+              if (modelType === 'gemini') {
+                // Gemini requires special format
+                response = await portkey.gemini.generateContent({
+                  contents: messages.map(msg => ({
+                    role: msg.role === 'system' ? 'user' : msg.role,
+                    parts: [{ text: msg.content }]
+                  })),
+                  ...modelOptions
+                });
+                
+                // Extract content and usage from Gemini response
+                content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
+                if (response.usageMetadata) {
+                  console.log(`[PortkeyConnector] Datos de uso (Gemini): promptTokenCount=${response.usageMetadata?.promptTokenCount}, candidatesTokenCount=${response.usageMetadata?.candidatesTokenCount}`);
+                  usage = {
+                    prompt_tokens: response.usageMetadata?.promptTokenCount || 0,
+                    completion_tokens: response.usageMetadata?.candidatesTokenCount || 0,
+                    total_tokens: (response.usageMetadata?.promptTokenCount || 0) + (response.usageMetadata?.candidatesTokenCount || 0)
+                  };
+                  console.log(`[PortkeyConnector] Total tokens (Gemini): ${usage.total_tokens}`);
+                }
+              } else {
+                // Use unified chat completions API for OpenAI and Anthropic
+                response = await portkey.chat.completions.create({
+                  messages,
+                  ...modelOptions
+                });
+                
+                // Extract content and usage based on model type
+                if (modelType === 'anthropic') {
+                  content = response.content?.[0]?.text || '';
+                } else {
+                  // Default to OpenAI format
+                  content = response.choices?.[0]?.message?.content || '';
+                }
+                
+                if (response.usage) {
+                  console.log(`[PortkeyConnector] Datos de uso estándar: ${JSON.stringify(response.usage)}`);
+                  usage = {
+                    ...response.usage,
+                    // Asegurar que total_tokens esté calculado
+                    total_tokens: response.usage.total_tokens || 
+                                 (response.usage.prompt_tokens || 0) + (response.usage.completion_tokens || 0)
+                  };
+                  console.log(`[PortkeyConnector] Total tokens (Estándar): ${usage.total_tokens}`);
+                } else {
+                  console.log(`[PortkeyConnector] No se encontraron datos de uso en la respuesta. Estructura: ${JSON.stringify(Object.keys(response))}`);
+                  // Si no hay información de uso, crear un objeto vacío con valores 0
+                  usage = {
+                    prompt_tokens: 0,
+                    completion_tokens: 0,
+                    total_tokens: 0
+                  };
+                }
+              }
+              
+              const duration = Date.now() - startTime;
+              console.log(`[PortkeyConnector] LLM respondió exitosamente en ${duration}ms con ${content?.length || 0} caracteres`);
+              
+              // Return standardized response format with model information
+              return {
+                content,
+                usage,
+                modelInfo: {
+                  model: usedModel,
+                  provider: provider
+                }
+              };
             }
             
-            if (response.usage) {
-              console.log(`[PortkeyConnector] Datos de uso estándar: ${JSON.stringify(response.usage)}`);
-              usage = {
-                ...response.usage,
-                // Asegurar que total_tokens esté calculado
-                total_tokens: response.usage.total_tokens || 
-                             (response.usage.prompt_tokens || 0) + (response.usage.completion_tokens || 0)
-              };
-              console.log(`[PortkeyConnector] Total tokens (Estándar): ${usage.total_tokens}`);
-            } else {
-              console.log(`[PortkeyConnector] No se encontraron datos de uso en la respuesta. Estructura: ${JSON.stringify(Object.keys(response))}`);
-              // Si no hay información de uso, crear un objeto vacío con valores 0
-              usage = {
-                prompt_tokens: 0,
-                completion_tokens: 0,
-                total_tokens: 0
-              };
+            // If we reach here, the attempt was successful, break out of retry loop
+            break;
+            
+          } catch (retryError: any) {
+            lastError = retryError;
+            console.error(`[PortkeyConnector] Intento ${attempt}/${maxRetries} falló:`, retryError.message);
+            
+            // Check if it's a connection/timeout error that we should retry
+            const isRetryableError = retryError.message?.includes('timeout') || 
+                                   retryError.message?.includes('Connect Timeout') ||
+                                   retryError.message?.includes('fetch failed') ||
+                                   retryError.code === 'UND_ERR_CONNECT_TIMEOUT';
+            
+            if (!isRetryableError || attempt === maxRetries) {
+              // If it's not retryable or we've exhausted retries, throw the error
+              throw retryError;
             }
+            
+            // Wait before retrying (exponential backoff)
+            const waitTime = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+            console.log(`[PortkeyConnector] Esperando ${waitTime}ms antes del siguiente intento...`);
+            await new Promise(resolve => setTimeout(resolve, waitTime));
           }
-          
-          const duration = Date.now() - startTime;
-          console.log(`[PortkeyConnector] LLM respondió exitosamente en ${duration}ms con ${content?.length || 0} caracteres`);
-          
-          // Return standardized response format with model information
-          return {
-            content,
-            usage,
-            modelInfo: {
-              model: usedModel,
-              provider: provider
-            }
-          };
         }
       } catch (apiCallError: any) {
         const duration = Date.now() - startTime;
         console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
+        
+        // Check if it's a Portkey connection error and we can fallback to direct OpenAI
+        const isPortkeyConnectionError = apiCallError.message?.includes('Could not instantiate the Portkey client') ||
+                                       apiCallError.message?.includes('Connect Timeout') ||
+                                       apiCallError.message?.includes('fetch failed') ||
+                                       apiCallError.code === 'UND_ERR_CONNECT_TIMEOUT';
+        
+        if (isPortkeyConnectionError && provider === 'openai') {
+          console.warn(`🔄 [PortkeyConnector] Portkey falló, intentando fallback con AI Gateway...`);
+          
+          if (!this.aiGateway.isAvailable()) {
+            console.error(`❌ [PortkeyConnector] AI Gateway no está disponible`);
+            throw new Error(`Portkey falló y AI Gateway no está configurado: ${apiCallError.message}`);
+          }
+          
+          try {
+            const fallbackResponse = await this.aiGateway.callAgent(messages, {
+              model: modelOptions.model,
+              maxTokens: modelOptions.max_tokens,
+              temperature: modelOptions.temperature,
+              topP: modelOptions.top_p,
+              stream: stream,
+              streamOptions: streamOptions
+            });
+            
+            console.log(`✅ [PortkeyConnector] Fallback con AI Gateway exitoso`);
+            return fallbackResponse;
+          } catch (fallbackError: any) {
+            console.error(`❌ [PortkeyConnector] Fallback con AI Gateway también falló:`, fallbackError.message);
+            throw new Error(`Portkey y AI Gateway fallaron: ${apiCallError.message} | Fallback: ${fallbackError.message}`);
+          }
+        }
         
         // Check if it's a timeout error
         if (apiCallError.message?.includes('timeout') || apiCallError.code === 'timeout') {
@@ -281,4 +349,6 @@ export class PortkeyConnector {
       };
     }
   }
+
+
 }

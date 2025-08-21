@@ -517,6 +517,7 @@ CREATE TABLE public.leads (
   attribution jsonb DEFAULT '{}'::jsonb,
   metadata jsonb DEFAULT '{}'::jsonb,
   assignee_id uuid,
+  referral_lead_id uuid,
   CONSTRAINT leads_pkey PRIMARY KEY (id),
   CONSTRAINT leads_company_id_fkey FOREIGN KEY (company_id) REFERENCES public.companies(id),
   CONSTRAINT leads_campaign_id_fkey FOREIGN KEY (campaign_id) REFERENCES public.campaigns(id),
@@ -524,7 +525,8 @@ CREATE TABLE public.leads (
   CONSTRAINT leads_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id),
   CONSTRAINT leads_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT leads_assignee_id_fkey FOREIGN KEY (assignee_id) REFERENCES auth.users(id),
-  CONSTRAINT fk_command_leads FOREIGN KEY (command_id) REFERENCES public.commands(id)
+  CONSTRAINT fk_command_leads FOREIGN KEY (command_id) REFERENCES public.commands(id),
+  CONSTRAINT leads_referral_lead_id_fkey FOREIGN KEY (referral_lead_id) REFERENCES public.leads(id)
 );
 CREATE TABLE public.messages (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
@@ -1160,7 +1162,7 @@ CREATE TABLE public.instance_plans (
   actual_duration_minutes integer,
   retry_count integer DEFAULT 0,
   max_retries integer DEFAULT 3,
-  steps jsonb DEFAULT '[]'::jsonb,
+  steps jsonb DEFAULT '[]'::jsonb, -- Array of step objects with id, title, description, status
   artifacts jsonb DEFAULT '[]'::jsonb,
   error_message text,
   progress_percentage integer DEFAULT 0 CHECK (progress_percentage >= 0 AND progress_percentage <= 100),
