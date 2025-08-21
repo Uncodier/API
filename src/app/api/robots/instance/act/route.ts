@@ -171,7 +171,7 @@ export async function POST(request: NextRequest) {
       .single();
 
     // 4. Decidir qué acción tomar con el plan usando IA
-    const planDecision = await decidePlanAction(latestPlan, message, userContext, site_id);
+    const planDecision = await decidePlanAction(latestPlan, message, userContext, site_id, user_id);
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ AI Plan decision: ${planDecision.action} - ${planDecision.reason}`);
 
     // Separar entre plan activo y plan completed/failed para compatibilidad

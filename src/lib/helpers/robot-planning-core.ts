@@ -496,7 +496,8 @@ export async function decidePlanAction(
   currentPlan: any | null,
   userMessage: string,
   userContext?: string,
-  siteId?: string
+  siteId?: string,
+  userId?: string
 ): Promise<PlanDecision> {
   // If there's no current plan, create a new one
   if (!currentPlan) {
@@ -518,7 +519,7 @@ export async function decidePlanAction(
 
   // Use AI to decide what to do with the plan (even with steps in_progress)
   try {
-    const aiDecision = await decideWithAI(currentPlan, userMessage, userContext, siteId);
+    const aiDecision = await decideWithAI(currentPlan, userMessage, userContext, siteId, userId);
     return aiDecision;
   } catch (error) {
     console.error('Error in AI decision, using fallback logic:', error);
@@ -570,7 +571,8 @@ async function decideWithAI(
   currentPlan: any,
   userMessage: string,
   userContext?: string,
-  siteId?: string
+  siteId?: string,
+  userId?: string
 ): Promise<PlanDecision> {
   const { ProcessorInitializer } = await import('@/lib/agentbase/services/processor/ProcessorInitializer');
   const { CommandFactory } = await import('@/lib/agentbase/services/command/CommandFactory');
@@ -703,7 +705,7 @@ Respond ONLY with the JSON in this exact format:
   // Create command for AI decision
   const command = CommandFactory.createCommand({
     task: 'plan decision analysis',
-    userId: 'system',
+    userId: userId || siteId || '00000000-0000-0000-0000-000000000000', // Use userId, then siteId as fallback, or default UUID
     agentId: 'tool_evaluator', // Use tool evaluator for decisions
     description: 'Analyze user message and current plan to decide the best action',
     context: fullContext,
