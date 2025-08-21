@@ -115,7 +115,7 @@ export function withDNSTimeout<T>(operation: Promise<T>, timeout: number = 5000)
 /**
  * Creates a socket connection with controlled timeout (no exceptions)
  */
-export function createSocketWithTimeout(host: string, port: number, timeout: number = 6000): Promise<{
+export function createSocketWithTimeout(host: string, port: number, timeout: number = 4000): Promise<{
   success: boolean;
   socket?: net.Socket;
   error?: string;
@@ -179,11 +179,11 @@ export function readSMTPResponse(socket: net.Socket): Promise<{
         isResolved = true;
         resolve({
           success: false,
-          error: 'SMTP response timeout after 3000ms',
+          error: 'SMTP response timeout after 2000ms',
           errorCode: 'RESPONSE_TIMEOUT'
         });
       }
-    }, 3000);
+    }, 2000);
     
     socket.once('data', (data) => {
       if (!isResolved) {

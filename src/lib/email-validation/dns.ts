@@ -95,11 +95,15 @@ export async function attemptFallbackValidation(domain: string): Promise<{
   const flags: string[] = [];
   console.log(`[FALLBACK_VALIDATION] Starting fallback validation for domain: ${domain}`);
   
+  // Check if we're in Vercel for faster timeouts
+  const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+  const dnsTimeout = isVercel ? 2000 : 3000; // Faster timeouts in Vercel
+  
   try {
     // Method 1: Check for TXT records that might indicate email service (fastest check first)
     console.log(`[FALLBACK_VALIDATION] Method 1: Checking TXT records for email indicators`);
     try {
-      const txtRecords = await withDNSTimeout(dns.resolveTxt(domain), 3000);
+      const txtRecords = await withDNSTimeout(dns.resolveTxt(domain), dnsTimeout);
       console.log(`[FALLBACK_VALIDATION] Found ${txtRecords.length} TXT records`);
       
       const emailRelatedTxt = txtRecords.some(record => 
@@ -133,24 +137,29 @@ export async function attemptFallbackValidation(domain: string): Promise<{
     // Method 2: Check if domain has A record and try direct SMTP connection
     console.log(`[FALLBACK_VALIDATION] Method 2: Checking A record and direct SMTP connection`);
     try {
-      const aRecords = await withDNSTimeout(dns.resolve4(domain), 2000);
+      const aRecords = await withDNSTimeout(dns.resolve4(domain), dnsTimeout);
       if (aRecords.length > 0) {
         console.log(`[FALLBACK_VALIDATION] Domain has A record: ${aRecords[0]}`);
         
         // Try direct SMTP connection to the domain (many domains accept mail directly)
-        const connectionResult = await createSocketWithTimeout(domain, 25, 2000);
-        if (connectionResult.success && connectionResult.socket) {
-          console.log(`[FALLBACK_VALIDATION] ✅ Direct SMTP connection successful`);
-          connectionResult.socket.destroy();
-          return {
-            canReceiveEmail: true,
-            fallbackMethod: 'direct_smtp_connection',
-            confidence: 75,
-            flags: ['direct_smtp_accessible', 'fallback_validation'],
-            message: 'Domain accepts direct SMTP connections (no MX record needed)'
-          };
+        // Skip direct SMTP in Vercel due to potential port restrictions
+        if (!isVercel) {
+          const connectionResult = await createSocketWithTimeout(domain, 25, 2000);
+          if (connectionResult.success && connectionResult.socket) {
+            console.log(`[FALLBACK_VALIDATION] ✅ Direct SMTP connection successful`);
+            connectionResult.socket.destroy();
+            return {
+              canReceiveEmail: true,
+              fallbackMethod: 'direct_smtp_connection',
+              confidence: 75,
+              flags: ['direct_smtp_accessible', 'fallback_validation'],
+              message: 'Domain accepts direct SMTP connections (no MX record needed)'
+            };
+          } else {
+            console.log(`[FALLBACK_VALIDATION] Direct SMTP connection failed:`, connectionResult.error);
+          }
         } else {
-          console.log(`[FALLBACK_VALIDATION] Direct SMTP connection failed:`, connectionResult.error);
+          console.log(`[FALLBACK_VALIDATION] Skipping direct SMTP connection in Vercel environment`);
         }
       }
     } catch (error: any) {
@@ -163,7 +172,8 @@ export async function attemptFallbackValidation(domain: string): Promise<{
     const subdomainPromises = commonMailSubdomains.map(async (subdomain) => {
       try {
         const mailDomain = `${subdomain}.${domain}`;
-        await withDNSTimeout(dns.resolve4(mailDomain), 1500);
+        const subdomainTimeout = isVercel ? 1000 : 1500; // Faster in Vercel
+        await withDNSTimeout(dns.resolve4(mailDomain), subdomainTimeout);
         console.log(`[FALLBACK_VALIDATION] Found mail subdomain: ${mailDomain}`);
         return { success: true, subdomain: mailDomain };
       } catch (error) {

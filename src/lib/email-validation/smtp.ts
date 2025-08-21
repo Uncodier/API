@@ -46,6 +46,32 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
     console.log(`[VALIDATE_EMAIL] Server greeting: ${greeting.code} ${greeting.message}`);
     
     if (greeting.code !== 220) {
+      // Check if this is an IP block/PBL issue rather than email invalidity
+      const greetingMsg = greeting.message.toLowerCase();
+      const isPBLBlock = greetingMsg.includes('pbl') || 
+                        greetingMsg.includes('policy block list') ||
+                        greetingMsg.includes('spamhaus') ||
+                        greetingMsg.includes('blocked') ||
+                        greetingMsg.includes('blacklist') ||
+                        greetingMsg.includes('rbl') ||
+                        greetingMsg.includes('reputation');
+      
+      const isIPIssue = greetingMsg.includes('connection refused') ||
+                       greetingMsg.includes('access denied') ||
+                       greetingMsg.includes('not authorized') ||
+                       greetingMsg.includes('relay not permitted');
+      
+      if (isPBLBlock || isIPIssue) {
+        // This is likely an IP/reputation issue, not an email validity issue
+        // The email could still be valid, but we can't verify it due to our IP being blocked
+        return {
+          isValid: false, // We can't validate, so technically we can't confirm it's valid
+          result: 'unknown',
+          flags: ['server_not_ready', 'ip_blocked', 'validation_blocked'],
+          message: `SMTP server blocks validation IP: ${greeting.code} ${greeting.message}`
+        };
+      }
+      
       return {
         isValid: false,
         result: 'unknown',
@@ -458,6 +484,12 @@ function calculateValidationConfidence(
   if (flags.includes('invalid_format')) {
     confidence -= 50;
     reasoning.push('Invalid email format (-50)');
+  }
+  
+  if (flags.includes('ip_blocked') || flags.includes('validation_blocked')) {
+    // IP blocks don't indicate email invalidity, just validation limitations
+    confidence = Math.max(confidence, 20); // Minimum confidence when blocked
+    reasoning.push('Validation blocked by IP reputation (inconclusive)');
   }
   
   // Risk factor adjustments

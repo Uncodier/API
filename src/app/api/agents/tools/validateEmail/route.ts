@@ -409,10 +409,14 @@ export async function POST(request: NextRequest) {
     // Try SMTP validation with MX records (try multiple if first fails with timeout)
     console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with ${mxRecords.length} MX record(s)`);
     
+    // Check if we're running in Vercel (serverless environment)
+    const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
+    const maxMXAttempts = isVercel ? 2 : 3; // Reduce attempts in Vercel for faster response
+    
     let smtpResult = null;
     let lastError = null;
     
-    for (let i = 0; i < Math.min(mxRecords.length, 3); i++) { // Try up to 3 MX records
+    for (let i = 0; i < Math.min(mxRecords.length, maxMXAttempts); i++) { // Try fewer MX records in Vercel
       const mxRecord = mxRecords[i];
       console.log(`[VALIDATE_EMAIL] 🔌 Trying MX record ${i + 1}/${mxRecords.length}: ${mxRecord.exchange} (priority: ${mxRecord.priority})`);
       
@@ -425,14 +429,24 @@ export async function POST(request: NextRequest) {
           break;
         }
         
-        // If we get 'unknown' but it's not a timeout, use it
+        // If we get 'unknown' but it's not a timeout, check if it's an IP block
         if (smtpResult.result === 'unknown' && !smtpResult.flags.includes('smtp_timeout')) {
-          console.log(`[VALIDATE_EMAIL] ⚠️ Got inconclusive result from ${mxRecord.exchange}: ${smtpResult.result}`);
-          break;
+          // If this is an IP block, we should try fallback validation
+          if (smtpResult.flags.includes('ip_blocked') || smtpResult.flags.includes('validation_blocked')) {
+            console.log(`[VALIDATE_EMAIL] 🚫 IP blocked by ${mxRecord.exchange}, will attempt fallback validation`);
+            // Continue to try other MX records or fallback validation
+            if (i < Math.min(mxRecords.length, 3) - 1) {
+              lastError = smtpResult;
+              continue;
+            }
+          } else {
+            console.log(`[VALIDATE_EMAIL] ⚠️ Got inconclusive result from ${mxRecord.exchange}: ${smtpResult.result}`);
+            break;
+          }
         }
         
         // If it's a timeout or risky result, try next MX record if available
-        if (i < Math.min(mxRecords.length, 3) - 1) {
+        if (i < Math.min(mxRecords.length, maxMXAttempts) - 1) {
           console.log(`[VALIDATE_EMAIL] ⏱️ Timeout/risky result from ${mxRecord.exchange}, trying next MX record...`);
           lastError = smtpResult;
           continue;
@@ -443,7 +457,7 @@ export async function POST(request: NextRequest) {
         lastError = error;
         
         // If this is the last MX record, we'll use the error
-        if (i === Math.min(mxRecords.length, 3) - 1) {
+        if (i === Math.min(mxRecords.length, maxMXAttempts) - 1) {
           // Create a fallback result for the error
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           smtpResult = {
@@ -472,6 +486,58 @@ export async function POST(request: NextRequest) {
         confidenceLevel: 'low' as const,
         reasoning: ['All available MX servers failed to respond']
       };
+    }
+    
+    // If we got IP blocks from all MX servers, or if we're in Vercel and got connection issues, try fallback validation
+    const allBlocked = smtpResult.flags.includes('ip_blocked') || 
+                      smtpResult.flags.includes('validation_blocked') ||
+                      (lastError && typeof lastError === 'object' && 'flags' in lastError && 
+                       Array.isArray((lastError as any).flags) &&
+                       ((lastError as any).flags.includes('ip_blocked') || (lastError as any).flags.includes('validation_blocked')));
+    
+    const hasConnectionIssues = smtpResult.flags.includes('connection_failed') || 
+                               smtpResult.flags.includes('smtp_timeout') ||
+                               smtpResult.flags.includes('all_mx_failed');
+    
+    const shouldTryFallback = allBlocked || (isVercel && hasConnectionIssues && smtpResult.result === 'unknown');
+    
+    if (shouldTryFallback) {
+      const fallbackReason = allBlocked ? 'IP blocked by servers' : 'Connection issues in serverless environment';
+      console.log(`[VALIDATE_EMAIL] 🔄 ${fallbackReason}, attempting fallback validation for ${domain}`);
+      
+      try {
+        const fallbackResult = await attemptFallbackValidation(domain);
+        
+        if (fallbackResult.canReceiveEmail) {
+          // Fallback validation suggests the domain can receive email
+          console.log(`[VALIDATE_EMAIL] ✅ Fallback validation successful: ${fallbackResult.message}`);
+          
+          smtpResult = {
+            isValid: true,
+            deliverable: false, // Still risky due to validation limitations
+            result: 'risky' as const,
+            flags: [...smtpResult.flags, 'fallback_validation', ...fallbackResult.flags],
+            message: `SMTP validation blocked but ${fallbackResult.message}`,
+            confidence: Math.max(fallbackResult.confidence - 20, 30), // Reduce confidence due to IP block
+            confidenceLevel: fallbackResult.confidence >= 70 ? 'medium' : 'low' as const,
+            reasoning: [
+              'SMTP validation blocked by IP reputation (-40)',
+              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+            ]
+          };
+        } else {
+          console.log(`[VALIDATE_EMAIL] ❌ Fallback validation also failed`);
+          // Keep original result but add fallback info
+          smtpResult.flags.push('fallback_failed');
+          smtpResult.reasoning = [
+            ...(smtpResult.reasoning || []),
+            'Fallback validation also failed (-10)'
+          ];
+        }
+      } catch (fallbackError: any) {
+        console.error(`[VALIDATE_EMAIL] ❌ Fallback validation error:`, fallbackError.message || fallbackError);
+        smtpResult.flags.push('fallback_error');
+      }
     }
     
     const executionTime = Date.now() - startTime;
