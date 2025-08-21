@@ -216,15 +216,21 @@ export async function POST(request: NextRequest) {
         const nonEmailCheck = isLikelyNonEmailDomain(domain);
         
         if (nonEmailCheck.isNonEmail) {
-          console.log(`[VALIDATE_EMAIL] 🚫 Skipping fallback - likely non-email domain: ${nonEmailCheck.reason}`);
+          console.log(`[VALIDATE_EMAIL] 🚫 Skipping fallback - likely non-email domain: ${nonEmailCheck.reason} (confidence: ${nonEmailCheck.confidence}%)`);
           // Don't perform expensive fallback validation for obvious non-email domains
         } else {
-          console.log(`[VALIDATE_EMAIL] 🔄 Attempting fallback validation for ${domain}`);
+          console.log(`[VALIDATE_EMAIL] 🔄 Attempting fallback validation for ${domain} (error: ${error.code})`);
           try {
             fallbackResult = await attemptFallbackValidation(domain);
-            console.log(`[VALIDATE_EMAIL] 📋 Fallback result:`, fallbackResult);
-          } catch (fallbackError) {
-            console.log(`[VALIDATE_EMAIL] ❌ Fallback validation failed:`, fallbackError);
+            console.log(`[VALIDATE_EMAIL] 📋 Fallback result:`, {
+              canReceiveEmail: fallbackResult.canReceiveEmail,
+              method: fallbackResult.fallbackMethod,
+              confidence: fallbackResult.confidence,
+              flags: fallbackResult.flags,
+              message: fallbackResult.message
+            });
+          } catch (fallbackError: any) {
+            console.error(`[VALIDATE_EMAIL] ❌ Fallback validation failed:`, fallbackError.message || fallbackError);
           }
         }
       }
@@ -245,6 +251,7 @@ export async function POST(request: NextRequest) {
           const nonEmailCheck = isLikelyNonEmailDomain(domain);
           
           if (fallbackResult?.canReceiveEmail) {
+            // Fallback validation found evidence of email capability
             result = 'risky';
             isValid = true;
             deliverable = false;
@@ -252,13 +259,14 @@ export async function POST(request: NextRequest) {
             message = `No MX records but ${fallbackResult.message}`;
             bounceRisk = 'high';
             reputationFlags = ['no_mx_but_mail_capable'];
-            confidence = fallbackResult.confidence;
+            confidence = Math.max(fallbackResult.confidence, 40); // Minimum confidence for positive fallback
             confidenceLevel = confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
             reasoning = [
               'No MX records found (-40)',
               `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
             ];
           } else if (nonEmailCheck.isNonEmail) {
+            // Domain pattern suggests it's not meant for email
             result = 'invalid';
             flags = ['no_mx_record', 'likely_non_email_domain'];
             message = `Domain exists but appears to be a non-email domain: ${nonEmailCheck.reason}`;
@@ -271,14 +279,19 @@ export async function POST(request: NextRequest) {
               `Non-email domain pattern detected (+${nonEmailCheck.confidence})`
             ];
           } else {
+            // No MX records and no fallback evidence - likely invalid for email
             result = 'invalid';
             flags = ['no_mx_record'];
-            message = 'Domain exists but has no mail servers configured';
+            message = 'Domain exists but has no mail servers configured and no fallback methods indicate email capability';
             bounceRisk = 'high';
             reputationFlags = ['no_mail_service'];
-            confidence = 90;
+            confidence = 85; // High confidence that it can't receive email
             confidenceLevel = 'very_high';
-            reasoning = ['No MX records and no fallback methods succeeded (-90)'];
+            reasoning = [
+              'No MX records found (-40)',
+              'No fallback validation methods succeeded (-45)',
+              'Domain exists but shows no email capability'
+            ];
           }
           break;
           

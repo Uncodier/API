@@ -173,17 +173,28 @@ export class StreamingResponseProcessor {
     
     let fullContent = '';
     let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
+    let heartbeatInterval: NodeJS.Timeout | null = null;
     
-    // Timeout específico para el procesamiento del stream (10 minutos)
-    const STREAM_PROCESSING_TIMEOUT = 10 * 60 * 1000; // 10 minutos
-    const CHUNK_TIMEOUT = 120 * 1000; // 2 minutos entre chunks - más generoso para streams lentos
+    // Timeout específico para el procesamiento del stream (más agresivo para detectar colgados)
+    const STREAM_PROCESSING_TIMEOUT = 8 * 60 * 1000; // 8 minutos (reducido de 10)
+    const CHUNK_TIMEOUT = 90 * 1000; // 90 segundos entre chunks (reducido de 2 minutos)
     
     try {
       console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
       
+      // Heartbeat para detectar streams colgados
+      let lastHeartbeat = Date.now();
+      heartbeatInterval = setInterval(() => {
+        const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
+        if (timeSinceLastHeartbeat > CHUNK_TIMEOUT * 1.5) {
+          console.warn(`[StreamingResponseProcessor] ⚠️ Stream heartbeat warning: ${timeSinceLastHeartbeat}ms since last activity for ${commandId}`);
+        }
+      }, 30000); // Check every 30 seconds
+      
       // Crear un timeout general para todo el procesamiento del stream
       const streamTimeout = new Promise((_, reject) => {
         setTimeout(() => {
+          clearInterval(heartbeatInterval);
           reject(new Error(`Stream processing timeout after ${STREAM_PROCESSING_TIMEOUT}ms`));
         }, STREAM_PROCESSING_TIMEOUT);
       });
@@ -193,11 +204,13 @@ export class StreamingResponseProcessor {
         stream, 
         fullContent, 
         tokenUsage, 
-        CHUNK_TIMEOUT
+        CHUNK_TIMEOUT,
+        () => { lastHeartbeat = Date.now(); } // Update heartbeat on chunk received
       );
       
       // Usar Promise.race para aplicar el timeout
       const result = await Promise.race([streamProcessing, streamTimeout]);
+      clearInterval(heartbeatInterval); // Clean up heartbeat
       fullContent = result.fullContent;
       tokenUsage = result.tokenUsage;
       
@@ -229,6 +242,12 @@ export class StreamingResponseProcessor {
       };
       
     } catch (error) {
+      // Clean up heartbeat interval
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+      
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[StreamingResponseProcessor] Error processing streaming response:`, error);
       
@@ -335,6 +354,12 @@ export class StreamingResponseProcessor {
         error: `Stream processing failed: ${errorMessage}`
       };
     } finally {
+      // Clean up heartbeat interval if still active
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+        heartbeatInterval = null;
+      }
+      
       // Always release the stream slot
       this.releaseStreamSlot(commandId);
     }
@@ -347,7 +372,8 @@ export class StreamingResponseProcessor {
     stream: any,
     initialContent: string,
     initialTokenUsage: any,
-    chunkTimeout: number
+    chunkTimeout: number,
+    onChunkReceived?: () => void
   ): Promise<{ fullContent: string, tokenUsage: any }> {
     let fullContent = initialContent;
     let tokenUsage = { ...initialTokenUsage };
@@ -408,6 +434,11 @@ export class StreamingResponseProcessor {
           const currentTime = Date.now();
           chunkCount++;
           lastChunkTime = currentTime;
+          
+          // Update heartbeat
+          if (onChunkReceived) {
+            onChunkReceived();
+          }
           
           // Process chunk content
           if (chunk.choices?.[0]?.delta?.content) {

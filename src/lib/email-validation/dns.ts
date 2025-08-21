@@ -93,40 +93,78 @@ export async function attemptFallbackValidation(domain: string): Promise<{
   message: string;
 }> {
   const flags: string[] = [];
+  console.log(`[FALLBACK_VALIDATION] Starting fallback validation for domain: ${domain}`);
   
   try {
     // Method 1: Check for TXT records that might indicate email service (fastest check first)
+    console.log(`[FALLBACK_VALIDATION] Method 1: Checking TXT records for email indicators`);
     try {
-      const txtRecords = await withDNSTimeout(dns.resolveTxt(domain), 2000);
+      const txtRecords = await withDNSTimeout(dns.resolveTxt(domain), 3000);
+      console.log(`[FALLBACK_VALIDATION] Found ${txtRecords.length} TXT records`);
+      
       const emailRelatedTxt = txtRecords.some(record => 
-        record.some(txt => 
-          txt.toLowerCase().includes('v=spf') || 
-          txt.toLowerCase().includes('v=dmarc') ||
-          txt.toLowerCase().includes('v=dkim') ||
-          txt.toLowerCase().includes('mail') ||
-          txt.toLowerCase().includes('smtp')
-        )
+        record.some(txt => {
+          const lowerTxt = txt.toLowerCase();
+          return lowerTxt.includes('v=spf') || 
+                 lowerTxt.includes('v=dmarc') ||
+                 lowerTxt.includes('v=dkim') ||
+                 lowerTxt.includes('mail') ||
+                 lowerTxt.includes('smtp') ||
+                 lowerTxt.includes('email') ||
+                 lowerTxt.includes('mx');
+        })
       );
       
       if (emailRelatedTxt) {
+        console.log(`[FALLBACK_VALIDATION] ✅ Email-related TXT records found`);
         return {
           canReceiveEmail: true,
           fallbackMethod: 'email_txt_records',
-          confidence: 50,
+          confidence: 60,
           flags: ['email_txt_records', 'fallback_validation'],
           message: 'Email-related TXT records found (SPF/DMARC/DKIM)'
         };
       }
-    } catch (error) {
-      // TXT lookup failed, continue to next method
+      console.log(`[FALLBACK_VALIDATION] No email-related TXT records found`);
+    } catch (error: any) {
+      console.log(`[FALLBACK_VALIDATION] TXT lookup failed:`, error.code || error.message);
     }
     
-    // Method 2: Check for common mail subdomains (parallel DNS lookups)
-    const commonMailSubdomains = ['mail', 'smtp', 'mx'];
+    // Method 2: Check if domain has A record and try direct SMTP connection
+    console.log(`[FALLBACK_VALIDATION] Method 2: Checking A record and direct SMTP connection`);
+    try {
+      const aRecords = await withDNSTimeout(dns.resolve4(domain), 2000);
+      if (aRecords.length > 0) {
+        console.log(`[FALLBACK_VALIDATION] Domain has A record: ${aRecords[0]}`);
+        
+        // Try direct SMTP connection to the domain (many domains accept mail directly)
+        const connectionResult = await createSocketWithTimeout(domain, 25, 2000);
+        if (connectionResult.success && connectionResult.socket) {
+          console.log(`[FALLBACK_VALIDATION] ✅ Direct SMTP connection successful`);
+          connectionResult.socket.destroy();
+          return {
+            canReceiveEmail: true,
+            fallbackMethod: 'direct_smtp_connection',
+            confidence: 75,
+            flags: ['direct_smtp_accessible', 'fallback_validation'],
+            message: 'Domain accepts direct SMTP connections (no MX record needed)'
+          };
+        } else {
+          console.log(`[FALLBACK_VALIDATION] Direct SMTP connection failed:`, connectionResult.error);
+        }
+      }
+    } catch (error: any) {
+      console.log(`[FALLBACK_VALIDATION] A record lookup failed:`, error.code || error.message);
+    }
+    
+    // Method 3: Check for common mail subdomains (parallel DNS lookups)
+    console.log(`[FALLBACK_VALIDATION] Method 3: Checking common mail subdomains`);
+    const commonMailSubdomains = ['mail', 'smtp', 'mx', 'mx1', 'mx2'];
     const subdomainPromises = commonMailSubdomains.map(async (subdomain) => {
       try {
         const mailDomain = `${subdomain}.${domain}`;
         await withDNSTimeout(dns.resolve4(mailDomain), 1500);
+        console.log(`[FALLBACK_VALIDATION] Found mail subdomain: ${mailDomain}`);
         return { success: true, subdomain: mailDomain };
       } catch (error) {
         return { success: false, subdomain: `${subdomain}.${domain}` };
@@ -139,33 +177,79 @@ export async function attemptFallbackValidation(domain: string): Promise<{
     );
     
     if (successfulSubdomain && successfulSubdomain.status === 'fulfilled') {
+      console.log(`[FALLBACK_VALIDATION] ✅ Mail subdomain found: ${successfulSubdomain.value.subdomain}`);
       return {
         canReceiveEmail: true,
         fallbackMethod: 'mail_subdomain_detection',
-        confidence: 60,
+        confidence: 65,
         flags: ['mail_subdomain_found', 'fallback_validation'],
         message: `Mail subdomain detected: ${successfulSubdomain.value.subdomain}`
       };
     }
+    console.log(`[FALLBACK_VALIDATION] No mail subdomains found`);
     
-    // Method 3: Quick port check (only port 25, with shorter timeout)
+    // Method 4: Check for CNAME records that might point to mail services
+    console.log(`[FALLBACK_VALIDATION] Method 4: Checking CNAME records for mail services`);
     try {
-      const connectionResult = await createSocketWithTimeout(domain, 25, 1500);
-      if (connectionResult.success && connectionResult.socket) {
-        connectionResult.socket.destroy();
+      const cnameRecords = await withDNSTimeout(dns.resolveCname(domain), 2000);
+      const mailRelatedCname = cnameRecords.some(cname => {
+        const lowerCname = cname.toLowerCase();
+        return lowerCname.includes('mail') || 
+               lowerCname.includes('smtp') || 
+               lowerCname.includes('mx') ||
+               lowerCname.includes('email') ||
+               lowerCname.includes('googlemail') ||
+               lowerCname.includes('outlook') ||
+               lowerCname.includes('office365');
+      });
+      
+      if (mailRelatedCname) {
+        console.log(`[FALLBACK_VALIDATION] ✅ Mail-related CNAME found`);
         return {
           canReceiveEmail: true,
-          fallbackMethod: 'email_port_detection',
-          confidence: 70,
-          flags: ['port_25_open', 'fallback_validation'],
-          message: 'Email port 25 is accessible on domain'
+          fallbackMethod: 'mail_cname_detection',
+          confidence: 55,
+          flags: ['mail_cname_found', 'fallback_validation'],
+          message: 'CNAME points to mail service provider'
         };
       }
-    } catch (error) {
-      // Port check failed, continue
+      console.log(`[FALLBACK_VALIDATION] No mail-related CNAME records found`);
+    } catch (error: any) {
+      console.log(`[FALLBACK_VALIDATION] CNAME lookup failed:`, error.code || error.message);
+    }
+    
+    // Method 5: Check for NS records pointing to known mail providers
+    console.log(`[FALLBACK_VALIDATION] Method 5: Checking NS records for mail providers`);
+    try {
+      const nsRecords = await withDNSTimeout(dns.resolveNs(domain), 2000);
+      const mailProviderNs = nsRecords.some(ns => {
+        const lowerNs = ns.toLowerCase();
+        return lowerNs.includes('google') || 
+               lowerNs.includes('microsoft') || 
+               lowerNs.includes('outlook') ||
+               lowerNs.includes('office365') ||
+               lowerNs.includes('zoho') ||
+               lowerNs.includes('mailgun') ||
+               lowerNs.includes('sendgrid');
+      });
+      
+      if (mailProviderNs) {
+        console.log(`[FALLBACK_VALIDATION] ✅ Mail provider NS records found`);
+        return {
+          canReceiveEmail: true,
+          fallbackMethod: 'mail_provider_ns',
+          confidence: 50,
+          flags: ['mail_provider_ns', 'fallback_validation'],
+          message: 'DNS managed by known mail service provider'
+        };
+      }
+      console.log(`[FALLBACK_VALIDATION] No mail provider NS records found`);
+    } catch (error: any) {
+      console.log(`[FALLBACK_VALIDATION] NS lookup failed:`, error.code || error.message);
     }
     
     // No fallback methods succeeded
+    console.log(`[FALLBACK_VALIDATION] ❌ All fallback methods failed`);
     return {
       canReceiveEmail: false,
       fallbackMethod: 'none',
@@ -174,7 +258,8 @@ export async function attemptFallbackValidation(domain: string): Promise<{
       message: 'No fallback validation methods succeeded'
     };
     
-  } catch (error) {
+  } catch (error: any) {
+    console.error(`[FALLBACK_VALIDATION] ❌ Fallback validation error:`, error);
     return {
       canReceiveEmail: false,
       fallbackMethod: 'error',
