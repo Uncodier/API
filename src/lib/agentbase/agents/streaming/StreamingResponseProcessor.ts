@@ -10,7 +10,7 @@ export class StreamingResponseProcessor {
   private static activeStreams = new Set<string>();
   private static readonly MAX_CONCURRENT_STREAMS = 5; // Increased from 3 to 5
   private static readonly STREAM_QUEUE: Array<{
-    resolve: (value: any) => void;
+    resolve: (value: void) => void;
     reject: (error: any) => void;
     commandId: string;
     processor: () => Promise<any>;
@@ -27,6 +27,9 @@ export class StreamingResponseProcessor {
   private static socketRetryCount = new Map<string, number>();
   private static readonly MAX_SOCKET_RETRIES = 2;
   private static readonly SOCKET_RETRY_DELAY = 1000; // 1 second
+
+  // Command processing locks to prevent race conditions
+  private static commandLocks = new Map<string, Promise<any>>();
 
   /**
    * Check if circuit breaker should prevent new streams
@@ -133,9 +136,34 @@ export class StreamingResponseProcessor {
       const next = this.STREAM_QUEUE.shift()!;
       this.activeStreams.add(next.commandId);
       console.log(`[StreamingResponseProcessor] Processing queued stream for ${next.commandId}. Queue remaining: ${this.STREAM_QUEUE.length}`);
-      next.resolve();
+      next.resolve(undefined);
     }
   }
+  /**
+   * Acquire a processing lock for a command to prevent race conditions
+   */
+  private static async acquireCommandLock(commandId: string): Promise<void> {
+    // If there's already a lock for this command, wait for it
+    const existingLock = this.commandLocks.get(commandId);
+    if (existingLock) {
+      console.log(`[StreamingResponseProcessor] Waiting for existing lock on command: ${commandId}`);
+      try {
+        await existingLock;
+      } catch (error) {
+        // Ignore errors from previous processing, we'll try again
+        console.log(`[StreamingResponseProcessor] Previous lock failed, proceeding: ${commandId}`);
+      }
+    }
+  }
+
+  /**
+   * Release a processing lock for a command
+   */
+  private static releaseCommandLock(commandId: string): void {
+    this.commandLocks.delete(commandId);
+    console.log(`[StreamingResponseProcessor] Released command lock: ${commandId}`);
+  }
+
   /**
    * Procesa una respuesta streaming del LLM
    * @param stream El stream de respuesta del LLM
@@ -145,6 +173,35 @@ export class StreamingResponseProcessor {
    * @returns El resultado del comando procesado
    */
   static async processStreamingResponse(
+    stream: any, 
+    command: DbCommand, 
+    modelInfo: any,
+    fillTargetWithContent: (target: any, content: any) => any
+  ): Promise<CommandExecutionResult> {
+    const commandId = command.id || 'unknown';
+    
+    // Acquire command lock to prevent race conditions
+    await this.acquireCommandLock(commandId);
+    
+    // Create a processing promise and store it in locks
+    const processingPromise = this.processStreamingResponseInternal(
+      stream, command, modelInfo, fillTargetWithContent
+    );
+    
+    this.commandLocks.set(commandId, processingPromise);
+    
+    try {
+      const result = await processingPromise;
+      return result;
+    } finally {
+      this.releaseCommandLock(commandId);
+    }
+  }
+
+  /**
+   * Internal method that does the actual streaming processing
+   */
+  private static async processStreamingResponseInternal(
     stream: any, 
     command: DbCommand, 
     modelInfo: any,
@@ -213,7 +270,9 @@ export class StreamingResponseProcessor {
       const effectiveTimeout = Math.min(STREAM_PROCESSING_TIMEOUT, SAFE_PROCESSING_TIME);
       const streamTimeout = new Promise((_, reject) => {
         setTimeout(() => {
-          clearInterval(heartbeatInterval);
+          if (heartbeatInterval) {
+            clearInterval(heartbeatInterval);
+          }
           reject(new Error(`Stream processing timeout after ${effectiveTimeout}ms (Vercel safety limit)`));
         }, effectiveTimeout);
       });
@@ -229,8 +288,10 @@ export class StreamingResponseProcessor {
       );
       
       // Usar Promise.race para aplicar el timeout
-      const result = await Promise.race([streamProcessing, streamTimeout]);
-      clearInterval(heartbeatInterval); // Clean up heartbeat
+      const result = await Promise.race([streamProcessing, streamTimeout]) as { fullContent: string; tokenUsage: any };
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval); // Clean up heartbeat
+      }
       fullContent = result.fullContent;
       tokenUsage = result.tokenUsage;
       
@@ -253,8 +314,13 @@ export class StreamingResponseProcessor {
       // Guardar en caché para futuras consultas
       CommandCache.cacheCommand(command.id, {
         ...command,
-        results: results
+        results: results,
+        status: 'completed' // Asegurar que el estado en caché sea correcto
       });
+      
+      console.log(`✅ [StreamingResponseProcessor] Comando procesado exitosamente: ${commandId}`);
+      console.log(`📊 [StreamingResponseProcessor] Tokens: input=${tokenUsage.prompt_tokens}, output=${tokenUsage.completion_tokens}`);
+      console.log(`📋 [StreamingResponseProcessor] Resultados: ${results.length} elementos`);
       
       return {
         status: 'completed',

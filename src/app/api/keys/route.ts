@@ -100,6 +100,11 @@ export async function POST(request: NextRequest) {
         data: apiKeyData
       });
     } catch (error) {
+      console.error('[Keys API] Error creating API key:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        hasEncryptionKey: !!process.env.ENCRYPTION_KEY
+      });
+      
       return NextResponse.json(
         {
           success: false,

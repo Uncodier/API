@@ -66,6 +66,11 @@ export class ApiKeyService {
     if (!encryptionKey) {
       throw new Error("Missing ENCRYPTION_KEY environment variable");
     }
+
+    // Check if Web Crypto API is available
+    if (typeof crypto === 'undefined' || !crypto.subtle) {
+      throw new Error("Web Crypto API is not available in this environment");
+    }
     
     try {
       const encoder = new TextEncoder();
@@ -96,8 +101,12 @@ export class ApiKeyService {
       // Convertir a base64
       return btoa(String.fromCharCode(...Array.from(result)));
     } catch (error) {
-      console.error('[ApiKeyService] Error encrypting:', error);
-      throw new Error("Failed to encrypt API key");
+      console.error('[ApiKeyService] Error encrypting:', {
+        error: error instanceof Error ? error.message : 'Unknown error',
+        cryptoAvailable: typeof crypto !== 'undefined',
+        cryptoSubtleAvailable: typeof crypto !== 'undefined' && !!crypto.subtle
+      });
+      throw new Error(`Failed to encrypt API key: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 
@@ -215,6 +224,12 @@ export class ApiKeyService {
       .single();
 
     if (error) {
+      console.error('[ApiKeyService] Database insert error:', {
+        error: error.message,
+        code: error.code,
+        details: error.details,
+        hint: error.hint
+      });
       throw new Error(`Failed to create API key: ${error.message}`);
     }
 

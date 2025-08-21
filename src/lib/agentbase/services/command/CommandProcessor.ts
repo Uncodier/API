@@ -125,40 +125,10 @@ export class CommandProcessor {
       }
       // Marcar como completado si no hay errores
       else if (command.status !== 'failed') {
-        console.log(`🎯 [CommandProcessor] Actualizando estado final a 'completed' para comando: ${command.id}`);
-        
-        try {
-          await this.commandService.updateStatus(command.id, 'completed');
-          command.status = 'completed';
-          console.log(`✅ [CommandProcessor] Estado actualizado exitosamente a 'completed' para comando: ${command.id}`);
-          
-          // Verificar que la actualización se persistió correctamente
-          const verificationCommand = await this.commandService.getCommandById(command.id);
-          if (verificationCommand && verificationCommand.status === 'completed') {
-            console.log(`✅ [CommandProcessor] Verificación exitosa: comando ${command.id} está marcado como 'completed' en BD`);
-          } else {
-            console.warn(`⚠️ [CommandProcessor] Posible problema: comando ${command.id} no se verifica como 'completed' después de actualización`);
-            // Intentar actualización directa como fallback
-            const dbUuid = CommandStore.getMappedId(command.id);
-            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-              await DatabaseAdapter.updateCommand(dbUuid, { status: 'completed' });
-              console.log(`🔧 [CommandProcessor] Fallback: Estado actualizado directamente en BD para UUID: ${dbUuid}`);
-            }
-          }
-        } catch (statusUpdateError) {
-          console.error(`❌ [CommandProcessor] Error crítico al actualizar estado:`, statusUpdateError);
-          // Intentar actualización directa como último recurso
-          try {
-            const dbUuid = CommandStore.getMappedId(command.id);
-            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
-              await DatabaseAdapter.updateCommand(dbUuid, { status: 'completed' });
-              command.status = 'completed';
-              console.log(`🔧 [CommandProcessor] Último recurso: Estado actualizado directamente para UUID: ${dbUuid}`);
-            }
-          } catch (fallbackError) {
-            console.error(`❌ [CommandProcessor] Error en último recurso:`, fallbackError);
-          }
-        }
+        console.log(`🎯 [CommandProcessor] Marcando comando como completado: ${command.id}`);
+        command.status = 'completed';
+        // NOTE: El estado se actualizará en la BD en processTargets() junto con los resultados
+        // Esto evita condiciones de carrera por múltiples actualizaciones
       }
       
       // Asegurar que el agent_background se mantiene al final del procesamiento
@@ -496,29 +466,51 @@ export class CommandProcessor {
       updatedCommand.input_tokens = (command.input_tokens || 0) + (targetProcessorResults.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (targetProcessorResults.outputTokens || 0);
       
-      // Actualizar los resultados y estado en base de datos a través del CommandService
+      // SINGLE POINT OF DATABASE UPDATE - Evita condiciones de carrera
+      // Actualizar los resultados y estado en base de datos en una sola operación atómica
       try {
         if (updatedCommand.results && updatedCommand.results.length > 0) {
+          console.log(`💾 [CommandProcessor] Actualizando comando completo en BD: ${command.id} -> ${updatedCommand.status}`);
+          
           await this.commandService.updateCommand(command.id, {
             results: updatedCommand.results,
             input_tokens: updatedCommand.input_tokens,
             output_tokens: updatedCommand.output_tokens,
-            status: updatedCommand.status, // CRITICAL FIX: Include status in database update
+            status: updatedCommand.status, // Estado incluido en la actualización atómica
             error: updatedCommand.error // Include error if present
           });
-          console.log(`💾 [CommandProcessor] Resultados y estado (${updatedCommand.status}) actualizados en base de datos`);
+          
+          console.log(`✅ [CommandProcessor] Comando actualizado exitosamente en BD: ${updatedCommand.status}`);
+          
+        } else if (updatedCommand.status === 'completed' || updatedCommand.status === 'failed') {
+          // Si no hay resultados pero el estado cambió, actualizar solo el estado
+          console.log(`🔄 [CommandProcessor] Actualizando solo estado en BD: ${command.id} -> ${updatedCommand.status}`);
+          
+          await this.commandService.updateStatus(command.id, updatedCommand.status, updatedCommand.error);
+          console.log(`✅ [CommandProcessor] Estado actualizado exitosamente en BD: ${updatedCommand.status}`);
         }
-      } catch (error) {
-        console.error(`❌ [CommandProcessor] Error al actualizar resultados en BD:`, error);
         
-        // FALLBACK: If database update fails but we have a completed status, try to update status separately
+      } catch (error) {
+        console.error(`❌ [CommandProcessor] Error crítico al actualizar comando en BD:`, error);
+        
+        // FALLBACK: Intentar actualización directa como último recurso
         if (updatedCommand.status === 'completed' || updatedCommand.status === 'failed') {
           try {
-            console.log(`🔧 [CommandProcessor] Fallback: Intentando actualizar solo el estado a '${updatedCommand.status}'`);
-            await this.commandService.updateStatus(command.id, updatedCommand.status, updatedCommand.error);
-            console.log(`✅ [CommandProcessor] Fallback exitoso: Estado actualizado a '${updatedCommand.status}'`);
-          } catch (statusError) {
-            console.error(`❌ [CommandProcessor] Fallback falló al actualizar estado:`, statusError);
+            console.log(`🔧 [CommandProcessor] Fallback: Actualización directa en BD`);
+            const dbUuid = CommandStore.getMappedId(command.id);
+            
+            if (dbUuid && DatabaseAdapter.isValidUUID(dbUuid)) {
+              await DatabaseAdapter.updateCommand(dbUuid, { 
+                status: updatedCommand.status,
+                ...(updatedCommand.results && { results: updatedCommand.results }),
+                ...(updatedCommand.error && { error: updatedCommand.error })
+              });
+              console.log(`✅ [CommandProcessor] Fallback exitoso: UUID ${dbUuid} -> ${updatedCommand.status}`);
+            } else {
+              console.warn(`⚠️ [CommandProcessor] No se pudo obtener UUID válido para fallback: ${dbUuid}`);
+            }
+          } catch (fallbackError) {
+            console.error(`❌ [CommandProcessor] Fallback falló completamente:`, fallbackError);
           }
         }
       }
