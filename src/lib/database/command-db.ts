@@ -1,4 +1,5 @@
 import { supabaseAdmin } from './supabase-client'
+import { circuitBreakers } from '@/lib/utils/circuit-breaker'
 
 /**
  * Type for command status enum
@@ -249,44 +250,94 @@ export async function updateCommandStatus(
 }
 
 /**
- * Gets a command by ID
+ * Retry function with exponential backoff
+ */
+async function retryWithBackoff<T>(
+  operation: () => Promise<T>,
+  maxRetries: number = 3,
+  baseDelay: number = 1000,
+  operationName: string = 'operation'
+): Promise<T> {
+  let lastError: Error;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      return await operation();
+    } catch (error: any) {
+      lastError = error;
+      
+      // Don't retry for certain error types
+      if (error.code === 'PGRST116' || error.message?.includes('not found')) {
+        throw error;
+      }
+      
+      if (attempt === maxRetries) {
+        console.error(`❌ [${operationName}] Final attempt failed after ${maxRetries} retries:`, error);
+        throw error;
+      }
+      
+      const delay = baseDelay * Math.pow(2, attempt - 1);
+      console.warn(`⚠️ [${operationName}] Attempt ${attempt}/${maxRetries} failed, retrying in ${delay}ms:`, error.message);
+      
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+  
+  throw lastError!;
+}
+
+/**
+ * Gets a command by ID with retry logic
  * 
  * @param commandId Command ID
  * @returns The command or null if not found
  */
 export async function getCommandById(commandId: string): Promise<DbCommand | null> {
-  try {
-    // Asegurarnos de seleccionar explícitamente agent_background
-    const { data, error } = await supabaseAdmin
-      .from('commands')
-      .select('*, agent_background')
-      .eq('id', commandId)
-      .single();
-    
-    if (error) {
-      if (error.code === 'PGRST116') {
-        return null; // Not found
+  return circuitBreakers.database.execute(async () => {
+    return retryWithBackoff(async () => {
+      try {
+        // Asegurarnos de seleccionar explícitamente agent_background
+        const { data, error } = await supabaseAdmin
+          .from('commands')
+          .select('*, agent_background')
+          .eq('id', commandId)
+          .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          return null; // Not found
+        }
+        console.error('Error getting command by ID:', {
+          message: error.message,
+          details: error.details || 'No additional details',
+          hint: error.hint || '',
+          code: error.code || ''
+        });
+        throw new Error(`Error getting command: ${error.message}`);
       }
-      console.error('Error getting command by ID:', error);
-      throw new Error(`Error getting command: ${error.message}`);
-    }
-    
-    // Log if agent_background is present
-    if (data && data.agent_background) {
-      console.log(`📋 Command ${commandId} has agent_background of length: ${data.agent_background.length}`);
-      // Verificar que el agent_background no esté vacío o corrupto
-      if (data.agent_background.length < 10) {
-        console.warn(`⚠️ ADVERTENCIA: agent_background es muy corto (${data.agent_background.length} caracteres)`);
+      
+      // Log if agent_background is present
+      if (data && data.agent_background) {
+        console.log(`📋 Command ${commandId} has agent_background of length: ${data.agent_background.length}`);
+        // Verificar que el agent_background no esté vacío o corrupto
+        if (data.agent_background.length < 10) {
+          console.warn(`⚠️ ADVERTENCIA: agent_background es muy corto (${data.agent_background.length} caracteres)`);
+        }
+      } else {
+        console.log(`📋 Command ${commandId} does not have agent_background`);
       }
-    } else {
-      console.log(`📋 Command ${commandId} does not have agent_background`);
+      
+      return data;
+    } catch (error: any) {
+      console.error('Error in getCommandById:', {
+        message: error.message,
+        details: error instanceof Error ? error.stack : String(error),
+        commandId
+      });
+      throw error;
     }
-    
-    return data;
-  } catch (error: any) {
-    console.error('Error in getCommandById:', error);
-    throw new Error(`Error getting command: ${error.message}`);
-  }
+  }, 3, 1000, `getCommandById(${commandId})`);
+  });
 }
 
 /**

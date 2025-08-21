@@ -3,11 +3,12 @@
  */
 import { DbCommand, CommandExecutionResult } from '../../models/types';
 import { CommandCache } from '../../services/command/CommandCache';
+import { StreamingMonitor } from '../../utils/StreamingMonitor';
 
 export class StreamingResponseProcessor {
   // Concurrency control to prevent resource exhaustion
   private static activeStreams = new Set<string>();
-  private static readonly MAX_CONCURRENT_STREAMS = 3;
+  private static readonly MAX_CONCURRENT_STREAMS = 5; // Increased from 3 to 5
   private static readonly STREAM_QUEUE: Array<{
     resolve: (value: any) => void;
     reject: (error: any) => void;
@@ -15,12 +16,12 @@ export class StreamingResponseProcessor {
     processor: () => Promise<any>;
   }> = [];
 
-  // Circuit breaker for streaming failures
+  // Circuit breaker for streaming failures - more lenient settings
   private static failureCount = 0;
   private static lastFailureTime = 0;
-  private static readonly MAX_FAILURES = 5;
-  private static readonly FAILURE_WINDOW = 5 * 60 * 1000; // 5 minutes
-  private static readonly CIRCUIT_BREAKER_TIMEOUT = 2 * 60 * 1000; // 2 minutes
+  private static readonly MAX_FAILURES = 8; // Increased from 5 to 8
+  private static readonly FAILURE_WINDOW = 10 * 60 * 1000; // 10 minutes (increased from 5)
+  private static readonly CIRCUIT_BREAKER_TIMEOUT = 1 * 60 * 1000; // 1 minute (reduced from 2)
 
   // Socket error retry tracking
   private static socketRetryCount = new Map<string, number>();
@@ -171,32 +172,50 @@ export class StreamingResponseProcessor {
     // Acquire stream slot with concurrency control
     await this.acquireStreamSlot(commandId);
     
+    // Start monitoring this stream
+    StreamingMonitor.startMonitoring(commandId);
+    
     let fullContent = '';
     let tokenUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 };
     let heartbeatInterval: NodeJS.Timeout | null = null;
     
-    // Timeout específico para el procesamiento del stream (más agresivo para detectar colgados)
-    const STREAM_PROCESSING_TIMEOUT = 8 * 60 * 1000; // 8 minutos (reducido de 10)
-    const CHUNK_TIMEOUT = 90 * 1000; // 90 segundos entre chunks (reducido de 2 minutos)
+    // Timeout específico para el procesamiento del stream - DEBE ser menor que Vercel maxDuration
+    const STREAM_PROCESSING_TIMEOUT = 4 * 60 * 1000; // 4 minutos (menor que 5min de Vercel)
+    const CHUNK_TIMEOUT = 30 * 1000; // 30 segundos entre chunks (más agresivo)
     
     try {
       console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
+      
+      // Early termination check to prevent Vercel timeout
+      const startTime = Date.now();
+      const VERCEL_SAFETY_MARGIN = 30 * 1000; // 30 seconds before Vercel timeout
+      const VERCEL_MAX_DURATION = 300 * 1000; // 5 minutes
+      const SAFE_PROCESSING_TIME = VERCEL_MAX_DURATION - VERCEL_SAFETY_MARGIN;
       
       // Heartbeat para detectar streams colgados
       let lastHeartbeat = Date.now();
       heartbeatInterval = setInterval(() => {
         const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
+        const totalElapsed = Date.now() - startTime;
+        
         if (timeSinceLastHeartbeat > CHUNK_TIMEOUT * 1.5) {
           console.warn(`[StreamingResponseProcessor] ⚠️ Stream heartbeat warning: ${timeSinceLastHeartbeat}ms since last activity for ${commandId}`);
         }
-      }, 30000); // Check every 30 seconds
+        
+        // Early termination warning
+        if (totalElapsed > SAFE_PROCESSING_TIME * 0.8) {
+          console.warn(`[StreamingResponseProcessor] ⚠️ Approaching Vercel timeout limit: ${totalElapsed}ms elapsed for ${commandId}`);
+        }
+      }, 15000); // Check every 15 seconds (more frequent monitoring)
       
       // Crear un timeout general para todo el procesamiento del stream
+      // Use the safer timeout to prevent Vercel timeout
+      const effectiveTimeout = Math.min(STREAM_PROCESSING_TIMEOUT, SAFE_PROCESSING_TIME);
       const streamTimeout = new Promise((_, reject) => {
         setTimeout(() => {
           clearInterval(heartbeatInterval);
-          reject(new Error(`Stream processing timeout after ${STREAM_PROCESSING_TIMEOUT}ms`));
-        }, STREAM_PROCESSING_TIMEOUT);
+          reject(new Error(`Stream processing timeout after ${effectiveTimeout}ms (Vercel safety limit)`));
+        }, effectiveTimeout);
       });
       
       // Procesar el stream con timeout
@@ -205,6 +224,7 @@ export class StreamingResponseProcessor {
         fullContent, 
         tokenUsage, 
         CHUNK_TIMEOUT,
+        commandId, // Pass commandId for monitoring
         () => { lastHeartbeat = Date.now(); } // Update heartbeat on chunk received
       );
       
@@ -216,6 +236,9 @@ export class StreamingResponseProcessor {
       
       console.log(`[StreamingResponseProcessor] Stream completed. Total content length: ${fullContent.length}`);
       console.log(`[StreamingResponseProcessor] Final content preview: ${fullContent.substring(0, 200)}...`);
+      
+      // Complete monitoring with success
+      StreamingMonitor.completeMonitoring(commandId, 'completed');
       
       // Process the accumulated content same as non-streaming response
       let results = StreamingResponseProcessor.processStreamContent(fullContent, command, fillTargetWithContent);
@@ -251,6 +274,9 @@ export class StreamingResponseProcessor {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       console.error(`[StreamingResponseProcessor] Error processing streaming response:`, error);
       
+      // Record error in monitoring
+      StreamingMonitor.recordError(commandId, errorMessage);
+      
       // Record failure for circuit breaker
       this.recordFailure();
       
@@ -273,6 +299,7 @@ export class StreamingResponseProcessor {
         errorType = 'GENERAL_TIMEOUT';
         isRecoverable = fullContent.length > 100; // Si tenemos contenido parcial substancial
         console.warn(`[StreamingResponseProcessor] ⏰ Timeout general - contenido parcial: ${fullContent.length} chars`);
+        StreamingMonitor.recordTimeout(commandId);
       } else if (errorMessage.includes('terminated') || 
                  errorMessage.includes('UND_ERR_SOCKET') || 
                  errorMessage.includes('other side closed') ||
@@ -345,6 +372,9 @@ export class StreamingResponseProcessor {
         updated_at: new Date().toISOString()
       };
       
+      // Complete monitoring with failure
+      StreamingMonitor.completeMonitoring(commandId, 'failed');
+      
       return {
         status: 'failed',
         results: errorResults,
@@ -373,6 +403,7 @@ export class StreamingResponseProcessor {
     initialContent: string,
     initialTokenUsage: any,
     chunkTimeout: number,
+    commandId: string, // Add commandId parameter
     onChunkReceived?: () => void
   ): Promise<{ fullContent: string, tokenUsage: any }> {
     let fullContent = initialContent;
@@ -380,6 +411,7 @@ export class StreamingResponseProcessor {
     let lastChunkTime = Date.now();
     let chunkCount = 0;
     let currentTimeoutId: NodeJS.Timeout | null = null;
+    const startTime = Date.now(); // Add startTime for logging
     
     console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms`);
     
@@ -445,9 +477,14 @@ export class StreamingResponseProcessor {
             const deltaContent = chunk.choices[0].delta.content;
             fullContent += deltaContent;
             
+            // Record chunk in monitoring
+            const chunkDelay = currentTime - lastChunkTime;
+            StreamingMonitor.recordChunk(commandId, deltaContent.length, chunkDelay);
+            
             // Log progress más frecuente para detectar problemas
-            if (fullContent.length % 500 === 0) {
-              console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received in ${chunkCount} chunks...`);
+            if (fullContent.length % 1000 === 0 || chunkCount % 100 === 0) {
+              const elapsed = Date.now() - startTime;
+              console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received in ${chunkCount} chunks (${elapsed}ms elapsed)...`);
             }
           }
           

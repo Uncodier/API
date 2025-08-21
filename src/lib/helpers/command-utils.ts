@@ -65,11 +65,13 @@ export async function getCommandDbUuid(internalId: string): Promise<string | nul
   }
 }
 
-// Función para esperar a que un comando se complete
+// Función para esperar a que un comando se complete con mejor manejo de errores
 export async function waitForCommandCompletion(commandId: string, maxAttempts = 120, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;
+  let consecutiveErrors = 0;
+  let stuckInPendingCount = 0;
   
   console.log(`⏳ Esperando a que se complete el comando ${commandId}...`);
   
@@ -86,11 +88,20 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
         // Luego obtener desde BD para estado actualizado
         executedCommand = await commandService.getCommandById(commandId);
         
+        // Reset consecutive errors on successful fetch
+        consecutiveErrors = 0;
+        
         if (!executedCommand) {
-          console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);
-          clearInterval(checkInterval);
-          resolve({command: null, dbUuid: null, completed: false});
-          return;
+          console.log(`⚠️ No se pudo encontrar el comando ${commandId} (intento ${attempts}/${maxAttempts})`);
+          
+          // If we can't find the command for too long, give up
+          if (attempts > maxAttempts * 0.3) {
+            console.error(`❌ Comando ${commandId} no encontrado después de ${attempts} intentos`);
+            clearInterval(checkInterval);
+            resolve({command: null, dbUuid: null, completed: false});
+            return;
+          }
+          return; // Continue trying
         }
         
         // Si hay comando en caché con agent_background, fusionar con el de BD
@@ -103,6 +114,26 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
         if (executedCommand.metadata && executedCommand.metadata.dbUuid) {
           dbUuid = executedCommand.metadata.dbUuid as string;
           console.log(`🔑 UUID de base de datos encontrado en metadata: ${dbUuid}`);
+        }
+        
+        // Check if command is stuck in pending state
+        if (executedCommand.status === 'pending') {
+          stuckInPendingCount++;
+          
+          // If stuck in pending for too long, consider it failed
+          if (stuckInPendingCount > maxAttempts * 0.7) {
+            console.warn(`⚠️ Comando ${commandId} está estancado en 'pending' por ${stuckInPendingCount} intentos`);
+            
+            // Check if it has agent_background - if not, it might be truly stuck
+            if (!executedCommand.agent_background && !cachedCommand?.agent_background) {
+              console.error(`❌ Comando ${commandId} estancado sin agent_background - considerando como fallido`);
+              clearInterval(checkInterval);
+              resolve({command: executedCommand, dbUuid: dbUuid, completed: false});
+              return;
+            }
+          }
+        } else {
+          stuckInPendingCount = 0; // Reset if not pending
         }
         
         // Verificar si el comando falló explícitamente
@@ -152,7 +183,8 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
         console.log(`⏳ Comando ${commandId} aún en ejecución (estado: ${executedCommand.status}), intento ${attempts}/${maxAttempts}`);
         
         if (attempts >= maxAttempts) {
-          console.log(`⏰ Tiempo de espera agotado para el comando ${commandId}`);
+          console.error(`⏰ Tiempo de espera agotado para el comando ${commandId} después de ${maxAttempts} intentos`);
+          console.error(`📊 Estadísticas finales: stuckInPending=${stuckInPendingCount}, consecutiveErrors=${consecutiveErrors}`);
           
           // Como último recurso, verificar una vez más si el comando tiene resultados
           // aunque no se haya actualizado su estado
@@ -173,9 +205,26 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
           resolve({command: executedCommand, dbUuid, completed: false});
         }
       } catch (error) {
-        console.error(`Error al verificar estado del comando ${commandId}:`, error);
-        clearInterval(checkInterval);
-        resolve({command: null, dbUuid: null, completed: false});
+        consecutiveErrors++;
+        console.error(`❌ Error al verificar estado del comando ${commandId} (intento ${attempts}/${maxAttempts}, errores consecutivos: ${consecutiveErrors}):`, error);
+        
+        // If we have too many consecutive errors, give up
+        if (consecutiveErrors >= 5) {
+          console.error(`❌ Demasiados errores consecutivos (${consecutiveErrors}) para comando ${commandId}, abandonando`);
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid: dbUuid, completed: false});
+          return;
+        }
+        
+        // If we've reached max attempts, give up
+        if (attempts >= maxAttempts) {
+          console.error(`❌ Tiempo de espera agotado con errores para comando ${commandId}`);
+          clearInterval(checkInterval);
+          resolve({command: executedCommand, dbUuid: dbUuid, completed: false});
+          return;
+        }
+        
+        // Continue trying on transient errors
       }
     }, delayMs);
   });
