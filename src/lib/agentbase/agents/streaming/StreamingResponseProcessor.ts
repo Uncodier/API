@@ -238,7 +238,7 @@ export class StreamingResponseProcessor {
     
     // Timeout específico para el procesamiento del stream - DEBE ser menor que Vercel maxDuration
     const STREAM_PROCESSING_TIMEOUT = 4 * 60 * 1000; // 4 minutos (menor que 5min de Vercel)
-    const CHUNK_TIMEOUT = 30 * 1000; // 30 segundos entre chunks (más agresivo)
+    const CHUNK_TIMEOUT = 90 * 1000; // 90 segundos entre chunks (más tolerante para respuestas complejas)
     
     try {
       console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
@@ -255,7 +255,7 @@ export class StreamingResponseProcessor {
         const timeSinceLastHeartbeat = Date.now() - lastHeartbeat;
         const totalElapsed = Date.now() - startTime;
         
-        if (timeSinceLastHeartbeat > CHUNK_TIMEOUT * 1.5) {
+        if (timeSinceLastHeartbeat > CHUNK_TIMEOUT * 0.8) {
           console.warn(`[StreamingResponseProcessor] ⚠️ Stream heartbeat warning: ${timeSinceLastHeartbeat}ms since last activity for ${commandId}`);
         }
         
@@ -263,7 +263,7 @@ export class StreamingResponseProcessor {
         if (totalElapsed > SAFE_PROCESSING_TIME * 0.8) {
           console.warn(`[StreamingResponseProcessor] ⚠️ Approaching Vercel timeout limit: ${totalElapsed}ms elapsed for ${commandId}`);
         }
-      }, 15000); // Check every 15 seconds (more frequent monitoring)
+      }, 30000); // Check every 30 seconds (balanced monitoring)
       
       // Crear un timeout general para todo el procesamiento del stream
       // Use the safer timeout to prevent Vercel timeout
@@ -462,6 +462,178 @@ export class StreamingResponseProcessor {
   }
 
   /**
+   * Process Server-Sent Events stream (Portkey format)
+   */
+  private static async processSSEStream(
+    stream: any,
+    initialContent: string,
+    initialTokenUsage: any,
+    chunkTimeout: number,
+    commandId: string,
+    onChunkReceived?: () => void
+  ): Promise<{ fullContent: string, tokenUsage: any }> {
+    let fullContent = initialContent;
+    let tokenUsage = { ...initialTokenUsage };
+    let chunkCount = 0;
+    let lastChunkTime = Date.now();
+    const startTime = Date.now();
+    
+    console.log(`[StreamingResponseProcessor] 🌊 Processing SSE stream with timeout: ${chunkTimeout}ms`);
+    
+    return new Promise((resolve, reject) => {
+      let timeoutId: NodeJS.Timeout | null = null;
+      let isCompleted = false;
+      
+      // Set up chunk timeout
+      const resetTimeout = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+        }
+        timeoutId = setTimeout(() => {
+          if (!isCompleted) {
+            const timeSinceLastChunk = Date.now() - lastChunkTime;
+            console.warn(`[StreamingResponseProcessor] ⏰ SSE timeout after ${timeSinceLastChunk}ms`);
+            console.warn(`[StreamingResponseProcessor] 📊 SSE stats: ${chunkCount} chunks, ${fullContent.length} chars`);
+            isCompleted = true;
+            reject(new Error(`SSE timeout: No data received for ${timeSinceLastChunk}ms`));
+          }
+        }, chunkTimeout);
+      };
+      
+      resetTimeout();
+      
+      // Handle SSE data events
+      stream.on('data', (chunk: any) => {
+        if (isCompleted) return;
+        
+        chunkCount++;
+        lastChunkTime = Date.now();
+        resetTimeout();
+        
+        if (onChunkReceived) {
+          onChunkReceived();
+        }
+        
+        console.log(`[StreamingResponseProcessor] 📦 SSE chunk ${chunkCount}: ${JSON.stringify(chunk).substring(0, 200)}...`);
+        
+        try {
+          // Parse SSE data
+          let parsedChunk;
+          if (typeof chunk === 'string') {
+            // Handle raw SSE format: "data: {...}"
+            const lines = chunk.split('\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const data = line.substring(6).trim();
+                if (data === '[DONE]') {
+                  console.log(`[StreamingResponseProcessor] 🏁 SSE stream completed with [DONE]`);
+                  isCompleted = true;
+                  if (timeoutId) clearTimeout(timeoutId);
+                  resolve({ fullContent, tokenUsage });
+                  return;
+                }
+                try {
+                  parsedChunk = JSON.parse(data);
+                } catch (e) {
+                  console.warn(`[StreamingResponseProcessor] Failed to parse SSE data: ${data}`);
+                  continue;
+                }
+              }
+            }
+          } else if (typeof chunk === 'object' && chunk !== null) {
+            // Handle already parsed chunk objects (Portkey format)
+            parsedChunk = chunk;
+          } else {
+            console.warn(`[StreamingResponseProcessor] Unknown chunk format: ${typeof chunk}`);
+            return; // Skip this chunk
+          }
+          
+          // Handle different chunk types according to OpenAI streaming format
+          if (!parsedChunk) {
+            return; // Skip if parsing failed
+          }
+          
+          // Check if this is the final usage chunk (empty choices array)
+          if (Array.isArray(parsedChunk.choices) && parsedChunk.choices.length === 0) {
+            console.log(`[StreamingResponseProcessor] 📊 Final usage chunk received`);
+            if (parsedChunk.usage) {
+              tokenUsage = {
+                prompt_tokens: parsedChunk.usage.prompt_tokens || 0,
+                completion_tokens: parsedChunk.usage.completion_tokens || 0,
+                total_tokens: parsedChunk.usage.total_tokens || 0
+              };
+              console.log(`[StreamingResponseProcessor] 📊 Final token usage: ${JSON.stringify(tokenUsage)}`);
+            }
+            isCompleted = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            resolve({ fullContent, tokenUsage });
+            return;
+          }
+          
+          // Extract content from delta
+          if (parsedChunk?.choices?.[0]?.delta?.content) {
+            const deltaContent = parsedChunk.choices[0].delta.content;
+            fullContent += deltaContent;
+            console.log(`[StreamingResponseProcessor] ✅ SSE content chunk ${chunkCount}: +${deltaContent.length} chars (total: ${fullContent.length})`);
+            
+            // Record chunk in monitoring
+            StreamingMonitor.recordChunk(commandId, deltaContent.length, Date.now() - lastChunkTime);
+          } 
+          
+          // Check for finish_reason in delta (indicates end of content)
+          if (parsedChunk?.choices?.[0]?.delta?.finish_reason || parsedChunk?.choices?.[0]?.finish_reason) {
+            const finishReason = parsedChunk.choices[0].delta?.finish_reason || parsedChunk.choices[0].finish_reason;
+            console.log(`[StreamingResponseProcessor] 🏁 SSE stream finishing with reason: ${finishReason}`);
+            
+            // Set a shorter timeout for the final usage chunk
+            if (timeoutId) clearTimeout(timeoutId);
+            timeoutId = setTimeout(() => {
+              if (!isCompleted) {
+                console.warn(`[StreamingResponseProcessor] ⏰ Timeout waiting for final usage chunk, completing anyway`);
+                isCompleted = true;
+                resolve({ fullContent, tokenUsage });
+              }
+            }, 5000); // 5 seconds to wait for usage chunk
+          }
+          
+          // Extract usage if available
+          if (parsedChunk?.usage) {
+            tokenUsage = {
+              prompt_tokens: parsedChunk.usage.prompt_tokens || 0,
+              completion_tokens: parsedChunk.usage.completion_tokens || 0,
+              total_tokens: parsedChunk.usage.total_tokens || 0
+            };
+            console.log(`[StreamingResponseProcessor] 📊 SSE token usage: ${JSON.stringify(tokenUsage)}`);
+          }
+          
+        } catch (error) {
+          console.error(`[StreamingResponseProcessor] Error processing SSE chunk:`, error);
+        }
+      });
+      
+      // Handle stream end
+      stream.on('end', () => {
+        if (!isCompleted) {
+          console.log(`[StreamingResponseProcessor] 🏁 SSE stream ended naturally`);
+          isCompleted = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          resolve({ fullContent, tokenUsage });
+        }
+      });
+      
+      // Handle stream errors
+      stream.on('error', (error: any) => {
+        if (!isCompleted) {
+          console.error(`[StreamingResponseProcessor] SSE stream error:`, error);
+          isCompleted = true;
+          if (timeoutId) clearTimeout(timeoutId);
+          reject(error);
+        }
+      });
+    });
+  }
+
+  /**
    * Procesa el stream con timeout entre chunks para detectar streams colgados
    */
   private static async processStreamWithChunkTimeout(
@@ -477,14 +649,44 @@ export class StreamingResponseProcessor {
     let lastChunkTime = Date.now();
     let chunkCount = 0;
     let currentTimeoutId: NodeJS.Timeout | null = null;
+    let adaptiveTimeout = chunkTimeout; // Start with base timeout
     const startTime = Date.now(); // Add startTime for logging
     
-    console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms`);
+    console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms (${chunkTimeout/1000}s)`);
+    console.log(`[StreamingResponseProcessor] 🔍 Stream object type: ${typeof stream}, has asyncIterator: ${!!stream[Symbol.asyncIterator]}`);
     
     try {
-      // Use an approach that properly handles the async iterator with timeout
+      // Check if this is a Server-Sent Events stream (Portkey format)
+      // Portkey streams are typically Node.js ReadableStreams with event emitters
+      const hasAsyncIterator = !!stream[Symbol.asyncIterator];
+      const hasEventEmitter = typeof stream.on === 'function';
+      const hasReadableInterface = typeof stream.pipe === 'function' || typeof stream.read === 'function';
+      
+      console.log(`[StreamingResponseProcessor] 🔍 Stream analysis: asyncIterator=${hasAsyncIterator}, eventEmitter=${hasEventEmitter}, readable=${hasReadableInterface}`);
+      
+      const isSSEStream = hasEventEmitter && hasReadableInterface && !hasAsyncIterator;
+      
+      if (isSSEStream) {
+        console.log(`[StreamingResponseProcessor] 🌊 Detected SSE stream, using SSE processing`);
+        return await this.processSSEStream(stream, initialContent, initialTokenUsage, chunkTimeout, commandId, onChunkReceived);
+      }
+      
+      // Fallback: If it has both AsyncIterator and EventEmitter, try SSE first, then AsyncIterator
+      if (hasAsyncIterator && hasEventEmitter) {
+        console.log(`[StreamingResponseProcessor] 🔄 Stream has both interfaces, trying SSE first`);
+        try {
+          return await this.processSSEStream(stream, initialContent, initialTokenUsage, chunkTimeout, commandId, onChunkReceived);
+        } catch (sseError) {
+          console.warn(`[StreamingResponseProcessor] SSE processing failed, falling back to AsyncIterator:`, sseError);
+          // Continue to AsyncIterator processing below
+        }
+      }
+      
+      // Use standard async iterator approach for other streams
       const streamProcessingPromise = (async () => {
+        console.log(`[StreamingResponseProcessor] 🚀 Iniciando iteración del stream...`);
         const streamIterator = stream[Symbol.asyncIterator]();
+        console.log(`[StreamingResponseProcessor] ✅ Stream iterator creado exitosamente`);
         
         while (true) {
           // Clear any existing timeout
@@ -497,8 +699,12 @@ export class StreamingResponseProcessor {
           const chunkTimeoutPromise = new Promise<never>((_, reject) => {
             currentTimeoutId = setTimeout(() => {
               const timeSinceLastChunk = Date.now() - lastChunkTime;
-              reject(new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms`));
-            }, chunkTimeout);
+              const totalElapsed = Date.now() - startTime;
+              console.warn(`[StreamingResponseProcessor] ⏰ Chunk timeout triggered after ${timeSinceLastChunk}ms (${(timeSinceLastChunk/1000).toFixed(1)}s)`);
+              console.warn(`[StreamingResponseProcessor] 📊 Stream stats: ${chunkCount} chunks, ${fullContent.length} chars, ${(totalElapsed/1000).toFixed(1)}s total`);
+              console.warn(`[StreamingResponseProcessor] 🔧 Using adaptive timeout: ${adaptiveTimeout}ms (${(adaptiveTimeout/1000).toFixed(1)}s)`);
+              reject(new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms (${(timeSinceLastChunk/1000).toFixed(1)}s)`));
+            }, adaptiveTimeout);
           });
           
           // Race between getting next chunk and timeout
@@ -525,6 +731,8 @@ export class StreamingResponseProcessor {
           
           // Check if stream is done
           if (chunkResult.done) {
+            console.log(`[StreamingResponseProcessor] 🏁 Stream terminado naturalmente después de ${chunkCount} chunks`);
+            console.log(`[StreamingResponseProcessor] 📊 Final stats: ${fullContent.length} chars, ${(Date.now() - startTime)/1000}s total`);
             break;
           }
           
@@ -532,6 +740,9 @@ export class StreamingResponseProcessor {
           const currentTime = Date.now();
           chunkCount++;
           lastChunkTime = currentTime;
+          
+          // Debug: Log every chunk to understand what we're receiving
+          console.log(`[StreamingResponseProcessor] 📦 Chunk ${chunkCount}: ${JSON.stringify(chunk).substring(0, 200)}...`);
           
           // Update heartbeat
           if (onChunkReceived) {
@@ -543,15 +754,35 @@ export class StreamingResponseProcessor {
             const deltaContent = chunk.choices[0].delta.content;
             fullContent += deltaContent;
             
+            console.log(`[StreamingResponseProcessor] ✅ Content chunk ${chunkCount}: +${deltaContent.length} chars (total: ${fullContent.length})`);
+            
             // Record chunk in monitoring
             const chunkDelay = currentTime - lastChunkTime;
             StreamingMonitor.recordChunk(commandId, deltaContent.length, chunkDelay);
             
+            // Adaptive timeout adjustment based on content progress
+            if (fullContent.length > 1000) {
+              // If we're getting substantial content, be more patient
+              adaptiveTimeout = Math.min(chunkTimeout * 1.5, 120000); // Max 2 minutes
+            } else if (chunkCount > 5) {
+              // If we've received several chunks, use standard timeout
+              adaptiveTimeout = chunkTimeout;
+            }
+            
             // Log progress más frecuente para detectar problemas
             if (fullContent.length % 1000 === 0 || chunkCount % 100 === 0) {
               const elapsed = Date.now() - startTime;
-              console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received in ${chunkCount} chunks (${elapsed}ms elapsed)...`);
+              console.log(`[StreamingResponseProcessor] Stream progress: ${fullContent.length} characters received in ${chunkCount} chunks (${(elapsed/1000).toFixed(1)}s elapsed)...`);
             }
+          } else if (chunk.choices?.[0]?.finish_reason) {
+            // Stream is finishing, this is normal
+            console.log(`[StreamingResponseProcessor] 🏁 Stream finishing with reason: ${chunk.choices[0].finish_reason}`);
+          } else if (chunk.choices?.[0]?.delta) {
+            // Empty delta or other delta properties
+            console.log(`[StreamingResponseProcessor] 📭 Empty/other delta chunk ${chunkCount}: ${JSON.stringify(chunk.choices[0].delta)}`);
+          } else {
+            // Unknown chunk type
+            console.log(`[StreamingResponseProcessor] ❓ Unknown chunk ${chunkCount} type: ${JSON.stringify(Object.keys(chunk))}`);
           }
           
           // Extract usage if available in final chunk

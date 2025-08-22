@@ -184,11 +184,16 @@ export class PortkeyConnector {
               console.log(`[PortkeyConnector] Ejecutando llamada en modo streaming`);
               const streamResponse = await portkey.chat.completions.create({
                 messages,
-                ...modelOptions
+                ...modelOptions,
+                stream_options: { include_usage: true } // Request token usage in stream
               });
 
               const duration = Date.now() - startTime;
               console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
+              console.log(`[PortkeyConnector] 🔍 Stream response type: ${typeof streamResponse}`);
+              console.log(`[PortkeyConnector] 🔍 Stream response constructor: ${streamResponse?.constructor?.name}`);
+              console.log(`[PortkeyConnector] 🔍 Stream has asyncIterator: ${!!streamResponse?.[Symbol.asyncIterator]}`);
+              console.log(`[PortkeyConnector] 🔍 Stream properties: ${Object.keys(streamResponse || {}).slice(0, 5).join(', ')}`);
               
               // Return the stream directly - caller must handle iteration
               return {

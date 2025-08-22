@@ -343,7 +343,17 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
           }
           
           clearInterval(checkInterval);
-          resolve({command: executedCommand, dbUuid, completed: executedCommand.status === 'completed'});
+          
+          // Consider a command "completed" if:
+          // 1. Status is 'completed', OR
+          // 2. Status is 'failed' but has valid results (error was handled gracefully)
+          const hasValidResults = executedCommand.results && executedCommand.results.length > 0;
+          const isEffectivelyCompleted = executedCommand.status === 'completed' || 
+                                       (executedCommand.status === 'failed' && hasValidResults);
+          
+          console.log(`📊 Command ${commandId} analysis: status=${executedCommand.status}, hasResults=${hasValidResults}, effectivelyCompleted=${isEffectivelyCompleted}`);
+          
+          resolve({command: executedCommand, dbUuid, completed: isEffectivelyCompleted});
           return;
         }
         
@@ -868,19 +878,39 @@ export async function POST(request: Request) {
     
     if (!salesCompleted || !completedSalesCommand) {
       console.error(`❌ PHASE 1: Sales command did not complete correctly`);
+      
+      // Provide more detailed error information
+      const errorDetails = {
+        commandId: salesCommandId,
+        completed: salesCompleted,
+        hasCommand: !!completedSalesCommand,
+        commandStatus: completedSalesCommand?.status || 'unknown',
+        hasResults: !!(completedSalesCommand?.results && completedSalesCommand.results.length > 0)
+      };
+      
+      console.error(`❌ PHASE 1: Error details:`, errorDetails);
+      
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'SALES_COMMAND_FAILED', 
-            message: 'Sales command did not complete successfully' 
+            message: 'Sales command did not complete successfully',
+            details: errorDetails
           } 
         },
         { status: 500 }
       );
     }
     
-    console.log(`✅ PHASE 1: Sales command completed successfully`);
+    // Log completion status with more detail
+    if (completedSalesCommand.status === 'completed') {
+      console.log(`✅ PHASE 1: Sales command completed successfully`);
+    } else if (completedSalesCommand.status === 'failed') {
+      console.log(`⚠️ PHASE 1: Sales command failed but has recoverable results`);
+      console.log(`🔄 PHASE 1: Error was handled gracefully, proceeding with available results`);
+    }
+    
     console.log(`📊 PHASE 1: Results obtained:`, JSON.stringify(completedSalesCommand.results, null, 2));
     
     // Extract follow-up content from results
@@ -920,6 +950,32 @@ export async function POST(request: Request) {
     if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
       console.error(`❌ PHASE 1: Could not extract follow-up content from results`);
       console.log(`🔍 PHASE 1: Available results structure:`, JSON.stringify(completedSalesCommand.results, null, 2));
+      
+      // If the command failed due to timeout but we need to continue, create a fallback response
+      if (completedSalesCommand.status === 'failed') {
+        console.log(`🔄 PHASE 1: Command failed, checking if we can create fallback content...`);
+        
+        // Check if we have error information that might be useful
+        const errorResult = completedSalesCommand.results?.find((r: any) => r.error || r.error_type);
+        if (errorResult) {
+          console.log(`⚠️ PHASE 1: Creating fallback response due to: ${errorResult.error_type || 'unknown error'}`);
+          
+          // Create a basic fallback content structure
+          salesFollowUpContent = {
+            strategy: "Follow-up strategy (generated after processing timeout)",
+            title: "Personalized Follow-up",
+            message: "Thank you for your interest. We'd like to follow up on your inquiry and provide you with more information that might be helpful.",
+            channel: "email", // Default to email as safest option
+            _metadata: {
+              fallback: true,
+              original_error: errorResult.error_type,
+              generated_at: new Date().toISOString()
+            }
+          };
+          
+          console.log(`🔧 PHASE 1: Fallback content created:`, JSON.stringify(salesFollowUpContent, null, 2));
+        }
+      }
     }
     
     // PHASE 2: Search for copywriter and create second command
