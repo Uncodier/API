@@ -9,8 +9,9 @@ import { Base } from '../../agents/Base';
 
 export class ProcessorConfigurationService {
   // Configurar los procesadores para el system
+  // EDGE FUNCTIONS: No caching - each request gets fresh configuration
   public configureProcessors(): Record<string, Base> {
-    console.log('🚀 Configurando procesadores para Agentbase');
+    console.log('🚀 [EDGE] Configurando procesadores para Agentbase (fresh config)');
     
     // Crear conector para LLMs con la configuración de Portkey
     const connector = this.createPortkeyConnector();
@@ -64,7 +65,7 @@ export class ProcessorConfigurationService {
       }
     );
     
-    console.log(`✅ Procesadores configurados: ${Object.keys(processors).join(', ')}`);
+    console.log(`✅ [EDGE] Procesadores configurados: ${Object.keys(processors).join(', ')}`);
     
     return processors;
   }

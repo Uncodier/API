@@ -6,52 +6,50 @@
 import AgentInitializer from '../agent/AgentInitializer';
 
 /**
- * ProcessorInitializer es un wrapper alrededor de AgentInitializer.
- * Proporciona la misma interfaz de AgentInitializer para mantener compatibilidad
- * con el código existente.
+ * ProcessorInitializer - EDGE FUNCTIONS compatible wrapper
+ * Creates fresh instances for each request instead of using singletons
  */
 export class ProcessorInitializer {
-  private static instance: ProcessorInitializer;
+  private agentInitializer: AgentInitializer;
   
-  // Constructor privado que utiliza AgentInitializer
-  private constructor() { }
+  // Constructor creates fresh AgentInitializer instance
+  constructor() {
+    console.log('🔄 [EDGE] ProcessorInitializer: Creating fresh AgentInitializer');
+    this.agentInitializer = AgentInitializer.createAndInitialize();
+  }
   
-  // Obtener la instancia única
+  // Static method to create fresh instance (Edge Functions compatible)
+  public static createFresh(): ProcessorInitializer {
+    return new ProcessorInitializer();
+  }
+  
+  // Legacy getInstance method - now creates fresh instance for Edge compatibility
   public static getInstance(): ProcessorInitializer {
-    if (!ProcessorInitializer.instance) {
-      ProcessorInitializer.instance = new ProcessorInitializer();
-    }
-    return ProcessorInitializer.instance;
+    console.log('🔄 [EDGE] ProcessorInitializer: Creating fresh instance (no singleton in Edge)');
+    return ProcessorInitializer.createFresh();
   }
   
-  // Inicializar usando AgentInitializer
+  // Initialize - already done in constructor
   public initialize() {
-    console.log('🔄 [ProcessorInitializer] Inicializando utilizando directamente AgentInitializer');
-    return AgentInitializer.initialize();
+    console.log('🔄 [EDGE] ProcessorInitializer: Already initialized in constructor');
+    return this;
   }
   
-  // Ejecutar un comando usando AgentInitializer directamente sin conversiones
+  // Execute command using the fresh AgentInitializer instance
   public async executeCommand(command: any): Promise<any> {
-    console.log('🔄 [ProcessorInitializer] Ejecutando comando directamente sin conversiones');
-    return AgentInitializer.executeCommand(command);
+    console.log('🔄 [EDGE] ProcessorInitializer: Executing command with fresh instance');
+    return this.agentInitializer.executeCommand(command);
   }
   
-  // Obtener el servicio de comandos de AgentInitializer
+  // Get command service from the fresh AgentInitializer instance
   public getCommandService(): any {
-    console.log('🔄 [ProcessorInitializer] Obteniendo CommandService sin conversiones');
-    return AgentInitializer.getCommandService();
+    console.log('🔄 [EDGE] ProcessorInitializer: Getting CommandService from fresh instance');
+    return this.agentInitializer.getCommandService();
   }
 }
 
-// Crear y exportar la instancia única
-export const processorInitializerInstance = ProcessorInitializer.getInstance();
+// EDGE FUNCTIONS: Export factory function instead of singleton instance
+export const processorInitializerInstance = ProcessorInitializer.createFresh();
 
-// Crear una instancia del getter en la instancia del singleton
-// Este truco permite que el código que usa ProcessorInitializer.getInstance() siga funcionando
-// al mismo tiempo que mantenemos la nueva forma de importar la instancia directamente
-(processorInitializerInstance as any).getInstance = function() {
-  return processorInitializerInstance;
-};
-
-// Exportar la instancia por defecto
-export default processorInitializerInstance;
+// Export fresh instance creator as default
+export default ProcessorInitializer;

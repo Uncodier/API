@@ -19,41 +19,35 @@ import CommandProcessor from '../command/CommandProcessor';
 import { CommandCache } from '../command/CommandCache';
 import { AgentBackgroundService } from './AgentBackgroundService';
 
-// Singleton para la inicialización de los procesadores
+// EDGE FUNCTIONS: Stateless initialization - no singleton pattern
 export class AgentInitializer {
-  private static instance: AgentInitializer;
-  private initialized: boolean = false;
   private commandService: CommandService;
-  private commandProcessor!: CommandProcessor; // Usando el operador ! para asegurar que será inicializado en initialize()
+  private commandProcessor!: CommandProcessor;
   private processors: Record<string, Base> = {};
   private agentBackgroundService: AgentBackgroundService;
   
-  // Constructor privado para el patrón singleton
-  private constructor() {
+  // Constructor público para Edge Functions
+  constructor() {
     this.commandService = new CommandService();
-    this.agentBackgroundService = AgentBackgroundService.getInstance();
-    console.log('🔧 AgentInitializer: Inicializando servicio de comandos');
+    this.agentBackgroundService = AgentBackgroundService.getInstance(); // This one might need fixing too
+    console.log('🔧 [EDGE] AgentInitializer: Inicializando servicio de comandos');
   }
   
-  // Obtener la instancia única
-  public static getInstance(): AgentInitializer {
-    if (!AgentInitializer.instance) {
-      AgentInitializer.instance = new AgentInitializer();
-    }
-    return AgentInitializer.instance;
+  // Static method to create and initialize a new instance
+  public static createAndInitialize(): AgentInitializer {
+    console.log('🚀 [EDGE] Creating fresh AgentInitializer instance');
+    const instance = new AgentInitializer();
+    instance.initialize();
+    return instance;
   }
   
   // Inicializar los procesadores y configurar los event listeners
   public initialize() {
-    if (this.initialized) {
-      console.log('🔍 AgentInitializer: Ya inicializado, omitiendo');
-      return;
-    }
-    
-    console.log('🚀 AgentInitializer: Inicializando procesadores y listeners');
+    console.log('🚀 [EDGE] AgentInitializer: Inicializando procesadores y listeners');
     
     // Configurar los procesadores usando el servicio de configuración
-    this.processors = ProcessorConfigurationService.configureProcessors();
+    const configService = new ProcessorConfigurationService();
+    this.processors = configService.configureProcessors(); // Always fresh config in Edge Functions
     
     // Crear el procesador de comandos
     this.commandProcessor = new CommandProcessor(this.commandService, this.processors);
@@ -63,10 +57,9 @@ export class AgentInitializer {
     
     // Configurar CommandCache con el mismo event emitter que CommandService
     CommandCache.setEventEmitter(this.commandService.getEventEmitter());
-    console.log('✅ AgentInitializer: CommandCache configurado con event emitter');
+    console.log('✅ [EDGE] AgentInitializer: CommandCache configurado con event emitter');
     
-    this.initialized = true;
-    console.log('✅ AgentInitializer: Inicialización completada');
+    console.log('✅ [EDGE] AgentInitializer: Inicialización completada');
   }
   
   // Configurar los event listeners para procesar comandos
