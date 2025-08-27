@@ -28,7 +28,7 @@ export class CommandProcessor {
   constructor(commandService: CommandService, processors: Record<string, any>) {
     this.commandService = commandService;
     this.processors = processors;
-    this.agentBackgroundService = AgentBackgroundService.getInstance();
+    this.agentBackgroundService = new AgentBackgroundService(); // Fresh instance for Edge Functions
     console.log(`🔄 CommandProcessor: Inicializado con ${Object.keys(processors).length} procesadores`);
   }
   

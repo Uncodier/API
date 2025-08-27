@@ -29,7 +29,7 @@ export class AgentInitializer {
   // Constructor público para Edge Functions
   constructor() {
     this.commandService = new CommandService();
-    this.agentBackgroundService = AgentBackgroundService.getInstance(); // This one might need fixing too
+    this.agentBackgroundService = new AgentBackgroundService(); // Fresh instance for Edge Functions
     console.log('🔧 [EDGE] AgentInitializer: Inicializando servicio de comandos');
   }
   
@@ -243,5 +243,5 @@ export class AgentInitializer {
   }
 }
 
-// Exportar la instancia única
-export default AgentInitializer.getInstance();
+// Export the class itself, not an instance (Edge Functions compatible)
+export default AgentInitializer;

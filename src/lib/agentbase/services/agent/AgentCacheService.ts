@@ -4,23 +4,15 @@
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 
 export class AgentCacheService {
-  private static instance: AgentCacheService;
   private agentCache: Record<string, {data: any, timestamp: number}> = {};
   // Tiempo de vida del caché en milisegundos (10 minutos)
   private readonly CACHE_TTL = 10 * 60 * 1000;
   
-  private constructor() {
-    console.log('📦 AgentCacheService: Inicializado');
+  constructor() {
+    console.log('📦 [EDGE] AgentCacheService: Inicializado');
     
-    // Configurar limpieza periódica del caché (cada 5 minutos)
-    setInterval(() => this.cleanExpiredCache(), 5 * 60 * 1000);
-  }
-  
-  public static getInstance(): AgentCacheService {
-    if (!AgentCacheService.instance) {
-      AgentCacheService.instance = new AgentCacheService();
-    }
-    return AgentCacheService.instance;
+    // Note: In Edge Functions, setInterval might not work as expected
+    // Cache cleanup will happen on-demand instead
   }
   
   /**

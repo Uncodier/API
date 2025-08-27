@@ -4,17 +4,8 @@
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
 
 export class FileProcessingService {
-  private static instance: FileProcessingService;
-  
-  private constructor() {
-    console.log('📄 FileProcessingService: Inicializado');
-  }
-  
-  public static getInstance(): FileProcessingService {
-    if (!FileProcessingService.instance) {
-      FileProcessingService.instance = new FileProcessingService();
-    }
-    return FileProcessingService.instance;
+  constructor() {
+    console.log('📄 [EDGE] FileProcessingService: Inicializado');
   }
 
   /**

@@ -9,7 +9,7 @@ import { CapabilitiesExtractor } from './CapabilitiesExtractor';
 import { CommandCache } from '../../../services/command';
 
 export class DataFetcher {
-  private static agentCache = AgentCacheService.getInstance();
+  private static agentCache = new AgentCacheService(); // Fresh instance for Edge Functions
   
   /**
    * Valida específicamente la estructura de business_hours

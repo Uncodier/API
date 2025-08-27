@@ -133,20 +133,20 @@ export class TargetProcessor extends Base {
         agentPrompt
       );
       
-      // Configure model options with streaming enabled
+      // Configure model options - use command stream preference or default to non-streaming
       const modelOptions: PortkeyModelOptions = {
         modelType: command.model_type || this.defaultOptions.modelType,
         modelId: command.model_id || this.defaultOptions.modelId,
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens,
         temperature: command.temperature || this.defaultOptions.temperature,
-        stream: true,
+        stream: command.stream !== undefined ? command.stream : this.defaultOptions.stream || false,
         streamOptions: {
           includeUsage: true
         }
       };
       
       console.log(`[TargetProcessor] Using model: ${modelOptions.modelId}`);
-      console.log(`[TargetProcessor] Calling LLM with ${messages.length} messages - STREAMING ENABLED`);
+      console.log(`[TargetProcessor] Calling LLM with ${messages.length} messages - STREAMING ${modelOptions.stream ? 'ENABLED' : 'DISABLED'}`);
       
       // Call LLM to process target
       const llmResponse = await this.connector.callAgent(messages, modelOptions);

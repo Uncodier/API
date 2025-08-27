@@ -44,7 +44,7 @@ export class ProcessorConfigurationService {
         modelId: 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5 for better streaming stability
         maxTokens: 32000,
         temperature: 0.7,
-        stream: true, // Habilitar streaming para mejor manejo de timeouts
+        stream: false, // Default to non-streaming for stability
         streamOptions: {
           includeUsage: true
         }
@@ -89,7 +89,7 @@ export class ProcessorConfigurationService {
       modelId: 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5-nano for better streaming stability
       maxTokens: 32000,
       temperature: 0.7,
-      stream: true, // Habilitar streaming por defecto para mejor manejo de timeouts
+      stream: false, // Default to non-streaming for stability
       streamOptions: {
         includeUsage: true
       }
@@ -100,6 +100,5 @@ export class ProcessorConfigurationService {
   }
 }
 
-// Crear una instancia antes de exportar
-const processorConfigurationService = new ProcessorConfigurationService();
-export default processorConfigurationService; 
+// Export the class itself for Edge Functions compatibility
+export default ProcessorConfigurationService; 

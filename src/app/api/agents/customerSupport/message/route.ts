@@ -1648,7 +1648,8 @@ export async function POST(request: Request) {
         }
       ],
       // Set model for customer support
-      model: 'gpt-5',
+      // Use default model from ProcessorConfigurationService (gpt-4o)
+      // model: 'gpt-4o',
       modelType: 'openai'
     });
     

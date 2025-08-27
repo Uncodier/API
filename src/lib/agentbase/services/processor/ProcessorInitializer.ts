@@ -18,15 +18,10 @@ export class ProcessorInitializer {
     this.agentInitializer = AgentInitializer.createAndInitialize();
   }
   
-  // Static method to create fresh instance (Edge Functions compatible)
-  public static createFresh(): ProcessorInitializer {
-    return new ProcessorInitializer();
-  }
-  
-  // Legacy getInstance method - now creates fresh instance for Edge compatibility
+  // Main method to get ProcessorInitializer instance (Edge Functions compatible)
   public static getInstance(): ProcessorInitializer {
     console.log('🔄 [EDGE] ProcessorInitializer: Creating fresh instance (no singleton in Edge)');
-    return ProcessorInitializer.createFresh();
+    return new ProcessorInitializer();
   }
   
   // Initialize - already done in constructor
@@ -48,8 +43,5 @@ export class ProcessorInitializer {
   }
 }
 
-// EDGE FUNCTIONS: Export factory function instead of singleton instance
-export const processorInitializerInstance = ProcessorInitializer.createFresh();
-
-// Export fresh instance creator as default
+// Export ProcessorInitializer class as the single interface
 export default ProcessorInitializer;

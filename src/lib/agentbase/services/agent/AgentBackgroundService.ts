@@ -8,21 +8,13 @@ import { BackgroundBuilder, CapabilitiesExtractor, DataFetcher } from './Backgro
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 
 export class AgentBackgroundService {
-  private static instance: AgentBackgroundService;
   private agentCache: AgentCacheService;
   private fileProcessingService: FileProcessingService;
   
-  private constructor() {
-    this.agentCache = AgentCacheService.getInstance();
-    this.fileProcessingService = FileProcessingService.getInstance();
-    console.log('🧠 AgentBackgroundService: Inicializado');
-  }
-  
-  public static getInstance(): AgentBackgroundService {
-    if (!AgentBackgroundService.instance) {
-      AgentBackgroundService.instance = new AgentBackgroundService();
-    }
-    return AgentBackgroundService.instance;
+  constructor() {
+    this.agentCache = new AgentCacheService(); // Fresh instance for Edge Functions
+    this.fileProcessingService = new FileProcessingService(); // Fresh instance for Edge Functions
+    console.log('🧠 [EDGE] AgentBackgroundService: Inicializado');
   }
   
   /**

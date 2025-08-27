@@ -2,8 +2,7 @@
  * Agentbase - API central para la biblioteca de agentes
  */
 import { CommandFactory } from './services/command/CommandFactory';
-import AgentInitializer from './services/agent/AgentInitializer';
-import ProcessorInitializer, { ProcessorInitializer as ProcessorInitializerClass, processorInitializerInstance } from './services/processor/ProcessorInitializer';
+import ProcessorInitializer from './services/processor/ProcessorInitializer';
 import ProcessorConfigurationService from './services/processor/ProcessorConfigurationService';
 import CommandProcessor from './services/command/CommandProcessor';
 
@@ -15,15 +14,11 @@ export {
 
 // Re-exportar los principales componentes para mantener compatibilidad
 export { CommandFactory };
-export { AgentInitializer };
 
-// Exportar ProcessorInitializer para retrocompatibilidad
-// Exportamos tanto la clase como la instancia
-export { ProcessorInitializerClass as ProcessorInitializer };
-export { processorInitializerInstance };
+// Exportar SOLO ProcessorInitializer como interfaz única
+export { ProcessorInitializer };
 
-// Exportar la instancia singleton como exportación por defecto 
-// para mantener la compatibilidad con código existente
+// Exportar ProcessorInitializer como exportación por defecto 
 export default ProcessorInitializer;
 
 // Services

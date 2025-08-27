@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import AgentInitializerInstance, { AgentInitializer } from '@/lib/agentbase';
+import { ProcessorInitializer } from '@/lib/agentbase';
 
 export const dynamic = 'force-dynamic';
 
@@ -14,9 +14,10 @@ function isLegacyId(id: string): boolean {
   return id.startsWith('cmd_');
 }
 
-// Obtener el servicio de comandos desde la instancia importada
-AgentInitializerInstance.initialize();
-const commandService = AgentInitializerInstance.getCommandService();
+// Inicializar el agente y obtener el servicio de comandos
+const processorInitializer = ProcessorInitializer.getInstance();
+processorInitializer.initialize();
+const commandService = processorInitializer.getCommandService();
 
 export async function GET(request: Request) {
   try {

@@ -17,7 +17,7 @@ export class PortkeyConnector {
       maxTokens: 4096,
       temperature: 0.7,
       responseFormat: 'text',
-      stream: true,
+      stream: false, // Default to non-streaming for stability
       streamOptions: {
         includeUsage: true
       }
@@ -350,7 +350,31 @@ export class PortkeyConnector {
             };
           } catch (fallbackError: any) {
             console.error(`❌ [PortkeyConnector] GPT-4o fallback also failed:`, fallbackError.message);
-            // Continue to other fallback mechanisms below
+            // Try non-streaming as final fallback for streaming issues
+            console.warn(`🔄 [PortkeyConnector] Trying non-streaming fallback for original model...`);
+            
+            try {
+              const nonStreamingResponse = await portkey.chat.completions.create({
+                messages,
+                ...modelOptions,
+                stream: false // Disable streaming
+              });
+              
+              console.log(`✅ [PortkeyConnector] Non-streaming fallback successful`);
+              return {
+                stream: nonStreamingResponse,
+                isStream: false,
+                modelInfo: {
+                  model: modelOptions.model,
+                  provider: provider,
+                  fallbackFrom: 'streaming',
+                  fallbackType: 'non-streaming'
+                }
+              };
+            } catch (nonStreamingError: any) {
+              console.error(`❌ [PortkeyConnector] Non-streaming fallback also failed:`, nonStreamingError.message);
+              // Continue to other fallback mechanisms below
+            }
           }
         }
         
