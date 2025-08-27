@@ -238,7 +238,7 @@ export class StreamingResponseProcessor {
     
     // Timeout específico para el procesamiento del stream - DEBE ser menor que Vercel maxDuration
     const STREAM_PROCESSING_TIMEOUT = 4 * 60 * 1000; // 4 minutos (menor que 5min de Vercel)
-    const CHUNK_TIMEOUT = 90 * 1000; // 90 segundos entre chunks (más tolerante para respuestas complejas)
+    const CHUNK_TIMEOUT = 30 * 1000; // 30 segundos entre chunks (más agresivo para detectar streams colgados)
     
     try {
       console.log(`[StreamingResponseProcessor] Iniciando procesamiento de stream con timeout ${STREAM_PROCESSING_TIMEOUT}ms...`);
@@ -651,6 +651,8 @@ export class StreamingResponseProcessor {
     let currentTimeoutId: NodeJS.Timeout | null = null;
     let adaptiveTimeout = chunkTimeout; // Start with base timeout
     const startTime = Date.now(); // Add startTime for logging
+    let hasReceivedContent = false; // Track if we've received actual content
+    let firstChunkWasRoleOnly = false; // Track if first chunk was role-only
     
     console.log(`[StreamingResponseProcessor] Procesando stream con timeout de chunk: ${chunkTimeout}ms (${chunkTimeout/1000}s)`);
     console.log(`[StreamingResponseProcessor] 🔍 Stream object type: ${typeof stream}, has asyncIterator: ${!!stream[Symbol.asyncIterator]}`);
@@ -703,7 +705,14 @@ export class StreamingResponseProcessor {
               console.warn(`[StreamingResponseProcessor] ⏰ Chunk timeout triggered after ${timeSinceLastChunk}ms (${(timeSinceLastChunk/1000).toFixed(1)}s)`);
               console.warn(`[StreamingResponseProcessor] 📊 Stream stats: ${chunkCount} chunks, ${fullContent.length} chars, ${(totalElapsed/1000).toFixed(1)}s total`);
               console.warn(`[StreamingResponseProcessor] 🔧 Using adaptive timeout: ${adaptiveTimeout}ms (${(adaptiveTimeout/1000).toFixed(1)}s)`);
-              reject(new Error(`Chunk timeout: No data received for ${timeSinceLastChunk}ms (${(timeSinceLastChunk/1000).toFixed(1)}s)`));
+              
+              // Special error message for role-only first chunk scenario
+              let errorMessage = `Chunk timeout: No data received for ${timeSinceLastChunk}ms (${(timeSinceLastChunk/1000).toFixed(1)}s)`;
+              if (firstChunkWasRoleOnly && !hasReceivedContent) {
+                errorMessage = `Stream hung after role-only first chunk. LLM provider connection likely stuck. ${errorMessage}`;
+              }
+              
+              reject(new Error(errorMessage));
             }, adaptiveTimeout);
           });
           
@@ -753,6 +762,7 @@ export class StreamingResponseProcessor {
           if (chunk.choices?.[0]?.delta?.content) {
             const deltaContent = chunk.choices[0].delta.content;
             fullContent += deltaContent;
+            hasReceivedContent = true; // Mark that we've received actual content
             
             console.log(`[StreamingResponseProcessor] ✅ Content chunk ${chunkCount}: +${deltaContent.length} chars (total: ${fullContent.length})`);
             
@@ -778,8 +788,16 @@ export class StreamingResponseProcessor {
             // Stream is finishing, this is normal
             console.log(`[StreamingResponseProcessor] 🏁 Stream finishing with reason: ${chunk.choices[0].finish_reason}`);
           } else if (chunk.choices?.[0]?.delta) {
-            // Empty delta or other delta properties
+            // Empty delta or other delta properties (like role:assistant)
             console.log(`[StreamingResponseProcessor] 📭 Empty/other delta chunk ${chunkCount}: ${JSON.stringify(chunk.choices[0].delta)}`);
+            
+            // Special warning for role-only chunks that might indicate stream hanging
+            if (chunk.choices[0].delta.role && !chunk.choices[0].delta.content && chunkCount === 1) {
+              console.warn(`[StreamingResponseProcessor] ⚠️ First chunk is role-only (${chunk.choices[0].delta.role}). Stream might hang if no content follows.`);
+              firstChunkWasRoleOnly = true;
+              // Use shorter timeout for subsequent chunks after role-only first chunk
+              adaptiveTimeout = Math.min(chunkTimeout * 0.5, 15000); // 15 seconds max for next chunk
+            }
           } else {
             // Unknown chunk type
             console.log(`[StreamingResponseProcessor] ❓ Unknown chunk ${chunkCount} type: ${JSON.stringify(Object.keys(chunk))}`);

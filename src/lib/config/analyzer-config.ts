@@ -102,7 +102,7 @@ export function getRequestOptions(provider = 'openai', modelId?: string) {
   
   // Opciones para OpenAI (Azure OpenAI)
   const openaiOptions = {
-    model: modelId || 'gpt-5',
+    model: modelId || 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5 for better streaming stability
     max_tokens: 32768 // Límite máximo de Azure OpenAI
   };
   

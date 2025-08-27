@@ -185,6 +185,7 @@ export class PortkeyConnector {
               const streamResponse = await portkey.chat.completions.create({
                 messages,
                 ...modelOptions,
+                stream: true, // Explicitly ensure streaming is enabled
                 stream_options: { include_usage: true } // Request token usage in stream
               });
 
@@ -304,11 +305,54 @@ export class PortkeyConnector {
         const duration = Date.now() - startTime;
         console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
         
+        // Check if it's a streaming error with GPT-5 that we can fallback from
+        const isStreamingError = stream === true && (
+          apiCallError.message?.includes('Stream hung after role-only first chunk') ||
+          apiCallError.message?.includes('Chunk timeout') ||
+          apiCallError.message?.includes('timeout')
+        );
+        
         // Check if it's a Portkey connection error and we can fallback to direct OpenAI
         const isPortkeyConnectionError = apiCallError.message?.includes('Could not instantiate the Portkey client') ||
                                        apiCallError.message?.includes('Connect Timeout') ||
                                        apiCallError.message?.includes('fetch failed') ||
                                        apiCallError.code === 'UND_ERR_CONNECT_TIMEOUT';
+        
+        // Try fallback for streaming errors with GPT-5
+        if (isStreamingError && provider === 'openai' && modelOptions.model === 'gpt-5') {
+          console.warn(`🔄 [PortkeyConnector] GPT-5 streaming failed, trying fallback to GPT-4o...`);
+          
+          try {
+            // Retry with GPT-4o which has more stable streaming
+            const fallbackModelOptions = {
+              ...modelOptions,
+              model: 'gpt-4o',
+              max_tokens: modelOptions.max_completion_tokens || modelOptions.max_tokens || 4096
+            };
+            delete fallbackModelOptions.max_completion_tokens; // GPT-4o uses max_tokens
+            
+            const fallbackResponse = await portkey.chat.completions.create({
+              messages,
+              ...fallbackModelOptions,
+              stream: true,
+              stream_options: { include_usage: true }
+            });
+            
+            console.log(`✅ [PortkeyConnector] GPT-4o fallback successful`);
+            return {
+              stream: fallbackResponse,
+              isStream: true,
+              modelInfo: {
+                model: 'gpt-4o',
+                provider: provider,
+                fallbackFrom: 'gpt-5'
+              }
+            };
+          } catch (fallbackError: any) {
+            console.error(`❌ [PortkeyConnector] GPT-4o fallback also failed:`, fallbackError.message);
+            // Continue to other fallback mechanisms below
+          }
+        }
         
         if (isPortkeyConnectionError && provider === 'openai') {
           console.warn(`🔄 [PortkeyConnector] Portkey falló, intentando fallback con AI Gateway...`);
