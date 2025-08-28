@@ -788,6 +788,11 @@ export async function POST(request: Request) {
     contextMessage += `- Maintain the core message, tone, and structure of approved content\n`;
     contextMessage += `- Use lead data (name, company, pain points, etc.) to customize approved messages\n`;
     contextMessage += `- Focus on lead-specific personalization rather than completely rewriting approved content\n`;
+    contextMessage += `🌍 LANGUAGE & ACCENT GUIDELINES:\n`;
+    contextMessage += `- Analyze the prospect's information (name, company, location, user agent, etc.) to determine their most likely language and accent\n`;
+    contextMessage += `- Send messages in the language and accent most probable for the prospect based on their profile and context\n`;
+    contextMessage += `- Consider cultural nuances and communication preferences when selecting language and tone\n`;
+    contextMessage += `- Adapt the message style to match the prospect's likely cultural and linguistic background\n`;
     contextMessage += `=== END OF COPYWRITING GUIDELINES ===\n`;
     
 
