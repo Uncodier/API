@@ -217,11 +217,15 @@ export class EmailTextExtractorService {
   private static removeMimeStructures(text: string): string {
     let cleanText = text;
 
-    // Remover boundaries MIME (líneas que empiezan con ---- seguidas de cadenas largas)
-    cleanText = cleanText.replace(/^----==_mimepart_[a-f0-9_]+.*$/gm, '');
-    cleanText = cleanText.replace(/^--[a-zA-Z0-9=_-]{10,}.*$/gm, '');
+    // 🎯 MEJORADO: Remover boundaries MIME más específicos
+    // Boundaries con formato específico como el ejemplo
+    cleanText = cleanText.replace(/^----[a-zA-Z0-9_]+.*$/gm, '');
+    cleanText = cleanText.replace(/^--[a-zA-Z0-9_]{20,}.*$/gm, '');
     
-    // Remover headers Content-Type multiline
+    // Remover headers Content-Type multiline con charset y encoding
+    cleanText = cleanText.replace(/^Content-Type:\s*.*charset=.*$/gmi, '');
+    cleanText = cleanText.replace(/^Content-Type:\s*.*encoding=.*$/gmi, '');
+    cleanText = cleanText.replace(/^Content-Type:\s*.*method=.*$/gmi, '');
     cleanText = cleanText.replace(/^Content-Type:\s*.*$/gmi, '');
     cleanText = cleanText.replace(/^Content-Transfer-Encoding:\s*.*$/gmi, '');
     cleanText = cleanText.replace(/^Content-Disposition:\s*.*$/gmi, '');
@@ -230,10 +234,14 @@ export class EmailTextExtractorService {
     // Remover líneas con charset y boundary definitions
     cleanText = cleanText.replace(/^.*charset=.*$/gmi, '');
     cleanText = cleanText.replace(/^.*boundary=.*$/gmi, '');
+    cleanText = cleanText.replace(/^.*method=.*$/gmi, '');
     
     // Remover headers MIME técnicos adicionales
     cleanText = cleanText.replace(/^MIME-Version:\s*.*$/gmi, '');
     cleanText = cleanText.replace(/^X-.*?:\s*.*$/gmi, ''); // Headers X- personalizados
+    
+    // 🎯 NUEVO: Remover contenido Base64 de calendarios y archivos
+    cleanText = cleanText.replace(/^[A-Za-z0-9+/]{50,}={0,2}$/gm, ''); // Líneas largas de Base64
     
     // Remover líneas que solo contienen = (quoted-printable artifacts)
     cleanText = cleanText.replace(/^=+$/gm, '');
@@ -241,6 +249,9 @@ export class EmailTextExtractorService {
     // Remover secuencias de quoted-printable problemáticas
     cleanText = cleanText.replace(/=\s*$/gm, ''); // Líneas que terminan con =
     cleanText = cleanText.replace(/=\n/g, ''); // Saltos de línea codificados
+    
+    // 🎯 NUEVO: Remover líneas vacías múltiples que quedan después de limpiar
+    cleanText = cleanText.replace(/\n{3,}/g, '\n\n');
     
     return cleanText;
   }
