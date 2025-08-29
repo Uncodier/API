@@ -5,6 +5,7 @@
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
+import { EmailDuplicationService } from './EmailDuplicationService';
 
 interface EmailSeparationResult {
   emailsToAliases: any[];
@@ -389,6 +390,34 @@ export class EmailProcessingService {
       console.log(`[EMAIL_PROCESSING] 🚫 Email NO se guardará (no requiere respuesta):`, emailObj.email?.id || emailObj.id);
       return false;
     });
+  }
+
+  /**
+   * Verifica si un email es duplicado usando la lógica robusta del sync
+   */
+  static async checkEmailDuplication(
+    email: any,
+    conversationId: string,
+    leadId: string,
+    siteId: string
+  ): Promise<{ isDuplicate: boolean; reason?: string; existingMessageId?: string }> {
+    try {
+      const result = await EmailDuplicationService.checkEmailDuplication(email, conversationId, leadId, siteId);
+      
+      if (result.isDuplicate) {
+        console.log(`[EMAIL_PROCESSING] 🚫 Email duplicado detectado: ${result.reason}`);
+        return {
+          isDuplicate: true,
+          reason: result.reason,
+          existingMessageId: result.existingMessageId
+        };
+      }
+      
+      return { isDuplicate: false };
+    } catch (error) {
+      console.error(`[EMAIL_PROCESSING] ❌ Error verificando duplicados:`, error);
+      return { isDuplicate: false };
+    }
   }
 
   /**
