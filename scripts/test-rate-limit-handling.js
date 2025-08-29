@@ -1,8 +1,8 @@
 /**
  * Test script to verify rate limit error handling in agent processor
  */
-import { TargetProcessor } from '../src/lib/agentbase/agents/TargetProcessor.js';
-import { PortkeyConnector } from '../src/lib/agentbase/services/PortkeyConnector.js';
+import { TargetProcessor } from '../src/lib/agentbase/agents/TargetProcessor.ts';
+import { PortkeyConnector } from '../src/lib/agentbase/services/PortkeyConnector.ts';
 
 // Mock the PortkeyConnector to simulate rate limit errors
 class MockPortkeyConnector extends PortkeyConnector {

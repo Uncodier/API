@@ -443,40 +443,41 @@ async function executeCopywriterRefinement(
     
     if (salesFollowUpContent && typeof salesFollowUpContent === 'object' && salesFollowUpContent.channel) {
       const channel = salesFollowUpContent.channel;
+      const messageLanguage = salesFollowUpContent.message_language || 'inferred from lead name, region, or company location';
       
       switch (channel) {
         case 'email':
           refinementTarget = {
-            title: "Refined and compelling email subject line that increases open rates",
-            message: "Enhanced email message with persuasive copy, clear value proposition, and strong call-to-action",
+            title: `Refined and compelling email subject line that increases open rates (in ${messageLanguage})`,
+            message: `Enhanced email message with persuasive copy, clear value proposition, and strong call-to-action (in ${messageLanguage})`,
             channel: channel
           };
           break;
         case 'whatsapp':
           refinementTarget = {
-            title: "Improved WhatsApp message with casual yet professional tone",
-            message: "Refined WhatsApp content that feels personal, direct, and encourages immediate response",
+            title: `Improved WhatsApp message with casual yet professional tone (in ${messageLanguage})`,
+            message: `Refined WhatsApp content that feels personal, direct, and encourages immediate response (in ${messageLanguage})`,
             channel: channel
           };
           break;
         case 'notification':
           refinementTarget = {
-            title: "Enhanced in-app notification that captures attention",
-            message: "Optimized notification message that's concise, actionable, and drives user engagement",
+            title: `Enhanced in-app notification that captures attention (in ${messageLanguage})`,
+            message: `Optimized notification message that's concise, actionable, and drives user engagement (in ${messageLanguage})`,
             channel: channel
           };
           break;
         case 'web':
           refinementTarget = {
-            title: "Polished web popup/banner headline that converts",
-            message: "Compelling web message with persuasive copy that motivates visitors to take action",
+            title: `Polished web popup/banner headline that converts (in ${messageLanguage})`,
+            message: `Compelling web message with persuasive copy that motivates visitors to take action (in ${messageLanguage})`,
             channel: channel
           };
           break;
         default:
           refinementTarget = {
-            title: `Refined ${channel} headline with improved copy`,
-            message: `Enhanced ${channel} message content with better persuasion and engagement`,
+            title: `Refined ${channel} headline with improved copy (in ${messageLanguage})`,
+            message: `Enhanced ${channel} message content with better persuasion and engagement (in ${messageLanguage})`,
             channel: channel
           };
       }

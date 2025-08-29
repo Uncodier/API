@@ -183,26 +183,34 @@ export class EmailService {
           const searchResults = await client.search(searchQuery);
           console.log(`[EmailService] 🔍 Búsqueda encontró ${searchResults.length} emails matching criterios`);
           
-          // Sort UIDs in descending order to get newest first
-          const sortedUIDs = searchResults.sort((a, b) => b - a);
-          console.log(`[EmailService] 📊 UIDs ordenados (más recientes primero): ${sortedUIDs.slice(0, 5).join(', ')}${sortedUIDs.length > 5 ? '...' : ''}`);
-          
-          // Take only the newest emails up to the limit
-          const limitedUIDs = sortedUIDs.slice(0, limit);
-          console.log(`[EmailService] 🎯 Procesando ${limitedUIDs.length} emails más recientes (límite: ${limit})`);
-          
-          // Fetch the selected emails
-          if (limitedUIDs.length > 0) {
-            for await (const message of client.fetch(limitedUIDs, {
+          // 🎯 CORREGIR: Obtener todos los emails y ordenar por fecha, no por UID
+          const allEmails = [];
+          if (searchResults.length > 0) {
+            for await (const message of client.fetch(searchResults, {
               envelope: true,
               bodyStructure: true,
               flags: true,
-              // Start with basic fetch, we'll get content separately if needed
-              bodyParts: ['TEXT'] // Only request text part for now
+              bodyParts: ['TEXT']
             })) {
-              messages.push(message);
+              allEmails.push(message);
             }
           }
+          
+          // Ordenar por fecha (más recientes primero)
+          const sortedEmails = allEmails.sort((a, b) => {
+            const dateA = a.envelope?.date?.getTime() || 0;
+            const dateB = b.envelope?.date?.getTime() || 0;
+            return dateB - dateA; // Descending order (newest first)
+          });
+          
+          console.log(`[EmailService] 📊 Emails ordenados por fecha (más recientes primero): ${sortedEmails.length} emails`);
+          
+          // Take only the newest emails up to the limit
+          const limitedEmails = sortedEmails.slice(0, limit);
+          console.log(`[EmailService] 🎯 Procesando ${limitedEmails.length} emails más recientes (límite: ${limit})`);
+          
+          // Add to messages array
+          messages.push(...limitedEmails);
           
           console.log(`[EmailService] 📨 Encontrados ${messages.length} emails para procesar`);
         } catch (fetchError) {

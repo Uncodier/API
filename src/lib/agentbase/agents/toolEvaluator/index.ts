@@ -139,8 +139,23 @@ export class ToolEvaluator extends Base {
         };
         
         // Llamar a la API a través del conector
-        const portkeyResponse = await this.connector.callAgent(messages, modelOptions);
-        console.log("[ToolEvaluator] Response received");
+        let portkeyResponse;
+        try {
+          portkeyResponse = await this.connector.callAgent(messages, modelOptions);
+          console.log("[ToolEvaluator] Response received");
+        } catch (error: any) {
+          // Check if it's a rate limit error
+          if (error.message?.includes('Rate limit exceeded') || 
+              error.message?.includes('exceeded token rate limit') ||
+              error.message?.includes('AIServices S0 pricing tier')) {
+            console.error(`[ToolEvaluator] Rate limit error from connector: ${error.message}`);
+            return {
+              status: 'failed',
+              error: `Rate limit exceeded: ${error.message}. Please try again later.`
+            };
+          }
+          throw error; // Re-throw other errors
+        }
         
         // Extraer el contenido de la respuesta
         const content = portkeyResponse.content;

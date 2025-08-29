@@ -113,7 +113,22 @@ export class AgentConnector extends Base {
       }
       
       // Llamar al agente a través de Portkey
-      const portkeyResponse = await this.connector.callAgent(messages, modelOptions);
+      let portkeyResponse;
+      try {
+        portkeyResponse = await this.connector.callAgent(messages, modelOptions);
+      } catch (error: any) {
+        // Check if it's a rate limit error
+        if (error.message?.includes('Rate limit exceeded') || 
+            error.message?.includes('exceeded token rate limit') ||
+            error.message?.includes('AIServices S0 pricing tier')) {
+          console.error(`[AgentConnector:${this.id}] Rate limit error from connector: ${error.message}`);
+          return {
+            status: 'failed',
+            error: `Rate limit exceeded: ${error.message}. Please try again later.`
+          };
+        }
+        throw error; // Re-throw other errors
+      }
       
       // Verificar si es una respuesta de streaming
       if (modelOptions.stream) {

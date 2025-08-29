@@ -184,7 +184,12 @@ export class ComprehensiveEmailFilterService {
           return true; // Bypass alias validation for AI leads
         }
         
-        if (!this.isValidByAlias(email, emailTo, normalizedAliases)) {
+        // 🎯 CORREGIR LÓGICA: Incluir emails que coinciden con aliases
+        const isValidByAlias = this.isValidByAlias(email, emailTo, normalizedAliases);
+        if (isValidByAlias) {
+          console.log(`[COMPREHENSIVE_FILTER] ✅ Email a alias incluido: ${emailTo}`);
+          return true; // Incluir emails que coinciden con aliases
+        } else {
           console.log(`[COMPREHENSIVE_FILTER] ❌ Email filtrado (no coincide con aliases): TO=${emailTo}`);
           stats.aliasFiltered++;
           return false;
