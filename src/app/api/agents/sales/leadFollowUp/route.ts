@@ -406,6 +406,7 @@ async function executeCopywriterRefinement(
       copywriterContext += `├─ Channel: ${salesFollowUpContent.channel || 'Not specified'}\n`;
       copywriterContext += `├─ Title: ${salesFollowUpContent.title || 'Not specified'}\n`;
       copywriterContext += `├─ Strategy: ${salesFollowUpContent.strategy || 'Not specified'}\n`;
+      copywriterContext += `├─ Message Language: ${salesFollowUpContent.message_language || 'Not specified'}\n`;
       copywriterContext += `└─ Message: ${salesFollowUpContent.message || 'Not specified'}\n\n`;
       
       copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
@@ -854,6 +855,7 @@ export async function POST(request: Request) {
         {
           follow_up_content: {
             strategy: "comprehensive sale strategy based on lead analysis",
+            message_language: "language for the message content (e.g., 'en', 'es', 'fr')",
             title: "compelling title or subject line for the selected channel",
             message: "personalized message content optimized for the chosen channel",
             channel: "the single most effective channel selected (email/whatsapp/notification/web)"
