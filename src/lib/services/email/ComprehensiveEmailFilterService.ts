@@ -108,8 +108,9 @@ export class ComprehensiveEmailFilterService {
     
     for (const email of emails) {
       try {
-        // Usar el nuevo servicio especializado para emails RECIBIDOS
-        const envelopeId = ReceivedEmailDuplicationService.generateReceivedEmailEnvelopeId(email);
+        // 🎯 USAR LA MISMA LÓGICA QUE sendEmail PARA CONSISTENCIA
+        // Usar el servicio de SentEmailDuplicationService para consistencia
+        const envelopeId = SentEmailDuplicationService.generateEnvelopeBasedId(email);
         if (envelopeId) {
           emailToEnvelopeMap.set(email, envelopeId);
         } else {

@@ -6,6 +6,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
 import { EmailDuplicationService } from './EmailDuplicationService';
+import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 
 interface EmailSeparationResult {
   emailsToAliases: any[];

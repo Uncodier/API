@@ -3,6 +3,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { SentEmailDuplicationService } from '@/lib/services/email/SentEmailDuplicationService';
 
 export interface SyncedObject {
   id: string;
@@ -74,6 +75,8 @@ export class SyncedObjectsService {
    * DEBE SER IDÉNTICO al extractValidEmailId del email sync route
    */
   private static extractValidEmailId(email: any): string | null {
+    // 🎯 USAR LA MISMA LÓGICA QUE sendEmail PARA CONSISTENCIA
+    // Priorizar Message-ID para correlación perfecta (RFC 5322)
     const candidates = [
       email.messageId, // 🎯 PRIORIZAR Message-ID para correlación perfecta (RFC 5322)
       email.id,
@@ -90,6 +93,20 @@ export class SyncedObjectsService {
     }
     
     return null;
+  }
+
+  /**
+   * Genera un envelope ID consistente usando la misma lógica que sendEmail
+   * DEBE SER IDÉNTICO al generateEnvelopeBasedId de SentEmailDuplicationService
+   */
+  private static generateConsistentEnvelopeId(email: any): string | null {
+    try {
+      // Usar exactamente la misma lógica que sendEmail
+      return SentEmailDuplicationService.generateEnvelopeBasedId(email);
+    } catch (error) {
+      console.error(`[SYNCED_OBJECTS] ❌ Error generando envelope ID consistente:`, error);
+      return null;
+    }
   }
 
   /**

@@ -98,31 +98,32 @@ export class EmailDuplicationService {
         return { isDuplicate: false, confidence: 'high' };
       }
 
-      // 1. VERIFICACIÓN EXACTA: email_id
+      console.log(`[EMAIL_DUPLICATION] 📊 Analizando ${existingMessages.length} mensajes existentes`);
+
+      // SOLO usar métodos de alta confianza para evitar falsos positivos
+      
+      // 1. VERIFICACIÓN EXACTA: email_id (más confiable)
       const exactIdMatch = this.checkExactIdMatch(analysisData, existingMessages);
       if (exactIdMatch.isDuplicate) {
+        console.log(`[EMAIL_DUPLICATION] 🎯 DUPLICADO CONFIRMADO por ID exacto`);
         return exactIdMatch;
       }
 
-      // 2. VERIFICACIÓN EXACTA: subject + recipient + timestamp cercano
-      const exactMatch = this.checkExactMatch(analysisData, existingMessages);
+      // 2. VERIFICACIÓN EXACTA: subject + recipient + timestamp MUY cercano (solo 2 minutos)
+      const exactMatch = this.checkExactMatchConservative(analysisData, existingMessages);
       if (exactMatch.isDuplicate) {
+        console.log(`[EMAIL_DUPLICATION] 🎯 DUPLICADO CONFIRMADO por coincidencia exacta`);
         return exactMatch;
       }
 
-      // 3. ANÁLISIS TEMPORAL POR RANGOS
-      const temporalMatch = this.checkTemporalRangeMatch(analysisData, existingMessages);
-      if (temporalMatch.isDuplicate) {
-        return temporalMatch;
-      }
-
-      // 4. VERIFICACIÓN POR RECIPIENT Y PROXIMIDAD TEMPORAL
-      const recipientMatch = this.checkRecipientTemporalMatch(analysisData, existingMessages);
+      // 3. VERIFICACIÓN POR RECIPIENT Y PROXIMIDAD TEMPORAL MUY ESTRICTA (solo 10 minutos)
+      const recipientMatch = this.checkRecipientTemporalMatchConservative(analysisData, existingMessages);
       if (recipientMatch.isDuplicate) {
+        console.log(`[EMAIL_DUPLICATION] 🎯 DUPLICADO CONFIRMADO por recipient + tiempo muy cercano`);
         return recipientMatch;
       }
 
-      console.log(`[EMAIL_DUPLICATION] ✅ No se encontraron duplicados`);
+      console.log(`[EMAIL_DUPLICATION] ✅ No se encontraron duplicados - email es NUEVO`);
       return { isDuplicate: false, confidence: 'high' };
 
     } catch (error) {
@@ -221,7 +222,43 @@ export class EmailDuplicationService {
   }
 
   /**
-   * Verifica coincidencia exacta por subject + recipient + timestamp
+   * Verifica coincidencia exacta por subject + recipient + timestamp (VERSIÓN CONSERVADORA)
+   */
+  private static checkExactMatchConservative(analysisData: EmailAnalysisData, existingMessages: any[]): DuplicationCheckResult {
+    if (!analysisData.subject || !analysisData.recipient) {
+      return { isDuplicate: false, confidence: 'low' };
+    }
+
+    for (const msg of existingMessages) {
+      const customData = msg.custom_data || {};
+      const deliveryDetails = customData.delivery?.details || {};
+      
+      const existingSubject = this.normalizeText(deliveryDetails.subject || customData.subject || '');
+      const existingRecipient = this.normalizeText(deliveryDetails.recipient || '');
+      const existingTimestamp = deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(msg.created_at);
+
+      if (analysisData.subject === existingSubject && analysisData.recipient === existingRecipient) {
+        const timeDiff = Math.abs(analysisData.timestamp.getTime() - existingTimestamp.getTime());
+        const twoMinutes = 2 * 60 * 1000; // MUCHO más estricto: solo 2 minutos
+
+        if (timeDiff <= twoMinutes) {
+          console.log(`[EMAIL_DUPLICATION] ✅ DUPLICADO EXACTO (conservador) por subject+recipient+timestamp: ${msg.id}`);
+          console.log(`[EMAIL_DUPLICATION] 📊 Detalles: subject="${analysisData.subject}", recipient="${analysisData.recipient}", timeDiff=${Math.round(timeDiff/1000)}s`);
+          return {
+            isDuplicate: true,
+            reason: `Duplicado exacto (conservador): mismo subject, recipient y timestamp muy cercano (${Math.round(timeDiff/1000)}s)`,
+            existingMessageId: msg.id,
+            confidence: 'high'
+          };
+        }
+      }
+    }
+
+    return { isDuplicate: false, confidence: 'high' };
+  }
+
+  /**
+   * Verifica coincidencia exacta por subject + recipient + timestamp (VERSIÓN ORIGINAL)
    */
   private static checkExactMatch(analysisData: EmailAnalysisData, existingMessages: any[]): DuplicationCheckResult {
     if (!analysisData.subject || !analysisData.recipient) {
@@ -318,7 +355,45 @@ export class EmailDuplicationService {
   }
 
   /**
-   * Verifica coincidencia por recipient y proximidad temporal
+   * Verifica coincidencia por recipient y proximidad temporal (VERSIÓN CONSERVADORA)
+   */
+  private static checkRecipientTemporalMatchConservative(analysisData: EmailAnalysisData, existingMessages: any[]): DuplicationCheckResult {
+    if (!analysisData.recipient) {
+      return { isDuplicate: false, confidence: 'low' };
+    }
+
+    const sameRecipientMessages = existingMessages.filter(msg => {
+      const customData = msg.custom_data || {};
+      const deliveryDetails = customData.delivery?.details || {};
+      const existingRecipient = this.normalizeText(deliveryDetails.recipient || '');
+      return existingRecipient === analysisData.recipient;
+    });
+
+    for (const msg of sameRecipientMessages) {
+      const customData = msg.custom_data || {};
+      const deliveryDetails = customData.delivery?.details || {};
+      const existingTimestamp = deliveryDetails.timestamp ? new Date(deliveryDetails.timestamp) : new Date(msg.created_at);
+      
+      const timeDiff = Math.abs(analysisData.timestamp.getTime() - existingTimestamp.getTime());
+      const tenMinutes = 10 * 60 * 1000; // MUCHO más estricto: solo 10 minutos
+
+      if (timeDiff < tenMinutes) {
+        console.log(`[EMAIL_DUPLICATION] ✅ DUPLICADO POR RECIPIENT+TIEMPO (conservador): ${msg.id}`);
+        console.log(`[EMAIL_DUPLICATION] 📊 Detalles: recipient="${analysisData.recipient}", timeDiff=${Math.round(timeDiff/1000/60)} min`);
+        return {
+          isDuplicate: true,
+          reason: `Duplicado por recipient y proximidad temporal muy cercana: "${analysisData.recipient}" (${Math.round(timeDiff/1000/60)} min)`,
+          existingMessageId: msg.id,
+          confidence: 'medium'
+        };
+      }
+    }
+
+    return { isDuplicate: false, confidence: 'medium' };
+  }
+
+  /**
+   * Verifica coincidencia por recipient y proximidad temporal (VERSIÓN ORIGINAL)
    */
   private static checkRecipientTemporalMatch(analysisData: EmailAnalysisData, existingMessages: any[]): DuplicationCheckResult {
     if (!analysisData.recipient) {
