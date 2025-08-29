@@ -188,6 +188,20 @@ export class PortkeyConnector {
                 stream: true, // Explicitly ensure streaming is enabled
                 stream_options: { include_usage: true } // Request token usage in stream
               });
+              
+              // Check if the response contains an error (even if it's a successful HTTP response)
+              if (streamResponse && typeof streamResponse === 'object' && streamResponse.body?.error) {
+                const errorBody = streamResponse.body;
+                if (errorBody.status === 429 || 
+                    errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
+                    errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
+                  throw {
+                    status: 429,
+                    body: errorBody.body,
+                    message: errorBody.body?.error?.message || 'Rate limit exceeded'
+                  };
+                }
+              }
 
               const duration = Date.now() - startTime;
               console.log(`[PortkeyConnector] Stream iniciado correctamente en ${duration}ms, devolviendo stream para procesamiento`);
@@ -217,6 +231,20 @@ export class PortkeyConnector {
                   ...modelOptions
                 });
                 
+                // Check if the response contains an error (even if it's a successful HTTP response)
+                if (response && typeof response === 'object' && response.body?.error) {
+                  const errorBody = response.body;
+                  if (errorBody.status === 429 || 
+                      errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
+                      errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
+                    throw {
+                      status: 429,
+                      body: errorBody.body,
+                      message: errorBody.body?.error?.message || 'Rate limit exceeded'
+                    };
+                  }
+                }
+                
                 // Extract content and usage from Gemini response
                 content = response.candidates?.[0]?.content?.parts?.[0]?.text || '';
                 if (response.usageMetadata) {
@@ -234,6 +262,20 @@ export class PortkeyConnector {
                   messages,
                   ...modelOptions
                 });
+                
+                // Check if the response contains an error (even if it's a successful HTTP response)
+                if (response && typeof response === 'object' && response.body?.error) {
+                  const errorBody = response.body;
+                  if (errorBody.status === 429 || 
+                      errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
+                      errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
+                    throw {
+                      status: 429,
+                      body: errorBody.body,
+                      message: errorBody.body?.error?.message || 'Rate limit exceeded'
+                    };
+                  }
+                }
                 
                 // Extract content and usage based on model type
                 if (modelType === 'anthropic') {
@@ -284,26 +326,64 @@ export class PortkeyConnector {
             lastError = retryError;
             console.error(`[PortkeyConnector] Intento ${attempt}/${maxRetries} falló:`, retryError.message);
             
+            // Check if it's a 429 rate limit error
+            const isRateLimitError = retryError.status === 429 || 
+                                   retryError.message?.includes('rate limit') ||
+                                   retryError.message?.includes('exceeded token rate limit') ||
+                                   retryError.message?.includes('AIServices S0 pricing tier');
+            
             // Check if it's a connection/timeout error that we should retry
             const isRetryableError = retryError.message?.includes('timeout') || 
                                    retryError.message?.includes('Connect Timeout') ||
                                    retryError.message?.includes('fetch failed') ||
-                                   retryError.code === 'UND_ERR_CONNECT_TIMEOUT';
+                                   retryError.code === 'UND_ERR_CONNECT_TIMEOUT' ||
+                                   isRateLimitError;
             
             if (!isRetryableError || attempt === maxRetries) {
               // If it's not retryable or we've exhausted retries, throw the error
               throw retryError;
             }
             
-            // Wait before retrying (exponential backoff)
-            const waitTime = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
-            console.log(`[PortkeyConnector] Esperando ${waitTime}ms antes del siguiente intento...`);
+            // Calculate wait time based on error type
+            let waitTime;
+            if (isRateLimitError) {
+              // For rate limit errors, wait longer (60 seconds as suggested in the error message)
+              waitTime = 60 * 1000; // 60 seconds
+              console.log(`[PortkeyConnector] Rate limit error detected, waiting ${waitTime/1000}s as suggested by API...`);
+            } else {
+              // For other retryable errors, use exponential backoff
+              waitTime = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
+              console.log(`[PortkeyConnector] Esperando ${waitTime}ms antes del siguiente intento...`);
+            }
+            
             await new Promise(resolve => setTimeout(resolve, waitTime));
           }
         }
       } catch (apiCallError: any) {
         const duration = Date.now() - startTime;
         console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
+        
+        // Check if it's a 429 rate limit error from the response structure
+        const isRateLimitError = apiCallError.status === 429 || 
+                               apiCallError.body?.error?.message?.includes('exceeded token rate limit') ||
+                               apiCallError.body?.error?.message?.includes('AIServices S0 pricing tier') ||
+                               apiCallError.body?.error?.param?.error?.includes('exceeded token rate limit') ||
+                               apiCallError.body?.error?.param?.error?.includes('AIServices S0 pricing tier') ||
+                               apiCallError.message?.includes('rate limit') ||
+                               apiCallError.message?.includes('exceeded token rate limit') ||
+                               apiCallError.message?.includes('AIServices S0 pricing tier');
+        
+        if (isRateLimitError) {
+          console.warn(`🔄 [PortkeyConnector] Rate limit error detected (429), this should have been handled by retry logic`);
+          
+          // Extract the specific error message from the nested structure
+          const errorMessage = apiCallError.body?.error?.message || 
+                              apiCallError.body?.error?.param?.error ||
+                              apiCallError.message ||
+                              'Rate limit exceeded';
+          
+          throw new Error(`Rate limit exceeded: ${errorMessage}`);
+        }
         
         // Check if it's a streaming error with GPT-5 that we can fallback from
         const isStreamingError = stream === true && (
@@ -338,6 +418,20 @@ export class PortkeyConnector {
               stream_options: { include_usage: true }
             });
             
+            // Check if the fallback response contains an error
+            if (fallbackResponse && typeof fallbackResponse === 'object' && fallbackResponse.body?.error) {
+              const errorBody = fallbackResponse.body;
+              if (errorBody.status === 429 || 
+                  errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
+                  errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
+                throw {
+                  status: 429,
+                  body: errorBody.body,
+                  message: errorBody.body?.error?.message || 'Rate limit exceeded'
+                };
+              }
+            }
+            
             console.log(`✅ [PortkeyConnector] GPT-4o fallback successful`);
             return {
               stream: fallbackResponse,
@@ -359,6 +453,20 @@ export class PortkeyConnector {
                 ...modelOptions,
                 stream: false // Disable streaming
               });
+              
+              // Check if the non-streaming fallback response contains an error
+              if (nonStreamingResponse && typeof nonStreamingResponse === 'object' && nonStreamingResponse.body?.error) {
+                const errorBody = nonStreamingResponse.body;
+                if (errorBody.status === 429 || 
+                    errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
+                    errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
+                  throw {
+                    status: 429,
+                    body: errorBody.body,
+                    message: errorBody.body?.error?.message || 'Rate limit exceeded'
+                  };
+                }
+              }
               
               console.log(`✅ [PortkeyConnector] Non-streaming fallback successful`);
               return {
@@ -395,6 +503,9 @@ export class PortkeyConnector {
               stream: stream,
               streamOptions: streamOptions
             });
+            
+            // Note: AI Gateway responses don't have the same error structure as Portkey
+            // Errors from AI Gateway would be thrown as exceptions, not contained in response body
             
             console.log(`✅ [PortkeyConnector] Fallback con AI Gateway exitoso`);
             return fallbackResponse;

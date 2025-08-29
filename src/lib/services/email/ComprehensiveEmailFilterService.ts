@@ -342,7 +342,7 @@ export class ComprehensiveEmailFilterService {
       this.applyBasicFiltersWithAILeadsBypass(emails, securityConfig, normalizedAliases, aiLeadsMap);
     
     // 6. Verificar emails ya procesados
-    const envelopeIds = basicFilteredEmails.map(email => emailToEnvelopeMap.get(email)).filter(Boolean);
+    const envelopeIds = basicFilteredEmails.map(email => emailToEnvelopeMap.get(email)).filter(Boolean) as string[];
     const processedEnvelopeIds = await this.getProcessedEmails(envelopeIds, siteId);
     
     // 7. Aplicar filtros finales
@@ -351,18 +351,18 @@ export class ComprehensiveEmailFilterService {
       const emailTo = (email.to || '').toLowerCase();
       const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
       
-      // Incluir automáticamente leads asignados a IA
-      if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
-        console.log(`[COMPREHENSIVE_FILTER] 🤖 Lead IA incluido automáticamente: ${fromEmailAddress} → ${emailTo}`);
-        return true;
-      }
-      
-      // Filtrar duplicados
+      // 🎯 PRIMERO verificar duplicados (para TODOS los emails, incluyendo leads IA)
       const emailEnvelopeId = emailToEnvelopeMap.get(email);
       if (emailEnvelopeId && processedEnvelopeIds.has(emailEnvelopeId)) {
         console.log(`[COMPREHENSIVE_FILTER] 🚨 Email duplicado filtrado: ${emailFrom} → ${emailTo} (ID: ${emailEnvelopeId})`);
         basicStats.duplicateFiltered = (basicStats.duplicateFiltered || 0) + 1;
         return false;
+      }
+      
+      // ✅ Si no es duplicado, incluir automáticamente leads asignados a IA
+      if (fromEmailAddress && aiLeadsMap.has(fromEmailAddress)) {
+        console.log(`[COMPREHENSIVE_FILTER] 🤖 Lead IA incluido (no duplicado): ${fromEmailAddress} → ${emailTo}`);
+        return true;
       }
       
       return true;

@@ -133,13 +133,13 @@ export class TargetProcessor extends Base {
         agentPrompt
       );
       
-      // Configure model options - use command stream preference or default to non-streaming
+      // Configure model options - default to non-streaming for stability
       const modelOptions: PortkeyModelOptions = {
         modelType: command.model_type || this.defaultOptions.modelType,
         modelId: command.model_id || this.defaultOptions.modelId,
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens,
         temperature: command.temperature || this.defaultOptions.temperature,
-        stream: command.stream !== undefined ? command.stream : this.defaultOptions.stream || false,
+        stream: this.defaultOptions.stream || false,
         streamOptions: {
           includeUsage: true
         }
@@ -149,7 +149,22 @@ export class TargetProcessor extends Base {
       console.log(`[TargetProcessor] Calling LLM with ${messages.length} messages - STREAMING ${modelOptions.stream ? 'ENABLED' : 'DISABLED'}`);
       
       // Call LLM to process target
-      const llmResponse = await this.connector.callAgent(messages, modelOptions);
+      let llmResponse;
+      try {
+        llmResponse = await this.connector.callAgent(messages, modelOptions);
+      } catch (error: any) {
+        // Check if it's a rate limit error
+        if (error.message?.includes('Rate limit exceeded') || 
+            error.message?.includes('exceeded token rate limit') ||
+            error.message?.includes('AIServices S0 pricing tier')) {
+          console.error(`[TargetProcessor] Rate limit error from connector: ${error.message}`);
+          return {
+            status: 'failed',
+            error: `Rate limit exceeded: ${error.message}. Please try again later.`
+          };
+        }
+        throw error; // Re-throw other errors
+      }
       
       // Handle streaming response
       if (llmResponse.isStream) {
