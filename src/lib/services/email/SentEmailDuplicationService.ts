@@ -317,22 +317,22 @@ export class SentEmailDuplicationService {
 
       // PASO 2: Verificar en SyncedObjectsService si ya fue procesado
       try {
-        const exists = await SyncedObjectsService.objectExists(
+        const isProcessed = await SyncedObjectsService.objectIsProcessed(
           standardEmailId, 
           siteId, 
           'sent_email'
         );
 
-        debugItem.existsInSyncedObjects = exists;
+        debugItem.existsInSyncedObjects = isProcessed;
 
-        if (exists) {
-          console.log(`[SENT_EMAIL_DEDUP] ✅ Email "${standardEmailId}" YA PROCESADO en synced_objects, SALTANDO`);
+        if (isProcessed) {
+          console.log(`[SENT_EMAIL_DEDUP] ✅ Email "${standardEmailId}" YA PROCESADO en synced_objects (status: processed/replied), SALTANDO`);
           debugItem.decision = 'already_processed_synced_objects';
           debugInfo.push(debugItem);
           alreadyProcessed.push(email);
           continue;
         } else {
-          console.log(`[SENT_EMAIL_DEDUP] 🆕 Email "${standardEmailId}" NO encontrado en synced_objects, PROCESANDO`);
+          console.log(`[SENT_EMAIL_DEDUP] 🆕 Email "${standardEmailId}" NO procesado aún en synced_objects, PROCESANDO`);
         }
 
       } catch (error) {

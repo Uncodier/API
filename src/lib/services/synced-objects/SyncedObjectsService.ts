@@ -121,6 +121,35 @@ export class SyncedObjectsService {
   }
 
   /**
+   * Verifica si un objeto ya fue procesado (status 'processed' o 'replied')
+   */
+  static async objectIsProcessed(
+    externalId: string, 
+    siteId: string, 
+    objectType: string = this.DEFAULT_OBJECT_TYPE
+  ): Promise<boolean> {
+    try {
+      const { data, error } = await supabaseAdmin
+        .from('synced_objects')
+        .select('status')
+        .eq('external_id', externalId)
+        .eq('site_id', siteId)
+        .eq('object_type', objectType)
+        .in('status', ['processed', 'replied'])
+        .single();
+
+      if (error && error.code !== 'PGRST116') { // PGRST116 = No rows found
+        throw error;
+      }
+
+      return !!data; // Solo true si existe Y tiene status processed/replied
+    } catch (error) {
+      console.error('[SYNCED_OBJECTS] Error checking if object is processed:', error);
+      return false; // En caso de error, asumir que no está procesado para no bloquear el proceso
+    }
+  }
+
+  /**
    * Obtiene un objeto sincronizado por ID externo
    */
   static async getObject(
@@ -335,11 +364,10 @@ export class SyncedObjectsService {
           continue;
         }
 
-        // Verificar si es primera vez que vemos este email (creado ahora)
-        const isNewObject = new Date(syncedObject.first_seen_at).getTime() >= (Date.now() - 5000); // Última 5 segundos
-        
-        if (isNewObject || syncedObject.status === 'pending') {
-          console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet, including`);
+        // CORREGIDO: Verificar solo el estado del email, no cuándo fue creado
+        // Esto previene duplicados entre syncs separados por tiempo (ej: 1 hora)
+        if (syncedObject.status === 'pending') {
+          console.log(`[SYNCED_OBJECTS] ✅ Email ${emailId} not processed yet (status: pending), including`);
           unprocessed.push(email);
         } else {
           console.log(`[SYNCED_OBJECTS] 🔄 Email ${emailId} already processed (status: ${syncedObject.status}), skipping`);

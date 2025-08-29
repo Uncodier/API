@@ -119,10 +119,11 @@ export class ReceivedEmailDuplicationService {
     try {
       const { data: existingObjects, error } = await supabaseAdmin
         .from('synced_objects')
-        .select('external_id')
+        .select('external_id, status')
         .eq('site_id', siteId)
         .eq('object_type', 'email')
-        .in('external_id', envelopeIds);
+        .in('external_id', envelopeIds)
+        .in('status', ['processed', 'replied']); // SOLO emails realmente procesados
       
       if (error) {
         console.warn(`[RECEIVED_EMAIL_DEDUP] ⚠️ Error consultando synced_objects:`, error);

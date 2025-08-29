@@ -280,7 +280,7 @@ export class ComprehensiveEmailFilterService {
   }
 
   /**
-   * Obtiene emails ya procesados
+   * Obtiene emails ya procesados (solo con status 'processed' o 'replied')
    */
   private static async getProcessedEmails(envelopeIds: string[], siteId: string): Promise<Set<string>> {
     const processedEnvelopeIds = new Set<string>();
@@ -290,14 +290,15 @@ export class ComprehensiveEmailFilterService {
     try {
       const { data: existingObjects, error } = await supabaseAdmin
         .from('synced_objects')
-        .select('external_id')
+        .select('external_id, status')
         .eq('site_id', siteId)
         .eq('object_type', 'email')
-        .in('external_id', envelopeIds);
+        .in('external_id', envelopeIds)
+        .in('status', ['processed', 'replied']); // SOLO emails realmente procesados
       
       if (!error && existingObjects) {
         existingObjects.forEach(obj => processedEnvelopeIds.add(obj.external_id));
-        console.log(`[COMPREHENSIVE_FILTER] 🔍 ${processedEnvelopeIds.size} emails ya procesados encontrados`);
+        console.log(`[COMPREHENSIVE_FILTER] 🔍 ${processedEnvelopeIds.size} emails ya procesados encontrados (status: processed/replied)`);
       }
     } catch (error) {
       console.warn(`[COMPREHENSIVE_FILTER] ⚠️ Error verificando emails procesados:`, error);
