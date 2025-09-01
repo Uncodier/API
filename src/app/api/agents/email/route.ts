@@ -54,8 +54,6 @@ export async function comprehensiveEmailFilter(
   siteId: string, 
   emailConfig: any
 ) {
-  console.log(`[EMAIL_API] 🔍 Procesando ${emails.length} emails para filtrado`);
-  
   // Delegar al nuevo servicio
   return await ComprehensiveEmailFilterService.comprehensiveEmailFilter(emails, siteId, emailConfig);
 }
@@ -82,22 +80,19 @@ function createEmailCommand(agentId: string, siteId: string, emails: any[], emai
 
 // Main POST endpoint to analyze emails (versión simplificada)
 export async function POST(request: NextRequest) {
+  const startTime = Date.now();
+  
   try {
     // Get and validate request data
     const requestData = await request.json();
-    console.log('[EMAIL_API] Request data received:', JSON.stringify(requestData, null, 2));
     
     // Normalizar datos del request para aceptar tanto camelCase como snake_case
     const normalizedData = CaseConverterService.normalizeRequestData(requestData, 'snake');
-    console.log('[EMAIL_API] Normalized data:', JSON.stringify(normalizedData, null, 2));
     
     const validationResult = EmailAgentRequestSchema.safeParse(normalizedData);
     
     if (!validationResult.success) {
-      console.error("[EMAIL_API] Validation error details:", JSON.stringify({
-        error: validationResult.error.format(),
-        issues: validationResult.error.issues,
-      }, null, 2));
+      console.error("[EMAIL_API] Validation error:", validationResult.error.format());
       
       return NextResponse.json(
         {
@@ -112,8 +107,6 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    console.log('[EMAIL_API] Validation successful, parsed data:', JSON.stringify(validationResult.data, null, 2));
-    
     // Extraer parámetros usando getFlexibleProperty para máxima compatibilidad
     const siteId = getFlexibleProperty(requestData, 'site_id') || validationResult.data.site_id;
     const limit = getFlexibleProperty(requestData, 'limit') || validationResult.data.limit || 5;
@@ -124,20 +117,11 @@ export async function POST(request: NextRequest) {
     const userId = getFlexibleProperty(requestData, 'user_id') || validationResult.data.user_id;
     const sinceDate = getFlexibleProperty(requestData, 'since_date') || validationResult.data.since_date;
     
-    console.log('[EMAIL_API] Extracted parameters:', {
-      siteId, limit, leadId, agentId, teamMemberId, analysisType, userId, sinceDate
-    });
-    
     try {
       // Get email configuration
-      console.log(`[EMAIL_API] 🔧 Obteniendo configuración de email para sitio: ${siteId}`);
       const emailConfig = await EmailConfigService.getEmailConfig(siteId);
-      console.log(`[EMAIL_API] ✅ Configuración de email obtenida exitosamente`);
       
       // Fetch emails con retry automático para asegurar suficientes emails válidos
-      console.log(`[EMAIL_API] 📥 Obteniendo emails con límite: ${limit}, desde: ${sinceDate || 'sin límite de fecha'}`);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PRE_FETCH - ANTES de EmailService.fetchEmails()`);
-      
       // Configuración de retry para asegurar emails suficientes
       const MIN_VALID_EMAILS = 2; // Mínimo de emails válidos después del filtrado
       const MAX_FETCH_ATTEMPTS = 3;
@@ -159,17 +143,12 @@ export async function POST(request: NextRequest) {
         if (!sinceDate && HOURS_PROGRESSIONS[fetchAttempt - 1]) {
           const hoursBack = HOURS_PROGRESSIONS[fetchAttempt - 1];
           finalSinceDate = new Date(Date.now() - hoursBack! * 60 * 60 * 1000).toISOString();
-          console.log(`[EMAIL_API] 🔄 Intento ${fetchAttempt}: Ampliando búsqueda a ${hoursBack}h atrás (${finalSinceDate})`);
-         } else {
-          console.log(`[EMAIL_API] 🔄 Intento ${fetchAttempt}: Usando fecha especificada: ${finalSinceDate}`);
         }
         
         // Fetch emails para este intento
         allEmails = await EmailService.fetchEmails(emailConfig, limit, finalSinceDate);
-        console.log(`[EMAIL_API] 📧 Intento ${fetchAttempt}: ${allEmails.length} emails obtenidos`);
         
         if (allEmails.length === 0) {
-          console.log(`[EMAIL_API] ⚠️ Intento ${fetchAttempt}: No se encontraron emails. ${fetchAttempt < MAX_FETCH_ATTEMPTS ? 'Ampliando rango...' : 'Procediendo sin emails'}`);
           if (fetchAttempt >= MAX_FETCH_ATTEMPTS) break;
           continue;
         }
@@ -189,43 +168,28 @@ export async function POST(request: NextRequest) {
           return true;
         });
         
-        console.log(`[EMAIL_API] 🔍 Intento ${fetchAttempt}: ~${quickValidEmails.length} emails potencialmente válidos (mínimo: ${MIN_VALID_EMAILS})`);
-        
         if (quickValidEmails.length >= MIN_VALID_EMAILS || fetchAttempt >= MAX_FETCH_ATTEMPTS) {
-          console.log(`[EMAIL_API] ✅ Intento ${fetchAttempt}: ${quickValidEmails.length >= MIN_VALID_EMAILS ? 'Suficientes emails encontrados' : 'Máximo de intentos alcanzado'}. Procediendo con filtro completo.`);
           break;
         }
-        
-        console.log(`[EMAIL_API] 📈 Intento ${fetchAttempt}: Insuficientes emails válidos (${quickValidEmails.length}/${MIN_VALID_EMAILS}). ${fetchAttempt < MAX_FETCH_ATTEMPTS ? 'Ampliando búsqueda...' : ''}`);
       }
       
-      console.log(`[EMAIL_API] 🔍 DEBUG: POST_FETCH - DESPUÉS de EmailService.fetchEmails() con ${fetchAttempt} intentos`);
-      console.log(`[EMAIL_API] ✅ Emails obtenidos exitosamente: ${allEmails.length} emails (rango final: ${finalSinceDate})`);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 1 - Emails fetched completamente`);
+      // Aplicar filtro comprehensivo optimizado (ahora usa ComprehensiveEmailFilterService)
+      let validEmails, summary, emailToEnvelopeMap;
+      try {
+        const result = await ComprehensiveEmailFilterService.comprehensiveEmailFilter(allEmails, siteId, emailConfig);
+        validEmails = result.validEmails;
+        summary = result.summary;
+        emailToEnvelopeMap = result.emailToEnvelopeMap;
+      } catch (error) {
+        console.error(`[EMAIL_API] Error en ComprehensiveEmailFilterService:`, error);
+        throw error;
+      }
       
-       // Aplicar filtro comprehensivo optimizado (ahora usa ComprehensiveEmailFilterService)
-       console.log(`[EMAIL_API] 🚀 Iniciando filtro comprehensivo para ${allEmails.length} emails...`);
-       
-       let validEmails, summary, emailToEnvelopeMap;
-       try {
-         const result = await ComprehensiveEmailFilterService.comprehensiveEmailFilter(allEmails, siteId, emailConfig);
-         validEmails = result.validEmails;
-         summary = result.summary;
-         emailToEnvelopeMap = result.emailToEnvelopeMap;
-       } catch (error) {
-         console.error(`[EMAIL_API] ❌ ERROR en ComprehensiveEmailFilterService:`, error);
-         throw error;
-       }
-       
-       console.log(`[EMAIL_API] ✅ Filtro completado: ${validEmails.length}/${allEmails.length} emails válidos`);
+      // SEPARAR EMAILS usando EmailProcessingService
+      const separationResult = await EmailProcessingService.separateEmailsByDestination(validEmails, emailConfig, siteId, userId);
+      const { emailsToAliases, emailsFromAILeads, emailsToAgent, directResponseEmails } = separationResult;
       
-       // SEPARAR EMAILS usando EmailProcessingService
-       console.log(`[EMAIL_API] 🔀 Separando emails por destino...`);
-       const separationResult = await EmailProcessingService.separateEmailsByDestination(validEmails, emailConfig, siteId, userId);
-       const { emailsToAliases, emailsFromAILeads, emailsToAgent, directResponseEmails } = separationResult;
-       
-       if (emailsToAgent.length === 0 && emailsToAliases.length === 0 && emailsFromAILeads.length === 0) {
-         console.log(`[EMAIL_API] ⚠️ No se encontraron emails para procesar después de la separación`);
+      if (emailsToAgent.length === 0 && emailsToAliases.length === 0 && emailsFromAILeads.length === 0) {
         return NextResponse.json({
           success: true,
           data: {
@@ -244,8 +208,6 @@ export async function POST(request: NextRequest) {
       
       // Si solo hay emails directos (aliases o AI leads), devolver directamente
       if (emailsToAgent.length === 0 && directResponseEmails.length > 0) {
-        console.log(`[EMAIL_API] 🎯 Solo emails directos encontrados, devolviendo respuesta directa...`);
-        
         // Guardar emails directos usando EmailProcessingService
         const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
         await EmailProcessingService.saveProcessedEmails(
@@ -287,41 +249,24 @@ export async function POST(request: NextRequest) {
       }
 
       // Si no se proporciona agentId, buscar el agente de soporte
-      console.log(`[EMAIL_API] 🔍 Determinando agente ID efectivo...`);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 6 - Antes de findSupportAgent`);
       const effectiveAgentId = agentId || await findSupportAgent(siteId);
-      console.log(`[EMAIL_API] ✅ Agente ID efectivo: ${effectiveAgentId}`);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 7 - Agente ID obtenido`);
       
       // Create and submit command (solo para emails que van al agente)
-      console.log(`[EMAIL_API] 🔧 Creando comando de análisis de emails para el agente...`);
       const command = createEmailCommand(effectiveAgentId, siteId, emailsToAgent, emailConfig, analysisType, leadId, teamMemberId, userId);
       
-      console.log(`[EMAIL_API] 📤 Enviando comando al servicio...`);
       const internalCommandId = await CommandManagementService.submitCommand(command);
-      console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
       
       // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 13 - Antes de getCommandDbUuid`);
       let initialDbUuid = await getCommandDbUuid(internalCommandId);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 14 - getCommandDbUuid completado`);
-      if (initialDbUuid) {
-        console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
-      }
       
       // Esperar a que el comando se complete (igual que chat)
-      console.log(`[EMAIL_API] ⏳ Esperando a que el comando se complete...`);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 15 - Antes de waitForCommandCompletion`);
       const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
-      console.log(`[EMAIL_API] 🔍 DEBUG: PUNTO 16 - waitForCommandCompletion completado`);
       
       // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
       const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
       
       // Si no completado y no hay resultados, retornar error
       if (!completed) {
-        console.warn(`⚠️ Comando ${internalCommandId} no completó exitosamente en el tiempo esperado`);
-        
         if (!executedCommand || !executedCommand.results || executedCommand.results.length === 0) {
           // Solo fallar si realmente no hay resultados utilizables
           return NextResponse.json(
@@ -334,42 +279,33 @@ export async function POST(request: NextRequest) {
             },
             { status: 500 }
           );
-        } else {
-          // Si hay resultados a pesar del estado, continuamos con advertencia
-          console.log(`⚠️ Comando en estado ${executedCommand.status} pero tiene ${executedCommand.results.length} resultados, continuando`);
         }
       }
       
       // Extraer los datos de email de los results usando EmailProcessingService
-      console.log(`[EMAIL_API] 🔍 Diagnosticando comando ejecutado:`);
-      console.log(`[EMAIL_API] executedCommand existe: ${!!executedCommand}`);
-      console.log(`[EMAIL_API] executedCommand.results existe: ${!!(executedCommand && executedCommand.results)}`);
-      console.log(`[EMAIL_API] executedCommand.results.length: ${executedCommand?.results?.length || 0}`);
-      
       // Extraer emails del comando ejecutado
       const agentEmails = EmailProcessingService.extractEmailsFromResults(executedCommand);
       
       // Combinar emails del agente con emails directos
       const emailsForResponse = [...agentEmails, ...directResponseEmails];
       
-      console.log(`[EMAIL_API] 📊 Total emails para respuesta: ${emailsForResponse.length}`);
-       
-       // Marcar emails como procesados usando EmailProcessingService
-       const emailsToSave = EmailProcessingService.filterEmailsToSave(emailsForResponse);
-       console.log(`[EMAIL_API] 💾 Emails a guardar en synced: ${emailsToSave.length}/${emailsForResponse.length}`);
-       
-       await EmailProcessingService.saveProcessedEmails(
-         emailsToSave, 
-         validEmails, 
-         emailToEnvelopeMap, 
-         siteId, 
-         effectiveDbUuid || undefined, 
-         internalCommandId, 
-         effectiveAgentId
-       );
+      // Marcar emails como procesados usando EmailProcessingService
+      const emailsToSave = EmailProcessingService.filterEmailsToSave(emailsForResponse);
+      
+      await EmailProcessingService.saveProcessedEmails(
+        emailsToSave, 
+        validEmails, 
+        emailToEnvelopeMap, 
+        siteId, 
+        effectiveDbUuid || undefined, 
+        internalCommandId, 
+        effectiveAgentId
+      );
       
       // Calcular estadísticas de procesamiento usando EmailProcessingService
       const stats = EmailProcessingService.calculateProcessingStats(emailsForResponse);
+      
+      const totalDuration = Date.now() - startTime;
       
       return NextResponse.json({
         success: true,
@@ -396,12 +332,17 @@ export async function POST(request: NextRequest) {
             finalSinceDate: finalSinceDate,
             minValidEmailsRequired: MIN_VALID_EMAILS,
             retryWasSuccessful: validEmails.length >= MIN_VALID_EMAILS
+          },
+          performance: {
+            totalDuration: totalDuration,
+            fetchAttempts: fetchAttempt
           }
         }
       });
       
     } catch (error: unknown) {
-      console.error(`[EMAIL_API] 💥 Error en el flujo principal:`, error);
+      const totalDuration = Date.now() - startTime;
+      console.error(`[EMAIL_API] Error en el flujo principal después de ${totalDuration}ms:`, error);
       
       const isConfigError = error instanceof Error && (
         error.message.includes('settings') || 
@@ -423,17 +364,22 @@ export async function POST(request: NextRequest) {
           error: {
             code: errorCode,
             message: errorMessage,
+            duration: totalDuration
           },
         },
         { status: isConfigError || isAgentError ? 404 : 500 }
       );
     }
   } catch (error: unknown) {
+    const totalDuration = Date.now() - startTime;
+    console.error(`[EMAIL_API] Error crítico después de ${totalDuration}ms:`, error);
+    
     return NextResponse.json({
       success: false,
       error: {
         code: ERROR_CODES.SYSTEM_ERROR,
         message: error instanceof Error ? error.message : "Error interno del sistema",
+        duration: totalDuration
       }
     }, { status: 500 });
   }

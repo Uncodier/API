@@ -1,6 +1,7 @@
 import { fetchHtml } from '@/lib/utils/html-utils';
 import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
 import { searchWithTavily } from '@/lib/services/search/data-analyst-search';
+import { DuckDuckGoInstantApiService } from './duckduckgo-instant-api';
 
 export interface DuckDuckGoSearchOptions {
   query: string;
@@ -249,40 +250,54 @@ export class DuckDuckGoSearchService {
   }
 
   /**
-   * Usa la API oficial de DuckDuckGo para respuestas instantáneas
+   * Usa la API oficial de DuckDuckGo Instant Answer para búsquedas
    */
-  private async searchWithInstantAPI(query: string): Promise<any> {
+  private async searchWithInstantApi(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
     try {
-      console.log(`🦆 [DuckDuckGo] Probando API oficial para: "${query}"`);
+      console.log(`🦆 [DuckDuckGo Instant] Usando API oficial para: "${options.query}"`);
       
-      const url = `${this.instantApiUrl}?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`;
+      const instantApiService = DuckDuckGoInstantApiService.getInstance();
+      const searchQuery = this.buildSearchQuery(options);
       
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; SearchBot/1.0)',
-        },
-        signal: AbortSignal.timeout(10000)
-      });
+      const result = await instantApiService.searchWebResults(searchQuery);
+      
+      if (result.success && result.results && result.results.length > 0) {
+        // Convertir resultados al formato esperado
+        const searchResults: SearchResult[] = result.results.map((item: any) => ({
+          title: item.title || '',
+          url: item.url || '',
+          domain: item.url ? this.extractDomain(item.url) : '',
+          publishedDate: undefined
+        }));
 
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.status}`);
-      }
-
-      const data = await response.json();
-      
-      // La API oficial solo proporciona respuestas instantáneas, no resultados de búsqueda web
-      if (data.AbstractText || data.Answer || data.Infobox) {
-        console.log(`✅ [DuckDuckGo] API oficial respondió con datos instantáneos`);
-        return data;
+        console.log(`✅ [DuckDuckGo Instant] API exitosa: ${searchResults.length} resultados`);
+        
+        return {
+          success: true,
+          results: searchResults,
+          query: searchQuery,
+          totalResults: searchResults.length,
+        };
       }
       
-      console.log(`⚠️ [DuckDuckGo] API oficial sin resultados útiles para búsqueda web`);
-      return null;
+      console.log(`⚠️ [DuckDuckGo Instant] API sin resultados útiles`);
+      return {
+        success: false,
+        results: [],
+        query: searchQuery,
+        totalResults: 0,
+        error: 'No results found'
+      };
       
     } catch (error) {
-      console.log(`❌ [DuckDuckGo] API oficial falló:`, error);
-      return null;
+      console.log(`❌ [DuckDuckGo Instant] API falló:`, error);
+      return {
+        success: false,
+        results: [],
+        query: options.query,
+        totalResults: 0,
+        error: error instanceof Error ? error.message : 'Unknown error'
+      };
     }
   }
 
@@ -354,7 +369,7 @@ export class DuckDuckGoSearchService {
    * Realiza una búsqueda usando Tavily como fallback
    */
   private async searchWithTavilyFallback(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
-    console.log(`🔄 [DuckDuckGo] Usando Tavily como fallback`);
+    console.log(`🔄 [Tavily] Usando Tavily como fallback`);
     
     try {
       const searchQuery = this.buildSearchQuery(options);
@@ -392,7 +407,7 @@ export class DuckDuckGoSearchService {
         publishedDate: undefined
       }));
 
-      console.log(`✅ [DuckDuckGo] Fallback Tavily: ${results.length} resultados`);
+      console.log(`✅ [Tavily] Fallback exitoso: ${results.length} resultados`);
 
       return {
         success: true,
@@ -402,7 +417,7 @@ export class DuckDuckGoSearchService {
       };
 
     } catch (error) {
-      console.error('❌ [DuckDuckGo] Error en fallback Tavily:', error);
+      console.error('❌ [Tavily] Error en fallback:', error);
       
       return {
         success: false,
@@ -415,39 +430,48 @@ export class DuckDuckGoSearchService {
   }
 
   /**
-   * Realiza una búsqueda inteligente (Tavily principal, DuckDuckGo como backup)
+   * Realiza una búsqueda inteligente (DuckDuckGo Instant API principal, HTML scraping como backup, Tavily como fallback)
    */
   async search(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
     console.log(`🔍 [SmartSearch] Iniciando búsqueda inteligente: "${options.query}"`);
     
-    // Usar Tavily como método principal ya que es más confiable
+    // Usar DuckDuckGo Instant API como método principal
     try {
-      console.log(`🎯 [SmartSearch] Usando Tavily como método principal`);
-      const tavilyResult = await this.searchWithTavilyFallback(options);
+      console.log(`🦆 [SmartSearch] Usando DuckDuckGo Instant API como método principal`);
+      const instantApiResult = await this.searchWithInstantApi(options);
       
-      if (tavilyResult.success && tavilyResult.results.length > 0) {
-        console.log(`✅ [SmartSearch] Tavily exitoso: ${tavilyResult.results.length} resultados`);
-        return tavilyResult;
+      if (instantApiResult.success && instantApiResult.results.length > 0) {
+        console.log(`✅ [SmartSearch] DuckDuckGo Instant API exitoso: ${instantApiResult.results.length} resultados`);
+        return instantApiResult;
       }
       
-      // Si Tavily falla, intentar DuckDuckGo como backup
-      console.log(`⚠️ [SmartSearch] Tavily sin resultados, intentando DuckDuckGo`);
-      return await this.searchDuckDuckGoDirectly(options);
+      // Si Instant API falla, intentar HTML scraping como backup
+      console.log(`⚠️ [SmartSearch] Instant API sin resultados, intentando HTML scraping`);
+      const htmlResult = await this.searchDuckDuckGoDirectly(options);
+      
+      if (htmlResult.success && htmlResult.results.length > 0) {
+        console.log(`✅ [SmartSearch] HTML scraping exitoso: ${htmlResult.results.length} resultados`);
+        return htmlResult;
+      }
+      
+      // Si ambos fallan, intentar Tavily como último fallback
+      console.log(`⚠️ [SmartSearch] HTML scraping sin resultados, intentando Tavily como fallback`);
+      return await this.searchWithTavilyFallback(options);
       
     } catch (error) {
       console.error('❌ [SmartSearch] Error en búsqueda principal:', error);
       
-      // Último intento con DuckDuckGo
-      console.log(`🔄 [SmartSearch] Último intento con DuckDuckGo`);
-      return await this.searchDuckDuckGoDirectly(options);
+      // Último intento con Tavily
+      console.log(`🔄 [SmartSearch] Último intento con Tavily`);
+      return await this.searchWithTavilyFallback(options);
     }
   }
 
   /**
-   * Método de búsqueda directo en DuckDuckGo (como backup)
+   * Método de búsqueda directo en DuckDuckGo (método principal)
    */
   private async searchDuckDuckGoDirectly(options: DuckDuckGoSearchOptions): Promise<DuckDuckGoSearchResponse> {
-    console.log(`🦆 [DuckDuckGo] Intentando búsqueda directa como backup`);
+    console.log(`🦆 [DuckDuckGo] Ejecutando búsqueda directa`);
     
     try {
       const searchUrl = this.buildSearchUrl(options);
@@ -468,7 +492,7 @@ export class DuckDuckGoSearchService {
         throw new Error('No se encontraron resultados parseables');
       }
 
-      console.log(`✅ [DuckDuckGo] Backup exitoso: ${results.length} resultados`);
+      console.log(`✅ [DuckDuckGo] Búsqueda exitosa: ${results.length} resultados`);
 
       return {
         success: true,
@@ -478,7 +502,7 @@ export class DuckDuckGoSearchService {
       };
 
     } catch (error) {
-      console.error('❌ [DuckDuckGo] Backup también falló:', error);
+      console.error('❌ [DuckDuckGo] Búsqueda falló:', error);
       
       return {
         success: false,

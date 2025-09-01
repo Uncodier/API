@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { GoogleSearchService } from '@/lib/services/google-search-service';
+import { DuckDuckGoSearchService } from '@/lib/services/duckduckgo-search-service';
+import { DuckDuckGoInstantApiService } from '@/lib/services/duckduckgo-instant-api';
 import { searchWithTavily } from '@/lib/services/search/data-analyst-search';
 import { z } from 'zod';
 
@@ -44,7 +45,7 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   
   try {
-    console.log('🚀 [DeepResearch] Iniciando operación de investigación');
+    console.log('🚀 [DeepResearch] Iniciando operación de investigación con DuckDuckGo Instant API');
     
     const body = await request.json();
     
@@ -80,21 +81,29 @@ export async function POST(request: NextRequest) {
     console.log(`🔍 [DeepResearch] Query: ${query || 'N/A'}`);
     console.log(`📅 [DeepResearch] Rango de fechas: ${date_from || 'N/A'} - ${date_to || 'N/A'}`);
     
-    const googleSearchService = GoogleSearchService.getInstance();
+    const duckDuckGoSearchService = DuckDuckGoSearchService.getInstance();
+    const instantApiService = DuckDuckGoInstantApiService.getInstance();
     let searchResults;
     let finalQuery = '';
     
     // Ejecutar búsqueda según el tipo de operación
     switch (operation_type) {
       case 'llm_news':
-        console.log('🤖 [DeepResearch] Ejecutando búsqueda de noticias de LLMs con Google');
-        searchResults = await googleSearchService.searchLLMNews({
-          dateFrom: date_from,
-          dateTo: date_to,
-          maxResults: max_results,
-          keywords
-        });
-        finalQuery = 'LLM and AI news';
+        console.log('🤖 [DeepResearch] Ejecutando búsqueda de noticias de LLMs con DuckDuckGo Instant API');
+        // Construir query específica para LLMs
+        let llmQuery = 'LLM OR "large language model" OR GPT OR Claude OR "artificial intelligence" OR AI';
+        if (keywords && keywords.length > 0) {
+          llmQuery += ` ${keywords.join(' OR ')}`;
+        }
+        
+        // Para la Instant API, usar solo la query básica sin filtros de fecha
+        if (sources && sources.length > 0) {
+          llmQuery += ` ${sources[0]}`; // Agregar el sitio como parte de la query
+        }
+        
+        console.log(`🔍 [DeepResearch] Query final para Instant API: "${llmQuery}"`);
+        searchResults = await instantApiService.searchWebResults(llmQuery);
+        finalQuery = llmQuery;
         break;
         
       case 'general_news':
@@ -110,15 +119,17 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        console.log('📰 [DeepResearch] Ejecutando búsqueda general de noticias con Google');
-        searchResults = await googleSearchService.searchNews({
-          topic: query,
-          dateFrom: date_from,
-          dateTo: date_to,
-          sources,
-          maxResults: max_results
-        });
-        finalQuery = query;
+        console.log('📰 [DeepResearch] Ejecutando búsqueda general de noticias con DuckDuckGo Instant API');
+        let newsQuery = query;
+        
+        // Para la Instant API, usar solo la query básica sin filtros de fecha
+        if (sources && sources.length > 0) {
+          newsQuery += ` ${sources.join(' ')}`; // Agregar los sitios como parte de la query
+        }
+        
+        console.log(`🔍 [DeepResearch] Query final para Instant API: "${newsQuery}"`);
+        searchResults = await instantApiService.searchWebResults(newsQuery);
+        finalQuery = newsQuery;
         break;
         
       case 'custom_search':
@@ -134,15 +145,28 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        console.log('🔧 [DeepResearch] Ejecutando búsqueda personalizada con Google');
-        searchResults = await googleSearchService.search({
-          query,
-          site: sources?.[0], // Usar el primer source como sitio principal
-          dateFrom: date_from,
-          dateTo: date_to,
-          maxResults: max_results
-        });
-        finalQuery = query;
+        console.log('🔧 [DeepResearch] Ejecutando búsqueda personalizada con DuckDuckGo Instant API');
+        let customQuery = query;
+        
+        // Simplificar la query para la Instant API - usar solo términos principales
+        // Remover operadores OR complejos y usar términos más simples
+        customQuery = customQuery
+          .replace(/\s+OR\s+/gi, ' ')  // Reemplazar OR con espacios
+          .replace(/\s+/g, ' ')        // Normalizar espacios
+          .trim();
+        
+        // Extraer solo los términos principales para la Instant API
+        const terms = customQuery.split(' ').slice(0, 3); // Tomar solo los primeros 3 términos
+        customQuery = terms.join(' ');
+        
+        // Para la Instant API, usar solo la query básica sin filtros de fecha
+        if (sources && sources.length > 0) {
+          customQuery += ` ${sources[0]}`; // Agregar el sitio como parte de la query, no como filtro
+        }
+        
+        console.log(`🔍 [DeepResearch] Query simplificada para Instant API: "${customQuery}"`);
+        searchResults = await instantApiService.searchWebResults(customQuery);
+        finalQuery = customQuery;
         break;
         
       default:
@@ -158,6 +182,53 @@ export async function POST(request: NextRequest) {
         );
     }
     
+    // Si la Instant API falla, intentar con el servicio original como fallback
+    if (!searchResults.success) {
+      console.log(`⚠️ [DeepResearch] Instant API falló: ${searchResults.error}`);
+      console.log(`🔄 [DeepResearch] Intentando con servicio original como fallback...`);
+      
+      try {
+        switch (operation_type) {
+          case 'llm_news':
+            searchResults = await duckDuckGoSearchService.searchLLMNews({
+              dateFrom: date_from,
+              dateTo: date_to,
+              maxResults: max_results,
+              keywords
+            });
+            break;
+            
+          case 'general_news':
+            searchResults = await duckDuckGoSearchService.searchNews({
+              topic: query!,
+              dateFrom: date_from,
+              dateTo: date_to,
+              sources,
+              maxResults: max_results
+            });
+            break;
+            
+          case 'custom_search':
+            searchResults = await duckDuckGoSearchService.search({
+              query: query!,
+              site: sources?.[0],
+              dateFrom: date_from,
+              dateTo: date_to,
+              maxResults: max_results
+            });
+            break;
+        }
+        
+        if (searchResults.success) {
+          console.log(`✅ [DeepResearch] Fallback exitoso: ${searchResults.results?.length || 0} resultados`);
+        } else {
+          console.log(`❌ [DeepResearch] Fallback también falló: ${searchResults.error}`);
+        }
+      } catch (fallbackError) {
+        console.error('❌ [DeepResearch] Error en fallback:', fallbackError);
+      }
+    }
+    
     if (!searchResults.success) {
       return NextResponse.json(
         {
@@ -171,10 +242,10 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    console.log(`✅ [DeepResearch] Búsqueda completada. ${searchResults.results.length} resultados encontrados`);
+    console.log(`✅ [DeepResearch] Búsqueda completada. ${searchResults.results?.length || 0} resultados encontrados`);
     
     // Procesar resultados (simplificado - solo URLs y metadatos)
-    const processedResults: ProcessedResult[] = searchResults.results.map(result => ({
+    const processedResults: ProcessedResult[] = (searchResults.results || []).map(result => ({
       title: result.title,
       url: result.url,
       domain: result.domain,
@@ -226,8 +297,8 @@ export async function POST(request: NextRequest) {
 export async function GET(request: NextRequest) {
   return NextResponse.json({
     name: 'Deep Research Operation API',
-    description: 'API for performing research operations with DuckDuckGo search and optional Tavily content analysis',
-    version: '1.0.0',
+    description: 'API for performing research operations with DuckDuckGo Instant API (primary) and fallback to HTML scraping + Tavily',
+    version: '2.0.0',
     endpoints: {
       POST: '/api/deepResearch/operation'
     },
