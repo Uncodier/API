@@ -372,10 +372,10 @@ export async function performSMTPValidation(email: string, mxRecord: MXRecord, a
       const catchallTest = await detectCatchallDomain(domain, mxRecord);
       
       if (catchallTest.isCatchall) {
-        deliverable = false; // Catchall domains are not reliably deliverable
+        deliverable = true; // Catchall domains are deliverable (server accepts them)
         finalResult = 'catchall';
         finalFlags = [...emailResult.flags, 'catchall_domain', 'catchall_detected', `confidence_${Math.round(catchallTest.confidence * 100)}%`];
-        finalMessage = `Email accepted but domain is catchall (${Math.round(catchallTest.confidence * 100)}% confidence) - delivery uncertain`;
+        finalMessage = `Email accepted by catchall domain (${Math.round(catchallTest.confidence * 100)}% confidence) - deliverable but uncertain recipient`;
       }
     } catch (error) {
       console.log(`[VALIDATE_EMAIL] Catchall test failed, treating as regular validation:`, error);
