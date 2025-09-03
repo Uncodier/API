@@ -211,7 +211,7 @@ IMPORTANTE: Este es un análisis real, NO devuelvas datos de ejemplo o simulados
                   { role: 'user', content: userMessage }
                 ],
                 modelType: params.modelType === 'anthropic' ? 'openai' : params.modelType, // Si es anthropic, usar openai como fallback
-                modelId: params.modelType === 'anthropic' ? 'gpt-4o' : params.modelId      // Si es anthropic, usar gpt-4o como fallback
+                modelId: params.modelType === 'anthropic' ? 'gpt-5-nano' : params.modelId      // Si es anthropic, usar gpt-5-nano como fallback
               })
             });
             

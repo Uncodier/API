@@ -308,7 +308,7 @@ La API soporta los siguientes proveedores y modelos:
 
 ### OpenAI (GPT)
 
-- `gpt-4o`: GPT-4o
+- `gpt-5-nano`: GPT-5 Nano
 - `gpt-4-vision-preview`: GPT-4 Vision
 - `gpt-4-turbo`: GPT-4 Turbo
 - `gpt-4`: GPT-4

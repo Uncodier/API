@@ -321,7 +321,7 @@ export async function GET(_request: NextRequest) {
         includeScreenshot: true,
         userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         provider: "openai",
-        modelId: "gpt-4o",
+        modelId: "gpt-5-nano",
         ignoreSSL: false,
         saveToDatabase: true // Set to true to save the analysis to the database
       }

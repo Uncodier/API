@@ -64,8 +64,7 @@ describe('TargetProcessor', () => {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       'Primary system prompt for target processing',
@@ -112,8 +111,7 @@ describe('TargetProcessor', () => {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       'Primary system prompt only'
@@ -144,8 +142,7 @@ describe('TargetProcessor', () => {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       undefined,

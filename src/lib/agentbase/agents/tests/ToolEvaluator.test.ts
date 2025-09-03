@@ -80,8 +80,7 @@ describe('ToolEvaluator', () => {
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       'Tool evaluator description',
@@ -129,8 +128,7 @@ describe('ToolEvaluator', () => {
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       'Tool evaluator description',
@@ -162,8 +160,7 @@ describe('ToolEvaluator', () => {
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o',
-        maxTokens: 4096,
+        modelId: 'gpt-5-nano',
         temperature: 0.1
       },
       'Tool evaluator description',

@@ -30,7 +30,7 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   showScreenshotOption={true}
   showModelOptions={true}
   defaultModelType="openai"
-  defaultModel="gpt-4o"
+  defaultModel="gpt-5-nano"
   showAnalysisTypeField={false}
 />
 
@@ -70,7 +70,7 @@ Realiza un análisis estructural del sitio web, enfocado en la estructura del DO
     "safeSelectors": true, // Si es true, valida los selectores antes de usarlos
     "includeScreenshot": true, // Incluir captura de pantalla en la respuesta
     "provider": "openai", // Proveedor de IA: 'openai', 'anthropic', 'gemini'
-    "modelId": "gpt-4o", // Modelo específico de IA a utilizar
+    "modelId": "gpt-5-nano", // Modelo específico de IA a utilizar
     "saveToDatabase": false // Guardar resultados en la base de datos (requiere site_id y user_id)
   }
 }
@@ -290,7 +290,7 @@ Obtiene un análisis específico por su ID (requiere que el análisis se haya al
     "status": "completed",
     "request_time": 12345,
     "provider": "openai",
-    "model_id": "gpt-4o"
+    "model_id": "gpt-5-nano"
   }
 }
 ```
@@ -316,7 +316,7 @@ Obtiene todos los análisis para un sitio específico (requiere el parámetro `u
       "status": "completed",
       "request_time": 12345,
       "provider": "openai",
-      "model_id": "gpt-4o"
+      "model_id": "gpt-5-nano"
     },
     {
       "id": "uuid-of-analysis-2",

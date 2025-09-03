@@ -36,7 +36,7 @@ const MODEL_OPTIONS = {
     { value: 'claude-3-haiku-20240307', label: 'Claude 3 Haiku' }
   ],
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
     { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
     { value: 'gpt-4', label: 'GPT-4' },
     { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }

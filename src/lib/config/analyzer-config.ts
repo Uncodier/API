@@ -12,7 +12,7 @@ export const AVAILABLE_MODELS = {
   ],
   openai: [
     { id: 'gpt-5', name: 'GPT-4.1' },
-    { id: 'gpt-4o', name: 'GPT-4o' },
+    { id: 'gpt-5-nano', name: 'GPT-5 Nano' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
     { id: 'gpt-4', name: 'GPT-4' },
@@ -102,8 +102,7 @@ export function getRequestOptions(provider = 'openai', modelId?: string) {
   
   // Opciones para OpenAI (Azure OpenAI)
   const openaiOptions = {
-    model: modelId || 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5 for better streaming stability
-    max_tokens: 32768 // Límite máximo de Azure OpenAI
+    model: modelId || 'gpt-5-nano'
   };
   
   // Opciones para Gemini

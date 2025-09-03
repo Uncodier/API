@@ -28,7 +28,6 @@ export class ProcessorConfigurationService {
       {
         modelType: 'openai',
         modelId: 'gpt-5-nano',
-        maxTokens: 32000,
         temperature: 0.6
       }
     );
@@ -41,8 +40,7 @@ export class ProcessorConfigurationService {
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5 for better streaming stability
-        maxTokens: 32000,
+        modelId: 'gpt-5-nano',
         temperature: 0.7,
         stream: false, // Default to non-streaming for stability
         streamOptions: {
@@ -59,8 +57,7 @@ export class ProcessorConfigurationService {
       ['copywriting', 'content_creation', 'marketing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5 for better streaming stability
-        maxTokens: 32000,
+        modelId: 'gpt-5-nano',
         temperature: 0.7
       }
     );
@@ -86,8 +83,7 @@ export class ProcessorConfigurationService {
     // Opciones por defecto para el modelo con streaming habilitado
     const defaultModelOptions: PortkeyModelOptions = {
       modelType: 'openai',
-      modelId: 'gpt-4o', // Temporarily use GPT-4o instead of GPT-5-nano for better streaming stability
-      maxTokens: 32000,
+      modelId: 'gpt-5-nano',
       temperature: 0.7,
       stream: false, // Default to non-streaming for stability
       streamOptions: {

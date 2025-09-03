@@ -89,7 +89,7 @@ export const MODEL_OPTIONS: Record<ModelProviderType, Array<{value: string, labe
     { value: 'claude-instant-1.2', label: 'Claude Instant 1.2' }
   ],
   openai: [
-    { value: 'gpt-4o', label: 'GPT-4o' },
+    { value: 'gpt-5-nano', label: 'GPT-5 Nano' },
     { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
     { value: 'gpt-4', label: 'GPT-4' },
     { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' }

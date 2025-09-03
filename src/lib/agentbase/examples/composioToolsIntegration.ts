@@ -39,8 +39,7 @@ export async function createComposioEnabledEvaluator(
     ['tool_evaluation'],
     { // Opciones de modelo
       modelType: 'openai',
-      modelId: 'gpt-4o',
-      maxTokens: 4000,
+      modelId: 'gpt-5-nano',
       temperature: 0.2
     },
     'Evaluador de herramientas con integración de Composio',

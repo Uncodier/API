@@ -60,8 +60,7 @@ const evaluator = new ToolEvaluator(
   ['tool_evaluation'],
   { // Opciones del modelo
     modelType: 'openai',
-    modelId: 'gpt-4o',
-    maxTokens: 4000
+    modelId: 'gpt-5-nano'
   },
   'Descripción opcional',
   undefined, // systemPrompt

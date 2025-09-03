@@ -64,7 +64,7 @@ const SiteApi: BaseApiConfig = {
       jsonResponse: false,
       htmlContent: '',
       modelType: (props.defaultModelType as ModelProviderType) || 'openai',
-      modelId: props.defaultModel || 'gpt-4o',
+      modelId: props.defaultModel || 'gpt-5-nano',
       site_id: props.defaultSiteId || '',
       user_id: props.defaultUserId || '',
       saveToDatabase: props.defaultSaveToDatabase || false
