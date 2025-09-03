@@ -41,9 +41,7 @@ export class EmailService {
     try {
       // Detectar si está en Quoted-Printable (contiene =XX o =\r\n)
       if (content.includes('=') && (content.match(/=[0-9A-F]{2}/gi) || content.includes('=\r\n') || content.includes('=\n'))) {
-        console.log(`[EmailService] 🔧 Decodificando contenido Quoted-Printable...`);
         const decoded = quotedPrintable.decode(content);
-        console.log(`[EmailService] ✅ Contenido decodificado: ${content.length} -> ${decoded.length} caracteres`);
         return decoded;
       }
       
@@ -69,14 +67,7 @@ export class EmailService {
     let client: ImapFlow | undefined;
     
     try {
-      console.log(`[EmailService] 🔧 Iniciando fetch de emails con configuración:`, {
-        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
-        port: emailConfig.imapPort || 993,
-        user: emailConfig.user || emailConfig.email,
-        useOAuth: emailConfig.useOAuth || false,
-        limit,
-        sinceDate
-      });
+
 
       // Validar configuración básica
       if (!emailConfig.password && !emailConfig.accessToken) {
@@ -111,21 +102,21 @@ export class EmailService {
       // Configure authentication
       if (emailConfig.useOAuth && emailConfig.accessToken) {
         // OAuth2 authentication
-        console.log(`[EmailService] 🔐 Usando autenticación OAuth2`);
+
         imapConfig.auth = {
           user: emailConfig.user || emailConfig.email,
           accessToken: emailConfig.accessToken
         };
       } else {
         // Traditional password authentication
-        console.log(`[EmailService] 🔐 Usando autenticación con contraseña`);
+
         imapConfig.auth = {
           user: emailConfig.user || emailConfig.email,
           pass: emailConfig.password
         };
       }
 
-      console.log(`[EmailService] 📡 Conectando a servidor IMAP: ${imapConfig.host}:${imapConfig.port}`);
+
       
       // Create ImapFlow client
       client = new ImapFlow(imapConfig);
@@ -137,7 +128,7 @@ export class EmailService {
       });
 
       await Promise.race([connectionPromise, timeoutPromise]);
-      console.log(`[EmailService] ✅ Conexión IMAP establecida exitosamente`);
+
       
       // Open INBOX with error handling
       console.log(`[EmailService] 📂 Abriendo bandeja de entrada...`);
@@ -146,11 +137,7 @@ export class EmailService {
       try {
         // Obtener información de la bandeja
         const mailboxInfo = await client.mailboxOpen('INBOX');
-        console.log(`[EmailService] 📊 Información de bandeja:`, {
-          exists: mailboxInfo.exists,
-          uidNext: mailboxInfo.uidNext,
-          uidValidity: mailboxInfo.uidValidity
-        });
+
 
         const emails: EmailMessage[] = [];
         
@@ -163,7 +150,7 @@ export class EmailService {
               throw new Error(`Fecha inválida: ${sinceDate}`);
             }
             searchQuery.since = sinceDateTime;
-            console.log(`[EmailService] 📅 Buscando emails desde: ${sinceDateTime.toISOString()}`);
+
           } catch (dateError) {
             console.warn(`[EmailService] ⚠️ Fecha inválida, ignorando filtro: ${sinceDate}`);
           }
@@ -174,14 +161,14 @@ export class EmailService {
           searchQuery = { all: true };
         }
 
-        console.log(`[EmailService] 🔍 Buscando emails con criterios:`, searchQuery);
+
         
         // Search for emails with conservative approach to avoid server conflicts
         const messages = [];
         try {
           // First, search to get UIDs
           const searchResults = await client.search(searchQuery);
-          console.log(`[EmailService] 🔍 Búsqueda encontró ${searchResults.length} emails matching criterios`);
+
           
           // 🎯 CORREGIR: Obtener todos los emails y ordenar por fecha, no por UID
           const allEmails = [];
@@ -203,16 +190,16 @@ export class EmailService {
             return dateB - dateA; // Descending order (newest first)
           });
           
-          console.log(`[EmailService] 📊 Emails ordenados por fecha (más recientes primero): ${sortedEmails.length} emails`);
+
           
           // Take only the newest emails up to the limit
           const limitedEmails = sortedEmails.slice(0, limit);
-          console.log(`[EmailService] 🎯 Procesando ${limitedEmails.length} emails más recientes (límite: ${limit})`);
+
           
           // Add to messages array
           messages.push(...limitedEmails);
           
-          console.log(`[EmailService] 📨 Encontrados ${messages.length} emails para procesar`);
+
         } catch (fetchError) {
           console.error(`[EmailService] ❌ Error durante fetch de emails:`, fetchError);
           throw new Error(`Error al buscar emails: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
@@ -236,7 +223,7 @@ export class EmailService {
             
             // Strategy 1: Try different bodyParts keys
             if (message.bodyParts) {
-              console.log(`[EmailService] 🔍 DIAGNOSTICO - BodyParts disponibles:`, Array.from(message.bodyParts.keys()));
+
               
               // Try common bodyParts keys - using valid IMAP part specifiers
               const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
@@ -249,25 +236,25 @@ export class EmailService {
                     // OPTIMIZACIÓN: Truncar during bodyParts extraction
                     const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
                     if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
-                      console.log(`[EmailService] ✂️ BodyPart truncado durante extracción: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+
                       bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
                     }
-                    console.log(`[EmailService] ✅ DIAGNOSTICO - Body encontrado con clave "${partKey}": ${bodyContent.length} chars`);
+
                     break;
                   }
                 } catch (partError) {
-                  console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error con clave "${partKey}":`, partError);
+
                 }
               }
               
               // If no specific part worked, try to get any text part
               if (!bodyContent) {
-                console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando con todas las partes disponibles...`);
+
                 const bodyPartsArray = Array.from(message.bodyParts.entries());
                 for (const [key, part] of bodyPartsArray) {
                   try {
                     const content = part.toString('utf8');
-                    console.log(`[EmailService] 🔍 DIAGNOSTICO - Parte "${key}": ${content.length} chars, preview: "${content.substring(0, 100)}..."`);
+
                     
                     // Skip header parts and take first substantial text content
                     if (!key.toLowerCase().includes('header') && content.length > 10) {
@@ -275,15 +262,15 @@ export class EmailService {
                       const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
                       let processedContent = content;
                       if (content.length > MAX_EMAIL_CONTENT_LENGTH) {
-                        console.log(`[EmailService] ✂️ Content truncado en iteración: ${content.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+
                         processedContent = content.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
                       }
                       bodyContent = processedContent;
-                      console.log(`[EmailService] ✅ DIAGNOSTICO - Using parte "${key}" como body`);
+
                       break;
                     }
                   } catch (partError) {
-                    console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando parte "${key}":`, partError);
+
                   }
                 }
               }
@@ -292,9 +279,9 @@ export class EmailService {
             // Strategy 2: Try to get full message source and parse it
             if (!bodyContent && message.source) {
               try {
-                console.log(`[EmailService] 🔍 DIAGNOSTICO - Intentando extraer del source completo...`);
+
                 const sourceContent = message.source.toString('utf8');
-                console.log(`[EmailService] 🔍 DIAGNOSTICO - Source length: ${sourceContent.length}`);
+
                 
                 // Try to find content after headers (simple approach)
                 const headerEndIndex = sourceContent.indexOf('\n\n');
@@ -303,13 +290,13 @@ export class EmailService {
                   // OPTIMIZACIÓN: Truncar también el contenido extraído del source
                   const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
                   if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
-                    console.log(`[EmailService] ✂️ Source content truncado: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+
                     bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
                   }
-                  console.log(`[EmailService] ✅ DIAGNOSTICO - Body extraído del source: ${bodyContent.length} chars`);
+
                 }
               } catch (sourceError) {
-                console.log(`[EmailService] ⚠️ DIAGNOSTICO - Error procesando source:`, sourceError);
+
               }
             }
             
@@ -317,13 +304,13 @@ export class EmailService {
               // OPTIMIZACIÓN: Truncar emails muy largos durante la descarga para evitar timeouts
               const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo por email
               if (bodyContent.length > MAX_EMAIL_CONTENT_LENGTH) {
-                console.log(`[EmailService] ✂️ Email truncado durante descarga: ${bodyContent.length} -> ${MAX_EMAIL_CONTENT_LENGTH} caracteres`);
+
                 bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
               }
               email.body = bodyContent;
-                              console.log(`[EmailService] ✅ Body content obtenido: ${bodyContent.length} caracteres`);
+
             } else {
-              console.log(`[EmailService] ❌ DIAGNOSTICO - No se pudo obtener body content para email ${email.id}`);
+
               email.body = null;
             }
             
@@ -337,14 +324,14 @@ export class EmailService {
           }
         }
         
-        console.log(`[EmailService] ✅ Procesamiento completado: ${emails.length} emails obtenidos`);
+
         return emails;
         
       } finally {
         // Always release the lock
         try {
           lock.release();
-          console.log(`[EmailService] 🔓 Lock de bandeja liberado`);
+
         } catch (lockError) {
           console.warn(`[EmailService] ⚠️ Error liberando lock:`, lockError);
         }
@@ -375,7 +362,7 @@ export class EmailService {
       if (client) {
         try {
           // NO HACER logout() - se cuelga. Forzar cierre directo.
-          console.log(`[EmailService] ⚡ Forzando cierre directo de conexión IMAP (sin logout)`);
+
           
           if (typeof (client as any).close === 'function') {
             (client as any).close();
@@ -383,10 +370,10 @@ export class EmailService {
             (client as any).destroy();
           }
           
-          console.log(`[EmailService] 👋 Conexión IMAP cerrada exitosamente`);
+
         } catch (closeError) {
           // Ignorar errores de cierre - no es crítico
-          console.log(`[EmailService] ⚠️ Error cerrando conexión (ignorado):`, closeError instanceof Error ? closeError.message : closeError);
+
         }
       }
     }
@@ -406,7 +393,7 @@ export class EmailService {
     let client: ImapFlow | undefined;
     
     try {
-      console.log(`[EmailService] 🗑️ Iniciando eliminación de email ID: ${emailId} ${isFromSent ? '(enviados)' : '(recibidos)'}`);
+
 
       // Validar configuración básica
       if (!emailConfig.password && !emailConfig.accessToken) {

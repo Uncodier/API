@@ -49,54 +49,32 @@ export class SentEmailDuplicationService {
       { field: 'ID', value: email.ID, priority: 6 }
     ];
     
-    console.log(`[SENT_EMAIL_DEDUP] 📋 Candidatos disponibles:`, 
-      candidates.map(c => `${c.field}="${c.value}" (prioridad: ${c.priority})`).join(', ')
-    );
+
     
     // Evaluar cada candidato en orden de prioridad
     for (const candidate of candidates) {
-      console.log(`[SENT_EMAIL_DEDUP] 🔍 Evaluando candidato ${candidate.field}="${candidate.value}"...`);
+
       
       if (this.isValidEmailId(candidate.value)) {
         const standardId = candidate.value.trim();
-        console.log(`[SENT_EMAIL_DEDUP] ✅ ID estándar seleccionado: "${standardId}" (fuente: ${candidate.field}, prioridad: ${candidate.priority})`);
-        
-        // Logging adicional sobre el tipo de ID seleccionado
-        if (standardId.includes('@')) {
-          console.log(`[SENT_EMAIL_DEDUP] 🎯 EXCELENTE: Message-ID con formato RFC 5322 (contiene @)`);
-        } else if (standardId.includes('-') || standardId.includes('.')) {
-          console.log(`[SENT_EMAIL_DEDUP] ✅ BUENO: ID con formato estructurado (contiene - o .)`);
-        } else if (standardId.length > 10) {
-          console.log(`[SENT_EMAIL_DEDUP] ✅ ACEPTABLE: ID largo (${standardId.length} caracteres)`);
-        }
+
         
         return standardId;
       } else {
-        console.log(`[SENT_EMAIL_DEDUP] ❌ Candidato ${candidate.field}="${candidate.value}" RECHAZADO por validación`);
+
       }
     }
     
-    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN candidato tradicional pasó la validación`);
+
     
     // 🆕 FALLBACK: Generar ID basado en envelope (para casos donde no hay Message-ID disponible)
     const envelopeId = this.generateEnvelopeBasedId(email);
     if (envelopeId) {
-      console.log(`[SENT_EMAIL_DEDUP] ✅ ID generado desde envelope: "${envelopeId}"`);
+
       return envelopeId;
     }
     
-    console.log(`[SENT_EMAIL_DEDUP] ❌ NINGÚN método pudo extraer ID estándar válido`);
-    console.log(`[SENT_EMAIL_DEDUP] 🔍 Resumen de rechazo:`, {
-      messageId: { value: email.messageId, reason: this.getValidationFailureReason(email.messageId) },
-      id: { value: email.id, reason: this.getValidationFailureReason(email.id) },
-      uid: { value: email.uid, reason: this.getValidationFailureReason(email.uid) },
-      envelopeData: {
-        to: email.to,
-        from: email.from,
-        subject: email.subject,
-        date: email.date
-      }
-    });
+
     
     return null;
   }
@@ -107,7 +85,7 @@ export class SentEmailDuplicationService {
    */
   static generateEnvelopeBasedId(email: any): string | null {
     try {
-      console.log(`[SENT_EMAIL_DEDUP] 🏗️ Generando ID basado en envelope...`);
+
       
       // Extraer datos requeridos
       const to = email.to || email.recipient;
@@ -116,19 +94,14 @@ export class SentEmailDuplicationService {
       const date = email.date || email.sent_at;
       
       if (!to || !from || !subject || !date) {
-        console.log(`[SENT_EMAIL_DEDUP] ❌ Datos insuficientes para generar ID desde envelope:`, {
-          hasTo: !!to,
-          hasFrom: !!from, 
-          hasSubject: !!subject,
-          hasDate: !!date
-        });
+
         return null;
       }
       
       // Normalizar timestamp a ventana de 1 minuto para manejar diferencias pequeñas
       const timestamp = new Date(date);
       if (isNaN(timestamp.getTime())) {
-        console.log(`[SENT_EMAIL_DEDUP] ❌ Fecha inválida para envelope ID: ${date}`);
+
         return null;
       }
       
@@ -142,15 +115,7 @@ export class SentEmailDuplicationService {
       const normalizedFrom = this.extractEmailAddress(from).toLowerCase().trim();
       const normalizedSubject = subject.toLowerCase().trim().substring(0, 50); // Primeros 50 chars
       
-      console.log(`[SENT_EMAIL_DEDUP] 📊 Datos normalizados para envelope ID:`, {
-        originalTo: to,
-        normalizedTo,
-        originalFrom: from,
-        normalizedFrom,
-        originalSubject: subject,
-        normalizedSubject: normalizedSubject.substring(0, 30) + '...',
-        timeWindow
-      });
+
       
       // Crear hash estable usando SHA-256 simplificado
       const dataString = `${timeWindow}|${normalizedTo}|${normalizedFrom}|${normalizedSubject}`;
@@ -166,8 +131,7 @@ export class SentEmailDuplicationService {
       // Crear ID con formato recognizable (usando día para estabilidad)
       const envelopeId = `env-${Math.abs(hash).toString(16)}-${timeWindow.replace(/[:-]/g, '')}`;
       
-      console.log(`[SENT_EMAIL_DEDUP] ✅ ID envelope generado: "${envelopeId}" (ventana diaria: ${timeWindow})`);
-      console.log(`[SENT_EMAIL_DEDUP] 📊 String hash usado: "${dataString.substring(0, 100)}..."`);
+
       
       return envelopeId;
       
@@ -297,9 +261,7 @@ export class SentEmailDuplicationService {
         }
       };
 
-      console.log(`[SENT_EMAIL_DEDUP] 📧 [${i+1}/${emails.length}] Procesando email enviado a: ${email.to}`);
-      console.log(`[SENT_EMAIL_DEDUP] 📧 Subject: "${email.subject}"`);
-      console.log(`[SENT_EMAIL_DEDUP] 📧 Date: ${email.date}`);
+
 
       // PASO 1: Extraer ID estándar
       const standardEmailId = this.extractStandardEmailId(email);
@@ -313,7 +275,7 @@ export class SentEmailDuplicationService {
         continue;
       }
 
-      console.log(`[SENT_EMAIL_DEDUP] 🆔 ID estándar para verificación: "${standardEmailId}"`);
+
 
       // PASO 2: Verificar en SyncedObjectsService si ya fue procesado
       try {
@@ -326,13 +288,13 @@ export class SentEmailDuplicationService {
         debugItem.existsInSyncedObjects = isProcessed;
 
         if (isProcessed) {
-          console.log(`[SENT_EMAIL_DEDUP] ✅ Email "${standardEmailId}" YA PROCESADO en synced_objects (status: processed/replied), SALTANDO`);
+
           debugItem.decision = 'already_processed_synced_objects';
           debugInfo.push(debugItem);
           alreadyProcessed.push(email);
           continue;
         } else {
-          console.log(`[SENT_EMAIL_DEDUP] 🆕 Email "${standardEmailId}" NO procesado aún en synced_objects, PROCESANDO`);
+
         }
 
       } catch (error) {
@@ -359,12 +321,12 @@ export class SentEmailDuplicationService {
         });
 
         if (created) {
-          console.log(`[SENT_EMAIL_DEDUP] ✅ Email "${standardEmailId}" registrado como pendiente, PROCESANDO`);
+
           debugItem.decision = 'unprocessed_new';
           debugInfo.push(debugItem);
           unprocessed.push(email);
         } else {
-          console.log(`[SENT_EMAIL_DEDUP] ⚠️ No se pudo crear registro para "${standardEmailId}", PROCESANDO de todas formas`);
+
           debugItem.decision = 'unprocessed_create_failed';
           debugInfo.push(debugItem);
           unprocessed.push(email);
@@ -407,7 +369,7 @@ export class SentEmailDuplicationService {
       return false;
     }
 
-    console.log(`[SENT_EMAIL_DEDUP] ✅ Marcando email "${standardEmailId}" como PROCESADO`);
+
 
     try {
       const result = await SyncedObjectsService.updateObject(
@@ -425,10 +387,10 @@ export class SentEmailDuplicationService {
       );
 
       if (result) {
-        console.log(`[SENT_EMAIL_DEDUP] ✅ Email "${standardEmailId}" marcado como procesado exitosamente`);
+
         return true;
       } else {
-        console.log(`[SENT_EMAIL_DEDUP] ❌ No se pudo marcar email "${standardEmailId}" como procesado`);
+
         return false;
       }
 
@@ -454,7 +416,7 @@ export class SentEmailDuplicationService {
     }
 
     const status = isSkipped ? 'skipped' : 'error';
-    console.log(`[SENT_EMAIL_DEDUP] ❌ Marcando email "${standardEmailId}" como ${status}: ${errorMessage}`);
+
 
     try {
       const result = await SyncedObjectsService.updateObject(
@@ -488,7 +450,7 @@ export class SentEmailDuplicationService {
   ): Promise<string | null> {
     if (!standardEmailId) return null;
     
-    console.log(`[SENT_EMAIL_DEDUP] 🔍 Buscando mensaje existente con ID estándar: "${standardEmailId}"`);
+
     
     try {
       const searchQueries = [
@@ -526,12 +488,12 @@ export class SentEmailDuplicationService {
       for (const result of results) {
         if (result.status === 'fulfilled' && result.value.data && result.value.data.length > 0) {
           const foundMessageId = result.value.data[0].id;
-          console.log(`[SENT_EMAIL_DEDUP] ✅ DUPLICADO ENCONTRADO por ID estándar "${standardEmailId}": ${foundMessageId}`);
+
           return foundMessageId;
         }
       }
       
-      console.log(`[SENT_EMAIL_DEDUP] ✅ No hay duplicados con ID estándar: "${standardEmailId}"`);
+
       return null;
     } catch (error) {
       console.error('[SENT_EMAIL_DEDUP] Error buscando por ID estándar:', error);
