@@ -62,7 +62,7 @@ export class PortkeyConnector {
       // Determine model options based on provider
       const modelOptions: any = {
         model: '',
-        max_tokens: maxTokens || 4096
+        max_tokens: maxTokens || 16384
       };
       
       // Set model ID based on provider
@@ -76,7 +76,13 @@ export class PortkeyConnector {
           let maxCompletionTokens = modelOptions.max_tokens;
           if (finalModelId === 'gpt-5') {
             // gpt-5 has a 16k limit
-            maxCompletionTokens = Math.min(maxCompletionTokens || 4096, 16384);
+            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 16384);
+          } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
+            // gpt-5-nano and gpt-5-mini have a 32k limit
+            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 32768);
+          } else {
+            // gpt-5.1 and other gpt-5 models have a 16k limit as base
+            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 16384);
           }
           
           modelOptions.max_completion_tokens = maxCompletionTokens;
