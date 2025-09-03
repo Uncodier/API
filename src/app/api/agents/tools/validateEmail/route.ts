@@ -9,6 +9,7 @@ import {
   attemptFallbackValidation,
   performSMTPValidation,
   checkDomainReputation,
+  performBasicEmailValidation,
   type EmailValidationResult,
   type MXRecord
 } from '@/lib/email-validation';
@@ -506,33 +507,72 @@ export async function POST(request: NextRequest) {
       console.log(`[VALIDATE_EMAIL] 🔄 ${fallbackReason}, attempting fallback validation for ${domain}`);
       
       try {
-        const fallbackResult = await attemptFallbackValidation(domain);
+        // First try basic validation (similar to other providers)
+        console.log(`[VALIDATE_EMAIL] 🔍 Performing basic email validation check`);
+        const basicValidation = await performBasicEmailValidation(domain);
         
-        if (fallbackResult.canReceiveEmail) {
-          // Fallback validation suggests the domain can receive email
-          console.log(`[VALIDATE_EMAIL] ✅ Fallback validation successful: ${fallbackResult.message}`);
+        console.log(`[VALIDATE_EMAIL] Basic validation results:`, {
+          has_dns: basicValidation.has_dns,
+          has_dns_mx: basicValidation.has_dns_mx,
+          smtp_connectable: basicValidation.smtp_connectable,
+          details: basicValidation.details
+        });
+        
+        // If basic validation shows email capability, use it
+        if (basicValidation.has_dns && basicValidation.has_dns_mx) {
+          const confidence = basicValidation.smtp_connectable ? 70 : 50;
+          const flags = ['basic_validation'];
+          
+          if (basicValidation.has_dns) flags.push('has_dns');
+          if (basicValidation.has_dns_mx) flags.push('has_dns_mx');
+          if (basicValidation.smtp_connectable) flags.push('smtp_connectable');
           
           smtpResult = {
             isValid: true,
-            deliverable: false, // Still risky due to validation limitations
-            result: 'risky' as const,
-            flags: [...smtpResult.flags, 'fallback_validation', ...fallbackResult.flags],
-            message: `SMTP validation blocked but ${fallbackResult.message}`,
-            confidence: Math.max(fallbackResult.confidence - 20, 30), // Reduce confidence due to IP block
-            confidenceLevel: fallbackResult.confidence >= 70 ? 'medium' : 'low' as const,
+            deliverable: basicValidation.smtp_connectable, // Deliverable if SMTP is connectable
+            result: basicValidation.smtp_connectable ? 'valid' : 'risky' as const,
+            flags: [...smtpResult.flags, ...flags],
+            message: `Basic validation: DNS=${basicValidation.has_dns}, MX=${basicValidation.has_dns_mx}, SMTP=${basicValidation.smtp_connectable}`,
+            confidence,
+            confidenceLevel: confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low' as const,
             reasoning: [
-              'SMTP validation blocked by IP reputation (-40)',
-              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+              `DNS records found (+${basicValidation.has_dns ? 20 : 0})`,
+              `MX records found (+${basicValidation.has_dns_mx ? 30 : 0})`,
+              `SMTP connectable (+${basicValidation.smtp_connectable ? 20 : 0})`
             ]
           };
+          
+          console.log(`[VALIDATE_EMAIL] ✅ Basic validation successful with confidence ${confidence}%`);
         } else {
-          console.log(`[VALIDATE_EMAIL] ❌ Fallback validation also failed`);
-          // Keep original result but add fallback info
-          smtpResult.flags.push('fallback_failed');
-          smtpResult.reasoning = [
-            ...(smtpResult.reasoning || []),
-            'Fallback validation also failed (-10)'
-          ];
+          // Try advanced fallback validation
+          const fallbackResult = await attemptFallbackValidation(domain);
+          
+          if (fallbackResult.canReceiveEmail) {
+            // Fallback validation suggests the domain can receive email
+            console.log(`[VALIDATE_EMAIL] ✅ Advanced fallback validation successful: ${fallbackResult.message}`);
+            
+            smtpResult = {
+              isValid: true,
+              deliverable: false, // Still risky due to validation limitations
+              result: 'risky' as const,
+              flags: [...smtpResult.flags, 'fallback_validation', ...fallbackResult.flags],
+              message: `SMTP validation blocked but ${fallbackResult.message}`,
+              confidence: Math.max(fallbackResult.confidence - 20, 30), // Reduce confidence due to IP block
+              confidenceLevel: fallbackResult.confidence >= 70 ? 'medium' : 'low' as const,
+              reasoning: [
+                'SMTP validation blocked by IP reputation (-40)',
+                `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
+              ]
+            };
+          } else {
+            console.log(`[VALIDATE_EMAIL] ❌ All fallback validations failed`);
+            // Keep original result but add fallback info
+            smtpResult.flags.push('all_fallbacks_failed');
+            smtpResult.reasoning = [
+              ...(smtpResult.reasoning || []),
+              'Basic and advanced fallback validation failed (-10)'
+            ];
+          }
         }
       } catch (fallbackError: any) {
         console.error(`[VALIDATE_EMAIL] ❌ Fallback validation error:`, fallbackError.message || fallbackError);

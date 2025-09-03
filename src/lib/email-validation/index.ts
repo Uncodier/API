@@ -1,6 +1,6 @@
 // Main validation functions
 export { performSMTPValidation, detectCatchallDomain } from './smtp';
-export { checkDomainExists, getMXRecords, attemptFallbackValidation } from './dns';
+export { checkDomainExists, getMXRecords, attemptFallbackValidation, performBasicEmailValidation } from './dns';
 export { checkDomainReputation } from './reputation';
 
 // Utility functions

@@ -48,6 +48,72 @@ export async function checkDomainExists(domain: string): Promise<{
 }
 
 /**
+ * Performs basic email capability validation (similar to other providers)
+ * Checks: has_dns, has_dns_mx, smtp_connectable
+ */
+export async function performBasicEmailValidation(domain: string): Promise<{
+  has_dns: boolean;
+  has_dns_mx: boolean;
+  smtp_connectable: boolean;
+  details: {
+    dns_error?: string;
+    mx_error?: string;
+    smtp_error?: string;
+  };
+}> {
+  const result = {
+    has_dns: false,
+    has_dns_mx: false,
+    smtp_connectable: false,
+    details: {} as any
+  };
+
+  // Check DNS existence
+  try {
+    const domainCheck = await checkDomainExists(domain);
+    result.has_dns = domainCheck.exists;
+    if (!domainCheck.exists) {
+      result.details.dns_error = domainCheck.errorMessage;
+    }
+  } catch (error: any) {
+    result.details.dns_error = error.message;
+  }
+
+  // Check MX records if DNS exists
+  if (result.has_dns) {
+    try {
+      const mxRecords = await getMXRecords(domain);
+      result.has_dns_mx = mxRecords.length > 0;
+      
+      // Test SMTP connectivity to primary MX if available
+      if (mxRecords.length > 0) {
+        try {
+          const { createSocketWithTimeout } = await import('./utils');
+          const primaryMX = mxRecords[0];
+          const connectionTest = await createSocketWithTimeout(primaryMX.exchange, 25, 8000);
+          result.smtp_connectable = connectionTest.success;
+          
+          if (!connectionTest.success) {
+            result.details.smtp_error = connectionTest.error;
+          }
+          
+          // Clean up socket if successful
+          if (connectionTest.socket) {
+            connectionTest.socket.destroy();
+          }
+        } catch (error: any) {
+          result.details.smtp_error = error.message;
+        }
+      }
+    } catch (error: any) {
+      result.details.mx_error = error.message;
+    }
+  }
+
+  return result;
+}
+
+/**
  * Performs MX record lookup for a domain with enhanced error handling and timeout
  */
 export async function getMXRecords(domain: string): Promise<MXRecord[]> {

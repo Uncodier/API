@@ -16,8 +16,8 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
   try {
     console.log(`[VALIDATE_EMAIL] Connecting to SMTP server: ${mxRecord.exchange}:25`);
     
-    // Create socket connection
-    const connectionResult = await createSocketWithTimeout(mxRecord.exchange, 25, 6000);
+    // Create socket connection with more generous timeout
+    const connectionResult = await createSocketWithTimeout(mxRecord.exchange, 25, 10000);
     
     if (!connectionResult.success) {
       return {
