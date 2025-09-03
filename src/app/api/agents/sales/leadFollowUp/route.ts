@@ -500,8 +500,7 @@ async function executeCopywriterRefinement(
         }
       ],
       context: copywriterContext,
-      modelType: 'openai',
-      modelId: 'gpt-5',
+      model: 'openai:gpt-5',
       supervisor: [
         {
           agent_role: 'creative_director',
@@ -868,8 +867,7 @@ export async function POST(request: Request) {
         }
       ],
       context: contextMessage,
-      modelType: 'openai',
-      modelId: 'gpt-5-mini',
+      model: 'openai:gpt-5-mini',
       supervisor: [
         {
           agent_role: 'sales_manager',

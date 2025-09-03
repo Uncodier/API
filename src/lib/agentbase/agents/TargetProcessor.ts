@@ -133,10 +133,29 @@ export class TargetProcessor extends Base {
         agentPrompt
       );
       
+      // Parse model field if it contains modelType:modelId format
+      let parsedModelType = command.model_type || this.defaultOptions.modelType;
+      let parsedModelId = command.model_id || this.defaultOptions.modelId;
+      
+      if (command.model && command.model.includes(':')) {
+        const [modelType, modelId] = command.model.split(':');
+        // Validate modelType
+        if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
+          parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
+          parsedModelId = modelId;
+          console.log(`[TargetProcessor] Parsed model field: ${modelType}:${modelId}`);
+        } else {
+          console.warn(`[TargetProcessor] Invalid modelType: ${modelType}, using default`);
+          parsedModelId = command.model; // Use the whole string as modelId
+        }
+      } else if (command.model) {
+        parsedModelId = command.model;
+      }
+      
       // Configure model options - default to non-streaming for stability
       const modelOptions: PortkeyModelOptions = {
-        modelType: command.model_type || this.defaultOptions.modelType,
-        modelId: command.model_id || this.defaultOptions.modelId,
+        modelType: parsedModelType,
+        modelId: parsedModelId,
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens,
         temperature: command.temperature || this.defaultOptions.temperature,
         stream: this.defaultOptions.stream || false,

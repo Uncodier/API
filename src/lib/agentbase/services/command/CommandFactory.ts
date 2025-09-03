@@ -29,6 +29,14 @@ export class CommandFactory {
     requiresCapabilities?: string[];
     site_id?: string;
   }): CreateCommandParams {
+    // Combine modelType and modelId into a single model field for database compatibility
+    let modelField = params.model;
+    if (params.modelType && params.modelId) {
+      modelField = `${params.modelType}:${params.modelId}`;
+    } else if (params.modelId) {
+      modelField = params.modelId;
+    }
+    
     return {
       task: params.task,
       status: 'pending',
@@ -37,9 +45,9 @@ export class CommandFactory {
       tools: params.tools || [],
       context: params.context,
       supervisor: params.supervisor,
-      model: params.model,
-      model_type: params.modelType,
-      model_id: params.modelId,
+      model: modelField,
+      model_type: params.modelType, // Keep for internal processing
+      model_id: params.modelId, // Keep for internal processing
       max_tokens: params.maxTokens,
       temperature: params.temperature,
       response_format: params.responseFormat,

@@ -57,10 +57,29 @@ export class AgentConnector extends Base {
         command.model_type: ${command.model_type || 'undefined'}
       `);
       
+      // Parse model field if it contains modelType:modelId format
+      let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openai';
+      let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-5-nano';
+      
+      if (command.model && command.model.includes(':')) {
+        const [modelType, modelId] = command.model.split(':');
+        // Validate modelType
+        if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
+          parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
+          parsedModelId = modelId;
+          console.log(`📝 [AgentConnector:${this.id}] Parsed model field: ${modelType}:${modelId}`);
+        } else {
+          console.warn(`📝 [AgentConnector:${this.id}] Invalid modelType: ${modelType}, using default`);
+          parsedModelId = command.model; // Use the whole string as modelId
+        }
+      } else if (command.model) {
+        parsedModelId = command.model;
+      }
+      
       // Configure model options for portkey
       const modelOptions: PortkeyModelOptions = {
-        modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-        modelId: command.model_id || command.model || this.defaultOptions.modelId || 'gpt-5-nano',
+        modelType: parsedModelType,
+        modelId: parsedModelId,
         maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
