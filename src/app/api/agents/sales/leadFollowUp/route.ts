@@ -423,7 +423,7 @@ async function executeCopywriterRefinement(
       copywriterContext += `7. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
       copywriterContext += `8. Use ONLY the real information provided in the lead context\n`;
       copywriterContext += `9. Write final content ready to send without additional editing\n`;
-      copywriterContext += `10. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off\n`;
+      copywriterContext += `10. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off. NEVER sign as the agent or AI - emails are sent from real company employees\n`;
       copywriterContext += `11. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
       copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
       copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
@@ -500,6 +500,8 @@ async function executeCopywriterRefinement(
         }
       ],
       context: copywriterContext,
+      modelType: 'openai',
+      modelId: 'gpt-5',
       supervisor: [
         {
           agent_role: 'creative_director',
@@ -839,6 +841,8 @@ export async function POST(request: Request) {
     contextMessage += `- Choose the channel MOST LIKELY to generate a positive response\n`;
     contextMessage += `\n⚠️ IMPORTANT: You MUST select and return content for ONLY ONE CHANNEL.\n`;
     contextMessage += `⚠️ Base your decision on the lead's history, context, and profile shown above.\n`;
+    contextMessage += `\n🚫 SIGNATURE RULES: DO NOT add any signature, sign-off, or identification as an AI agent.\n`;
+    contextMessage += `Messages are sent from real company employees' email addresses and should not include agent signatures.\n`;
     contextMessage += `=== END OF INSTRUCTIONS ===\n\n`;
 
     // PHASE 1: Create command for Sales/CRM Specialist
@@ -864,6 +868,8 @@ export async function POST(request: Request) {
         }
       ],
       context: contextMessage,
+      modelType: 'openai',
+      modelId: 'gpt-5-mini',
       supervisor: [
         {
           agent_role: 'sales_manager',
