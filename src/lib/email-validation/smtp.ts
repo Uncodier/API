@@ -2,6 +2,12 @@ import * as tls from 'tls';
 import { MXRecord, createSocketWithTimeout, readSMTPResponse, sendSMTPCommand, extractDomain } from './utils';
 import { checkDomainReputation } from './reputation';
 
+// Configurable SMTP handshake parameters
+const EHLO_DOMAIN = process.env.EMAIL_VALIDATOR_EHLO_DOMAIN || 'validator.uncodie.com';
+const MAIL_FROM_ADDRESS = process.env.EMAIL_VALIDATOR_MAIL_FROM || 'validate@uncodie.com';
+const CONNECT_TIMEOUT_MS = process.env.EMAIL_VALIDATOR_CONNECT_TIMEOUT_MS ? Number(process.env.EMAIL_VALIDATOR_CONNECT_TIMEOUT_MS) : 20000;
+const TLS_HANDSHAKE_TIMEOUT_MS = process.env.EMAIL_VALIDATOR_TLS_TIMEOUT_MS ? Number(process.env.EMAIL_VALIDATOR_TLS_TIMEOUT_MS) : 8000;
+
 /**
  * Core SMTP validation logic (extracted for reuse)
  */
@@ -16,8 +22,8 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
   try {
     console.log(`[VALIDATE_EMAIL] Connecting to SMTP server: ${mxRecord.exchange}:25`);
     
-    // Create socket connection with more generous timeout
-    const connectionResult = await createSocketWithTimeout(mxRecord.exchange, 25, 10000);
+    // Create socket connection with configurable timeout
+    const connectionResult = await createSocketWithTimeout(mxRecord.exchange, 25, CONNECT_TIMEOUT_MS);
     
     if (!connectionResult.success) {
       return {
@@ -81,7 +87,7 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
     }
     
     // Send EHLO command
-    const ehloResult = await sendSMTPCommand(socket, 'EHLO validateemail.local');
+    const ehloResult = await sendSMTPCommand(socket, `EHLO ${EHLO_DOMAIN}`);
     
     if (!ehloResult.success) {
       return {
@@ -112,7 +118,7 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
           
           // Wait for TLS handshake
           await new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => reject(new Error('TLS handshake timeout')), 5000);
+            const timeout = setTimeout(() => reject(new Error('TLS handshake timeout')), TLS_HANDSHAKE_TIMEOUT_MS);
             tlsSocket!.once('secureConnect', () => {
               clearTimeout(timeout);
               resolve(true);
@@ -124,7 +130,7 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
           });
           
           // Send EHLO again after TLS
-          tlsSocket.write('EHLO validateemail.local\r\n');
+          tlsSocket.write(`EHLO ${EHLO_DOMAIN}\r\n`);
           const tlsEhloResult = await readSMTPResponse(tlsSocket);
           if (tlsEhloResult.success) {
             console.log(`[VALIDATE_EMAIL] TLS EHLO response: ${tlsEhloResult.response!.code} ${tlsEhloResult.response!.message}`);
@@ -140,7 +146,7 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
     const activeSocket = tlsSocket || socket;
     
     // Send MAIL FROM command
-    const mailFromResult = await sendSMTPCommand(activeSocket, 'MAIL FROM:<test@validateemail.local>');
+    const mailFromResult = await sendSMTPCommand(activeSocket, `MAIL FROM:<${MAIL_FROM_ADDRESS}>`);
     
     if (!mailFromResult.success) {
       return {
@@ -196,15 +202,42 @@ export async function performSMTPValidationCore(email: string, mxRecord: MXRecor
       result = 'valid';
       message = 'Email address is valid';
     } else if (rcptToResponse.code >= 550 && rcptToResponse.code <= 559) {
-      // Permanent failure - email doesn't exist
-      isValid = false;
-      result = 'invalid';
-      message = 'Email address does not exist';
-      
-      if (rcptToResponse.message.toLowerCase().includes('user unknown') || 
-          rcptToResponse.message.toLowerCase().includes('no such user') ||
-          rcptToResponse.message.toLowerCase().includes('user not found')) {
+      // 55x can be user unknown or policy. Disambiguate by message.
+      const lowerMsg = rcptToResponse.message.toLowerCase();
+      const isUserUnknown = lowerMsg.includes('5.1.1') ||
+                            lowerMsg.includes('user unknown') ||
+                            lowerMsg.includes('no such user') ||
+                            lowerMsg.includes('user not found') ||
+                            lowerMsg.includes('unknown recipient') ||
+                            lowerMsg.includes('mailbox unavailable');
+      const isPolicy = lowerMsg.includes('5.7.') ||
+                       lowerMsg.includes('policy') ||
+                       lowerMsg.includes('spam') ||
+                       lowerMsg.includes('blocked') ||
+                       lowerMsg.includes('client host blocked') ||
+                       lowerMsg.includes('relay access denied') ||
+                       lowerMsg.includes('authentication required') ||
+                       lowerMsg.includes('tls') ||
+                       lowerMsg.includes('starttls') ||
+                       lowerMsg.includes('greylist') ||
+                       lowerMsg.includes('temporar');
+
+      if (isUserUnknown) {
+        isValid = false;
+        result = 'invalid';
+        message = 'Email address does not exist';
         flags.push('user_unknown');
+      } else if (isPolicy) {
+        isValid = false;
+        result = 'unknown';
+        message = 'Rejected due to anti-spam policy - validation inconclusive';
+        flags.push('anti_spam_policy');
+      } else {
+        // Default: treat as unknown to avoid false negatives
+        isValid = false;
+        result = 'unknown';
+        message = `Permanent error but not user-unknown: ${rcptToResponse.code} ${rcptToResponse.message}`;
+        flags.push('permanent_error');
       }
     } else if (rcptToResponse.code >= 450 && rcptToResponse.code <= 459) {
       // Temporary failure - could be valid but server issues
@@ -380,6 +413,34 @@ export async function performSMTPValidation(email: string, mxRecord: MXRecord, a
     } catch (error) {
       console.log(`[VALIDATE_EMAIL] Catchall test failed, treating as regular validation:`, error);
       // Continue with original result if catchall test fails
+    }
+  }
+  
+  // If result is unknown due to policy/temporary failures (not connection issues), attempt catchall detection
+  if (
+    finalResult === 'unknown' &&
+    !emailResult.flags.includes('connection_failed') &&
+    !emailResult.flags.includes('smtp_timeout') &&
+    !emailResult.flags.includes('all_mx_failed') &&
+    (
+      emailResult.flags.includes('anti_spam_policy') ||
+      emailResult.flags.includes('temporary_failure') ||
+      emailResult.flags.includes('service_unavailable') ||
+      emailResult.flags.includes('permanent_error')
+    )
+  ) {
+    console.log(`[VALIDATE_EMAIL] Unknown due to policy/temporary failure. Trying catchall detection for: ${domain}`);
+    try {
+      const catchallTest = await detectCatchallDomain(domain, mxRecord);
+      if (catchallTest.isCatchall) {
+        deliverable = true;
+        finalResult = 'catchall';
+        finalFlags = [...finalFlags, 'catchall_domain', 'catchall_detected', `confidence_${Math.round(catchallTest.confidence * 100)}%`];
+        finalMessage = `Catchall detected after policy/temporary failure (${Math.round(catchallTest.confidence * 100)}% confidence) - deliverable but uncertain recipient`;
+        finalIsValid = true;
+      }
+    } catch (error) {
+      console.log(`[VALIDATE_EMAIL] Catchall check after unknown failed:`, error);
     }
   }
   
