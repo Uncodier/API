@@ -13,6 +13,7 @@ import {
   type EmailValidationResult,
   type MXRecord
 } from '@/lib/email-validation';
+import { WorkflowService } from '@/lib/services/workflow-service';
 
 // Types are now imported from the email-validation module
 
@@ -81,6 +82,7 @@ export async function POST(request: NextRequest) {
     // Parse request body
     const body = await request.json();
     const { email, aggressiveMode = false } = body;
+    let temporalInfo: { started: boolean; workflowId?: string; executionId?: string; runId?: string; status?: string; error?: string } | null = null;
     
     // Validate that email is provided
     if (!email) {
@@ -90,7 +92,8 @@ export async function POST(request: NextRequest) {
           code: 'EMAIL_REQUIRED',
           message: 'Email is required',
           details: 'Please provide an email address to validate'
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 400,
         headers: { 'Content-Type': 'application/json' }
@@ -115,11 +118,40 @@ export async function POST(request: NextRequest) {
           timestamp: new Date().toISOString(),
           bounceRisk: 'high',
           reputationFlags: ['invalid_format']
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
+    }
+    
+    // Start Temporal workflow asynchronously before heavy validation
+    try {
+      const workflowService = WorkflowService.getInstance();
+      const workflowOptions = {
+        priority: 'medium' as const,
+        async: true,
+        retryAttempts: 0,
+        taskQueue: process.env.EMAIL_VALIDATION_TASK_QUEUE || process.env.WORKFLOW_TASK_QUEUE || 'email-validation-queue',
+        workflowId: `validate-email-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      };
+      const workflowStart = await workflowService.executeWorkflow(
+        'validateEmailWorkflow',
+        { email, aggressiveMode },
+        workflowOptions
+      );
+      temporalInfo = {
+        started: !!workflowStart.success,
+        workflowId: workflowStart.workflowId,
+        executionId: workflowStart.executionId,
+        runId: workflowStart.runId,
+        status: workflowStart.status || 'running'
+      };
+      console.log(`[VALIDATE_EMAIL] 🧭 Temporal workflow started:`, temporalInfo);
+    } catch (temporalErr: any) {
+      console.error(`[VALIDATE_EMAIL] ⚠️ Failed to start Temporal workflow:`, temporalErr);
+      temporalInfo = { started: false, error: temporalErr?.message || 'Unknown Temporal error' };
     }
     
     const domain = extractDomain(email);
@@ -155,7 +187,8 @@ export async function POST(request: NextRequest) {
             `Error: ${domainCheck.errorCode || 'DOMAIN_NOT_FOUND'}`
           ],
           aggressiveMode: aggressiveMode
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -180,7 +213,8 @@ export async function POST(request: NextRequest) {
           timestamp: new Date().toISOString(),
           bounceRisk: 'high',
           reputationFlags: ['disposable_provider']
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -378,7 +412,8 @@ export async function POST(request: NextRequest) {
           reasoning,
           aggressiveMode: aggressiveMode,
           ...(fallbackResult && { fallbackValidation: fallbackResult })
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -400,7 +435,8 @@ export async function POST(request: NextRequest) {
           timestamp: new Date().toISOString(),
           bounceRisk: 'high',
           reputationFlags: ['no_mx_record']
-        }
+        },
+        temporal: temporalInfo
       }, {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
@@ -612,7 +648,8 @@ export async function POST(request: NextRequest) {
         confidenceLevel: smtpResult.confidenceLevel,
         reasoning: smtpResult.reasoning,
         aggressiveMode: aggressiveMode
-      }
+      },
+      temporal: temporalInfo
     };
     
     return NextResponse.json(response, {
@@ -630,7 +667,8 @@ export async function POST(request: NextRequest) {
         code: 'INTERNAL_ERROR',
         message: 'Internal server error',
         details: process.env.NODE_ENV === 'development' ? error.message : 'An error occurred while validating the email'
-      }
+      },
+      temporal: null
     }, {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
