@@ -92,7 +92,8 @@ export async function POST(request: NextRequest) {
     try {
       const apiKeyData = await ApiKeyService.createApiKey(
         validationResult.data.user_id,
-        validationResult.data
+        validationResult.data,
+        { client: supabase }
       );
 
       return NextResponse.json({

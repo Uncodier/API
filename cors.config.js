@@ -17,6 +17,7 @@
 const corsConfig = {
   production: {
     origins: [
+      'https://api.uncodie.com',
       'https://salocal.site',
       'https://www.salocal.site',
       // También permitir orígenes de desarrollo en producción para pruebas

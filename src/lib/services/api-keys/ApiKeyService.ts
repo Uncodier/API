@@ -191,7 +191,11 @@ export class ApiKeyService {
   /**
    * Crea una nueva API key en la base de datos
    */
-  static async createApiKey(userId: string, data: ApiKeyData): Promise<{
+  static async createApiKey(
+    userId: string,
+    data: ApiKeyData,
+    options?: { client?: any }
+  ): Promise<{
     apiKey: string;
     id: string;
     prefix: string;
@@ -217,11 +221,63 @@ export class ApiKeyService {
       status: 'active'
     };
 
-    const { data: savedKey, error } = await supabaseAdmin
+    console.log('[ApiKeyService] Insert payload sanity check:', {
+      hasName: !!insertData.name,
+      prefix: insertData.prefix,
+      user_id: insertData.user_id,
+      site_id: insertData.site_id,
+      scopes_len: Array.isArray(insertData.scopes) ? insertData.scopes.length : 0,
+      expires_after_now: new Date(insertData.expires_at) > new Date(),
+      metadata_keys: Object.keys(insertData.metadata || {}).length
+    });
+
+    // Try insert requesting representation explicitly to avoid empty body
+    const dbClient = options?.client || supabaseAdmin;
+
+    const { data: insertedRows, error } = await dbClient
       .from('api_keys')
       .insert(insertData)
-      .select('id, prefix, expires_at')
-      .single();
+      .select('id, prefix, expires_at, user_id, site_id, created_at');
+
+    // If user-scoped client returns empty due to SELECT RLS, try admin reselect
+    if (!error && (!insertedRows || insertedRows.length === 0)) {
+      console.log('[ApiKeyService] No rows returned under user client, trying admin insert fallback');
+      const { data: adminInsertRows, error: adminInsertError } = await supabaseAdmin
+        .from('api_keys')
+        .insert(insertData)
+        .select('id, prefix, expires_at, user_id, site_id, created_at');
+
+      if (adminInsertError) {
+        console.error('[ApiKeyService] Admin insert error:', {
+          error: adminInsertError.message,
+          code: adminInsertError.code
+        });
+      }
+
+      if (adminInsertRows && adminInsertRows.length > 0) {
+        return {
+          apiKey,
+          id: adminInsertRows[0].id,
+          prefix: adminInsertRows[0].prefix,
+          expires_at: adminInsertRows[0].expires_at
+        };
+      }
+
+      const { data: adminInserted } = await supabaseAdmin
+        .from('api_keys')
+        .select('id, prefix, expires_at, user_id, site_id, created_at')
+        .eq('key_hash', encryptedKey)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      if (adminInserted && adminInserted.length > 0) {
+        return {
+          apiKey,
+          id: adminInserted[0].id,
+          prefix: adminInserted[0].prefix,
+          expires_at: adminInserted[0].expires_at
+        };
+      }
+    }
 
     if (error) {
       console.error('[ApiKeyService] Database insert error:', {
@@ -233,9 +289,70 @@ export class ApiKeyService {
       throw new Error(`Failed to create API key: ${error.message}`);
     }
 
+    console.log('[ApiKeyService] Insert result rows length:', insertedRows?.length || 0);
+
+    // Some PostgREST setups can still return 0 rows on insert + select due to RLS select policy.
+    // Fallback: fetch the just-inserted row by its unique key_hash.
+    let resultRow = insertedRows && insertedRows[0] ? insertedRows[0] : undefined;
+    if (!resultRow) {
+      // First attempt: fetch by key_hash
+      const { data: fetchedByHash, error: fetchByHashError } = await dbClient
+        .from('api_keys')
+        .select('id, prefix, expires_at, created_at')
+        .eq('key_hash', encryptedKey)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (fetchedByHash) {
+        resultRow = fetchedByHash;
+      } else {
+        // Second attempt: fetch the most recent row for this user/site/name
+        const { data: fetchedRecent, error: fetchRecentError } = await dbClient
+          .from('api_keys')
+          .select('id, prefix, expires_at, created_at')
+          .eq('user_id', userId)
+          .eq('site_id', data.site_id)
+          .eq('name', data.name)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (fetchedRecent) {
+          resultRow = fetchedRecent;
+        } else {
+          const err = fetchByHashError || fetchRecentError;
+          console.error('[ApiKeyService] Post-insert fetch failed:', {
+            error: err?.message,
+            code: err?.code,
+            details: err?.details,
+            hint: err?.hint
+          });
+          // As a final attempt, use admin client to bypass any RLS/select issues
+          const { data: fetchedAdmin, error: adminFetchError } = await supabaseAdmin
+            .from('api_keys')
+            .select('id, prefix, expires_at, created_at')
+            .eq('key_hash', encryptedKey)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+
+          if (fetchedAdmin) {
+            resultRow = fetchedAdmin;
+          } else {
+            console.error('[ApiKeyService] Admin fetch also failed:', {
+              error: adminFetchError?.message,
+              code: adminFetchError?.code
+            });
+            throw new Error('Failed to create API key: no row returned by PostgREST after insert');
+          }
+        }
+      }
+    }
+
     return {
       apiKey,
-      ...savedKey
+      ...resultRow
     };
   }
 
