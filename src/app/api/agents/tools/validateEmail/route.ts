@@ -14,6 +14,7 @@ import {
   type MXRecord
 } from '@/lib/email-validation';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { validateWithNeverBounce } from '@/lib/email-validation/providers/neverbounce';
 
 // Types are now imported from the email-validation module
 
@@ -89,46 +90,41 @@ export async function POST(request: NextRequest) {
     // Primary NeverBounce validation (preferred)
     const tryNeverBouncePrimary = async (): Promise<NextResponse | null> => {
       try {
-        const xfp = request.headers.get('x-forwarded-proto');
-        const xfHost = request.headers.get('x-forwarded-host');
-        const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
-        const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
-        const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
-        const url = `${origin}/api/integrations/neverbounce/validate`;
+        console.info(`[VALIDATE_EMAIL] 🔁 Trying NeverBounce (primary) via SDK`);
+        const nb = await validateWithNeverBounce(email);
+        const originalResult = nb.result as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
+        let mappedResult: 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown' = originalResult;
+        let isValidMapped = nb.isValid;
+        let deliverable = nb.isValid && originalResult === 'valid';
+        const flagsBase = [...(nb.flags || []), 'neverbounce_primary'];
+        const flags = [...flagsBase];
 
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-
-        const json = await res.json().catch(() => null);
-
-        if (!res.ok || !json || json.success !== true || !json.data) {
-          console.warn(`[VALIDATE_EMAIL] ⚠️ NeverBounce primary validation failed`, { status: res.status, json });
-          return null;
+        if (originalResult === 'valid' || originalResult === 'catchall') {
+          mappedResult = 'valid';
+          isValidMapped = true;
+          deliverable = true;
+          if (originalResult === 'catchall') {
+            flags.push('neverbounce_original_catchall', 'catchall_mapped_to_valid');
+          }
         }
 
-        const nb = json.data as { email: string; isValid: boolean; result: string; flags?: string[]; suggested_correction?: string | null; execution_time?: number; message?: string; timestamp?: string };
-        const executionTime = Date.now() - startTime;
+        const bounceRisk: 'low' | 'medium' | 'high' = 'low';
+        const confidence = 85;
+        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = 'very_high';
 
-        const nbResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
-        const deliverable = nb.isValid && nbResult === 'valid';
-        const bounceRisk: 'low' | 'medium' | 'high' = nbResult === 'valid' ? 'low' : (nbResult === 'catchall' || nbResult === 'unknown') ? 'medium' : 'high';
-        const confidence = nbResult === 'valid' ? 85 : nbResult === 'invalid' ? 95 : nbResult === 'catchall' ? 55 : 45;
-        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = confidence >= 85 ? 'very_high' : confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+        console.info(`[VALIDATE_EMAIL] ✅ NeverBounce primary success: ${originalResult} -> ${mappedResult}`);
 
         return NextResponse.json({
           success: true,
           data: {
             email: nb.email,
-            isValid: nb.isValid,
+            isValid: isValidMapped,
             deliverable,
-            result: nbResult,
-            flags: [...(nb.flags || []), 'neverbounce_primary'],
+            result: mappedResult,
+            flags,
             suggested_correction: nb.suggested_correction ?? null,
-            execution_time: executionTime,
-            message: `NeverBounce: ${nb.message || nbResult}`,
+            execution_time: nb.execution_time,
+            message: `NeverBounce: ${nb.message || originalResult}${originalResult === 'catchall' ? ' (mapped_to_valid)' : ''}`,
             timestamp: new Date().toISOString(),
             bounceRisk,
             reputationFlags: ['neverbounce_validation'],
@@ -143,7 +139,7 @@ export async function POST(request: NextRequest) {
           fallback: false
         }, { status: 200, headers: { 'Content-Type': 'application/json' } });
       } catch (nbErr: any) {
-        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce primary error`, nbErr);
+        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce primary error`, nbErr?.message || nbErr);
         return null;
       }
     };
@@ -151,84 +147,41 @@ export async function POST(request: NextRequest) {
     // Helper: fallback via NeverBounce integration if we've exceeded timeout
     const maybeTimeoutFallback = async (): Promise<NextResponse | null> => {
       if (Date.now() <= deadline) return null;
-      console.log(`[VALIDATE_EMAIL] ⏱️ Exceeded ${TIMEOUT_MS}ms, falling back to NeverBounce integration`);
+      console.log(`[VALIDATE_EMAIL] ⏱️ Exceeded ${TIMEOUT_MS}ms, falling back to NeverBounce (SDK)`);
 
       try {
-        const xfp = request.headers.get('x-forwarded-proto');
-        const xfHost = request.headers.get('x-forwarded-host');
-        const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
-        const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
-        const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
-        const url = `${origin}/api/integrations/neverbounce/validate`;
+        const nb = await validateWithNeverBounce(email);
+        const originalResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
+        let mappedResult: 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown' = originalResult;
+        let isValidMapped = nb.isValid;
+        let deliverable = nb.isValid && originalResult === 'valid';
+        const flagsBase = [...(nb.flags || []), 'fallback_neverbounce'];
+        const flags = [...flagsBase];
 
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email })
-        });
-
-        const json = await res.json().catch(() => null);
-
-        if (!res.ok || !json || json.success !== true || !json.data) {
-          console.error(`[VALIDATE_EMAIL] ❌ NeverBounce fallback failed`, { status: res.status, json });
-
-          // Try final fallback route if provided via header or env var
-          const finalFallbackPath = request.headers.get('x-email-validation-fallback-path') || process.env.EMAIL_VALIDATION_FINAL_FALLBACK_PATH;
-          if (finalFallbackPath) {
-            try {
-              const finalUrl = finalFallbackPath.startsWith('http')
-                ? finalFallbackPath
-                : `${origin}${finalFallbackPath.startsWith('/') ? '' : '/'}${finalFallbackPath}`;
-
-              const finalRes = await fetch(finalUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
-              });
-
-              const finalJson = await finalRes.json().catch(() => null);
-              if (finalRes.ok && finalJson) {
-                return NextResponse.json(finalJson, { status: finalRes.status, headers: { 'Content-Type': 'application/json' } });
-              } else {
-                console.error(`[VALIDATE_EMAIL] ❌ Final fallback route failed`, { status: finalRes.status, finalJson });
-              }
-            } catch (finalErr: any) {
-              console.error(`[VALIDATE_EMAIL] ❌ Error calling final fallback route`, finalErr);
-            }
+        if (originalResult === 'valid' || originalResult === 'catchall') {
+          mappedResult = 'valid';
+          isValidMapped = true;
+          deliverable = true;
+          if (originalResult === 'catchall') {
+            flags.push('neverbounce_original_catchall', 'catchall_mapped_to_valid');
           }
-
-          return NextResponse.json({
-            success: false,
-            error: {
-              code: 'TIMEOUT_FALLBACK_FAILED',
-              message: 'Primary validation timed out and fallbacks failed',
-              details: 'Exceeded timeout and failed to fetch fallback validations'
-            },
-            temporal: temporalInfo
-          }, { status: 504, headers: { 'Content-Type': 'application/json' } });
         }
 
-        const nb = json.data as { email: string; isValid: boolean; result: string; flags?: string[]; suggested_correction?: string | null; execution_time?: number; message?: string; timestamp?: string };
-        const executionTime = Date.now() - startTime;
-
-        // Map NeverBounce response to our schema
-        const nbResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
-        const deliverable = nb.isValid && nbResult === 'valid';
-        const bounceRisk: 'low' | 'medium' | 'high' = nbResult === 'valid' ? 'low' : (nbResult === 'catchall' || nbResult === 'unknown') ? 'medium' : 'high';
-        const confidence = nbResult === 'valid' ? 85 : nbResult === 'invalid' ? 95 : nbResult === 'catchall' ? 55 : 45;
-        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = confidence >= 85 ? 'very_high' : confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+        const bounceRisk: 'low' | 'medium' | 'high' = 'low';
+        const confidence = 85;
+        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = 'very_high';
 
         return NextResponse.json({
           success: true,
           data: {
             email: nb.email,
-            isValid: nb.isValid,
+            isValid: isValidMapped,
             deliverable,
-            result: nbResult,
-            flags: [...(nb.flags || []), 'fallback_neverbounce'],
+            result: mappedResult,
+            flags,
             suggested_correction: nb.suggested_correction ?? null,
-            execution_time: executionTime,
-            message: `NeverBounce: ${nb.message || nbResult}`,
+            execution_time: nb.execution_time,
+            message: `NeverBounce: ${nb.message || originalResult}${originalResult === 'catchall' ? ' (mapped_to_valid)' : ''}`,
             timestamp: new Date().toISOString(),
             bounceRisk,
             reputationFlags: ['neverbounce_validation'],
@@ -243,13 +196,42 @@ export async function POST(request: NextRequest) {
           fallback: true
         }, { status: 200, headers: { 'Content-Type': 'application/json' } });
       } catch (nbErr: any) {
-        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce fallback error`, nbErr);
+        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce SDK fallback failed`, nbErr);
+
+        // Try final fallback route if provided via header or env var
+        const finalFallbackPath = request.headers.get('x-email-validation-fallback-path') || process.env.EMAIL_VALIDATION_FINAL_FALLBACK_PATH;
+        if (finalFallbackPath) {
+          try {
+            const xfp = request.headers.get('x-forwarded-proto');
+            const xfHost = request.headers.get('x-forwarded-host');
+            const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
+            const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
+            const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
+            const finalUrl = finalFallbackPath.startsWith('http') ? finalFallbackPath : `${origin}${finalFallbackPath.startsWith('/') ? '' : '/'}${finalFallbackPath}`;
+
+            const finalRes = await fetch(finalUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ email })
+            });
+
+            const finalJson = await finalRes.json().catch(() => null);
+            if (finalRes.ok && finalJson) {
+              return NextResponse.json(finalJson, { status: finalRes.status, headers: { 'Content-Type': 'application/json' } });
+            } else {
+              console.error(`[VALIDATE_EMAIL] ❌ Final fallback route failed`, { status: finalRes.status, finalJson });
+            }
+          } catch (finalErr: any) {
+            console.error(`[VALIDATE_EMAIL] ❌ Error calling final fallback route`, finalErr);
+          }
+        }
+
         return NextResponse.json({
           success: false,
           error: {
-            code: 'TIMEOUT_FALLBACK_ERROR',
-            message: 'Primary validation timed out and NeverBounce fallback threw an error',
-            details: process.env.NODE_ENV === 'development' ? (nbErr?.message || String(nbErr)) : 'Fallback error'
+            code: 'TIMEOUT_FALLBACK_FAILED',
+            message: 'Primary validation timed out and fallbacks failed',
+            details: 'Exceeded timeout and failed to fetch fallback validations'
           },
           temporal: temporalInfo
         }, { status: 504, headers: { 'Content-Type': 'application/json' } });
@@ -300,8 +282,10 @@ export async function POST(request: NextRequest) {
     
     // Prefer NeverBounce as the primary provider
     {
+      console.info(`[VALIDATE_EMAIL] ⬆️ Preferring NeverBounce as primary provider`);
       const nbResponse = await tryNeverBouncePrimary();
       if (nbResponse) return nbResponse;
+      console.info(`[VALIDATE_EMAIL] ⏭️ NeverBounce did not produce a usable response, continuing with DNS/SMTP flow`);
     }
     
     // Start Temporal workflow asynchronously before heavy validation
@@ -684,14 +668,14 @@ export async function POST(request: NextRequest) {
           continue;
         }
         
-      } catch (error) {
-        console.log(`[VALIDATE_EMAIL] ❌ Error with MX record ${mxRecord.exchange}:`, error);
-        lastError = error;
+      } catch (smtpError: unknown) {
+        console.log(`[VALIDATE_EMAIL] ❌ Error with MX record ${mxRecord.exchange}:`, smtpError);
+        lastError = smtpError;
         
         // If this is the last MX record, we'll use the error
         if (i === Math.min(mxRecords.length, maxMXAttempts) - 1) {
           // Create a fallback result for the error
-          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          const errorMessage = smtpError instanceof Error ? smtpError.message : 'Unknown error';
           smtpResult = {
             isValid: false,
             deliverable: false,
