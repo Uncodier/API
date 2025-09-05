@@ -75,6 +75,8 @@ import { WorkflowService } from '@/lib/services/workflow-service';
  */
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
+  const TIMEOUT_MS = 60_000;
+  const deadline = startTime + TIMEOUT_MS;
   
   try {
     console.log(`[VALIDATE_EMAIL] 🚀 Starting email validation process`);
@@ -83,6 +85,114 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { email, aggressiveMode = false } = body;
     let temporalInfo: { started: boolean; workflowId?: string; executionId?: string; runId?: string; status?: string; error?: string } | null = null;
+
+    // Helper: fallback via NeverBounce integration if we've exceeded timeout
+    const maybeTimeoutFallback = async (): Promise<NextResponse | null> => {
+      if (Date.now() <= deadline) return null;
+      console.log(`[VALIDATE_EMAIL] ⏱️ Exceeded ${TIMEOUT_MS}ms, falling back to NeverBounce integration`);
+
+      try {
+        const xfp = request.headers.get('x-forwarded-proto');
+        const xfHost = request.headers.get('x-forwarded-host');
+        const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
+        const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
+        const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
+        const url = `${origin}/api/integrations/neverbounce/validate`;
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+
+        const json = await res.json().catch(() => null);
+
+        if (!res.ok || !json || json.success !== true || !json.data) {
+          console.error(`[VALIDATE_EMAIL] ❌ NeverBounce fallback failed`, { status: res.status, json });
+
+          // Try final fallback route if provided via header or env var
+          const finalFallbackPath = request.headers.get('x-email-validation-fallback-path') || process.env.EMAIL_VALIDATION_FINAL_FALLBACK_PATH;
+          if (finalFallbackPath) {
+            try {
+              const finalUrl = finalFallbackPath.startsWith('http')
+                ? finalFallbackPath
+                : `${origin}${finalFallbackPath.startsWith('/') ? '' : '/'}${finalFallbackPath}`;
+
+              const finalRes = await fetch(finalUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+              });
+
+              const finalJson = await finalRes.json().catch(() => null);
+              if (finalRes.ok && finalJson) {
+                return NextResponse.json(finalJson, { status: finalRes.status, headers: { 'Content-Type': 'application/json' } });
+              } else {
+                console.error(`[VALIDATE_EMAIL] ❌ Final fallback route failed`, { status: finalRes.status, finalJson });
+              }
+            } catch (finalErr: any) {
+              console.error(`[VALIDATE_EMAIL] ❌ Error calling final fallback route`, finalErr);
+            }
+          }
+
+          return NextResponse.json({
+            success: false,
+            error: {
+              code: 'TIMEOUT_FALLBACK_FAILED',
+              message: 'Primary validation timed out and fallbacks failed',
+              details: 'Exceeded timeout and failed to fetch fallback validations'
+            },
+            temporal: temporalInfo
+          }, { status: 504, headers: { 'Content-Type': 'application/json' } });
+        }
+
+        const nb = json.data as { email: string; isValid: boolean; result: string; flags?: string[]; suggested_correction?: string | null; execution_time?: number; message?: string; timestamp?: string };
+        const executionTime = Date.now() - startTime;
+
+        // Map NeverBounce response to our schema
+        const nbResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
+        const deliverable = nb.isValid && nbResult === 'valid';
+        const bounceRisk: 'low' | 'medium' | 'high' = nbResult === 'valid' ? 'low' : (nbResult === 'catchall' || nbResult === 'unknown') ? 'medium' : 'high';
+        const confidence = nbResult === 'valid' ? 85 : nbResult === 'invalid' ? 95 : nbResult === 'catchall' ? 55 : 45;
+        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = confidence >= 85 ? 'very_high' : confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+
+        return NextResponse.json({
+          success: true,
+          data: {
+            email: nb.email,
+            isValid: nb.isValid,
+            deliverable,
+            result: nbResult,
+            flags: [...(nb.flags || []), 'fallback_neverbounce'],
+            suggested_correction: nb.suggested_correction ?? null,
+            execution_time: executionTime,
+            message: `NeverBounce: ${nb.message || nbResult}`,
+            timestamp: new Date().toISOString(),
+            bounceRisk,
+            reputationFlags: ['neverbounce_validation'],
+            riskFactors: ['neverbounce_fallback'],
+            confidence,
+            confidenceLevel,
+            reasoning: ['Primary validation exceeded timeout', 'Returned NeverBounce result'] ,
+            aggressiveMode
+          },
+          temporal: temporalInfo,
+          provider: 'neverbounce',
+          fallback: true
+        }, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      } catch (nbErr: any) {
+        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce fallback error`, nbErr);
+        return NextResponse.json({
+          success: false,
+          error: {
+            code: 'TIMEOUT_FALLBACK_ERROR',
+            message: 'Primary validation timed out and NeverBounce fallback threw an error',
+            details: process.env.NODE_ENV === 'development' ? (nbErr?.message || String(nbErr)) : 'Fallback error'
+          },
+          temporal: temporalInfo
+        }, { status: 504, headers: { 'Content-Type': 'application/json' } });
+      }
+    };
     
     // Validate that email is provided
     if (!email) {
@@ -197,6 +307,12 @@ export async function POST(request: NextRequest) {
     
     console.log(`[VALIDATE_EMAIL] ✅ Domain exists: ${domain} (IPv4: ${domainCheck.hasARecord})`);
     
+    // If we've already exceeded the timeout, use NeverBounce
+    {
+      const timeoutResponse = await maybeTimeoutFallback();
+      if (timeoutResponse) return timeoutResponse;
+    }
+
     // Check for disposable email domains
     if (isDisposableEmail(domain)) {
       const executionTime = Date.now() - startTime;
@@ -446,6 +562,12 @@ export async function POST(request: NextRequest) {
     // Try SMTP validation with MX records (try multiple if first fails with timeout)
     console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with ${mxRecords.length} MX record(s)`);
     
+    // Timeout check before starting SMTP attempts
+    {
+      const timeoutResponse = await maybeTimeoutFallback();
+      if (timeoutResponse) return timeoutResponse;
+    }
+
     // Check if we're running in Vercel (serverless environment)
     const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
     const maxMXAttempts = isVercel ? 2 : 3; // Reduce attempts in Vercel for faster response
@@ -456,6 +578,11 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < Math.min(mxRecords.length, maxMXAttempts); i++) { // Try fewer MX records in Vercel
       const mxRecord = mxRecords[i];
       console.log(`[VALIDATE_EMAIL] 🔌 Trying MX record ${i + 1}/${mxRecords.length}: ${mxRecord.exchange} (priority: ${mxRecord.priority})`);
+      // Timeout check per attempt
+      {
+        const timeoutResponse = await maybeTimeoutFallback();
+        if (timeoutResponse) return timeoutResponse;
+      }
       
       try {
         smtpResult = await performSMTPValidation(email, mxRecord, aggressiveMode);
@@ -525,6 +652,12 @@ export async function POST(request: NextRequest) {
       };
     }
     
+    // Final timeout check before fallback analysis and response assembly
+    {
+      const timeoutResponse = await maybeTimeoutFallback();
+      if (timeoutResponse) return timeoutResponse;
+    }
+
     // If we got IP blocks from all MX servers, or if we're in Vercel and got connection issues, try fallback validation
     const allBlocked = smtpResult.flags.includes('ip_blocked') || 
                       smtpResult.flags.includes('validation_blocked') ||
