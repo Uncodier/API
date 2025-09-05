@@ -401,6 +401,14 @@ REQUIRED ANALYSIS & RECOMMENDATIONS:
 
 Please provide your analysis in a conversational, strategic format as if you're briefing the executive team. Focus on business impact, user experience, and growth opportunities rather than technical details.
 
+CRITICAL FORMAT RULES (MUST FOLLOW):
+- Output must be plain text only. Do not use markdown, HTML, emojis, or code fences.
+- Use ASCII characters only. Avoid smart quotes and special symbols.
+- Use simple dashes '-' for bullet points when needed.
+- Provide a single line beginning with 'Status:' followed by one of GREEN, YELLOW, or RED and a short reason (e.g., "Status: GREEN - billing active and configuration progressing").
+- Provide short bullets for priorities starting with '- '. Keep lines under 140 characters.
+- Avoid headings with markdown markers (#, **, etc.). Use simple plain sentences.
+
 IMPORTANT:
 - The summary should be in the language of the company.
 
@@ -430,7 +438,7 @@ ${JSON.stringify({
             focus_areas: [ 
                 "list with activities to do in order to finish the account setup"
             ],
-            output_format: "executive_briefing_with_actionable_insights",
+            output_format: "plain_text_executive_briefing",
             perspective: "cmo_strategic_business_analysis"
           }
         }

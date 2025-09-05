@@ -250,6 +250,14 @@ IMPORTANT:
 - Avoid obvious things like, attend clients, be consice in which client, what task, what content or campaign.
 - Be short, if only one task may be acomplished, just mention that one task that could make the rest easier or more effective.
 
+CRITICAL FORMAT RULES FOR OUTPUT (MUST FOLLOW):
+- Output must be plain text only. Do not use markdown, HTML, emojis, or code fences.
+- Use ASCII characters only. Avoid smart quotes and special symbols.
+- Use simple dashes '-' for bullet points when needed.
+- Provide a single line beginning with 'Status:' followed by one of GREEN, YELLOW, or RED and a short reason (e.g., "Status: YELLOW - billing pending and setup incomplete").
+- Provide priorities as short bullets starting with '- ' under 140 characters each.
+- Avoid headings with symbols (#, **, etc.). Use simple sentences.
+
 The summary should be executive-level, actionable, and provide clear visibility into the current state of operations across all business functions.`;
     
     // Crear el comando
@@ -279,8 +287,8 @@ The summary should be executive-level, actionable, and provide clear visibility 
               ].filter(Boolean)
             }
           },
-          subject: "key task or focus for the day (taken from your analysis)",
-          message: "message with the kay actions for the team to take based on the analysis and recommendations of the rest te ai team, that would make the best results for the company"
+          subject: "Plain text key task or focus for the day (no markdown, emojis)",
+          message: "Plain text list of key actions for the team to take. Start with a single 'Status: GREEN|YELLOW|RED - reason' line, followed by concise '- ' bullets for priorities. No markdown/emojis/HTML."
         }
       ],
       tools: [

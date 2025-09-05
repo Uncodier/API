@@ -86,6 +86,68 @@ export async function POST(request: NextRequest) {
     const { email, aggressiveMode = false } = body;
     let temporalInfo: { started: boolean; workflowId?: string; executionId?: string; runId?: string; status?: string; error?: string } | null = null;
 
+    // Primary NeverBounce validation (preferred)
+    const tryNeverBouncePrimary = async (): Promise<NextResponse | null> => {
+      try {
+        const xfp = request.headers.get('x-forwarded-proto');
+        const xfHost = request.headers.get('x-forwarded-host');
+        const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
+        const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
+        const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
+        const url = `${origin}/api/integrations/neverbounce/validate`;
+
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email })
+        });
+
+        const json = await res.json().catch(() => null);
+
+        if (!res.ok || !json || json.success !== true || !json.data) {
+          console.warn(`[VALIDATE_EMAIL] ⚠️ NeverBounce primary validation failed`, { status: res.status, json });
+          return null;
+        }
+
+        const nb = json.data as { email: string; isValid: boolean; result: string; flags?: string[]; suggested_correction?: string | null; execution_time?: number; message?: string; timestamp?: string };
+        const executionTime = Date.now() - startTime;
+
+        const nbResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
+        const deliverable = nb.isValid && nbResult === 'valid';
+        const bounceRisk: 'low' | 'medium' | 'high' = nbResult === 'valid' ? 'low' : (nbResult === 'catchall' || nbResult === 'unknown') ? 'medium' : 'high';
+        const confidence = nbResult === 'valid' ? 85 : nbResult === 'invalid' ? 95 : nbResult === 'catchall' ? 55 : 45;
+        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = confidence >= 85 ? 'very_high' : confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
+
+        return NextResponse.json({
+          success: true,
+          data: {
+            email: nb.email,
+            isValid: nb.isValid,
+            deliverable,
+            result: nbResult,
+            flags: [...(nb.flags || []), 'neverbounce_primary'],
+            suggested_correction: nb.suggested_correction ?? null,
+            execution_time: executionTime,
+            message: `NeverBounce: ${nb.message || nbResult}`,
+            timestamp: new Date().toISOString(),
+            bounceRisk,
+            reputationFlags: ['neverbounce_validation'],
+            riskFactors: ['neverbounce_primary'],
+            confidence,
+            confidenceLevel,
+            reasoning: ['Used NeverBounce as primary provider', 'Returned NeverBounce result'],
+            aggressiveMode
+          },
+          temporal: temporalInfo,
+          provider: 'neverbounce',
+          fallback: false
+        }, { status: 200, headers: { 'Content-Type': 'application/json' } });
+      } catch (nbErr: any) {
+        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce primary error`, nbErr);
+        return null;
+      }
+    };
+
     // Helper: fallback via NeverBounce integration if we've exceeded timeout
     const maybeTimeoutFallback = async (): Promise<NextResponse | null> => {
       if (Date.now() <= deadline) return null;
@@ -234,6 +296,12 @@ export async function POST(request: NextRequest) {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
+    }
+    
+    // Prefer NeverBounce as the primary provider
+    {
+      const nbResponse = await tryNeverBouncePrimary();
+      if (nbResponse) return nbResponse;
     }
     
     // Start Temporal workflow asynchronously before heavy validation
