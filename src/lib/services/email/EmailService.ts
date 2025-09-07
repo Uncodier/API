@@ -163,43 +163,36 @@ export class EmailService {
 
 
         
-        // Search for emails with conservative approach to avoid server conflicts
+        // Search for emails and fetch ONLY the newest up to the requested limit
         const messages = [];
         try {
           // First, search to get UIDs
           const searchResults = await client.search(searchQuery);
-
           
-          // 🎯 CORREGIR: Obtener todos los emails y ordenar por fecha, no por UID
-          const allEmails = [];
-          if (searchResults.length > 0) {
-            for await (const message of client.fetch(searchResults, {
+          // Order by UID descending (usually correlates with newest first)
+          const sortedUIDs = searchResults.sort((a, b) => b - a);
+          
+          // Take only the newest emails up to the limit
+          const limitedUIDs = sortedUIDs.slice(0, limit);
+          
+          // Fetch only the selected UIDs
+          if (limitedUIDs.length > 0) {
+            for await (const message of client.fetch(limitedUIDs, {
               envelope: true,
               bodyStructure: true,
               flags: true,
               bodyParts: ['TEXT']
             })) {
-              allEmails.push(message);
+              messages.push(message);
             }
           }
           
-          // Ordenar por fecha (más recientes primero)
-          const sortedEmails = allEmails.sort((a, b) => {
+          // Ensure messages are ordered by date descending for consistency
+          messages.sort((a: any, b: any) => {
             const dateA = a.envelope?.date?.getTime() || 0;
             const dateB = b.envelope?.date?.getTime() || 0;
-            return dateB - dateA; // Descending order (newest first)
+            return dateB - dateA;
           });
-          
-
-          
-          // Take only the newest emails up to the limit
-          const limitedEmails = sortedEmails.slice(0, limit);
-
-          
-          // Add to messages array
-          messages.push(...limitedEmails);
-          
-
         } catch (fetchError) {
           console.error(`[EmailService] ❌ Error durante fetch de emails:`, fetchError);
           throw new Error(`Error al buscar emails: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
