@@ -187,12 +187,12 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // Start Temporal workflow asynchronously before heavy validation
+    // Execute Temporal workflow and return its result directly when successful
     try {
       const workflowService = WorkflowService.getInstance();
       const workflowOptions = {
         priority: 'medium' as const,
-        async: true,
+        async: false,
         retryAttempts: 0,
         taskQueue: process.env.EMAIL_VALIDATION_TASK_QUEUE || 'validation',
         workflowId: `validate-email-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
@@ -207,9 +207,36 @@ export async function POST(request: NextRequest) {
         workflowId: workflowStart.workflowId,
         executionId: workflowStart.executionId,
         runId: workflowStart.runId,
-        status: workflowStart.status || 'running'
+        status: workflowStart.status || 'completed'
       };
-      console.log(`[VALIDATE_EMAIL] 🧭 Temporal workflow started:`, temporalInfo);
+
+      // If Temporal completed, short-circuit and return its data
+      if (workflowStart.success && workflowStart.status === 'completed' && workflowStart.data) {
+        console.log(`[VALIDATE_EMAIL] ✅ Temporal workflow completed, returning workflow result`);
+        return NextResponse.json({
+          success: true,
+          data: workflowStart.data,
+          temporal: temporalInfo
+        }, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+      
+      // If Temporal did not complete or returned no data, treat as failure and use fallback
+      if (!workflowStart.success) {
+        console.warn(`[VALIDATE_EMAIL] ⚠️ Temporal workflow failed, attempting NeverBounce fallback`);
+        const nbResponse = await tryNeverBouncePrimary();
+        if (nbResponse) return nbResponse;
+        return NextResponse.json({
+          success: false,
+          error: {
+            code: workflowStart.error?.code || 'TEMPORAL_EXECUTION_FAILED',
+            message: workflowStart.error?.message || 'Temporal execution failed and fallback did not produce a response'
+          },
+          temporal: temporalInfo
+        }, { status: 502, headers: { 'Content-Type': 'application/json' } });
+      }
     } catch (temporalErr: any) {
       console.error(`[VALIDATE_EMAIL] ⚠️ Failed to start Temporal workflow:`, temporalErr);
       temporalInfo = { started: false, error: temporalErr?.message || 'Unknown Temporal error' };
