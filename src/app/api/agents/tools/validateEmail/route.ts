@@ -280,14 +280,6 @@ export async function POST(request: NextRequest) {
       });
     }
     
-    // Prefer NeverBounce as the primary provider
-    {
-      console.info(`[VALIDATE_EMAIL] ⬆️ Preferring NeverBounce as primary provider`);
-      const nbResponse = await tryNeverBouncePrimary();
-      if (nbResponse) return nbResponse;
-      console.info(`[VALIDATE_EMAIL] ⏭️ NeverBounce did not produce a usable response, continuing with DNS/SMTP flow`);
-    }
-    
     // Start Temporal workflow asynchronously before heavy validation
     try {
       const workflowService = WorkflowService.getInstance();
@@ -314,6 +306,14 @@ export async function POST(request: NextRequest) {
     } catch (temporalErr: any) {
       console.error(`[VALIDATE_EMAIL] ⚠️ Failed to start Temporal workflow:`, temporalErr);
       temporalInfo = { started: false, error: temporalErr?.message || 'Unknown Temporal error' };
+    }
+    
+    // If Temporal workflow failed to start, try NeverBounce as fallback
+    if (!temporalInfo?.started) {
+      console.info(`[VALIDATE_EMAIL] ⚠️ Temporal workflow not started, trying NeverBounce fallback`);
+      const nbResponse = await tryNeverBouncePrimary();
+      if (nbResponse) return nbResponse;
+      console.info(`[VALIDATE_EMAIL] ⏭️ NeverBounce fallback did not produce a usable response, continuing with DNS/SMTP flow`);
     }
     
     const domain = extractDomain(email);

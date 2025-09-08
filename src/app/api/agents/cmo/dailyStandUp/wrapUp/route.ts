@@ -250,6 +250,13 @@ IMPORTANT:
 - Avoid obvious things like, attend clients, be consice in which client, what task, what content or campaign.
 - Be short, if only one task may be acomplished, just mention that one task that could make the rest easier or more effective.
 
+CLIENT ACTIVATION & INVITATION GUIDELINES:
+- Use a helpful, proactive tone that nudges the client to take one concrete step in Uncodie today.
+- Close with one clear invitation to use Uncodie (e.g., "Log in to your Uncodie dashboard to start today's priority" or "Enable your campaign in Uncodie now").
+- Reference specific Uncodie actions relevant to the day: review new leads, connect inbox, approve a campaign, launch a template, adjust targeting, or check the pipeline.
+- Keep the invitation plain text and compliant with output rules (no markdown, emojis, or links); make it achievable within 5 minutes.
+- If priorities are very limited, offer one quick-win CTA that unlocks the next steps.
+
 CRITICAL FORMAT RULES FOR OUTPUT (MUST FOLLOW):
 - Output must be plain text only. Do not use markdown, HTML, emojis, or code fences.
 - Use ASCII characters only. Avoid smart quotes and special symbols.
@@ -269,26 +276,13 @@ The summary should be executive-level, actionable, and provide clear visibility 
       description: 'Consolidate all daily standup analyses into executive summary and actionable recommendations',
       targets: [
         {
-          executive_summary: {
-            analysis_type: "daily_standup_wrapup",
-            consolidated_memories: memoriesData.memories,
-            system_insights: systemMemories,
-            sales_insights: salesMemories,
-            support_insights: supportMemories,
-            growth_insights: growthMemories,
-            performance_metrics: {
-              memories_analyzed: memoriesData.memoriesCount,
-              commands_reviewed: memoriesData.commandsCount,
-              departments_covered: [
-                systemMemories.length > 0 ? 'system' : null,
-                salesMemories.length > 0 ? 'sales' : null,
-                supportMemories.length > 0 ? 'support' : null,
-                growthMemories.length > 0 ? 'growth' : null
-              ].filter(Boolean)
-            }
-          },
-          subject: "Plain text key task or focus for the day (no markdown, emojis)",
-          message: "Plain text list of key actions for the team to take. Start with a single 'Status: GREEN|YELLOW|RED - reason' line, followed by concise '- ' bullets for priorities. No markdown/emojis/HTML."
+          subject: "Plain text key task or focus for the day (no markdown or special characters)",
+          message: "Most important, news, leads, opportunities, warning, tasks or focus for the day (no markdown or special characters) keep it short and concise",
+          health: {
+            status: "GREEN|YELLOW|RED",
+            reason: "Short plain text reason (no emojis, no markdown)",
+            priorities: ["Short plain text priority items under 140 chars each"]
+          }
         }
       ],
       tools: [
@@ -323,43 +317,43 @@ The summary should be executive-level, actionable, and provide clear visibility 
       );
     }
     
-    // Extraer todos los resultados del análisis
+    // Extraer resultados simplificados: subject, message, health
     let summary = "Executive summary completed";
     let subject = "";
     let message = "";
-    let executiveSummaryData = null;
-    let allResults = [];
+    let health: { status: 'GREEN' | 'YELLOW' | 'RED'; reason: string; priorities: string[] } | null = null;
     
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
-      allResults = executedCommand.results;
-      
       const analysisResults = executedCommand.results.find((r: any) => 
-        r.executive_summary || r.consolidated_data || r.content || r.summary
+        r.subject || r.message || r.health || r.content || r.summary
       );
       
       if (analysisResults) {
-        // Extraer executive_summary completo si existe
-        if (analysisResults.executive_summary) {
-          executiveSummaryData = analysisResults.executive_summary;
-          
-          // Extraer summary del executive_summary
-          if (analysisResults.executive_summary.summary) {
-            summary = analysisResults.executive_summary.summary;
-          }
-        } else if (analysisResults.consolidated_data && analysisResults.consolidated_data.summary) {
-          summary = analysisResults.consolidated_data.summary;
-        } else if (analysisResults.content) {
+        if (analysisResults.content) {
           summary = analysisResults.content;
         } else if (analysisResults.summary) {
           summary = analysisResults.summary;
         }
         
-        // Buscar subject y message por separado en el nivel raíz de los resultados
+        // Campos directos esperados
         if (analysisResults.subject) {
           subject = analysisResults.subject;
         }
         if (analysisResults.message) {
           message = analysisResults.message;
+        }
+        if (analysisResults.health && typeof analysisResults.health === 'object') {
+          const h = analysisResults.health as any;
+          if (typeof h.status === 'string') {
+            const up = h.status.toUpperCase();
+            if (up === 'GREEN' || up === 'YELLOW' || up === 'RED') {
+              health = {
+                status: up,
+                reason: typeof h.reason === 'string' ? h.reason : '',
+                priorities: Array.isArray(h.priorities) ? h.priorities.map((p: any) => String(p)) : []
+              };
+            }
+          }
         }
       }
     }
@@ -383,32 +377,53 @@ The summary should be executive-level, actionable, and provide clear visibility 
     
     console.log(`📊 Executive summary completado: ${summary.substring(0, 100)}...`);
     
-    return NextResponse.json(
-      { 
+    // Fallbacks: si no hay message/health en resultados, intentar parsear del resumen en texto plano
+    if (!message && typeof summary === 'string') {
+      message = summary;
+    }
+    if (!health && typeof message === 'string' && message.trim().length > 0) {
+      const lines = message.split('\n').map(l => l.trim()).filter(Boolean);
+      const statusLine = lines.find(l => /^Status:\s*(GREEN|YELLOW|RED)/i.test(l));
+      if (statusLine) {
+        const match = statusLine.match(/^Status:\s*(GREEN|YELLOW|RED)\s*-\s*(.*)$/i);
+        const status = match ? match[1].toUpperCase() : 'YELLOW';
+        const reason = match ? match[2].trim() : '';
+        const priorities = lines
+          .filter(l => l.startsWith('- '))
+          .map(l => l.substring(2).trim())
+          .filter(l => l.length > 0);
+        if (status === 'GREEN' || status === 'YELLOW' || status === 'RED') {
+          health = { status: status as 'GREEN' | 'YELLOW' | 'RED', reason, priorities };
+        }
+      }
+    }
+    
+    // Build optional systemAnalysis for daily standup notification compatibility
+    let systemAnalysis: any = undefined;
+    if (health) {
+      const assessmentLines = [
+        `Status: ${health.status} - ${health.reason}`,
+        ...health.priorities.map(p => `- ${p}`)
+      ];
+      systemAnalysis = {
         success: true,
-        data: { 
-          command_id: executedCommand.id,
-          summary: summary,
-          subject: subject,
-          message: message,
-          analysis_type: "executive_wrapup",
-          executive_summary: executiveSummaryData,
-          results: allResults,
-          consolidated_data: {
-            memories_analyzed: memoriesData.memoriesCount,
-            commands_reviewed: memoriesData.commandsCount,
-            departments_covered: [
-              systemMemories.length > 0 ? 'system' : null,
-              salesMemories.length > 0 ? 'sales' : null,
-              supportMemories.length > 0 ? 'support' : null,
-              growthMemories.length > 0 ? 'growth' : null
-            ].filter(Boolean),
-            coverage_score: ((
-              [systemMemories, salesMemories, supportMemories, growthMemories]
-              .filter(arr => arr.length > 0).length / 4
-            ) * 100).toFixed(0) + '%'
-          }
-        } 
+        command_id: executedCommand.id,
+        strategic_analysis: {
+          business_assessment: assessmentLines.join('\n')
+        },
+        analysis_type: 'executive_wrapup'
+      };
+    }
+
+    return NextResponse.json(
+      {
+        success: true,
+        data: {
+          subject,
+          message,
+          health,
+          ...(systemAnalysis ? { systemAnalysis } : {})
+        }
       },
       { status: 200 }
     );

@@ -23,10 +23,14 @@ export class EmailSyncErrorService {
     
     try {
       // Update settings.channels to mark email as failed and disabled
-      await this.updateChannelStatus(siteId, errorMessage);
+      const didChange = await this.updateChannelStatus(siteId, errorMessage);
       
-      // Send notification about the failure
-      await this.sendFailureNotification(siteId, errorMessage);
+      // Send notification about the failure ONLY if we actually changed the channel status
+      if (didChange) {
+        await this.sendFailureNotification(siteId, errorMessage);
+      } else {
+        console.log(`[EmailSyncErrorService] ℹ️ Channel already disabled with error status; skipping duplicate notification`);
+      }
       
       console.log(`[EmailSyncErrorService] ✅ Email sync failure handled: channel disabled and notification sent`);
     } catch (failureHandlingError) {
@@ -38,7 +42,7 @@ export class EmailSyncErrorService {
   /**
    * Update email channel status to failed and disabled
    */
-  private static async updateChannelStatus(siteId: string, errorMessage: string): Promise<void> {
+  private static async updateChannelStatus(siteId: string, errorMessage: string): Promise<boolean> {
     try {
       console.log(`[EmailSyncErrorService] 🔧 Updating settings.channels for email sync failure`);
       
@@ -51,11 +55,22 @@ export class EmailSyncErrorService {
       
       if (getError) {
         console.error('[EmailSyncErrorService] Error getting settings:', getError);
-        return;
+        return false;
       }
       
       const currentChannels = settings?.channels || {};
       
+      // If already disabled and marked as error, avoid duplicate updates/notifications
+      const alreadyFailed = Boolean(
+        currentChannels?.email &&
+        currentChannels.email.enabled === false &&
+        (currentChannels.email.sync_status === 'error' || currentChannels.email.synced === 'failed')
+      );
+      if (alreadyFailed) {
+        console.log(`[EmailSyncErrorService] ℹ️ Email channel already disabled and in error state; skipping update`);
+        return false;
+      }
+
       // Update email channel status
       const updatedChannels = {
         ...currentChannels,
@@ -77,10 +92,11 @@ export class EmailSyncErrorService {
       
       if (updateError) {
         console.error('[EmailSyncErrorService] Error updating settings:', updateError);
-        return;
+        return false;
       }
       
       console.log(`[EmailSyncErrorService] ✅ Settings.channels updated: email marked as failed and disabled`);
+      return true;
     } catch (error) {
       console.error('[EmailSyncErrorService] Error in updateChannelStatus:', error);
       throw error;
@@ -138,20 +154,43 @@ export class EmailSyncErrorService {
    * Determine error type based on error message
    */
   static determineErrorType(error: Error): 'connection' | 'configuration' | 'fetch' {
-    const message = error.message.toLowerCase();
+    // Aggregate as much context as possible to correctly classify auth errors
+    const message = (error.message || '').toLowerCase();
+    const responseText = typeof (error as any)?.responseText === 'string' ? ((error as any).responseText as string).toLowerCase() : '';
+    const response = typeof (error as any)?.response === 'string' ? ((error as any).response as string).toLowerCase() : '';
+    const serverCode = typeof (error as any)?.serverResponseCode === 'string' ? ((error as any).serverResponseCode as string).toLowerCase() : '';
+    const executedCommand = typeof (error as any)?.executedCommand === 'string' ? ((error as any).executedCommand as string).toLowerCase() : '';
+    const authenticationFailed = Boolean((error as any)?.authenticationFailed);
+
+    const combined = [message, responseText, response, serverCode, executedCommand]
+      .filter(Boolean)
+      .join(' | ');
     
     // Configuration errors
-    if (message.includes('settings') || message.includes('token') || message.includes('config')) {
+    if (
+      combined.includes('settings') ||
+      combined.includes('token') ||
+      combined.includes('oauth') ||
+      combined.includes('config')
+    ) {
       return 'configuration';
     }
     
-    // Connection errors
-    if (message.includes('connect') || 
-        message.includes('timeout') || 
-        message.includes('econnrefused') || 
-        message.includes('enotfound') || 
-        message.includes('authentication') || 
-        message.includes('login')) {
+    // Connection/authentication errors
+    if (
+      combined.includes('connect') ||
+      combined.includes('timeout') ||
+      combined.includes('econnrefused') ||
+      combined.includes('enotfound') ||
+      authenticationFailed ||
+      combined.includes('authentication') || // English
+      combined.includes('autenticación') || // Spanish
+      combined.includes('invalid credentials') ||
+      combined.includes('credentials') ||
+      combined.includes('authenticate') ||
+      combined.includes('authenticationfailed') ||
+      combined.includes('login')
+    ) {
       return 'connection';
     }
     

@@ -2380,19 +2380,8 @@ export async function POST(request: NextRequest) {
       const errorCode = errorType === 'configuration' ? ERROR_CODES.EMAIL_CONFIG_NOT_FOUND : ERROR_CODES.EMAIL_FETCH_ERROR;
       const errorMessage = error instanceof Error ? error.message : "Error procesando emails enviados";
       
-      // Handle failures that require channel update and notification
-      if (EmailSyncErrorService.shouldHandleAsFailure(errorType)) {
-        try {
-          await EmailSyncErrorService.handleEmailSyncFailure({
-            siteId,
-            errorMessage,
-            errorType,
-            errorCode
-          });
-        } catch (failureHandlingError) {
-          console.error(`[EMAIL_SYNC] ❌ Error handling sync failure:`, failureHandlingError);
-        }
-      }
+      // Skip failure handler here to avoid duplicate notifications; handled by /api/agents/email
+      console.log(`[EMAIL_SYNC] ℹ️ Skipping failure handler (handled by /api/agents/email)`);
       
       console.error(`[EMAIL_SYNC] 🚨 Retornando error: ${errorCode} - ${errorMessage}`);
       

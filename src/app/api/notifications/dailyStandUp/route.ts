@@ -12,6 +12,15 @@ const DailyStandUpSchema = z.object({
   site_id: z.string().uuid('site_id debe ser un UUID válido'),
   subject: z.string().min(1, 'subject es requerido'),
   message: z.string().min(1, 'message es requerido'),
+  health: z
+    .object({
+      status: z
+        .union([z.enum(['GREEN', 'YELLOW', 'RED']), z.string()])
+        .optional(),
+      reason: z.string().optional(),
+      priorities: z.array(z.string()).optional(),
+    })
+    .optional(),
   systemAnalysis: z.object({
     success: z.boolean(),
     command_id: z.string(),
@@ -128,8 +137,9 @@ function formatBusinessAssessment(assessment: string): string {
     if (trimmedLine.startsWith('Status:')) {
       const status = trimmedLine.replace('Status:', '').trim();
       const color = status.includes('RED') ? '#dc2626' : status.includes('YELLOW') ? '#d97706' : '#059669';
+      const emoji = status.includes('RED') ? '🔴' : status.includes('YELLOW') ? '🟡' : '🟢';
       htmlContent += `<div style="margin: 8px 0; padding: 8px 12px; background-color: ${color}15; border-left: 3px solid ${color}; border-radius: 4px;">
-        <strong style="color: ${color};">Status:</strong> <span style="color: #374151;">${status}</span>
+        <span style="margin-right: 6px;">${emoji}</span><span style="color: #374151;">${status}</span>
       </div>`;
       continue;
     }
@@ -140,9 +150,13 @@ function formatBusinessAssessment(assessment: string): string {
       continue;
     }
     
-    // Formatear bullets
-    if (trimmedLine.startsWith('- ')) {
-      const bulletText = trimmedLine.substring(2);
+    // Formatear bullets (normaliza prefijos '-', '•', '• -')
+    if (trimmedLine.startsWith('- ') || trimmedLine.startsWith('•') || trimmedLine.startsWith('• -')) {
+      const normalized = trimmedLine
+        .replace(/^•\s*-\s*/,'')
+        .replace(/^•\s*/,'')
+        .replace(/^\-\s*/,'');
+      const bulletText = normalized;
       // Cortar bullets muy largos
       const shortText = bulletText.length > 120 ? bulletText.substring(0, 120) + '...' : bulletText;
       htmlContent += `<div style="margin: 4px 0 4px 16px; color: #4b5563; font-size: 14px;">• ${shortText}</div>`;
@@ -340,13 +354,36 @@ export async function POST(request: NextRequest) {
       console.log('✅ [DailyStandUp] Debug - transformed focus_areas:', JSON.stringify(validationResult.data.systemAnalysis.strategic_analysis.focus_areas));
     }
     
-    const { site_id, subject, message, systemAnalysis } = validationResult.data;
+    const { site_id, subject, message, systemAnalysis, health } = validationResult.data;
     
     console.log(`📋 [DailyStandUp] Procesando notificación para sitio: ${site_id}`);
     
     // Extraer business assessment del systemAnalysis si está disponible
     let businessAssessment: string | undefined;
-    if (systemAnalysis?.strategic_analysis?.business_assessment) {
+
+    // 1) Construir desde health si está disponible (tiene prioridad)
+    if (health) {
+      const statusUpper = health.status ? String(health.status).toUpperCase() : undefined;
+      const statusPart = statusUpper
+        ? `Status: ${statusUpper}${health.reason ? ' - ' + health.reason : ''}`
+        : health.reason || '';
+      const prioritiesPart = Array.isArray(health.priorities) && health.priorities.length > 0
+        ? '\n' + health.priorities
+            .map((p: string) => {
+              const cleaned = String(p).replace(/^\s*[•\-]\s*/, '');
+              return `- ${cleaned}`;
+            })
+            .join('\n')
+        : '';
+      const composed = `${statusPart}${prioritiesPart}`.trim();
+      if (composed.length > 0) {
+        businessAssessment = composed;
+        console.log('📊 [DailyStandUp] Business assessment construido desde health (prioritario)');
+      }
+    }
+
+    // 2) Si no hay health utilizable, usar el de systemAnalysis
+    if (!businessAssessment && systemAnalysis?.strategic_analysis?.business_assessment) {
       businessAssessment = systemAnalysis.strategic_analysis.business_assessment;
       console.log('📊 [DailyStandUp] Business assessment extraído del systemAnalysis');
     }

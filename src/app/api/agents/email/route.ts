@@ -6,6 +6,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { EmailService } from '@/lib/services/email/EmailService';
+import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
 import { EmailConfigService } from '@/lib/services/email/EmailConfigService';
 import { ComprehensiveEmailFilterService } from '@/lib/services/email/ComprehensiveEmailFilterService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
@@ -357,6 +358,21 @@ export async function POST(request: NextRequest) {
                        ERROR_CODES.EMAIL_FETCH_ERROR;
       
       const errorMessage = error instanceof Error ? error.message : "Error procesando emails";
+
+      // Trigger failure handler here (single source) with idempotency in service
+      const errorType = error instanceof Error ? EmailSyncErrorService.determineErrorType(error) : 'fetch';
+      if (EmailSyncErrorService.shouldHandleAsFailure(errorType)) {
+        try {
+          await EmailSyncErrorService.handleEmailSyncFailure({
+            siteId,
+            errorMessage,
+            errorType,
+            errorCode
+          });
+        } catch (failureHandlingError) {
+          console.error(`[EMAIL_API] ❌ Error handling email failure:`, failureHandlingError);
+        }
+      }
       
       return NextResponse.json(
         {

@@ -336,13 +336,32 @@ export class EmailService {
       
       // Provide more specific error messages
       let errorMessage = error instanceof Error ? error.message : String(error);
-      
+
+      // Extract additional fields from ImapFlow error to better classify auth errors
+      const lowerMessage = (errorMessage || '').toLowerCase();
+      const responseText = typeof (error as any)?.responseText === 'string' ? ((error as any).responseText as string).toLowerCase() : '';
+      const response = typeof (error as any)?.response === 'string' ? ((error as any).response as string).toLowerCase() : '';
+      const serverCode = typeof (error as any)?.serverResponseCode === 'string' ? ((error as any).serverResponseCode as string).toLowerCase() : '';
+      const executedCommand = typeof (error as any)?.executedCommand === 'string' ? ((error as any).executedCommand as string).toLowerCase() : '';
+      const authenticationFailed = Boolean((error as any)?.authenticationFailed);
+
       if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
         errorMessage = `No se pudo conectar al servidor IMAP: ${emailConfig.imapHost || emailConfig.host || 'imap.gmail.com'}. Verifica la configuración del host.`;
       } else if (errorMessage.includes('ECONNREFUSED')) {
         errorMessage = `Conexión rechazada por el servidor IMAP en puerto ${emailConfig.imapPort || 993}. Verifica el puerto y las configuraciones de firewall.`;
-      } else if (errorMessage.includes('authentication') || errorMessage.includes('login') || errorMessage.includes('credentials')) {
-        errorMessage = `Error de autenticación: credenciales inválidas o problema con el acceso al servidor IMAP.`;
+      } else if (
+        authenticationFailed ||
+        lowerMessage.includes('authentication') ||
+        lowerMessage.includes('credentials') ||
+        lowerMessage.includes('login') ||
+        responseText.includes('authentication') ||
+        responseText.includes('invalid credentials') ||
+        response.includes('invalid credentials') ||
+        serverCode.includes('authenticationfailed') ||
+        executedCommand.includes('authenticate')
+      ) {
+        // Use English keyword "Authentication" to allow downstream classifiers to catch it
+        errorMessage = `Authentication failed: invalid credentials or IMAP access problem.`;
       } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
         errorMessage = `Timeout de conexión al servidor IMAP. El servidor puede estar lento o no responder.`;
       } else if (errorMessage.includes('TLS') || errorMessage.includes('SSL')) {
@@ -1138,13 +1157,32 @@ export class EmailService {
       
       // Provide more specific error messages
       let errorMessage = error instanceof Error ? error.message : String(error);
-      
+
+      // Extract additional fields from ImapFlow error to better classify auth errors
+      const lowerMessage = (errorMessage || '').toLowerCase();
+      const responseText = typeof (error as any)?.responseText === 'string' ? ((error as any).responseText as string).toLowerCase() : '';
+      const response = typeof (error as any)?.response === 'string' ? ((error as any).response as string).toLowerCase() : '';
+      const serverCode = typeof (error as any)?.serverResponseCode === 'string' ? ((error as any).serverResponseCode as string).toLowerCase() : '';
+      const executedCommand = typeof (error as any)?.executedCommand === 'string' ? ((error as any).executedCommand as string).toLowerCase() : '';
+      const authenticationFailed = Boolean((error as any)?.authenticationFailed);
+
       if (errorMessage.includes('ENOTFOUND') || errorMessage.includes('getaddrinfo')) {
         errorMessage = `No se pudo conectar al servidor IMAP: ${emailConfig.imapHost || emailConfig.host || 'imap.gmail.com'}. Verifica la configuración del host.`;
       } else if (errorMessage.includes('ECONNREFUSED')) {
         errorMessage = `Conexión rechazada por el servidor IMAP en puerto ${emailConfig.imapPort || 993}. Verifica el puerto y las configuraciones de firewall.`;
-      } else if (errorMessage.includes('authentication') || errorMessage.includes('login') || errorMessage.includes('credentials')) {
-        errorMessage = `Error de autenticación: credenciales inválidas o problema con el acceso al servidor IMAP.`;
+      } else if (
+        authenticationFailed ||
+        lowerMessage.includes('authentication') ||
+        lowerMessage.includes('credentials') ||
+        lowerMessage.includes('login') ||
+        responseText.includes('authentication') ||
+        responseText.includes('invalid credentials') ||
+        response.includes('invalid credentials') ||
+        serverCode.includes('authenticationfailed') ||
+        executedCommand.includes('authenticate')
+      ) {
+        // Use English keyword "Authentication" to allow downstream classifiers to catch it
+        errorMessage = `Authentication failed: invalid credentials or IMAP access problem.`;
       } else if (errorMessage.includes('timeout') || errorMessage.includes('Timeout')) {
         errorMessage = `Timeout de conexión al servidor IMAP. El servidor puede estar lento o no responder.`;
       } else if (errorMessage.includes('TLS') || errorMessage.includes('SSL')) {
