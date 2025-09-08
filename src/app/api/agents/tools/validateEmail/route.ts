@@ -287,7 +287,7 @@ export async function POST(request: NextRequest) {
         priority: 'medium' as const,
         async: true,
         retryAttempts: 0,
-        taskQueue: process.env.EMAIL_VALIDATION_TASK_QUEUE || process.env.WORKFLOW_TASK_QUEUE || 'email-validation-queue',
+        taskQueue: process.env.EMAIL_VALIDATION_TASK_QUEUE || 'validation',
         workflowId: `validate-email-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
       };
       const workflowStart = await workflowService.executeWorkflow(
