@@ -6,10 +6,8 @@ import {
   isLikelyNonEmailDomain,
   checkDomainExists,
   getMXRecords,
-  attemptFallbackValidation,
   performSMTPValidation,
   checkDomainReputation,
-  performBasicEmailValidation,
   type EmailValidationResult,
   type MXRecord
 } from '@/lib/email-validation';
@@ -144,99 +142,8 @@ export async function POST(request: NextRequest) {
       }
     };
 
-    // Helper: fallback via NeverBounce integration if we've exceeded timeout
-    const maybeTimeoutFallback = async (): Promise<NextResponse | null> => {
-      if (Date.now() <= deadline) return null;
-      console.log(`[VALIDATE_EMAIL] ⏱️ Exceeded ${TIMEOUT_MS}ms, falling back to NeverBounce (SDK)`);
-
-      try {
-        const nb = await validateWithNeverBounce(email);
-        const originalResult = (nb.result || (nb.isValid ? 'valid' : 'invalid')) as 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown';
-        let mappedResult: 'valid' | 'invalid' | 'disposable' | 'catchall' | 'unknown' = originalResult;
-        let isValidMapped = nb.isValid;
-        let deliverable = nb.isValid && originalResult === 'valid';
-        const flagsBase = [...(nb.flags || []), 'fallback_neverbounce'];
-        const flags = [...flagsBase];
-
-        if (originalResult === 'valid' || originalResult === 'catchall') {
-          mappedResult = 'valid';
-          isValidMapped = true;
-          deliverable = true;
-          if (originalResult === 'catchall') {
-            flags.push('neverbounce_original_catchall', 'catchall_mapped_to_valid');
-          }
-        }
-
-        const bounceRisk: 'low' | 'medium' | 'high' = 'low';
-        const confidence = 85;
-        const confidenceLevel: 'low' | 'medium' | 'high' | 'very_high' = 'very_high';
-
-        return NextResponse.json({
-          success: true,
-          data: {
-            email: nb.email,
-            isValid: isValidMapped,
-            deliverable,
-            result: mappedResult,
-            flags,
-            suggested_correction: nb.suggested_correction ?? null,
-            execution_time: nb.execution_time,
-            message: `NeverBounce: ${nb.message || originalResult}${originalResult === 'catchall' ? ' (mapped_to_valid)' : ''}`,
-            timestamp: new Date().toISOString(),
-            bounceRisk,
-            reputationFlags: ['neverbounce_validation'],
-            riskFactors: ['neverbounce_fallback'],
-            confidence,
-            confidenceLevel,
-            reasoning: ['Primary validation exceeded timeout', 'Returned NeverBounce result'] ,
-            aggressiveMode
-          },
-          temporal: temporalInfo,
-          provider: 'neverbounce',
-          fallback: true
-        }, { status: 200, headers: { 'Content-Type': 'application/json' } });
-      } catch (nbErr: any) {
-        console.error(`[VALIDATE_EMAIL] ❌ NeverBounce SDK fallback failed`, nbErr);
-
-        // Try final fallback route if provided via header or env var
-        const finalFallbackPath = request.headers.get('x-email-validation-fallback-path') || process.env.EMAIL_VALIDATION_FINAL_FALLBACK_PATH;
-        if (finalFallbackPath) {
-          try {
-            const xfp = request.headers.get('x-forwarded-proto');
-            const xfHost = request.headers.get('x-forwarded-host');
-            const host = xfHost || request.headers.get('host') || process.env.NEXT_PUBLIC_VERCEL_URL || 'localhost:3000';
-            const proto = xfp || (process.env.VERCEL ? 'https' : 'http');
-            const origin = process.env.NEXT_PUBLIC_APP_URL || `${proto}://${host}`;
-            const finalUrl = finalFallbackPath.startsWith('http') ? finalFallbackPath : `${origin}${finalFallbackPath.startsWith('/') ? '' : '/'}${finalFallbackPath}`;
-
-            const finalRes = await fetch(finalUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ email })
-            });
-
-            const finalJson = await finalRes.json().catch(() => null);
-            if (finalRes.ok && finalJson) {
-              return NextResponse.json(finalJson, { status: finalRes.status, headers: { 'Content-Type': 'application/json' } });
-            } else {
-              console.error(`[VALIDATE_EMAIL] ❌ Final fallback route failed`, { status: finalRes.status, finalJson });
-            }
-          } catch (finalErr: any) {
-            console.error(`[VALIDATE_EMAIL] ❌ Error calling final fallback route`, finalErr);
-          }
-        }
-
-        return NextResponse.json({
-          success: false,
-          error: {
-            code: 'TIMEOUT_FALLBACK_FAILED',
-            message: 'Primary validation timed out and fallbacks failed',
-            details: 'Exceeded timeout and failed to fetch fallback validations'
-          },
-          temporal: temporalInfo
-        }, { status: 504, headers: { 'Content-Type': 'application/json' } });
-      }
-    };
+    // NOTE: Timeout-based fallback disabled by product decision. We only fallback to NeverBounce
+    // when Temporal fails to start. No other fallbacks should trigger.
     
     // Validate that email is provided
     if (!email) {
@@ -359,11 +266,7 @@ export async function POST(request: NextRequest) {
     
     console.log(`[VALIDATE_EMAIL] ✅ Domain exists: ${domain} (IPv4: ${domainCheck.hasARecord})`);
     
-    // If we've already exceeded the timeout, use NeverBounce
-    {
-      const timeoutResponse = await maybeTimeoutFallback();
-      if (timeoutResponse) return timeoutResponse;
-    }
+    // Timeout fallback disabled
 
     // Check for disposable email domains
     if (isDisposableEmail(domain)) {
@@ -399,9 +302,8 @@ export async function POST(request: NextRequest) {
     } catch (error: any) {
       const executionTime = Date.now() - startTime;
       console.error(`[VALIDATE_EMAIL] ❌ Failed to get MX records:`, error);
-      
-      // Determine appropriate response based on error type
-      let result: 'invalid' | 'unknown' | 'risky' = 'invalid';
+
+      let result: 'invalid' | 'unknown' = 'unknown';
       let flags: string[] = [];
       let message = 'Domain validation failed';
       let bounceRisk: 'low' | 'medium' | 'high' = 'high';
@@ -411,37 +313,11 @@ export async function POST(request: NextRequest) {
       let reasoning: string[] = [];
       let isValid = false;
       let deliverable = false;
-      
-      // Check if domain is likely a non-email domain before expensive fallback validation
-      let fallbackResult = null;
-      if (error.code === 'NO_MX_RECORDS' || error.code === 'DNS_TIMEOUT' || error.code === 'DNS_SERVER_FAILURE') {
-        // Quick check for obviously non-email domains
-        const nonEmailCheck = isLikelyNonEmailDomain(domain);
-        
-        if (nonEmailCheck.isNonEmail) {
-          console.log(`[VALIDATE_EMAIL] 🚫 Skipping fallback - likely non-email domain: ${nonEmailCheck.reason} (confidence: ${nonEmailCheck.confidence}%)`);
-          // Don't perform expensive fallback validation for obvious non-email domains
-        } else {
-          console.log(`[VALIDATE_EMAIL] 🔄 Attempting fallback validation for ${domain} (error: ${error.code})`);
-          try {
-            fallbackResult = await attemptFallbackValidation(domain);
-            console.log(`[VALIDATE_EMAIL] 📋 Fallback result:`, {
-              canReceiveEmail: fallbackResult.canReceiveEmail,
-              method: fallbackResult.fallbackMethod,
-              confidence: fallbackResult.confidence,
-              flags: fallbackResult.flags,
-              message: fallbackResult.message
-            });
-          } catch (fallbackError: any) {
-            console.error(`[VALIDATE_EMAIL] ❌ Fallback validation failed:`, fallbackError.message || fallbackError);
-          }
-        }
-      }
-      
+
       switch (error.code) {
         case 'DOMAIN_NOT_FOUND':
           result = 'invalid';
-          flags = ['domain_not_found', 'no_mx_record'];
+          flags = ['domain_not_found'];
           message = 'Domain does not exist';
           bounceRisk = 'high';
           reputationFlags = ['non_existent_domain'];
@@ -449,107 +325,37 @@ export async function POST(request: NextRequest) {
           confidenceLevel = 'very_high';
           reasoning = ['Domain does not exist (-95)', 'Error: DOMAIN_NOT_FOUND'];
           break;
-          
         case 'NO_MX_RECORDS':
-          const nonEmailCheck = isLikelyNonEmailDomain(domain);
-          
-          if (fallbackResult?.canReceiveEmail) {
-            // Fallback validation found evidence of email capability
-            result = 'risky';
-            isValid = true;
-            deliverable = false;
-            flags = ['no_mx_record', ...fallbackResult.flags];
-            message = `No MX records but ${fallbackResult.message}`;
-            bounceRisk = 'high';
-            reputationFlags = ['no_mx_but_mail_capable'];
-            confidence = Math.max(fallbackResult.confidence, 40); // Minimum confidence for positive fallback
-            confidenceLevel = confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low';
-            reasoning = [
-              'No MX records found (-40)',
-              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
-            ];
-          } else if (nonEmailCheck.isNonEmail) {
-            // Domain pattern suggests it's not meant for email
-            result = 'invalid';
-            flags = ['no_mx_record', 'likely_non_email_domain'];
-            message = `Domain exists but appears to be a non-email domain: ${nonEmailCheck.reason}`;
-            bounceRisk = 'high';
-            reputationFlags = ['non_email_domain'];
-            confidence = Math.max(90, nonEmailCheck.confidence);
-            confidenceLevel = 'very_high';
-            reasoning = [
-              'No MX records found (-40)',
-              `Non-email domain pattern detected (+${nonEmailCheck.confidence})`
-            ];
-          } else {
-            // No MX records and no fallback evidence - likely invalid for email
-            result = 'invalid';
-            flags = ['no_mx_record'];
-            message = 'Domain exists but has no mail servers configured and no fallback methods indicate email capability';
-            bounceRisk = 'high';
-            reputationFlags = ['no_mail_service'];
-            confidence = 85; // High confidence that it can't receive email
-            confidenceLevel = 'very_high';
-            reasoning = [
-              'No MX records found (-40)',
-              'No fallback validation methods succeeded (-45)',
-              'Domain exists but shows no email capability'
-            ];
-          }
+          // No MX is treated as invalid without additional fallbacks
+          result = 'invalid';
+          flags = ['no_mx_record'];
+          message = 'Domain exists but has no MX records configured';
+          bounceRisk = 'high';
+          reputationFlags = ['no_mail_service'];
+          confidence = 85;
+          confidenceLevel = 'very_high';
+          reasoning = ['No MX records found (-85)'];
           break;
-          
         case 'DNS_TIMEOUT':
-          if (fallbackResult?.canReceiveEmail) {
-            result = 'risky';
-            isValid = true;
-            deliverable = false;
-            flags = ['dns_timeout', ...fallbackResult.flags];
-            message = `DNS timeout but ${fallbackResult.message}`;
-            bounceRisk = 'medium';
-            reputationFlags = ['dns_issues_but_mail_capable'];
-            confidence = Math.max(fallbackResult.confidence - 20, 10);
-            confidenceLevel = confidence >= 50 ? 'medium' : 'low';
-            reasoning = [
-              'DNS timeout issues (-30)',
-              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
-            ];
-          } else {
-            result = 'unknown';
-            flags = ['dns_timeout'];
-            message = 'DNS lookup timeout - domain validation inconclusive';
-            bounceRisk = 'medium';
-            reputationFlags = ['dns_issues'];
-            confidence = 25;
-            reasoning = ['DNS timeout prevents validation (-75)'];
-          }
+          result = 'unknown';
+          flags = ['dns_timeout'];
+          message = 'DNS lookup timeout - domain validation inconclusive';
+          bounceRisk = 'medium';
+          reputationFlags = ['dns_issues'];
+          confidence = 25;
+          confidenceLevel = 'low';
+          reasoning = ['DNS timeout prevents validation (-75)'];
           break;
-          
         case 'DNS_SERVER_FAILURE':
-          if (fallbackResult?.canReceiveEmail) {
-            result = 'risky';
-            isValid = true;
-            deliverable = false;
-            flags = ['dns_server_failure', ...fallbackResult.flags];
-            message = `DNS server failure but ${fallbackResult.message}`;
-            bounceRisk = 'medium';
-            reputationFlags = ['dns_issues_but_mail_capable'];
-            confidence = Math.max(fallbackResult.confidence - 20, 10);
-            confidenceLevel = confidence >= 50 ? 'medium' : 'low';
-            reasoning = [
-              'DNS server failure (-30)',
-              `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
-            ];
-          } else {
-            result = 'unknown';
-            flags = ['dns_server_failure'];
-            message = 'DNS server failure - domain validation inconclusive';
-            bounceRisk = 'medium';
-            reputationFlags = ['dns_issues'];
-            confidence = 25;
-            reasoning = ['DNS server failure prevents validation (-75)'];
-          }
+          result = 'unknown';
+          flags = ['dns_server_failure'];
+          message = 'DNS server failure - domain validation inconclusive';
+          bounceRisk = 'medium';
+          reputationFlags = ['dns_issues'];
+          confidence = 25;
+          confidenceLevel = 'low';
+          reasoning = ['DNS server failure prevents validation (-75)'];
           break;
-          
         default:
           result = 'unknown';
           flags = ['dns_error'];
@@ -557,9 +363,10 @@ export async function POST(request: NextRequest) {
           bounceRisk = 'high';
           reputationFlags = ['dns_error'];
           confidence = 15;
+          confidenceLevel = 'low';
           reasoning = ['DNS resolution failed (-85)', `Error type: ${error.code || 'DNS_ERROR'}`];
       }
-      
+
       return NextResponse.json({
         success: true,
         data: {
@@ -578,8 +385,7 @@ export async function POST(request: NextRequest) {
           confidence,
           confidenceLevel,
           reasoning,
-          aggressiveMode: aggressiveMode,
-          ...(fallbackResult && { fallbackValidation: fallbackResult })
+          aggressiveMode: aggressiveMode
         },
         temporal: temporalInfo
       }, {
@@ -614,11 +420,7 @@ export async function POST(request: NextRequest) {
     // Try SMTP validation with MX records (try multiple if first fails with timeout)
     console.log(`[VALIDATE_EMAIL] 🔌 Attempting SMTP validation with ${mxRecords.length} MX record(s)`);
     
-    // Timeout check before starting SMTP attempts
-    {
-      const timeoutResponse = await maybeTimeoutFallback();
-      if (timeoutResponse) return timeoutResponse;
-    }
+    // Timeout fallback disabled
 
     // Check if we're running in Vercel (serverless environment)
     const isVercel = process.env.VERCEL === '1' || process.env.VERCEL_ENV;
@@ -630,11 +432,7 @@ export async function POST(request: NextRequest) {
     for (let i = 0; i < Math.min(mxRecords.length, maxMXAttempts); i++) { // Try fewer MX records in Vercel
       const mxRecord = mxRecords[i];
       console.log(`[VALIDATE_EMAIL] 🔌 Trying MX record ${i + 1}/${mxRecords.length}: ${mxRecord.exchange} (priority: ${mxRecord.priority})`);
-      // Timeout check per attempt
-      {
-        const timeoutResponse = await maybeTimeoutFallback();
-        if (timeoutResponse) return timeoutResponse;
-      }
+      // Timeout fallback disabled per attempt
       
       try {
         smtpResult = await performSMTPValidation(email, mxRecord, aggressiveMode);
@@ -704,102 +502,7 @@ export async function POST(request: NextRequest) {
       };
     }
     
-    // Final timeout check before fallback analysis and response assembly
-    {
-      const timeoutResponse = await maybeTimeoutFallback();
-      if (timeoutResponse) return timeoutResponse;
-    }
-
-    // If we got IP blocks from all MX servers, or if we're in Vercel and got connection issues, try fallback validation
-    const allBlocked = smtpResult.flags.includes('ip_blocked') || 
-                      smtpResult.flags.includes('validation_blocked') ||
-                      (lastError && typeof lastError === 'object' && 'flags' in lastError && 
-                       Array.isArray((lastError as any).flags) &&
-                       ((lastError as any).flags.includes('ip_blocked') || (lastError as any).flags.includes('validation_blocked')));
-    
-    const hasConnectionIssues = smtpResult.flags.includes('connection_failed') || 
-                               smtpResult.flags.includes('smtp_timeout') ||
-                               smtpResult.flags.includes('all_mx_failed');
-    
-    const shouldTryFallback = allBlocked || (isVercel && hasConnectionIssues && smtpResult.result === 'unknown');
-    
-    if (shouldTryFallback) {
-      const fallbackReason = allBlocked ? 'IP blocked by servers' : 'Connection issues in serverless environment';
-      console.log(`[VALIDATE_EMAIL] 🔄 ${fallbackReason}, attempting fallback validation for ${domain}`);
-      
-      try {
-        // First try basic validation (similar to other providers)
-        console.log(`[VALIDATE_EMAIL] 🔍 Performing basic email validation check`);
-        const basicValidation = await performBasicEmailValidation(domain);
-        
-        console.log(`[VALIDATE_EMAIL] Basic validation results:`, {
-          has_dns: basicValidation.has_dns,
-          has_dns_mx: basicValidation.has_dns_mx,
-          smtp_connectable: basicValidation.smtp_connectable,
-          details: basicValidation.details
-        });
-        
-        // If basic validation shows email capability, use it
-        if (basicValidation.has_dns && basicValidation.has_dns_mx) {
-          const confidence = basicValidation.smtp_connectable ? 70 : 50;
-          const flags = ['basic_validation'];
-          
-          if (basicValidation.has_dns) flags.push('has_dns');
-          if (basicValidation.has_dns_mx) flags.push('has_dns_mx');
-          if (basicValidation.smtp_connectable) flags.push('smtp_connectable');
-          
-          smtpResult = {
-            isValid: true,
-            deliverable: basicValidation.smtp_connectable, // Deliverable if SMTP is connectable
-            result: basicValidation.smtp_connectable ? 'valid' : 'risky' as const,
-            flags: [...smtpResult.flags, ...flags],
-            message: `Basic validation: DNS=${basicValidation.has_dns}, MX=${basicValidation.has_dns_mx}, SMTP=${basicValidation.smtp_connectable}`,
-            confidence,
-            confidenceLevel: confidence >= 70 ? 'high' : confidence >= 50 ? 'medium' : 'low' as const,
-            reasoning: [
-              `DNS records found (+${basicValidation.has_dns ? 20 : 0})`,
-              `MX records found (+${basicValidation.has_dns_mx ? 30 : 0})`,
-              `SMTP connectable (+${basicValidation.smtp_connectable ? 20 : 0})`
-            ]
-          };
-          
-          console.log(`[VALIDATE_EMAIL] ✅ Basic validation successful with confidence ${confidence}%`);
-        } else {
-          // Try advanced fallback validation
-          const fallbackResult = await attemptFallbackValidation(domain);
-          
-          if (fallbackResult.canReceiveEmail) {
-            // Fallback validation suggests the domain can receive email
-            console.log(`[VALIDATE_EMAIL] ✅ Advanced fallback validation successful: ${fallbackResult.message}`);
-            
-            smtpResult = {
-              isValid: true,
-              deliverable: false, // Still risky due to validation limitations
-              result: 'risky' as const,
-              flags: [...smtpResult.flags, 'fallback_validation', ...fallbackResult.flags],
-              message: `SMTP validation blocked but ${fallbackResult.message}`,
-              confidence: Math.max(fallbackResult.confidence - 20, 30), // Reduce confidence due to IP block
-              confidenceLevel: fallbackResult.confidence >= 70 ? 'medium' : 'low' as const,
-              reasoning: [
-                'SMTP validation blocked by IP reputation (-40)',
-                `Fallback validation: ${fallbackResult.fallbackMethod} (+${fallbackResult.confidence})`
-              ]
-            };
-          } else {
-            console.log(`[VALIDATE_EMAIL] ❌ All fallback validations failed`);
-            // Keep original result but add fallback info
-            smtpResult.flags.push('all_fallbacks_failed');
-            smtpResult.reasoning = [
-              ...(smtpResult.reasoning || []),
-              'Basic and advanced fallback validation failed (-10)'
-            ];
-          }
-        }
-      } catch (fallbackError: any) {
-        console.error(`[VALIDATE_EMAIL] ❌ Fallback validation error:`, fallbackError.message || fallbackError);
-        smtpResult.flags.push('fallback_error');
-      }
-    }
+    // Post-SMTP fallback logic disabled by product decision
     
     const executionTime = Date.now() - startTime;
     
