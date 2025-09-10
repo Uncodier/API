@@ -1539,12 +1539,12 @@ async function addReceivedMessageToConversation(
       return null;
     }
     
-    // Crear mensaje como 'lead' (mensaje del destinatario/cliente)
+    // Crear mensaje como 'visitor' (mensaje del destinatario/cliente)
     // Los emails recibidos del hilo mantienen estructura simple de custom_data
     const messageData = {
       conversation_id: conversationId,
       content: messageContent, // Usando contenido extraído y validado
-      role: 'lead',  // Email recibido del lead/cliente
+      role: 'visitor',  // Email recibido del lead/cliente (roles válidos: visitor, agent, user, system, assistant, team_member)
       user_id: conversation.user_id,
       lead_id: leadId,
       custom_data: {
