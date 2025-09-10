@@ -213,7 +213,8 @@ function finalCleanup(text: string): string {
  * Specifically designed for cleaning Google News RSS feed content and email content
  */
 export function cleanHtmlContent(htmlString: string): string {
-  console.log('🧽 [cleanHtmlContent] Input:', htmlString?.substring(0, 100) + (htmlString?.length > 100 ? '...' : ''))
+  // Avoid logging content for privacy; keep minimal metadata only
+  console.log('🧽 [cleanHtmlContent] Input length:', (htmlString || '').length)
   
   if (!htmlString || typeof htmlString !== 'string') return ''
   
@@ -269,7 +270,7 @@ export function cleanHtmlContent(htmlString: string): string {
   // Step 10: Final cleanup and validation
   cleaned = finalCleanup(cleaned)
   
-  console.log('✨ [cleanHtmlContent] Output:', cleaned)
+  console.log('✨ [cleanHtmlContent] Output length:', cleaned.length)
   return cleaned
 }
 

@@ -20,7 +20,7 @@ export const maxDuration = 300; // 5 minutos en segundos (máximo para plan Pro)
 // Create schemas for request validation
 const EmailAgentRequestSchema = z.object({
   site_id: z.string().min(1, "Site ID is required"),
-  limit: z.number().max(20).default(5).optional(),
+  limit: z.number().max(100).default(5).optional(),
   lead_id: z.string().optional(),
   agentId: z.string().optional(),
   user_id: z.string().optional(),
@@ -136,18 +136,44 @@ export async function POST(request: NextRequest) {
       let finalSinceDate = sinceDate;
       let fetchAttempt = 0;
       
-      // Loop de retry para asegurar emails suficientes
+      // Loop de retry para asegurar emails suficientes (pero siempre usando últimas 24h)
       while (fetchAttempt < MAX_FETCH_ATTEMPTS) {
         fetchAttempt++;
         
-        // Calcular fecha para este intento
-        if (!sinceDate && HOURS_PROGRESSIONS[fetchAttempt - 1]) {
-          const hoursBack = HOURS_PROGRESSIONS[fetchAttempt - 1];
-          finalSinceDate = new Date(Date.now() - hoursBack! * 60 * 60 * 1000).toISOString();
-        }
+        // Ignorar since_date y traer exactamente las últimas 24 horas [now-24h, now)
+        const endRange = new Date();
+        const startRange = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        finalSinceDate = startRange.toISOString();
         
-        // Fetch emails para este intento
-        allEmails = await EmailService.fetchEmails(emailConfig, limit, finalSinceDate);
+        // Fetch emails para este intento usando rango fijo de 24h
+        allEmails = await EmailService.fetchEmailsInRange(
+          emailConfig,
+          startRange.toISOString(),
+          endRange.toISOString(),
+          500
+        );
+
+        // Log ordenado de emails obtenidos (antes de filtros)
+        if (allEmails && allEmails.length > 0) {
+          try {
+            console.log(`[EMAIL_FETCH] 🧾 Emails obtenidos (ordenados por fecha desc): ${allEmails.length}`);
+            const previewList = allEmails.slice(0, 100);
+            for (let i = 0; i < previewList.length; i++) {
+              const e = previewList[i] || {} as any;
+              const date = (e.date || '').toString();
+              const from = (e.from || '').toString();
+              const to = (e.to || '').toString();
+              const subjectFull = (e.subject || '').toString();
+              const subject = subjectFull.length > 120 ? subjectFull.substring(0, 120) + '…' : subjectFull;
+              console.log(`[EMAIL_FETCH] ${String(i + 1).padStart(2, '0')}. ${date} | ${from} -> ${to} | ${subject}`);
+            }
+            if (allEmails.length > previewList.length) {
+              console.log(`[EMAIL_FETCH] … (${allEmails.length - previewList.length} más)`);
+            }
+          } catch (logErr) {
+            console.warn(`[EMAIL_FETCH] ⚠️ Error generando log de emails obtenidos:`, logErr);
+          }
+        }
         
         if (allEmails.length === 0) {
           if (fetchAttempt >= MAX_FETCH_ATTEMPTS) break;
@@ -156,14 +182,21 @@ export async function POST(request: NextRequest) {
         
         // Aplicar filtro rápido para estimar emails válidos
         const quickValidEmails = allEmails.filter(email => {
-          const emailFrom = (email.from || '').toLowerCase();
+          const emailFromRaw = (email.from || '').toLowerCase();
+          const emailReplyToRaw = (email.replyTo || email['reply-to'] || email.headers?.['reply-to'] || '').toLowerCase();
           const emailTo = (email.to || '').toLowerCase();
           
           // Filtros básicos rápidos
-          if (emailFrom.includes('@uncodie.com') && !emailTo.includes('@uncodie.com')) {
+          const fromEmailAddress = emailFromRaw.match(/<([^>]+)>/) ? emailFromRaw.match(/<([^>]+)>/)?.[1] : emailFromRaw;
+          const replyToEmailAddress = emailReplyToRaw.match(/<([^>]+)>/) ? emailReplyToRaw.match(/<([^>]+)>/)?.[1] : emailReplyToRaw;
+          const effectiveFromOnly = (replyToEmailAddress && replyToEmailAddress.includes('@')) && replyToEmailAddress !== fromEmailAddress
+            ? replyToEmailAddress
+            : (fromEmailAddress || emailFromRaw);
+
+          if (effectiveFromOnly.includes('@uncodie.com') && !emailTo.includes('@uncodie.com')) {
             return false; // Email enviado
           }
-          if (emailFrom === emailTo) {
+          if (effectiveFromOnly === emailTo) {
             return false; // Self-sent
           }
           return true;
@@ -185,9 +218,26 @@ export async function POST(request: NextRequest) {
         console.error(`[EMAIL_API] Error en ComprehensiveEmailFilterService:`, error);
         throw error;
       }
+
+      // Priorizar y limitar por cantidad de mensajes a responder: agente → alias → leads IA
+      const preliminarySeparation = await EmailProcessingService.separateEmailsByDestination(validEmails, emailConfig, siteId, userId);
+      const prioritized = [
+        ...preliminarySeparation.emailsToAgent,
+        ...preliminarySeparation.emailsToAliases,
+        ...preliminarySeparation.emailsFromAILeads
+      ];
+      const selectedIds = new Set<string>();
+      for (const email of prioritized) {
+        const id = (email?.id || email?.uid || email?.messageId || '').toString();
+        if (!id || selectedIds.has(id)) continue;
+        selectedIds.add(id);
+        if (selectedIds.size >= limit) break;
+      }
+      // Subconjunto limitado por ID (no dependemos de envelope_id para seleccionar)
+      const limitedValidEmails = validEmails.filter(e => selectedIds.has((e?.id || e?.uid || e?.messageId || '').toString()));
       
-      // SEPARAR EMAILS usando EmailProcessingService
-      const separationResult = await EmailProcessingService.separateEmailsByDestination(validEmails, emailConfig, siteId, userId);
+      // SEPARAR EMAILS (sobre el subconjunto limitado) usando EmailProcessingService
+      const separationResult = await EmailProcessingService.separateEmailsByDestination(limitedValidEmails, emailConfig, siteId, userId);
       const { emailsToAliases, emailsFromAILeads, emailsToAgent, directResponseEmails } = separationResult;
       
       if (emailsToAgent.length === 0 && emailsToAliases.length === 0 && emailsFromAILeads.length === 0) {
@@ -226,7 +276,7 @@ export async function POST(request: NextRequest) {
             commandId: null,
             status: 'completed',
             message: stats.processingMessage,
-            emailCount: validEmails.length,
+            emailCount: limitedValidEmails.length,
             originalEmailCount: allEmails.length,
             analysisCount: directResponseEmails.length,
             processingBreakdown: {
@@ -243,7 +293,7 @@ export async function POST(request: NextRequest) {
               maxAttempts: MAX_FETCH_ATTEMPTS,
               finalSinceDate: finalSinceDate,
               minValidEmailsRequired: MIN_VALID_EMAILS,
-              retryWasSuccessful: validEmails.length >= MIN_VALID_EMAILS
+              retryWasSuccessful: limitedValidEmails.length >= MIN_VALID_EMAILS
             }
           }
         });
@@ -295,7 +345,7 @@ export async function POST(request: NextRequest) {
       
       await EmailProcessingService.saveProcessedEmails(
         emailsToSave, 
-        validEmails, 
+        limitedValidEmails, 
         emailToEnvelopeMap, 
         siteId, 
         effectiveDbUuid || undefined, 
@@ -314,7 +364,7 @@ export async function POST(request: NextRequest) {
           commandId: effectiveDbUuid || internalCommandId,
           status: executedCommand?.status || 'completed',
           message: stats.processingMessage,
-          emailCount: validEmails.length,
+          emailCount: limitedValidEmails.length,
           originalEmailCount: allEmails.length,
           analysisCount: emailsForResponse.length,
           processingBreakdown: {
@@ -332,7 +382,7 @@ export async function POST(request: NextRequest) {
             maxAttempts: MAX_FETCH_ATTEMPTS,
             finalSinceDate: finalSinceDate,
             minValidEmailsRequired: MIN_VALID_EMAILS,
-            retryWasSuccessful: validEmails.length >= MIN_VALID_EMAILS
+            retryWasSuccessful: limitedValidEmails.length >= MIN_VALID_EMAILS
           },
           performance: {
             totalDuration: totalDuration,

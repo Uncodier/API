@@ -62,10 +62,16 @@ export class EmailProcessingService {
    * Obtiene leads asignados a IA
    */
   static async getAILeads(validEmails: any[], siteId: string): Promise<Map<string, any>> {
+    const extractAddress = (value: any): string => {
+      const raw = (value || '').toString().toLowerCase().trim();
+      const match = raw.match(/<([^>]+)>/);
+      return (match ? match[1] : raw).trim();
+    };
     const fromEmails = validEmails.map(email => {
-      const fromEmail = (email.from || '').toLowerCase().trim();
-      const emailMatch = fromEmail.match(/<([^>]+)>/);
-      return emailMatch ? emailMatch[1] : fromEmail;
+      const fromAddr = extractAddress(email.from);
+      const replyToAddr = extractAddress(email.replyTo || email['reply-to'] || email.headers?.['reply-to']);
+      const effective = replyToAddr && replyToAddr.includes('@') && replyToAddr !== fromAddr ? replyToAddr : fromAddr;
+      return effective;
     }).filter(email => email && email.includes('@'));
     
     let aiLeadsMap = new Map<string, any>();
@@ -116,15 +122,22 @@ export class EmailProcessingService {
     for (const email of validEmails) {
       const emailTo = (email.to || '').toLowerCase().trim();
       const emailFrom = (email.from || '').toLowerCase().trim();
-      const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
+      const replyToRaw = (email.replyTo || email['reply-to'] || email.headers?.['reply-to'] || '').toLowerCase().trim();
+      const extract = (val: string) => {
+        const m = val.match(/<([^>]+)>/);
+        return (m ? m[1] : val).trim();
+      };
+      const fromEmailOnly = extract(emailFrom);
+      const replyToOnly = extract(replyToRaw);
+      const effectiveFrom = replyToOnly && replyToOnly.includes('@') && replyToOnly !== fromEmailOnly ? replyToOnly : fromEmailOnly;
       
       const isToAlias = normalizedAliases.includes(emailTo);
-      const isFromAILead = fromEmailAddress && aiLeadsMap.has(fromEmailAddress);
+      const isFromAILead = effectiveFrom && aiLeadsMap.has(effectiveFrom);
       
       // PRIORIDAD: Lead IA tiene prioridad sobre alias (los leads se responden automáticamente)
       if (isFromAILead) {
-        console.log(`[EMAIL_PROCESSING] 🤖 Email de LEAD IA detectado: ${email.from} → ${emailTo} (Lead ID: ${aiLeadsMap.get(fromEmailAddress).id})`);
-        emailsFromAILeads.push({...email, leadInfo: aiLeadsMap.get(fromEmailAddress)});
+        console.log(`[EMAIL_PROCESSING] 🤖 Email de LEAD IA detectado: ${effectiveFrom} → ${emailTo} (Lead ID: ${aiLeadsMap.get(effectiveFrom).id})`);
+        emailsFromAILeads.push({...email, leadInfo: aiLeadsMap.get(effectiveFrom)});
       } else if (isToAlias) {
         console.log(`[EMAIL_PROCESSING] 📧 Email a ALIAS detectado: ${email.from} → ${emailTo}`);
         emailsToAliases.push(email);
@@ -160,32 +173,37 @@ export class EmailProcessingService {
       console.log(`[EMAIL_PROCESSING] 🚀 Procesando ${emailsToAliases.length} emails a aliases directamente...`);
       
       for (const email of emailsToAliases) {
+        const extractAddress = (value: any): string => {
+          const raw = (value || '').toString();
+          const match = raw.match(/<([^>]+)>/);
+          return (match ? match[1] : raw).trim();
+        };
+        const fromAddress = extractAddress(email.from);
+        const replyToAddress = extractAddress(email.replyTo || email['reply-to'] || email.headers?.['reply-to']);
+        const effectiveFrom = (replyToAddress && replyToAddress.includes('@') && replyToAddress !== fromAddress) ? replyToAddress : fromAddress;
         console.log(`[EMAIL_PROCESSING] 🔍 DEBUG EMAIL INDIVIDUAL:`);
         console.log(`[EMAIL_PROCESSING] 🔍   ID: ${email.id || email.messageId || email.uid}`);
-        console.log(`[EMAIL_PROCESSING] 🔍   FROM: ${email.from}`);
+        console.log(`[EMAIL_PROCESSING] 🔍   FROM: ${effectiveFrom} (raw-from: ${email.from || ''}${replyToAddress ? `, reply-to: ${replyToAddress}` : ''})`);
         console.log(`[EMAIL_PROCESSING] 🔍   SUBJECT: ${email.subject}`);
         console.log(`[EMAIL_PROCESSING] 🔍   DATE: ${email.date || email.received_date}`);
         console.log(`[EMAIL_PROCESSING] 🔍   BODY LENGTH: ${(email.body || '').length} chars`);
-        console.log(`[EMAIL_PROCESSING] 🔍   BODY PREVIEW: "${(email.body || '').substring(0, 200)}..."`);
-        console.log(`[EMAIL_PROCESSING] 🔍   BODY FULL:`, JSON.stringify(email.body || '', null, 2));
         
         let cleanBody = email.body || '';
         
         // Limpieza HTML comprehensiva
         cleanBody = cleanHtmlContent(cleanBody);
         
-        console.log(`[EMAIL_PROCESSING] 🔍   CLEAN BODY: "${cleanBody}"`);
         console.log(`[EMAIL_PROCESSING] 🔍   CLEAN BODY LENGTH: ${cleanBody.length} chars`);
         
         const directEmail = {
-          summary: `Correo recibido de ${email.from} en alias ${email.to}. Respuesta automática requerida.`,
+          summary: `Correo recibido de ${effectiveFrom} en alias ${email.to}. Respuesta automática requerida.`,
           original_text: cleanBody,
           original_subject: email.subject || '',
           contact_info: {
-            name: email.from ? email.from.split('@')[0] : '',
-            email: email.from || '',
+            name: effectiveFrom ? effectiveFrom.split('@')[0] : '',
+            email: effectiveFrom || '',
             phone: '',
-            company: email.from ? email.from.split('@')[1] : ''
+            company: effectiveFrom ? effectiveFrom.split('@')[1] : ''
           },
           site_id: siteId,
           user_id: userId || '',
@@ -200,7 +218,7 @@ export class EmailProcessingService {
         };
         
         directResponseEmails.push(directEmail);
-        console.log(`[EMAIL_PROCESSING] ✅ Email de alias procesado: ${email.from} → ${email.to}`);
+        console.log(`[EMAIL_PROCESSING] ✅ Email de alias procesado: ${effectiveFrom} → ${email.to}`);
       }
     }
     

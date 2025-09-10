@@ -181,9 +181,11 @@ export class EmailFilterService {
     const from = (email.from || '').toLowerCase();
     const subject = (email.subject || '').toLowerCase();
     const body = (email.body || '').toLowerCase();
+    const replyTo = ((email.replyTo || email['reply-to'] || email.headers?.['reply-to'] || '') as string).toLowerCase();
 
     console.log(`[EmailFilterService] 🔍 Evaluando bounce email:`);
     console.log(`[EmailFilterService]   - From: "${from}"`);
+    console.log(`[EmailFilterService]   - Reply-To: "${replyTo || 'N/A'}"`);
     console.log(`[EmailFilterService]   - Subject: "${subject}"`);
     console.log(`[EmailFilterService]   - Body length: ${body.length} chars`);
 
@@ -329,6 +331,7 @@ export class EmailFilterService {
    */
   static validateEmailNotFromNoReply(email: any, noReplyAddresses: string[]): EmailFilterResult {
     const emailFrom = (email.from || '').toLowerCase();
+    const emailReplyTo = ((email.replyTo || email['reply-to'] || email.headers?.['reply-to'] || '') as string).toLowerCase();
     
     // Verificar contra direcciones no-reply específicas
     for (const noReplyAddr of noReplyAddresses) {
@@ -336,7 +339,7 @@ export class EmailFilterService {
       
       const normalizedAddr = noReplyAddr.toLowerCase();
       
-      if (emailFrom.includes(normalizedAddr)) {
+      if (emailFrom.includes(normalizedAddr) || emailReplyTo.includes(normalizedAddr)) {
         return {
           isValid: false,
           reason: `Email viene de dirección no-reply configurada: ${normalizedAddr}`,
@@ -346,7 +349,7 @@ export class EmailFilterService {
       
       // Verificar dominio
       const noReplyDomain = this.extractDomainFromUrl(`mailto:${normalizedAddr}`);
-      if (noReplyDomain && emailFrom.includes(noReplyDomain)) {
+      if (noReplyDomain && (emailFrom.includes(noReplyDomain) || emailReplyTo.includes(noReplyDomain))) {
         return {
           isValid: false,
           reason: `Email viene de dominio no-reply configurado: ${noReplyDomain}`,
@@ -364,11 +367,17 @@ export class EmailFilterService {
       'automated',
       'system@',
       'daemon@',
-      'postmaster@'
+      'postmaster@',
+      'mailer-daemon',
+      'bounce',
+      'newsletter@',
+      'no_reply',
+      'bot@',
+      'notification@'
     ];
     
     for (const pattern of noReplyPatterns) {
-      if (emailFrom.includes(pattern)) {
+      if (emailFrom.includes(pattern) || emailReplyTo.includes(pattern)) {
         return {
           isValid: false,
           reason: `Email contiene patrón no-reply: ${pattern}`,

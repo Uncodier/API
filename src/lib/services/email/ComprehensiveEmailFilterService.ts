@@ -57,7 +57,19 @@ export class ComprehensiveEmailFilterService {
       process.env.SENDGRID_FROM_EMAIL,
       process.env.NO_REPLY_EMAILS,
       'no-reply@uncodie.com',
-      'noreply@uncodie.com'
+      'noreply@uncodie.com',
+      // Customer-provided explicit no-reply senders
+      'messages-noreply@linkedin.com',
+      'notifications-noreply@linkedin.com',
+      'noreply@linkedin.com',
+      'edm.feedback@tiktok.com',
+      'no-reply@em1.turbotax.intuit.com',
+      'noreply@redditmail.com',
+      'news-noreply@news.pitchbook.com',
+      'no-reply@accounts.google.com',
+      'noreply@github.com',
+      'no-reply@facebookmail.com',
+      'no-reply@twitter.com'
     ].filter(Boolean).flatMap(addr => 
       addr && typeof addr === 'string' ? 
         (addr.includes(',') ? addr.split(',').map(a => a.trim()) : [addr]) : []
@@ -150,25 +162,29 @@ export class ComprehensiveEmailFilterService {
     
     // Aplicar filtros adicionales específicos
     const filteredEmails = deliveryValidEmails.filter(email => {
-      const emailFrom = (email.from || '').toLowerCase();
+      const emailFromRaw = (email.from || '').toLowerCase();
+      const emailReplyToRaw = (email.replyTo || email['reply-to'] || email.headers?.['reply-to'] || '').toLowerCase();
       const emailTo = (email.to || '').toLowerCase().trim();
       
       // NUEVO FILTRO: Excluir emails enviados desde nuestro dominio hacia externos
-      const fromEmailAddress = emailFrom.match(/<([^>]+)>/) ? emailFrom.match(/<([^>]+)>/)?.[1] : emailFrom;
-      const fromEmailOnly = fromEmailAddress || emailFrom;
+      const fromEmailAddress = emailFromRaw.match(/<([^>]+)>/) ? emailFromRaw.match(/<([^>]+)>/)?.[1] : emailFromRaw;
+      const replyToEmailAddress = emailReplyToRaw.match(/<([^>]+)>/) ? emailReplyToRaw.match(/<([^>]+)>/)?.[1] : emailReplyToRaw;
+      const effectiveFromOnly = (replyToEmailAddress && replyToEmailAddress.includes('@')) && replyToEmailAddress !== fromEmailAddress
+        ? replyToEmailAddress
+        : (fromEmailAddress || emailFromRaw);
       const toEmailAddress = emailTo.match(/<([^>]+)>/) ? emailTo.match(/<([^>]+)>/)?.[1] : emailTo;
       const toEmailOnly = toEmailAddress || emailTo;
       
       // Si el email es FROM nuestro dominio HACIA una cuenta externa, es un email enviado que no debemos procesar
-      if (fromEmailOnly.includes('@uncodie.com') && !toEmailOnly.includes('@uncodie.com')) {
-        console.log(`[COMPREHENSIVE_FILTER] 🚫 Email enviado filtrado: ${fromEmailOnly} -> ${toEmailOnly} (email enviado desde nuestro dominio)`);
+      if (effectiveFromOnly.includes('@uncodie.com') && !toEmailOnly.includes('@uncodie.com')) {
+        console.log(`[COMPREHENSIVE_FILTER] 🚫 Email enviado filtrado: ${effectiveFromOnly} -> ${toEmailOnly} (email enviado desde nuestro dominio)`);
         stats.feedbackLoopFiltered++; // Usar esta categoría para este tipo de filtrado
         return false;
       }
       
       // VALIDACIÓN: Self-sent emails
       
-      if (fromEmailOnly && toEmailOnly && fromEmailOnly === toEmailOnly) {
+      if (effectiveFromOnly && toEmailOnly && effectiveFromOnly === toEmailOnly) {
         stats.selfSentFiltered++;
         return false;
       }
@@ -176,7 +192,7 @@ export class ComprehensiveEmailFilterService {
       // VALIDACIÓN: Alias validation (SOLO si NO es un lead IA)
       if (normalizedAliases.length > 0) {
         // Verificar si es de un lead IA conocido - bypass de filtro de alias
-        const fromEmailAddress = fromEmailOnly;
+        const fromEmailAddress = effectiveFromOnly;
         const isFromAILead = aiLeadsMap.has(fromEmailAddress);
         
         if (isFromAILead) {
@@ -334,9 +350,16 @@ export class ComprehensiveEmailFilterService {
     
     // 4. Obtener leads asignados a IA ANTES de filtros básicos
     const allFromEmails = emails.map(email => {
-      const fromEmail = (email.from || '').toLowerCase().trim();
-      const emailMatch = fromEmail.match(/<([^>]+)>/);
-      return emailMatch ? emailMatch[1] : fromEmail;
+      const fromRaw = (email.from || '').toLowerCase().trim();
+      const replyToRaw = (email.replyTo || (email as any)['reply-to'] || email.headers?.['reply-to'] || '').toLowerCase().trim();
+      const extract = (val: string) => {
+        const m = val.match(/<([^>]+)>/);
+        return (m ? m[1] : val).trim();
+      };
+      const fromAddr = extract(fromRaw);
+      const replyToAddr = extract(replyToRaw);
+      const effective = replyToAddr && replyToAddr.includes('@') && replyToAddr !== fromAddr ? replyToAddr : fromAddr;
+      return effective;
     }).filter(email => email && email.includes('@'));
     
     const aiLeadsMap = await this.getAILeads(allFromEmails, siteId);

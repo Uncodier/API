@@ -11,6 +11,8 @@ export interface EmailMessage {
   from?: string;
   to?: string;
   date?: string;
+  receivedAt?: string; // INTERNALDATE del servidor (fecha de llegada)
+  replyTo?: string; // Reply-To extraído del ENVELOPE
   body?: string | null;
   headers?: any;
 }
@@ -187,11 +189,11 @@ export class EmailService {
             }
           }
           
-          // Ensure messages are ordered by date descending for consistency
+          // Ensure messages are ordered by INTERNALDATE (arrival) descending
           messages.sort((a: any, b: any) => {
-            const dateA = a.envelope?.date?.getTime() || 0;
-            const dateB = b.envelope?.date?.getTime() || 0;
-            return dateB - dateA;
+            const aTime = (a.internalDate?.getTime?.() || a.envelope?.date?.getTime?.() || 0) as number;
+            const bTime = (b.internalDate?.getTime?.() || b.envelope?.date?.getTime?.() || 0) as number;
+            return bTime - aTime;
           });
         } catch (fetchError) {
           console.error(`[EmailService] ❌ Error durante fetch de emails:`, fetchError);
@@ -207,6 +209,8 @@ export class EmailService {
               from: message.envelope?.from?.[0]?.address || 'Unknown',
               to: message.envelope?.to?.[0]?.address || 'Unknown',
               date: message.envelope?.date?.toISOString() || new Date().toISOString(),
+              receivedAt: (message.internalDate instanceof Date ? message.internalDate : undefined)?.toISOString(),
+              replyTo: message.envelope?.replyTo?.[0]?.address || undefined,
               body: null,
               headers: null
             };
@@ -243,8 +247,8 @@ export class EmailService {
               // If no specific part worked, try to get any text part
               if (!bodyContent) {
 
-                const bodyPartsArray = Array.from(message.bodyParts.entries());
-                for (const [key, part] of bodyPartsArray) {
+                const bodyPartsArray = Array.from((message.bodyParts as Map<string, any>).entries());
+                for (const [key, part] of bodyPartsArray as Array<[string, any]>) {
                   try {
                     const content = part.toString('utf8');
 
@@ -391,6 +395,205 @@ export class EmailService {
     }
   }
 
+  /**
+   * Obtiene emails dentro de un rango de fechas [sinceDate, beforeDate)
+   * Nota: Usa 'since' y 'before' del SEARCH IMAP. Limita cantidad máxima por seguridad.
+   */
+  static async fetchEmailsInRange(
+    emailConfig: EmailConfig,
+    sinceDateISO: string,
+    beforeDateISO: string,
+    maxFetch: number = 500
+  ): Promise<EmailMessage[]> {
+    // Reutilizar lógica de fetchEmails con pequeñas variaciones de búsqueda
+    let client: ImapFlow | undefined;
+    try {
+      // Validación básica
+      if (!emailConfig.password && !emailConfig.accessToken) {
+        throw new Error('No se proporcionó contraseña ni token de acceso OAuth2');
+      }
+      if (!emailConfig.user && !emailConfig.email) {
+        throw new Error('No se proporcionó usuario o email');
+      }
+
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') imapPort = parseInt(imapPort, 10);
+      if (isNaN(imapPort) || imapPort <= 0) {
+        throw new Error(`Puerto IMAP inválido: ${imapPort}`);
+      }
+
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: { rejectUnauthorized: false }
+      };
+
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        imapConfig.auth = { user: emailConfig.user || emailConfig.email, accessToken: emailConfig.accessToken };
+      } else {
+        imapConfig.auth = { user: emailConfig.user || emailConfig.email, pass: emailConfig.password };
+      }
+
+      client = new ImapFlow(imapConfig);
+      const connectionPromise = client.connect();
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de conexión IMAP (30s)')), 30000));
+      await Promise.race([connectionPromise, timeoutPromise]);
+
+      console.log(`[EmailService] 📂 Abriendo bandeja de entrada...`);
+      const lock = await client.getMailboxLock('INBOX');
+      try {
+        await client.mailboxOpen('INBOX');
+
+        const emails: EmailMessage[] = [];
+        // Construir query de rango
+        const searchQuery: any = {};
+        try {
+          const since = new Date(sinceDateISO);
+          const before = new Date(beforeDateISO);
+          if (isNaN(since.getTime()) || isNaN(before.getTime())) {
+            throw new Error('Fechas inválidas para rango');
+          }
+          searchQuery.since = since;
+          searchQuery.before = before; // Exclusivo: antes de 'before'
+        } catch (e) {
+          throw new Error(`Fechas inválidas para búsqueda en rango: ${sinceDateISO} - ${beforeDateISO}`);
+        }
+
+        const messages: any[] = [];
+        try {
+          const searchResults = await client.search(searchQuery);
+          // Ordenar más nuevos primero
+          const sortedUIDs = searchResults.sort((a, b) => b - a);
+          // Limitar por seguridad la cantidad máxima a traer
+          const limitedUIDs = sortedUIDs.slice(0, Math.max(0, maxFetch));
+          if (limitedUIDs.length > 0) {
+            for await (const message of client.fetch(limitedUIDs, {
+              envelope: true,
+              bodyStructure: true,
+              flags: true,
+              bodyParts: ['TEXT']
+            })) {
+              messages.push(message);
+            }
+          }
+
+          // Orden estable por INTERNALDATE (arrival) desc
+          messages.sort((a: any, b: any) => {
+            const aTime = (a.internalDate?.getTime?.() || a.envelope?.date?.getTime?.() || 0) as number;
+            const bTime = (b.internalDate?.getTime?.() || b.envelope?.date?.getTime?.() || 0) as number;
+            return bTime - aTime;
+          });
+        } catch (fetchError) {
+          console.error(`[EmailService] ❌ Error durante fetch de emails en rango:`, fetchError);
+          throw new Error(`Error al buscar emails en rango: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+        }
+
+        // Procesar mensajes (reutilizar lógica del método principal)
+        for (const message of messages) {
+          try {
+            const email: EmailMessage = {
+              id: message.uid.toString(),
+              subject: message.envelope?.subject || 'No Subject',
+              from: message.envelope?.from?.[0]?.address || 'Unknown',
+              to: message.envelope?.to?.[0]?.address || 'Unknown',
+              date: message.envelope?.date?.toISOString() || new Date().toISOString(),
+              receivedAt: (message.internalDate instanceof Date ? message.internalDate : undefined)?.toISOString(),
+              replyTo: message.envelope?.replyTo?.[0]?.address || undefined,
+              body: null,
+              headers: null
+            };
+
+            let bodyContent: string | null = null;
+            if (message.bodyParts) {
+              const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
+              for (const partKey of bodyPartsToTry) {
+                try {
+                  const part = message.bodyParts.get(partKey);
+                  if (part) {
+                    bodyContent = part.toString('utf8');
+                    const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                    if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                      bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                    }
+                    break;
+                  }
+                } catch {}
+              }
+              if (!bodyContent) {
+                const bodyPartsArray: any[] = Array.from((message.bodyParts as any).entries());
+                for (const entry of bodyPartsArray) {
+                  const key = String(entry[0]);
+                  const part = entry[1];
+                  try {
+                    const content = part.toString('utf8');
+                    if (!key.toLowerCase().includes('header') && content.length > 10) {
+                      const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                      let processedContent = content;
+                      if ((content || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                        processedContent = (content || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                      }
+                      bodyContent = processedContent;
+                      break;
+                    }
+                  } catch {}
+                }
+              }
+            }
+
+            if (!bodyContent && message.source) {
+              try {
+                const sourceContent = message.source.toString('utf8');
+                const headerEndIndex = sourceContent.indexOf('\n\n');
+                if (headerEndIndex !== -1) {
+                  bodyContent = sourceContent.substring(headerEndIndex + 2).trim();
+                  const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                  if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                    bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                  }
+                }
+              } catch {}
+            }
+
+            if (bodyContent) {
+              const MAX_EMAIL_CONTENT_LENGTH = 25000;
+              if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+              }
+              email.body = bodyContent;
+            } else {
+              email.body = null;
+            }
+
+            email.headers = null;
+            emails.push(email);
+          } catch (messageError) {
+            console.error(`[EmailService] ❌ Error procesando mensaje (range):`, messageError);
+          }
+        }
+
+        return emails;
+      } finally {
+        try { lock.release(); } catch (lockError) {
+          console.warn(`[EmailService] ⚠️ Error liberando lock:`, lockError);
+        }
+      }
+    } catch (error) {
+      console.error(`[EmailService] 💥 Error crítico en fetchEmailsInRange:`, error);
+      throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+      if (client) {
+        try {
+          if (typeof (client as any).close === 'function') {
+            (client as any).close();
+          } else if (typeof (client as any).destroy === 'function') {
+            (client as any).destroy();
+          }
+        } catch {}
+      }
+    }
+  }
   /**
    * Elimina un email del servidor IMAP
    * @param emailConfig Configuración del servidor de email
