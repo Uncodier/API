@@ -228,11 +228,22 @@ export async function buildEnrichedContext(siteId: string, leadId: string): Prom
   console.log(`🔍 Construyendo contexto enriquecido para site: ${siteId}, lead: ${leadId}`);
   
   try {
-    // Obtener últimos 5 contenidos
-    const latestContent = await getLatestContent(siteId);
-    if (latestContent && latestContent.length > 0) {
-      contextParts.push(`RECENT CONTENT (Last ${latestContent.length} items):`);
-      latestContent.forEach((content, index) => {
+    // Get top 5 published content with 5-star rating for inspiration
+    const { data: fiveStarContent, error: fiveStarError } = await supabaseAdmin
+      .from('content')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('status', 'published')
+      .eq('performance_rating', 5)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    if (fiveStarError) {
+      console.error('Error fetching 5-star content:', fiveStarError);
+    } else if (fiveStarContent && fiveStarContent.length > 0) {
+      contextParts.push(`INSPIRATION CONTENT (Your company's 5-star site pieces; use only as inspiration for user-facing messages, not as the lead's content):`);
+      contextParts.push(`Clarification: These items are from YOUR company site, not from the lead's company. Do not imply the lead owns them; reference only tone, style, themes or ideas.`);
+      fiveStarContent.forEach((content, index) => {
         contextParts.push(`${index + 1}. ${content.title} (${content.type})`);
         if (content.description) {
           contextParts.push(`   Description: ${content.description}`);
