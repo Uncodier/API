@@ -532,13 +532,14 @@ export class PortkeyConnector {
         throw new Error(`Error calling ${provider} API: ${apiCallError.message}`);
       }
     } catch (error: any) {
-      console.error('[PortkeyConnector] API call error:', error.message);
-      
-      // Return simplified error
-      return {
-        content: `Error calling LLM: ${error.message}`,
-        error: error.message
-      };
+      console.error('[PortkeyConnector] API call error:', error?.message || error);
+      // IMPORTANT: Do not return a success-shaped object here. Propagate the error
+      // so upstream processors can mark the command as failed instead of
+      // accidentally storing an error string as a completion.
+      if (error instanceof Error) {
+        throw error;
+      }
+      throw new Error(typeof error === 'string' ? error : (error?.message || 'Unknown error'));
     }
   }
 

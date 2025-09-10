@@ -149,6 +149,16 @@ export class AgentConnector extends Base {
         throw error; // Re-throw other errors
       }
       
+      // Guard against error-shaped responses mistakenly returned as success
+      if (portkeyResponse && typeof portkeyResponse === 'object' && (portkeyResponse.error || (typeof portkeyResponse.content === 'string' && portkeyResponse.content.startsWith('Error calling LLM:')))) {
+        const errMsg = portkeyResponse.error || portkeyResponse.content;
+        console.error(`[AgentConnector:${this.id}] Connector returned error-shaped response: ${errMsg}`);
+        return {
+          status: 'failed',
+          error: typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)
+        };
+      }
+
       // Verificar si es una respuesta de streaming
       if (modelOptions.stream) {
         console.log(`[AgentConnector:${this.id}] Respuesta de streaming recibida, devolviendo stream para procesamiento`);

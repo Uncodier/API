@@ -185,6 +185,16 @@ export class TargetProcessor extends Base {
         throw error; // Re-throw other errors
       }
       
+      // Guard against error-shaped responses mistakenly returned as success
+      if (llmResponse && typeof llmResponse === 'object' && (llmResponse.error || (typeof llmResponse.content === 'string' && llmResponse.content.startsWith('Error calling LLM:')))) {
+        const errMsg = llmResponse.error || llmResponse.content;
+        console.error(`[TargetProcessor] Connector returned error-shaped response: ${errMsg}`);
+        return {
+          status: 'failed',
+          error: typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)
+        };
+      }
+      
       // Handle streaming response
       if (llmResponse.isStream) {
         console.log(`[TargetProcessor] Processing streaming response...`);
