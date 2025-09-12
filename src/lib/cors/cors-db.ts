@@ -164,6 +164,12 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
     return false;
   }
 
+  // Always allow localhost/loopback in any environment for developer ergonomics
+  if (domain === 'localhost' || domain === '127.0.0.1') {
+    console.info('[CORS-DB] Allowing localhost/loopback domain:', domain);
+    return true;
+  }
+
   // Check cache first
   const cachedResult = domainCache.get(domain);
   if (cachedResult !== null) {

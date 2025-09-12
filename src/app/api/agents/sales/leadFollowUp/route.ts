@@ -10,6 +10,45 @@ import {
   safeStringify
 } from '@/lib/helpers/lead-context-helper';
 
+// Helper to parse both JSON and multipart/form-data requests
+async function parseIncomingRequest(request: Request, requestId?: string): Promise<{ body: any, files: Record<string, any> }> {
+  const contentType = request.headers.get('content-type') || '';
+  const files: Record<string, any> = {};
+  let body: any = {};
+  try {
+    console.log(`[LeadFollowUp:${requestId || 'no-trace'}] CP0 content-type: ${contentType}`);
+    if (contentType.includes('application/json')) {
+      body = await request.json();
+    } else if (contentType.includes('multipart/form-data')) {
+      const formData = await (request as any).formData();
+      for (const [key, value] of (formData as any).entries()) {
+        if (typeof File !== 'undefined' && value instanceof File) {
+          files[key] = value as any;
+        } else {
+          body[key] = value;
+        }
+      }
+    } else if (contentType.includes('application/x-www-form-urlencoded')) {
+      const formData = await (request as any).formData();
+      for (const [key, value] of (formData as any).entries()) {
+        body[key] = value;
+      }
+    } else {
+      // Try JSON as a fallback
+      try {
+        body = await request.json();
+      } catch {
+        // No-op, leave body as empty
+      }
+    }
+    console.log(`[LeadFollowUp:${requestId || 'no-trace'}] CP1 parsed keys:`, Object.keys(body));
+    console.log(`[LeadFollowUp:${requestId || 'no-trace'}] CP1 files present:`, Object.keys(files));
+  } catch (e) {
+    console.error('Error parsing incoming request body:', e);
+  }
+  return { body, files };
+}
+
 // Function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -170,13 +209,18 @@ async function getSiteChannelsConfiguration(siteId: string): Promise<{
       };
     }
     
-    if (channels.whatsapp && channels.whatsapp.phone_number) {
-      configuredChannels.push('whatsapp');
-      channelsDetails.whatsapp = {
-        type: 'whatsapp',
-        phone_number: channels.whatsapp.phone_number,
-        description: 'WhatsApp Business messaging'
-      };
+    if (channels.whatsapp) {
+      const whatsappNumber = channels.whatsapp.phone_number || channels.whatsapp.existingNumber || channels.whatsapp.number || channels.whatsapp.phone;
+      const whatsappEnabled = channels.whatsapp.enabled !== false; // default to true if not explicitly false
+      const whatsappStatusOk = !channels.whatsapp.status || String(channels.whatsapp.status).toLowerCase() === 'active';
+      if (whatsappNumber && whatsappEnabled && whatsappStatusOk) {
+        configuredChannels.push('whatsapp');
+        channelsDetails.whatsapp = {
+          type: 'whatsapp',
+          phone_number: whatsappNumber,
+          description: 'WhatsApp Business messaging'
+        };
+      }
     }
     
     return {
@@ -228,7 +272,8 @@ async function triggerChannelsSetupNotification(siteId: string): Promise<void> {
 // Function to manually filter and correct channel based on site configuration
 function filterAndCorrectMessageChannel(
   messages: any,
-  configuredChannels: string[]
+  configuredChannels: string[],
+  leadContact?: { hasEmail?: boolean; hasPhone?: boolean; leadEmail?: string | null; leadPhone?: string | null }
 ): { correctedMessages: any, corrections: string[] } {
   console.log(`🔧 CHANNEL FILTER: Starting manual channel filtering...`);
   console.log(`🔧 CHANNEL FILTER: Configured channels: [${configuredChannels.join(', ')}]`);
@@ -243,37 +288,48 @@ function filterAndCorrectMessageChannel(
     
     let targetChannel = originalChannel;
     let needsCorrection = false;
+    const leadHasEmail = !!leadContact?.hasEmail && !!(leadContact?.leadEmail && String(leadContact.leadEmail).trim() !== '');
+    const leadHasPhone = !!leadContact?.hasPhone && !!(leadContact?.leadPhone && String(leadContact.leadPhone).trim() !== '');
     
     // Manual filtering logic
-    if (originalChannel === 'whatsapp' && !configuredChannels.includes('whatsapp')) {
-      // WhatsApp message but no WhatsApp configured -> try email
-      if (configuredChannels.includes('email')) {
-        targetChannel = 'email';
-        needsCorrection = true;
-        corrections.push(`Changed ${originalChannel} → ${targetChannel} (WhatsApp not configured)`);
-        console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp → Email (WhatsApp not configured)`);
-      } else {
-        console.log(`🔧 CHANNEL FILTER: ❌ WhatsApp not configured and no email alternative`);
-        continue; // Skip this message if no alternative
+    if (originalChannel === 'whatsapp') {
+      // If WhatsApp not configured OR lead lacks phone, try fallback to email
+      const whatsappConfigured = configuredChannels.includes('whatsapp');
+      if (!whatsappConfigured || !leadHasPhone) {
+        if (configuredChannels.includes('email') && leadHasEmail) {
+          targetChannel = 'email';
+          needsCorrection = true;
+          const reason = !whatsappConfigured ? 'WhatsApp not configured' : 'Lead has no phone number';
+          corrections.push(`Changed ${originalChannel} → ${targetChannel} (${reason})`);
+          console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp → Email (${reason})`);
+        } else {
+          console.log(`🔧 CHANNEL FILTER: ❌ Cannot use WhatsApp (configured=${whatsappConfigured}), leadHasPhone=${leadHasPhone}. No valid email fallback.`);
+          continue; // Skip this message if no valid alternative
+        }
+      } else if (whatsappConfigured && leadHasPhone) {
+        console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp is properly configured and lead has phone`);
       }
-    } 
-    else if (originalChannel === 'email' && !configuredChannels.includes('email')) {
-      // Email message but no email configured -> try WhatsApp
-      if (configuredChannels.includes('whatsapp')) {
-        targetChannel = 'whatsapp';
-        needsCorrection = true;
-        corrections.push(`Changed ${originalChannel} → ${targetChannel} (Email not configured)`);
-        console.log(`🔧 CHANNEL FILTER: ✅ Email → WhatsApp (Email not configured)`);
-      } else {
-        console.log(`🔧 CHANNEL FILTER: ❌ Email not configured and no WhatsApp alternative`);
-        continue; // Skip this message if no alternative
+    } else if (originalChannel === 'email') {
+      // If Email not configured OR lead lacks email, try fallback to WhatsApp
+      const emailConfigured = configuredChannels.includes('email');
+      if (!emailConfigured || !leadHasEmail) {
+        if (configuredChannels.includes('whatsapp') && leadHasPhone) {
+          targetChannel = 'whatsapp';
+          needsCorrection = true;
+          const reason = !emailConfigured ? 'Email not configured' : 'Lead has no email address';
+          corrections.push(`Changed ${originalChannel} → ${targetChannel} (${reason})`);
+          console.log(`🔧 CHANNEL FILTER: ✅ Email → WhatsApp (${reason})`);
+        } else {
+          console.log(`🔧 CHANNEL FILTER: ❌ Cannot use Email (configured=${emailConfigured}), leadHasEmail=${leadHasEmail}. No valid WhatsApp fallback.`);
+          continue; // Skip this message if no valid alternative
+        }
+      } else if (emailConfigured && leadHasEmail) {
+        console.log(`🔧 CHANNEL FILTER: ✅ Email is properly configured and lead has email`);
       }
-    }
-    else if (configuredChannels.includes(originalChannel)) {
-      // Channel is properly configured
+    } else if (configuredChannels.includes(originalChannel)) {
+      // For other channels, accept if configured
       console.log(`🔧 CHANNEL FILTER: ✅ ${originalChannel} is properly configured`);
-    }
-    else {
+    } else {
       // Channel not supported or not configured, skip
       console.log(`🔧 CHANNEL FILTER: ⚠️ Skipping ${originalChannel} (not configured)`);
       continue;
@@ -288,7 +344,10 @@ function filterAndCorrectMessageChannel(
     // Add correction metadata if needed
     if (needsCorrection) {
       correctedMessages[targetChannel].original_channel = originalChannel;
-      correctedMessages[targetChannel].correction_reason = `Original channel '${originalChannel}' not configured, switched to '${targetChannel}'`;
+      // Provide a clearer correction reason already pushed into corrections[]
+      const lastCorrection = corrections[corrections.length - 1] || '';
+      const reason = lastCorrection.includes('(') ? lastCorrection.substring(lastCorrection.indexOf('(') + 1, lastCorrection.lastIndexOf(')')) : 'Channel correction applied';
+      correctedMessages[targetChannel].correction_reason = reason;
     }
     
     console.log(`🔧 CHANNEL FILTER: Message added for channel: ${targetChannel}`);
@@ -610,7 +669,26 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
+    const requestId = uuidv4();
+    console.log(`[LeadFollowUp:${requestId}] ▶️ Incoming request`);
+    const { body: rawBody, files } = await parseIncomingRequest(request, requestId);
+    // Normalize keys to camelCase aliases
+    const body: any = {
+      ...rawBody,
+      siteId: rawBody?.siteId || rawBody?.site_id,
+      leadId: rawBody?.leadId || rawBody?.lead_id,
+      userId: rawBody?.userId || rawBody?.user_id,
+      agent_id: rawBody?.agent_id || rawBody?.agentId,
+      visitorId: rawBody?.visitorId || rawBody?.visitor_id
+    };
+    console.log(`[LeadFollowUp:${requestId}] CP1b normalized fields:`, {
+      siteId: body.siteId,
+      leadId: body.leadId,
+      userId: body.userId,
+      agent_id: body.agent_id,
+      visitorId: body.visitorId,
+      hasFiles: Object.keys(files || {}).length > 0
+    });
     
     // Extract parameters from request
     const { 
@@ -629,14 +707,30 @@ export async function POST(request: Request) {
     // Validate required parameters
     if (!siteId) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'siteId is required' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'siteId is required', trace_id: requestId } },
         { status: 400 }
       );
     }
     
     if (!leadId) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'leadId is required' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'leadId is required', trace_id: requestId } },
+        { status: 400 }
+      );
+    }
+
+    // Strong UUID validation with clear early errors
+    if (!isValidUUID(siteId)) {
+      console.error(`[LeadFollowUp:${requestId}] INVALID siteId UUID: ${siteId}`);
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_INPUT', message: 'siteId must be a valid UUID', trace_id: requestId } },
+        { status: 400 }
+      );
+    }
+    if (!isValidUUID(leadId)) {
+      console.error(`[LeadFollowUp:${requestId}] INVALID leadId UUID: ${leadId}`);
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_INPUT', message: 'leadId must be a valid UUID', trace_id: requestId } },
         { status: 400 }
       );
     }
@@ -675,7 +769,7 @@ export async function POST(request: Request) {
     // If we still don't have a userId, error
     if (!effectiveUserId) {
       return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required and no active agent found for the site' } },
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'userId is required and no active agent found for the site', trace_id: requestId } },
         { status: 400 }
       );
     }
@@ -696,6 +790,64 @@ export async function POST(request: Request) {
       if (interactions && interactions.length > 0) {
         effectivePreviousInteractions = interactions;
       }
+    }
+
+    // Determine lead contact availability
+    const hasEmail = !!(effectiveLeadData && effectiveLeadData.email && String(effectiveLeadData.email).trim() !== '');
+    const hasPhone = !!(effectiveLeadData && effectiveLeadData.phone && String(effectiveLeadData.phone).trim() !== '');
+
+    // Fetch site channel configuration EARLY (before any AI work)
+    const channelConfig = await getSiteChannelsConfiguration(siteId);
+    console.log(`[LeadFollowUp:${requestId}] 📡 [EARLY] Channel configuration result:`, channelConfig);
+
+    // Early abort if site has no channels configured
+    if (!channelConfig.hasChannels) {
+      console.error(`❌ CHANNELS CONFIG: Site ${siteId} has no channels configured. Aborting before AI.`);
+      try {
+        await triggerChannelsSetupNotification(siteId);
+      } catch (notificationError) {
+        console.error(`⚠️ Failed to trigger channels setup notification:`, notificationError);
+      }
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'NO_CHANNELS_CONFIGURED',
+            message: 'Site has no communication channels configured. Configure email or WhatsApp in settings before sending messages.',
+            details: channelConfig.warning || 'No channels configured',
+            action_taken: 'Channels setup notification attempted',
+            trace_id: requestId
+          }
+        },
+        { status: 400 }
+      );
+    }
+
+    // Early abort if no configured channel matches lead contact data
+    const canEmail = channelConfig.configuredChannels.includes('email') && hasEmail;
+    const canWhatsApp = channelConfig.configuredChannels.includes('whatsapp') && hasPhone;
+    if (!canEmail && !canWhatsApp) {
+      console.error(`❌ CHANNELS CONFIG: No valid channel for this lead. Aborting before AI.`, {
+        configured: channelConfig.configuredChannels,
+        hasEmail,
+        hasPhone
+      });
+      return NextResponse.json(
+        {
+          success: false,
+          error: {
+            code: 'NO_VALID_CHANNELS_FOR_LEAD',
+            message: 'No valid configured channel matches this lead contact info.',
+            details: {
+              configured_channels: channelConfig.configuredChannels,
+              lead_has_email: hasEmail,
+              lead_has_phone: hasPhone
+            },
+            trace_id: requestId
+          }
+        },
+        { status: 400 }
+      );
     }
     
     // Prepare context for command
@@ -799,19 +951,16 @@ export async function POST(request: Request) {
     contextMessage += `=== END OF COPYWRITING GUIDELINES ===\n`;
     
 
-    // Determine which communication channels are available
-    const hasEmail = effectiveLeadData && effectiveLeadData.email && effectiveLeadData.email.trim() !== '';
-    const hasPhone = effectiveLeadData && effectiveLeadData.phone && effectiveLeadData.phone.trim() !== '';
-    
-    console.log(`📞 Available channels - Email: ${hasEmail ? 'YES' : 'NO'}, Phone: ${hasPhone ? 'YES' : 'NO'}`);
+    // Determine which communication channels are available (consider site config)
+    console.log(`[LeadFollowUp:${requestId}] 📞 Lead contact availability - Email: ${hasEmail ? 'YES' : 'NO'}, Phone: ${hasPhone ? 'YES' : 'NO'}`);
     
     // Build available channels list for context
     const availableChannels = [];
     
-    if (hasEmail) {
+    if (hasEmail && channelConfig.configuredChannels.includes('email')) {
       availableChannels.push('email');
     }
-    if (hasPhone) {
+    if (hasPhone && channelConfig.configuredChannels.includes('whatsapp')) {
       availableChannels.push('whatsapp');
     }
     // Always add web and notification channels (don't depend on specific lead data)
@@ -838,6 +987,11 @@ export async function POST(request: Request) {
     contextMessage += `- A lead should receive communication through only one channel per interaction\n`;
     contextMessage += `- Contacting through multiple channels creates annoyance and may push prospects away\n`;
     contextMessage += `- Choose the channel MOST LIKELY to generate a positive response\n`;
+    contextMessage += `\nPREFERENCE HEURISTICS:\n`;
+    contextMessage += `- If the lead has NO email but has a phone, and WhatsApp is configured for the site, prefer WHATSAPP.\n`;
+    contextMessage += `- If the lead has NO phone but has an email, and Email is configured, prefer EMAIL.\n`;
+    contextMessage += `- If both are available and configured, choose based on persona/context (e.g., quick mobile contact → WhatsApp; formal/business or attachments → Email).\n`;
+    contextMessage += `- If you choose a channel that is NOT available for the lead (missing email/phone) or NOT configured for the site, you MUST propose the valid alternative instead.\n`;
     contextMessage += `\n⚠️ IMPORTANT: You MUST select and return content for ONLY ONE CHANNEL.\n`;
     contextMessage += `⚠️ Base your decision on the lead's history, context, and profile shown above.\n`;
     contextMessage += `\n🚫 SIGNATURE RULES: DO NOT add any signature, sign-off, or identification as an AI agent.\n`;
@@ -1167,9 +1321,8 @@ export async function POST(request: Request) {
     // ===== MANUAL CHANNEL FILTERING =====
     console.log(`🔧 STARTING MANUAL CHANNEL FILTERING FOR SITE: ${siteId}`);
     
-    // Get site channel configuration
-    const channelConfig = await getSiteChannelsConfiguration(siteId);
-    console.log(`📡 Channel configuration result:`, channelConfig);
+    // Channel configuration was already fetched earlier
+    console.log(`[LeadFollowUp:${requestId}] 📡 Channel configuration (reused):`, channelConfig);
     
     // Check if site has no channels configured at all
     if (!channelConfig.hasChannels) {
@@ -1191,7 +1344,8 @@ export async function POST(request: Request) {
             code: 'NO_CHANNELS_CONFIGURED', 
             message: 'Site has no communication channels configured. Please configure at least email or WhatsApp channels in site settings before sending messages. Team members have been notified to set up channels.',
             details: channelConfig.warning,
-            action_taken: 'Channels setup notification sent to team members'
+            action_taken: 'Channels setup notification sent to team members',
+            trace_id: requestId
           } 
         },
         { status: 400 }
@@ -1200,8 +1354,14 @@ export async function POST(request: Request) {
     
     // Apply manual channel filtering
     const { correctedMessages, corrections } = filterAndCorrectMessageChannel(
-      messages, 
-      channelConfig.configuredChannels
+      messages,
+      channelConfig.configuredChannels,
+      {
+        hasEmail,
+        hasPhone,
+        leadEmail: effectiveLeadData?.email || null,
+        leadPhone: effectiveLeadData?.phone || null
+      }
     );
     
     // Check if no messages remain after filtering
@@ -1217,7 +1377,8 @@ export async function POST(request: Request) {
               available_channels: channelConfig.configuredChannels,
               original_channels: Object.keys(messages),
               corrections_applied: corrections
-            }
+            },
+            trace_id: requestId
           } 
         },
         { status: 400 }
@@ -1263,8 +1424,8 @@ export async function POST(request: Request) {
       data: responseData
     });
     
-  } catch (error) {
-    console.error('General error in lead follow-up route:', error);
+  } catch (error: any) {
+    console.error('General error in lead follow-up route:', error?.stack || error);
     
     return NextResponse.json(
       { 

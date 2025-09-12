@@ -19,6 +19,23 @@ function isValidDomain(domain: string): boolean {
   return domainRegex.test(domain);
 }
 
+// Extraer dominio a partir de una URL del sitio
+function extractDomainFromUrl(url: string | null | undefined): string | null {
+  if (!url || typeof url !== 'string') return null;
+  try {
+    const parsed = new URL(url.startsWith('http') ? url : `https://${url}`);
+    return parsed.hostname.replace(/^www\./, '');
+  } catch {
+    // Fallback: eliminar protocolo y rutas si viene en formato no estándar
+    const cleaned = url
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .split('/')[0]
+      .trim();
+    return cleaned || null;
+  }
+}
+
 // Función para encontrar agente con role "Data Analyst"
 async function findDataAnalystAgent(siteId: string): Promise<{agentId: string, userId: string} | null> {
   try {
@@ -614,6 +631,23 @@ export async function POST(request: Request) {
       );
     }
     
+    // Obtener información del sitio para evitar confusiones de dominio
+    let siteUrl: string | null = null;
+    let siteDomainNote: string | null = null;
+    try {
+      const { data: siteData } = await supabaseAdmin
+        .from('sites')
+        .select('url')
+        .eq('id', site_id)
+        .single();
+      siteUrl = siteData?.url || null;
+      siteDomainNote = extractDomainFromUrl(siteUrl);
+    } catch {
+      // Si falla, continuamos sin bloquear el flujo
+      siteUrl = null;
+      siteDomainNote = null;
+    }
+    
     // Buscar agente Data Analyst
     const dataAnalystAgent = await findDataAnalystAgent(site_id);
     if (!dataAnalystAgent) {
@@ -644,6 +678,9 @@ CONTACT INFORMATION:
 - Name: ${name}
 - Domain: ${domain}
 - Additional Context: ${context}
+\nSITE INFORMATION (for disambiguation only):
+- Site URL: ${siteUrl || 'N/A'}
+- Site Domain: ${siteDomainNote || 'N/A'}
 
 CULTURAL ANALYSIS:
 - Detected Language: ${culturalInfo.language}
@@ -706,6 +743,11 @@ CRITICAL REQUIREMENTS:
 - For EXECUTIVES: Include executive generic emails in emails 16-20
 - Apply cultural naming conventions based on detected language/region
 - Consider regional business email etiquette and formality levels
+\nABSOLUTE DOMAIN POLICY (Do NOT violate):
+- Use ONLY the lead's domain provided: ${domain}
+- The site's/company's domain is ${siteDomainNote || 'N/A'} (from ${siteUrl || 'N/A'}).
+- NEVER use or propose any email address on the site's/company's domain or any of its subdomains.
+- Do NOT confuse the site's domain with the lead's domain. All generated emails MUST be on ${domain}.
 
 EXECUTIVE POSITION DETECTION:
 Consider these roles as executive positions requiring 20 emails: CEO, CTO, CFO, CMO, COO, Director, President, VP, Vice President, Founder, Co-founder, Owner, Partner, General Manager, Country Manager, Regional Manager, Executive, Senior Manager, Managing Director, Executive Director.
@@ -843,6 +885,8 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
       context: context,
       site_id: site_id,
       basic_patterns_generated: basicEmailPatterns,
+      site_url: siteUrl,
+      site_domain_note: siteDomainNote,
       timestamp: new Date().toISOString()
     };
 
