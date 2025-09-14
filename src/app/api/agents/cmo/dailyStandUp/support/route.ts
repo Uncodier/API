@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { getSupportDataByPrevDay } from '@/lib/services/supportData';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -9,23 +10,7 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-// Función para validar valores de estado de la base de datos
-function validateDatabaseEnumValues() {
-  return {
-    tasks: {
-      validStatuses: ['completed', 'in_progress', 'pending', 'failed'],
-      isValidStatus: (status: string) => ['completed', 'in_progress', 'pending', 'failed'].includes(status)
-    },
-    commands: {
-      validStatuses: ['pending', 'running', 'completed', 'failed', 'cancelled'],
-      isValidStatus: (status: string) => ['pending', 'running', 'completed', 'failed', 'cancelled'].includes(status)
-    },
-    requirements: {
-      validStatuses: ['validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'],
-      isValidStatus: (status: string) => ['validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'].includes(status)
-    }
-  };
-}
+// (Removed unused database enum validator)
 
 // Función para guardar en agent_memories
 async function saveToAgentMemory(agentId: string, userId: string, commandId: string, analysisData: any, siteId: string): Promise<{success: boolean, memoryId?: string, error?: string}> {
@@ -141,116 +126,7 @@ async function findActiveCmoAgent(siteId: string): Promise<{agentId: string, use
   }
 }
 
-// Función para obtener datos de soporte
-// Valid enum values for database tables:
-// - tasks.status: 'completed', 'in_progress', 'pending', 'failed'
-// - commands.status: 'pending', 'running', 'completed', 'failed', 'cancelled'
-// - requirements.status: 'validated', 'in-progress', 'on-review', 'done', 'backlog', 'canceled'
-async function getSupportData(siteId: string) {
-  try {
-    console.log(`🎧 Obteniendo datos de soporte para site_id: ${siteId}`);
-    
-    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    
-    // Obtener tareas abiertas
-    const { data: openTasks, error: tasksError } = await supabaseAdmin
-      .from('tasks')
-      .select('*')
-      .eq('site_id', siteId)
-      .in('status', ['in_progress', 'pending'])
-      .order('created_at', { ascending: false })
-      .limit(50);
-    
-    if (tasksError) {
-      console.error('Error al obtener tareas:', tasksError);
-      // Return early if there's a critical database error
-      if (tasksError.code === '22P02') {
-        console.error('❌ Database enum error in tasks query:', tasksError.message);
-        return null;
-      }
-    }
-    
-    // Obtener conversaciones de soporte recientes
-    const { data: supportConversations, error: conversationsError } = await supabaseAdmin
-      .from('conversations')
-      .select('*, messages(*)')
-      .eq('site_id', siteId)
-      .not('visitor_id', 'is', null)
-      .gte('updated_at', yesterday)
-      .order('updated_at', { ascending: false })
-      .limit(20);
-    
-    if (conversationsError) {
-      console.error('Error al obtener conversaciones de soporte:', conversationsError);
-    }
-    
-    // Obtener comandos de soporte activos
-    const { data: supportCommands, error: commandsError } = await supabaseAdmin
-      .from('commands')
-      .select('*')
-      .eq('site_id', siteId)
-      .in('task', ['customer support', 'ticket analysis', 'user assistance'])
-      .in('status', ['pending', 'running'])
-      .order('created_at', { ascending: false })
-      .limit(20);
-    
-    if (commandsError) {
-      console.error('Error al obtener comandos de soporte:', commandsError);
-      // Return early if there's a critical database error
-      if (commandsError.code === '22P02') {
-        console.error('❌ Database enum error in commands query:', commandsError.message);
-        return null;
-      }
-    }
-    
-    // Obtener agente de soporte activo
-    const { data: supportAgent, error: supportAgentError } = await supabaseAdmin
-      .from('agents')
-      .select('id, user_id, status')
-      .eq('site_id', siteId)
-      .eq('role', 'Customer Support')
-      .eq('status', 'active')
-      .order('created_at', { ascending: false })
-      .limit(1);
-    
-    if (supportAgentError) {
-      console.error('Error al obtener agente de soporte:', supportAgentError);
-    }
-    
-    // Obtener requerimientos no completados
-    const { data: pendingRequirements, error: requirementsError } = await supabaseAdmin
-      .from('requirements')
-      .select('*')
-      .eq('site_id', siteId)
-      .in('status', ['validated', 'in-progress'])
-      .order('created_at', { ascending: false })
-      .limit(30);
-    
-    if (requirementsError) {
-      console.error('Error al obtener requerimientos:', requirementsError);
-      // Return early if there's a critical database error
-      if (requirementsError.code === '22P02') {
-        console.error('❌ Database enum error in requirements query:', requirementsError.message);
-        return null;
-      }
-    }
-    
-    return {
-      openTasks: openTasks || [],
-      supportConversations: supportConversations || [],
-      supportCommands: supportCommands || [],
-      supportAgent: supportAgent?.[0] || null,
-      pendingRequirements: pendingRequirements || [],
-      openTasksCount: openTasks?.length || 0,
-      conversationsCount: supportConversations?.length || 0,
-      activeCommandsCount: supportCommands?.length || 0,
-      pendingRequirementsCount: pendingRequirements?.length || 0
-    };
-  } catch (error) {
-    console.error('Error al obtener datos de soporte:', error);
-    return null;
-  }
-}
+// (Moved support data fetching to '@/lib/services/supportData')
 
 // Función para esperar a que un comando se complete
 async function waitForCommandCompletion(commandService: any, commandId: string, maxAttempts = 100, delayMs = 1000) {
@@ -375,8 +251,8 @@ export async function POST(request: Request) {
     
     console.log(`🤖 Iniciando daily standup support para agente: ${agent.agentId}, usuario: ${agent.userId}, sitio: ${site_id}`);
     
-    // Obtener datos de soporte
-    const supportData = await getSupportData(site_id);
+    // Obtener datos de soporte del día anterior (nuevos tasks y conversations)
+    const supportData = await getSupportDataByPrevDay(site_id);
     
     if (!supportData) {
       return NextResponse.json(
@@ -388,21 +264,21 @@ export async function POST(request: Request) {
     // Preparar contexto con los datos de soporte
     const contextMessage = `Daily StandUp - Support Analysis for Site: ${site_id}
     
-Support Performance (Last 24h):
-- Open Tasks: ${supportData.openTasksCount}
-- Active Support Conversations: ${supportData.conversationsCount}
+Support Performance (Previous Day: ${supportData.prevDayRange.start} to ${supportData.prevDayRange.end} UTC):
+- New Tasks: ${supportData.newTasksCount}
+- New Support Conversations: ${supportData.newConversationsCount}
 - Active Support Commands: ${supportData.activeCommandsCount}
 - Pending Requirements: ${supportData.pendingRequirementsCount}
 - Support Agent Status: ${supportData.supportAgent ? 'Active' : 'Not Found'}
 
-Open Tasks Summary:
-${supportData.openTasks.slice(0, 10).map((task: any, index: number) => 
+New Tasks Summary (Prev Day):
+${supportData.newTasks.slice(0, 10).map((task: any, index: number) => 
   `${index + 1}. ${task.title || 'Untitled'} - Priority: ${task.priority || 'Normal'} - Status: ${task.status}`
 ).join('\n')}
 
-Recent Support Conversations:
-${supportData.supportConversations.slice(0, 5).map((conv: any, index: number) => 
-  `${index + 1}. Conversation ${conv.id} - Messages: ${conv.messages?.length || 0} - Last update: ${conv.updated_at}`
+New Conversations (Prev Day):
+${supportData.newConversations.slice(0, 5).map((conv: any, index: number) => 
+  `${index + 1}. Conversation ${conv.id} - Messages: ${conv.messages?.length || 0} - Created: ${conv.created_at}`
 ).join('\n')}
 
 Pending Requirements:
@@ -413,11 +289,11 @@ ${supportData.pendingRequirements.slice(0, 10).map((req: any, index: number) =>
 Support Team Coordination:
 - Support Agent ID: ${supportData.supportAgent?.id || 'No active agent'}
 - Active Commands: ${supportData.activeCommandsCount}
-- Task Load: ${supportData.openTasksCount > 20 ? 'High' : supportData.openTasksCount > 10 ? 'Medium' : 'Low'}
+- New Task Load: ${supportData.newTasksCount > 20 ? 'High' : supportData.newTasksCount > 10 ? 'Medium' : 'Low'}
 
 Please analyze these support aspects and provide a comprehensive summary focusing on:
-1. Support workload and task management efficiency
-2. Customer satisfaction trends from conversations
+1. Support workload and task management efficiency based on new tasks
+2. Customer satisfaction trends from new conversations
 3. Requirements backlog and prioritization
 4. Support team capacity and resource allocation`;
     
@@ -432,12 +308,12 @@ Please analyze these support aspects and provide a comprehensive summary focusin
         {
           support_analysis: {
             analysis_type: "daily_standup_support",
-            tasks_data: supportData.openTasks,
-            conversations_data: supportData.supportConversations,
+            tasks_data: supportData.newTasks,
+            conversations_data: supportData.newConversations,
             requirements_data: supportData.pendingRequirements,
             performance_metrics: {
-              open_tasks_count: supportData.openTasksCount,
-              conversations_count: supportData.conversationsCount,
+              open_tasks_count: supportData.newTasksCount,
+              conversations_count: supportData.newConversationsCount,
               active_commands_count: supportData.activeCommandsCount,
               pending_requirements_count: supportData.pendingRequirementsCount
             }
@@ -560,8 +436,8 @@ Please analyze these support aspects and provide a comprehensive summary focusin
               summary: summary,
               analysis_type: "support",
               support_data: {
-                open_tasks_count: supportData.openTasksCount,
-                conversations_count: supportData.conversationsCount,
+                open_tasks_count: supportData.newTasksCount,
+                conversations_count: supportData.newConversationsCount,
                 active_commands_count: supportData.activeCommandsCount,
                 pending_requirements_count: supportData.pendingRequirementsCount,
                 support_agent_active: !!supportData.supportAgent

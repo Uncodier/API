@@ -815,6 +815,212 @@ CREATE TABLE public.settings (
 -- Comments on columns
 COMMENT ON COLUMN public.settings.branding IS 'Brand identity information including: brand pyramid (essence, personality, benefits, attributes, values, promise), color palette, typography, voice/tone, communication style, brand assets, and guidelines';
 COMMENT ON COLUMN public.settings.customer_journey IS 'Customer journey configuration with metrics, actions, and tactics for each stage: awareness, interest, consideration, purchase, retention, and advocacy';
+
+-- Lead Analysis Collection for ROI Calculator
+CREATE TABLE public.lead_analysis (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  
+  -- Company Information
+  company_name text NOT NULL,
+  industry text CHECK (industry = ANY (ARRAY['technology'::text, 'finance'::text, 'healthcare'::text, 'education'::text, 'retail'::text, 'manufacturing'::text, 'services'::text, 'hospitality'::text, 'media'::text, 'real_estate'::text, 'logistics'::text, 'nonprofit'::text, 'other'::text])),
+  company_size text CHECK (company_size = ANY (ARRAY['1-10'::text, '11-50'::text, '51-200'::text, '201-500'::text, '501-1000'::text, '1000+'::text])),
+  annual_revenue text CHECK (annual_revenue = ANY (ARRAY['<1M'::text, '1M-5M'::text, '5M-10M'::text, '10M-50M'::text, '50M-100M'::text, '100M+'::text])),
+  
+  -- Current KPIs (stored as JSONB for flexibility)
+  current_kpis jsonb DEFAULT '{
+    "monthlyRevenue": 0,
+    "customerAcquisitionCost": 0,
+    "customerLifetimeValue": 0,
+    "conversionRate": 0,
+    "averageOrderValue": 0,
+    "monthlyLeads": 0,
+    "salesCycleLength": 0,
+    "convertedCustomers": 0,
+    "customerLifetimeSpan": 0,
+    "churnRate": 0,
+    "marketingQualifiedLeads": 0,
+    "salesQualifiedLeads": 0
+  }'::jsonb,
+  
+  -- Current Costs
+  current_costs jsonb DEFAULT '{
+    "marketingBudget": 0,
+    "salesTeamCost": 0,
+    "salesCommission": 0,
+    "technologyCosts": 0,
+    "operationalCosts": 0,
+    "cogs": 0,
+    "otherCosts": 0,
+    "totalMonthlyCosts": 0
+  }'::jsonb,
+  
+  -- Sales Process Information
+          sales_process jsonb DEFAULT '{
+          "leadSources": [],
+          "qualificationProcess": {
+            "deepResearch": false,
+            "manualResearch": false,
+            "interviews": false,
+            "icpTargeting": false,
+            "behaviorAnalysis": false,
+            "leadScoring": false,
+            "demographicFiltering": false,
+            "companySize": false,
+            "budgetQualification": false,
+            "decisionMakerID": false,
+            "painPointAssessment": false,
+            "competitorAnalysis": false
+          },
+          "followUpFrequency": "",
+          "closingTechniques": [],
+          "painPoints": [],
+          "salesTeamSize": 0,
+          "averageDealSize": 0,
+          "winRate": 0,
+          "salesActivities": {
+            "coldCalls": false,
+            "personalizedFollowUp": false,
+            "videoCalls": false,
+            "transactionalEmails": false,
+            "socialSelling": false,
+            "contentMarketing": false,
+            "referralProgram": false,
+            "webinarsEvents": false,
+            "paidAds": false,
+            "seoContent": false,
+            "partnerships": false,
+            "directMail": false,
+            "tradeShows": false,
+            "influencerMarketing": false,
+            "retargeting": false,
+            "activations": false,
+            "physicalVisits": false,
+            "personalBrand": false
+          }
+        }'::jsonb,
+  
+  -- Goals and Objectives
+  goals jsonb DEFAULT '{
+    "revenueTarget": 0,
+    "timeframe": "",
+    "primaryObjectives": [],
+    "growthChallenges": [],
+    "marketingGoals": [],
+    "salesGoals": []
+  }'::jsonb,
+  
+  -- Analysis Results (calculated and stored)
+  analysis_results jsonb DEFAULT '{
+    "currentROI": 0,
+    "projectedROI": 0,
+    "potentialIncrease": 0,
+    "projectedRevenue": 0,
+    "projectedCosts": 0,
+    "opportunityCosts": 0,
+    "recommendations": [],
+    "riskFactors": [],
+    "implementationPlan": {},
+    "expectedTimeline": ""
+  }'::jsonb,
+  
+  -- ROI Projections
+  roi_projections jsonb DEFAULT '{
+    "threeMonth": {"revenue": 0, "costs": 0, "roi": 0},
+    "sixMonth": {"revenue": 0, "costs": 0, "roi": 0},
+    "twelveMonth": {"revenue": 0, "costs": 0, "roi": 0},
+    "twentyFourMonth": {"revenue": 0, "costs": 0, "roi": 0}
+  }'::jsonb,
+  
+  -- Strategies and Opportunities
+  strategies jsonb DEFAULT '{
+    "leadOptimization": [],
+    "conversionImprovement": [],
+    "costReduction": [],
+    "revenueGrowth": [],
+    "processAutomation": [],
+    "technologyUpgrades": []
+  }'::jsonb,
+  
+  -- Contact Information (for follow-up)
+  contact_info jsonb DEFAULT '{
+    "email": "",
+    "phone": "",
+    "name": "",
+    "title": "",
+    "preferredContactMethod": "",
+    "bestTimeToCall": ""
+  }'::jsonb,
+  
+  -- Analysis Status and Metadata
+  status text DEFAULT 'draft' CHECK (status = ANY (ARRAY['draft'::text, 'completed'::text, 'reviewed'::text, 'contacted'::text, 'converted'::text])),
+  completion_percentage integer DEFAULT 0 CHECK (completion_percentage >= 0 AND completion_percentage <= 100),
+  
+  -- Tracking and Attribution
+  source text DEFAULT 'roi-calculator',
+  utm_source text,
+  utm_medium text,
+  utm_campaign text,
+  referrer text,
+  ip_address inet,
+  user_agent text,
+  
+  -- Timestamps
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  updated_at timestamp with time zone NOT NULL DEFAULT now(),
+  completed_at timestamp with time zone,
+  
+  -- Optional user association (if they sign up)
+  user_id uuid,
+  site_id uuid,
+  
+  CONSTRAINT lead_analysis_pkey PRIMARY KEY (id),
+  CONSTRAINT lead_analysis_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
+  CONSTRAINT lead_analysis_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
+
+-- Comments on lead_analysis table
+COMMENT ON TABLE public.lead_analysis IS 'ROI Calculator lead analysis data - stores comprehensive business analysis for prospects';
+COMMENT ON COLUMN public.lead_analysis.current_kpis IS 'Current business KPIs and metrics including revenue, CAC, LTV, conversion rates, etc.';
+COMMENT ON COLUMN public.lead_analysis.current_costs IS 'Current business costs breakdown including marketing, sales, technology, and operational expenses';
+COMMENT ON COLUMN public.lead_analysis.sales_process IS 'Information about current sales process, lead sources, qualification methods, and challenges';
+COMMENT ON COLUMN public.lead_analysis.goals IS 'Business goals, targets, objectives, and growth challenges';
+COMMENT ON COLUMN public.lead_analysis.analysis_results IS 'Calculated ROI analysis results, recommendations, and projections';
+COMMENT ON COLUMN public.lead_analysis.roi_projections IS 'ROI projections for different timeframes (3, 6, 12, 24 months)';
+COMMENT ON COLUMN public.lead_analysis.strategies IS 'Recommended strategies and opportunities for growth and optimization';
+COMMENT ON COLUMN public.lead_analysis.contact_info IS 'Contact information for follow-up and sales outreach';
+
+-- Indexes for performance
+CREATE INDEX idx_lead_analysis_created_at ON public.lead_analysis(created_at DESC);
+CREATE INDEX idx_lead_analysis_status ON public.lead_analysis(status);
+CREATE INDEX idx_lead_analysis_company_size ON public.lead_analysis(company_size);
+CREATE INDEX idx_lead_analysis_industry ON public.lead_analysis(industry);
+CREATE INDEX idx_lead_analysis_source ON public.lead_analysis(source);
+CREATE INDEX idx_lead_analysis_completion ON public.lead_analysis(completion_percentage);
+
+-- RLS (Row Level Security) policies
+ALTER TABLE public.lead_analysis ENABLE ROW LEVEL SECURITY;
+
+-- Policy for public access (ROI calculator is public)
+CREATE POLICY "Allow public insert for ROI calculator" ON public.lead_analysis
+  FOR INSERT WITH CHECK (true);
+
+-- Policy for users to view their own analyses
+CREATE POLICY "Users can view own analyses" ON public.lead_analysis
+  FOR SELECT USING (auth.uid() = user_id);
+
+-- Policy for users to update their own analyses
+CREATE POLICY "Users can update own analyses" ON public.lead_analysis
+  FOR UPDATE USING (auth.uid() = user_id);
+
+-- Policy for admin access (if needed)
+CREATE POLICY "Admin full access" ON public.lead_analysis
+  FOR ALL USING (
+    EXISTS (
+      SELECT 1 FROM auth.users 
+      WHERE auth.users.id = auth.uid() 
+      AND auth.users.raw_user_meta_data->>'role' = 'admin'
+    )
+  );
 CREATE TABLE public.site_members (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   site_id uuid NOT NULL,
@@ -1604,3 +1810,73 @@ CREATE TABLE public.instance_plans (
 | TRIGGER     | update_waitlist_updated_at                       | waitlist              |
 | TRIGGER     | validate_performance_bitmask_trigger             | commands              |
 | TRIGGER     | validate_performance_bitmask_trigger             | commands              |
+
+## Webhooks
+
+Market Fit supports site-scoped outbound webhooks so external services can receive real-time events.
+
+### Tables
+
+- webhooks_endpoints
+  - id (uuid, pk)
+  - site_id (uuid → sites.id)
+  - created_by (uuid → profiles.id)
+  - name (text, unique per site)
+  - description (text)
+  - target_url (text)
+  - secret (text)
+  - is_active (boolean)
+  - handshake_status (text: pending | verified | failed | none)
+  - handshake_token (text)
+  - handshake_verified_at (timestamptz)
+  - last_handshake_error (text)
+  - created_at / updated_at
+
+- webhooks_subscriptions
+  - id (uuid, pk)
+  - site_id (uuid → sites.id)
+  - endpoint_id (uuid → webhooks_endpoints.id)
+  - event_type (text)
+  - is_active (boolean)
+  - filters (jsonb)
+  - created_at / updated_at
+  - Unique: (endpoint_id, event_type)
+
+- webhooks_deliveries
+  - id (uuid, pk)
+  - site_id (uuid → sites.id)
+  - endpoint_id (uuid → webhooks_endpoints.id)
+  - subscription_id (uuid → webhooks_subscriptions.id, nullable)
+  - event_type (text)
+  - payload (jsonb)
+  - status (text: pending | delivered | failed | retrying)
+  - attempt_count (int)
+  - last_attempt_at (timestamptz)
+  - response_status (int)
+  - response_body (text)
+  - last_error (text)
+  - delivered_at (timestamptz)
+  - created_at / updated_at
+
+### Indexes
+
+- Endpoints: site_id, (site_id, is_active)
+- Subscriptions: site_id, endpoint_id, event_type
+- Deliveries: site_id, endpoint_id, status, event_type, created_at
+
+### RLS
+
+Unified RLS per table using site-scoped access:
+
+- A user can access rows if they are:
+  - a site owner via `site_ownership`, or
+  - an active member via `site_members` (status = 'active').
+- Policies use `(select auth.uid())` to avoid initplan overhead.
+
+### Event Types (initial)
+
+- task.created
+- task.updated
+- message.created
+
+You can subscribe an endpoint to any of these. Deliveries are recorded in `webhooks_deliveries` and should be sent by a background worker or scheduled job.

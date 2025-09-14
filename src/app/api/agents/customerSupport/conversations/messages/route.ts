@@ -122,7 +122,7 @@ export async function GET(request: Request) {
           id: `task-${task.id}`,
           conversation_id: conversationId,
           content: `Task created: ${task.title}${task.description ? ` — ${task.description}` : ''}`,
-          role: 'system',
+          role: 'assistant',
           created_at: task.created_at,
           updated_at: task.updated_at,
           custom_data: {
@@ -155,20 +155,54 @@ export async function GET(request: Request) {
           if (commentsError) {
             console.warn('⚠️ Error al consultar task_comments (se continuará sin comentarios):', commentsError.message);
           } else if (comments && comments.length > 0) {
-            const taskCommentMessages = comments.map((c: any) => ({
-              id: `task_comment-${c.id}`,
-              conversation_id: conversationId,
-              content: c.content,
-              role: 'team_member',
-              created_at: c.created_at,
-              updated_at: c.updated_at,
-              custom_data: {
-                type: 'task_comment',
-                task_id: c.task_id,
-                attachments: c.attachments,
-                files: c.files
+            const taskCommentMessages = comments
+              // Extra safety: never include private comments
+              .filter((c: any) => !c.is_private)
+              .map((c: any) => {
+              // Extract file URLs from the files payload (array of objects, object, or string)
+              const fileUrls: string[] = [];
+              const filesPayload = c.files;
+              if (Array.isArray(filesPayload)) {
+                for (const f of filesPayload) {
+                  if (!f) continue;
+                  if (typeof f === 'string' && /^https?:\/\//i.test(f)) {
+                    fileUrls.push(f);
+                  } else if (typeof f === 'object' && typeof f.url === 'string' && f.url) {
+                    fileUrls.push(f.url);
+                  }
+                }
+              } else if (filesPayload && typeof filesPayload === 'object') {
+                if (typeof filesPayload.url === 'string' && filesPayload.url) {
+                  fileUrls.push(filesPayload.url);
+                }
+              } else if (typeof filesPayload === 'string' && /^https?:\/\//i.test(filesPayload)) {
+                fileUrls.push(filesPayload);
               }
-            }));
+
+              const contentWithUrls = fileUrls.length > 0
+                ? `${c.content}\n${fileUrls.join('\n')}`
+                : c.content;
+
+              // Adjust created_at for public (user) comments by subtracting one minute
+              const adjustedCreatedAt = !c.is_private
+                ? new Date(new Date(c.created_at).getTime() - 10 * 1000).toISOString()
+                : c.created_at;
+
+              return {
+                id: `task_comment-${c.id}`,
+                conversation_id: conversationId,
+                content: (!c.is_private && fileUrls.length > 0) ? fileUrls.join('\n') : contentWithUrls,
+                role: c.is_private ? 'team_member' : 'user',
+                created_at: adjustedCreatedAt,
+                updated_at: c.updated_at,
+                custom_data: {
+                  type: 'task_comment',
+                  task_id: c.task_id,
+                  attachments: c.attachments,
+                  files: c.files
+                }
+              };
+              });
             syntheticMessages.push(...taskCommentMessages);
           }
         }

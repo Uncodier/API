@@ -67,6 +67,8 @@ export async function POST(request: NextRequest) {
       return jsonT({ success: false, error: 'Unsupported content type. Use multipart/form-data' }, 415, request, traceId);
     }
 
+    // 5d) If workflow didn't return a title, we'll try to read the conversation title later once conversationId is confirmed
+
     let form: FormData;
     try {
       form = await request.formData();
@@ -336,12 +338,24 @@ export async function POST(request: NextRequest) {
       console.warn(`[VisitorsUpload:${traceId}] ⚠️ customerSupport workflow start failed:`, e?.message || e);
     }
 
+    // 5e) Fallback: if workflow didn't return a title, try to fetch conversation title now
+    if (!workflowTitle && isValidUUID(conversationId)) {
+      try {
+        const { data: conv } = await supabaseAdmin
+          .from('conversations')
+          .select('title')
+          .eq('id', conversationId as string)
+          .maybeSingle();
+        workflowTitle = conv?.title || null;
+      } catch {}
+    }
+
     // 6) Create task if needed, else reuse existing
     if (!isReplyOnly) {
       console.log(`[VisitorsUpload:${traceId}] CP6 creating new task`);
       const newTask = await createTask({
-        title: workflowTitle || title || 'Customer support ticket',
-        description: userMessage,
+        title: workflowTitle || 'Customer support ticket',
+        description: textMessage || '',
         type: 'ticket',
         status: 'pending',
         stage: 'consideration',
@@ -391,27 +405,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 6) Notify team only if a new task was created
+    // 6) Notify team only if a new task was created (reuse Task tool notifier style)
     let teamNotificationSummary: any = null;
-    if (createdNewTask) {
+    if (createdNewTask && taskIdToUse) {
       try {
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-        const teamTaskUrl = `${appUrl}/sites/${siteId}/tasks/${taskIdToUse}`;
-        const notifyTitle = `New ticket created: ${workflowTitle || title || 'Customer support ticket'}`;
-        const notifyMsg = `A new ticket was created from a website upload. Files: ${uploadedFiles.length}. ${leadId ? `Lead: ${leadId}.` : ''}`;
-        const notifyResult = await TeamNotificationService.notifyTeam({
-          siteId,
-          title: notifyTitle,
-          message: `${notifyMsg} View: ${teamTaskUrl}`,
-          type: NotificationType.INFO,
-          categories: ['task-notification', 'task-created', 'ticket'],
-          customArgs: {
-            taskId: taskIdToUse as string,
-            taskType: 'ticket',
-            filesCount: String(uploadedFiles.length)
-          },
-          relatedEntityType: 'task',
-          relatedEntityId: taskIdToUse as string
+        const notifyResult = await (await import('@/lib/services/TaskNotifier')).TaskNotifier.notifyTaskCreated({
+          task: {
+            id: taskIdToUse as string,
+            title: workflowTitle || 'Customer support ticket',
+            description: textMessage || '',
+            type: 'ticket',
+            priority: 1,
+            site_id: siteId,
+            lead_id: leadId || null,
+            assignee: null,
+            scheduled_date: new Date().toISOString()
+          }
         });
         teamNotificationSummary = {
           success: notifyResult.success,
@@ -419,7 +428,7 @@ export async function POST(request: NextRequest) {
           emails_sent: notifyResult.emailsSent,
           total_members: notifyResult.totalMembers
         };
-        console.log(`[VisitorsUpload:${traceId}] 📢 Team notified about new ticket`, teamNotificationSummary);
+        console.log(`[VisitorsUpload:${traceId}] 📢 Team notified about new ticket (TaskNotifier)`, teamNotificationSummary);
       } catch (e: any) {
         console.warn(`[VisitorsUpload:${traceId}] ⚠️ Failed to notify team about new ticket:`, e?.message || e);
         teamNotificationSummary = { success: false, error: e?.message || 'notification_failed' };

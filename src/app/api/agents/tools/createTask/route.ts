@@ -5,6 +5,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationService, NotificationType, NotificationPriority } from '@/lib/services/notification-service';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { generateTaskTeamEmailHtml as sharedTeamTemplate, generateTaskUserNotificationHtml as sharedUserTemplate } from '@/lib/services/templates/task-email-templates';
 
 /**
  * Función para transformar diferentes formatos de fecha a ISO 8601

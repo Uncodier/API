@@ -130,12 +130,19 @@ async function getSalesData(siteId: string, salesAgent?: any) {
     console.log(`💰 Obteniendo datos de ventas para site_id: ${siteId}`);
     
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    // Bordes del día previo (UTC): [yesterdayStart, todayStart)
+    const now = new Date();
+    const todayStartDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
+    const yesterdayStartDate = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 1, 0, 0, 0, 0));
+    const startTs = yesterdayStartDate.getTime();
+    const endTs = todayStartDate.getTime();
     
-    // Obtener leads creados ayer
+    // Obtener leads creados ayer con status 'new'
     const { data: newLeads, error: leadsError } = await supabaseAdmin
       .from('leads')
       .select('*')
       .eq('site_id', siteId)
+      .eq('status', 'new')
       .gte('created_at', yesterday)
       .order('created_at', { ascending: false });
     
@@ -171,14 +178,25 @@ async function getSalesData(siteId: string, salesAgent?: any) {
       console.error('Error al obtener conversaciones de ventas:', conversationsError);
     }
 
+    // Extraer mensajes nuevos (últimas 24h) desde las conversaciones recientes
+    const newMessages = (salesConversations || [])
+      .flatMap((conv: any) => Array.isArray(conv?.messages) ? conv.messages : [])
+      .filter((m: any) => {
+        if (!m?.created_at) return false;
+        const ts = new Date(m.created_at).getTime();
+        return Number.isFinite(ts) && ts >= startTs && ts < endTs; // solo día previo
+      });
+
     return {
       newLeads: newLeads || [],
       salesCommands: salesCommands || [],
       salesConversations: salesConversations || [],
+      newMessages: newMessages || [],
       salesAgent: salesAgent || null,
       leadsCount: newLeads?.length || 0,
       activeCommandsCount: salesCommands?.length || 0,
-      conversationsCount: salesConversations?.length || 0
+      conversationsCount: salesConversations?.length || 0,
+      newMessagesCount: newMessages?.length || 0
     };
   } catch (error) {
     console.error('Error al obtener datos de ventas:', error);
@@ -275,12 +293,19 @@ Sales Performance (Last 24h):
 - New Leads Created: ${salesData.leadsCount}
 - Active Sales Commands: ${salesData.activeCommandsCount}
 - Sales Conversations: ${salesData.conversationsCount}
+- New Messages Added: ${salesData.newMessagesCount}
 - Sales Agent Status: ${salesData.salesAgent ? 'Active' : 'Not Found'}
 
-Recent Leads Summary:
+New Leads (status = new) Summary:
 ${salesData.newLeads.map((lead: any, index: number) => 
   `${index + 1}. ${lead.name || 'Unknown'} (${lead.email || 'No email'}) - ${lead.status || 'New'}`
 ).join('\n')}
+
+New Messages Summary (Previous day, UTC):
+${(salesData.newMessages || []).slice(0, 10).map((m: any, index: number) => {
+  const content = (m?.content || '').replace(/\n/g, ' ').slice(0, 120);
+  return `${index + 1}. ${m?.role || 'unknown'} - ${content}${content.length === 120 ? '…' : ''} (Conv: ${m?.conversation_id || 'n/a'})`;
+}).join('\n')}
 
 Active Sales Commands:
 ${salesData.salesCommands.map((cmd: any, index: number) => 
@@ -295,7 +320,9 @@ Please analyze these sales aspects and provide a comprehensive summary focusing 
 1. Lead generation performance and quality
 2. Sales pipeline health and active opportunities
 3. Sales team coordination and capacity
-4. Recommendations for sales optimization`;
+4. Recommendations for sales optimization
+
+Additionally, include a brief summary of the newly added leads (status = new) and the newly added messages (last 24h).`;
     
     // Crear el comando
     const command = CommandFactory.createCommand({
@@ -311,10 +338,12 @@ Please analyze these sales aspects and provide a comprehensive summary focusing 
             leads_data: salesData.newLeads,
             sales_commands: salesData.salesCommands,
             sales_conversations: salesData.salesConversations,
+            new_messages: salesData.newMessages,
             performance_metrics: {
               new_leads_count: salesData.leadsCount,
               active_commands_count: salesData.activeCommandsCount,
-              conversations_count: salesData.conversationsCount
+              conversations_count: salesData.conversationsCount,
+              new_messages_count: salesData.newMessagesCount
             }
           }
         }
@@ -421,6 +450,7 @@ Please analyze these sales aspects and provide a comprehensive summary focusing 
             new_leads_count: salesData.leadsCount,
             active_commands_count: salesData.activeCommandsCount,
             conversations_count: salesData.conversationsCount,
+            new_messages_count: salesData.newMessagesCount,
             sales_agent_active: !!salesData.salesAgent
           }
         } 
