@@ -73,18 +73,18 @@ export class PortkeyConnector {
         const finalModelId = modelOptions.model;
         if (finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5' || finalModelId === 'gpt-5.1' || finalModelId === 'gpt-5-nano') {
           // Set appropriate max tokens based on model
-          let maxCompletionTokens = modelOptions.max_tokens;
+          let maxCompletionTokens: number;
           if (finalModelId === 'gpt-5') {
-            // gpt-5 has a 16k limit
-            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 16384);
+            // gpt-5 default to 32k unless overridden
+            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 32768), 32768);
           } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
-            // gpt-5-nano and gpt-5-mini have a 32k limit
-            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 32768);
+            // gpt-5-nano and gpt-5-mini have a 32k limit (default to full 32k if unspecified)
+            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 32768), 32768);
           } else {
             // gpt-5.1 and other gpt-5 models have a 16k limit as base
-            maxCompletionTokens = Math.min(maxCompletionTokens || 16384, 16384);
+            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 16384), 16384);
           }
-          
+
           modelOptions.max_completion_tokens = maxCompletionTokens;
           delete modelOptions.max_tokens;
           console.log(`[PortkeyConnector] Using max_completion_tokens for ${finalModelId}: ${modelOptions.max_completion_tokens}`);

@@ -18,20 +18,22 @@ export function buildWrapUpContext(params: {
   const lines = (s: string) => s;
 
   const systemSection = systemMemories.length > 0
-    ? systemMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')
-    : 'No system analysis memories found';
+    ? `=== SYSTEM ANALYSIS ===\n${systemMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')}`
+    : '';
 
   const salesSection = salesMemories.length > 0
-    ? salesMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')
-    : 'No sales analysis memories found';
+    ? `=== SALES ANALYSIS ===\n${salesMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')}`
+    : '';
 
   const supportSection = supportMemories.length > 0
-    ? supportMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')
-    : 'No support analysis memories found';
+    ? `=== SUPPORT ANALYSIS ===\n${supportMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')}`
+    : '';
 
   const growthSection = growthMemories.length > 0
-    ? growthMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')
-    : 'No growth analysis memories found';
+    ? `=== GROWTH ANALYSIS ===\n${growthMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')}`
+    : '';
+
+  const consolidatedSections = [systemSection, salesSection, supportSection, growthSection].filter(Boolean).join('\n\n');
 
   const commandsSection = (standupCommands || []).slice(0, 10).map((cmd: any, index: number) => `${index + 1}. ${cmd.task} - Status: ${cmd.status} - Created: ${cmd.created_at}`).join('\n');
 
@@ -65,18 +67,7 @@ ${tasksLines.join('\n')}
   const context = lines(`Daily StandUp - Executive Summary & Wrap-Up for Site: ${siteId}
 
 CONSOLIDATED ANALYSIS FROM ALL DEPARTMENTS:
-
-=== SYSTEM ANALYSIS ===
-${systemSection}
-
-=== SALES ANALYSIS ===
-${salesSection}
-
-=== SUPPORT ANALYSIS ===
-${supportSection}
-
-=== GROWTH ANALYSIS ===
-${growthSection}
+${consolidatedSections}
 
 RECENT STANDUP COMMANDS SUMMARY:
 ${commandsSection}
@@ -114,7 +105,8 @@ CRITICAL FORMAT RULES FOR OUTPUT (MUST FOLLOW):
 - Output must be plain text only. Do not use markdown, HTML, emojis, or code fences.
 - Use ASCII characters only. Avoid smart quotes and special symbols.
 - Use simple dashes '-' for bullet points when needed.
-- Provide a single line beginning with 'Status:' followed by one of GREEN, YELLOW, or RED and a short reason (e.g., "Status: YELLOW - billing pending and setup incomplete").
+- Do NOT include a 'Status:' line in the message. Status must be provided ONLY in the 'health' object (status, reason, priorities).
+- Start the message with the single most useful, actionable item for the team.
 - Provide priorities as short bullets starting with '- ' under 140 characters each.
 - Avoid headings with symbols (#, **, etc.). Use simple sentences.
 

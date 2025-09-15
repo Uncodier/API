@@ -153,10 +153,12 @@ export class TargetProcessor extends Base {
       }
       
       // Configure model options - default to non-streaming for stability
+      const isGpt5Family = parsedModelType === 'openai' && (parsedModelId === 'gpt-5' || parsedModelId === 'gpt-5-mini' || parsedModelId === 'gpt-5-nano' || parsedModelId === 'gpt-5.1');
+      const defaultMax = isGpt5Family ? 32768 : (this.defaultOptions.maxTokens || 16384);
       const modelOptions: PortkeyModelOptions = {
         modelType: parsedModelType,
         modelId: parsedModelId,
-        maxTokens: command.max_tokens || this.defaultOptions.maxTokens,
+        maxTokens: command.max_tokens || defaultMax,
         temperature: command.temperature || this.defaultOptions.temperature,
         stream: this.defaultOptions.stream || false,
         streamOptions: {

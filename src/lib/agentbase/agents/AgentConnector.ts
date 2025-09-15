@@ -76,11 +76,20 @@ export class AgentConnector extends Base {
         parsedModelId = command.model;
       }
       
+      // Decide sane default for max tokens when not specified
+      const inferredDefaultMaxTokens = (() => {
+        const isOpenAI = parsedModelType === 'openai';
+        const isGpt5Family = parsedModelId === 'gpt-5' || parsedModelId === 'gpt-5-mini' || parsedModelId === 'gpt-5-nano' || parsedModelId === 'gpt-5.1';
+        if (isOpenAI && isGpt5Family) return 32768;
+        // Default baseline if unspecified
+        return 16384;
+      })();
+
       // Configure model options for portkey
       const modelOptions: PortkeyModelOptions = {
         modelType: parsedModelType,
         modelId: parsedModelId,
-        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 4000,
+        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || inferredDefaultMaxTokens,
         temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente

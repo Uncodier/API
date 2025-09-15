@@ -4,6 +4,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getWrapUpInputs } from '@/lib/services/wrapUpData';
 import { buildWrapUpContext } from '@/lib/prompts/dailyStandupWrapUpContext';
 
+// Increase function execution limit for Vercel/Next.js to 200 seconds
+export const maxDuration = 200;
+
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -301,18 +304,6 @@ export async function POST(request: Request) {
             reason: "Short plain text reason (no emojis, no markdown)",
             priorities: ["Short plain text priority items under 140 chars each"]
           }
-        },
-        {
-          executive_wrapup_inputs: {
-            analysis_type: 'wrapup',
-            time_window: wrapUpInputs.prevDayRange,
-            settings: wrapUpInputs.settings,
-            new_leads_prev_day: wrapUpInputs.prevDay.leads,
-            new_conversations_prev_day: wrapUpInputs.prevDay.conversations,
-            new_tasks_prev_day: wrapUpInputs.prevDay.tasks,
-            pending_contents: wrapUpInputs.pendingContents,
-            counts: wrapUpInputs.counts
-          }
         }
       ],
       tools: [
@@ -331,8 +322,13 @@ export async function POST(request: Request) {
     const internalCommandId = await commandService.submitCommand(command);
     console.log(`📝 Comando executive summary creado con ID: ${internalCommandId}`);
     
-    // Esperar a que el comando se complete
-    const { command: executedCommand, completed } = await waitForCommandCompletion(commandService, internalCommandId);
+    // Esperar a que el comando se complete (hasta ~190s)
+    const { command: executedCommand, completed } = await waitForCommandCompletion(
+      commandService,
+      internalCommandId,
+      190,
+      1000
+    );
     
     if (!completed || !executedCommand) {
       return NextResponse.json(
