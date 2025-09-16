@@ -420,8 +420,8 @@ export async function POST(request: NextRequest) {
     try {
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: site_id,
-        title: `Daily Stand-Up: ${subject}`,
-        message: `Resumen diario de ${siteInfo.name}: ${message}`,
+        title: subject,
+        message: `Daily summary for ${siteInfo.name}: ${message}`,
         htmlContent: generateDailyStandUpHtml({
           subject,
           message,
