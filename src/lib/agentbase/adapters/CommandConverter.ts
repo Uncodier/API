@@ -86,10 +86,8 @@ export class CommandConverter {
       // Solo se usará internamente en el objeto en memoria
     }
     
-    // Añadir model_id si está definido
-    if (command.model_id !== undefined && command.model_id !== null) {
-      (dbCommand as any).model_id = command.model_id;
-    }
+    // Importante: no guardar model_id en BD (no existe la columna)
+    // Si viene model_id ya fue mapeado a model arriba cuando aplique
     
     // Solo incluir agent_id si es un UUID válido
     if (command.agent_id && isValidUUID(command.agent_id)) {
