@@ -134,7 +134,7 @@ export async function GET(request: NextRequest) {
 
     // Obtener información detallada de los miembros del equipo
     const { data: teamMembersData, error: membersError } = await supabaseAdmin
-      .from('users')
+      .from('profiles')
       .select('id, email, name, role')
       .in('id', teamData.members || []);
       
@@ -153,7 +153,7 @@ export async function GET(request: NextRequest) {
     if (!teamMembersData || teamMembersData.length === 0) {
       // Obtener el usuario administrador
       const { data: adminUser, error: adminError } = await supabaseAdmin
-        .from('users')
+        .from('profiles')
         .select('id, email, name, role')
         .eq('role', 'admin')
         .limit(1)

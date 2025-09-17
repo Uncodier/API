@@ -67,12 +67,13 @@ async function getLeadInfo(leadId: string): Promise<any | null> {
 async function getAssigneeInfo(assigneeId: string): Promise<any | null> {
   try {
     const { data, error } = await supabaseAdmin
-      .from('users')
+      .from('profiles')
       .select(`
         id,
         email,
         name,
-        raw_user_meta_data
+        role,
+        metadata
       `)
       .eq('id', assigneeId)
       .single();

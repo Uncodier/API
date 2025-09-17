@@ -178,10 +178,9 @@ export async function POST(request: NextRequest) {
       role: 'system',
       agent_id: selectedAgent.id,
       user_id: conversationData.user_id,
-      site_id: conversationData.site_id,
       lead_id: conversationData.lead_id,
       visitor_id: conversationData.visitor_id,
-      metadata: {
+      custom_data: {
         delegation: {
           agent_role,
           agent_id: selectedAgent.id,
