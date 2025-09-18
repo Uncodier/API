@@ -4,6 +4,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { TextHashService } from '../../utils/text-hash-service';
 
 export class ReceivedEmailDuplicationService {
   
@@ -115,11 +116,17 @@ export class ReceivedEmailDuplicationService {
     
     // Obtener envelope IDs ya procesados
     const envelopeIds = emailsWithEnvelopes.map(email => email.envelopeId);
+    // Preparar hashes de contenido para búsqueda secundaria
+    const hashes = emailsWithEnvelopes.map(e => {
+      const text = `${e.from||''}\n${e.to||''}\n${e.subject||''}\n${e.date||e.received_date||''}\n\n${e.body||''}`;
+      const h = TextHashService.hash64(text);
+      return String(h);
+    }).filter(Boolean) as string[];
     
     try {
       const { data: existingObjects, error } = await supabaseAdmin
         .from('synced_objects')
-        .select('external_id, status')
+        .select('external_id, status, hash')
         .eq('site_id', siteId)
         .eq('object_type', 'email')
         .in('external_id', envelopeIds)
@@ -141,11 +148,31 @@ export class ReceivedEmailDuplicationService {
       }
       
       const processedEnvelopeIds = new Set(existingObjects?.map(obj => obj.external_id) || []);
+      const processedHashes = new Set((existingObjects || []).map(obj => obj.hash).filter(Boolean).map(String));
+
+      // Consultar por hashes si tenemos
+      if (hashes.length > 0) {
+        try {
+          const { data: byHash, error: hashErr } = await supabaseAdmin
+            .from('synced_objects')
+            .select('hash, status')
+            .eq('site_id', siteId)
+            .eq('object_type', 'email')
+            .in('hash', hashes)
+            .in('status', ['processed', 'replied']);
+          if (!hashErr && byHash) {
+            byHash.forEach(o => { if (o.hash) processedHashes.add(String(o.hash)); });
+          }
+        } catch {}
+      }
       console.log(`[RECEIVED_EMAIL_DEDUP] 🔍 ${processedEnvelopeIds.size} emails ya procesados encontrados`);
       
       // Separar emails procesados vs no procesados
       for (const email of emailsWithEnvelopes) {
-        const isProcessed = processedEnvelopeIds.has(email.envelopeId);
+        const text = `${email.from||''}\n${email.to||''}\n${email.subject||''}\n${email.date||email.received_date||''}\n\n${email.body||''}`;
+        const hv = TextHashService.hash64(text);
+        const hKey = String(hv);
+        const isProcessed = processedEnvelopeIds.has(email.envelopeId) || (hKey ? processedHashes.has(hKey) : false);
         
         debugInfo.push({
           index: debugInfo.length + 1,
@@ -153,6 +180,7 @@ export class ReceivedEmailDuplicationService {
           emailFrom: email.from,
           emailSubject: email.subject,
           envelopeId: email.envelopeId,
+          hash: hKey,
           decision: isProcessed ? 'YA_PROCESADO - omitido' : 'NUEVO - procesado'
         });
         

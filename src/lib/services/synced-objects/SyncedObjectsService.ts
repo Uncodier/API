@@ -360,6 +360,7 @@ export class SyncedObjectsService {
             object_type: objectType,
             status: 'pending',
             provider: email.provider || 'unknown',
+            // hash opcional: otros flujos lo rellenan
             metadata: {
               subject: email.subject,
               from: email.from,

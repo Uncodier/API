@@ -1069,6 +1069,8 @@ CREATE TABLE public.synced_objects (
   object_type text NOT NULL DEFAULT 'email'::text,
   status text NOT NULL DEFAULT 'pending'::text,
   provider text,
+  -- New: stable 64-bit hash for full email content fingerprinting (int8)
+  hash bigint,
   first_seen_at timestamp with time zone DEFAULT now(),
   last_processed_at timestamp with time zone,
   process_count integer DEFAULT 0,
@@ -1693,6 +1695,8 @@ CREATE TABLE public.instance_plans (
 | INDEX       | idx_synced_objects_site_status                   | synced_objects        |
 | INDEX       | idx_synced_objects_external_site_type            | synced_objects        |
 | INDEX       | idx_synced_objects_unique_external_site_type     | synced_objects        |
+| INDEX       | idx_synced_objects_hash                          | synced_objects        |
+| INDEX       | idx_synced_objects_site_hash                     | synced_objects        |
 | INDEX       | synced_objects_pkey                              | synced_objects        |
 | INDEX       | idx_task_categories_category_id                  | task_categories       |
 | INDEX       | idx_task_categories_task_id                      | task_categories       |

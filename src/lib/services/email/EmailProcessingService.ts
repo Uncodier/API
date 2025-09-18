@@ -7,6 +7,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { cleanHtmlContent } from '@/lib/utils/html-content-cleaner';
 import { EmailDuplicationService } from './EmailDuplicationService';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
+import { TextHashService } from '../../utils/text-hash-service';
 
 interface EmailSeparationResult {
   emailsToAliases: any[];
@@ -335,21 +336,58 @@ export class EmailProcessingService {
   ): Promise<void> {
     console.log(`[EMAIL_PROCESSING] 💾 Guardando ${emailsToSave.length} emails procesados...`);
     
+    const toPgSignedBigintString = (value: unknown): string | null => {
+      try {
+        // Normalize any input to a signed 64-bit range acceptable by Postgres BIGINT
+        const n = BigInt(value as any);
+        const signed64 = (BigInt as any).asIntN ? (BigInt as any).asIntN(64, n) : n; // Fallback if not available
+        return signed64.toString();
+      } catch {
+        try {
+          // Fallback: stringify if not coercible
+          return String(value);
+        } catch {
+          return null;
+        }
+      }
+    };
+
     const processedEmailsWithEnvelopes = emailsToSave.map(emailObj => {
       const emailId = emailObj.email ? emailObj.email.id : (emailObj.analysis_id || emailObj.id);
-      const originalEmail = validEmails.find(ve => ve.id === emailId || ve.messageId === emailId || ve.uid === emailId);
+      const originalEmail = validEmails.find(ve => ve.id === emailId || ve.messageId === emailId || ve.uid === emailId) || {} as any;
       const envelopeId = originalEmail ? emailToEnvelopeMap.get(originalEmail) : null;
-      return { email: emailObj, originalEmail, envelopeId };
-    }).filter(item => item.envelopeId);
+      const rawTextForHash = (() => {
+        try {
+          const subject = originalEmail?.subject || emailObj.original_subject || '';
+          const body = originalEmail?.body || emailObj.original_text || '';
+          const from = originalEmail?.from || emailObj.contact_info?.email || '';
+          const to = originalEmail?.to || '';
+          const date = originalEmail?.date || originalEmail?.received_date || '';
+          return `${from}\n${to}\n${subject}\n${date}\n\n${body}`;
+        } catch {
+          return '';
+        }
+      })();
+      const contentHash = TextHashService.hash64(rawTextForHash);
+      const hashForDb = toPgSignedBigintString(contentHash);
+      return { email: emailObj, originalEmail, envelopeId, contentHash: hashForDb };
+    }).filter(item => {
+      if (item.envelopeId) return true;
+      const t = typeof item.contentHash;
+      if (t === 'bigint' || t === 'number') return true;
+      if (t === 'string') return (item.contentHash as unknown as string).length > 0;
+      return false;
+    });
     
     if (processedEmailsWithEnvelopes.length > 0) {
       try {
-        const syncedObjectsToInsert = processedEmailsWithEnvelopes.map(({ email, originalEmail, envelopeId }) => ({
+        const syncedObjectsToInsert = processedEmailsWithEnvelopes.map(({ email, originalEmail, envelopeId, contentHash }) => ({
           external_id: envelopeId,
           site_id: siteId,
           object_type: 'email',
           status: 'processed',
           provider: originalEmail?.provider || 'unknown',
+          hash: (contentHash !== null && contentHash !== undefined) ? String(contentHash) : null,
           metadata: {
             subject: originalEmail?.subject,
             from: originalEmail?.from,

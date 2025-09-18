@@ -84,6 +84,10 @@ export async function POST(request: NextRequest) {
   const startTime = Date.now();
   
   try {
+    console.warn('[EMAIL_API] DEPRECATION: /api/agents/email está deprecada. Usa /api/agents/email/leadsReply, /api/agents/email/aliasReply o /api/agents/email/reply.');
+    const deprecationHeaders = new Headers({
+      'x-deprecated-route': 'Use /api/agents/email/leadsReply, /api/agents/email/aliasReply, /api/agents/email/reply'
+    });
     // Get and validate request data
     const requestData = await request.json();
     
@@ -219,12 +223,13 @@ export async function POST(request: NextRequest) {
         throw error;
       }
 
-      // Priorizar y limitar por cantidad de mensajes a responder: agente → alias → leads IA
+      // Priorizar y limitar por cantidad de mensajes a responder: leads IA → alias → agente
       const preliminarySeparation = await EmailProcessingService.separateEmailsByDestination(validEmails, emailConfig, siteId, userId);
+      // Solo priorizamos correos con respuesta directa (leads IA y alias).
+      // Emails para agente NO se seleccionan en este endpoint para evitar respuestas a contactos no calificados.
       const prioritized = [
-        ...preliminarySeparation.emailsToAgent,
-        ...preliminarySeparation.emailsToAliases,
-        ...preliminarySeparation.emailsFromAILeads
+        ...preliminarySeparation.emailsFromAILeads,
+        ...preliminarySeparation.emailsToAliases
       ];
       const selectedIds = new Set<string>();
       for (const email of prioritized) {
@@ -254,7 +259,7 @@ export async function POST(request: NextRequest) {
              filterSummary: summary,
              reason: allEmails.length === 0 ? 'No hay emails nuevos en el buzón' : 'Todos los emails fueron filtrados por validaciones de negocio'
           }
-        });
+        }, { headers: deprecationHeaders });
       }
       
       // Si solo hay emails directos (aliases o AI leads), devolver directamente
@@ -296,7 +301,7 @@ export async function POST(request: NextRequest) {
               retryWasSuccessful: limitedValidEmails.length >= MIN_VALID_EMAILS
             }
           }
-        });
+        }, { headers: deprecationHeaders });
       }
 
       // Si no se proporciona agentId, buscar el agente de soporte
@@ -337,21 +342,34 @@ export async function POST(request: NextRequest) {
       // Extraer emails del comando ejecutado
       const agentEmails = EmailProcessingService.extractEmailsFromResults(executedCommand);
       
-      // Combinar emails del agente con emails directos
+      // Combinar para métricas, pero guardamos en dos pasos para evitar doble inserción
       const emailsForResponse = [...agentEmails, ...directResponseEmails];
-      
-      // Marcar emails como procesados usando EmailProcessingService
-      const emailsToSave = EmailProcessingService.filterEmailsToSave(emailsForResponse);
-      
+
+      // 1) Guardar SOLO los emails del agente ahora
+      const agentEmailsToSave = EmailProcessingService.filterEmailsToSave(agentEmails);
       await EmailProcessingService.saveProcessedEmails(
-        emailsToSave, 
-        limitedValidEmails, 
+        agentEmailsToSave, 
+        validEmails, 
         emailToEnvelopeMap, 
         siteId, 
         effectiveDbUuid || undefined, 
         internalCommandId, 
         effectiveAgentId
       );
+
+      // Ensure synced_objects for all direct replies right before responding
+      const ensureDirect = EmailProcessingService.filterEmailsToSave(directResponseEmails);
+      if (ensureDirect.length > 0) {
+        await EmailProcessingService.saveProcessedEmails(
+          ensureDirect,
+          validEmails,
+          emailToEnvelopeMap,
+          siteId,
+          effectiveDbUuid || undefined,
+          internalCommandId,
+          effectiveAgentId
+        );
+      }
       
       // Calcular estadísticas de procesamiento usando EmailProcessingService
       const stats = EmailProcessingService.calculateProcessingStats(emailsForResponse);
@@ -389,7 +407,7 @@ export async function POST(request: NextRequest) {
             fetchAttempts: fetchAttempt
           }
         }
-      });
+      }, { headers: deprecationHeaders });
       
     } catch (error: unknown) {
       const totalDuration = Date.now() - startTime;

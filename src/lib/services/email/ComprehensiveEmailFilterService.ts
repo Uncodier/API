@@ -6,6 +6,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 import { ReceivedEmailDuplicationService } from './ReceivedEmailDuplicationService';
+import { TextHashService } from '../../utils/text-hash-service';
 import { EmailFilterService } from './EmailFilterService';
 
 interface FilterSummary {
@@ -33,6 +34,9 @@ interface SecurityConfig {
 }
 
 export class ComprehensiveEmailFilterService {
+  
+  /** Opciones de filtrado para comportamientos específicos */
+  static defaultOptions = { allowNonAliasForAgent: false } as { allowNonAliasForAgent: boolean };
   
   /**
    * Obtiene configuraciones para los filtros de seguridad
@@ -145,7 +149,8 @@ export class ComprehensiveEmailFilterService {
     emails: any[],
     securityConfig: SecurityConfig,
     normalizedAliases: string[],
-    aiLeadsMap: Map<string, any>
+    aiLeadsMap: Map<string, any>,
+    options: { allowNonAliasForAgent: boolean } = this.defaultOptions
   ): { filteredEmails: any[], stats: Partial<FilterSummary> } {
     console.log(`[COMPREHENSIVE_FILTER] 🔧 Aplicando filtros básicos a ${emails.length} emails...`);
     
@@ -189,24 +194,30 @@ export class ComprehensiveEmailFilterService {
         return false;
       }
       
-      // VALIDACIÓN: Alias validation (SOLO si NO es un lead IA)
+      // VALIDACIÓN: Alias validation (SOLO marca; NO excluye emails no-alias para permitir análisis por agente)
       if (normalizedAliases.length > 0) {
-        // Verificar si es de un lead IA conocido - bypass de filtro de alias
+        // Verificar si es de un lead IA conocido - bypass de alias
         const fromEmailAddress = effectiveFromOnly;
         const isFromAILead = aiLeadsMap.has(fromEmailAddress);
-        
+
         if (isFromAILead) {
           console.log(`[COMPREHENSIVE_FILTER] 🤖 BYPASS: Email de lead IA (${fromEmailAddress}) → ${emailTo} - ignora validación de alias`);
-          return true; // Bypass alias validation for AI leads
+          return true; // Lead IA siempre pasa
         }
-        
-        // 🎯 CORREGIR LÓGICA: Incluir emails que coinciden con aliases
+
+        // Incluir emails a alias directamente
         const isValidByAlias = this.isValidByAlias(email, emailTo, normalizedAliases);
         if (isValidByAlias) {
           console.log(`[COMPREHENSIVE_FILTER] ✅ Email a alias incluido: ${emailTo}`);
-          return true; // Incluir emails que coinciden con aliases
+          return true;
+        }
+
+        // No es alias ni lead IA
+        if (options.allowNonAliasForAgent) {
+          console.log(`[COMPREHENSIVE_FILTER] ℹ️ Email no-alias retenido para análisis por agente (modo permitido): TO=${emailTo}`);
+          return true;
         } else {
-          console.log(`[COMPREHENSIVE_FILTER] ❌ Email filtrado (no coincide con aliases): TO=${emailTo}`);
+          console.log(`[COMPREHENSIVE_FILTER] ❌ Email filtrado (no alias y no lead IA): TO=${emailTo}`);
           stats.aliasFiltered++;
           return false;
         }
@@ -304,15 +315,16 @@ export class ComprehensiveEmailFilterService {
   /**
    * Obtiene emails ya procesados (solo con status 'processed' o 'replied')
    */
-  private static async getProcessedEmails(envelopeIds: string[], siteId: string): Promise<Set<string>> {
+  private static async getProcessedEmails(envelopeIds: string[], siteId: string, emails?: any[]): Promise<{ byEnvelope: Set<string>, byHash: Set<string> }> {
     const processedEnvelopeIds = new Set<string>();
+    const processedHashes = new Set<string>();
     
-    if (envelopeIds.length === 0) return processedEnvelopeIds;
+    if (envelopeIds.length === 0) return { byEnvelope: processedEnvelopeIds, byHash: processedHashes };
     
     try {
       const { data: existingObjects, error } = await supabaseAdmin
         .from('synced_objects')
-        .select('external_id, status')
+        .select('external_id, status, hash')
         .eq('site_id', siteId)
         .eq('object_type', 'email')
         .in('external_id', envelopeIds)
@@ -320,13 +332,38 @@ export class ComprehensiveEmailFilterService {
       
       if (!error && existingObjects) {
         existingObjects.forEach(obj => processedEnvelopeIds.add(obj.external_id));
+        existingObjects.forEach(obj => { if (obj.hash) processedHashes.add(String(obj.hash)); });
         console.log(`[COMPREHENSIVE_FILTER] 🔍 ${processedEnvelopeIds.size} emails ya procesados encontrados (status: processed/replied)`);
       }
     } catch (error) {
       console.warn(`[COMPREHENSIVE_FILTER] ⚠️ Error verificando emails procesados:`, error);
     }
     
-    return processedEnvelopeIds;
+    // Si nos pasaron emails, también calcular sus hashes para búsqueda por hash
+    if (emails && emails.length > 0) {
+      try {
+        const hashes = emails.map(e => {
+          const text = `${e.from||''}\n${e.to||''}\n${e.subject||''}\n${e.date||e.received_date||''}\n\n${e.body||''}`;
+          const h = TextHashService.hash64(text);
+          return String(h);
+        }).filter(Boolean) as string[];
+
+        if (hashes.length > 0) {
+          const { data: byHash, error: hashErr } = await supabaseAdmin
+            .from('synced_objects')
+            .select('hash, status')
+            .eq('site_id', siteId)
+            .eq('object_type', 'email')
+            .in('hash', hashes)
+            .in('status', ['processed', 'replied']);
+          if (!hashErr && byHash) {
+            byHash.forEach(o => { if (o.hash) processedHashes.add(String(o.hash)); });
+          }
+        }
+      } catch {}
+    }
+
+    return { byEnvelope: processedEnvelopeIds, byHash: processedHashes };
   }
 
   /**
@@ -335,7 +372,8 @@ export class ComprehensiveEmailFilterService {
   static async comprehensiveEmailFilter(
     emails: any[], 
     siteId: string, 
-    emailConfig: any
+    emailConfig: any,
+    options: { allowNonAliasForAgent?: boolean } = {}
   ): Promise<FilterResult> {
     console.log(`[COMPREHENSIVE_FILTER] 🔍 Aplicando filtro comprehensivo a ${emails.length} emails...`);
     
@@ -367,11 +405,17 @@ export class ComprehensiveEmailFilterService {
     
     // 5. Aplicar filtros básicos (con bypass para leads IA)
     const { filteredEmails: basicFilteredEmails, stats: basicStats } = 
-      this.applyBasicFiltersWithAILeadsBypass(emails, securityConfig, normalizedAliases, aiLeadsMap);
+      this.applyBasicFiltersWithAILeadsBypass(
+        emails,
+        securityConfig,
+        normalizedAliases,
+        aiLeadsMap,
+        { allowNonAliasForAgent: options.allowNonAliasForAgent === true }
+      );
     
     // 6. Verificar emails ya procesados
     const envelopeIds = basicFilteredEmails.map(email => emailToEnvelopeMap.get(email)).filter(Boolean) as string[];
-    const processedEnvelopeIds = await this.getProcessedEmails(envelopeIds, siteId);
+    const processed = await this.getProcessedEmails(envelopeIds, siteId, basicFilteredEmails);
     
     // 7. Aplicar filtros finales
     const validEmails = basicFilteredEmails.filter(email => {
@@ -381,7 +425,10 @@ export class ComprehensiveEmailFilterService {
       
       // 🎯 PRIMERO verificar duplicados (para TODOS los emails, incluyendo leads IA)
       const emailEnvelopeId = emailToEnvelopeMap.get(email);
-      if (emailEnvelopeId && processedEnvelopeIds.has(emailEnvelopeId)) {
+      const textForHash = `${email.from||''}\n${email.to||''}\n${email.subject||''}\n${email.date||email.received_date||''}\n\n${email.body||''}`;
+      const hashVal = TextHashService.hash64(textForHash);
+      const hashKey = String(hashVal);
+      if ((emailEnvelopeId && processed.byEnvelope.has(emailEnvelopeId)) || (hashKey && processed.byHash.has(hashKey))) {
         console.log(`[COMPREHENSIVE_FILTER] 🚨 Email duplicado filtrado: ${emailFrom} → ${emailTo} (ID: ${emailEnvelopeId})`);
         basicStats.duplicateFiltered = (basicStats.duplicateFiltered || 0) + 1;
         return false;

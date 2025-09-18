@@ -35,6 +35,51 @@ export interface EmailConfig {
 
 export class EmailService {
   /**
+   * Lista todas las carpetas disponibles del servidor IMAP y las normaliza.
+   */
+  static async listAllMailboxes(emailConfig: EmailConfig): Promise<MailboxInfo[]> {
+    let client: ImapFlow | undefined;
+    try {
+      if (!emailConfig.password && !emailConfig.accessToken) {
+        throw new Error('No se proporcionó contraseña ni token de acceso OAuth2');
+      }
+      if (!emailConfig.user && !emailConfig.email) {
+        throw new Error('No se proporcionó usuario o email');
+      }
+
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') imapPort = parseInt(imapPort, 10);
+
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: { rejectUnauthorized: false },
+        auth: emailConfig.useOAuth && emailConfig.accessToken
+          ? { user: emailConfig.user || emailConfig.email, accessToken: emailConfig.accessToken }
+          : { user: emailConfig.user || emailConfig.email, pass: emailConfig.password }
+      };
+
+      client = new ImapFlow(imapConfig);
+      await client.connect();
+      const list = await client.list();
+      const normalized = MailboxDetectorService.normalizeMailboxInfo(list);
+      console.log(`[EmailService] 📚 Mailboxes (${normalized.length}):`, normalized.map(m => ({ name: m.name, path: m.path, specialUse: m.specialUse, attributes: m.attributes })));
+      return normalized;
+    } catch (e) {
+      console.warn(`[EmailService] ⚠️ No se pudo listar mailboxes:`, e);
+      return [];
+    } finally {
+      if (client) {
+        try {
+          if (typeof (client as any).close === 'function') (client as any).close();
+          else if (typeof (client as any).destroy === 'function') (client as any).destroy();
+        } catch {}
+      }
+    }
+  }
+  /**
    * Decodifica el contenido del email si está encoded
    */
   private static decodeEmailContent(content: string): string {
@@ -205,6 +250,7 @@ export class EmailService {
           try {
             const email: EmailMessage = {
               id: message.uid.toString(),
+              messageId: (message.envelope?.messageId ? String(message.envelope.messageId) : undefined),
               subject: message.envelope?.subject || 'No Subject',
               from: message.envelope?.from?.[0]?.address || 'Unknown',
               to: message.envelope?.to?.[0]?.address || 'Unknown',
@@ -495,6 +541,7 @@ export class EmailService {
           try {
             const email: EmailMessage = {
               id: message.uid.toString(),
+              messageId: (message.envelope?.messageId ? String(message.envelope.messageId) : undefined),
               subject: message.envelope?.subject || 'No Subject',
               from: message.envelope?.from?.[0]?.address || 'Unknown',
               to: message.envelope?.to?.[0]?.address || 'Unknown',
@@ -582,6 +629,173 @@ export class EmailService {
     } catch (error) {
       console.error(`[EmailService] 💥 Error crítico en fetchEmailsInRange:`, error);
       throw error instanceof Error ? error : new Error(String(error));
+    } finally {
+      if (client) {
+        try {
+          if (typeof (client as any).close === 'function') {
+            (client as any).close();
+          } else if (typeof (client as any).destroy === 'function') {
+            (client as any).destroy();
+          }
+        } catch {}
+      }
+    }
+  }
+
+  /**
+   * Obtiene emails dentro de un rango desde una carpeta específica (e.g., "[Gmail]/Important", "[Gmail]/All Mail").
+   * Útil para casos donde Gmail etiqueta correos fuera de INBOX.
+   */
+  static async fetchEmailsInRangeFromMailbox(
+    emailConfig: EmailConfig,
+    sinceDateISO: string,
+    beforeDateISO: string,
+    mailboxName: string,
+    maxFetch: number = 300
+  ): Promise<EmailMessage[]> {
+    let client: ImapFlow | undefined;
+    try {
+      if (!emailConfig.password && !emailConfig.accessToken) {
+        throw new Error('No se proporcionó contraseña ni token de acceso OAuth2');
+      }
+      if (!emailConfig.user && !emailConfig.email) {
+        throw new Error('No se proporcionó usuario o email');
+      }
+
+      let imapPort = emailConfig.imapPort || 993;
+      if (typeof imapPort === 'string') imapPort = parseInt(imapPort, 10);
+      if (isNaN(imapPort) || imapPort <= 0) throw new Error(`Puerto IMAP inválido: ${imapPort}`);
+
+      const imapConfig: any = {
+        host: emailConfig.imapHost || emailConfig.host || 'imap.gmail.com',
+        port: imapPort,
+        secure: emailConfig.tls !== false,
+        logger: false,
+        tls: { rejectUnauthorized: false }
+      };
+
+      if (emailConfig.useOAuth && emailConfig.accessToken) {
+        imapConfig.auth = { user: emailConfig.user || emailConfig.email, accessToken: emailConfig.accessToken };
+      } else {
+        imapConfig.auth = { user: emailConfig.user || emailConfig.email, pass: emailConfig.password };
+      }
+
+      client = new ImapFlow(imapConfig);
+      const connectionPromise = client.connect();
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout de conexión IMAP (30s)')), 30000));
+      await Promise.race([connectionPromise, timeoutPromise]);
+
+      const lock = await client.getMailboxLock(mailboxName);
+      try {
+        await client.mailboxOpen(mailboxName);
+
+        const emails: EmailMessage[] = [];
+        const searchQuery: any = {};
+        try {
+          const since = new Date(sinceDateISO);
+          const before = new Date(beforeDateISO);
+          if (isNaN(since.getTime()) || isNaN(before.getTime())) throw new Error('Fechas inválidas para rango');
+          searchQuery.since = since;
+          searchQuery.before = before;
+        } catch (e) {
+          throw new Error(`Fechas inválidas para búsqueda en rango: ${sinceDateISO} - ${beforeDateISO}`);
+        }
+
+        const messages: any[] = [];
+        try {
+          const searchResults = await client.search(searchQuery);
+          const sortedUIDs = searchResults.sort((a, b) => b - a);
+          const limitedUIDs = sortedUIDs.slice(0, Math.max(0, maxFetch));
+          if (limitedUIDs.length > 0) {
+            for await (const message of client.fetch(limitedUIDs, {
+              envelope: true,
+              bodyStructure: true,
+              flags: true,
+              bodyParts: ['TEXT']
+            })) {
+              messages.push(message);
+            }
+          }
+          messages.sort((a: any, b: any) => {
+            const aTime = (a.internalDate?.getTime?.() || a.envelope?.date?.getTime?.() || 0) as number;
+            const bTime = (b.internalDate?.getTime?.() || b.envelope?.date?.getTime?.() || 0) as number;
+            return bTime - aTime;
+          });
+        } catch (fetchError) {
+          console.error(`[EmailService] ❌ Error durante fetch de emails en rango (${mailboxName}):`, fetchError);
+          throw new Error(`Error al buscar emails en rango (${mailboxName}): ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`);
+        }
+
+        let excludedBySentFlag = 0;
+        for (const message of messages) {
+          try {
+            // Excluir mensajes con flag \Sent (p. ej., en [Gmail]/All Mail o Important)
+            const rawFlags = (message.flags ? (Array.isArray(message.flags) ? message.flags : Array.from(message.flags)) : []) as string[];
+            const hasSentFlag = rawFlags.some(f => String(f).toLowerCase().includes('\\sent') || String(f).toLowerCase() === 'sent');
+            if (hasSentFlag) {
+              excludedBySentFlag++;
+              continue;
+            }
+
+            const email: EmailMessage = {
+              id: message.uid.toString(),
+              messageId: (message.envelope?.messageId ? String(message.envelope.messageId) : undefined),
+              subject: message.envelope?.subject || 'No Subject',
+              from: message.envelope?.from?.[0]?.address || 'Unknown',
+              to: message.envelope?.to?.[0]?.address || 'Unknown',
+              date: message.envelope?.date?.toISOString() || new Date().toISOString(),
+              receivedAt: (message.internalDate instanceof Date ? message.internalDate : undefined)?.toISOString(),
+              replyTo: message.envelope?.replyTo?.[0]?.address || undefined,
+              body: null,
+              headers: null
+            };
+
+            let bodyContent: string | null = null;
+            if (message.bodyParts) {
+              const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
+              for (const partKey of bodyPartsToTry) {
+                try {
+                  const part = message.bodyParts.get(partKey);
+                  if (part) {
+                    bodyContent = part.toString('utf8');
+                    const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                    if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                      bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                    }
+                    break;
+                  }
+                } catch {}
+              }
+            }
+
+            if (!bodyContent && message.source) {
+              try {
+                const sourceContent = message.source.toString('utf8');
+                const headerEndIndex = sourceContent.indexOf('\n\n');
+                if (headerEndIndex !== -1) {
+                  bodyContent = sourceContent.substring(headerEndIndex + 2).trim();
+                  const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                  if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                    bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                  }
+                }
+              } catch {}
+            }
+
+            email.body = bodyContent || null;
+            email.headers = null;
+            emails.push(email);
+          } catch (messageError) {
+            console.error(`[EmailService] ❌ Error procesando mensaje (range:${mailboxName}):`, messageError);
+          }
+        }
+
+        console.log(`[EmailService] (${mailboxName}) Returned ${emails.length} emails after excluding Sent-flagged messages (excluded=${excludedBySentFlag})`);
+
+        return emails;
+      } finally {
+        try { lock.release(); } catch {}
+      }
     } finally {
       if (client) {
         try {

@@ -772,10 +772,16 @@ export class BackgroundBuilder {
       if (siteInfo.settings.social_media) {
         console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
         
-        // Parsear social_media si es string
-        const socialMediaData = typeof siteInfo.settings.social_media === 'string'
-          ? JSON.parse(siteInfo.settings.social_media)
-          : siteInfo.settings.social_media;
+        // Parsear social_media si es string (con try/catch preventivo)
+        let socialMediaData: any = null;
+        try {
+          socialMediaData = typeof siteInfo.settings.social_media === 'string'
+            ? JSON.parse(siteInfo.settings.social_media)
+            : siteInfo.settings.social_media;
+        } catch (error) {
+          console.error(`❌ [BackgroundBuilder] Error parsing social_media:`, error);
+          socialMediaData = null; // Evita romper la generación del background
+        }
         
         // Verificar si es un array (estructura nueva) o un objeto (estructura antigua)
         let filteredSocialMedia: Record<string, string> = {};

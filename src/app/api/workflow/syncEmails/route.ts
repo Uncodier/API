@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
 
     // Configuración de retry para asegurar emails suficientes
     const MIN_EMAILS_FOR_ANALYSIS = 3; // Mínimo de emails válidos para análisis
-    const MAX_RETRY_ATTEMPTS = 3;
+    const MAX_RETRY_ATTEMPTS = 1;
     const HOUR_PROGRESSIONS = [24, 48, 168]; // 24h, 48h (2 días), 168h (1 semana)
     
     let result: any = null;
