@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { z } from 'zod';
+import { fetchEligibleMemberIds, isProfileEligibleForLeadAssignment } from '@/lib/services/lead-assignment/eligibility';
+import { formatLeadOrigin } from '@/lib/emails/lead-assignment';
 
 // Schema de validación para la request
 const AssignLeadsSchema = z.object({
@@ -187,31 +189,14 @@ async function getTeamMemberAttributionsBySegment(siteId: string): Promise<Map<s
 // Función para obtener team members disponibles como fallback
 async function getAvailableTeamMembers(siteId: string): Promise<string[]> {
   try {
-    console.log(`👥 Buscando team members disponibles para sitio: ${siteId}`);
-    
-    // Buscar usuarios que tengan acceso al sitio
-    const { data: siteMembers, error } = await supabaseAdmin
-      .from('site_members')
-      .select('user_id, role')
-      .eq('site_id', siteId)
-      .eq('status', 'active')
-      .in('role', ['admin', 'member', 'sales_agent']); // Roles que pueden ser asignados a leads
-    
-    if (error) {
-      console.error('Error al obtener team members:', error);
+    console.log(`👥 Buscando team members elegibles (excluyendo externos) para sitio: ${siteId}`);
+    const eligibleIds = await fetchEligibleMemberIds(siteId);
+    if (!eligibleIds || eligibleIds.length === 0) {
+      console.log('⚠️ No se encontraron team members elegibles para asignación');
       return [];
     }
-    
-    if (!siteMembers || siteMembers.length === 0) {
-      console.log('⚠️ No se encontraron team members disponibles');
-      return [];
-    }
-    
-    const teamMemberIds = siteMembers.map(member => member.user_id);
-    console.log(`✅ Encontrados ${teamMemberIds.length} team members disponibles`);
-    
-    return teamMemberIds;
-    
+    console.log(`✅ Encontrados ${eligibleIds.length} team members elegibles`);
+    return eligibleIds;
   } catch (error) {
     console.error('Error al obtener team members disponibles:', error);
     return [];
@@ -223,7 +208,7 @@ function generateLeadBrief(lead: any, segment: any, assignee: any, attributionDa
   const companyName = lead.company?.name || 'Company not specified';
   const leadName = lead.name || 'Lead name not available';
   const segmentName = segment?.name || 'Segment not specified';
-  const origin = lead.origin || 'unknown';
+  const origin = formatLeadOrigin(lead.origin) || 'Unknown';
   
   let brief = `**Lead Assignment: ${leadName}**\n\n`;
   brief += `**Company:** ${companyName}\n`;
@@ -294,7 +279,8 @@ async function getTeamMemberInfo(userId: string): Promise<any> {
       id: data.user.id,
       email: data.user.email,
       name: metadata.name || metadata.full_name || 'Team Member',
-      role: metadata.role || 'team_member'
+      role: metadata.role || 'team_member',
+      metadata
     };
   } catch (error) {
     console.error('Error al obtener información del team member:', error);
@@ -535,7 +521,7 @@ function generateEnhancedLeadBrief(lead: any, segment: any, assignee: any, leadS
   const companyName = lead.company?.name || 'Company not specified';
   const leadName = lead.name || 'Lead name not available';
   const segmentName = segment?.name || 'Segment not specified';
-  const origin = lead.origin || 'unknown';
+  const origin = formatLeadOrigin(lead.origin) || 'Unknown';
   
   let brief = `**🚀 HIGH-PRIORITY LEAD ASSIGNMENT: ${leadName}**\n\n`;
   
@@ -661,7 +647,7 @@ export async function POST(request: NextRequest) {
     // 2. Obtener team members con más atribuciones por segmento
     const teamMemberAttributions = await getTeamMemberAttributionsBySegment(site_id);
     
-    // 3. Obtener team members disponibles como fallback
+    // 3. Obtener team members disponibles como fallback (elegibles)
     const availableTeamMembers = await getAvailableTeamMembers(site_id);
     
     if (availableTeamMembers.length === 0) {
@@ -699,7 +685,7 @@ export async function POST(request: NextRequest) {
         // Encontrar el mejor assignee para este segmento
         let assigneeId = teamMemberAttributions.get(segmentId);
         
-        // Si no hay atribuciones específicas, usar el primer team member disponible
+        // Si no hay atribuciones específicas, usar el primer team member elegible disponible
         if (!assigneeId && availableTeamMembers.length > 0) {
           assigneeId = availableTeamMembers[0];
         }
@@ -710,11 +696,27 @@ export async function POST(request: NextRequest) {
         }
         
         // Obtener información del team member
-        const teamMemberInfo = await getTeamMemberInfo(assigneeId);
+        let teamMemberInfo = await getTeamMemberInfo(assigneeId);
         
         if (!teamMemberInfo) {
           console.warn(`⚠️ No se pudo obtener información del team member ${assigneeId}`);
           continue;
+        }
+        
+        // Validar elegibilidad por políticas (excluir externos / roles no ventas)
+        if (!isProfileEligibleForLeadAssignment(teamMemberInfo)) {
+          console.warn(`⚠️ Assignee no elegible por políticas (externo/no ventas): ${assigneeId}. Usando fallback elegible si existe...`);
+          const fallbackId = availableTeamMembers.find(id => id !== assigneeId);
+          if (!fallbackId) {
+            console.warn(`⚠️ No hay fallback elegible para lead ${lead.id}`);
+            continue;
+          }
+          assigneeId = fallbackId;
+          teamMemberInfo = await getTeamMemberInfo(assigneeId);
+          if (!teamMemberInfo || !isProfileEligibleForLeadAssignment(teamMemberInfo)) {
+            console.warn(`⚠️ Fallback ${assigneeId} tampoco es elegible, saltando lead ${lead.id}`);
+            continue;
+          }
         }
         
         // Generar brief e intro message mejorados
@@ -741,7 +743,7 @@ export async function POST(request: NextRequest) {
             email: lead.email,
             company: lead.company,
             phone: lead.phone,
-            origin: lead.origin,
+            origin: formatLeadOrigin(lead.origin),
             created_at: lead.created_at
           },
           quality_score: leadScore

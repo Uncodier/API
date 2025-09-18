@@ -915,6 +915,15 @@ export async function POST(request: Request) {
     contextMessage += `- Prioritize assigning team members who have proven success in specific segments based on attribution data\n`;
     contextMessage += `- Consider the team member's track record with similar companies/segments when making assignments\n`;
     contextMessage += `- Leave lower-value or routine leads unassigned for general team handling\n\n`;
+    contextMessage += `STRICT ROLE RESTRICTIONS (Multilingual):\n`;
+    contextMessage += `- EN: Do NOT assign leads to external consultants, contractors, freelancers, vendors, or external collaborators unless their role is Sales, SDR, or BDR.\n`;
+    contextMessage += `- ES: NO asignes leads a consultores externos, contratistas, freelancers, proveedores o colaboradores externos salvo que su rol sea Vendedor, SDR o BDR.\n`;
+    contextMessage += `- PT: NÃO atribua leads a consultores externos, contratados, freelancers, fornecedores ou colaboradores externos, a menos que o cargo seja Vendas, SDR ou BDR.\n`;
+    contextMessage += `- FR: N'ASSIGNEZ PAS de leads à des consultants externes, sous-traitants, freelances, fournisseurs ou collaborateurs externes sauf si leur rôle est Ventes, SDR ou BDR.\n`;
+    contextMessage += `- IT: NON assegnare lead a consulenti esterni, contractor, freelancer, fornitori o collaboratori esterni, salvo che il ruolo sia Vendite, SDR o BDR.\n`;
+    contextMessage += `- DE: Weisen Sie KEINE Leads an externe Berater, Auftragnehmer, Freelancer, Anbieter oder externe Mitarbeiter zu, außer ihre Rolle ist Vertrieb, SDR oder BDR.\n`;
+    contextMessage += `- Synonyms: external consultant, contractor, freelancer, vendor, collaborator, outsource, third-party.\n`;
+    contextMessage += `- Allowed roles: sales_agent, seller, SDR, BDR only.\n\n`;
     contextMessage += `Consider these factors in your analysis:\n`;
     contextMessage += `- Historical conversion patterns from segment data provided\n`;
     contextMessage += `- Team member attribution success rates by segment\n`;
