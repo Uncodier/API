@@ -59,7 +59,7 @@ export class AgentConnector extends Base {
       
       // Parse model field if it contains modelType:modelId format
       let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openai';
-      let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-5-nano';
+      let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-4o';
       
       if (command.model && command.model.includes(':')) {
         const [modelType, modelId] = command.model.split(':');
@@ -76,30 +76,30 @@ export class AgentConnector extends Base {
         parsedModelId = command.model;
       }
       
-      // Decide sane default for max tokens when not specified
-      const inferredDefaultMaxTokens = (() => {
-        const isOpenAI = parsedModelType === 'openai';
-        const isGpt5Family = parsedModelId === 'gpt-5' || parsedModelId === 'gpt-5-mini' || parsedModelId === 'gpt-5-nano' || parsedModelId === 'gpt-5.1';
-        if (isOpenAI && isGpt5Family) return 32768;
-        // Default baseline if unspecified
-        return 16384;
-      })();
-
       // Configure model options for portkey
-      const modelOptions: PortkeyModelOptions = {
+      const modelOptions: any = {
         modelType: parsedModelType,
         modelId: parsedModelId,
-        maxTokens: command.max_tokens || this.defaultOptions.maxTokens || inferredDefaultMaxTokens,
-        temperature: command.temperature || this.defaultOptions.temperature || 0.7,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
       };
+      
+      // Only set temperature if explicitly provided in command
+      if (command.temperature !== undefined) {
+        modelOptions.temperature = command.temperature;
+      } else if (this.defaultOptions.temperature !== undefined) {
+        modelOptions.temperature = this.defaultOptions.temperature;
+      }
+      // Only include explicit maxTokens if provided by the command
+      if (Object.prototype.hasOwnProperty.call(command, 'max_tokens') && command.max_tokens != null) {
+        modelOptions.maxTokens = command.max_tokens;
+      }
       
       console.log(`📝 [AgentConnector:${this.id}] Opciones finales para Portkey:
         modelType: ${modelOptions.modelType}
         modelId: ${modelOptions.modelId}
         maxTokens: ${modelOptions.maxTokens}
-        temperature: ${modelOptions.temperature}
+        temperature: ${modelOptions.temperature !== undefined ? modelOptions.temperature : 'not set'}
         responseFormat: ${modelOptions.responseFormat}
         stream: ${modelOptions.stream ? 'true' : 'false'}
       `);

@@ -18,7 +18,7 @@ export class ModelOptionsBuilder {
     // Configurar opciones del modelo
     const modelOptions: PortkeyModelOptions = {
       modelType: this.getValidModelType(commandModelType, defaultOptions?.modelType),
-      modelId: commandModelId || defaultOptions?.modelId || 'gpt-5-nano',
+      modelId: commandModelId || defaultOptions?.modelId || 'gpt-4o',
       temperature: commandTemperature || defaultOptions?.temperature || 0.2,
       responseFormat: commandResponseFormat || defaultOptions?.responseFormat || 'json'
     };

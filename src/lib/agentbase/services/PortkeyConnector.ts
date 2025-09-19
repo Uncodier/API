@@ -14,7 +14,6 @@ export class PortkeyConnector {
     this.portkeyConfig = config;
     this.defaultOptions = defaultOptions || {
       modelType: 'openai',
-      maxTokens: 4096,
       temperature: 0.7,
       responseFormat: 'text',
       stream: false, // Default to non-streaming for stability
@@ -36,9 +35,15 @@ export class PortkeyConnector {
     options?: Partial<PortkeyModelOptions>
   ): Promise<any> {
     try {
-      // Merge default options with provided options
+      // Merge default options with provided options (options override defaults)
       const mergedOptions = { ...this.defaultOptions, ...options };
       const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions } = mergedOptions;
+      
+      console.log(`[PortkeyConnector] Debug - defaultOptions.modelId: ${this.defaultOptions.modelId}`);
+      console.log(`[PortkeyConnector] Debug - options.modelId: ${options?.modelId}`);
+      console.log(`[PortkeyConnector] Debug - merged modelId: ${modelId}`);
+      // Only include token limits when explicitly provided by the caller
+      const hasExplicitMaxTokens = options !== undefined && Object.prototype.hasOwnProperty.call(options, 'maxTokens') && options.maxTokens !== undefined;
       
       // Get virtual key for the selected provider
       const provider = modelType || this.defaultOptions.modelType || 'openai';
@@ -61,42 +66,45 @@ export class PortkeyConnector {
       
       // Determine model options based on provider
       const modelOptions: any = {
-        model: '',
-        max_tokens: maxTokens || 16384
+        model: ''
       };
       
       // Set model ID based on provider
       if (modelType === 'openai') {
         modelOptions.model = modelId;
+        console.log(`[PortkeyConnector] Setting OpenAI model to: ${modelId}`);
         
         // Handle gpt-5 models specific parameters - check the final model name
         const finalModelId = modelOptions.model;
-        if (finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5' || finalModelId === 'gpt-5.1' || finalModelId === 'gpt-5-nano') {
-          // Set appropriate max tokens based on model
-          let maxCompletionTokens: number;
-          if (finalModelId === 'gpt-5') {
-            // gpt-5 default to 32k unless overridden
-            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 32768), 32768);
-          } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
-            // gpt-5-nano and gpt-5-mini have a 32k limit (default to full 32k if unspecified)
-            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 32768), 32768);
+        const isGpt5Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5' || finalModelId === 'gpt-5.1' || finalModelId === 'gpt-5-nano';
+        if (hasExplicitMaxTokens) {
+          if (isGpt5Family) {
+            // Apply upper cap per model family but only when explicitly provided
+            let maxCompletionTokens: number = maxTokens as number;
+            if (finalModelId === 'gpt-5') {
+              maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
+            } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
+              maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
+            } else {
+              maxCompletionTokens = Math.min(maxCompletionTokens, 16384);
+            }
+            modelOptions.max_completion_tokens = maxCompletionTokens;
           } else {
-            // gpt-5.1 and other gpt-5 models have a 16k limit as base
-            maxCompletionTokens = Math.min((typeof maxTokens === 'number' ? maxTokens : 16384), 16384);
+            modelOptions.max_tokens = maxTokens;
           }
-
-          modelOptions.max_completion_tokens = maxCompletionTokens;
-          delete modelOptions.max_tokens;
-          console.log(`[PortkeyConnector] Using max_completion_tokens for ${finalModelId}: ${modelOptions.max_completion_tokens}`);
         }
       } else if (modelType === 'anthropic') {
         modelOptions.model = modelId;
+        if (hasExplicitMaxTokens) {
+          modelOptions.max_tokens = maxTokens;
+        }
       } else if (modelType === 'gemini') {
         modelOptions.model = modelId;
         
         // Gemini uses different parameter names
-        modelOptions.maxOutputTokens = modelOptions.max_tokens;
-        delete modelOptions.max_tokens;
+        if (hasExplicitMaxTokens) {
+          modelOptions.maxOutputTokens = maxTokens;
+        }
       }
       
       // Add response format if specified
@@ -412,11 +420,16 @@ export class PortkeyConnector {
           
           try {
             // Retry with GPT-4o which has more stable streaming
-            const fallbackModelOptions = {
+            const fallbackModelOptions: any = {
               ...modelOptions,
-              model: 'gpt-4o',
-              max_tokens: modelOptions.max_completion_tokens || modelOptions.max_tokens || 4096
+              model: 'gpt-4o'
             };
+            // Only set max_tokens if an explicit limit existed
+            if (modelOptions.max_completion_tokens != null) {
+              fallbackModelOptions.max_tokens = modelOptions.max_completion_tokens;
+            } else if (modelOptions.max_tokens != null) {
+              fallbackModelOptions.max_tokens = modelOptions.max_tokens;
+            }
             delete fallbackModelOptions.max_completion_tokens; // GPT-4o uses max_tokens
             
             const fallbackResponse = await portkey.chat.completions.create({

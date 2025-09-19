@@ -129,14 +129,50 @@ export class ToolEvaluator extends Base {
         // Usar la función prepareMessagesFromCommand para preparar los mensajes
         const messages = prepareMessagesFromCommand(command, customSystemPrompt);
         
-        // Configurar opciones del modelo
-        const modelOptions = {
-          modelType: command.model_type || this.defaultOptions.modelType || 'openai',
-          modelId: command.model_id || this.defaultOptions.modelId || 'gpt-5-nano',
-          maxTokens: command.max_tokens || this.defaultOptions.maxTokens || 32768,
-          temperature: command.temperature || this.defaultOptions.temperature || 0.7,
+        // Parse model field if it contains modelType:modelId format
+        let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openai';
+        let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-4o';
+        
+        if (command.model && command.model.includes(':')) {
+          const [modelType, modelId] = command.model.split(':');
+          // Validate modelType
+          if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
+            parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
+            parsedModelId = modelId;
+            console.log(`[ToolEvaluator] Parsed model field: ${modelType}:${modelId}`);
+          } else {
+            console.warn(`[ToolEvaluator] Invalid modelType: ${modelType}, using default`);
+            parsedModelId = command.model; // Use the whole string as modelId
+          }
+        } else if (command.model) {
+          parsedModelId = command.model;
+        }
+        
+        // Configure model options, no implicit max tokens
+        const modelOptions: any = {
+          modelType: parsedModelType,
+          modelId: parsedModelId,
           responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'
         };
+        
+        // Only set temperature if explicitly provided in command
+        if (command.temperature !== undefined) {
+          modelOptions.temperature = command.temperature;
+        } else if (this.defaultOptions.temperature !== undefined) {
+          modelOptions.temperature = this.defaultOptions.temperature;
+        }
+        
+        console.log(`[ToolEvaluator] Debug - command.model: ${command.model}`);
+        console.log(`[ToolEvaluator] Debug - command.model_id: ${command.model_id}`);
+        console.log(`[ToolEvaluator] Debug - this.defaultOptions.modelId: ${this.defaultOptions.modelId}`);
+        console.log(`[ToolEvaluator] Debug - parsedModelId: ${parsedModelId}`);
+        console.log(`[ToolEvaluator] Debug - final modelOptions.modelId: ${modelOptions.modelId}`);
+        console.log(`[ToolEvaluator] Debug - command.temperature: ${command.temperature}`);
+        console.log(`[ToolEvaluator] Debug - this.defaultOptions.temperature: ${this.defaultOptions.temperature}`);
+        console.log(`[ToolEvaluator] Debug - final modelOptions.temperature: ${modelOptions.temperature !== undefined ? modelOptions.temperature : 'not set'}`);
+        if (Object.prototype.hasOwnProperty.call(command, 'max_tokens') && command.max_tokens != null) {
+          modelOptions.maxTokens = command.max_tokens;
+        }
         
         // Llamar a la API a través del conector
         let portkeyResponse;

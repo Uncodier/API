@@ -46,7 +46,7 @@ export class ProcessorFactory {
     
     return new PortkeyConnector(portkeyConfig, {
       modelType: 'openai',
-      modelId: 'gpt-5-nano',
+      modelId: 'gpt-4o',
       temperature: 0.7
     });
   }
@@ -63,7 +63,7 @@ export class ProcessorFactory {
       {
         defaultOptions: {
           modelType: 'openai',
-          modelId: 'gpt-5-nano',
+          modelId: 'gpt-4o',
           temperature: 0.7
         },
         description: "Agente de soporte al cliente especializado en resolver problemas relacionados con pedidos, productos y servicios.",
@@ -96,8 +96,8 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['tool_evaluation'],
       {
         modelType: 'openai',
-        modelId: 'gpt-5-nano',
-        temperature: .7
+        modelId: 'gpt-4o'
+        // No temperature - let command or PortkeyConnector defaults handle it
       },
       "Evaluador de herramientas que analiza y selecciona las mejores herramientas para una tarea."
     );
@@ -114,7 +114,7 @@ Remember that you represent the company and should maintain a helpful, positive 
       ['target_processing'],
       {
         modelType: 'openai',
-        modelId: 'gpt-5-nano',
+        modelId: 'gpt-4o',
         temperature: 0.7
       },
       "Procesador de targets que genera respuestas específicas para diferentes tipos de contenido.",
