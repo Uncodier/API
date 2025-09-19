@@ -123,14 +123,62 @@ export class WhatsAppTemplateService {
         bodyLength: templateContent.length
       });
       
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${credentials}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(templateBody)
-      });
+      // Implementar reintentos para manear problemas de conectividad
+      let response;
+      let lastError;
+      const maxRetries = 3;
+      const retryDelay = 1000; // 1 segundo
+      
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          console.log(`🔄 [WhatsAppTemplateService] Intento ${attempt}/${maxRetries} de llamada a Content API`);
+          
+          response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: {
+              'Authorization': `Basic ${credentials}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(templateBody),
+            // Agregar timeout para evitar llamadas colgadas
+            signal: AbortSignal.timeout(30000) // 30 segundos timeout
+          });
+          
+          // Si la respuesta es exitosa, salir del loop
+          break;
+          
+        } catch (error) {
+          lastError = error;
+          console.warn(`⚠️ [WhatsAppTemplateService] Intento ${attempt} falló:`, {
+            error: error instanceof Error ? error.message : String(error),
+            code: error && typeof error === 'object' && 'code' in error ? (error as any).code : 'unknown',
+            cause: error && typeof error === 'object' && 'cause' in error ? (error as any).cause : undefined
+          });
+          
+          // Si es el último intento, no esperar
+          if (attempt < maxRetries) {
+            console.log(`⏳ [WhatsAppTemplateService] Esperando ${retryDelay}ms antes del siguiente intento...`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+          }
+        }
+      }
+      
+      // Si después de todos los intentos no hay respuesta, lanzar el último error
+      if (!response) {
+        console.error('❌ [WhatsAppTemplateService] Error en creación de Content Template:', lastError);
+        
+        // Proporcionar error más descriptivo basado en el tipo de error
+        let errorMessage = 'Failed to connect to Twilio Content API';
+        if (lastError && typeof lastError === 'object' && 'code' in lastError && (lastError as any).code === 'ENOTFOUND') {
+          errorMessage = 'DNS resolution failed for content.twilio.com. Please check network connectivity.';
+        } else if (lastError && typeof lastError === 'object' && 'name' in lastError && (lastError as any).name === 'TimeoutError') {
+          errorMessage = 'Request timeout. Twilio Content API is not responding.';
+        } else if (lastError && typeof lastError === 'object' && 'code' in lastError && (lastError as any).code === 'ECONNREFUSED') {
+          errorMessage = 'Connection refused by Twilio Content API.';
+        }
+        
+        throw new Error(errorMessage);
+      }
       
       if (!response.ok) {
         const errorData = await response.json();
@@ -181,9 +229,29 @@ export class WhatsAppTemplateService {
       
     } catch (error) {
       console.error(`❌ [WhatsAppTemplateService] Error en creación de Content Template:`, error);
+      
+      // Proporcionar información más específica del error
+      let errorMessage = 'Unknown error creating Content Template';
+      let errorDetails = '';
+      
+      if (error instanceof Error) {
+        errorMessage = error.message;
+        
+        // Agregar detalles específicos según el tipo de error
+        if (error.message.includes('DNS resolution failed')) {
+          errorDetails = ' This is typically caused by network connectivity issues or DNS problems. Please check your internet connection and try again.';
+        } else if (error.message.includes('Request timeout')) {
+          errorDetails = ' The Twilio API is taking too long to respond. This might be a temporary issue with Twilio services.';
+        } else if (error.message.includes('Connection refused')) {
+          errorDetails = ' The connection to Twilio was refused. This might indicate firewall issues or Twilio service problems.';
+        } else if (error.message.includes('fetch failed')) {
+          errorDetails = ' General network failure. Please verify your internet connection and Twilio service status.';
+        }
+      }
+      
       return {
         success: false,
-        error: error instanceof Error ? error.message : 'Unknown error creating Content Template'
+        error: errorMessage + errorDetails
       };
     }
   }
