@@ -82,6 +82,7 @@ async function saveAssistantMessageForTemplate(
  * - agent_id: (Opcional) ID del agente que envía el mensaje
  * - conversation_id: (Opcional) ID de la conversación (requerido para detectar ventana de respuesta)
  * - lead_id: (Opcional) ID del lead asociado
+ * - responseWindowEnabled: (Optional) boolean - If true, assume active window and skip template creation
  * 
  * Respuesta incluye:
  * - template_used: boolean - Si se usó un template de Twilio
@@ -104,7 +105,8 @@ export async function POST(request: NextRequest) {
       agent_id,
       conversation_id,
       lead_id,
-      site_id
+      site_id,
+      responseWindowEnabled
     } = body;
     
     console.log('🔍 [SendWhatsApp] Parámetros recibidos:', {
@@ -114,7 +116,8 @@ export async function POST(request: NextRequest) {
       agent_id,
       conversation_id,
       lead_id,
-      site_id
+      site_id,
+      responseWindowEnabled
     });
     
     // Validar parámetros requeridos
@@ -277,7 +280,8 @@ export async function POST(request: NextRequest) {
       agent_id,
       conversation_id,
       lead_id,
-      site_id
+      site_id,
+      responseWindowEnabled
     });
 
     console.log('📨 [SendWhatsApp] Resultado del envío:', {

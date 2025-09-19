@@ -12,6 +12,7 @@ export interface SendWhatsAppParams {
   conversation_id?: string;
   lead_id?: string;
   site_id: string;
+  responseWindowEnabled?: boolean; // If true, assume response window active and skip template
 }
 
 export interface SendWhatsAppResult {
@@ -55,7 +56,7 @@ export class WhatsAppSendService {
    * Envía un mensaje de WhatsApp usando la API de WhatsApp Business
    */
   static async sendMessage(params: SendWhatsAppParams): Promise<SendWhatsAppResult> {
-    const { phone_number, message, from, agent_id, conversation_id, lead_id, site_id } = params;
+    const { phone_number, message, from, agent_id, conversation_id, lead_id, site_id, responseWindowEnabled } = params;
     
     // Si el número es temporal, no enviar mensaje real
     if (phone_number === 'no-phone-example' || phone_number === '+00000000000') {
@@ -117,11 +118,14 @@ export class WhatsAppSendService {
       // ** NUEVA FUNCIONALIDAD: Verificar ventana de respuesta y usar templates si es necesario **
       console.log('🕐 [WhatsAppSendService] Verificando ventana de respuesta...');
       
-      const windowCheck = await WhatsAppTemplateService.checkResponseWindow(
-        conversation_id || null,
-        normalizedPhone,
-        site_id
-      );
+      // If responseWindowEnabled comes true, force withinWindow=true to skip template creation
+      const windowCheck = responseWindowEnabled === true
+        ? { withinWindow: true, hoursElapsed: 0 }
+        : await WhatsAppTemplateService.checkResponseWindow(
+            conversation_id || null,
+            normalizedPhone,
+            site_id
+          );
       
       console.log(`⏰ [WhatsAppSendService] Resultado de ventana:`, {
         withinWindow: windowCheck.withinWindow,
