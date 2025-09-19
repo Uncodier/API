@@ -171,33 +171,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Añadir un mensaje de sistema en la conversación indicando la delegación
-    const systemMessageData = {
-      conversation_id,
-      content: `La conversación ha sido delegada al agente con rol "${agent_role}" (${selectedAgent.name}).`,
-      role: 'system',
-      agent_id: selectedAgent.id,
-      user_id: conversationData.user_id,
-      lead_id: conversationData.lead_id,
-      visitor_id: conversationData.visitor_id,
-      custom_data: {
-        delegation: {
-          agent_role,
-          agent_id: selectedAgent.id,
-          agent_name: selectedAgent.name
-        }
-      }
-    };
-    
-    const { error: messageError } = await supabaseAdmin
-      .from('messages')
-      .insert([systemMessageData]);
-    
-    if (messageError) {
-      console.error('Error al guardar el mensaje de sistema:', messageError);
-      // No fallamos toda la operación si solo falla el mensaje
-      console.log('Continuando con la respuesta de la API...');
-    }
+    // Nota: Se deshabilita temporalmente la creación de un mensaje de sistema para evitar duplicados
     
     // Respuesta exitosa con los datos de la delegación
     return NextResponse.json(

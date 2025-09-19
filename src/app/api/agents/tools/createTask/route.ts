@@ -656,20 +656,9 @@ export async function POST(request: NextRequest) {
       // Preparar datos para notificaciones
       const siteId = newTask.site_id;
       const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-      const teamTaskUrl = `${appUrl}/sites/${siteId}/tasks/${newTask.id}`;
-      
-      // Para el usuario: URL del sitio donde está el chat
-      let userSiteUrl = appUrl; // fallback a app URL
-      try {
-        const { data: siteData } = await supabaseAdmin
-          .from('sites')
-          .select('url')
-          .eq('id', siteId)
-          .single();
-        userSiteUrl = siteData?.url || appUrl;
-      } catch (error) {
-        console.warn('[CreateTask] Error obteniendo URL del sitio:', error);
-      }
+      // CTA correcto: app_url/control-center/{task_id}
+      const controlCenterUrl = `${appUrl}/control-center/${newTask.id}`;
+      const teamTaskUrl = controlCenterUrl;
       
       // Obtener información adicional del lead y assignee si existen
       let leadNotificationInfo = null;
@@ -774,7 +763,7 @@ export async function POST(request: NextRequest) {
           assigneeName: assigneeInfo?.name || undefined,
           assigneeEmail: assigneeInfo?.email || undefined,
           scheduledDate: newTask.scheduled_date || undefined,
-          taskUrl: userSiteUrl
+          taskUrl: controlCenterUrl
         });
         
         taskNotificationResult = await sendGridService.sendEmail({
