@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       priority: 'high', // Customer support tiene alta prioridad
       async: false, // Esperamos el resultado
       retryAttempts: 3,
-      taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'high',
+      taskQueue: 'high',
       workflowId: `customer-support-message-${site_id || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     };
 
