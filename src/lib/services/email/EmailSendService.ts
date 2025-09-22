@@ -212,20 +212,86 @@ export class EmailSendService {
    * Construye el contenido HTML del email
    */
   private static buildHtmlContent(message: string, siteInfo: SiteInfo, signatureHtml?: string): string {
+    const contentHtml = this.renderMessageWithLists(message);
     return `
       <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; color: #333;">
         <div style="line-height: 1.6; font-size: 16px;">
-          ${message.split('\n').map((line: string) => 
-            line.trim() ? `<p style="margin: 0 0 16px 0;">${line}</p>` : '<br>'
-          ).join('')}
+          ${contentHtml}
         </div>
         ${signatureHtml ? `<div style="margin-top: 20px; font-size: 14px; color: #666;">${signatureHtml}</div>` : ''}
       </div>
     `;
   }
 
+  /**
+   * Escapa caracteres HTML especiales para prevenir inyección y preservar texto
+   */
+  private static escapeHtml(input: string): string {
+    return input
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
+  /**
+   * Convierte texto plano a HTML con soporte para listas con -, *, • y 1. 2.
+   */
+  private static renderMessageWithLists(message: string): string {
+    const lines = message.split('\n');
+    const htmlParts: string[] = [];
 
+    const isBullet = (line: string) => /^\s*(?:[-*•]\s+)/.test(line);
+    const isNumbered = (line: string) => /^\s*\d+[\.)]\s+/.test(line);
+
+    let i = 0;
+    while (i < lines.length) {
+      const raw = lines[i] ?? '';
+      const line = raw.trimEnd();
+
+      // Bloque de lista con viñetas
+      if (isBullet(line)) {
+        const items: string[] = [];
+        while (i < lines.length && isBullet((lines[i] ?? '').trimEnd())) {
+          const itemText = (lines[i] ?? '')
+            .replace(/^\s*[-*•]\s+/, '')
+            .trim();
+          items.push(`<li style="margin: 4px 0;">${this.escapeHtml(itemText)}</li>`);
+          i++;
+        }
+        htmlParts.push(`<ul style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: disc;">${items.join('')}</ul>`);
+        continue;
+      }
+
+      // Bloque de lista numerada
+      if (isNumbered(line)) {
+        const items: string[] = [];
+        while (i < lines.length && isNumbered((lines[i] ?? '').trimEnd())) {
+          const itemText = (lines[i] ?? '')
+            .replace(/^\s*\d+[\.)]\s+/, '')
+            .trim();
+          items.push(`<li style="margin: 4px 0;">${this.escapeHtml(itemText)}</li>`);
+          i++;
+        }
+        htmlParts.push(`<ol style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: decimal;">${items.join('')}</ol>`);
+        continue;
+      }
+
+      // Línea vacía -> salto visual
+      if (line.trim().length === 0) {
+        htmlParts.push('<br>');
+        i++;
+        continue;
+      }
+
+      // Párrafo normal
+      htmlParts.push(`<p style="margin: 0 0 16px 0;">${this.escapeHtml(line.trim())}</p>`);
+      i++;
+    }
+
+    return htmlParts.join('');
+  }
   /**
    * Valida el formato de email
    */

@@ -298,7 +298,7 @@ export async function POST(request: Request) {
       targets: [
         {
           subject: "Plain text key task or focus for the day (no markdown or special characters)",
-          message: "Most important, news, leads, opportunities, warning, tasks or focus for the day (no markdown or special characters) keep it short and concise",
+          message: "Write a concise, scannable daily update with simple rich formatting compatible with plain text emails: start with a one-line summary; include a line 'Status: GREEN|YELLOW|RED - short reason'; then add short sections using bullets with '-' (one per line): 'Highlights', 'Leads & Opportunities', 'Risks / Blockers', 'Focus / Next Actions'. Use optional numbered steps with '1.' where needed; keep lines under 120 characters; use a few emojis for scannability (✅ ⚠️ 📈 🚀); do not use inline bold/italics markers, links, code blocks, or HTML.",
           health: {
             status: "GREEN|YELLOW|RED",
             reason: "Short plain text reason (no emojis, no markdown)",

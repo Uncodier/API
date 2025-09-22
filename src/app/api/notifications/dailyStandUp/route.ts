@@ -7,6 +7,67 @@ import { z } from 'zod';
 // Configurar timeout máximo a 2 minutos
 export const maxDuration = 120;
 
+// Utilidades para sanear/maquetar contenido
+function escapeHtml(input: string): string {
+  return input
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderMessageWithLists(message: string): string {
+  const lines = message.split('\n');
+  const htmlParts: string[] = [];
+
+  const isBullet = (line: string) => /^\s*(?:[-*•]\s+)/.test(line);
+  const isNumbered = (line: string) => /^\s*\d+[\.)]\s+/.test(line);
+
+  let i = 0;
+  while (i < lines.length) {
+    const raw = lines[i] ?? '';
+    const line = raw.trimEnd();
+
+    if (isBullet(line)) {
+      const items: string[] = [];
+      while (i < lines.length && isBullet((lines[i] ?? '').trimEnd())) {
+        const itemText = (lines[i] ?? '')
+          .replace(/^\s*[-*•]\s+/, '')
+          .trim();
+        items.push(`<li style="margin: 4px 0;">${escapeHtml(itemText)}</li>`);
+        i++;
+      }
+      htmlParts.push(`<ul style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: disc;">${items.join('')}</ul>`);
+      continue;
+    }
+
+    if (isNumbered(line)) {
+      const items: string[] = [];
+      while (i < lines.length && isNumbered((lines[i] ?? '').trimEnd())) {
+        const itemText = (lines[i] ?? '')
+          .replace(/^\s*\d+[\.)]\s+/, '')
+          .trim();
+        items.push(`<li style="margin: 4px 0;">${escapeHtml(itemText)}</li>`);
+        i++;
+      }
+      htmlParts.push(`<ol style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: decimal;">${items.join('')}</ol>`);
+      continue;
+    }
+
+    if (line.trim().length === 0) {
+      htmlParts.push('<br>');
+      i++;
+      continue;
+    }
+
+    htmlParts.push(`<p style="margin: 0 0 16px 0;">${escapeHtml(line.trim())}</p>`);
+    i++;
+  }
+
+  return htmlParts.join('');
+}
+
 // Schema de validación para la request
 const DailyStandUpSchema = z.object({
   site_id: z.string().uuid('site_id debe ser un UUID válido'),
@@ -194,13 +255,15 @@ function generateDailyStandUpHtml(data: {
     day: 'numeric' 
   });
   
+  const safeSubject = escapeHtml(data.subject);
+  const safeMessageHtml = renderMessageWithLists(data.message);
   return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${data.subject} - ${data.siteName}</title>
+      <title>${safeSubject} - ${escapeHtml(data.siteName)}</title>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
       
@@ -239,15 +302,13 @@ function generateDailyStandUpHtml(data: {
           
           <!-- Subject -->
           <div style="margin-bottom: 32px;">
-            <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📋 ${data.subject}</h3>
+          <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📋 ${safeSubject}</h3>
           </div>
           
-          <!-- Main Message -->
+          <!-- Main Message (plain, no colored container) -->
           <div style="margin-bottom: 32px;">
-            <div style="background-color: #f0f9ff; padding: 24px; border-radius: 8px; border-left: 4px solid #0ea5e9;">
-              <div style="color: #1e293b; font-size: 16px; line-height: 1.7; white-space: pre-wrap;">
-                ${data.message}
-              </div>
+            <div style="color: #1e293b; font-size: 16px; line-height: 1.7;">
+              ${safeMessageHtml}
             </div>
           </div>
           
