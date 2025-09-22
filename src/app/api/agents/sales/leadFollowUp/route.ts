@@ -55,6 +55,27 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
+// Function to validate phone numbers
+function isValidPhoneNumber(phoneNumber: string): boolean {
+  if (!phoneNumber || typeof phoneNumber !== 'string') {
+    return false;
+  }
+  
+  // Remove all whitespace and check if empty
+  const cleanPhone = phoneNumber.trim();
+  if (cleanPhone === '') {
+    return false;
+  }
+  
+  // Basic validation: must contain at least some digits and be at least 7 characters
+  // This catches empty strings, whitespace-only strings, and very short inputs
+  const digitCount = (cleanPhone.match(/\d/g) || []).length;
+  const hasMinLength = cleanPhone.length >= 7;
+  const hasMinDigits = digitCount >= 7;
+  
+  return hasMinLength && hasMinDigits;
+}
+
 // Initialize agent and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -701,7 +722,8 @@ export async function POST(request: Request) {
       previousInteractions,
       leadData,
       productInterest,
-      followUpInterval
+      followUpInterval,
+      phone_number
     } = body;
     
     // Validate required parameters
@@ -731,6 +753,23 @@ export async function POST(request: Request) {
       console.error(`[LeadFollowUp:${requestId}] INVALID leadId UUID: ${leadId}`);
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_INPUT', message: 'leadId must be a valid UUID', trace_id: requestId } },
+        { status: 400 }
+      );
+    }
+    
+    // Validate phone_number if provided (prevent empty strings and invalid formats)
+    if (phone_number !== undefined && !isValidPhoneNumber(phone_number)) {
+      console.error(`[LeadFollowUp:${requestId}] ❌ INVALID phone_number: "${phone_number}" (length: ${phone_number?.length || 0})`);
+      console.log(`[LeadFollowUp:${requestId}] 📱 Phone validation failed - rejecting request to prevent empty/invalid WhatsApp attempts`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_PHONE_NUMBER', 
+            message: 'phone_number must be a valid phone number with at least 7 digits. Empty strings are not allowed.', 
+            trace_id: requestId 
+          } 
+        },
         { status: 400 }
       );
     }
