@@ -521,8 +521,13 @@ export class WhatsAppTemplateService {
     // Limitar longitud (WhatsApp templates tienen límites)
     let templateContent = message.length > 1000 ? message.substring(0, 1000) + '...' : message;
     
-    // Asegurar que no contenga caracteres problemáticos
-    templateContent = templateContent.replace(/[^\w\s\-.,!?()]/g, '');
+    // Preservar Unicode y URLs; eliminar solo control/zero-width y normalizar espacios
+    templateContent = templateContent
+      .normalize('NFC')
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
     
     // Si el mensaje es muy corto, agregar contexto
     if (templateContent.length < 10) {

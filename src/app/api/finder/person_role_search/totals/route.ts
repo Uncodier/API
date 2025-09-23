@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logInfo } from '@/lib/utils/api-response-utils';
 
 export async function POST(req: NextRequest) {
   let requestBody: unknown;
@@ -47,6 +48,8 @@ export async function POST(req: NextRequest) {
     const url = `https://api-v2.forager.ai/api/${encodeURIComponent(
       foragerAccountId
     )}/datastorage/person_role_search/totals/`;
+
+    logInfo('finder.person_role_search.totals', 'Upstream request', { url, body: payload });
 
     const upstreamResponse = await fetch(url, {
       method: 'POST',

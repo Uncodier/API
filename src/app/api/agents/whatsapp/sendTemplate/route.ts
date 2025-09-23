@@ -43,17 +43,24 @@ async function updateMessageStatusToSent(
   try {
     console.log(`🔄 [updateMessageStatus] Actualizando mensaje ${messageId} a estado "sent"`);
     
-    // Primero obtener el custom_data actual
-    const { data: currentMessage, error: fetchError } = await supabaseAdmin
+    // Primero obtener el custom_data actual (sin usar .single() para evitar PGRST116)
+    const { data: currentMessageRows, error: fetchError } = await supabaseAdmin
       .from('messages')
       .select('custom_data')
       .eq('id', messageId)
-      .single();
+      .limit(1);
 
-    if (fetchError || !currentMessage) {
+    if (fetchError) {
       console.error('❌ [updateMessageStatus] Error al obtener mensaje actual:', fetchError);
       return;
     }
+
+    if (!currentMessageRows || currentMessageRows.length === 0) {
+      console.log('ℹ️ [updateMessageStatus] Mensaje no encontrado por id. Probable message_id de tracking (no de messages). Omitiendo actualización en messages.');
+      return;
+    }
+
+    const currentMessage = currentMessageRows[0];
 
     // Actualizar el custom_data con el nuevo estado y SID de Twilio
     const updatedCustomData = {

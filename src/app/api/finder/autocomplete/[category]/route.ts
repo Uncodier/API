@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { logInfo } from '@/lib/utils/api-response-utils';
 
 // Allowed autocomplete categories based on Forager docs/screenshot
 // industries, organizations, organization_keywords, locations, person_skills, web_technologies
@@ -33,6 +34,9 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
       page = '1';
     }
 
+    const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
+    logInfo('API:finder-autocomplete', 'GET query', { category, q, page, ip });
+
     
 
     const qs = new URLSearchParams([
@@ -40,6 +44,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
       ['q', q]
     ]).toString();
     const upstreamUrl = `https://api-v2.forager.ai/api/datastorage/autocomplete/${encodeURIComponent(category)}/?${qs}`;
+    logInfo('API:finder-autocomplete', 'Upstream request', { upstreamUrl, params: { category, q, page } });
 
     const resp = await fetch(upstreamUrl, { method: 'GET' });
     const contentType = resp.headers.get('content-type') || '';
