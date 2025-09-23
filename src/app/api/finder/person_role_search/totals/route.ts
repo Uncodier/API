@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     const url = `https://api-v2.forager.ai/api/${encodeURIComponent(
       foragerAccountId
-    )}/datastorage/person_role_search/`;
+    )}/datastorage/person_role_search/totals/`;
 
     const upstreamResponse = await fetch(url, {
       method: 'POST',
@@ -66,7 +66,7 @@ export async function POST(req: NextRequest) {
         : await upstreamResponse.text().catch(() => 'Upstream error');
 
       if (isDev) {
-        console.error('[finder.person_role_search] Upstream error', {
+        console.error('[finder.person_role_search.totals] Upstream error', {
           url,
           params: payload,
           upstream: {
@@ -99,7 +99,7 @@ export async function POST(req: NextRequest) {
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     if (process.env.NODE_ENV !== 'production') {
-      console.error('[finder.person_role_search] Handler exception', {
+      console.error('[finder.person_role_search.totals] Handler exception', {
         message,
         params: requestBody
       });
@@ -112,4 +112,5 @@ export async function POST(req: NextRequest) {
 }
 
 export const dynamic = 'force-dynamic';
+
 

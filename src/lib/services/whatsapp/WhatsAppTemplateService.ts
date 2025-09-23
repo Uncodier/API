@@ -265,7 +265,8 @@ export class WhatsAppTemplateService {
     accountSid: string,
     authToken: string,
     fromNumber: string,
-    originalMessage: string
+    originalMessage: string,
+    messagingServiceSidOverride?: string
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string }> {
     try {
       console.log(`📤 [WhatsAppTemplateService] Enviando mensaje con Content Template: ${templateSid}`);
@@ -277,8 +278,8 @@ export class WhatsAppTemplateService {
       const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
       
       // Content Templates para WhatsApp REQUIEREN Messaging Service
-      // Intentar obtener MessagingServiceSid desde settings
-      const messagingServiceSid = await this.getMessagingServiceSid(accountSid);
+      // Usar override si se proporciona (preferido, site-specific); fallback al método existente
+      const messagingServiceSid = messagingServiceSidOverride || await this.getMessagingServiceSid(accountSid);
       
       // Preparar el cuerpo de la solicitud con Content Template
       const formData = new URLSearchParams();
@@ -627,17 +628,7 @@ export class WhatsAppTemplateService {
     try {
       console.log(`🔍 [WhatsAppTemplateService] Buscando Messaging Service para account: ${accountSid}`);
       
-      // Primero intentar desde variables de entorno
-      if (process.env.TWILIO_MESSAGING_SERVICE_SID) {
-        console.log(`✅ [WhatsAppTemplateService] Messaging Service desde env: ${process.env.TWILIO_MESSAGING_SERVICE_SID}`);
-        return process.env.TWILIO_MESSAGING_SERVICE_SID;
-      }
-      
-      // Buscar en settings del sitio (si tienen configurado)
-      // Por ahora retornar null para que use From como fallback
-      console.warn(`⚠️ [WhatsAppTemplateService] No se encontró TWILIO_MESSAGING_SERVICE_SID en variables de entorno`);
-      console.warn(`💡 [WhatsAppTemplateService] Configura TWILIO_MESSAGING_SERVICE_SID=MGxxxxxxxxx en tu .env`);
-      
+      // Ya no usar env aquí. Este método queda como fallback neutral (null)
       return null;
       
     } catch (error) {

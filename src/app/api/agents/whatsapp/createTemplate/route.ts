@@ -3,7 +3,6 @@ import { WhatsAppTemplateService } from '../../../../../lib/services/whatsapp/Wh
 import { WhatsAppSendService } from '../../../../../lib/services/whatsapp/WhatsAppSendService';
 import { supabaseAdmin } from '../../../../../lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import CryptoJS from 'crypto-js';
 
 /**
  * Ruta para determinar si se necesita plantilla y crearla si es necesario
@@ -78,7 +77,7 @@ async function formatMessageForTemplate(message: string, siteId: string, from?: 
   }
 }
 
-// Función para obtener configuración de WhatsApp del sitio
+// Usa el mismo servicio centralizado que tools/sendWhatsApp
 async function getWhatsAppConfig(siteId: string): Promise<{
   success: boolean;
   config?: {
@@ -89,200 +88,13 @@ async function getWhatsAppConfig(siteId: string): Promise<{
   error?: string;
 }> {
   try {
-    console.log(`🔎 [CreateTemplate] Buscando configuración para site_id: ${siteId}`);
-    
-    // Obtener configuración del sitio para validar la configuración de WhatsApp
-    const { data: siteSettings, error: settingsError } = await supabaseAdmin
-      .from('settings')
-      .select('channels')
-      .eq('site_id', siteId)
-      .single();
-    
-    console.log('📊 [CreateTemplate] Resultado de consulta settings:', {
-      siteSettings,
-      settingsError: settingsError?.message || settingsError,
-      hasData: !!siteSettings
-    });
-      
-    if (settingsError || !siteSettings) {
-      console.error('❌ [CreateTemplate] No se encontró configuración del sitio:', {
-        site_id: siteId,
-        error: settingsError?.message || settingsError,
-        hasData: !!siteSettings
-      });
-      return {
-        success: false,
-        error: 'Site configuration not found'
-      };
-    }
-    
-    console.log('🔧 [CreateTemplate] Configuración de channels encontrada:', {
-      channels: siteSettings.channels,
-      hasChannels: !!siteSettings.channels,
-      hasWhatsApp: !!siteSettings.channels?.whatsapp,
-      whatsappConfig: siteSettings.channels?.whatsapp
-    });
-    
-    // Verificar si WhatsApp está configurado (en settings, secure_tokens o variables de entorno)
-    const hasWhatsAppInSettings = siteSettings.channels?.whatsapp?.enabled === true;
-    const hasWhatsAppInEnv = process.env.WHATSAPP_PHONE_NUMBER_ID && 
-                            process.env.WHATSAPP_API_TOKEN;
-    
-    // Verificar si hay tokens en secure_tokens
-    let hasWhatsAppTokens = false;
-    let tokensData = null;
-    try {
-      const { data: tokens } = await supabaseAdmin
-        .from('secure_tokens')
-        .select('*')
-        .eq('token_type', 'twilio_whatsapp')
-        .eq('site_id', siteId)
-        .eq('status', 'active')
-        .limit(1)
-        .single();
-      hasWhatsAppTokens = !!tokens;
-      tokensData = tokens;
-    } catch (error) {
-      console.warn('⚠️ [CreateTemplate] Error verificando secure_tokens:', error);
-    }
-    
-    console.log('🔍 [CreateTemplate] Verificación de configuraciones:', {
-      hasWhatsAppInSettings,
-      hasWhatsAppInEnv,
-      hasWhatsAppTokens,
-      settingsEnabled: siteSettings.channels?.whatsapp?.enabled,
-      settingsStatus: siteSettings.channels?.whatsapp?.status,
-      envPhoneNumberId: !!process.env.WHATSAPP_PHONE_NUMBER_ID,
-      envApiToken: !!process.env.WHATSAPP_API_TOKEN
-    });
-    
-    if (!hasWhatsAppInSettings && !hasWhatsAppInEnv && !hasWhatsAppTokens) {
-      console.error('❌ [CreateTemplate] WhatsApp no está configurado:', {
-        site_id: siteId,
-        hasWhatsAppInSettings,
-        hasWhatsAppInEnv,
-        hasWhatsAppTokens,
-        channels: siteSettings.channels
-      });
-      return {
-        success: false,
-        error: 'WhatsApp is not configured for this site. Please configure WhatsApp settings, environment variables, or secure tokens.'
-      };
-    }
-
-    // Determinar fuente de configuración y construir config
-    let config: {
-      phoneNumberId: string;
-      accessToken: string;
-      fromNumber: string;
-    };
-
-    if (hasWhatsAppTokens && tokensData) {
-      // Usar secure_tokens
-      console.log('🔐 [CreateTemplate] Usando configuración de secure_tokens');
-      config = {
-        phoneNumberId: tokensData.token_data?.account_sid || tokensData.identifier,
-        accessToken: tokensData.secure_token,
-        fromNumber: tokensData.metadata?.from_number || tokensData.identifier
-      };
-    } else if (hasWhatsAppInEnv) {
-      // Usar variables de entorno
-      console.log('🌍 [CreateTemplate] Usando configuración de variables de entorno');
-      config = {
-        phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID!,
-        accessToken: process.env.WHATSAPP_API_TOKEN!,
-        fromNumber: process.env.WHATSAPP_PHONE_NUMBER_ID!
-      };
-    } else {
-      // Fallback: intentar obtener de settings si está habilitado
-      console.log('⚙️ [CreateTemplate] Usando configuración de settings');
-      const whatsappSettings = siteSettings.channels?.whatsapp;
-      config = {
-        phoneNumberId: whatsappSettings?.phone_number_id || '',
-        accessToken: whatsappSettings?.access_token || '',
-        fromNumber: whatsappSettings?.from_number || whatsappSettings?.phone_number_id || ''
-      };
-    }
-
-    console.log('✅ [CreateTemplate] Configuración de WhatsApp obtenida exitosamente');
-    
-    // Validar que accountSid (phoneNumberId) y accessToken no estén vacíos
-    if (!config.phoneNumberId || !config.accessToken) {
-      console.warn('⚠️ [CreateTemplate] Faltan credenciales después de primera búsqueda. Intentando variables de entorno estándar de Twilio...');
-      const envAccountSid = process.env.TWILIO_ACCOUNT_SID || process.env.WHATSAPP_PHONE_NUMBER_ID;
-      const envAuthToken  = process.env.TWILIO_AUTH_TOKEN  || process.env.WHATSAPP_API_TOKEN;
-      if (envAccountSid && envAuthToken) {
-        config.phoneNumberId = envAccountSid;
-        config.accessToken   = envAuthToken;
-        console.log('✅ [CreateTemplate] Credenciales obtenidas desde variables de entorno TWILIO_* / WHATSAPP_*');
-      }
-    }
-
-    // Si aún faltan credenciales, intentar desencriptar desde secure_tokens (optimizado)
-    if (!config.phoneNumberId || !config.accessToken) {
-      try {
-        console.log('🔓 [CreateTemplate] Intentando obtener token desde base de datos (local)...');
-        
-        // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
-        const { data: tokenData, error } = await supabaseAdmin
-          .from('secure_tokens')
-          .select('*')
-          .eq('site_id', siteId)
-          .eq('token_type', 'twilio_whatsapp')
-          .maybeSingle();
-        
-        if (tokenData?.encrypted_value && !error) {
-          console.log('✅ [CreateTemplate] Token encontrado en DB, desencriptando localmente...');
-          const decryptedValue = decryptToken(tokenData.encrypted_value);
-          if (decryptedValue) {
-            config.accessToken = decryptedValue;
-            if (!config.phoneNumberId && siteSettings.channels?.whatsapp?.account_sid) {
-              config.phoneNumberId = siteSettings.channels.whatsapp.account_sid;
-            }
-            console.log('✅ [CreateTemplate] Token desencriptado localmente');
-          }
-        } else {
-          // 2. FALLBACK: Intentar desde servicio HTTP (MÁS LENTO)
-          console.log('⚠️ [CreateTemplate] Token no encontrado en DB, intentando servicio HTTP...');
-          const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-          const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
-          const resp = await fetch(decryptUrl, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              site_id: siteId,
-              token_type: 'twilio_whatsapp'
-            })
-          });
-          const json = await resp.json();
-          if (resp.ok && json.success && json.data?.tokenValue) {
-            const tokenValue = typeof json.data.tokenValue === 'string' ? json.data.tokenValue : JSON.stringify(json.data.tokenValue);
-            config.accessToken = tokenValue;
-            if (!config.phoneNumberId && siteSettings.channels?.whatsapp?.account_sid) {
-              config.phoneNumberId = siteSettings.channels.whatsapp.account_sid;
-            }
-            console.log('✅ [CreateTemplate] Token obtenido del servicio HTTP como fallback');
-          }
-        }
-      } catch (decryptErr) {
-        console.warn('⚠️ [CreateTemplate] Error obteniendo token:', decryptErr);
-      }
-    }
-
-    // Última validación
-    if (!config.phoneNumberId || !config.accessToken) {
-      console.error('❌ [CreateTemplate] Credenciales de Twilio incompletas tras todas las estrategias');
+    const cfg = await WhatsAppSendService.getWhatsAppConfig(siteId);
+    if (!cfg?.phoneNumberId || !cfg?.accessToken) {
       return { success: false, error: 'Twilio credentials (Account SID / Auth Token) are missing for this site' };
     }
-
-    return { success: true, config };
-    
-  } catch (error) {
-    console.error('💥 [CreateTemplate] Error obteniendo configuración:', error);
-    return {
-      success: false,
-      error: 'Failed to retrieve WhatsApp configuration'
-    };
+    return { success: true, config: cfg };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Failed to retrieve WhatsApp configuration' };
   }
 }
 
@@ -346,7 +158,7 @@ export async function POST(request: NextRequest) {
     // ESCENARIO B: Fuera de ventana - crear plantilla
     console.log('📝 [CreateTemplate] Fuera de ventana - creando plantilla...');
 
-    // Obtener configuración de WhatsApp
+    // Obtener configuración de WhatsApp (servicio centralizado: settings + secure_tokens; sin .env)
     const configResult = await getWhatsAppConfig(site_id);
     if (!configResult.success) {
       return NextResponse.json({
@@ -552,32 +364,4 @@ export async function GET(request: NextRequest) {
   }
 }
 
-/**
- * Desencripta un token usando CryptoJS (copia de WhatsAppSendService)
- */
-function decryptToken(encryptedValue: string): string | null {
-  const encryptionKey = process.env.ENCRYPTION_KEY || '';
-  
-  if (!encryptionKey) {
-    console.error("Missing ENCRYPTION_KEY environment variable");
-    return null;
-  }
-  
-  if (encryptedValue.includes(':')) {
-    const [salt, encrypted] = encryptedValue.split(':');
-    const combinedKey = encryptionKey + salt;
-    
-    try {
-      const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
-      const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-      
-      if (decryptedText) {
-        return decryptedText;
-      }
-    } catch (error) {
-      console.error('Error desencriptando token:', error);
-    }
-  }
-  
-  return null;
-} 
+// decryptToken eliminado: la desencriptación queda encapsulada en WhatsAppSendService

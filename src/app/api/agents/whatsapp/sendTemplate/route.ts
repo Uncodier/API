@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
 /**
  * Ruta para enviar mensajes usando plantillas de WhatsApp previamente creadas
@@ -86,7 +88,7 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-// Función para obtener configuración de WhatsApp del sitio - usando la misma lógica que WhatsAppSendService
+// Unifica con la lógica de tools/sendWhatsApp usando el servicio centralizado
 async function getWhatsAppConfig(siteId: string): Promise<{
   success: boolean;
   config?: {
@@ -97,257 +99,17 @@ async function getWhatsAppConfig(siteId: string): Promise<{
   error?: string;
 }> {
   try {
-    console.log(`🔍 [SendTemplate] Buscando configuración de WhatsApp para site_id: ${siteId}`);
-
-    // Primero intentar obtener desde variables de entorno globales
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = process.env.WHATSAPP_API_TOKEN;
-    
-    if (phoneNumberId && accessToken) {
-      console.log('✅ [SendTemplate] Usando configuración de variables de entorno');
-      return { 
-        success: true, 
-        config: {
-          accountSid: phoneNumberId,
-          authToken: accessToken,
-          fromNumber: process.env.TWILIO_WHATSAPP_FROM || '+14155238886'
-        }
-      };
+    const cfg = await WhatsAppSendService.getWhatsAppConfig(siteId);
+    if (!cfg?.phoneNumberId || !cfg?.accessToken) {
+      return { success: false, error: 'Twilio credentials (Account SID / Auth Token) are missing for this site' };
     }
-
-    // Si no están en env, buscar y desencriptar desde secure_tokens
-    console.log('🔎 [SendTemplate] Buscando en secure_tokens...');
-    
-    const decryptedToken = await getTokenFromService(siteId);
-    
-    if (decryptedToken) {
-      console.log('✅ [SendTemplate] Token desencriptado exitosamente desde secure_tokens');
-      
-      // El token desencriptado es directamente el auth token de Twilio
-      const authToken = typeof decryptedToken === 'string' ? decryptedToken : String(decryptedToken);
-      
-      // Obtener el Account SID desde settings.channels.whatsapp
-      console.log('🔍 [SendTemplate] Obteniendo Account SID desde settings...');
-      
-      const { data: siteSettings, error: settingsError } = await supabaseAdmin
-        .from('settings')
-        .select('channels')
-        .eq('site_id', siteId)
-        .single();
-        
-      if (settingsError || !siteSettings?.channels?.whatsapp) {
-        console.error('❌ [SendTemplate] No se pudo obtener settings para Account SID:', settingsError);
-        throw new Error('No se pudo obtener Account SID desde settings');
-      }
-      
-      const accountSid = siteSettings.channels.whatsapp.account_sid;
-      
-      console.log('📋 [SendTemplate] Credenciales obtenidas:', {
-        hasAccountSid: !!accountSid,
-        hasAuthToken: !!authToken,
-        accountSidPreview: accountSid ? accountSid.substring(0, 10) + '...' : 'No encontrado',
-        authTokenPreview: authToken ? authToken.substring(0, 10) + '...' : 'No encontrado',
-        whatsappConfig: siteSettings.channels.whatsapp
-      });
-      
-      if (!accountSid || !authToken) {
-        throw new Error('AccountSid or AuthToken missing - accountSid debe estar en settings.channels.whatsapp.account_sid');
-      }
-      
-      return {
-        success: true,
-        config: {
-          accountSid: accountSid, 
-          authToken: authToken,
-          fromNumber: siteSettings.channels.whatsapp.existingNumber
-        }
-      };
-    } else {
-      console.log('❌ [SendTemplate] No se pudo desencriptar el token desde secure_tokens');
-      throw new Error('WhatsApp configuration not found in secure_tokens');
-    }
-
-  } catch (error) {
-    console.error('❌ [SendTemplate] Error obteniendo configuración de WhatsApp:', error);
-    
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : 'Failed to retrieve WhatsApp configuration'
-    };
+    return { success: true, config: { accountSid: cfg.phoneNumberId, authToken: cfg.accessToken, fromNumber: cfg.fromNumber } };
+  } catch (e) {
+    return { success: false, error: e instanceof Error ? e.message : 'Failed to retrieve WhatsApp configuration' };
   }
 }
 
-// Copia exacta de getTokenFromService de WhatsAppSendService
-async function getTokenFromService(siteId: string): Promise<any | null> {
-  try {
-    console.log('🔓 [SendTemplate] Obteniendo token directamente desde base de datos...');
-    
-    // 1. PRIMERO: Intentar obtener directamente de la base de datos (MÁS RÁPIDO)
-    const { data, error } = await supabaseAdmin
-      .from('secure_tokens')
-      .select('*')
-      .eq('site_id', siteId)
-      .eq('token_type', 'twilio_whatsapp')
-      .maybeSingle();
-    
-    if (error || !data) {
-      if (error) {
-        console.error('❌ [SendTemplate] Error consultando secure_tokens:', error);
-      } else {
-        console.log('⚠️ [SendTemplate] No se encontró token en secure_tokens, intentando servicio HTTP...');
-      }
-      
-      // 2. FALLBACK: Intentar obtener del servicio de desencriptación HTTP (MÁS LENTO)
-      try {
-        const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-        const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
-        
-        const response = await fetch(decryptUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            site_id: siteId,
-            token_type: 'twilio_whatsapp'
-          })
-        });
-        
-        const result = await response.json();
-        
-        if (response.ok && result.success && result.data?.tokenValue) {
-          console.log('✅ [SendTemplate] Token obtenido del servicio HTTP como fallback');
-          const decryptedValue = result.data.tokenValue;
-          return typeof decryptedValue === 'object' ? decryptedValue : JSON.parse(decryptedValue);
-        }
-      } catch (httpError) {
-        console.log('❌ [SendTemplate] Servicio HTTP también falló:', httpError);
-      }
-      
-      return null;
-    }
-    
-    console.log('📊 [SendTemplate] Token encontrado en base de datos:', {
-      id: data.id,
-      hasEncryptedValue: !!data.encrypted_value,
-      hasValue: !!data.value,
-      hasTokenValue: !!data.token_value
-    });
-    
-    // 3. Determinar qué campo usar para desencriptar
-    let encryptedValue;
-    if (data.encrypted_value) {
-      encryptedValue = data.encrypted_value;
-    } else if (data.value && typeof data.value === 'string' && data.value.includes(':')) {
-      encryptedValue = data.value;
-    } else if (data.token_value && typeof data.token_value === 'string' && data.token_value.includes(':')) {
-      encryptedValue = data.token_value;
-    } else {
-      console.log('❌ [SendTemplate] No se encontró valor encriptado válido');
-      return null;
-    }
-    
-    console.log('🔐 [SendTemplate] Desencriptando token...');
-    
-    // 4. Desencriptar el token
-    const decryptedValue = decryptToken(encryptedValue);
-    
-    if (!decryptedValue) {
-      console.log('❌ [SendTemplate] Falló la desencriptación');
-      return null;
-    }
-    
-    console.log('✅ [SendTemplate] Token desencriptado exitosamente');
-    
-    // 5. Actualizar last_used si el campo existe
-    if (data.hasOwnProperty('last_used')) {
-      await supabaseAdmin
-        .from('secure_tokens')
-        .update({ last_used: new Date().toISOString() })
-        .eq('id', data.id);
-    }
-    
-    // 6. Intentar parsear como JSON
-    try {
-      return JSON.parse(decryptedValue);
-    } catch (jsonError) {
-      // Si no es JSON, retornar como string
-      console.log('⚠️ [SendTemplate] Token no es JSON, retornando como string:', decryptedValue);
-      return decryptedValue;
-    }
-    
-  } catch (error) {
-    console.error('❌ [SendTemplate] Error obteniendo/desencriptando token:', error);
-    return null;
-  }
-}
-
-// Copia exacta de decryptToken de WhatsAppSendService  
-function decryptToken(encryptedValue: string): string | null {
-  const CryptoJS = require('crypto-js');
-  const encryptionKey = process.env.ENCRYPTION_KEY || '';
-  
-  if (!encryptionKey) {
-    console.error('❌ [SendTemplate] ENCRYPTION_KEY no está configurada');
-    return null;
-  }
-  
-  if (encryptedValue.includes(':')) {
-    const [salt, encrypted] = encryptedValue.split(':');
-    const combinedKey = encryptionKey + salt;
-    
-    try {
-      console.log('🔑 [SendTemplate] Intentando desencriptar con clave del environment...');
-      // 1. Intentar con la clave del environment
-      const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
-      const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-      
-      if (decryptedText) {
-        console.log('✅ [SendTemplate] Desencriptado exitosamente con clave del environment');
-        return decryptedText;
-      }
-
-      throw new Error("La desencriptación produjo un texto vacío");
-    } catch (error) {
-      try {
-        console.log('🔑 [SendTemplate] Intentando con clave fija original...');
-        // 2. Intentar con la clave fija original
-        const originalKey = 'Encryption-key';
-        const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
-        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-        
-        if (decryptedText) {
-          console.log('✅ [SendTemplate] Desencriptado exitosamente con clave original');
-          return decryptedText;
-        }
-        
-        throw new Error("La desencriptación produjo un texto vacío con clave original");
-      } catch (errorOriginal) {
-        // 3. Intentar con clave alternativa en desarrollo
-        const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
-        if (altEncryptionKey && process.env.NODE_ENV === 'development') {
-          try {
-            console.log('🔑 [SendTemplate] Intentando con clave alternativa de desarrollo...');
-            const altCombinedKey = altEncryptionKey + salt;
-            const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
-            const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-            
-            if (decryptedText) {
-              console.log('✅ [SendTemplate] Desencriptado exitosamente con clave alternativa');
-              return decryptedText;
-            }
-          } catch (altError) {
-            console.log('❌ [SendTemplate] Falló clave alternativa también');
-          }
-        }
-        
-        console.error('❌ [SendTemplate] No se pudo desencriptar el token con ninguna clave disponible');
-        return null;
-      }
-    }
-  }
-  
-  console.error('❌ [SendTemplate] Formato de token no soportado, se esperaba salt:encrypted');
-  return null;
-}
+// Eliminado duplicado de getTokenFromService y decryptToken; todo queda centralizado en WhatsAppSendService
 
 // Función para actualizar tracking de template
 async function updateTemplateTracking(
@@ -441,14 +203,67 @@ export async function POST(request: NextRequest) {
       } as SendTemplateResponse, { status: 500 });
     }
 
-    // Validar que el teléfono tenga formato internacional
+    // Validar y rescatar el número para formato internacional consistente
     let normalizedPhone = phone_number;
-    if (!normalizedPhone.startsWith('+')) {
-      normalizedPhone = `+${normalizedPhone}`;
+    if (!WhatsAppSendService.isValidPhoneNumber(normalizedPhone)) {
+      console.log(`⚠️ [SendTemplate] Teléfono inválido, intentando rescate: ${normalizedPhone}`);
+      const rescued = attemptPhoneRescue(normalizedPhone);
+      if (rescued && WhatsAppSendService.isValidPhoneNumber(rescued)) {
+        console.log(`✅ [SendTemplate] Teléfono rescatado: ${normalizedPhone} -> ${rescued}`);
+        normalizedPhone = rescued;
+      } else {
+        const err = `Invalid phone number format: "${phone_number}". Include correct country code (e.g., +52 for Mexico).`;
+        console.error(`❌ [SendTemplate] ${err}`);
+        if (message_id) {
+          await updateTemplateTracking(message_id, template_id, 'failed', undefined, err);
+        }
+        return NextResponse.json({
+          success: false,
+          error: err,
+          template_id,
+          status: 'failed'
+        } as SendTemplateResponse, { status: 400 });
+      }
+    }
+
+    // Ajuste conservador si hay desajuste de código de país entre remitente y destinatario
+    const fromCcMatch = (config.fromNumber || '').toString().match(/^\+(\d{1,3})/);
+    const toCcMatch = normalizedPhone.match(/^\+(\d{1,3})/);
+    const fromCc = fromCcMatch ? fromCcMatch[1] : null;
+    const toCc = toCcMatch ? toCcMatch[1] : null;
+    if (fromCc && toCc && fromCc !== toCc) {
+      console.log(`⚠️ [SendTemplate] Country code mismatch (from +${fromCc}, to +${toCc}). Attempting conservative remap...`);
+      // Caso común: remitente MX (+52) y destinatario con +1 por error
+      if (fromCc === '52' && toCc === '1') {
+        const digits = normalizedPhone.replace(/\D/g, '');
+        const last10 = digits.slice(-10);
+        if (last10.length === 10) {
+          const candidate = `+52${last10}`;
+          if (WhatsAppSendService.isValidPhoneNumber(candidate)) {
+            console.log(`✅ [SendTemplate] Remap aplicado: ${normalizedPhone} -> ${candidate}`);
+            normalizedPhone = candidate;
+          }
+        }
+      }
     }
 
     console.log(`📋 [SendTemplate] Configuración obtenida para site: ${site_id}`);
     console.log(`🔐 [SendTemplate] Usando accountSid: ${config.accountSid.substring(0, 6)}***`);
+
+    // Determinar Messaging Service SID por sitio (si disponible)
+    let messagingServiceSidOverride: string | undefined = undefined;
+    try {
+      const { data: siteSettings } = await supabaseAdmin
+        .from('settings')
+        .select('channels')
+        .eq('site_id', site_id)
+        .single();
+      const ms = siteSettings?.channels?.whatsapp?.messaging_service_sid;
+      if (ms && typeof ms === 'string') {
+        messagingServiceSidOverride = ms;
+        console.log(`📬 [SendTemplate] Usando Messaging Service SID del sitio: ${messagingServiceSidOverride}`);
+      }
+    } catch {}
 
     // Enviar mensaje usando la plantilla
     const sendResult = await WhatsAppTemplateService.sendMessageWithTemplate(
@@ -457,7 +272,8 @@ export async function POST(request: NextRequest) {
       config.accountSid,
       config.authToken,
       config.fromNumber,
-      original_message || 'Template message'
+      original_message || 'Template message',
+      messagingServiceSidOverride
     );
 
     console.log(`📊 [SendTemplate] Resultado del envío:`, {

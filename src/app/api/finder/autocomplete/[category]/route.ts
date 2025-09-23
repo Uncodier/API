@@ -11,19 +11,10 @@ const ALLOWED_CATEGORIES = new Set([
   'web_technologies'
 ]);
 
-export async function GET(req: NextRequest, context: { params: { category?: string } }) {
+export async function GET(req: NextRequest, context: { params: Promise<{ category?: string }> }) {
   try {
-    const foragerApiKey = process.env.FORAGER_API_KEY;
-    const foragerAccountId = process.env.FORAGER_ACCOUNT_ID;
-
-    if (!foragerApiKey || !foragerAccountId) {
-      return NextResponse.json(
-        { error: 'Missing FORAGER_API_KEY or FORAGER_ACCOUNT_ID env vars' },
-        { status: 500 }
-      );
-    }
-
-    const category = (context.params?.category || '').toLowerCase();
+    const { category: rawCategory } = await context.params;
+    const category = (rawCategory || '').toLowerCase();
     if (!ALLOWED_CATEGORIES.has(category)) {
       return NextResponse.json(
         {
@@ -36,33 +27,36 @@ export async function GET(req: NextRequest, context: { params: { category?: stri
 
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q') || '';
-    const page = searchParams.get('page') || '0';
+    let page = searchParams.get('page') || '1';
+    // Force page to be a positive integer starting at 1
+    if (!/^[1-9]\d*$/.test(page)) {
+      page = '1';
+    }
 
-    const upstreamUrl = `https://api-v2.forager.ai/api/datastorage/autocomplete/${encodeURIComponent(
-      category
-    )}/?${new URLSearchParams({ q, page }).toString()}`;
+    
 
-    const upstreamResponse = await fetch(upstreamUrl, {
-      method: 'GET',
-      headers: {
-        'X-API-KEY': foragerApiKey
-      }
-    });
+    const qs = new URLSearchParams([
+      ['page', page],
+      ['q', q]
+    ]).toString();
+    const upstreamUrl = `https://api-v2.forager.ai/api/datastorage/autocomplete/${encodeURIComponent(category)}/?${qs}`;
 
-    const contentType = upstreamResponse.headers.get('content-type') || '';
+    const resp = await fetch(upstreamUrl, { method: 'GET' });
+    const contentType = resp.headers.get('content-type') || '';
     const isJson = contentType.includes('application/json');
+    
 
-    if (!upstreamResponse.ok) {
+    if (!resp.ok) {
       const errorPayload = isJson
-        ? await upstreamResponse.json().catch(() => ({ message: 'Upstream error (invalid JSON)' }))
-        : { message: await upstreamResponse.text().catch(() => 'Upstream error') };
+        ? await resp.json().catch(() => ({ message: 'Upstream error (invalid JSON)' }))
+        : { message: await resp.text().catch(() => 'Upstream error' as const) };
       return NextResponse.json(
         { error: 'Forager API error', details: errorPayload },
-        { status: upstreamResponse.status }
+        { status: resp.status }
       );
     }
 
-    const data = isJson ? await upstreamResponse.json() : await upstreamResponse.text();
+    const data = isJson ? await resp.json() : await resp.text();
     return NextResponse.json(typeof data === 'string' ? { data } : data);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';

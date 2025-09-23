@@ -272,7 +272,7 @@ export class WhatsAppSendService {
   /**
    * Obtiene la configuración de WhatsApp desde las variables de entorno o secure_tokens
    */
-  private static async getWhatsAppConfig(siteId: string): Promise<{
+  static async getWhatsAppConfig(siteId: string): Promise<{
     phoneNumberId: string;
     accessToken: string;
     fromNumber: string;
@@ -284,14 +284,7 @@ export class WhatsAppSendService {
 
     console.log(`🔍 [WhatsAppSendService] Buscando configuración de WhatsApp para site_id: ${siteId}`);
 
-    // Primero intentar obtener desde variables de entorno globales
-    const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
-    const accessToken = process.env.WHATSAPP_API_TOKEN;
-    
-    if (phoneNumberId && accessToken) {
-      console.log('✅ [WhatsAppSendService] Usando configuración de variables de entorno');
-      return { phoneNumberId, accessToken, fromNumber: process.env.TWILIO_WHATSAPP_FROM || '+14155238886' };
-    }
+    // Ya no usar variables de entorno; sólo settings + secure_tokens
 
     // Si no están en env, buscar y desencriptar desde secure_tokens
     try {
@@ -351,7 +344,7 @@ export class WhatsAppSendService {
     } catch (error) {
       console.error('❌ [WhatsAppSendService] Error obteniendo configuración de WhatsApp:', error);
       
-      // Si falla secure_tokens, intentar fallback con settings (configuración anterior)
+      // Si falla secure_tokens, intentar fallback con settings
       try {
         console.log('🔄 [WhatsAppSendService] Intentando fallback con settings...');
         
@@ -367,16 +360,16 @@ export class WhatsAppSendService {
         
         const whatsappSettings = siteSettings.channels.whatsapp;
         
-        if (!whatsappSettings.phoneNumberId || !whatsappSettings.accessToken) {
+        if (!whatsappSettings.account_sid || !whatsappSettings.access_token) {
           throw new Error('WhatsApp configuration incomplete in settings');
         }
         
         console.log('✅ [WhatsAppSendService] Usando configuración de settings como fallback');
         
         return {
-          phoneNumberId: whatsappSettings.phoneNumberId,
-          accessToken: whatsappSettings.accessToken,
-          fromNumber: whatsappSettings.existingNumber
+          phoneNumberId: whatsappSettings.account_sid,
+          accessToken: whatsappSettings.access_token,
+          fromNumber: whatsappSettings.existingNumber || whatsappSettings.from_number
         };
       } catch (fallbackError) {
         console.error('❌ [WhatsAppSendService] Fallback también falló:', fallbackError);
