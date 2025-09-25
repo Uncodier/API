@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logInfo } from '@/lib/utils/api-response-utils';
+import { logInfo, logError } from '@/lib/utils/api-response-utils';
 
 // Allowed autocomplete categories based on Forager docs/screenshot
 // industries, organizations, organization_keywords, locations, person_skills, web_technologies
@@ -28,11 +28,8 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
 
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q') || '';
-    let page = searchParams.get('page') || '1';
-    // Force page to be a positive integer starting at 1
-    if (!/^[1-9]\d*$/.test(page)) {
-      page = '1';
-    }
+    const pageRaw = searchParams.get('page');
+    const page = pageRaw && /^\d+$/.test(pageRaw) ? Math.max(1, parseInt(pageRaw, 10)) : 1;
 
     const ip = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '';
     logInfo('API:finder-autocomplete', 'GET query', { category, q, page, ip });
@@ -40,7 +37,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
     
 
     const qs = new URLSearchParams([
-      ['page', page],
+      ['page', String(page)],
       ['q', q]
     ]).toString();
     const upstreamUrl = `https://api-v2.forager.ai/api/datastorage/autocomplete/${encodeURIComponent(category)}/?${qs}`;
@@ -55,6 +52,13 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
       const errorPayload = isJson
         ? await resp.json().catch(() => ({ message: 'Upstream error (invalid JSON)' }))
         : { message: await resp.text().catch(() => 'Upstream error' as const) };
+      logError('API:finder-autocomplete', 'Upstream error', {
+        status: resp.status,
+        upstreamUrl,
+        contentType,
+        params: { category, q, page },
+        error: errorPayload
+      });
       return NextResponse.json(
         { error: 'Forager API error', details: errorPayload },
         { status: resp.status }
@@ -65,6 +69,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
     return NextResponse.json(typeof data === 'string' ? { data } : data);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
+    logError('API:finder-autocomplete', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack } : error);
     return NextResponse.json({ error: 'Internal error', message }, { status: 500 });
   }
 }

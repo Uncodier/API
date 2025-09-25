@@ -1932,3 +1932,133 @@ You can subscribe an endpoint to any of these. Deliveries are recorded in `webho
 - query_hash permite upserts/dedupe rápidos: `on conflict (query_hash)`.
 - role_query_segments permite asociar el mismo query a múltiples `segments` (1→N).
 - persons almacena el snapshot crudo del API en `raw_result` y campos denormalizados para listados.
+
+## System: ICP Mining
+
+### Tables
+
+- icp_mining (system)
+  - id (uuid, pk)
+  - role_query_id (uuid → role_queries.id on delete cascade)
+  - icp_criteria (jsonb, required)
+  - icp_hash (text, generated: sha256 of icp_criteria::text)
+  - status (text: pending | running | completed | failed, default pending)
+  - total_targets (int, default 0)
+  - processed_targets (int, default 0)
+  - found_matches (int, default 0)
+  - progress_percent (numeric(5,2), generated)
+  - started_at / last_progress_at / finished_at (timestamptz)
+  - last_error (text)
+  - errors (jsonb, default [])
+  - created_at / updated_at
+  - Indexes: role_query_id, status, created_at, last_progress_at, GIN(icp_criteria)
+  - Partial Unique: (role_query_id, icp_hash) where status in ('pending','running')
+
+### SQL
+
+```sql
+-- Dependencies
+create extension if not exists pgcrypto;
+
+-- Helper for updated_at
+create or replace function public.set_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- Table: icp_mining
+create table if not exists public.icp_mining (
+  id uuid primary key default gen_random_uuid(),
+
+  role_query_id uuid not null
+    references public.role_queries(id)
+    on delete cascade,
+
+  icp_criteria jsonb not null,
+
+  icp_hash text
+    generated always as (encode(digest(icp_criteria::text, 'sha256'), 'hex')) stored,
+
+  status text not null default 'pending'
+    check (status in ('pending', 'running', 'completed', 'failed')),
+
+  total_targets integer default 0 check (total_targets >= 0),
+  processed_targets integer default 0 check (processed_targets >= 0),
+  found_matches integer default 0 check (found_matches >= 0),
+
+  progress_percent numeric(5,2)
+    generated always as (
+      case
+        when total_targets > 0
+          then round(100.0 * processed_targets::numeric / total_targets::numeric, 2)
+        when status = 'completed'
+          then 100.00
+        else 0.00
+      end
+    ) stored,
+
+  started_at timestamptz,
+  last_progress_at timestamptz,
+  finished_at timestamptz,
+
+  last_error text,
+  errors jsonb not null default '[]'::jsonb,
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+-- Trigger for updated_at
+drop trigger if exists trg_icp_mining_set_updated_at on public.icp_mining;
+create trigger trg_icp_mining_set_updated_at
+before update on public.icp_mining
+for each row execute function public.set_updated_at();
+
+-- Indexes
+create index if not exists idx_icp_mining_role_query_id on public.icp_mining (role_query_id);
+create index if not exists idx_icp_mining_status on public.icp_mining (status);
+create index if not exists idx_icp_mining_created_at on public.icp_mining (created_at);
+create index if not exists idx_icp_mining_last_progress_at on public.icp_mining (last_progress_at);
+create index if not exists idx_icp_mining_icp_criteria_gin on public.icp_mining using gin (icp_criteria);
+
+-- Enforce no duplicate active runs per role_query + ICP
+drop index if exists uq_icp_mining_active_unique;
+create unique index uq_icp_mining_active_unique
+  on public.icp_mining (role_query_id, icp_hash)
+  where status in ('pending','running');
+
+-- RLS
+alter table public.icp_mining enable row level security;
+
+-- Clean up if re-running
+drop policy if exists "icp_mining - anon can read completed" on public.icp_mining;
+drop policy if exists "icp_mining - service_role can do anything" on public.icp_mining;
+
+-- Public read access for completed runs
+create policy "icp_mining - anon can read completed"
+on public.icp_mining
+as permissive
+for select
+to anon
+using (status = 'completed');
+
+-- Full access for service_role
+create policy "icp_mining - service_role can do anything"
+on public.icp_mining
+as permissive
+for all
+to service_role
+using (true)
+with check (true);
+```
+
+### Notes
+
+- `icp_hash` evita minados simultáneos duplicados por `role_query_id` + ICP.
+- `progress_percent` refleja avance con base en `processed_targets / total_targets`.
+- `anon` puede leer únicamente corridas completadas; `service_role` tiene acceso total.

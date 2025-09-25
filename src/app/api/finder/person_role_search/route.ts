@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { logInfo } from '@/lib/utils/api-response-utils';
+import { logInfo, logError } from '@/lib/utils/api-response-utils';
 
 export async function POST(req: NextRequest) {
   let requestBody: unknown;
@@ -25,13 +25,12 @@ export async function POST(req: NextRequest) {
 
     requestBody = await req.json();
 
-    // Normalize payload (ensure page starts at 1 if provided)
+    // Normalize payload (allow 0-indexed pages; coerce to non-negative integer)
     const normalizePage = (val: unknown): unknown => {
-      if (val === 0 || val === '0') return 1;
-      if (typeof val === 'number') return Math.max(1, Math.trunc(val));
+      if (typeof val === 'number') return Math.max(0, Math.trunc(val));
       if (typeof val === 'string' && /^\d+$/.test(val)) {
         const n = parseInt(val, 10);
-        return Math.max(1, n);
+        return Math.max(0, n);
       }
       return val;
     };
@@ -68,18 +67,16 @@ export async function POST(req: NextRequest) {
         ? await upstreamResponse.json().catch(() => ({ error: 'Upstream error (invalid JSON)' }))
         : await upstreamResponse.text().catch(() => 'Upstream error');
 
-      if (isDev) {
-        console.error('[finder.person_role_search] Upstream error', {
-          url,
-          params: payload,
-          upstream: {
-            status: upstreamResponse.status,
-            ok: upstreamResponse.ok,
-            contentType
-          },
-          responsePreview: preview(rawError)
-        });
-      }
+      logError('finder.person_role_search', 'Upstream error', {
+        url,
+        params: payload,
+        upstream: {
+          status: upstreamResponse.status,
+          ok: upstreamResponse.ok,
+          contentType
+        },
+        responsePreview: preview(rawError)
+      });
 
       const debug = {
         params: payload,
@@ -101,12 +98,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(typeof data === 'string' ? { data } : data);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    if (process.env.NODE_ENV !== 'production') {
-      console.error('[finder.person_role_search] Handler exception', {
-        message,
-        params: requestBody
-      });
-    }
+    logError('finder.person_role_search', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack, params: requestBody } : { error, params: requestBody });
     return NextResponse.json(
       { error: 'Internal error', message, debug: { params: requestBody } },
       { status: 500 }

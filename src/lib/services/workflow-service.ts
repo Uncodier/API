@@ -105,6 +105,10 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.leadGeneration(args, options);
   }
 
+  public async idealClientProfileMining(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.idealClientProfileMining(args, options);
+  }
+
   public async analyzeSite(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.dataService.analyzeSite(args, options);
   }

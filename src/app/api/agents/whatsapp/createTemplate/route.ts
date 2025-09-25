@@ -20,6 +20,7 @@ interface CreateTemplateRequest {
   site_id: string;
   conversation_id?: string;
   from?: string;
+  message_id?: string; // If provided, reuse existing messages.id instead of generating a tracking UUID
 }
 
 interface CreateTemplateResponse {
@@ -124,8 +125,10 @@ export async function POST(request: NextRequest) {
       } as CreateTemplateResponse, { status: 400 });
     }
 
-    // Generar message_id único para tracking
-    const messageId = uuidv4();
+    // Reuse provided message_id when available and valid, otherwise generate a tracking UUID
+    const messageId = body.message_id && isValidUUID(body.message_id)
+      ? body.message_id
+      : uuidv4();
     console.log(`🆔 [CreateTemplate] Message ID generado: ${messageId}`);
 
     // Verificar ventana de respuesta
@@ -276,7 +279,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ [CreateTemplate] Plantilla creada exitosamente: ${templateResult.templateSid}`);
 
-    // Guardar relación message_id -> template_id para tracking
+    // Guardar relación message_id -> template_id para tracking (message_id proviene del mensaje ya creado cuando se suministra)
     try {
       await supabaseAdmin
         .from('whatsapp_template_tracking')

@@ -3,6 +3,12 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 
+// Util function to validate UUIDs
+function isValidUUID(uuid: string): boolean {
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return uuidRegex.test(uuid);
+}
+
 /**
  * Guarda el mensaje del asistente en la base de datos cuando se requiere template
  */
@@ -106,7 +112,8 @@ export async function POST(request: NextRequest) {
       conversation_id,
       lead_id,
       site_id,
-      responseWindowEnabled
+      responseWindowEnabled,
+      message_id // If present, this is the messages.id already created upstream (leadFollowUp/logs)
     } = body;
     
     console.log('🔍 [SendWhatsApp] Parámetros recibidos:', {
@@ -296,8 +303,8 @@ export async function POST(request: NextRequest) {
       templateRequired: result.template_required
     });
 
-    // Si se requiere template, guardar el mensaje en la base de datos y usar ese ID
-    if (result.success && result.template_required) {
+    // Si se requiere template y NO tenemos un message_id preexistente, guardar el mensaje y usar ese ID
+    if (result.success && result.template_required && !message_id) {
       console.log('📝 [SendWhatsApp] Template requerido - guardando mensaje en base de datos...');
       
       const savedMessageId = await saveAssistantMessageForTemplate(
@@ -316,6 +323,10 @@ export async function POST(request: NextRequest) {
       } else {
         console.warn('⚠️ [SendWhatsApp] No se pudo guardar el mensaje en la base de datos, usando UUID original');
       }
+    } else if (result.success && result.template_required && message_id && isValidUUID(message_id)) {
+      // Respetar message_id ya existente y propagarlo en la respuesta
+      console.log('🔗 [SendWhatsApp] Usando message_id existente provisto por el cliente');
+      result.message_id = message_id;
     }
 
     if (!result.success) {
