@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { logError, logInfo } from '@/lib/utils/api-response-utils';
 import crypto from 'crypto';
+import { isValidUUID } from '@/lib/agentbase/utils/UuidUtils';
 
 type AnyRecord = Record<string, unknown>;
 
@@ -43,9 +44,47 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Optional segment_id association
+    let segmentId: string | undefined;
+    if ('segment_id' in bodyObj) {
+      if (typeof bodyObj.segment_id !== 'string') {
+        return NextResponse.json(
+          { error: 'Invalid segment_id. Expected UUID string.' },
+          { status: 400 }
+        );
+      }
+      if (!isValidUUID(bodyObj.segment_id as string)) {
+        return NextResponse.json(
+          { error: 'Invalid segment_id format. Must be UUID.' },
+          { status: 400 }
+        );
+      }
+      segmentId = bodyObj.segment_id as string;
+    }
+
+    // Optional name for icp_mining identification
+    let runName: string | undefined;
+    if ('name' in bodyObj) {
+      if (typeof bodyObj.name !== 'string') {
+        return NextResponse.json(
+          { error: 'Invalid name. Expected string.' },
+          { status: 400 }
+        );
+      }
+      const trimmed = bodyObj.name.trim();
+      if (trimmed.length === 0) {
+        return NextResponse.json(
+          { error: 'Invalid name. Must be non-empty.' },
+          { status: 400 }
+        );
+      }
+      runName = trimmed;
+    }
+
     let rawQuery: unknown = 'query' in bodyObj ? bodyObj.query : { ...bodyObj };
-    if (rawQuery && typeof rawQuery === 'object' && 'site_id' in (rawQuery as AnyRecord)) {
-      const { site_id: _omit, ...rest } = rawQuery as AnyRecord;
+    if (rawQuery && typeof rawQuery === 'object') {
+      const obj = rawQuery as AnyRecord;
+      const { site_id: _omitSite, segment_id: _omitSegment, name: _omitName, ...rest } = obj;
       rawQuery = rest;
     }
 
@@ -80,11 +119,29 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Link role_query to segment if provided (idempotent)
+    if (segmentId) {
+      const { error: linkErr } = await supabaseAdmin
+        .from('role_query_segments')
+        .upsert(
+          [{ role_query_id: roleQuery.id, segment_id: segmentId }],
+          { onConflict: 'role_query_id,segment_id' }
+        );
+      if (linkErr) {
+        logError('finder.person_role_search.createQuery', 'Failed to upsert role_query_segments', linkErr);
+        return NextResponse.json(
+          { error: 'Database error linking role_query to segment', details: linkErr.message },
+          { status: 500 }
+        );
+      }
+    }
+
     // Prepare icp_criteria embedding site context and the search snapshot
     const icpCriteria = {
       site_id: siteId,
       source: 'person_role_search',
-      query_snapshot: roleQuery.query || rawQuery
+      query_snapshot: roleQuery.query || rawQuery,
+      ...(runName ? { name: runName } : {})
     } as AnyRecord;
 
     const icpHash = computeSha256Hex(icpCriteria);
@@ -120,11 +177,11 @@ export async function POST(req: NextRequest) {
     // Insert new icp_mining run (status defaults to pending)
     const { data: miningRow, error: miningErr } = await supabaseAdmin
       .from('icp_mining')
-      .insert([{ role_query_id: roleQuery.id, icp_criteria: icpCriteria }])
-      .select('id, status, icp_hash, created_at')
+      .insert([{ role_query_id: roleQuery.id, icp_criteria: icpCriteria, site_id: siteId, name: runName ?? null }])
+      .select('id, status, icp_hash, created_at, site_id, name')
       .single();
 
-    if (miningErr && (miningErr as AnyRecord)?.code === '23505') {
+    if (miningErr && (miningErr as unknown as { code?: string }).code === '23505') {
       // Unique violation due to race; fetch the active row
       const { data: racedList } = await supabaseAdmin
         .from('icp_mining')

@@ -1,0 +1,44 @@
+---
+title: AI Video Generation API
+description: Video generation endpoint placeholder
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester'
+
+# AI Video Generation (`/api/ai/video`)
+
+This endpoint is not implemented yet. It returns `501 Not Implemented`.
+
+## Try it
+
+<UnifiedApiTester 
+  apiId="ai-video"
+  title="AI Video Generation"
+  description="Placeholder endpoint that returns 501."
+  defaultEndpoint="/api/ai/video"
+  defaultMethod="POST"
+  defaultBody={`{\n  "prompt": "a cinematic desert scene at sunset"\n}`}
+/>
+
+## Endpoint
+
+```
+POST /api/ai/video
+```
+
+## Request Body
+
+| Field | Type | Description | Required |
+|------|------|-------------|----------|
+| prompt | string | Text prompt describing the video to generate | Yes |
+| provider | string | Provider id (reserved for future use) | No |
+
+## Example
+
+```json
+{
+  "prompt": "a cinematic desert scene at sunset"
+}
+```
+
+

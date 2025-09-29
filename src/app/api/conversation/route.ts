@@ -184,7 +184,7 @@ export async function processConversation(options: {
   
   // Obtener opciones de solicitud
   console.log('[Conversation Service] Getting request options for model:', modelType, modelId);
-  const requestOptions = getRequestOptions(modelType, modelId);
+  const requestOptions: any = getRequestOptions(modelType, modelId);
   console.log('[Conversation Service] Request options obtained');
   
   // Configurar opciones del modelo según el tipo

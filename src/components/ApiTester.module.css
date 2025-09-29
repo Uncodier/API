@@ -774,13 +774,12 @@
 
 .tabContent {
   padding: 20px 0;
-  min-height: 500px;
-  height: 500px;
   width: 100%;
   display: flex;
   flex-direction: column;
   flex: 1;
-  overflow-y: auto;
+  height: auto;
+  overflow: visible;
 }
 
 /* Estilos específicos para tema oscuro */
@@ -915,10 +914,11 @@
   padding: 16px;
   margin-top: 0;
   border: 1px solid var(--nextra-border-color, #eaeaea);
-  overflow-y: auto;
+  overflow: visible;
   display: flex;
   flex-direction: column;
   width: 100%;
+  height: auto;
 }
 
 .requestPreview h4 {
@@ -1051,12 +1051,11 @@
 
 .tabContent {
   padding: 20px 0;
-  min-height: 500px;
-  height: 500px;
   width: 100%;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  overflow: visible;
+  height: auto;
 }
 
 :global(.dark) .requestPreview {

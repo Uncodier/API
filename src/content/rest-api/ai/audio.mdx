@@ -1,0 +1,56 @@
+---
+title: AI Audio (Text-to-Speech) API
+description: TTS using Vercel AI Gateway (OpenAI-compatible)
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester'
+
+# AI Audio (TTS) (`/api/ai/audio`)
+
+## Try it
+
+<UnifiedApiTester 
+  apiId="ai-audio"
+  title="AI Audio (Text-to-Speech)"
+  description="Synthesize speech using Vercel AI Gateway (OpenAI-compatible). Returns audio bytes."
+  defaultEndpoint="/api/ai/audio"
+  defaultMethod="POST"
+  defaultBody={`{\n  "text": "Hello from the AI audio API",\n  "provider": "vercel",\n  "voice": "alloy",\n  "format": "mp3"\n}`}
+/>
+
+## Endpoint
+
+```
+POST /api/ai/audio
+```
+
+## Request Body
+
+| Field | Type | Description | Required |
+|------|------|-------------|----------|
+| text | string | Text to synthesize | Yes |
+| provider | 'vercel' | Provider to use | No (default: 'vercel') |
+| voice | string | Voice name | No |
+| format | 'mp3' \| 'wav' \| 'ogg' | Output format | No (default: 'mp3') |
+| model | string | Model id (OpenAI-compatible) | No |
+
+### Example
+
+```json
+{
+  "text": "Hello from the AI audio API",
+  "provider": "vercel",
+  "voice": "alloy",
+  "format": "mp3"
+}
+```
+
+## Response
+
+Binary audio data. Content-Type depends on `format`.
+
+## Environment
+
+- Vercel: `VERCEL_AI_GATEWAY_OPENAI`, `VERCEL_AI_GATEWAY_API_KEY`
+
+

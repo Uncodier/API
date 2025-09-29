@@ -1,0 +1,91 @@
+---
+title: AI Text Generation API
+description: Text chat completions using Azure OpenAI or Gemini with Vercel fallback
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester'
+
+# AI Text Generation (`/api/ai/text`)
+
+## Try it
+
+<UnifiedApiTester 
+  apiId="ai-text"
+  title="AI Text Generation"
+  description="Chat-based text generation with Azure, Gemini, or Vercel fallback."
+  defaultEndpoint="/api/ai/text"
+  defaultMethod="POST"
+  defaultBody={`{\n  "messages": [\n    { "role": "system", "content": "You are a helpful assistant." },\n    { "role": "user", "content": "Write a haiku about the ocean" }\n  ],\n  "provider": "azure",\n  "model": "gpt-4o-mini"\n}`}
+/>
+
+## Endpoint
+
+```
+POST /api/ai/text
+```
+
+## Request Body
+
+| Field | Type | Description | Required |
+|------|------|-------------|----------|
+| messages | array | Chat messages with roles system/user/assistant | Yes |
+| provider | 'azure' \| 'gemini' \| 'vercel' | Provider to use | No (default: 'azure') |
+| model | string | Provider-specific model id | No |
+| temperature | number | Sampling temperature | No |
+| maxTokens | number | Max output tokens | No |
+| topP | number | Nucleus sampling | No |
+
+### Example (Azure)
+
+```json
+{
+  "messages": [
+    { "role": "system", "content": "You are a helpful assistant." },
+    { "role": "user", "content": "Write a haiku about the ocean" }
+  ],
+  "provider": "azure"
+}
+```
+
+### Example (Gemini)
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "Summarize this text." }
+  ],
+  "provider": "gemini",
+  "model": "models/gemini-1.5-pro"
+}
+```
+
+### Example (Vercel fallback)
+
+```json
+{
+  "messages": [
+    { "role": "user", "content": "List 3 ideas for a blog post" }
+  ],
+  "provider": "vercel",
+  "model": "gpt-4o-mini",
+  "temperature": 0.7,
+  "maxTokens": 200
+}
+```
+
+## Response
+
+```json
+{
+  "provider": "azure",
+  "content": "..."
+}
+```
+
+## Environment
+
+- Azure: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_CHAT_DEPLOYMENT`
+- Gemini: `GEMINI_API_KEY`
+- Vercel fallback: `VERCEL_AI_GATEWAY_OPENAI`, `VERCEL_AI_GATEWAY_API_KEY`
+
+

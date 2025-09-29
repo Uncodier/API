@@ -1,0 +1,72 @@
+---
+title: AI Image Generation API
+description: Generate images using Azure OpenAI with Vercel Gateway fallback
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester'
+
+# AI Image Generation (`/api/ai/image`)
+
+## Try it
+
+<UnifiedApiTester 
+  apiId="ai-image"
+  title="AI Image Generation"
+  description="Generate images using Azure OpenAI (DALL·E) with fallback to Vercel AI Gateway."
+  defaultEndpoint="/api/ai/image"
+  defaultMethod="POST"
+  defaultBody={`{\n  "prompt": "a watercolor fox in a forest",\n  "provider": "azure",\n  "size": "1024x1024",\n  "n": 1,\n  "quality": "hd"\n}`}
+/>
+
+## Endpoint
+
+```
+POST /api/ai/image
+```
+
+## Request Body
+
+| Field | Type | Description | Required |
+|------|------|-------------|----------|
+| prompt | string | Text prompt to generate the image | Yes |
+| provider | 'azure' \| 'vercel' | Provider to use | No (default: 'azure') |
+| size | '256x256' \| '512x512' \| '1024x1024' | Output size | No (default: '1024x1024') |
+| n | number | Number of images to generate | No (default: 1) |
+| quality | 'standard' \| 'hd' | Quality level (Azure) | No |
+
+### Example (Azure)
+
+```json
+{
+  "prompt": "a watercolor fox in a forest",
+  "provider": "azure",
+  "size": "1024x1024",
+  "n": 1,
+  "quality": "hd"
+}
+```
+
+### Example (Vercel fallback)
+
+```json
+{
+  "prompt": "a watercolor fox in a forest",
+  "provider": "vercel"
+}
+```
+
+## Response
+
+```json
+{
+  "provider": "azure",
+  "images": [ { "url": "..." } ]
+}
+```
+
+## Environment
+
+- Azure: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_IMAGES_DEPLOYMENT`
+- Vercel fallback: `VERCEL_AI_GATEWAY_OPENAI`, `VERCEL_AI_GATEWAY_API_KEY`
+
+

@@ -47,7 +47,7 @@ export async function POST(request: NextRequest) {
     });
     
     // Obtener opciones de solicitud
-    const requestOptions = getRequestOptions(modelType, modelId);
+    const requestOptions: any = getRequestOptions(modelType, modelId);
     
     // Configurar opciones del modelo según el tipo
     let modelOptions;

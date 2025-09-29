@@ -15,6 +15,12 @@
     "src/app/api/agents/email/deliveryStatus/route.ts": {
       "maxDuration": 300
     }
+    "src/app/api/ai/image/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/ai/video/route.ts": {
+      "maxDuration": 300
+    }
   },
   "regions": ["iad1"]
 } 
