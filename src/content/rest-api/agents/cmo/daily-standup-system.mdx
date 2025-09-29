@@ -1,107 +1,9 @@
 ---
 title: Daily StandUp System Analysis
-description: Genera un análisis estratégico del estado del sistema para reuniones diarias de seguimiento
+description: Generate a strategic analysis of system health for daily standup follow-ups
 ---
 
 import { UnifiedApiTester } from '@/components/ApiTester';
-
-# API de Daily StandUp System Analysis de CMO
-
-Esta API permite al agente CMO realizar un análisis comprensivo del estado del sistema, incluyendo configuración del sitio, estado de facturación, métricas de actividad y recomendaciones estratégicas para optimización y crecimiento.
-
-## Endpoint
-
-`POST /api/agents/cmo/dailyStandUp/system`
-
-## Request Body
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| site_id | string | Sí | Identificador único del sitio para analizar. Debe ser un UUID válido. |
-| command_id | string | No | Identificador opcional del comando si forma parte de una secuencia existente. |
-
-## Response
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| success | boolean | Indica si la solicitud fue exitosa. |
-| data.command_id | string | Identificador único del comando creado. |
-| data.summary | string | Resumen estratégico del análisis del sistema. |
-| data.analysis_type | string | Tipo de análisis realizado ("system"). |
-| data.system_data | object | Datos del sistema analizados. |
-| data.system_data.site_status | string | Estado actual del sitio. |
-| data.system_data.billing_status | string | Estado de facturación del sitio. |
-| data.system_data.events_count | number | Número de eventos recientes (últimas 24 horas). |
-| data.system_data.settings_count | number | Número de configuraciones del sitio. |
-
-En caso de error:
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| success | boolean | false |
-| error.code | string | Código de error (INVALID_REQUEST, AGENT_NOT_FOUND, DATA_ERROR, COMMAND_EXECUTION_FAILED, INTERNAL_SERVER_ERROR). |
-| error.message | string | Descripción del error. |
-
-## Ejemplo de Uso
-
-<UnifiedApiTester apiId="cmo-daily-standup-system" />
-
-## Características
-
-- **Análisis Estratégico Completo**: Evalúa el estado de salud del sistema desde una perspectiva de negocio
-- **Revisión de Facturación**: Analiza el estado de suscripciones y oportunidades de optimización financiera
-- **Análisis de Configuración**: Identifica brechas críticas en la configuración del sistema
-- **Métricas de Actividad**: Evalúa la actividad reciente del usuario y engagement
-- **Recomendaciones Accionables**: Proporciona prioridades estratégicas y pasos siguientes claros
-- **Evaluación de Riesgos**: Identifica riesgos potenciales y oportunidades perdidas
-
-## Análisis Incluido
-
-El agente CMO proporciona un análisis estructurado que incluye:
-
-### 1. Evaluación de Salud del Sistema
-- Calificación general del sistema (Verde/Amarillo/Rojo)
-- Identificación de problemas críticos
-- Evaluación de estabilidad operacional
-
-### 2. Revisión Estratégica de Facturación
-- Estado de suscripciones y facturación
-- Identificación de preocupaciones financieras
-- Oportunidades de optimización de ingresos
-
-### 3. Análisis de Configuración y Setup
-- Completitud de la configuración del sistema
-- Brechas críticas que impiden el máximo rendimiento
-- Mejoras de configuración con mayor impacto
-
-### 4. Estado de Onboarding y Activación
-- Porcentaje estimado de configuración completa
-- Principales bloqueadores para activación completa
-- Prioridades para mejorar la experiencia de onboarding
-
-### 5. Recomendaciones de Acción Estratégica
-- Top 3 prioridades estratégicas para la semana
-- Quick wins implementables inmediatamente
-- Cambios de configuración recomendados para impulsar crecimiento
-
-### 6. Evaluación de Riesgos y Oportunidades
-- Riesgos identificados en el estado actual del sistema
-- Oportunidades perdidas por configuración incompleta
-- Medidas preventivas recomendadas
-
-## Casos de Uso
-
-- **Daily Standups Ejecutivos**: Proporcionar resúmenes estratégicos para reuniones diarias
-- **Análisis de Salud del Sistema**: Evaluación regular del estado operacional
-- **Optimización de Configuración**: Identificar mejoras críticas de setup
-- **Revisión de Billing**: Monitoreo estratégico del estado financiero
-- **Planificación Estratégica**: Identificar prioridades y próximos pasos
-
-## Validaciones
-
-- **UUID Validation**: El `site_id` debe ser un UUID válido
-- **Agent Validation**: Debe existir un agente CMO activo para el sitio
-- **Data Validation**: Se valida la disponibilidad de datos del sistema
 
 ## English Documentation
 
@@ -156,4 +58,4 @@ The CMO agent provides analysis across six key strategic areas:
 5. **Strategic Recommendations** - Top priorities and quick wins
 6. **Risk Assessment** - Current risks and missed opportunities
 
-This comprehensive analysis serves as the foundation for executive briefings and strategic decision-making. 
+This comprehensive analysis serves as the foundation for executive briefings and strategic decision-making.
