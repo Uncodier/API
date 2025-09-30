@@ -81,10 +81,22 @@ export async function POST(req: NextRequest) {
       runName = trimmed;
     }
 
+    // Optional total_targets for icp_mining
+    let totalTargets: number | undefined;
+    if ('total_targets' in bodyObj) {
+      if (typeof bodyObj.total_targets !== 'number' || !Number.isInteger(bodyObj.total_targets) || bodyObj.total_targets < 0) {
+        return NextResponse.json(
+          { error: 'Invalid total_targets. Expected non-negative integer.' },
+          { status: 400 }
+        );
+      }
+      totalTargets = bodyObj.total_targets;
+    }
+
     let rawQuery: unknown = 'query' in bodyObj ? bodyObj.query : { ...bodyObj };
     if (rawQuery && typeof rawQuery === 'object') {
       const obj = rawQuery as AnyRecord;
-      const { site_id: _omitSite, segment_id: _omitSegment, name: _omitName, ...rest } = obj;
+      const { site_id: _omitSite, segment_id: _omitSegment, name: _omitName, total_targets: _omitTotalTargets, ...rest } = obj;
       rawQuery = rest;
     }
 
@@ -170,15 +182,26 @@ export async function POST(req: NextRequest) {
     if (existingActive) {
       return NextResponse.json({
         role_query: { id: roleQuery.id, query_hash: roleQuery.query_hash },
-        icp_mining: { id: existingActive.id, status: existingActive.status, reused: true }
+        icp_mining: { 
+          id: existingActive.id, 
+          status: existingActive.status, 
+          total_targets: totalTargets ?? 0,
+          reused: true 
+        }
       });
     }
 
     // Insert new icp_mining run (status defaults to pending)
     const { data: miningRow, error: miningErr } = await supabaseAdmin
       .from('icp_mining')
-      .insert([{ role_query_id: roleQuery.id, icp_criteria: icpCriteria, site_id: siteId, name: runName ?? null }])
-      .select('id, status, icp_hash, created_at, site_id, name')
+      .insert([{ 
+        role_query_id: roleQuery.id, 
+        icp_criteria: icpCriteria, 
+        site_id: siteId, 
+        name: runName ?? null,
+        total_targets: totalTargets ?? 0
+      }])
+      .select('id, status, icp_hash, created_at, site_id, name, total_targets')
       .single();
 
     if (miningErr && (miningErr as unknown as { code?: string }).code === '23505') {
@@ -194,7 +217,12 @@ export async function POST(req: NextRequest) {
       if (raced) {
         return NextResponse.json({
           role_query: { id: roleQuery.id, query_hash: roleQuery.query_hash },
-          icp_mining: { id: raced.id, status: raced.status, reused: true }
+          icp_mining: { 
+            id: raced.id, 
+            status: raced.status, 
+            total_targets: totalTargets ?? 0,
+            reused: true 
+          }
         });
       }
     }
@@ -209,7 +237,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       role_query: { id: roleQuery.id, query_hash: roleQuery.query_hash },
-      icp_mining: { id: miningRow.id, status: miningRow.status, reused: false }
+      icp_mining: { 
+        id: miningRow.id, 
+        status: miningRow.status, 
+        total_targets: miningRow.total_targets,
+        reused: false 
+      }
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
