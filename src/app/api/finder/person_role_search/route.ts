@@ -89,7 +89,7 @@ export async function POST(req: NextRequest) {
       };
 
       return NextResponse.json(
-        { error: 'Forager API error', debug },
+        { error: 'Search service temporarily unavailable', debug },
         { status: upstreamResponse.status }
       );
     }

@@ -89,6 +89,10 @@ async function saveAssistantMessageForTemplate(
  * - conversation_id: (Opcional) ID de la conversación (requerido para detectar ventana de respuesta)
  * - lead_id: (Opcional) ID del lead asociado
  * - responseWindowEnabled: (Optional) boolean - If true, assume active window and skip template creation
+ * - message_id: (Optional) string - ID del mensaje existente a actualizar (requerido cuando template_required=true)
+ * 
+ * IMPORTANTE: Cuando template_required=true, el cliente DEBE proporcionar un message_id válido
+ * de un mensaje previamente creado. Este endpoint NO creará mensajes automáticamente.
  * 
  * Respuesta incluye:
  * - template_used: boolean - Si se usó un template de Twilio
@@ -303,30 +307,38 @@ export async function POST(request: NextRequest) {
       templateRequired: result.template_required
     });
 
-    // Si se requiere template y NO tenemos un message_id preexistente, guardar el mensaje y usar ese ID
-    if (result.success && result.template_required && !message_id) {
-      console.log('📝 [SendWhatsApp] Template requerido - guardando mensaje en base de datos...');
+    // Actualizar el mensaje existente si se proporciona un message_id válido (opcional)
+    if (result.success && result.template_required && message_id && isValidUUID(message_id)) {
+      console.log('🔍 [SendWhatsApp] Verificando que el message_id existe en la base de datos...');
       
-      const savedMessageId = await saveAssistantMessageForTemplate(
-        message,
-        conversation_id,
-        agent_id,
-        lead_id,
-        site_id,
-        validatedPhone
-      );
+      try {
+        const { data: existingMessage, error: messageError } = await supabaseAdmin
+          .from('messages')
+          .select('id, role, content')
+          .eq('id', message_id)
+          .single();
 
-      if (savedMessageId) {
-        console.log(`✅ [SendWhatsApp] Mensaje guardado con ID: ${savedMessageId}`);
-        // Reemplazar el UUID generado por el WhatsAppSendService con el ID real del mensaje
-        result.message_id = savedMessageId;
-      } else {
-        console.warn('⚠️ [SendWhatsApp] No se pudo guardar el mensaje en la base de datos, usando UUID original');
+        if (messageError || !existingMessage) {
+          console.warn('⚠️ [SendWhatsApp] El message_id no existe en la base de datos, continuando sin actualización:', {
+            message_id,
+            error: messageError?.message || 'Message not found'
+          });
+          // No romper el flujo, solo continuar sin actualizar
+        } else {
+          console.log('✅ [SendWhatsApp] Message_id verificado y existe en la base de datos:', {
+            id: existingMessage.id,
+            role: existingMessage.role,
+            contentLength: existingMessage.content?.length || 0
+          });
+          
+          result.message_id = message_id;
+        }
+      } catch (dbError) {
+        console.warn('⚠️ [SendWhatsApp] Error verificando message_id en la base de datos, continuando sin actualización:', dbError);
+        // No romper el flujo, solo continuar sin actualizar
       }
-    } else if (result.success && result.template_required && message_id && isValidUUID(message_id)) {
-      // Respetar message_id ya existente y propagarlo en la respuesta
-      console.log('🔗 [SendWhatsApp] Usando message_id existente provisto por el cliente');
-      result.message_id = message_id;
+    } else if (result.success && result.template_required && !message_id) {
+      console.log('ℹ️ [SendWhatsApp] Template requerido pero no se proporcionó message_id - continuando sin actualización de mensaje');
     }
 
     if (!result.success) {

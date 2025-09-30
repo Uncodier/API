@@ -60,7 +60,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ categor
         error: errorPayload
       });
       return NextResponse.json(
-        { error: 'Forager API error', details: errorPayload },
+        { error: 'Search service temporarily unavailable', details: errorPayload },
         { status: resp.status }
       );
     }

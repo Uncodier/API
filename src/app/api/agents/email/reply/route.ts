@@ -5,6 +5,7 @@ import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
 import { EmailRoutingService } from '@/lib/services/email/EmailRoutingService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export const maxDuration = 300;
 
@@ -104,11 +105,11 @@ export async function POST(request: NextRequest) {
   const limited = validEmails.filter(e => selectedIds.has((e?.id || e?.uid || e?.messageId || '').toString()));
 
   const separationLimited = await EmailProcessingService.separateEmailsByDestination(limited, emailConfig, siteId);
-  const { emailsToAgent, directResponseEmails } = separationLimited;
+  const { directResponseEmails } = separationLimited;
 
-  // No guardamos directos aquí; esta ruta es de agente
-  const emailsForResponse = [...emailsToAgent, ...directResponseEmails];
-  const emailsToSave = EmailProcessingService.filterEmailsToSave(emailsForResponse);
+  // Solo guardamos los emails que van a respuesta directa (como aliasReply y leadsReply)
+  // Los emailsToAgent no se marcan como procesados para evitar duplicados
+  const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
   await EmailProcessingService.saveProcessedEmails(
     emailsToSave,
     validEmails,
@@ -121,7 +122,7 @@ export async function POST(request: NextRequest) {
     data: {
       message: 'Agent reply flow processed',
       filterSummary: summary,
-      emails: emailsForResponse
+      emails: directResponseEmails
     }
   });
 }
