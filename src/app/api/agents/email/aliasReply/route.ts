@@ -5,6 +5,7 @@ import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
 import { EmailRoutingService } from '@/lib/services/email/EmailRoutingService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
+import { SiteEmailGuardService } from '@/lib/services/email/SiteEmailGuardService';
 
 export const maxDuration = 300;
 
@@ -89,7 +90,14 @@ export async function POST(request: NextRequest) {
     { allowNonAliasForAgent: false }
   );
 
-  const partition = await EmailRoutingService.partition(validEmails, emailConfig, siteId);
+  // Guard: no procesar correos entrantes desde el mismo dominio/direcciones del sitio
+  const siteUrlDomain = await SiteEmailGuardService.getSiteUrlDomain(siteId);
+  const guardResult = SiteEmailGuardService.filterOutInboundFromSiteDomain(validEmails, emailConfig, { siteId, siteUrlDomain });
+  if (guardResult.skipped > 0) {
+    console.log(`[ALIAS_REPLY] Guard skipped ${guardResult.skipped} inbound emails from site domain/addresses`);
+  }
+
+  const partition = await EmailRoutingService.partition(guardResult.filtered, emailConfig, siteId);
   const prioritized = [...partition.alias];
 
   const selectedIds = new Set<string>();
@@ -99,7 +107,7 @@ export async function POST(request: NextRequest) {
     selectedIds.add(id);
     if (selectedIds.size >= limit) break;
   }
-  const limited = validEmails.filter(e => selectedIds.has((e?.id || e?.uid || e?.messageId || '').toString()));
+  const limited = guardResult.filtered.filter(e => selectedIds.has((e?.id || e?.uid || e?.messageId || '').toString()));
 
   const separationLimited = await EmailProcessingService.separateEmailsByDestination(limited, emailConfig, siteId);
   const { directResponseEmails } = separationLimited;
@@ -107,7 +115,7 @@ export async function POST(request: NextRequest) {
   const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
   await EmailProcessingService.saveProcessedEmails(
     emailsToSave,
-    validEmails,
+    guardResult.filtered,
     emailToEnvelopeMap,
     siteId
   );

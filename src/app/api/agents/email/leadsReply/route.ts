@@ -5,6 +5,7 @@ import { EmailService } from '@/lib/services/email/EmailService';
 import { EmailProcessingService } from '@/lib/services/email/EmailProcessingService';
 import { EmailRoutingService } from '@/lib/services/email/EmailRoutingService';
 import { CaseConverterService, getFlexibleProperty } from '@/lib/utils/case-converter';
+import { SiteEmailGuardService } from '@/lib/services/email/SiteEmailGuardService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export const maxDuration = 300;
@@ -87,7 +88,13 @@ export async function POST(request: NextRequest) {
     emailConfig,
     { allowNonAliasForAgent: true }
   );
-  console.log(`[LEADS_REPLY] Received ${emails.length} emails, ${validEmails.length} after comprehensive filter for site ${siteId}`);
+  // Guard: no procesar correos entrantes que provienen del mismo dominio/direcciones del sitio
+  const siteUrlDomain = await SiteEmailGuardService.getSiteUrlDomain(siteId);
+  const guardResult = SiteEmailGuardService.filterOutInboundFromSiteDomain(validEmails, emailConfig, { siteId, siteUrlDomain });
+  if (guardResult.skipped > 0) {
+    console.log(`[LEADS_REPLY] Guard skipped ${guardResult.skipped} inbound emails from site domain/addresses`);
+  }
+  console.log(`[LEADS_REPLY] Received ${emails.length} emails, ${guardResult.filtered.length} after filters for site ${siteId}`);
 
   // Build a set of sender addresses and fetch ASSIGNED leads from DB
   const extractAddress = (value: any): string => {
@@ -127,7 +134,7 @@ export async function POST(request: NextRequest) {
     return { effectiveFrom: fromAddr, reason: 'from-used' };
   };
 
-  const effectiveFromAddresses = validEmails.map(email => {
+  const effectiveFromAddresses = guardResult.filtered.map(email => {
     const result = computeEffectiveFrom(email);
     console.log(`[LEADS_REPLY] effectiveFrom decision id=${(email?.id || email?.uid || email?.messageId || '').toString()} → ${result.effectiveFrom} (${result.reason})`);
     return result.effectiveFrom;
@@ -161,7 +168,7 @@ export async function POST(request: NextRequest) {
   console.log(`[LEADS_REPLY][DEBUG] Target '${targetDebugAddress}' present in DB map?`, assignedLeadsMap.has(targetDebugAddress));
 
   // Per-email match diagnostics before filtering
-  for (const email of validEmails) {
+  for (const email of guardResult.filtered) {
     const id = (email?.id || email?.uid || email?.messageId || '').toString();
     const rawFrom = (email.from || '').toString();
     const rawReply = (email.replyTo || (email as any)['reply-to'] || email.headers?.['reply-to'] || '').toString();
@@ -176,7 +183,7 @@ export async function POST(request: NextRequest) {
   }
 
   // Keep only emails coming FROM unassigned (IA) leads (ignore alias filtering completely)
-  const emailsFromAssignedLeads = validEmails
+  const emailsFromAssignedLeads = guardResult.filtered
     .map(email => {
       const { effectiveFrom } = computeEffectiveFrom(email);
       const leadInfo = assignedLeadsMap.get(effectiveFrom);
@@ -202,7 +209,7 @@ export async function POST(request: NextRequest) {
   const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
   await EmailProcessingService.saveProcessedEmails(
     emailsToSave,
-    validEmails,
+    guardResult.filtered,
     emailToEnvelopeMap,
     siteId
   );

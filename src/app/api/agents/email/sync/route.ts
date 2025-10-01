@@ -17,6 +17,7 @@ import { EmailTextExtractorService } from '@/lib/services/email/EmailTextExtract
 import { StableEmailDeduplicationService } from '@/lib/utils/stable-email-deduplication';
 import { SentEmailDuplicationService } from '@/lib/services/email/SentEmailDuplicationService';
 import { EmailSyncErrorService } from '@/lib/services/email/EmailSyncErrorService';
+import { SiteEmailGuardService } from '@/lib/services/email/SiteEmailGuardService';
 
 // Configuración de timeout extendido para Vercel
 export const maxDuration = 800; // 13.33 minutos en segundos (máximo para plan Pro)
@@ -2256,16 +2257,24 @@ export async function POST(request: NextRequest) {
       
       const preFilteredInternalCount = allSentEmails.length - internalFilteredEmails.length;
       
+      // Additional guard: ensure they are truly site → external based on site config
+      const siteUrlDomain = await SiteEmailGuardService.getSiteUrlDomain(siteId);
+      const siteToExternal = SiteEmailGuardService.filterSiteToExternalSent(internalFilteredEmails, emailConfig, { siteId, siteUrlDomain });
+      if (siteToExternal.excluded > 0) {
+        console.log(`[EMAIL_SYNC] Guard excluded ${siteToExternal.excluded} emails not classified as site→external`);
+      }
+
       // Filter emails using specialized SentEmailDuplicationService (second filter)
       console.log(`[EMAIL_SYNC] 🔄 Filtrando emails ENVIADOS ya procesados usando SentEmailDuplicationService...`);
       const { unprocessed: sentEmails, alreadyProcessed, debugInfo } = await SentEmailDuplicationService.filterUnprocessedSentEmails(
-        internalFilteredEmails, 
+        siteToExternal.sent, 
         siteId
       );
       
       console.log(`[EMAIL_SYNC] 📈 RESUMEN DE FILTRADO DETALLADO:`);
       console.log(`[EMAIL_SYNC] - Emails enviados obtenidos inicialmente: ${allSentEmails.length}`);
       console.log(`[EMAIL_SYNC] - Emails después del filtro de dominios internos: ${internalFilteredEmails.length}`);
+      console.log(`[EMAIL_SYNC] - Emails después de validar site→external: ${siteToExternal.sent.length}`);
       console.log(`[EMAIL_SYNC] - Emails ya procesados (duplicados evitados): ${alreadyProcessed.length}`);
       console.log(`[EMAIL_SYNC] - Emails finales para sincronización: ${sentEmails.length}`);
       
