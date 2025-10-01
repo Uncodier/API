@@ -29,21 +29,35 @@ export function normalizePhoneForSearch(phone: string): string[] {
     variants.push(cleaned);
   }
   
-  // Si empieza con +, generar variantes sin el +
+  // Detectar y convertir prefijos internacionales comunes a formato +
+  if (cleaned.startsWith('00')) {
+    const withPlus = `+${cleaned.substring(2)}`;
+    variants.push(withPlus);
+    cleaned = withPlus;
+  } else if (cleaned.startsWith('011')) {
+    const withPlus = `+${cleaned.substring(3)}`;
+    variants.push(withPlus);
+    cleaned = withPlus;
+  }
+
+  // Si empieza con +, generar variantes sin el + y variantes sin posibles dígitos de marcación nacional tras el código de país
   if (cleaned.startsWith('+')) {
     const withoutPlus = cleaned.substring(1);
     variants.push(withoutPlus);
-    
-    // Para números mexicanos (+52), generar variantes adicionales
-    if (withoutPlus.startsWith('52')) {
-      const without52 = withoutPlus.substring(2);
-      variants.push(without52);
-      
-      // Si después del 52 viene un 1 (lada), generar variante sin el 1
-      if (without52.startsWith('1') && without52.length > 1) {
-        const without521 = without52.substring(1);
-        variants.push(without521);
+
+    const match = cleaned.match(/^\+(\d{1,3})(\d{6,14})$/);
+    if (match) {
+      const cc = match[1];
+      const rest = match[2];
+      // Quitar un posible dígito de marcación nacional (0, 1, 9) justo después del código de país
+      if (rest.length > 1 && (rest.startsWith('0') || rest.startsWith('1') || rest.startsWith('9'))) {
+        const restNoTrunk = rest.substring(1);
+        variants.push(`+${cc}${restNoTrunk}`);
+        variants.push(`${cc}${restNoTrunk}`);
       }
+
+      // Variante sólo dígitos (sin +)
+      variants.push(`${cc}${rest}`);
     }
   } else {
     // Si no empieza con +, generar variantes con códigos comunes
@@ -66,6 +80,12 @@ export function normalizePhoneForSearch(phone: string): string[] {
       variants.push(`+52${withoutLeading1}`);
       variants.push(`52${withoutLeading1}`);
     }
+  }
+
+  // Variante de últimos 10 dígitos como fallback de matching (cuidadosa para colisiones)
+  const digitsOnly = cleaned.replace(/[^\d]/g, '');
+  if (digitsOnly.length >= 10) {
+    variants.push(digitsOnly.slice(-10));
   }
   
   // Remover duplicados y números vacíos
@@ -93,9 +113,25 @@ export function normalizePhoneForStorage(phone: string): string {
   
   // Remover caracteres no numéricos excepto el + inicial
   cleaned = cleaned.replace(/[^\d+]/g, '');
+
+  // Convertir prefijos internacionales comunes a +
+  if (cleaned.startsWith('00')) {
+    cleaned = `+${cleaned.substring(2)}`;
+  } else if (cleaned.startsWith('011')) {
+    cleaned = `+${cleaned.substring(3)}`;
+  }
   
-  // Si ya tiene formato internacional (+), mantenerlo
+  // Si ya tiene formato internacional (+), normalizar trunk digit tras código de país (0/1/9) de forma genérica
   if (cleaned.startsWith('+')) {
+    // Caso específico MX histórico: +521XXXXXXXXXX -> +52XXXXXXXXXX
+    if (/^\+521\d{10}$/.test(cleaned)) {
+      return `+52${cleaned.substring(4)}`;
+    }
+    // Regla genérica: quitar un único 0 inmediatamente después del código de país si aparece (trunk local)
+    const m = cleaned.match(/^(\+\d{1,3})0(\d{6,14})$/);
+    if (m) {
+      return `${m[1]}${m[2]}`;
+    }
     return cleaned;
   }
   
@@ -105,9 +141,9 @@ export function normalizePhoneForStorage(phone: string): string {
     return `+52${cleaned}`;
   }
   
-  // Para números de 11 dígitos que empiecen con 1, podría ser +52 1 (lada)
+  // Mantener heurística MX existente (compatibilidad)
   if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    return `+52${cleaned}`;
+    return `+52${cleaned.substring(1)}`;
   }
   
   // Para números de 12 dígitos que empiecen con 52, agregar +

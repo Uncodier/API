@@ -346,6 +346,29 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     // Crear una nueva conversación si no existe
     if (!effectiveConversationId) {
+      // Late re-check: try to find an existing conversation again to avoid race conditions (especially for WhatsApp)
+      try {
+        if (siteId && (validatedLeadId || visitorId)) {
+          const lateOrigin = origin || undefined;
+          const lateExistingConversationId = await ConversationService.findExistingConversation(
+            validatedLeadId,
+            visitorId,
+            siteId,
+            lateOrigin,
+            undefined,
+            undefined
+          );
+          if (lateExistingConversationId) {
+            effectiveConversationId = lateExistingConversationId;
+            console.log(`♻️ Late re-check found existing conversation: ${effectiveConversationId}`);
+          }
+        }
+      } catch (lateErr) {
+        console.log('⚠️ Late re-check for existing conversation failed:', lateErr);
+      }
+
+      // If still no conversation, create a new one
+      if (!effectiveConversationId) {
       // Crear una nueva conversación
       const conversationData: any = {
         // Añadir user_id obligatoriamente
@@ -392,6 +415,7 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       
       effectiveConversationId = conversation.id;
       console.log(`🗣️ Nueva conversación creada con ID: ${effectiveConversationId}`);
+      }
     } else if (conversationTitle || siteId || validatedLeadId || origin) {
       // Actualizar la conversación existente si se proporciona un nuevo título, site_id, lead_id o origin
       const updateData: any = {};
