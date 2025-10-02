@@ -1,30 +1,30 @@
 ---
-title: API de Análisis de UX de Sitios Web
-description: Documentación completa para la API avanzada de análisis de sitios web
+title: Website UX Analysis API
+description: Comprehensive documentation for the advanced website analysis API
 ---
 
-# API de Análisis de UX de Sitios Web
+# Website UX Analysis API
 
-El endpoint `/api/site/analyze` permite realizar análisis completos de sitios web, evaluando su rendimiento, SEO, accesibilidad y mejores prácticas.
+The `/api/site/analyze` endpoint performs comprehensive website analysis, evaluating performance, SEO, accessibility, and best practices.
 
-## Características principales
+## Key Features
 
-- Implementación avanzada y flexible
-- Ofrece múltiples tipos de análisis: básico, completo y estructurado
-- Utiliza servicios especializados para cada tipo de análisis
-- Permite configurar múltiples opciones avanzadas
-- Puede utilizar diferentes proveedores de IA (OpenAI, Anthropic, Gemini)
-- Sistema sofisticado de manejo de errores
+- Advanced and flexible implementation
+- Multiple analysis types: basic, complete, and structured
+- Specialized services for each analysis type
+- Multiple advanced configuration options
+- Supports multiple AI providers (OpenAI, Anthropic, Gemini)
+- Sophisticated error handling system
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
 <UnifiedApiTester 
   apiType="site" 
-  title="Analizador de Sitios Web"
-  description="Prueba el API de análisis de sitios web con tus propios parámetros."
+  title="Website Analyzer"
+  description="Test the website analysis API with your own parameters."
   defaultEndpoint="/api/site/analyze"
   defaultMethod="POST"
-  defaultUrl="https://ejemplo.com"
+  defaultUrl="https://example.com"
   defaultTimeout="30000"
   showScreenshotOption={true}
   showModelOptions={true}
@@ -33,78 +33,78 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   showAnalysisTypeField={false}
 />
 
-## Tipos de análisis
+## Analysis Types
 
-### Análisis básico (`basic`)
+### Basic analysis (`basic`)
 
-Proporciona un análisis rápido y general del sitio web, incluyendo:
-- Información básica del sitio
-- Estructura general
-- Problemas evidentes
+Provides a quick, general analysis including:
+- Basic site information
+- General structure
+- Obvious issues
 
-### Análisis completo (`complete`)
+### Complete analysis (`complete`)
 
-Proporciona un análisis más profundo, incluyendo:
-- Todo lo del análisis básico
-- Evaluación de rendimiento
-- Análisis SEO
-- Verificación de accesibilidad
-- Mejores prácticas
-- Recomendaciones detalladas
+Provides a deeper analysis, including:
+- Everything in the basic analysis
+- Performance evaluation
+- SEO analysis
+- Accessibility checks
+- Best practices
+- Detailed recommendations
 
-### Análisis estructurado (`structured`)
+### Structured analysis (`structured`)
 
-Proporciona un análisis estructurado del sitio, incluyendo:
-- Jerarquía de elementos
-- Bloques de contenido
-- Estructura semántica
-- Relaciones entre elementos
+Provides a structural analysis, including:
+- Heading hierarchy
+- Content blocks
+- Semantic structure
+- Relationships between elements
 
-## Métodos disponibles
+## Available Methods
 
 ### POST /api/site/analyze
 
-Realiza un análisis completo de un sitio web, evaluando múltiples aspectos como rendimiento, SEO, accesibilidad y mejores prácticas.
+Performs a complete analysis of a website across performance, SEO, accessibility, and best practices.
 
-#### Parámetros de solicitud
+#### Request Parameters
 
 ```json
 {
-  "url": "https://ejemplo.com", // URL del sitio (obligatorio)
+  "url": "https://example.com", // Site URL (required)
   "options": {
-    "analysisType": "complete", // Tipo de análisis: 'basic', 'complete', 'structured'
-    "depth": 2, // Profundidad del análisis (1-3)
-    "timeout": 30000, // Tiempo máximo de espera en milisegundos (entre 5000 y 60000)
-    "ignoreSSL": false, // Ignorar errores de certificados SSL
-    "userAgent": "Mozilla/5.0...", // User Agent personalizado (opcional)
-    "failOnError": false, // Si es false, intenta continuar incluso con errores
-    "safeSelectors": true, // Si es true, valida los selectores antes de usarlos
-    "includeScreenshot": true, // Incluir captura de pantalla en la respuesta
-    "aiProvider": "openai", // Proveedor de IA: 'openai', 'anthropic', 'gemini'
-    "aiModel": "gpt-5-nano" // Modelo específico de IA a utilizar
+    "analysisType": "complete", // Analysis type: 'basic', 'complete', 'structured'
+    "depth": 2, // Analysis depth (1-3)
+    "timeout": 30000, // Max wait time in milliseconds (between 5000 and 60000)
+    "ignoreSSL": false, // Ignore SSL certificate errors
+    "userAgent": "Mozilla/5.0...", // Custom User Agent (optional)
+    "failOnError": false, // If false, continue even with errors
+    "safeSelectors": true, // Validate selectors before use
+    "includeScreenshot": true, // Include screenshot in response
+    "aiProvider": "openai", // AI provider: 'openai', 'anthropic', 'gemini'
+    "aiModel": "gpt-5-nano" // Specific AI model to use
   }
 }
 ```
 
-#### Respuesta
+#### Response
 
 ```json
 {
-  "url": "https://ejemplo.com",
-  "title": "Título del sitio",
-  "description": "Descripción del sitio",
-  "screenshot": "data:image/png;base64,...", // Captura de pantalla en base64 (opcional)
+  "url": "https://example.com",
+  "title": "Site title",
+  "description": "Site description",
+  "screenshot": "data:image/png;base64,...", // Base64 screenshot (optional)
   "performance": {
     "overall": 85,
     "firstContentfulPaint": {
       "score": 90,
       "label": "First Contentful Paint",
-      "description": "Tiempo hasta que se muestra el primer contenido"
+      "description": "Time until first content is displayed"
     },
     "largestContentfulPaint": {
       "score": 85,
       "label": "Largest Contentful Paint",
-      "description": "Tiempo hasta que se muestra el contenido principal"
+      "description": "Time until main content is displayed"
     },
     // Otras métricas de rendimiento...
   },
@@ -113,7 +113,7 @@ Realiza un análisis completo de un sitio web, evaluando múltiples aspectos com
     "metaTags": {
       "score": 95,
       "label": "Meta Tags",
-      "description": "Uso correcto de meta tags"
+      "description": "Correct use of meta tags"
     },
     // Otras métricas de SEO...
   },
@@ -121,8 +121,8 @@ Realiza un análisis completo de un sitio web, evaluando múltiples aspectos com
     "overall": 78,
     "contrast": {
       "score": 80,
-      "label": "Contraste",
-      "description": "Contraste adecuado entre texto y fondo"
+      "label": "Contrast",
+      "description": "Adequate contrast between text and background"
     },
     // Otras métricas de accesibilidad...
   },
@@ -130,8 +130,8 @@ Realiza un análisis completo de un sitio web, evaluando múltiples aspectos com
     "overall": 82,
     "httpsUsage": {
       "score": 100,
-      "label": "Uso de HTTPS",
-      "description": "El sitio utiliza HTTPS correctamente"
+      "label": "HTTPS Usage",
+      "description": "The site correctly uses HTTPS"
     },
     // Otras métricas de mejores prácticas...
   },
@@ -170,10 +170,10 @@ Realiza un análisis completo de un sitio web, evaluando múltiples aspectos com
   "recommendations": [
     {
       "category": "performance",
-      "priority": "alta",
-      "issue": "Imágenes sin optimizar",
-      "recommendation": "Optimizar y comprimir imágenes para reducir su tamaño",
-      "impact": "Mejora significativa en el tiempo de carga"
+      "priority": "high",
+      "issue": "Unoptimized images",
+      "recommendation": "Optimize and compress images to reduce size",
+      "impact": "Significant improvement to load times"
     },
     // Otras recomendaciones...
   ],
@@ -196,9 +196,9 @@ Realiza un análisis completo de un sitio web, evaluando múltiples aspectos com
 
 ### GET /api/site/analyze
 
-Obtiene información sobre el servicio de análisis.
+Retrieves information about the analysis service.
 
-#### Respuesta
+#### Response
 
 ```json
 {
@@ -327,38 +327,38 @@ Realiza un análisis estructural del sitio web, enfocado en la estructura del DO
 }
 ```
 
-## Diferencias con la API Básica
+## Differences with the Basic API
 
-Esta API avanzada (`/api/site/analyze`) difiere de la API básica (`/api/analyze`) en los siguientes aspectos:
+This advanced API (`/api/site/analyze`) differs from the basic API (`/api/analyze`) in the following ways:
 
-1. **Implementación**: Utiliza servicios especializados para diferentes tipos de análisis, mientras que la API básica usa la función `analyzeSiteAction`.
-2. **Opciones**: Permite configurar múltiples opciones avanzadas como tipo de análisis, profundidad, timeout, proveedor de IA, etc. La API básica tiene opciones limitadas.
-3. **Respuesta**: Devuelve una estructura de respuesta más detallada con metadatos adicionales.
-4. **Manejo de errores**: Implementa un sistema de manejo de errores más sofisticado con tipos de errores específicos.
+1. Implementation: Uses specialized services for different analysis types; the basic API uses the `analyzeSiteAction` function.
+2. Options: Supports many advanced options (analysis type, depth, timeout, AI provider, etc.); the basic API has limited options.
+3. Response: Returns a more detailed response structure with additional metadata.
+4. Error handling: More sophisticated error handling with specific error types.
 
-> **Nota:** Si necesitas una implementación más simple para casos de uso básicos, puedes utilizar la API básica `/api/analyze`. Para más información, consulta la [documentación de la API Básica de Análisis](/api/analysis/basic-analyze).
+> Note: For simpler use cases, you can use the basic API `/api/analyze`. See the [Basic Analysis API documentation](/api/analysis/basic-analyze).
 
-## Códigos de estado
+## Status Codes
 
-- `200 OK`: La solicitud se completó correctamente
-- `400 Bad Request`: Parámetros de solicitud inválidos
-- `404 Not Found`: El recurso solicitado no existe
-- `429 Too Many Requests`: Se ha excedido el límite de solicitudes
-- `500 Internal Server Error`: Error en el servidor durante el análisis
-- `504 Gateway Timeout`: Tiempo de espera agotado durante el análisis
+- `200 OK`: Request completed successfully
+- `400 Bad Request`: Invalid request parameters
+- `404 Not Found`: Resource not found
+- `429 Too Many Requests`: Rate limit exceeded
+- `500 Internal Server Error`: Server error during analysis
+- `504 Gateway Timeout`: Analysis timed out
 
-## Ejemplos de uso
+## Usage Examples
 
-### Realizar un análisis completo
+### Perform a complete analysis
 
 ```javascript
-const response = await fetch('https://tudominio.com/api/site/analyze', {
+const response = await fetch('https://yourdomain.com/api/site/analyze', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    url: 'https://ejemplo.com',
+    url: 'https://example.com',
     options: {
       analysisType: 'complete',
       timeout: 45000,
@@ -370,20 +370,20 @@ const response = await fetch('https://tudominio.com/api/site/analyze', {
 });
 
 const data = await response.json();
-console.log(data.performance.overall); // Puntuación de rendimiento
-console.log(data.recommendations); // Recomendaciones de mejora
+console.log(data.performance.overall); // Performance score
+console.log(data.recommendations); // Improvement recommendations
 ```
 
-### Realizar un análisis estructural
+### Perform a structural analysis
 
 ```javascript
-const response = await fetch('https://tudominio.com/api/site/analyze/structure', {
+const response = await fetch('https://yourdomain.com/api/site/analyze/structure', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    url: 'https://ejemplo.com',
+    url: 'https://example.com',
     options: {
       depth: 3,
       aiProvider: 'anthropic',
@@ -393,6 +393,6 @@ const response = await fetch('https://tudominio.com/api/site/analyze/structure',
 });
 
 const data = await response.json();
-console.log(data.structure); // Estructura del sitio
-console.log(data.analysis); // Análisis de la estructura
+console.log(data.structure); // Site structure
+console.log(data.analysis); // Structure analysis
 ``` 

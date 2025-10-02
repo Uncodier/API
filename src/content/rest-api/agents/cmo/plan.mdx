@@ -1,60 +1,9 @@
 ---
 title: Daily Planning
-description: Planifica el uso de recursos y actividades del día para el agente CMO, optimizando productividad y asignación de tiempo
+description: Plan the use of resources and daily activities for the CMO agent, optimizing productivity and time allocation
 ---
 
 import { UnifiedApiTester } from '@/components/ApiTester';
-
-# API de Planificación Diaria de CMO
-
-Esta API facilita la planificación estratégica del día para el agente CMO, optimizando la asignación de recursos, tiempo y prioridades para maximizar la productividad y efectividad en las iniciativas de marketing.
-
-## Endpoint
-
-`POST /api/agents/cmo/plan`
-
-## Request Body
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| site_id | string | Sí | Identificador del sitio para contextualizar la planificación. |
-
-## Response
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| success | boolean | Indica si la solicitud fue exitosa. |
-| data.command_id | string | Identificador único del comando creado. |
-| data.conversation_id | string | Identificador de la conversación asociada. |
-| data.status | string | Estado de la solicitud (e.g., "completed", "in_progress"). |
-| data.planning_details | object | Detalles de la planificación, incluyendo fecha y alcance. |
-| data.daily_schedule | array | Cronograma optimizado del día con bloques de tiempo asignados. |
-| data.resource_allocation | object | Distribución de recursos humanos y presupuestarios. |
-| data.priority_matrix | object | Matriz de prioridades con tareas categorizadas por urgencia e importancia. |
-| data.recommendations | array | Recomendaciones estratégicas para optimizar el día. |
-| data.context_analysis | object | Análisis de contexto si fue solicitado, incluyendo tareas, campañas, y métricas. |
-
-## Ejemplo de Uso
-
-<UnifiedApiTester apiId="cmo-plan" />
-
-## Características
-
-- Planificación inteligente basada en prioridades y contexto empresarial
-- Optimización automática de bloques de tiempo según tipo de actividad
-- Análisis de capacidad del equipo y recursos disponibles
-- Integración con tareas existentes y compromisos del calendario
-- Recomendaciones estratégicas para maximizar ROI del tiempo invertido
-- Adaptación dinámica basada en urgencias y cambios de prioridad
-
-## Casos de Uso
-
-- Planificación diaria de actividades de marketing estratégico
-- Optimización de asignación de tiempo entre diferentes iniciativas
-- Coordinación de recursos del equipo y presupuesto diario
-- Priorización inteligente de tareas basada en impacto empresarial
-- Adaptación de planes ante urgencias o cambios de prioridad
-- Seguimiento y optimización de productividad del equipo de marketing
 
 ## English Documentation
 
@@ -115,37 +64,37 @@ The system generates a command object with comprehensive planning guidance and e
     {
       "tool": "campaign-analysis",
       "time": "09:00-10:30",
-      "description": "Analizar métricas de campañas activas y identificar oportunidades de optimización",
+          "description": "Analyze active campaign metrics and identify optimization opportunities",
       "priority": "high"
     },
     {
       "tool": "budget-allocation",
       "time": "10:30-11:15",
-      "description": "Revisar y ajustar asignación de presupuesto para Q2",
+          "description": "Review and adjust budget allocation for Q2",
       "priority": "high"
     },
     {
       "tool": "content-strategy",
       "time": "11:15-12:00",
-      "description": "Planificar contenido para próximas 2 semanas",
+          "description": "Plan content for the next 2 weeks",
       "priority": "medium"
     },
     {
       "tool": "team-coordination",
       "time": "14:00-14:30",
-      "description": "Coordinar tareas del equipo y resolver bloqueos",
+          "description": "Coordinate team tasks and resolve blockers",
       "priority": "medium"
     },
     {
       "tool": "performance-reporting",
       "time": "15:00-16:00",
-      "description": "Generar reportes de performance para stakeholders",
+          "description": "Generate performance reports for stakeholders",
       "priority": "high"
     },
     {
       "tool": "stakeholder-coordination",
       "time": "16:00-17:00",
-      "description": "Llamada con stakeholders para alineación estratégica",
+          "description": "Stakeholder call for strategic alignment",
       "priority": "urgent"
     }
   ],

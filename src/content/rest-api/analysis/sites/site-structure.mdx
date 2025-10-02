@@ -1,31 +1,31 @@
 ---
-title: API de Análisis Estructural de Sitios Web
-description: Documentación completa para la API avanzada de análisis estructural de sitios web
+title: Website Structural Analysis API
+description: Comprehensive documentation for the advanced website structural analysis API
 ---
 
-# API de Análisis Estructural de Sitios Web
+# Website Structural Analysis API
 
-El endpoint `/api/site/analyze/structure` permite realizar análisis estructurales de sitios web, evaluando la jerarquía de elementos, bloques de contenido, estructura semántica y relaciones entre elementos.
+The `/api/site/analyze/structure` endpoint performs structural analysis of websites, evaluating heading hierarchy, content blocks, semantic structure, and relationships between elements.
 
-## Características principales
+## Key Features
 
-- Implementación avanzada y flexible
-- Enfocado específicamente en el análisis estructural del sitio
-- Utiliza servicios especializados para el análisis de estructura
-- Permite configurar múltiples opciones avanzadas
-- Puede utilizar diferentes proveedores de IA (OpenAI, Anthropic, Gemini)
-- Sistema sofisticado de manejo de errores
-- Posibilidad de guardar resultados en la base de datos
+- Advanced and flexible implementation
+- Focused specifically on site structural analysis
+- Uses specialized services for structure analysis
+- Multiple advanced configuration options
+- Supports multiple AI providers (OpenAI, Anthropic, Gemini)
+- Sophisticated error handling system
+- Option to save results to the database
 
 import { UnifiedApiTester } from '@/components/ApiTester';
 
 <UnifiedApiTester 
   apiType="site" 
-  title="Analizador Estructural de Sitios Web"
-  description="Prueba el API de análisis estructural de sitios web con tus propios parámetros."
+  title="Website Structural Analyzer"
+  description="Test the website structural analysis API with your own parameters."
   defaultEndpoint="/api/site/analyze/structure"
   defaultMethod="POST"
-  defaultUrl="https://ejemplo.com"
+  defaultUrl="https://example.com"
   defaultTimeout="30000"
   showScreenshotOption={true}
   showModelOptions={true}
@@ -34,69 +34,69 @@ import { UnifiedApiTester } from '@/components/ApiTester';
   showAnalysisTypeField={false}
 />
 
-## Enfoque del análisis estructural
+## Structural Analysis Focus
 
-El análisis estructural se centra en comprender la organización y jerarquía del contenido del sitio web, incluyendo:
+Structural analysis focuses on understanding the organization and hierarchy of website content, including:
 
-- Jerarquía de elementos
-- Bloques de contenido
-- Estructura semántica
-- Relaciones entre elementos
-- Navegación y menús
-- Secciones principales y su importancia
-- Patrones de diseño utilizados
+- Heading hierarchy
+- Content blocks
+- Semantic structure
+- Relationships between elements
+- Navigation and menus
+- Main sections and their importance
+- Design patterns used
 
-## Métodos disponibles
+## Available Methods
 
 ### POST /api/site/analyze/structure
 
-Realiza un análisis estructural del sitio web, enfocado en la estructura del DOM y la organización del contenido.
+Performs a structural analysis of the website, focused on DOM structure and content organization.
 
-#### Parámetros de solicitud
+#### Request Parameters
 
 ```json
 {
-  "url": "https://ejemplo.com", // URL del sitio (obligatorio)
+  "url": "https://example.com", // Site URL (required)
   "htmlContent": "<html>...</html>", // HTML de la página (opcional)
   "screenshot": "data:image/png;base64,...", // Captura de pantalla en Base64 (opcional)
   "site_id": "uuid-of-the-site", // ID del sitio para almacenamiento en BD (opcional)
   "user_id": "uuid-of-the-user", // ID del usuario para almacenamiento en BD (opcional)
   "options": {
-    "timeout": 30000, // Tiempo máximo de espera en milisegundos (entre 5000 y 60000)
-    "userAgent": "Mozilla/5.0...", // User Agent personalizado (opcional)
-    "depth": 2, // Profundidad del análisis (1-3)
-    "ignoreSSL": false, // Ignorar errores de certificados SSL
-    "failOnError": false, // Si es false, intenta continuar incluso con errores
-    "safeSelectors": true, // Si es true, valida los selectores antes de usarlos
-    "includeScreenshot": true, // Incluir captura de pantalla en la respuesta
-    "provider": "openai", // Proveedor de IA: 'openai', 'anthropic', 'gemini'
-    "modelId": "gpt-5-nano", // Modelo específico de IA a utilizar
-    "saveToDatabase": false // Guardar resultados en la base de datos (requiere site_id y user_id)
+    "timeout": 30000, // Max wait time in milliseconds (between 5000 and 60000)
+    "userAgent": "Mozilla/5.0...", // Custom User Agent (optional)
+    "depth": 2, // Analysis depth (1-3)
+    "ignoreSSL": false, // Ignore SSL certificate errors
+    "failOnError": false, // If false, continue even with errors
+    "safeSelectors": true, // Validate selectors before use
+    "includeScreenshot": true, // Include screenshot in response
+    "provider": "openai", // AI provider: 'openai', 'anthropic', 'gemini'
+    "modelId": "gpt-5-nano", // Specific AI model to use
+    "saveToDatabase": false // Save results to database (requires site_id and user_id)
   }
 }
 ```
 
-#### Respuesta
+#### Response
 
 ```json
 {
-  "url": "https://ejemplo.com",
+  "url": "https://example.com",
   "structuredAnalysis": {
     // Detalles del análisis estructural...
   },
-  "requestTime": 12345, // Tiempo de procesamiento en milisegundos
+  "requestTime": 12345, // Processing time in milliseconds
   "timestamp": "2023-06-15T14:30:00Z",
-  "analysis_id": "uuid-of-saved-analysis", // Presente solo si saveToDatabase=true y hubo éxito
-  "database_status": "success", // "success", "error", o "not_saved"
-  "database_error": null // Mensaje de error si database_status es "error"
+  "analysis_id": "uuid-of-saved-analysis", // Present only if saveToDatabase=true and successful
+  "database_status": "success", // "success", "error", or "not_saved"
+  "database_error": null // Error message if database_status is "error"
 }
 ```
 
-#### Respuesta detallada
+#### Detailed Response
 
 ```json
 {
-  "url": "https://ejemplo.com",
+  "url": "https://example.com",
   "structuredAnalysis": {
     "headings": {
       "h1": 1,
@@ -169,11 +169,11 @@ Realiza un análisis estructural del sitio web, enfocado en la estructura del DO
     "accessibility": {
       "ariaUsage": {
         "score": 75,
-        "details": "Uso moderado de atributos ARIA"
+        "details": "Moderate use of ARIA attributes"
       },
       "semanticStructure": {
         "score": 85,
-        "details": "Buena estructura semántica general"
+        "details": "Good overall semantic structure"
       }
     }
   },
@@ -188,41 +188,41 @@ Realiza un análisis estructural del sitio web, enfocado en la estructura del DO
   "patterns": [
     {
       "name": "Hero Section",
-      "implementation": "Estándar",
-      "effectiveness": "Alta"
+      "implementation": "Standard",
+      "effectiveness": "High"
     },
     {
       "name": "Card Grid",
       "implementation": "Responsive",
-      "effectiveness": "Media-Alta"
+      "effectiveness": "Medium-High"
     },
     {
       "name": "Sticky Navigation",
-      "implementation": "Parcial",
-      "effectiveness": "Media"
+      "implementation": "Partial",
+      "effectiveness": "Medium"
     }
   ],
   "recommendations": [
     {
-      "category": "estructura",
-      "priority": "media",
-      "issue": "Jerarquía de encabezados inconsistente",
-      "recommendation": "Asegurar que los encabezados sigan una jerarquía lógica",
-      "impact": "Mejora en SEO y accesibilidad"
+      "category": "structure",
+      "priority": "medium",
+      "issue": "Inconsistent heading hierarchy",
+      "recommendation": "Ensure headings follow a logical hierarchy",
+      "impact": "Improves SEO and accessibility"
     },
     {
-      "category": "navegación",
-      "priority": "alta",
-      "issue": "Menú móvil difícil de usar",
-      "recommendation": "Simplificar la estructura del menú en dispositivos móviles",
-      "impact": "Mejora significativa en la experiencia móvil"
+      "category": "navigation",
+      "priority": "high",
+      "issue": "Mobile menu is difficult to use",
+      "recommendation": "Simplify the mobile menu structure",
+      "impact": "Significant improvement in mobile experience"
     },
     {
-      "category": "contenido",
-      "priority": "baja",
-      "issue": "Bloques de contenido desalineados",
-      "recommendation": "Alinear los bloques de contenido para mejorar la coherencia visual",
-      "impact": "Mejora estética y de usabilidad"
+      "category": "content",
+      "priority": "low",
+      "issue": "Misaligned content blocks",
+      "recommendation": "Align content blocks to improve visual coherence",
+      "impact": "Aesthetic and usability improvement"
     }
     // Otras recomendaciones...
   ],
@@ -245,7 +245,7 @@ Realiza un análisis estructural del sitio web, enfocado en la estructura del DO
 
 ### GET /api/site/analyze/structure
 
-Obtiene información sobre el servicio de análisis estructural.
+Retrieves information about the structural analysis service.
 
 #### Respuesta
 
@@ -268,11 +268,11 @@ Obtiene información sobre el servicio de análisis estructural.
 }
 ```
 
-## Endpoints relacionados
+## Related Endpoints
 
 ### GET /api/site/analysis/:id
 
-Obtiene un análisis específico por su ID (requiere que el análisis se haya almacenado en la base de datos).
+Retrieves a specific analysis by its ID (requires the analysis to have been stored in the database).
 
 #### Respuesta
 
@@ -297,7 +297,7 @@ Obtiene un análisis específico por su ID (requiere que el análisis se haya al
 
 ### GET /api/site/analysis/site/:siteId
 
-Obtiene todos los análisis para un sitio específico (requiere el parámetro `user_id` en la URL de consulta).
+Retrieves all analyses for a specific site (requires the `user_id` query parameter).
 
 #### Respuesta
 
@@ -328,7 +328,7 @@ Obtiene todos los análisis para un sitio específico (requiere el parámetro `u
 }
 ```
 
-## Diferencias con la API General de Análisis
+## Differences with the General Analysis API
 
 Esta API específica de análisis estructural (`/api/site/analyze/structure`) difiere de la API general (`/api/site/analyze`) en los siguientes aspectos:
 
@@ -338,29 +338,29 @@ Esta API específica de análisis estructural (`/api/site/analyze/structure`) di
 4. **Análisis**: Proporciona un análisis más profundo de la estructura del sitio, incluyendo patrones de diseño y organización del contenido.
 5. **Almacenamiento**: Permite guardar los resultados del análisis en la base de datos para su consulta posterior.
 
-> **Nota:** Si necesitas un análisis más completo que incluya rendimiento, SEO y otros aspectos, puedes utilizar la API general `/api/site/analyze`. Para más información, consulta la [documentación de la API General de Análisis de Sitios](/api/analysis/sites/site).
+> Note: If you need a broader analysis including performance, SEO, and more, use the general API `/api/site/analyze`. See the [General Site Analysis API documentation](/api/analysis/sites/site).
 
-## Códigos de estado
+## Status Codes
 
-- `200 OK`: La solicitud se completó correctamente
-- `400 Bad Request`: Parámetros de solicitud inválidos
-- `404 Not Found`: El recurso solicitado no existe
-- `429 Too Many Requests`: Se ha excedido el límite de solicitudes
-- `500 Internal Server Error`: Error en el servidor durante el análisis
-- `504 Gateway Timeout`: Tiempo de espera agotado durante el análisis
+- `200 OK`: Request completed successfully
+- `400 Bad Request`: Invalid request parameters
+- `404 Not Found`: Resource not found
+- `429 Too Many Requests`: Rate limit exceeded
+- `500 Internal Server Error`: Server error during analysis
+- `504 Gateway Timeout`: Analysis timed out
 
-## Ejemplos de uso
+## Usage Examples
 
-### Realizar un análisis estructural básico
+### Perform a basic structural analysis
 
 ```javascript
-const response = await fetch('https://tudominio.com/api/site/analyze/structure', {
+const response = await fetch('https://yourdomain.com/api/site/analyze/structure', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    url: 'https://ejemplo.com',
+    url: 'https://example.com',
     options: {
       depth: 2,
       timeout: 30000,
@@ -370,73 +370,73 @@ const response = await fetch('https://tudominio.com/api/site/analyze/structure',
 });
 
 const data = await response.json();
-console.log(data.structuredAnalysis); // Estructura del sitio
+console.log(data.structuredAnalysis); // Site structure
 ```
 
-### Realizar un análisis estructural con HTML proporcionado y guardar resultados
+### Perform a structural analysis with provided HTML and save results
 
 ```javascript
-const response = await fetch('https://tudominio.com/api/site/analyze/structure', {
+const response = await fetch('https://yourdomain.com/api/site/analyze/structure', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json'
   },
   body: JSON.stringify({
-    url: 'https://ejemplo.com',
-    htmlContent: '<html>...</html>', // HTML del sitio
-    site_id: 'uuid-del-sitio', // ID del sitio en tu BD
-    user_id: 'uuid-del-usuario', // ID del usuario en tu BD
+    url: 'https://example.com',
+    htmlContent: '<html>...</html>', // Site HTML
+    site_id: 'site-uuid', // Site ID in your DB
+    user_id: 'user-uuid', // User ID in your DB
     options: {
       depth: 3,
       provider: 'anthropic',
       modelId: 'claude-3-5-sonnet-20240620',
-      saveToDatabase: true // Guardar análisis en BD
+      saveToDatabase: true // Save analysis in DB
     }
   })
 });
 
 const data = await response.json();
-console.log(data.analysis_id); // ID del análisis guardado
-console.log(data.structuredAnalysis); // Datos del análisis
+console.log(data.analysis_id); // Saved analysis ID
+console.log(data.structuredAnalysis); // Analysis data
 ```
 
-### Obtener un análisis guardado por su ID
+### Get a saved analysis by ID
 
 ```javascript
-const analysisId = 'uuid-del-analisis';
-const response = await fetch(`https://tudominio.com/api/site/analysis/${analysisId}`, {
+const analysisId = 'analysis-uuid';
+const response = await fetch(`https://yourdomain.com/api/site/analysis/${analysisId}`, {
   method: 'GET'
 });
 
 const data = await response.json();
-console.log(data.analysis); // Análisis recuperado
+console.log(data.analysis); // Retrieved analysis
 ```
 
-### Obtener todos los análisis de un sitio
+### Get all analyses for a site
 
 ```javascript
-const siteId = 'uuid-del-sitio';
-const userId = 'uuid-del-usuario';
-const response = await fetch(`https://tudominio.com/api/site/analysis/site/${siteId}?user_id=${userId}`, {
+const siteId = 'site-uuid';
+const userId = 'user-uuid';
+const response = await fetch(`https://yourdomain.com/api/site/analysis/site/${siteId}?user_id=${userId}`, {
   method: 'GET'
 });
 
 const data = await response.json();
-console.log(data.analyses); // Lista de análisis
+console.log(data.analyses); // List of analyses
 ```
 
-## Almacenamiento en Base de Datos
+## Database Storage
 
-Para utilizar la funcionalidad de almacenamiento en base de datos, se utiliza la tabla `analysis` existente en tu base de datos Supabase.
+To use database persistence, this API leverages the existing `analysis` table in your Supabase database.
 
-### Requisitos previos
+### Prerequisites
 
-1. Proyecto Supabase con la tabla `analysis` ya configurada
-2. Tabla `analysis` con los campos necesarios (ver documentación)
+1. Supabase project with the `analysis` table configured
+2. `analysis` table with the required fields (see documentation)
 
-### Configuración
+### Setup
 
-No es necesario crear una nueva tabla. Esta API utiliza la tabla `analysis` que ya existe en el sistema. Solamente debes asegurarte que la tabla tenga los campos requeridos:
+No new table is needed. This API uses the existing `analysis` table. Ensure it contains the required fields:
 
 - `id` (UUID, clave primaria)
 - `site_id` (UUID)
@@ -450,22 +450,22 @@ No es necesario crear una nueva tabla. Esta API utiliza la tabla `analysis` que 
 - `provider` (TEXT)
 - `model_id` (TEXT)
 
-Para más detalles sobre la configuración y solución de problemas, consulta la documentación en `docs/setup-site-analysis-database.md`.
+For configuration and troubleshooting details, see `docs/setup-site-analysis-database.md`.
 
-### Posibles errores
+### Possible Errors
 
-Si recibes un error al intentar guardar el análisis en la base de datos, el campo `database_error` en la respuesta proporcionará información sobre el problema:
+If you encounter an error saving to the database, the `database_error` field in the response will contain details:
 
 ```json
 {
-  "url": "https://ejemplo.com",
-  "structuredAnalysis": { /* datos del análisis */ },
+  "url": "https://example.com",
+  "structuredAnalysis": { /* analysis data */ },
   "database_status": "error",
   "database_error": "The analysis table does not exist. Please contact the administrator."
 }
 ```
 
-Los errores comunes incluyen:
-- Tabla inexistente: Verifica que la tabla `analysis` exista en tu base de datos
-- Permisos insuficientes: Verifica las políticas RLS y permisos
-- Valores inválidos: Asegúrate de que los UUIDs proporcionados sean válidos 
+Common issues include:
+- Missing table: Verify that the `analysis` table exists
+- Insufficient permissions: Check RLS policies and permissions
+- Invalid values: Ensure provided UUIDs are valid

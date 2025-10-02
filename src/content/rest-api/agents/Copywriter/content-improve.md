@@ -1,42 +1,42 @@
 # Content Improve API
 
-API para mejorar contenido existente utilizando agentes de copywriting con IA. Esta API procesa **todo el contenido en estado `draft` de un sitio** de golpe, aplicando mejoras consistentes basadas en objetivos específicos y actualizando el contenido en la base de datos.
+API to enhance existing content using AI copywriter agents. This API processes all site content in `draft` state in bulk, applying consistent improvements based on specific goals and updating the content in the database.
 
-## Endpoint Base
+## Base Endpoint
 
 ```
 /api/agents/copywriter/content-improve
 ```
 
-## Métodos Disponibles
+## Available Methods
 
-### POST - Mejora Masiva de Contenido en Draft
+### POST - Bulk Improve Draft Content
 
-Mejora **todo el contenido en estado `draft` de un sitio** aplicando optimizaciones de SEO, legibilidad y engagement de forma consistente.
+Improves all site content in `draft` state by consistently applying SEO, readability, and engagement optimizations.
 
 #### URL
 ```
 POST /api/agents/copywriter/content-improve
 ```
 
-#### Parámetros del Body (JSON)
+#### Request Body (JSON)
 
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `siteId` | string (UUID) | ✅ | ID del sitio - se procesará todo su contenido en draft |
-| `contentIds` | array[string (UUID)] | ❌ | IDs específicos de contenido a mejorar (si no se proporciona, mejora todo el draft del sitio) |
-| `segmentId` | string (UUID) | ❌ | ID del segmento de audiencia |
-| `campaignId` | string (UUID) | ❌ | ID de la campaña |
-| `userId` | string | ❌ | ID del usuario (por defecto: `system`) |
-| `agent_id` | string | ❌ | ID del agente (por defecto: `default_copywriter_agent`) |
-| `improvementGoals` | array[string] | ❌ | Objetivos específicos de mejora |
-| `targetAudience` | string\|array[string] | ❌ | Audiencia objetivo específica |
-| `keywords` | array[string] | ❌ | Palabras clave para optimización SEO |
-| `contentStyle` | string | ❌ | Estilo de contenido deseado |
-| `maxLength` | number | ❌ | Longitud máxima en caracteres por contenido |
-| `limit` | number | ❌ | Límite máximo de contenidos a procesar (por defecto: 50) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string (UUID) | Yes | Site ID — all its draft content will be processed |
+| `contentIds` | array[string (UUID)] | No | Specific content IDs to improve (if omitted, improves all site draft content) |
+| `segmentId` | string (UUID) | No | Audience segment ID |
+| `campaignId` | string (UUID) | No | Campaign ID |
+| `userId` | string | No | User ID (default: `system`) |
+| `agent_id` | string | No | Agent ID (default: `default_copywriter_agent`) |
+| `improvementGoals` | array[string] | No | Specific improvement goals |
+| `targetAudience` | string\|array[string] | No | Target audience |
+| `keywords` | array[string] | No | Keywords for SEO optimization |
+| `contentStyle` | string | No | Desired content style |
+| `maxLength` | number | No | Max characters per content item |
+| `limit` | number | No | Max content items to process (default: 50) |
 
-#### Ejemplo de Request - Mejora Masiva
+#### Example Request — Bulk Improve
 
 ```json
 {
@@ -44,29 +44,29 @@ POST /api/agents/copywriter/content-improve
   "segmentId": "789e0123-e89b-12d3-a456-426614174002",
   "userId": "user_123",
   "improvementGoals": [
-    "Mejorar la legibilidad y estructura",
-    "Optimizar para SEO",
-    "Aumentar el engagement",
-    "Mantener consistencia de marca"
+    "Improve readability and structure",
+    "Optimize for SEO",
+    "Increase engagement",
+    "Maintain brand consistency"
   ],
   "targetAudience": [
-    "Emprendedores digitales",
-    "Marketers profesionales"
+    "Digital entrepreneurs",
+    "Professional marketers"
   ],
   "keywords": [
-    "marketing digital",
-    "estrategia de contenido",
+    "digital marketing",
+    "content strategy",
     "SEO",
-    "conversión",
+    "conversion",
     "engagement"
   ],
-  "contentStyle": "profesional pero accesible",
+  "contentStyle": "professional yet accessible",
   "maxLength": 2000,
   "limit": 25
 }
 ```
 
-#### Ejemplo de Request - Mejora Selectiva
+#### Example Request — Selective Improve
 
 ```json
 {
@@ -78,14 +78,14 @@ POST /api/agents/copywriter/content-improve
   ],
   "userId": "user_123",
   "improvementGoals": [
-    "Optimizar para palabras clave específicas",
-    "Mejorar call-to-action"
+    "Optimize for specific keywords",
+    "Improve call-to-action"
   ],
-  "keywords": ["producto", "ventas", "conversión"]
+  "keywords": ["product", "sales", "conversion"]
 }
 ```
 
-#### Respuesta Exitosa (200)
+#### Success Response (200)
 
 ```json
 {
@@ -102,36 +102,36 @@ POST /api/agents/copywriter/content-improve
     "original_content": [
       {
         "id": "234e5678-e89b-12d3-a456-426614174001",
-        "title": "Título Original 1",
-        "description": "Descripción original",
+        "title": "Original Title 1",
+        "description": "Original description",
         "status": "draft"
       },
       {
         "id": "345e6789-e89b-12d3-a456-426614174002",
-        "title": "Título Original 2", 
-        "description": "Descripción original",
+        "title": "Original Title 2",
+        "description": "Original description",
         "status": "draft"
       }
     ],
     "improved_content": [
       {
         "id": "234e5678-e89b-12d3-a456-426614174001",
-        "title": "Título Mejorado y Optimizado para SEO",
-        "description": "Descripción mejorada con mayor impacto y keywords",
-        "text": "Contenido mejorado con mejor estructura...",
+        "title": "Improved Title Optimized for SEO",
+        "description": "Improved description with higher impact and keywords",
+        "text": "Improved content with better structure...",
         "status": "improved",
         "updated_at": "2024-01-15T10:30:00Z",
         "metadata": {
           "improved_at": "2024-01-15T10:30:00Z",
           "improved_by": "user_123",
-          "improvement_notes": "Optimización SEO, mejora de estructura y fortalecimiento del CTA",
+          "improvement_notes": "SEO optimization, structure improvements, stronger CTA",
           "original_score": 65,
           "improved_score": 87,
           "improvements_applied": [
-            "Reestructuración de párrafos",
-            "Optimización de keywords",
-            "Mejora de call-to-action",
-            "Corrección de legibilidad"
+            "Paragraph restructuring",
+            "Keyword optimization",
+            "Call-to-action improvements",
+            "Readability fixes"
           ]
         }
       }
@@ -141,9 +141,9 @@ POST /api/agents/copywriter/content-improve
 }
 ```
 
-#### Respuestas de Error
+#### Error Responses
 
-**400 - Parámetros Inválidos**
+**400 — Invalid Parameters**
 ```json
 {
   "success": false,
@@ -154,7 +154,7 @@ POST /api/agents/copywriter/content-improve
 }
 ```
 
-**400 - ContentIds Inválidos**
+**400 — Invalid contentIds**
 ```json
 {
   "success": false,
@@ -165,7 +165,7 @@ POST /api/agents/copywriter/content-improve
 }
 ```
 
-**404 - Sin Contenido Draft**
+**404 — No Draft Content**
 ```json
 {
   "success": false,
@@ -176,7 +176,7 @@ POST /api/agents/copywriter/content-improve
 }
 ```
 
-**500 - Error de Ejecución**
+**500 — Execution Error**
 ```json
 {
   "success": false,
@@ -187,31 +187,31 @@ POST /api/agents/copywriter/content-improve
 }
 ```
 
-### GET - Obtener Contenido en Draft
+### GET — List Draft Content
 
-Obtiene lista de contenido en estado `draft` disponible para mejora en un sitio.
+Returns site content in `draft` state that is available for improvement.
 
 #### URL
 ```
 GET /api/agents/copywriter/content-improve?siteId={siteId}&limit={limit}
 ```
 
-#### Parámetros de Query
+#### Query Parameters
 
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `siteId` | string (UUID) | ✅ | ID del sitio |
-| `segmentId` | string (UUID) | ❌ | Filtrar por segmento específico |
-| `campaignId` | string (UUID) | ❌ | Filtrar por campaña específica |
-| `limit` | number | ❌ | Límite de resultados (por defecto: 50) |
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `siteId` | string (UUID) | Yes | Site ID |
+| `segmentId` | string (UUID) | No | Filter by specific segment |
+| `campaignId` | string (UUID) | No | Filter by specific campaign |
+| `limit` | number | No | Result limit (default: 50) |
 
-#### Ejemplo de Request
+#### Example Request
 
 ```
 GET /api/agents/copywriter/content-improve?siteId=456e7890-e89b-12d3-a456-426614174001&limit=20
 ```
 
-#### Respuesta Exitosa (200)
+#### Success Response (200)
 
 ```json
 {
@@ -223,9 +223,9 @@ GET /api/agents/copywriter/content-improve?siteId=456e7890-e89b-12d3-a456-426614
     "draft_content": [
       {
         "id": "123e4567-e89b-12d3-a456-426614174000",
-        "title": "Guía de Marketing Digital",
-        "description": "Una guía completa sobre marketing digital",
-        "text": "Contenido del artículo...",
+        "title": "Digital Marketing Guide",
+        "description": "A complete guide to digital marketing",
+        "text": "Article content...",
         "type": "blog_post",
         "status": "draft",
         "created_at": "2024-01-10T09:15:00Z",
@@ -237,9 +237,9 @@ GET /api/agents/copywriter/content-improve?siteId=456e7890-e89b-12d3-a456-426614
       },
       {
         "id": "234e5678-e89b-12d3-a456-426614174001",
-        "title": "Estrategias de Conversión",
-        "description": "Cómo optimizar tu funnel de ventas",
-        "text": "Contenido sobre conversiones...",
+        "title": "Conversion Strategies",
+        "description": "How to optimize your sales funnel",
+        "text": "Content about conversions...",
         "type": "article",
         "status": "draft",
         "created_at": "2024-01-11T10:20:00Z",
@@ -251,124 +251,121 @@ GET /api/agents/copywriter/content-improve?siteId=456e7890-e89b-12d3-a456-426614
 }
 ```
 
-## Flujo de Mejora Masiva de Contenido
+## Bulk Improvement Flow
 
-1. **Consultar Contenido Draft**: Usar GET para ver todo el contenido disponible para mejora
-2. **Configurar Mejoras**: Definir objetivos, palabras clave y parámetros para mejora masiva
-3. **Ejecutar Mejora Masiva**: Enviar request POST con `siteId` para procesar todo el contenido draft
-4. **Mejora Selectiva (Opcional)**: Usar `contentIds` para mejorar solo contenidos específicos
-5. **Recibir Resultados**: Todos los contenidos se actualizan automáticamente en la base de datos
+1. List draft content via GET
+2. Configure improvements (goals, keywords, parameters)
+3. Execute bulk improvement via POST with `siteId`
+4. Optional selective improvement with `contentIds`
+5. Receive results; content is updated in the database
 
-## Ventajas de la Mejora Masiva
+## Benefits of Bulk Improvement
 
-### Consistencia
-- **Estilo Unificado**: Mantiene coherencia de marca en todo el contenido
-- **Terminología Consistente**: Usa vocabulario y tono uniformes
-- **Calidad Homogénea**: Aplica los mismos estándares a todos los contenidos
+### Consistency
+- Unified style across all content
+- Consistent terminology and tone
+- Homogeneous quality standards
 
-### Eficiencia
-- **Procesamiento Bulk**: Mejora múltiples contenidos en una sola operación
-- **Optimización de Recursos**: Reduce el tiempo total de procesamiento
-- **Análisis Conjunto**: Evalúa todo el contenido como un conjunto cohesivo
+### Efficiency
+- Bulk processing in one operation
+- Resource optimization and reduced processing time
+- Cohesive evaluation of content set
 
-### Estrategia
-- **Visión Holística**: Considera el contenido como parte de una estrategia integral
-- **Optimización SEO Coordinada**: Distribuye keywords de forma estratégica
-- **Mensaje Unificado**: Asegura que todo el contenido apoye los objetivos de negocio
+### Strategy
+- Holistic view of content strategy
+- Coordinated SEO optimization across items
+- Unified messaging aligned with business goals
 
-## Estados del Contenido
+## Content States
 
-- `draft`: Contenido disponible para mejora masiva
-- `improved`: Contenido que ha sido mejorado por el agente
-- `published`: Contenido publicado (no se incluye en mejora masiva)
+- `draft`: Available for bulk improvement
+- `improved`: Improved by the agent
+- `published`: Published (not included in bulk improvement)
 
-## Metadatos de Mejora
+## Improvement Metadata
 
-Cada contenido mejorado incluye metadatos detallados:
+Each improved content item includes detailed metadata:
 
-- `improved_at`: Timestamp de la mejora
-- `improved_by`: Usuario que solicitó la mejora
-- `improvement_notes`: Notas sobre las mejoras aplicadas
-- `original_score`: Puntuación de calidad antes de la mejora
-- `improved_score`: Puntuación de calidad después de la mejora
-- `improvements_applied`: Lista de mejoras específicas aplicadas
+- `improved_at`: Improvement timestamp
+- `improved_by`: Requesting user
+- `improvement_notes`: Notes about applied improvements
+- `original_score`: Quality score before improvement
+- `improved_score`: Quality score after improvement
+- `improvements_applied`: List of specific improvements
 
-## Mejores Prácticas
+## Best Practices
 
-### Para Mejora Masiva
-1. **Objetivos Claros**: Define objetivos específicos que se apliquen a todo el contenido
-2. **Keywords Estratégicas**: Proporciona palabras clave que funcionen para múltiples contenidos
-3. **Estilo Consistente**: Especifica un estilo que funcione para todo el contenido del sitio
-4. **Límites Apropiados**: Usa `limit` para controlar el volumen de procesamiento
-5. **Monitoreo**: Revisa los resultados para identificar patrones y mejoras futuras
+### For Bulk Improvement
+1. Define clear goals applicable across content
+2. Provide strategic keywords that work across items
+3. Specify a consistent style for the whole site
+4. Use `limit` to control processing volume
+5. Review results to detect patterns and future improvements
 
-### Para Mejora Selectiva
-1. **Selección Estratégica**: Elige contenidos que se beneficien de mejoras similares
-2. **Objetivos Específicos**: Define mejoras particulares para el conjunto seleccionado
-3. **Coordinación**: Asegúrate de que las mejoras se alineen con el resto del contenido
+### For Selective Improvement
+1. Choose content items that benefit from similar improvements
+2. Define specific improvements for the selection
+3. Ensure alignment with the rest of the content
 
-## Límites y Consideraciones
+## Limits and Considerations
 
-- **Volumen**: Por defecto procesa hasta 50 contenidos (configurable con `limit`)
-- **Tiempo de Procesamiento**: Operaciones masivas pueden tomar hasta 2 minutos
-- **Solo Draft**: Solo procesa contenido en estado `draft`
-- **Actualizaciones Automáticas**: Los cambios se aplican directamente a la base de datos
-- **Consistencia**: Mantiene coherencia entre todos los contenidos procesados
-- **Rollback**: No hay función de rollback automático, revisa los resultados
+- Volume: processes up to 50 items by default (configurable with `limit`)
+- Processing time: bulk operations may take up to 2 minutes
+- Draft only: only processes content in `draft` state
+- Automatic updates: changes are applied directly to the database
+- Consistency: maintains coherence across processed items
+- Rollback: no automatic rollback; review results
 
-## Códigos de Error
+## Error Codes
 
-| Código | Descripción |
-|--------|-------------|
-| `INVALID_REQUEST` | Parámetros de request inválidos |
-| `NO_DRAFT_CONTENT` | No se encontró contenido en draft para mejorar |
-| `COMMAND_EXECUTION_FAILED` | Error en la ejecución del comando de mejora masiva |
-| `NO_IMPROVED_CONTENT` | No se generó contenido mejorado |
-| `DATABASE_UPDATE_FAILED` | Error al actualizar contenidos en la base de datos |
-| `INTERNAL_SERVER_ERROR` | Error interno del servidor |
+| Code | Description |
+|------|-------------|
+| `INVALID_REQUEST` | Invalid request parameters |
+| `NO_DRAFT_CONTENT` | No draft content found to improve |
+| `COMMAND_EXECUTION_FAILED` | Bulk improvement command failed |
+| `NO_IMPROVED_CONTENT` | No improved content generated |
+| `DATABASE_UPDATE_FAILED` | Error updating content in database |
+| `INTERNAL_SERVER_ERROR` | Internal server error |
 
-## Ejemplos de Uso
+## Usage Examples
 
-### Mejora Completa del Sitio
+### Improve Entire Site Draft Content
 ```javascript
-// Mejorar todo el contenido draft de un sitio
 const response = await fetch('/api/agents/copywriter/content-improve', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     siteId: 'site-uuid',
     improvementGoals: [
-      'Optimizar para SEO',
-      'Mejorar legibilidad',
-      'Fortalecer calls-to-action'
+      'Optimize for SEO',
+      'Improve readability',
+      'Strengthen calls-to-action'
     ],
-    keywords: ['producto', 'servicio', 'solución'],
-    contentStyle: 'profesional y accesible'
+    keywords: ['product', 'service', 'solution'],
+    contentStyle: 'professional and accessible'
   })
 });
 ```
 
-### Mejora de Contenidos Específicos
+### Improve Specific Content Items
 ```javascript
-// Mejorar solo contenidos seleccionados
 const response = await fetch('/api/agents/copywriter/content-improve', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
     siteId: 'site-uuid',
     contentIds: ['content-1-uuid', 'content-2-uuid'],
-    improvementGoals: ['Optimizar para conversión'],
-    targetAudience: 'decisores de compra'
+    improvementGoals: ['Optimize for conversion'],
+    targetAudience: 'decision makers'
   })
 });
 ```
 
-### Consulta de Contenido Draft
+### Query Draft Content
 ```javascript
-// Ver contenido disponible para mejora
 const response = await fetch(
   '/api/agents/copywriter/content-improve?siteId=site-uuid&limit=20'
 );
 const data = await response.json();
-console.log(`${data.data.total_items} contenidos disponibles para mejora`);
-``` 
+console.log(`${data.data.total_items} content items available for improvement`);
+```
