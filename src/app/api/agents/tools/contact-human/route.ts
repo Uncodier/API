@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { NotificationService, NotificationType } from '@/lib/services/notification-service';
+import { NotificationType } from '@/lib/services/notification-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { v4 as uuidv4 } from 'uuid';
+import { createHash } from 'crypto';
 import { 
   NotificationPriority 
 } from '@/lib/services/notification-service';
@@ -40,18 +41,58 @@ async function createSupportTask(
       .from('leads')
       .select('name, email')
       .eq('id', leadId)
-      .single();
+      .maybeSingle();
     
-    if (leadError || !lead) {
-      console.error('Error al obtener información del lead para el task:', leadError);
-      return null;
+    if (leadError) {
+      // Permitir continuar si el error es por no encontrar filas (PGRST116)
+      if (leadError.code && leadError.code !== 'PGRST116') {
+        console.error('Error al obtener información del lead para el task:', leadError);
+        return null;
+      }
     }
     
+    // Generar un serial_id determinístico para idempotencia de esta solicitud
+    const hashInput = `${conversationId}|${leadId}|${(message || '').slice(0, 200)}|${summary || ''}`;
+    const serialId = `SUPPORT-${createHash('sha256').update(hashInput).digest('hex').slice(0, 24)}`;
+
+    // Dedupe 1: verificar por serial_id existente
+    const { data: existingBySerial, error: existingSerialError } = await supabaseAdmin
+      .from('tasks')
+      .select('id, serial_id, created_at')
+      .eq('serial_id', serialId)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!existingSerialError && existingBySerial && existingBySerial.length > 0) {
+      const existing = existingBySerial[0];
+      console.log(`🔁 Task de soporte ya existe por serial_id (${existing.serial_id}): ${existing.id}`);
+      return existing.id;
+    }
+
+    // Dedupe 2: verificar por conversación/tipo/estado reciente (protege contra reintentos sin mismo payload)
+    const tenMinutesAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: recentTasks, error: recentError } = await supabaseAdmin
+      .from('tasks')
+      .select('id, created_at, type, status, conversation_id, lead_id')
+      .eq('conversation_id', conversationId)
+      .eq('lead_id', leadId)
+      .eq('type', 'support')
+      .in('status', ['pending', 'active'])
+      .gte('created_at', tenMinutesAgo)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    if (!recentError && recentTasks && recentTasks.length > 0) {
+      console.log(`🔁 Task de soporte duplicado detectado en ventana reciente, reutilizando ${recentTasks[0].id}`);
+      return recentTasks[0].id;
+    }
+
     // Preparar datos para el task
+    const taskTitleName = contactName || lead?.name || 'Lead';
     const taskData = {
       lead_id: leadId,
       conversation_id: conversationId,
-      title: `Soporte solicitado - ${contactName || lead.name}`,
+      title: `Soporte solicitado - ${taskTitleName}`,
       description: `Tarea de soporte creada automáticamente cuando el usuario solicitó ayuda humana.\n\nMensaje del usuario: "${message}"${summary ? `\n\nResumen de la conversación: ${summary}` : ''}`,
       type: 'support',
       stage: 'retention',
@@ -60,7 +101,8 @@ async function createSupportTask(
       user_id: userId,
       site_id: siteId,
       scheduled_date: new Date().toISOString(),
-      notes: `Intervención humana solicitada. Conversación ID: ${conversationId}`
+      notes: `Intervención humana solicitada. Conversación ID: ${conversationId}`,
+      serial_id: serialId
     };
     
     console.log(`📋 Datos para el task de soporte:`, JSON.stringify(taskData));
@@ -70,7 +112,7 @@ async function createSupportTask(
       .from('tasks')
       .insert([taskData])
       .select()
-      .single();
+      .maybeSingle();
     
     if (taskError) {
       console.error('Error al crear task de soporte:', taskError);
@@ -285,10 +327,23 @@ export async function POST(request: NextRequest) {
       .from('conversations')
       .select('id, user_id, title, site_id, lead_id, visitor_id, channel, custom_data')
       .eq('id', conversation_id)
-      .single();
+      .maybeSingle();
     
     if (conversationError) {
       console.error('Error al verificar la conversación:', conversationError);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'DATABASE_ERROR', 
+            message: 'Failed to verify conversation' 
+          } 
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!conversationData) {
       return NextResponse.json(
         { 
           success: false, 
@@ -328,10 +383,23 @@ export async function POST(request: NextRequest) {
         .from('agents')
         .select('id, name, site_id')
         .eq('id', agent_id)
-        .single();
+        .maybeSingle();
       
       if (agentError) {
         console.error('Error al verificar el agente:', agentError);
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'DATABASE_ERROR', 
+              message: 'Failed to verify agent' 
+            } 
+          },
+          { status: 500 }
+        );
+      }
+      
+      if (!agent) {
         return NextResponse.json(
           { 
             success: false, 

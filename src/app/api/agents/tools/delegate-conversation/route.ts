@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
     if (!delegateError && existingDelegate && existingDelegate.delegate_id) {
       if (existingDelegate.delegate_id === selectedAgent.id) {
         // El delegado ya está asignado al mismo agente
-        statusCode = 204;
+        statusCode = 200;
         responseMessage = 'Agent already assigned as delegate';
       } else {
         // Se está cambiando el delegado
