@@ -103,13 +103,8 @@ export class WhatsAppLeadService {
         .select('id')
         .eq('site_id', siteId);
       
-      // Si hay múltiples variantes, usar OR query
-      if (phoneVariants.length > 1) {
-        const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
-        query = query.or(phoneQueries.join(','));
-      } else {
-        query = query.eq('phone', phoneVariants[0]);
-      }
+      // Usar IN para evitar issues de encoding con '+' en OR queries
+      query = query.in('phone', phoneVariants);
       
       const { data, error } = await query
         .order('created_at', { ascending: false })
