@@ -265,11 +265,13 @@ export class EmailService {
             let bodyContent: string | null = null;
             
             // Strategy 1: Try different bodyParts keys
+            // PRIORITY: Always prefer text/plain over text/html (cleaner for AI)
             if (message.bodyParts) {
 
               
               // Try common bodyParts keys - using valid IMAP part specifiers
-              const bodyPartsToTry = ['TEXT', '1', '1.1', '1.2', 'text/plain', 'text'];
+              // TEXT and text/plain should come before any HTML variants
+              const bodyPartsToTry = ['TEXT', '1', '1.1', 'text/plain', 'text'];
               
               for (const partKey of bodyPartsToTry) {
                 try {
@@ -290,30 +292,55 @@ export class EmailService {
                 }
               }
               
-              // If no specific part worked, try to get any text part
+              // If no specific part worked, try to get text/plain parts before HTML
               if (!bodyContent) {
 
                 const bodyPartsArray = Array.from((message.bodyParts as Map<string, any>).entries());
+                
+                // First pass: Look for text/plain parts explicitly
                 for (const [key, part] of bodyPartsArray as Array<[string, any]>) {
                   try {
-                    const content = part.toString('utf8');
+                    const keyLower = key.toLowerCase();
+                    if (!keyLower.includes('header') && !keyLower.includes('html')) {
+                      const content = part.toString('utf8');
+                      if (content.length > 10) {
+                        // OPTIMIZACIÓN: Truncar durante iteración de partes
+                        const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
+                        let processedContent = content;
+                        if (content.length > MAX_EMAIL_CONTENT_LENGTH) {
 
-                    
-                    // Skip header parts and take first substantial text content
-                    if (!key.toLowerCase().includes('header') && content.length > 10) {
-                      // OPTIMIZACIÓN: Truncar durante iteración de partes
-                      const MAX_EMAIL_CONTENT_LENGTH = 25000; // 25KB máximo
-                      let processedContent = content;
-                      if (content.length > MAX_EMAIL_CONTENT_LENGTH) {
+                          processedContent = content.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                        }
+                        bodyContent = processedContent;
 
-                        processedContent = content.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                        break;
                       }
-                      bodyContent = processedContent;
-
-                      break;
                     }
                   } catch (partError) {
 
+                  }
+                }
+                
+                // Second pass: If still no content, accept HTML parts as fallback
+                if (!bodyContent) {
+                  for (const [key, part] of bodyPartsArray as Array<[string, any]>) {
+                    try {
+                      const keyLower = key.toLowerCase();
+                      if (!keyLower.includes('header')) {
+                        const content = part.toString('utf8');
+                        if (content.length > 10) {
+                          const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                          let processedContent = content;
+                          if (content.length > MAX_EMAIL_CONTENT_LENGTH) {
+                            processedContent = content.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                          }
+                          bodyContent = processedContent;
+                          break;
+                        }
+                      }
+                    } catch (partError) {
+
+                    }
                   }
                 }
               }
@@ -568,23 +595,52 @@ export class EmailService {
                   }
                 } catch {}
               }
+              // PRIORITY: Try to get text/plain parts before HTML
               if (!bodyContent) {
                 const bodyPartsArray: any[] = Array.from((message.bodyParts as any).entries());
+                
+                // First pass: Look for text/plain parts explicitly (avoid HTML)
                 for (const entry of bodyPartsArray) {
                   const key = String(entry[0]);
                   const part = entry[1];
                   try {
-                    const content = part.toString('utf8');
-                    if (!key.toLowerCase().includes('header') && content.length > 10) {
-                      const MAX_EMAIL_CONTENT_LENGTH = 25000;
-                      let processedContent = content;
-                      if ((content || '').length > MAX_EMAIL_CONTENT_LENGTH) {
-                        processedContent = (content || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                    const keyLower = key.toLowerCase();
+                    if (!keyLower.includes('header') && !keyLower.includes('html')) {
+                      const content = part.toString('utf8');
+                      if (content.length > 10) {
+                        const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                        let processedContent = content;
+                        if ((content || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                          processedContent = (content || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                        }
+                        bodyContent = processedContent;
+                        break;
                       }
-                      bodyContent = processedContent;
-                      break;
                     }
                   } catch {}
+                }
+                
+                // Second pass: If still no content, accept HTML parts as fallback
+                if (!bodyContent) {
+                  for (const entry of bodyPartsArray) {
+                    const key = String(entry[0]);
+                    const part = entry[1];
+                    try {
+                      const keyLower = key.toLowerCase();
+                      if (!keyLower.includes('header')) {
+                        const content = part.toString('utf8');
+                        if (content.length > 10) {
+                          const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                          let processedContent = content;
+                          if ((content || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                            processedContent = (content || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                          }
+                          bodyContent = processedContent;
+                          break;
+                        }
+                      }
+                    } catch {}
+                  }
                 }
               }
             }
@@ -765,6 +821,49 @@ export class EmailService {
                     break;
                   }
                 } catch {}
+              }
+              
+              // PRIORITY: Try to get text/plain parts before HTML if no specific part worked
+              if (!bodyContent) {
+                const bodyPartsArray: any[] = Array.from(message.bodyParts.entries());
+                
+                // First pass: Look for text/plain parts explicitly (avoid HTML)
+                for (const [key, part] of bodyPartsArray) {
+                  try {
+                    const keyLower = String(key).toLowerCase();
+                    if (!keyLower.includes('header') && !keyLower.includes('html')) {
+                      const content = part.toString('utf8');
+                      if (content.length > 10) {
+                        const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                        bodyContent = content;
+                        if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                          bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                        }
+                        break;
+                      }
+                    }
+                  } catch {}
+                }
+                
+                // Second pass: If still no content, accept HTML parts as fallback
+                if (!bodyContent) {
+                  for (const [key, part] of bodyPartsArray) {
+                    try {
+                      const keyLower = String(key).toLowerCase();
+                      if (!keyLower.includes('header')) {
+                        const content = part.toString('utf8');
+                        if (content.length > 10) {
+                          const MAX_EMAIL_CONTENT_LENGTH = 25000;
+                          bodyContent = content;
+                          if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
+                            bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
+                          }
+                          break;
+                        }
+                      }
+                    } catch {}
+                  }
+                }
               }
             }
 
@@ -1517,19 +1616,41 @@ export class EmailService {
               } else {
                 console.log(`[EmailService] ⚠️ TEXT part no encontrado en bodyParts`);
                 
-                // Try any available body part as fallback
+                // PRIORITY: Try to get text/plain parts before HTML
                 const bodyPartsArray = Array.from(message.bodyParts.entries());
+                
+                // First pass: Look for text/plain parts explicitly (avoid HTML)
                 for (const [key, part] of bodyPartsArray) {
-                  if (!key.toLowerCase().includes('header')) {
+                  const keyLower = key.toLowerCase();
+                  if (!keyLower.includes('header') && !keyLower.includes('html')) {
                     try {
                       const rawContent = part.toString('utf8');
                       if (rawContent && rawContent.length > 10) {
                         bodyContent = this.decodeEmailContent(rawContent);
-                        console.log(`[EmailService] ✅ Body content obtenido de "${key}" part: ${bodyContent.length} caracteres`);
+                        console.log(`[EmailService] ✅ Body content obtenido de "${key}" part (text): ${bodyContent.length} caracteres`);
                         break;
                       }
                     } catch (partError) {
                       console.log(`[EmailService] ⚠️ Error procesando "${key}" part:`, partError);
+                    }
+                  }
+                }
+                
+                // Second pass: If still no content, accept HTML parts as fallback
+                if (!bodyContent) {
+                  for (const [key, part] of bodyPartsArray) {
+                    const keyLower = key.toLowerCase();
+                    if (!keyLower.includes('header')) {
+                      try {
+                        const rawContent = part.toString('utf8');
+                        if (rawContent && rawContent.length > 10) {
+                          bodyContent = this.decodeEmailContent(rawContent);
+                          console.log(`[EmailService] ✅ Body content obtenido de "${key}" part (fallback HTML): ${bodyContent.length} caracteres`);
+                          break;
+                        }
+                      } catch (partError) {
+                        console.log(`[EmailService] ⚠️ Error procesando "${key}" part:`, partError);
+                      }
                     }
                   }
                 }

@@ -17,7 +17,7 @@ export class EmailFilterService {
   static validateEmailNotDeliveryStatus(email: any): EmailFilterResult {
     const emailFrom = (email.from || '').toLowerCase();
     const emailSubject = (email.subject || '').toLowerCase();
-    const emailContent = (email.body || email.text || '').toLowerCase();
+    const emailContent = (email.text || email.body || '').toLowerCase();
     
     // Patrones comunes en el FROM de delivery status emails (mejorados)
     const deliveryStatusFromPatterns = [

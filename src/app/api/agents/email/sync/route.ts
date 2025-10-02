@@ -817,25 +817,21 @@ async function addSentMessageToConversation(
     }
     
     // Si EmailTextExtractor falló, intentar fallback manual más estricto
+    // PRIORITY: Prefer text over HTML when both are available (text is cleaner and shorter for AI)
     if (!extractionSuccessful) {
       let fallbackContent = '';
       
-      // 1. Intentar con email.body (string directo)
-      if (email.body && typeof email.body === 'string' && email.body.trim()) {
-        fallbackContent = email.body.trim();
-        console.log(`[EMAIL_SYNC] 📝 Usando email.body (string): ${fallbackContent.length} caracteres`);
-      }
-      // 2. Intentar con email.text
-      else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+      // 1. Intentar con email.text primero
+      if (email.text && typeof email.text === 'string' && email.text.trim()) {
         fallbackContent = email.text.trim();
         console.log(`[EMAIL_SYNC] 📝 Usando email.text: ${fallbackContent.length} caracteres`);
       }
-      // 3. Intentar con email.html (extraer texto comprehensivo)
-      else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = cleanHtmlContent(email.html);
-        console.log(`[EMAIL_SYNC] 📝 Usando email.html (limpieza comprehensiva): ${fallbackContent.length} caracteres`);
+      // 2. Intentar con email.body (string directo)
+      else if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
+        console.log(`[EMAIL_SYNC] 📝 Usando email.body (string): ${fallbackContent.length} caracteres`);
       }
-      // 4. Verificar si body es un objeto con propiedades anidadas
+      // 3. Verificar si body es un objeto con propiedades anidadas (priorizar text sobre html)
       else if (email.body && typeof email.body === 'object') {
         console.log(`[EMAIL_SYNC] 🔍 Analizando email.body como objeto...`);
         
@@ -846,6 +842,11 @@ async function addSentMessageToConversation(
           fallbackContent = cleanHtmlContent(email.body.html);
           console.log(`[EMAIL_SYNC] 📝 Usando email.body.html (limpieza comprehensiva): ${fallbackContent.length} caracteres`);
         }
+      }
+      // 4. Solo como último recurso, intentar con email.html
+      else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = cleanHtmlContent(email.html);
+        console.log(`[EMAIL_SYNC] 📝 Usando email.html (limpieza comprehensiva): ${fallbackContent.length} caracteres`);
       }
       
       // Validar que el contenido fallback sea útil (mínimo 10 caracteres)
@@ -1425,22 +1426,23 @@ async function addReceivedMessageToConversation(
     }
     
     // Si EmailTextExtractor falló, intentar fallback manual más estricto
+    // PRIORITY: Prefer text over HTML when both are available (text is cleaner and shorter for AI)
     if (!extractionSuccessful) {
       let fallbackContent = '';
       
-      // Intentar extraer contenido con fallbacks
-      if (email.body && typeof email.body === 'string' && email.body.trim()) {
-        fallbackContent = email.body.trim();
-      } else if (email.text && typeof email.text === 'string' && email.text.trim()) {
+      // Intentar extraer contenido con fallbacks (priorizar texto sobre HTML)
+      if (email.text && typeof email.text === 'string' && email.text.trim()) {
         fallbackContent = email.text.trim();
-      } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
-        fallbackContent = cleanHtmlContent(email.html);
+      } else if (email.body && typeof email.body === 'string' && email.body.trim()) {
+        fallbackContent = email.body.trim();
       } else if (email.body && typeof email.body === 'object') {
         if (email.body.text && typeof email.body.text === 'string' && email.body.text.trim()) {
           fallbackContent = email.body.text.trim();
         } else if (email.body.html && typeof email.body.html === 'string' && email.body.html.trim()) {
           fallbackContent = cleanHtmlContent(email.body.html);
         }
+      } else if (email.html && typeof email.html === 'string' && email.html.trim()) {
+        fallbackContent = cleanHtmlContent(email.html);
       }
       
       // Validar que el contenido fallback sea útil (mínimo 10 caracteres)

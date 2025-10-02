@@ -56,19 +56,20 @@ export class EmailTextExtractorService {
       const to = this.extractEmailAddress(email.to || '');
       
       // Obtener el contenido del email
+      // PRIORITY: Prefer text over HTML when both are available (text is cleaner and shorter for AI)
       let rawContent = '';
-      if (email.html) {
-        rawContent = this.extractTextFromHtml(email.html);
-      } else if (email.text) {
+      if (email.text) {
         rawContent = email.text;
       } else if (email.body) {
         if (typeof email.body === 'string') {
           rawContent = email.body;
-        } else if (email.body.html) {
-          rawContent = this.extractTextFromHtml(email.body.html);
         } else if (email.body.text) {
           rawContent = email.body.text;
+        } else if (email.body.html) {
+          rawContent = this.extractTextFromHtml(email.body.html);
         }
+      } else if (email.html) {
+        rawContent = this.extractTextFromHtml(email.html);
       }
 
       const originalLength = rawContent.length;

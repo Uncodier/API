@@ -148,7 +148,7 @@ export class EmailDuplicationService {
       sender,
       timestamp,
       emailId,
-      content: email.body || email.text || ''
+      content: email.text || email.body || ''
     };
   }
 
