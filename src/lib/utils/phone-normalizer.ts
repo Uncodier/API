@@ -40,24 +40,27 @@ export function normalizePhoneForSearch(phone: string): string[] {
     cleaned = withPlus;
   }
 
-  // Si empieza con +, generar variantes sin el + y variantes sin posibles dígitos de marcación nacional tras el código de país
+  // Si empieza con +, generar variantes sin el + y probar múltiples particiones de código de país (1-3 dígitos)
   if (cleaned.startsWith('+')) {
     const withoutPlus = cleaned.substring(1);
     variants.push(withoutPlus);
 
-    const match = cleaned.match(/^\+(\d{1,3})(\d{6,14})$/);
-    if (match) {
-      const cc = match[1];
-      const rest = match[2];
-      // Quitar un posible dígito de marcación nacional (0, 1, 9) justo después del código de país
-      if (rest.length > 1 && (rest.startsWith('0') || rest.startsWith('1') || rest.startsWith('9'))) {
-        const restNoTrunk = rest.substring(1);
-        variants.push(`+${cc}${restNoTrunk}`);
-        variants.push(`${cc}${restNoTrunk}`);
+    const digits = withoutPlus;
+    if (/^\d{7,15}$/.test(digits)) {
+      // Probar CC de 1, 2 y 3 dígitos
+      for (let ccLen = 1; ccLen <= 3 && ccLen < digits.length; ccLen++) {
+        const cc = digits.substring(0, ccLen);
+        const rest = digits.substring(ccLen);
+        // Variante completa
+        variants.push(`+${cc}${rest}`);
+        variants.push(`${cc}${rest}`);
+        // Quitar un posible dígito de marcación nacional (0,1,9)
+        if (rest.length > 1 && (rest.startsWith('0') || rest.startsWith('1') || rest.startsWith('9'))) {
+          const restNoTrunk = rest.substring(1);
+          variants.push(`+${cc}${restNoTrunk}`);
+          variants.push(`${cc}${restNoTrunk}`);
+        }
       }
-
-      // Variante sólo dígitos (sin +)
-      variants.push(`${cc}${rest}`);
     }
   } else {
     // Si no empieza con +, generar variantes con códigos comunes
@@ -81,6 +84,17 @@ export function normalizePhoneForSearch(phone: string): string[] {
       variants.push(`52${withoutLeading1}`);
     }
   }
+
+  // Incluir también la forma canónica de almacenamiento para asegurar matching
+  try {
+    const canonical = normalizePhoneForStorage(phone);
+    if (canonical) {
+      variants.push(canonical);
+      if (canonical.startsWith('+')) {
+        variants.push(canonical.substring(1));
+      }
+    }
+  } catch (_) {}
 
   // Variante de últimos 10 dígitos como fallback de matching (cuidadosa para colisiones)
   const digitsOnly = cleaned.replace(/[^\d]/g, '');
