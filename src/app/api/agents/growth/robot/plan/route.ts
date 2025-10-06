@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeUnifiedRobotActivityPlanning, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
+import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 
 // ------------------------------------------------------------------------------------
 // Growth Plan Specific Context (extends the core planning with previous plan context)
@@ -65,7 +66,10 @@ export async function POST(request: NextRequest) {
 
     console.log(`🤖 Robot agent encontrado: ${robotAgent.agentId}`);
 
-    // 4. Registrar un registro base en instance_plans --------------------------------
+    // 4. Complete all in-progress plans before creating a new one -------------------
+    await completeInProgressPlans(instance_id);
+
+    // 5. Registrar un registro base en instance_plans --------------------------------
     const { data: newPlan, error: planError } = await supabaseAdmin
       .from('instance_plans')
       .insert({
@@ -85,7 +89,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error al registrar el plan' }, { status: 500 });
     }
 
-    // 5. Obtener contexto específico para el tipo de actividad con contexto de growth plan ------------------------
+    // 6. Obtener contexto específico para el tipo de actividad con contexto de growth plan ------------------------
     console.log(`🎯 OBTENIENDO: Contexto específico para actividad: ${activity}`);
     
     const growthPlanContext = await buildGrowthPlanContext(site_id, activity, previousSessions || []);
@@ -198,7 +202,7 @@ export async function POST(request: NextRequest) {
       planData = activityPlanResults[0]; // Tomar el primer plan generado
     }
 
-    // 7. Actualizar el plan con los resultados usando el core unificado ----------------------------------------
+    // 8. Actualizar el plan con los resultados usando el core unificado ----------------------------------------
     
     // Formatear steps usando el core unificado
     let planSteps = formatPlanSteps(planData);

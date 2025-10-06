@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 
 /**
  * Función auxiliar para agregar actividad al plan del robot
@@ -33,6 +34,9 @@ export async function addActivityToPlan(
     let currentPlan = activePlan;
     if (!activePlan) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ No active plan found, creating new plan...`);
+      
+      // Complete all in-progress plans before creating a new one
+      await completeInProgressPlans(instance_id);
       
       const { data: newPlan, error: createError } = await supabaseAdmin
         .from('instance_plans')
@@ -100,7 +104,7 @@ export async function addActivityToPlan(
     const updatedSteps = [
       ...currentSteps.slice(0, insertPosition),
       newStep,
-      ...currentSteps.slice(insertPosition).map(step => ({
+      ...currentSteps.slice(insertPosition).map((step: any) => ({
         ...step,
         order: step.order + 1 // Actualizar orden de steps posteriores
       }))

@@ -4,19 +4,19 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/stop
-// Detiene una instancia remota específica y actualiza su estado en la BD
+// Pausa una instancia remota específica y actualiza su estado en la BD
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 60; // 1 minuto
 
-const StopInstanceSchema = z.object({
+const PauseInstanceSchema = z.object({
   instance_id: z.string().uuid('instance_id debe ser un UUID válido'),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.json();
-    const { instance_id } = StopInstanceSchema.parse(rawBody);
+    const { instance_id } = PauseInstanceSchema.parse(rawBody);
 
     // 1. Buscar la instancia en la BD -----------------------------------------------
     const { data: instance, error: instanceError } = await supabaseAdmin
@@ -29,14 +29,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
 
-    if (instance.status === 'stopped') {
-      return NextResponse.json({ message: 'La instancia ya está detenida' }, { status: 200 });
+    if (instance.status === 'paused') {
+      return NextResponse.json({ message: 'La instancia ya está pausada' }, { status: 200 });
     }
 
-    // 2. Detener instancia en Scrapybara usando API REST --------------------------
+    // 2. Pausar instancia en Scrapybara usando API REST ----------------------------
     const scrapybaraInstanceId = instance.provider_instance_id ?? instance.id;
     
-    const stopResponse = await fetch(`https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/stop`, {
+    const pauseResponse = await fetch(`https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/pause`, {
       method: 'POST',
       headers: {
         'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
@@ -44,23 +44,19 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!stopResponse.ok) {
-      const errorText = await stopResponse.text();
-      console.error('Error deteniendo instancia en Scrapybara:', errorText);
+    if (!pauseResponse.ok) {
+      const errorText = await pauseResponse.text();
+      console.error('Error pausando instancia en Scrapybara:', errorText);
       return NextResponse.json({ 
-        error: `Error al detener instancia: ${stopResponse.status} ${errorText}` 
+        error: `Error al pausar instancia: ${pauseResponse.status} ${errorText}` 
       }, { status: 500 });
     }
-
-    const stopResult = await stopResponse.json();
-    console.log('Instancia detenida en Scrapybara:', stopResult);
 
     // 3. Actualizar estado en la BD -----------------------------------------------
     const { error: updateError } = await supabaseAdmin
       .from('remote_instances')
       .update({ 
-        status: 'stopped', 
-        stopped_at: new Date().toISOString() 
+        status: 'paused'
       })
       .eq('id', instance_id);
 
@@ -69,22 +65,33 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error al actualizar el estado' }, { status: 500 });
     }
 
-    // 4. Marcar planes asociados como cancelados ----------------------------------
-    await supabaseAdmin
+    // 4. Mark in-progress and paused plans as failed -----------------------------------------
+    const { data: affectedPlans } = await supabaseAdmin
       .from('instance_plans')
-      .update({ 
-        status: 'cancelled', 
-        completed_at: new Date().toISOString() 
-      })
+      .select('id, title')
       .eq('instance_id', instance_id)
-      .in('status', ['pending', 'in_progress']);
+      .in('status', ['in_progress', 'paused']);
+
+    if (affectedPlans && affectedPlans.length > 0) {
+      console.log(`Marking ${affectedPlans.length} plans as failed due to instance pause`);
+      
+      await supabaseAdmin
+        .from('instance_plans')
+        .update({ 
+          status: 'failed',
+          error_message: 'Instance was paused while plan was in progress',
+          updated_at: new Date().toISOString()
+        })
+        .eq('instance_id', instance_id)
+        .in('status', ['in_progress', 'paused']);
+    }
 
     return NextResponse.json(
       {
         instance_id,
-        status: 'stopped',
-        message: 'Instancia detenida correctamente',
-        scrapybara_response: stopResult,
+        status: 'paused',
+        message: 'Instance paused successfully',
+        affected_plans: affectedPlans?.length || 0,
       },
       { status: 200 },
     );

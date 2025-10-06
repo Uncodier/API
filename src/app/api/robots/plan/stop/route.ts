@@ -4,20 +4,19 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/stop
-// Detiene la instancia remota y marca el plan como completado/cancelado
+// Pausa la instancia remota y deja el plan pendiente para reanudar luego
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 60; // 1 minuto
 
-const StopSchema = z.object({
+const PauseSchema = z.object({
   instance_id: z.string().uuid('instance_id inválido'),
-  status: z.enum(['completed', 'cancelled']).default('completed'),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { instance_id, status } = StopSchema.parse(body);
+    const { instance_id } = PauseSchema.parse(body);
 
     // 1. Buscar la instancia en la BD -----------------------------------------------
     const { data: instance, error: instanceError } = await supabaseAdmin
@@ -30,10 +29,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
 
-    // 2. Detener instancia en Scrapybara usando API REST ---------------------------
+    if (instance.status === 'paused') {
+      return NextResponse.json({ message: 'La instancia ya está pausada', instance_id }, { status: 200 });
+    }
+
+    // 2. Pausar instancia en Scrapybara usando API REST -----------------------------
     const scrapybaraInstanceId = instance.provider_instance_id ?? instance.id;
     
-    const stopResponse = await fetch(`https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/stop`, {
+    const pauseResponse = await fetch(`https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/pause`, {
       method: 'POST',
       headers: {
         'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
@@ -41,29 +44,32 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    if (!stopResponse.ok) {
-      const errorText = await stopResponse.text();
-      console.error('Error deteniendo instancia en Scrapybara:', errorText);
+    if (!pauseResponse.ok) {
+      const errorText = await pauseResponse.text();
+      console.error('Error pausando instancia en Scrapybara:', errorText);
       return NextResponse.json({ 
-        error: `Error al detener instancia: ${stopResponse.status} ${errorText}` 
+        error: `Error al pausar instancia: ${pauseResponse.status} ${errorText}` 
       }, { status: 500 });
     }
 
     // 3. Actualizar BD --------------------------------------------------------------
     await supabaseAdmin
       .from('remote_instances')
-      .update({ status: 'stopped', stopped_at: new Date().toISOString() })
+      .update({ status: 'paused' })
       .eq('id', instance_id);
 
+    // Mover planes activos a 'paused' para permitir reanudación
     await supabaseAdmin
       .from('instance_plans')
-      .update({ status, completed_at: new Date().toISOString(), progress_percentage: 100 })
-      .eq('instance_id', instance_id);
+      .update({ status: 'paused' })
+      .eq('instance_id', instance_id)
+      .in('status', ['pending', 'in_progress']);
 
     return NextResponse.json({ 
-      message: 'Instancia detenida',
+      message: 'Instancia pausada',
       instance_id,
-      plan_status: status
+      instance_status: 'paused',
+      plan_status: 'paused'
     }, { status: 200 });
 
   } catch (err: any) {

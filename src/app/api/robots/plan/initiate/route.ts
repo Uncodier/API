@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { ScrapybaraClient } from 'scrapybara';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
+import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/plan/initiate
@@ -29,6 +30,12 @@ export async function POST(request: NextRequest) {
 
     if (planError || !plan) {
       return NextResponse.json({ error: 'Plan no encontrado' }, { status: 404 });
+    }
+
+    // 1.5. Complete any existing active plans for this instance before starting a new one
+    if (plan.instance_id) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Completing any existing active plans for instance before initiating new plan`);
+      await completeInProgressPlans(plan.instance_id, 'New plan initiated - previous plan auto-completed');
     }
 
     // 2. Crear instancia en Scrapybara ----------------------------------------------

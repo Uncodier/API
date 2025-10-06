@@ -160,9 +160,23 @@ export async function createTask(taskData: CreateTaskParams): Promise<DbTask> {
   try {
     const dataToInsert = {
       ...taskData,
-      status: taskData.status || 'active',
+      // Default status should be 'pending' to match schema and other flows
+      status: taskData.status || 'pending',
       stage: taskData.stage || 'pending',
-      priority: taskData.priority || 0,
+      // Ensure priority defaults to low (0) and never passes null/undefined
+      priority: ((): number => {
+        const p = (taskData as any).priority;
+        if (typeof p === 'number' && Number.isFinite(p)) return p;
+        if (typeof p === 'string') {
+          const map: Record<string, number> = { low: 0, normal: 1, medium: 5, high: 10, urgent: 15 };
+          const key = p.toLowerCase();
+          if (key in map) return map[key];
+          const parsed = parseInt(p, 10);
+          if (!Number.isNaN(parsed)) return parsed;
+        }
+        return 0;
+      })(),
+      scheduled_date: taskData.scheduled_date || new Date().toISOString(), // Default to current time if not provided
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };

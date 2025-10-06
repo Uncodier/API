@@ -471,13 +471,150 @@ ALWAYS break down complex tasks into simple, executable steps:
 - Maximum 1-4 minutes per step
 - If a task takes longer, break it into smaller sub-steps
 
+🔍 TOOL DISCOVERY & PLATFORM EXPLORATION REQUIREMENTS:
+When working with apps/websites, ALWAYS include exploration steps to discover available tools/features:
+
+EXPLORATION STEP EXAMPLES:
+- "Navigate to [platform] dashboard to identify available sections and tools"
+- "Locate and inspect the main navigation menu to discover available features"
+- "Click on 'Settings' or 'Tools' section to explore configuration options"
+- "Search for [feature name] in the platform's search bar to find the tool"
+- "Browse through available menu options to identify the correct section for [task]"
+- "Check platform documentation or help center to understand tool usage"
+- "Inspect the UI to identify buttons, menus, or sections related to [objective]"
+- "Navigate to [platform]/help or [platform]/docs to research available features"
+
+🛠️ SPECIFIC TOOL USAGE INSTRUCTIONS:
+For EVERY platform interaction, specify the exact tools/sections to use:
+
+PLATFORM-SPECIFIC EXAMPLES:
+
+LinkedIn:
+- "Navigate to LinkedIn Campaign Manager at linkedin.com/campaignmanager"
+- "Click on 'Create Campaign' button in the top right corner"
+- "Use LinkedIn's 'Audience Network' tool to expand reach"
+- "Access 'Analytics' section to review campaign performance"
+
+Facebook/Instagram:
+- "Navigate to Facebook Ads Manager at business.facebook.com/adsmanager"
+- "Use 'Audiences' tool under Assets menu to create custom audiences"
+- "Access 'Creative Hub' to preview ad creatives before publishing"
+- "Use Instagram's 'Professional Dashboard' to schedule posts"
+
+Google Ads:
+- "Navigate to Google Ads campaign creation at ads.google.com/campaigns/new"
+- "Use 'Keyword Planner' tool to research and select keywords"
+- "Access 'Recommendations' tab to optimize campaign settings"
+- "Use 'Display Planner' to find placements for display ads"
+
+Email Platforms:
+- "Navigate to campaign creation section in [email platform]"
+- "Use 'Segmentation' or 'Audience' tool to select target recipients"
+- "Access 'Template Library' or 'Design' section to create email content"
+- "Use 'A/B Testing' or 'Split Test' tool to test email variations"
+
+🔬 RESEARCH & INVESTIGATION STEPS:
+When platform/tool is unknown or unclear, include MANDATORY investigation steps:
+
+INVESTIGATION PROTOCOL:
+1. "Navigate to [platform] homepage to familiarize with layout and features"
+2. "Locate and click on 'Help', 'Documentation', or '?' icon to access platform guides"
+3. "Search for '[specific task]' in platform's help center or documentation"
+4. "Explore main navigation menus to map available sections and tools"
+5. "Look for 'Getting Started', 'Tutorials', or 'Guides' section to learn platform workflow"
+6. "If uncertain about feature location, use platform's internal search tool"
+7. "Check for tooltips or info icons (i) next to features for usage instructions"
+8. "Review platform's API documentation if automation/integration is needed"
+
+⚠️ MANDATORY TOOL SPECIFICATION:
+For EVERY action step, you MUST specify:
+- The exact section/menu where the tool is located (e.g., "Under 'Campaigns' > 'Create New'")
+- The button/link text to click (e.g., "Click the blue 'Create Campaign' button")
+- The tool/feature name to use (e.g., "Use the 'Audience Targeting' tool")
+- Alternative paths if primary method is unavailable (e.g., "If 'Create Campaign' is not visible, click '+ New' icon")
+
+STEP FORMAT WITH TOOL SPECIFICATION:
+{
+  "title": "Create campaign using Campaign Manager",
+  "description": "Navigate to Campaign Manager tool (under 'Marketing' menu) and click 'Create Campaign' button to initiate campaign setup wizard",
+  "platform": "LinkedIn",
+  "tool_section": "Marketing > Campaign Manager",
+  "tool_name": "Campaign Creation Wizard",
+  "specific_ui_element": "Blue 'Create Campaign' button in top right",
+  "alternative_path": "Can also access via dashboard '+ Create' dropdown > 'Campaign'",
+  "step_number": 1,
+  "automation_level": "automated",
+  "estimated_duration": "2 minutes"
+}
+
 SIMPLE EXECUTION STEPS (Maximum 5-8 steps):
 Each step must be a specific, quick browser automation action with coordinated response:
 
-STEP FORMAT EXAMPLE:
+COMPLETE STEP FORMAT EXAMPLES:
+
+Example 1 - Exploration Step:
 {
-  "title": "Login to Facebook",
-  "description": "Navigate to Facebook and authenticate using stored session",
+  "title": "Explore LinkedIn Campaign Manager interface",
+  "description": "Navigate to linkedin.com/campaignmanager to discover available campaign types and tools. Inspect the main navigation menu to identify sections like 'Create Campaign', 'Analytics', and 'Audiences'.",
+  "platform": "LinkedIn",
+  "tool_section": "Campaign Manager Dashboard",
+  "tool_name": "Campaign Manager",
+  "specific_ui_element": "Main navigation sidebar with campaign options",
+  "alternative_path": "Can access via LinkedIn main menu > Advertise > Campaign Manager",
+  "is_exploration_step": true,
+  "exploration_objective": "Identify available campaign creation tools and campaign types supported by LinkedIn",
+  "step_number": 1,
+  "automation_level": "automated",
+  "estimated_duration": "2 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": "linkedin"
+}
+
+Example 2 - Tool Usage Step:
+{
+  "title": "Create new LinkedIn campaign using Campaign Wizard",
+  "description": "Click the 'Create Campaign' button in the top right corner of Campaign Manager. This will open the Campaign Creation Wizard where you can select campaign objective.",
+  "platform": "LinkedIn",
+  "tool_section": "Campaign Manager > Create",
+  "tool_name": "Campaign Creation Wizard",
+  "specific_ui_element": "Blue 'Create Campaign' button in top right corner",
+  "alternative_path": "Can also click '+ New' dropdown and select 'Campaign'",
+  "is_exploration_step": false,
+  "step_number": 2,
+  "automation_level": "automated",
+  "estimated_duration": "2 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": "linkedin"
+}
+
+Example 3 - Research/Unknown Platform Step:
+{
+  "title": "Research HubSpot campaign creation process",
+  "description": "Navigate to HubSpot help center (help.hubspot.com) and search for 'create marketing campaign'. Read the documentation to understand the required steps and tools available.",
+  "platform": "HubSpot Documentation",
+  "tool_section": "Help Center > Marketing Hub",
+  "tool_name": "Documentation Search",
+  "specific_ui_element": "Search bar in help center header",
+  "alternative_path": "Can also navigate to HubSpot Academy for video tutorials",
+  "is_exploration_step": true,
+  "exploration_objective": "Learn the proper workflow and tools for creating campaigns in HubSpot Marketing Hub",
+  "step_number": 1,
+  "automation_level": "automated",
+  "estimated_duration": "3 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": null
+}
+
+Example 4 - Authentication Step:
+{
+  "title": "Login to Facebook Ads Manager",
+  "description": "Navigate to business.facebook.com/adsmanager and authenticate using stored session credentials",
+  "platform": "Facebook",
+  "tool_section": "Ads Manager Login",
+  "tool_name": "Facebook Authentication",
+  "specific_ui_element": "Login form or session restoration",
+  "alternative_path": "Can access via facebook.com and click on 'Ad Manager' in main menu",
+  "is_exploration_step": false,
   "step_number": 1,
   "automation_level": "automated",
   "estimated_duration": "3 minutes",
@@ -493,16 +630,84 @@ COORDINATION EXAMPLES:
 - Platform navigation → expected_response_type: "step_completed"
 - Publishing actions → expected_response_type: "user_attention_required" (for approval)
 
+🎓 WHEN TO INCLUDE EXPLORATION STEPS:
+You MUST include exploration/research steps when:
+1. Working with a platform/tool you're not familiar with
+2. The specific tool location or workflow is unclear
+3. Multiple ways to achieve the objective exist (explore to find the best)
+4. Platform UI may have changed since training data
+5. Need to verify available features before proceeding
+6. Documentation review would prevent errors or improve efficiency
+
+COMPLETE PLAN EXAMPLE WITH EXPLORATION:
+
+Activity: "Create and publish LinkedIn sponsored content campaign"
+
+Step 1 (Exploration):
+{
+  "title": "Explore LinkedIn Campaign Manager to identify campaign types",
+  "description": "Navigate to linkedin.com/campaignmanager and inspect available campaign types. Locate 'Sponsored Content' option and identify the campaign creation workflow.",
+  "platform": "LinkedIn",
+  "tool_section": "Campaign Manager > Dashboard",
+  "tool_name": "Campaign Type Selector",
+  "specific_ui_element": "Campaign type cards or dropdown menu",
+  "alternative_path": "Click 'Create Campaign' and explore objectives menu",
+  "is_exploration_step": true,
+  "exploration_objective": "Confirm Sponsored Content is available and understand creation workflow",
+  "step_number": 1,
+  "estimated_duration": "2 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": "linkedin"
+}
+
+Step 2 (Action):
+{
+  "title": "Initiate Sponsored Content campaign creation",
+  "description": "Click 'Create Campaign' button and select 'Brand Awareness' objective, then choose 'Sponsored Content' as the format.",
+  "platform": "LinkedIn",
+  "tool_section": "Campaign Manager > Create > Objective Selection",
+  "tool_name": "Campaign Creation Wizard",
+  "specific_ui_element": "'Create Campaign' blue button, then 'Brand Awareness' card",
+  "alternative_path": "Can use '+ New Campaign' dropdown if visible",
+  "is_exploration_step": false,
+  "step_number": 2,
+  "estimated_duration": "2 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": "linkedin"
+}
+
+Step 3 (Tool Usage):
+{
+  "title": "Configure audience targeting using Audience Manager",
+  "description": "Use LinkedIn's Audience Targeting tool to define target audience. Access under 'Audience' section and select criteria like location, job title, and industry.",
+  "platform": "LinkedIn",
+  "tool_section": "Campaign Manager > Campaign Settings > Audience",
+  "tool_name": "Audience Targeting Tool",
+  "specific_ui_element": "Audience criteria dropdowns and search fields",
+  "alternative_path": "Can import saved audience from Matched Audiences library",
+  "is_exploration_step": false,
+  "step_number": 3,
+  "estimated_duration": "3 minutes",
+  "expected_response_type": "step_completed",
+  "required_authentication": "linkedin"
+}
+
 OUTPUT FORMAT - KEEP SIMPLE:
 Provide a FOCUSED execution plan with:
 - Simple activity title (one sentence)
 - Selected channel/platform (ONLY ONE)
 - Customer journey stage focus (ONLY ONE)
-- Quick execution steps (5-8 maximum) with expected_response_type for each
+- Quick execution steps (5-8 maximum) with ALL required fields:
+  * title, description, platform
+  * tool_section, tool_name, specific_ui_element, alternative_path
+  * is_exploration_step, exploration_objective (if applicable)
+  * step_number, automation_level, estimated_duration
+  * expected_response_type, required_authentication
 - Simple timeline (1-2 hours total, 1-4 minutes per step)
 - Basic success metrics (1-3 key metrics)
 - Single integration requirement
 - Human intervention points clearly identified
+- AT LEAST one exploration step if platform workflow is unclear
 
 COMPLETE COMPANY CONTEXT (Choose the BEST single option from this):
 
@@ -551,11 +756,18 @@ Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
               steps: [{
                 step_number: 1,
                 title: "Browser action title",
-                description: "Specific browser automation step (click, type, navigate, etc.)",
-                platform: "Platform/website where action occurs",
-                estimated_duration: "Duration estimate for browser action",
-                required_authentication: "Authentication session needed",
-                automation_level: "automated"
+                description: "Detailed browser automation step with specific tool/section information (e.g., 'Navigate to Campaign Manager under Marketing menu and click Create Campaign button')",
+                platform: "Platform/website where action occurs (e.g., 'LinkedIn', 'Facebook Ads Manager')",
+                tool_section: "Exact menu path to the tool (e.g., 'Marketing > Campaign Manager', 'Assets > Audiences')",
+                tool_name: "Specific tool or feature name being used (e.g., 'Campaign Creation Wizard', 'Audience Targeting Tool')",
+                specific_ui_element: "Exact UI element to interact with (e.g., 'Blue Create Campaign button in top right', 'Search bar in header')",
+                alternative_path: "Alternative way to access the tool if primary method fails (e.g., 'Can also access via + Create dropdown')",
+                is_exploration_step: false,
+                exploration_objective: "If exploration step, what are we trying to discover (e.g., 'Identify available campaign types', 'Locate analytics section')",
+                estimated_duration: "Duration estimate for browser action (1-4 minutes)",
+                required_authentication: "Authentication session needed (e.g., 'linkedin', 'facebook')",
+                automation_level: "automated",
+                expected_response_type: "step_completed"
               }],
               timeline: "Execution timeline",
               success_criteria: ["Measurable success criteria for automation"]
@@ -571,7 +783,7 @@ Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
       ],
       context: robotPrompt,
       // Set model for growth robot planning
-      model: 'gpt-5',
+      model: 'gpt-4o',
       modelType: 'openai'
     });
 

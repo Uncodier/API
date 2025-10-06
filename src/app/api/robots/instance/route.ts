@@ -30,8 +30,34 @@ export async function POST(request: NextRequest) {
       .in('status', ['running', 'paused'])
       .single();
 
-    // Si ya existe una instancia para esta actividad, devolverla
+    // Si ya existe una instancia para esta actividad, intentar reanudar si está pausada y devolverla
     if (existingInstance && !searchError) {
+      try {
+        if (existingInstance.status === 'paused' && existingInstance.provider_instance_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Existing instance is paused. Attempting resume: ${existingInstance.provider_instance_id}`);
+          const apiKey = process.env.SCRAPYBARA_API_KEY || '';
+          const resumeResp = await fetch(`https://api.scrapybara.com/v1/instance/${existingInstance.provider_instance_id}/resume`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': apiKey,
+            },
+            body: JSON.stringify({ timeout_hours: existingInstance.timeout_hours || 1 }),
+          });
+          if (!resumeResp.ok) {
+            const errText = await resumeResp.text();
+            throw new Error(`Resume failed: ${resumeResp.status} ${errText}`);
+          }
+          await supabaseAdmin
+            .from('remote_instances')
+            .update({ status: 'running', updated_at: new Date().toISOString() })
+            .eq('id', existingInstance.id);
+          existingInstance.status = 'running';
+          console.log('₍ᐢ•(ܫ)•ᐢ₎ ✅ Existing paused instance resumed');
+        }
+      } catch (resumeErr: any) {
+        console.warn('₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Failed to resume existing paused instance:', resumeErr?.message || resumeErr);
+      }
       return NextResponse.json(
         {
           instance_id: existingInstance.id,

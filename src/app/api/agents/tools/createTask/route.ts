@@ -169,9 +169,14 @@ function preprocessTaskData(data: any) {
       console.log('[CreateTask] Fecha transformada:', data.scheduled_date, '->', transformedDate);
     } else {
       console.warn('[CreateTask] No se pudo transformar la fecha:', data.scheduled_date);
-      // Remover la fecha si no se puede transformar para evitar error de validación
-      delete processed.scheduled_date;
+      // Set default to current time instead of removing to avoid database constraint error
+      processed.scheduled_date = new Date().toISOString();
+      console.log('[CreateTask] Usando fecha por defecto:', processed.scheduled_date);
     }
+  } else {
+    // If no scheduled_date provided, set default to current time
+    processed.scheduled_date = new Date().toISOString();
+    console.log('[CreateTask] No se proporcionó scheduled_date, usando fecha por defecto:', processed.scheduled_date);
   }
   
   return processed;

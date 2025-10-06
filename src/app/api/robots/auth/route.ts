@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { connectToInstance, validateInstanceStatus, verifyBrowserResponsive } from '@/lib/services/robot-plan-execution';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/auth
@@ -21,13 +22,17 @@ const AuthSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const body = await request.json();
+    console.log(`[robots/auth][${reqId}] Incoming request`, { keys: Object.keys(body || {}) });
     const { site_id, remote_instance_id, instance_id, auth_type } = AuthSchema.parse(body);
+    console.log(`[robots/auth][${reqId}] Parsed payload`, { site_id, remote_instance_id, instance_id, auth_type });
 
     // 1. Recuperar instancia ----------------------------------------------------------------
     let instance, instanceError;
 
     if (instance_id) {
+      console.log(`[robots/auth][${reqId}] Looking up instance by instance_id`, { instance_id, site_id });
       // Buscar por ID interno de la BD
       const result = await supabaseAdmin
         .from('remote_instances')
@@ -40,6 +45,7 @@ export async function POST(request: NextRequest) {
     } else if (remote_instance_id) {
       // Determinar si es un UUID (ID interno) o provider_instance_id
       const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remote_instance_id);
+      console.log(`[robots/auth][${reqId}] Looking up instance by remote_instance_id`, { remote_instance_id, site_id, isUUID });
       
       let result;
       if (isUUID) {
@@ -74,29 +80,58 @@ export async function POST(request: NextRequest) {
       }
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
+    console.log(`[robots/auth][${reqId}] Instance found`, { id: instance.id, provider_instance_id: instance.provider_instance_id, user_id: instance.user_id });
 
     // Usar el provider_instance_id para las llamadas a Scrapybara
     const effectiveRemoteInstanceId = instance.provider_instance_id || remote_instance_id;
+    console.log(`[robots/auth][${reqId}] Effective remote instance id`, { effectiveRemoteInstanceId });
 
-    // 2. Obtener URL actual del navegador ---------------------------------------------------
+    // 2. Preflight: conectar y validar instancia/navegador ----------------------------------
     const scrapybaraApiKey = process.env.SCRAPYBARA_API_KEY;
     if (!scrapybaraApiKey) {
+      console.error(`[robots/auth][${reqId}] SCRAPYBARA_API_KEY not configured`);
       return NextResponse.json({ error: 'SCRAPYBARA_API_KEY no configurada' }, { status: 500 });
     }
+    const apiKeySuffix = scrapybaraApiKey.slice(-4);
+    console.log(`[robots/auth][${reqId}] SCRAPYBARA_API_KEY present`, { suffix: apiKeySuffix });
 
+    // Conectarse a la instancia con el SDK y validar estado del navegador
+    try {
+      const { remoteInstance } = await connectToInstance(instance.provider_instance_id);
+      const validation = validateInstanceStatus(remoteInstance);
+      if (!validation.valid) {
+        console.error(`[robots/auth][${reqId}] Instance not valid/running`, validation);
+        return NextResponse.json({ error: validation.error, status: validation.status }, { status: 503 });
+      }
+      await verifyBrowserResponsive(remoteInstance);
+      console.log(`[robots/auth][${reqId}] Preflight OK: browser responsive`);
+    } catch (preflightError: any) {
+      console.error(`[robots/auth][${reqId}] Preflight connection/validation failed`, { message: preflightError?.message });
+      // Continuar igualmente a pedir current_url para obtener detalle del upstream
+    }
+
+    // 3. Obtener URL actual del navegador ---------------------------------------------------
     const instanceId = effectiveRemoteInstanceId;
     const currentUrlApiUrl = `https://api.scrapybara.com/v1/instance/${instanceId}/browser/current_url`;
+    console.log(`[robots/auth][${reqId}] Fetching current URL`, { url: currentUrlApiUrl, instanceId });
     
-    const currentUrlResponse = await fetch(currentUrlApiUrl, {
-      method: 'GET',
-      headers: {
-        'x-api-key': scrapybaraApiKey,
-      },
-    });
+    let currentUrlResponse;
+    try {
+      currentUrlResponse = await fetch(currentUrlApiUrl, {
+        method: 'GET',
+        headers: {
+          'x-api-key': scrapybaraApiKey,
+        },
+      });
+    } catch (networkError: any) {
+      console.error(`[robots/auth][${reqId}] Network error fetching current_url`, { message: networkError?.message, stack: networkError?.stack });
+      throw networkError;
+    }
+    console.log(`[robots/auth][${reqId}] current_url response`, { status: currentUrlResponse.status });
 
     if (!currentUrlResponse.ok) {
       const errorText = await currentUrlResponse.text();
-      console.error('Error obteniendo URL actual:', errorText);
+      console.error(`[robots/auth][${reqId}] Error getting current URL`, { status: currentUrlResponse.status, body: errorText });
       return NextResponse.json(
         { error: 'Error obteniendo URL actual del navegador' },
         { status: currentUrlResponse.status }
@@ -104,9 +139,11 @@ export async function POST(request: NextRequest) {
     }
 
     const { current_url } = await currentUrlResponse.json();
+    console.log(`[robots/auth][${reqId}] Current URL obtained`, { current_url });
     
     // 3. Obtener título de la página actual ejecutando JavaScript -------------------
     const executeJsApiUrl = `https://api.scrapybara.com/v1/instance/${instanceId}/browser/evaluate`;
+    console.log(`[robots/auth][${reqId}] Evaluating page title`, { url: executeJsApiUrl });
     
     let pageTitle = 'Sin título';
     try {
@@ -120,6 +157,7 @@ export async function POST(request: NextRequest) {
           code: 'document.title || "Sin título"'
         }),
       });
+      console.log(`[robots/auth][${reqId}] evaluate response`, { status: titleResponse.status });
 
       if (titleResponse.ok) {
         const titleData = await titleResponse.json();
@@ -132,7 +170,7 @@ export async function POST(request: NextRequest) {
         console.warn('Response body:', errorText);
       }
     } catch (titleError) {
-      console.warn('Error obteniendo título de la página:', titleError);
+      console.warn(`[robots/auth][${reqId}] Error evaluating page title`, titleError);
       // Continuar con valor por defecto
     }
     
@@ -140,9 +178,11 @@ export async function POST(request: NextRequest) {
     const urlObj = new URL(current_url);
     const domain = urlObj.hostname;
     const sessionName = `${domain}_auth_${Date.now()}`;
+    console.log(`[robots/auth][${reqId}] Session naming`, { domain, sessionName });
 
     // 5. Llamar API de Scrapybara para guardar auth ------------------------------------------
     const saveAuthUrl = `https://api.scrapybara.com/v1/instance/${instanceId}/browser/save_auth`;
+    console.log(`[robots/auth][${reqId}] Saving auth state`, { url: saveAuthUrl, instanceId, sessionName });
     
     const saveAuthResponse = await fetch(saveAuthUrl, {
       method: 'POST',
@@ -152,10 +192,11 @@ export async function POST(request: NextRequest) {
       },
       body: JSON.stringify({ name: sessionName }),
     });
+    console.log(`[robots/auth][${reqId}] save_auth response`, { status: saveAuthResponse.status });
 
     if (!saveAuthResponse.ok) {
       const errorText = await saveAuthResponse.text();
-      console.error('Error llamando API Scrapybara:', errorText);
+      console.error(`[robots/auth][${reqId}] Error saving auth state`, { status: saveAuthResponse.status, body: errorText });
       return NextResponse.json(
         { error: 'Error guardando autenticación en Scrapybara' },
         { status: saveAuthResponse.status }
@@ -163,6 +204,7 @@ export async function POST(request: NextRequest) {
     }
 
     const authSaveResult = await saveAuthResponse.json();
+    console.log(`[robots/auth][${reqId}] Auth state saved`, { auth_state_id: authSaveResult?.auth_state_id });
 
     // 6. Registrar sesión en BD --------------------------------------------------------------
     const { data: authSession, error: authError } = await supabaseAdmin
@@ -182,9 +224,10 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (authError) {
-      console.error('Error guardando sesión de auth:', authError);
+      console.error(`[robots/auth][${reqId}] Error inserting auth session`, authError);
       return NextResponse.json({ error: 'Error guardando sesión de auth' }, { status: 500 });
     }
+    console.log(`[robots/auth][${reqId}] Auth session persisted`, { auth_session_id: authSession.id });
 
     return NextResponse.json(
       {
@@ -199,7 +242,7 @@ export async function POST(request: NextRequest) {
       { status: 200 },
     );
   } catch (err: any) {
-    console.error('Error en POST /robots/auth:', err);
+    console.error(`[robots/auth] Error in POST /robots/auth`, { message: err?.message, stack: err?.stack });
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }

@@ -4,6 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { addActivityToPlan } from '@/lib/services/robot-instance/robot-plan-service';
 import { executeUnifiedRobotActivityPlanning, decidePlanAction, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
+import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 
 // ------------------------------------------------------------------------------------
 // Instance Act Specific Context (builds on the shared planning core)
@@ -21,7 +22,19 @@ async function saveCompletePlan(
   planDecisionAction: string
 ): Promise<{ planId: string | null; success: boolean }> {
   try {
-    // Obtener información de la instancia ANTES de crear el plan
+    // STEP 1: Complete all in-progress plans FIRST before any other operation
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 1: Completing existing plans for instance: ${instanceId}`);
+    const completionResult = await completeInProgressPlans(instanceId, 'New plan created - previous plan auto-completed');
+    
+    if (!completionResult.success) {
+      console.error(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Warning: Some plans failed to complete:`, completionResult.errors);
+      // Continue anyway but log the warning
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Successfully completed ${completionResult.completedCount} existing plan(s)`);
+    }
+
+    // STEP 2: Get instance information
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 2: Getting instance data for plan creation`);
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
       .select('site_id, user_id')
@@ -33,7 +46,8 @@ async function saveCompletePlan(
       return { planId: null, success: false };
     }
 
-    // Formatear steps usando el core unificado
+    // STEP 3: Format plan steps
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 3: Formatting plan steps`);
     let planSteps = formatPlanSteps(planData);
     
     // Agregar pasos de guardado de sesión usando el core unificado
@@ -41,7 +55,8 @@ async function saveCompletePlan(
 
     const stepsTotal = planSteps.length;
 
-    // Crear nuevo plan en la base de datos siguiendo el patrón de growth/robot/plan
+    // STEP 4: Create new plan in database
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 4: Creating new plan in database`);
     const { data: newPlan, error: planError } = await supabaseAdmin
       .from('instance_plans')
       .insert({
@@ -61,7 +76,10 @@ async function saveCompletePlan(
       return { planId: null, success: false };
     }
 
-    // Actualizar el plan con los resultados siguiendo el patrón de growth/robot/plan
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ New plan created with ID: ${newPlan.id}`);
+
+    // STEP 5: Update plan with detailed information
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ STEP 5: Updating plan with detailed information`);
     const { error: updateError } = await supabaseAdmin
       .from('instance_plans')
       .update({
@@ -84,7 +102,8 @@ async function saveCompletePlan(
       return { planId: null, success: false };
     }
 
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Complete plan saved successfully with ID: ${newPlan.id}`);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Complete plan saved successfully with ID: ${newPlan.id}`);
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ 📊 Summary: Completed ${completionResult.completedCount} old plan(s), created 1 new plan`);
     return { planId: newPlan.id, success: true };
 
   } catch (error) {

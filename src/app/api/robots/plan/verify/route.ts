@@ -44,9 +44,17 @@ export async function POST(request: NextRequest) {
 
     // 2. Conectar Scrapybara y tomar screenshot -------------------------------------------
     const client = new ScrapybaraClient({ apiKey: process.env.SCRAPYBARA_API_KEY || '' });
-    // @ts-ignore
-    const remoteInstance = await client.resumeInstance(instance.provider_instance_id ?? instance.id);
-
+    const providerId = instance.provider_instance_id ?? instance.id;
+    const apiKey = process.env.SCRAPYBARA_API_KEY || '';
+    await fetch(`https://api.scrapybara.com/v1/instance/${providerId}/resume`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+      },
+      body: JSON.stringify({ timeout_hours: 1 }),
+    });
+    const remoteInstance = await client.get(providerId);
     const screenshot = await remoteInstance.screenshot();
     const base64Image = screenshot?.base64Image || '';
 

@@ -26,7 +26,8 @@ async function createSupportTask(
   userId: string,
   message: string,
   summary?: string,
-  contactName?: string
+  contactName?: string,
+  priorityInput?: 'low' | 'normal' | 'high' | 'urgent' | number
 ): Promise<string | null> {
   try {
     if (!leadId) {
@@ -89,6 +90,26 @@ async function createSupportTask(
 
     // Preparar datos para el task
     const taskTitleName = contactName || lead?.name || 'Lead';
+    // Map incoming priority to numeric; default to low (0)
+    const priorityMap: Record<string, number> = {
+      low: 0,
+      normal: 1,
+      high: 10,
+      urgent: 15
+    };
+    const normalizedPriority = (() => {
+      if (typeof priorityInput === 'number' && Number.isFinite(priorityInput)) {
+        return priorityInput;
+      }
+      if (typeof priorityInput === 'string') {
+        const key = priorityInput.toLowerCase();
+        if (key in priorityMap) return priorityMap[key];
+        const parsed = parseInt(priorityInput, 10);
+        if (!Number.isNaN(parsed)) return parsed;
+      }
+      return 0; // low default
+    })();
+
     const taskData = {
       lead_id: leadId,
       conversation_id: conversationId,
@@ -97,7 +118,7 @@ async function createSupportTask(
       type: 'support',
       stage: 'retention',
       status: 'pending',
-      priority: 1,
+      priority: normalizedPriority,
       user_id: userId,
       site_id: siteId,
       scheduled_date: new Date().toISOString(),
@@ -544,7 +565,8 @@ export async function POST(request: NextRequest) {
         conversationData.user_id,
         message,
         summary,
-        name
+        name,
+        priority
       );
       
       if (supportTaskId) {
