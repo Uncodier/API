@@ -377,7 +377,7 @@ export class EmailService {
 
                 bodyContent = bodyContent.substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
               }
-              email.body = bodyContent;
+              email.body = this.decodeEmailContent(bodyContent);
 
             } else {
 
@@ -664,7 +664,7 @@ export class EmailService {
               if ((bodyContent || '').length > MAX_EMAIL_CONTENT_LENGTH) {
                 bodyContent = (bodyContent || '').substring(0, MAX_EMAIL_CONTENT_LENGTH) + '\n\n[... Email truncado durante descarga para optimización ...]';
               }
-              email.body = bodyContent;
+              email.body = this.decodeEmailContent(bodyContent);
             } else {
               email.body = null;
             }
@@ -881,7 +881,7 @@ export class EmailService {
               } catch {}
             }
 
-            email.body = bodyContent || null;
+            email.body = bodyContent ? this.decodeEmailContent(bodyContent) : null;
             email.headers = null;
             emails.push(email);
           } catch (messageError) {

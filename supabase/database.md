@@ -807,6 +807,7 @@ CREATE TABLE public.settings (
   business_hours jsonb DEFAULT '[]'::jsonb,
   branding jsonb DEFAULT NULL,
   customer_journey jsonb DEFAULT '{"awareness": {"metrics": [], "actions": [], "tactics": []}, "consideration": {"metrics": [], "actions": [], "tactics": []}, "decision": {"metrics": [], "actions": [], "tactics": []}, "purchase": {"metrics": [], "actions": [], "tactics": []}, "retention": {"metrics": [], "actions": [], "tactics": []}, "referral": {"metrics": [], "actions": [], "tactics": []}}'::jsonb,
+  activities jsonb DEFAULT '{"daily_resume_and_stand_up": {"status": "default"}, "local_lead_generation": {"status": "default"}, "icp_lead_generation": {"status": "default"}, "leads_initial_cold_outreach": {"status": "default"}, "leads_follow_up": {"status": "default"}, "email_sync": {"status": "default"}}'::jsonb,
   CONSTRAINT settings_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_settings FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT settings_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
@@ -1939,6 +1940,7 @@ You can subscribe an endpoint to any of these. Deliveries are recorded in `webho
 
 - icp_mining (system)
   - id (uuid, pk)
+  - name (text)
   - role_query_id (uuid → role_queries.id on delete cascade)
   - icp_criteria (jsonb, required)
   - icp_hash (text, generated: sha256 of icp_criteria::text)
@@ -1974,6 +1976,8 @@ $$;
 -- Table: icp_mining
 create table if not exists public.icp_mining (
   id uuid primary key default gen_random_uuid(),
+
+  name text,
 
   role_query_id uuid not null
     references public.role_queries(id)

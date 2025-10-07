@@ -1,9 +1,12 @@
-// Configuración de timeout para Vercel
-export const maxDuration = 800; // 13.33 minutos (máximo para Pro plan)
+// Next.js/Vercel runtime configuration for this route
+export const runtime = 'edge';
+export const preferredRegion = 'auto';
+export const maxDuration = 300; // 5 minutes (align with vercel.json and platform limits)
+export const dynamic = 'force-dynamic';
 
-// Timeout preventivo: cerrar 1 segundo antes del límite de Vercel
-const VERCEL_TIMEOUT_LIMIT = 800; // 800 segundos (13.33 minutos)
-const PREVENTIVE_TIMEOUT = (VERCEL_TIMEOUT_LIMIT - 1) * 1000; // 799 segundos en milisegundos
+// Preventive timeout: close 1 second before Vercel limit
+const VERCEL_TIMEOUT_LIMIT_SECONDS = 300; // seconds
+const PREVENTIVE_TIMEOUT = (VERCEL_TIMEOUT_LIMIT_SECONDS - 1) * 1000; // milliseconds
 
 import { NextRequest } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';

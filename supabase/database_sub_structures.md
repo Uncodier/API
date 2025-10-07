@@ -923,33 +923,25 @@ Available tools and their configurations for the agent.
 ```
 
 ### `activities` (jsonb)
-Agent activities and their configurations.
+Agent activities toggles. Defines whether each activity is active by default or explicitly inactive.
 
-**Default:** `{}`
-
-**Structure:**
+**Default:**
 ```json
 {
-  "lead_qualification": {
-    "name": "Lead Qualification",
-    "description": "Qualify incoming leads based on criteria",
-    "estimatedTime": "5-10 min",
-    "successRate": 85,
-    "executions": 142,
-    "status": "available",
-    "enabled": true
-  },
-  "appointment_booking": {
-    "name": "Appointment Booking",
-    "description": "Schedule appointments with prospects",
-    "estimatedTime": "10-15 min",
-    "successRate": 90,
-    "executions": 98,
-    "status": "available",
-    "enabled": true
-  }
+  "daily_resume_and_stand_up": { "status": "default" },
+  "local_lead_generation": { "status": "default" },
+  "icp_lead_generation": { "status": "default" },
+  "leads_initial_cold_outreach": { "status": "default" },
+  "leads_follow_up": { "status": "default" },
+  "email_sync": { "status": "default" }
 }
 ```
+
+**Allowed values:** `status: "default" | "inactive"`
+
+**Notes:**
+- When `default`, the platform enables the activity by default according to company business hours and best practices.
+- Company business hours can be configured in Context and are respected by activities scheduling.
 
 ### `integrations` (jsonb)
 Third-party integrations and their connection status.
