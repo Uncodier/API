@@ -4,7 +4,6 @@ import { OpenAIAgentExecutor } from '@/lib/custom-automation';
 import { anthropic } from 'scrapybara/anthropic';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 import {
-  MAX_DURATION,
   ActSchema,
   AgentResponseSchema,
   updatePlanWithStepResult,
@@ -35,7 +34,7 @@ import {
   saveExecutionSummary,
 } from '@/lib/services/robot-plan-execution';
 
-export const maxDuration = MAX_DURATION;
+export const maxDuration = 300;
 
 /**
  * Verifies that both the plan and instance remain active and in progress
