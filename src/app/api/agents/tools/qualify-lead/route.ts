@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-// Valid lead status values
-const VALID_STATUSES = ['new', 'contacted', 'qualified', 'converted', 'lost'] as const;
+// Valid lead status values (exclude 'new' from qualifying tool)
+const VALID_STATUSES = ['contacted', 'qualified', 'converted', 'lost'] as const;
 type LeadStatus = typeof VALID_STATUSES[number];
 
 // Function to validate UUIDs

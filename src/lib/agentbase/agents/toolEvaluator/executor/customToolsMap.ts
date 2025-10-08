@@ -875,6 +875,58 @@ export const customTools: Record<string, ApiResponseConfig> = {
   },
 
   /**
+   * Tool: Qualify or change the status of a lead
+   *
+   * Expected responses by HTTP code:
+   *
+   * 200 OK (Success):
+   * {
+   *   "success": true,
+   *   "lead": { ...updated lead... },
+   *   "status_changed": true,
+   *   "status_change": { "from": "qualified", "to": "converted", "timestamp": "..." },
+   *   "next_actions": [ ... ]
+   * }
+   *
+   * 400/404/500 (Error):
+   * {
+   *   "success": false,
+   *   "error": "..."
+   * }
+   */
+  QUALIFY_LEAD: {
+    endpoint: {
+      url: '/api/agents/tools/qualify-lead',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      requiresAuth: false
+    },
+    responseMapping: {
+      success: 'success',
+      lead: 'lead',
+      status_changed: 'status_changed',
+      status_change: 'status_change',
+      next_actions: 'next_actions'
+    },
+    errors: {
+      400: {
+        message: 'error',
+        code: 'error'
+      },
+      404: {
+        message: 'error',
+        code: 'error'
+      },
+      500: {
+        message: 'error',
+        code: 'error'
+      }
+    }
+  },
+
+  /**
    * Herramienta: Actualizar tarea existente
    * 
    * Ejemplos de respuestas según código HTTP:

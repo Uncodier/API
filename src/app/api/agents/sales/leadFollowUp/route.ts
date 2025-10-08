@@ -988,7 +988,21 @@ export async function POST(request: Request) {
     contextMessage += `- Consider cultural nuances and communication preferences when selecting language and tone\n`;
     contextMessage += `- Adapt the message style to match the prospect's likely cultural and linguistic background\n`;
     contextMessage += `=== END OF COPYWRITING GUIDELINES ===\n`;
-    
+
+    // Lead Qualification Policy & Tool Usage
+    contextMessage += `\n=== LEAD QUALIFICATION POLICY ===\n`;
+    contextMessage += `Always reflect the latest state by updating the lead status using the QUALIFY_LEAD tool when appropriate.\n`;
+    contextMessage += `- contacted → first meaningful two-way interaction (lead replies or attends a call)\n`;
+    contextMessage += `- qualified → ICP fit + clear interest (e.g., requested demo, positive signals, BANT fit, meeting booked)\n`;
+    contextMessage += `- converted → deal won (payment received, contract signed, clear verbal commit with PO/date)\n`;
+    contextMessage += `- lost → explicitly not interested, selected competitor, no response after agreed cadence, no budget/timing\n`;
+    contextMessage += `\nWHEN TO USE QUALIFY_LEAD:\n`;
+    contextMessage += `- After each significant interaction that changes the pipeline stage.\n`;
+    contextMessage += `- Immediately after booking a meeting (qualified) or closing a sale (converted).\n`;
+    contextMessage += `- After explicit rejection or disqualification (use lost; do not invent statuses).\n`;
+    contextMessage += `\nHOW TO CALL QUALIFY_LEAD (only one identifier is needed in addition to site_id):\n`;
+    contextMessage += `- Required fields: site_id, status; Optional: lead_id | email | phone, notes.\n`;
+    contextMessage += `Return to drafting messages only after ensuring the status is updated.\n`;
 
     // Determine which communication channels are available (consider site config)
     console.log(`[LeadFollowUp:${requestId}] 📞 Lead contact availability - Email: ${hasEmail ? 'YES' : 'NO'}, Phone: ${hasPhone ? 'YES' : 'NO'}`);
@@ -1069,6 +1083,55 @@ export async function POST(request: Request) {
         {
           agent_role: 'customer_success',
           status: 'not_initialized'
+        }
+      ],
+      tools: [
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'QUALIFY_LEAD',
+            description: 'Qualify or update lead status based on interaction outcome and company policy',
+            parameters: {
+              type: 'object',
+              properties: {
+                site_id: {
+                  type: 'string',
+                  description: 'Site UUID where the lead belongs (required)',
+                  ...(siteId ? { enum: [siteId] } : {})
+                },
+                lead_id: {
+                  type: 'string',
+                  description: 'Lead UUID to qualify (one of lead_id, email, or phone is required)'
+                },
+                email: {
+                  type: 'string',
+                  description: 'Lead email as alternative identifier'
+                },
+                phone: {
+                  type: 'string',
+                  description: 'Lead phone as alternative identifier'
+                },
+                status: {
+                  type: 'string',
+                  enum: ['contacted', 'qualified', 'converted', 'lost'],
+                  description: 'New lead status according to company rules'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'Short reasoning for the qualification change'
+                }
+              },
+              required: ['site_id', 'status'],
+              oneOf: [
+                { required: ['lead_id'] },
+                { required: ['email'] },
+                { required: ['phone'] }
+              ],
+              additionalProperties: false
+            },
+            strict: true
+          }
         }
       ]
     });

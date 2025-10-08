@@ -1268,6 +1268,15 @@ export async function POST(request: Request) {
     }
     
     // Create the command using CommandFactory with the conversation history in the context
+    // Lead Qualification Policy & Tool Usage (for support):
+    contextMessage += `\n\n=== LEAD QUALIFICATION POLICY ===\n`;
+    contextMessage += `Customer Support can update lead status when conversations clearly change the sales stage.\n`;
+    contextMessage += `- contacted → first meaningful two-way interaction.\n`;
+    contextMessage += `- qualified → ICP fit + explicit interest or handoff to sales after a successful discovery.\n`;
+    contextMessage += `- converted → payment received or contract signed (only if verified).\n`;
+    contextMessage += `- lost → explicit rejection, competitor chosen, or no response after agreed cadence.\n`;
+    contextMessage += `Use QUALIFY_LEAD with: site_id, status, and one identifier (lead_id | email | phone). Add notes briefly explaining the change.\n`;
+
     const command = CommandFactory.createCommand({
       task: 'create message',
       userId: effectiveUserId,
@@ -1320,6 +1329,53 @@ export async function POST(request: Request) {
                 }
               },
               required: ['conversation', 'lead_id'],
+              additionalProperties: false
+            },
+            strict: true
+          }
+        },
+        {
+          type: "function",
+          async: true,
+          function: {
+            name: 'QUALIFY_LEAD',
+            description: 'Qualify or update lead status based on conversation outcome and company policy',
+            parameters: {
+              type: 'object',
+              properties: {
+                site_id: {
+                  type: 'string',
+                  description: 'Site UUID where the lead belongs (required)',
+                  ...(effectiveSiteId ? { enum: [effectiveSiteId] } : {})
+                },
+                lead_id: {
+                  type: 'string',
+                  description: 'Lead UUID to qualify (one of lead_id, email, or phone is required)'
+                },
+                email: {
+                  type: 'string',
+                  description: 'Lead email as alternative identifier'
+                },
+                phone: {
+                  type: 'string',
+                  description: 'Lead phone as alternative identifier'
+                },
+                status: {
+                  type: 'string',
+                  enum: ['contacted', 'qualified', 'converted', 'lost'],
+                  description: 'New lead status according to company rules'
+                },
+                notes: {
+                  type: 'string',
+                  description: 'Short reasoning for the qualification change'
+                }
+              },
+              required: ['site_id', 'status'],
+              oneOf: [
+                { required: ['lead_id'] },
+                { required: ['email'] },
+                { required: ['phone'] }
+              ],
               additionalProperties: false
             },
             strict: true
