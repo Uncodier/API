@@ -5,6 +5,7 @@ interface StartRobotWorkflowArgs {
   site_id: string;
   activity: string;
   user_id?: string;
+  instance_id?: string;
 }
 
 interface WorkflowExecutionOptions {
@@ -25,7 +26,7 @@ export async function POST(request: NextRequest) {
 
     // Extraer y validar parámetros del cuerpo de la petición
     const body = await request.json();
-    const { site_id, activity, user_id } = body;
+    const { site_id, activity, user_id, instance_id } = body;
 
     // Validación de parámetros requeridos
     if (!site_id || typeof site_id !== 'string') {
@@ -61,6 +62,9 @@ export async function POST(request: NextRequest) {
     if (user_id) {
       console.log(`👤 Usuario: ${user_id}`);
     }
+    if (instance_id) {
+      console.log(`🆔 Instance ID: ${instance_id}`);
+    }
 
     // Obtener instancia del servicio de workflows
     const workflowService = WorkflowService.getInstance();
@@ -69,7 +73,8 @@ export async function POST(request: NextRequest) {
     const workflowArgs: StartRobotWorkflowArgs = {
       site_id,
       activity,
-      user_id
+      user_id,
+      instance_id
     };
 
     // Opciones de ejecución del workflow
@@ -137,7 +142,8 @@ export async function GET() {
       activity: 'string - Tipo de actividad para el robot (requerido)'
     },
     optionalParams: {
-      user_id: 'string - UUID del usuario que solicita el robot (opcional)'
+      user_id: 'string - UUID del usuario que solicita el robot (opcional)',
+      instance_id: 'string - ID de instancia preexistente a asociar (opcional)'
     },
     robotTypes: {
       'sales-bot': 'Robot especializado en procesos de ventas',
@@ -155,7 +161,8 @@ export async function GET() {
     example: {
       site_id: 'site_12345',
       activity: 'sales-lead-qualification',
-      user_id: 'user_67890'
+      user_id: 'user_67890',
+      instance_id: 'instance_abc123'
     }
   });
 }
