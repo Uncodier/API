@@ -129,23 +129,43 @@ export class ToolEvaluator extends Base {
         // Usar la función prepareMessagesFromCommand para preparar los mensajes
         const messages = prepareMessagesFromCommand(command, customSystemPrompt);
         
-        // Parse model field if it contains modelType:modelId format
-        let parsedModelType = command.model_type || this.defaultOptions.modelType || 'openai';
-        let parsedModelId = command.model_id || this.defaultOptions.modelId || 'gpt-4o';
+        // Debug: Check what fields we have
+        console.log(`[ToolEvaluator] DEBUG - tools_model_type: ${command.tools_model_type || 'undefined'}`);
+        console.log(`[ToolEvaluator] DEBUG - tools_model_id: ${command.tools_model_id || 'undefined'}`);
+        console.log(`[ToolEvaluator] DEBUG - tools_model: ${command.tools_model || 'undefined'}`);
+        console.log(`[ToolEvaluator] DEBUG - model_type: ${command.model_type || 'undefined'}`);
+        console.log(`[ToolEvaluator] DEBUG - model_id: ${command.model_id || 'undefined'}`);
         
-        if (command.model && command.model.includes(':')) {
-          const [modelType, modelId] = command.model.split(':');
-          // Validate modelType
+        // Simple 3-case logic for model selection
+        let parsedModelType = 'openai';
+        let parsedModelId = 'gpt-4o';
+        
+        // Case 1: Tools model defined (highest priority)
+        if (command.tools_model_type && command.tools_model_id) {
+          parsedModelType = command.tools_model_type;
+          parsedModelId = command.tools_model_id;
+          console.log(`[ToolEvaluator] Using tools model: ${parsedModelType}:${parsedModelId}`);
+        }
+        // Check combined tools_model field as fallback
+        else if (command.tools_model && command.tools_model.includes(':')) {
+          const [modelType, modelId] = command.tools_model.split(':');
           if (['anthropic', 'openai', 'gemini'].includes(modelType)) {
             parsedModelType = modelType as 'anthropic' | 'openai' | 'gemini';
             parsedModelId = modelId;
-            console.log(`[ToolEvaluator] Parsed model field: ${modelType}:${modelId}`);
-          } else {
-            console.warn(`[ToolEvaluator] Invalid modelType: ${modelType}, using default`);
-            parsedModelId = command.model; // Use the whole string as modelId
+            console.log(`[ToolEvaluator] Using tools model (combined): ${parsedModelType}:${parsedModelId}`);
           }
-        } else if (command.model) {
-          parsedModelId = command.model;
+        }
+        // Case 2: Main command model defined
+        else if (command.model_type && command.model_id) {
+          parsedModelType = command.model_type;
+          parsedModelId = command.model_id;
+          console.log(`[ToolEvaluator] Using main model: ${parsedModelType}:${parsedModelId}`);
+        }
+        // Case 3: No model defined, use defaults
+        else {
+          parsedModelType = this.defaultOptions.modelType || 'openai';
+          parsedModelId = this.defaultOptions.modelId || 'gpt-4o';
+          console.log(`[ToolEvaluator] Using default model: ${parsedModelType}:${parsedModelId}`);
         }
         
         // Configure model options, no implicit max tokens
@@ -155,11 +175,17 @@ export class ToolEvaluator extends Base {
           responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'
         };
         
-        // Only set temperature if explicitly provided in command
-        if (command.temperature !== undefined) {
-          modelOptions.temperature = command.temperature;
-        } else if (this.defaultOptions.temperature !== undefined) {
-          modelOptions.temperature = this.defaultOptions.temperature;
+        // Set temperature based on model type
+        if (parsedModelId.startsWith('gpt-5')) {
+          // GPT-5 family doesn't support custom temperature, must use default 1.0
+          modelOptions.temperature = 1.0;
+        } else {
+          // For other models (like gpt-4o), use command temperature or default
+          if (command.temperature !== undefined) {
+            modelOptions.temperature = command.temperature;
+          } else if (this.defaultOptions.temperature !== undefined) {
+            modelOptions.temperature = this.defaultOptions.temperature;
+          }
         }
         
         console.log(`[ToolEvaluator] Debug - command.model: ${command.model}`);

@@ -89,6 +89,22 @@ export class CommandSubmitService {
         console.log(`🔥 [CommandSubmitService] Usando model como model_id en memoria: ${memoryCommand.model}`);
       }
       
+      // Preserve tools model fields in memory (same pattern as model_type/model_id)
+      if (command.tools_model_type && !memoryCommand.tools_model_type) {
+        memoryCommand.tools_model_type = command.tools_model_type;
+        console.log(`🔥 [CommandSubmitService] Preserving tools_model_type in memory: ${command.tools_model_type}`);
+      }
+
+      if (command.tools_model_id && !memoryCommand.tools_model_id) {
+        memoryCommand.tools_model_id = command.tools_model_id;
+        console.log(`🔥 [CommandSubmitService] Preserving tools_model_id in memory: ${command.tools_model_id}`);
+      }
+
+      if (command.tools_model && !memoryCommand.tools_model) {
+        memoryCommand.tools_model = command.tools_model;
+        console.log(`🔥 [CommandSubmitService] Preserving tools_model in memory: ${command.tools_model}`);
+      }
+      
       // Verificar si el agent_background se mantiene
       if (command.agent_background) {
         console.log(`🔍 [CommandSubmitService] Verificando si agent_background permanece en memoryCommand: ${memoryCommand.agent_background ? 'SÍ' : 'NO'}`);

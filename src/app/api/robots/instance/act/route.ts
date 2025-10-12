@@ -5,6 +5,7 @@ import { addActivityToPlan } from '@/lib/services/robot-instance/robot-plan-serv
 import { executeUnifiedRobotActivityPlanning, decidePlanAction, formatPlanSteps, addSessionSaveSteps, calculateEstimatedDuration } from '@/lib/helpers/robot-planning-core';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
+import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
 
 // ------------------------------------------------------------------------------------
 // Instance Act Specific Context (builds on the shared planning core)
@@ -175,6 +176,31 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
     }
 
+    // 1.5. Check if instance is uninstantiated and needs provisioning
+    if (needsProvisioning(instance)) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated, provisioning Scrapybara instance...`);
+      try {
+        const provisionResult = await provisionScrapybaraInstance(
+          instance_id,
+          instance.site_id,
+          instance.timeout_hours || 1
+        );
+        
+        // Update local instance object with provisioned data
+        instance.provider_instance_id = provisionResult.provider_instance_id;
+        instance.cdp_url = provisionResult.cdp_url;
+        instance.status = 'running';
+        
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Instance provisioned successfully: ${provisionResult.provider_instance_id}`);
+      } catch (provisionError: any) {
+        return NextResponse.json({
+          error: 'Failed to provision instance',
+          details: provisionError.message,
+          instance_id
+        }, { status: 500 });
+      }
+    }
+
     // 2. Usar valores de la instancia si no se proporcionan en el request
     const site_id = providedSiteId || instance.site_id;
     const activity = providedActivity || 'robot_activity';
@@ -270,17 +296,85 @@ export async function POST(request: NextRequest) {
           .eq('site_id', site_id)
           .eq('is_valid', true);
 
-        // Ejecutar planificación usando el core unificado con contexto del usuario y plan previo
-        // Usar el mensaje del usuario como la actividad para que el plan sea específico
-        const { activityPlanResults, planningCommandUuid } = await executeUnifiedRobotActivityPlanning(
-          site_id,
-          robotAgent.agentId,
-          robotAgent.userId,
-          message, // Usar el mensaje del usuario como actividad específica
-          previousSessions || [],
-          userContext, // User context from instance act route
-          previousPlanContext // Previous plan context for modifications
-        );
+        // Si la actividad es "ask", crear plan simple de 3 pasos sin ejecutar comandos
+        const isAskActivity = (message || '').toLowerCase().trim() === 'ask';
+        let activityPlanResults: any[] | null = null;
+        let planningCommandUuid: string | null = null;
+
+        if (isAskActivity) {
+          console.log(`🗣️ ASK MODE (instance): Creando plan de 3 pasos sin ejecutar comando`);
+          activityPlanResults = [{
+            title: "Ask - Quick Q&A",
+            description: "Three-step plan: request info, respond, validate. No command execution.",
+            phases: [
+              {
+                phase_name: "Q&A",
+                description: "Collect question context, provide answer, and validate",
+                timeline: "30 minutes",
+                success_criteria: [
+                  "All needed info requested or confirmed available",
+                  "Concise, direct answer provided",
+                  "Answer validated with source or internal consistency"
+                ],
+                steps: [
+                  {
+                    title: "Request all pertinent information",
+                    description: "Ask for missing context, constraints, and desired depth to answer the question effectively",
+                    step_number: 1,
+                    automation_level: "automated",
+                    estimated_duration: "3 minutes",
+                    estimated_duration_minutes: 3,
+                    required_authentication: "none",
+                    expected_response_type: "user_attention_required",
+                    human_intervention_reason: "Needs user context/clarifications"
+                  },
+                  {
+                    title: "Provide the answer",
+                    description: "Draft a concise answer (1–3 sentences) based on available context and reputable sources if needed",
+                    step_number: 2,
+                    automation_level: "automated",
+                    estimated_duration: "4 minutes",
+                    estimated_duration_minutes: 4,
+                    required_authentication: "none",
+                    expected_response_type: "step_completed",
+                    human_intervention_reason: null
+                  },
+                  {
+                    title: "Validate the answer",
+                    description: "Validate correctness and include the source or rationale; adjust if inconsistencies are found",
+                    step_number: 3,
+                    automation_level: "automated",
+                    estimated_duration: "3 minutes",
+                    estimated_duration_minutes: 3,
+                    required_authentication: "none",
+                    expected_response_type: "step_completed",
+                    human_intervention_reason: null
+                  }
+                ]
+              }
+            ],
+            activity_type: "ask",
+            estimated_timeline: "30 minutes",
+            success_metrics: [
+              "Clarity and completeness of the answer",
+              "Source or validation provided"
+            ]
+          }];
+        } else {
+          // Ejecutar planificación usando el core unificado con contexto del usuario y plan previo
+          // Usar el mensaje del usuario como la actividad para que el plan sea específico
+          const planning = await executeUnifiedRobotActivityPlanning(
+            site_id,
+            robotAgent.agentId,
+            robotAgent.userId,
+            message, // Usar el mensaje del usuario como actividad específica
+            previousSessions || [],
+            userContext, // User context from instance act route
+            previousPlanContext // Previous plan context for modifications
+          );
+          activityPlanResults = planning.activityPlanResults;
+          planningCommandUuid = planning.planningCommandUuid;
+        }
 
         if (activityPlanResults && activityPlanResults.length > 0) {
           // Generar o actualizar plan con los nuevos resultados

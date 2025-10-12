@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { markRunningPlansAsFailed } from '@/lib/helpers/plan-lifecycle';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/stop
@@ -65,33 +66,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Error al actualizar el estado' }, { status: 500 });
     }
 
-    // 4. Mark in-progress and paused plans as failed -----------------------------------------
-    const { data: affectedPlans } = await supabaseAdmin
-      .from('instance_plans')
-      .select('id, title')
-      .eq('instance_id', instance_id)
-      .in('status', ['in_progress', 'paused']);
-
-    if (affectedPlans && affectedPlans.length > 0) {
-      console.log(`Marking ${affectedPlans.length} plans as failed due to instance pause`);
-      
-      await supabaseAdmin
-        .from('instance_plans')
-        .update({ 
-          status: 'failed',
-          error_message: 'Instance was paused while plan was in progress',
-          updated_at: new Date().toISOString()
-        })
-        .eq('instance_id', instance_id)
-        .in('status', ['in_progress', 'paused']);
-    }
+    // 4. Mark running plans as failed -----------------------------------------
+    const failedPlansResult = await markRunningPlansAsFailed(
+      instance_id,
+      'Instance was paused while plan was in progress'
+    );
 
     return NextResponse.json(
       {
         instance_id,
         status: 'paused',
         message: 'Instance paused successfully',
-        affected_plans: affectedPlans?.length || 0,
+        affected_plans: failedPlansResult.completedCount,
+        plan_failure_success: failedPlansResult.success,
+        plan_failure_errors: failedPlansResult.errors,
       },
       { status: 200 },
     );

@@ -37,7 +37,7 @@ export class PortkeyConnector {
     try {
       // Merge default options with provided options (options override defaults)
       const mergedOptions = { ...this.defaultOptions, ...options };
-      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions } = mergedOptions;
+      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions, reasoningEffort, verbosity } = mergedOptions;
       
       console.log(`[PortkeyConnector] Debug - defaultOptions.modelId: ${this.defaultOptions.modelId}`);
       console.log(`[PortkeyConnector] Debug - options.modelId: ${options?.modelId}`);
@@ -130,6 +130,28 @@ export class PortkeyConnector {
       // Set top_p if provided
       if (topP !== undefined) {
         modelOptions.top_p = topP;
+      }
+      
+      // Add reasoning and verbosity for GPT-5 family models at the same level as max_completion_tokens
+      const finalModelId = modelOptions.model;
+      const isGpt5Family = modelType === 'openai' && (
+        finalModelId === 'gpt-5' || 
+        finalModelId === 'gpt-5-mini' || 
+        finalModelId === 'gpt-5-nano' || 
+        finalModelId === 'gpt-5.1'
+      );
+      
+      if (isGpt5Family) {
+        if (reasoningEffort !== undefined) {
+          modelOptions.reasoning = {
+            effort: reasoningEffort
+          };
+          console.log(`[PortkeyConnector] Using reasoning.effort=${reasoningEffort} for GPT-5 model: ${finalModelId}`);
+        }
+        if (verbosity !== undefined) {
+          modelOptions.verbosity = verbosity;
+          console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5 model: ${finalModelId}`);
+        }
       }
       
       // Set streaming options if enabled

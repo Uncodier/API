@@ -21,37 +21,39 @@ export async function verifyInstanceRunning(
   if (instance.status !== 'running') {
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Instance not running (status: ${instance.status})`);
     
-    // Attempt automatic resume when paused
+    // Do NOT auto-resume when paused. Return waiting response and allow explicit resume elsewhere.
     if (instance.status === 'paused') {
-      try {
-        const providerId = instance.provider_instance_id || instance_id;
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Attempting to resume paused instance: ${providerId}`);
-        const apiKey = process.env.SCRAPYBARA_API_KEY || '';
-        const resumeResp = await fetch(`https://api.scrapybara.com/v1/instance/${providerId}/resume`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'x-api-key': apiKey,
-          },
-          body: JSON.stringify({ timeout_hours: instance.timeout_hours || 1 }),
-        });
-        if (!resumeResp.ok) {
-          const errText = await resumeResp.text();
-          throw new Error(`Resume failed: ${resumeResp.status} ${errText}`);
-        }
-
-        // Update DB optimistically to running
-        await supabaseAdmin
-          .from('remote_instances')
-          .update({ status: 'running', updated_at: new Date().toISOString() })
-          .eq('id', instance_id);
-
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Instance resumed successfully, proceeding with execution`);
-        return null; // Continue execution after resume
-      } catch (resumeError: any) {
-        console.warn(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Failed to resume paused instance: ${resumeError?.message || resumeError}`);
-        // Fall through to plan status handling below
+      // Determine current or latest plan to include context in response
+      let planForStatusCheck;
+      if (instance_plan_id) {
+        const planResult = await supabaseAdmin
+          .from('instance_plans')
+          .select('*')
+          .eq('id', instance_plan_id)
+          .single();
+        planForStatusCheck = planResult.data;
+      } else {
+        const planResult = await supabaseAdmin
+          .from('instance_plans')
+          .select('*')
+          .eq('instance_id', instance_id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        planForStatusCheck = planResult.data;
       }
+
+      return NextResponse.json({
+        data: {
+          waiting_for_instructions: true,
+          instance_paused: true,
+          message: 'Instance is paused. Provide a new prompt to resume.',
+          instance_status: 'paused',
+          plan_status: planForStatusCheck?.status || null,
+          plan_id: planForStatusCheck?.id || null,
+          can_resume: true
+        }
+      }, { status: 200 });
     }
     
     // Get plan to determine if completed or not

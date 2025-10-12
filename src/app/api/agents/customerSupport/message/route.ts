@@ -1728,14 +1728,20 @@ export async function POST(request: Request) {
         }
       ],
       // Set model for customer support
-      // Use default model from ProcessorConfigurationService (gpt-5-nano)
+      // Use GPT-5-mini with minimal reasoning effort for deep thinking
       modelType: 'openai',
-      modelId: 'gpt-4o'
+      modelId: 'gpt-5-mini',
+      reasoningEffort: 'minimal',
+      verbosity: 'low',
+      // Add tools-specific model
+      toolsModelType: 'openai',
+      toolsModelId: 'gpt-4o'
     });
     
     // Submit the command for processing
     const internalCommandId = await commandService.submitCommand(command);
     console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
+    console.log(`[CustomerSupport] Using GPT-5-mini for responses, GPT-4o for tools`);
     
     // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
     let initialDbUuid = await getCommandDbUuid(internalCommandId);

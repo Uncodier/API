@@ -84,6 +84,14 @@ export class AgentConnector extends Base {
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
       };
       
+      // Add reasoning_effort and verbosity if present in command
+      if (command.reasoning_effort) {
+        modelOptions.reasoningEffort = command.reasoning_effort;
+      }
+      if (command.metadata?.verbosity) {
+        modelOptions.verbosity = command.metadata.verbosity;
+      }
+      
       // Only set temperature if explicitly provided in command
       if (command.temperature !== undefined) {
         modelOptions.temperature = command.temperature;

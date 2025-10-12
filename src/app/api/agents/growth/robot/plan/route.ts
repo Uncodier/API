@@ -94,7 +94,7 @@ export async function POST(request: NextRequest) {
     
     const growthPlanContext = await buildGrowthPlanContext(site_id, activity, previousSessions || []);
     
-    // 6. Manejo especial para Free Agent vs otras actividades ------------------------
+    // 6. Manejo especial para Free Agent y Ask vs otras actividades ------------------------
     let planData;
     let planningCommandUuid = null;
     
@@ -103,6 +103,7 @@ export async function POST(request: NextRequest) {
     const isFreeAgent = normalizedActivity === 'freeagent' || 
                        activity.toLowerCase().trim() === 'free agent' || 
                        activity.toLowerCase().trim() === 'free-agent';
+    const isAsk = activity.toLowerCase().trim() === 'ask';
     
     if (isFreeAgent) {
       console.log(`🆓 FREE AGENT MODE: Creando plan básico sin ejecutar comando robot`);
@@ -160,6 +161,68 @@ export async function POST(request: NextRequest) {
         ]
       };
       
+    } else if (isAsk) {
+      console.log(`🗣️ ASK MODE: Creando plan de 3 pasos sin ejecutar comando robot`);
+      // Crear plan de 3 pasos para Ask sin ejecutar comando
+      planData = {
+        title: "Ask - Quick Q&A",
+        description: "Three-step plan: request info, respond, validate. No command execution.",
+        phases: [
+          {
+            phase_name: "Q&A",
+            description: "Collect question context, provide answer, and validate",
+            timeline: "30 minutes",
+            success_criteria: [
+              "All needed info requested or confirmed available",
+              "Concise, direct answer provided",
+              "Answer validated with source or internal consistency"
+            ],
+            steps: [
+              {
+                title: "Request all pertinent information",
+                description: "Ask for missing context, constraints, and desired depth to answer the question effectively",
+                step_number: 1,
+                automation_level: "automated",
+                estimated_duration: "3 minutes",
+                estimated_duration_minutes: 3,
+                required_authentication: "none",
+                expected_response_type: "user_attention_required",
+                human_intervention_reason: "Needs user context/clarifications"
+              },
+              {
+                title: "Provide the answer",
+                description: "Draft a concise answer (1–3 sentences) based on available context and reputable sources if needed",
+                step_number: 2,
+                automation_level: "automated",
+                estimated_duration: "4 minutes",
+                estimated_duration_minutes: 4,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              },
+              {
+                title: "Validate the answer",
+                description: "Validate correctness and include the source or rationale; adjust if inconsistencies are found",
+                step_number: 3,
+                automation_level: "automated",
+                estimated_duration: "3 minutes",
+                estimated_duration_minutes: 3,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              }
+            ]
+          }
+        ],
+        activity_type: "ask",
+        estimated_timeline: "30 minutes",
+        success_metrics: [
+          "Clarity and completeness of the answer",
+          "Source or validation provided"
+        ]
+      };
+      // No command id for Ask simple plan
+      planningCommandUuid = null;
     } else {
       console.log(`🤖 INICIANDO: Ejecutando planificación de actividad con Robot usando core unificado...`);
       

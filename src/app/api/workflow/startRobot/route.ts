@@ -156,7 +156,9 @@ export async function GET() {
       'support-ticket-routing', 
       'marketing-campaign-automation',
       'customer-onboarding',
-      'data-analysis'
+      'data-analysis',
+      'ask',
+      'deep-research'
     ],
     example: {
       site_id: 'site_12345',

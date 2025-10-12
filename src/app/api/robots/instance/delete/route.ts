@@ -37,27 +37,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 2) Stop/terminate in Scrapybara ----------------------------------------------
-    const scrapybaraInstanceId = instance.provider_instance_id ?? instance.id;
-
-    const stopResponse = await fetch(
-      `https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/stop`,
-      {
-        method: 'POST',
-        headers: {
-          'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
-          'Content-Type': 'application/json',
+    // 2) Stop/terminate in Scrapybara (only if instance exists) -------------------
+    let scrapybaraStopped = false;
+    
+    // Only try to stop in Scrapybara if we have a provider_instance_id
+    if (instance.provider_instance_id && instance.status !== 'uninstantiated') {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Stopping Scrapybara instance: ${instance.provider_instance_id}`);
+      
+      const stopResponse = await fetch(
+        `https://api.scrapybara.com/v1/instance/${instance.provider_instance_id}/stop`,
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
+            'Content-Type': 'application/json',
+          },
         },
-      },
-    );
-
-    if (!stopResponse.ok) {
-      const errorText = await stopResponse.text();
-      console.error('Error stopping/terminating instance in Scrapybara:', errorText);
-      return NextResponse.json(
-        { error: `Failed to stop instance: ${stopResponse.status} ${errorText}` },
-        { status: 500 },
       );
+
+      if (stopResponse.ok) {
+        scrapybaraStopped = true;
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara instance stopped successfully`);
+      } else {
+        const errorText = await stopResponse.text();
+        console.error('Error stopping/terminating instance in Scrapybara:', errorText);
+        // Continue anyway - we'll still mark as stopped in DB
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Scrapybara stop failed, but continuing with DB cleanup`);
+      }
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated or has no provider_instance_id, skipping Scrapybara stop`);
     }
 
     // 3) Update DB status -----------------------------------------------------------
@@ -95,7 +103,10 @@ export async function POST(request: NextRequest) {
         instance_id,
         provider_instance_id: instance.provider_instance_id,
         status: 'stopped',
-        message: 'Instance stopped and destroyed successfully',
+        message: scrapybaraStopped 
+          ? 'Instance stopped and destroyed successfully' 
+          : 'Instance deleted from database (no Scrapybara instance to stop)',
+        scrapybara_stopped: scrapybaraStopped,
         affected_plans: affectedPlans?.length || 0,
       },
       { status: 200 },

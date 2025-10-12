@@ -437,6 +437,71 @@ ${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context 
         requiredData: ['pending_requirements', 'current_resources', 'priority_matrix']
       };
 
+    case 'ask':
+      return {
+        additionalContext: baseContext,
+        specificInstructions: `
+🗣️ ASK MODE (Quick Q&A):
+- Goal: Answer a specific question quickly using reputable sources.
+- Keep it simple: 3–5 short steps, total time ≤ 30 minutes.
+- Prefer a single channel: Web search (DuckDuckGo/Google) or internal docs if relevant.
+- Always cite and validate the source of the answer.
+ - If the answer is already known, provide it directly without browsing.
+
+🔧 Step decomposition (examples):
+- "Navigate to duckduckgo.com"
+- "Type '[question keywords]' in the search field"
+- "Open the first reputable result (docs, gov, edu, recognized vendor)"
+- "Locate the exact answer, extract key facts"
+- "Summarize the answer in 1–3 sentences and capture the source URL"
+
+✅ Validation:
+- Verify the page loaded and is accessible.
+- Check the source credibility; avoid low-quality or AI-generated pages.
+- Confirm the extracted answer matches the question intent.
+- Include the source URL in the final verification step.
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT:\n${userContext}\n` : ''}`,
+        requiredData: ['question', 'context_sources']
+      };
+
+    case 'deep research':
+    case 'deep-research':
+      return {
+        additionalContext: baseContext,
+        specificInstructions: `
+🕵️ DEEP RESEARCH MODE (Multi-source synthesis):
+- Goal: Conduct thorough research on a single topic and synthesize findings.
+- Use multiple credible sources; include at least one primary or standards/documentation source when possible.
+- Include exploration steps to discover tools/sections and refine queries.
+- Timebox the effort (e.g., 60–120 minutes), break into short actionable steps.
+
+🔧 Phase guidance:
+1) Scoping & Query Refinement:
+- "Navigate to duckduckgo.com"
+- "Search for '[topic] overview' to identify 2–3 authoritative sources"
+- "Refine queries for subtopics (definitions, metrics, trade-offs, recent changes)"
+
+2) Evidence Collection:
+- "Open source A (docs/standard/peer-reviewed) and collect key facts"
+- "Open source B (recognized vendor/blog) and note differences and dates"
+- "Capture URLs, publication dates, and relevant quotes"
+
+3) Synthesis & Gaps:
+- "List convergences/divergences across sources"
+- "Identify gaps or uncertainties requiring follow-up"
+- "Draft a concise summary with citations"
+
+✅ Validation:
+- Verify sources are accessible and reputable (docs/standards, gov/edu, established vendors).
+- Check publication/update dates to avoid stale information.
+- Cross-check key claims across at least two sources.
+- Ensure final summary includes explicit citations/links.
+
+${userContext ? `\n⚠️ ADDITIONAL CONTEXT:\n${userContext}\n` : ''}`,
+        requiredData: ['research_goal', 'candidate_sources', 'timebox_minutes']
+      };
+
     default:
       return {
         additionalContext: baseContext,

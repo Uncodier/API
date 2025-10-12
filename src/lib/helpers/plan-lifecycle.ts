@@ -192,6 +192,88 @@ export async function resumePlan(
 }
 
 /**
+ * Mark all running plans as failed for an instance
+ * This is used when an instance is stopped or paused
+ * 
+ * @param instanceId - The instance ID to mark plans as failed for
+ * @param failureReason - Reason for marking plans as failed
+ * @returns Result object with success status, count, and any errors
+ */
+export async function markRunningPlansAsFailed(
+  instanceId: string,
+  failureReason: string = 'Instance was stopped while plan was running'
+): Promise<CompletePlanResult> {
+  const result: CompletePlanResult = {
+    success: false,
+    completedCount: 0,
+    errors: []
+  };
+
+  try {
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Marking running plans as failed for instance: ${instanceId}`);
+    
+    // Find all running plans for this instance
+    const { data: runningPlans, error: fetchError } = await supabaseAdmin
+      .from('instance_plans')
+      .select('*')
+      .eq('instance_id', instanceId)
+      .in('status', ['in_progress', 'paused']);
+
+    if (fetchError) {
+      const errorMsg = `Error fetching running plans: ${fetchError.message}`;
+      console.error(errorMsg, fetchError);
+      result.errors.push(errorMsg);
+      return result;
+    }
+
+    if (!runningPlans || runningPlans.length === 0) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ No running plans found to mark as failed`);
+      result.success = true;
+      return result;
+    }
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${runningPlans.length} running plan(s) to mark as failed`);
+
+    // Mark all running plans as failed
+    for (const plan of runningPlans) {
+      const { error: updateError } = await supabaseAdmin
+        .from('instance_plans')
+        .update({
+          status: 'failed',
+          error_message: failureReason,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', plan.id);
+
+      if (updateError) {
+        const errorMsg = `Failed to mark plan ${plan.id} as failed: ${updateError.message}`;
+        console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ ${errorMsg}`);
+        result.errors.push(errorMsg);
+      } else {
+        result.completedCount++;
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Plan ${plan.id} marked as failed (was ${plan.status})`);
+      }
+    }
+
+    // Consider it a success if we marked at least some plans as failed
+    result.success = result.completedCount > 0 || runningPlans.length === 0;
+    
+    if (result.errors.length > 0) {
+      console.warn(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Marked ${result.completedCount}/${runningPlans.length} plans as failed with ${result.errors.length} error(s)`);
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Successfully marked all ${result.completedCount} running plan(s) as failed`);
+    }
+
+    return result;
+  } catch (error: any) {
+    const errorMsg = `Unexpected error marking plans as failed: ${error.message}`;
+    console.error(errorMsg, error);
+    result.errors.push(errorMsg);
+    return result;
+  }
+}
+
+/**
  * Get all active plans for an instance
  * 
  * @param instanceId - The instance ID to get plans for

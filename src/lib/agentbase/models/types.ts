@@ -31,6 +31,10 @@ export interface CreateCommandParams {
   input_tokens?: number;
   output_tokens?: number;
   site_id?: string;
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'minimal';
+  tools_model?: string;
+  tools_model_type?: 'anthropic' | 'openai' | 'gemini';
+  tools_model_id?: string;
 }
 
 export interface DbCommand {
@@ -64,6 +68,10 @@ export interface DbCommand {
   input_tokens?: number;
   output_tokens?: number;
   site_id?: string;
+  reasoning_effort?: 'low' | 'medium' | 'high' | 'minimal';
+  tools_model?: string;
+  tools_model_type?: 'anthropic' | 'openai' | 'gemini';
+  tools_model_id?: string;
   metadata?: {
     dbUuid?: string;
     createTime?: string;
@@ -141,6 +149,8 @@ export interface PortkeyModelOptions {
   streamOptions?: {
     includeUsage?: boolean;
   };
+  reasoningEffort?: 'low' | 'medium' | 'high' | 'minimal';
+  verbosity?: 'low' | 'medium' | 'high';
 }
 
 export interface AzureOpenAIOptions {

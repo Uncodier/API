@@ -28,6 +28,11 @@ export class CommandFactory {
     supervisionParams?: SupervisionParams;
     requiresCapabilities?: string[];
     site_id?: string;
+    reasoningEffort?: 'low' | 'medium' | 'high' | 'minimal';
+    verbosity?: 'low' | 'medium' | 'high';
+    toolsModel?: string;
+    toolsModelType?: 'anthropic' | 'openai' | 'gemini';
+    toolsModelId?: string;
   }): CreateCommandParams {
     // Combine modelType and modelId into a single model field for database compatibility
     let modelField = params.model;
@@ -35,6 +40,14 @@ export class CommandFactory {
       modelField = `${params.modelType}:${params.modelId}`;
     } else if (params.modelId) {
       modelField = params.modelId;
+    }
+    
+    // Process tools model fields similar to main model
+    let toolsModelField = params.toolsModel;
+    if (params.toolsModelType && params.toolsModelId) {
+      toolsModelField = `${params.toolsModelType}:${params.toolsModelId}`;
+    } else if (params.toolsModelId) {
+      toolsModelField = params.toolsModelId;
     }
     
     return {
@@ -58,7 +71,11 @@ export class CommandFactory {
       execution_order: params.executionOrder,
       supervision_params: params.supervisionParams,
       requires_capabilities: params.requiresCapabilities,
-      site_id: params.site_id
+      site_id: params.site_id,
+      reasoning_effort: params.reasoningEffort,
+      tools_model: toolsModelField,
+      tools_model_type: params.toolsModelType,
+      tools_model_id: params.toolsModelId
     };
   }
   
