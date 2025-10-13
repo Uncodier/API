@@ -105,6 +105,9 @@ interface StartRobotWorkflowArgs {
   site_id: string;
   activity: string;
   user_id?: string;
+  instance_id?: string;
+  message?: string;
+  context?: string;
 }
 
 interface PromptRobotWorkflowArgs {

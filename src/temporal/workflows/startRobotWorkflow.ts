@@ -5,6 +5,9 @@ export interface StartRobotWorkflowArgs {
   site_id: string;
   activity: string;
   user_id?: string;
+  instance_id?: string;
+  message?: string;
+  context?: string;
 }
 
 export interface StartRobotWorkflowResult {
@@ -12,6 +15,9 @@ export interface StartRobotWorkflowResult {
   site_id: string;
   activity: string;
   user_id?: string;
+  instance_id?: string;
+  message?: string;
+  context?: string;
   robotId?: string;
   executionTime: number;
   timestamp: string;
@@ -35,11 +41,20 @@ export interface StartRobotWorkflowResult {
  */
 export async function startRobotWorkflow(args: StartRobotWorkflowArgs): Promise<StartRobotWorkflowResult> {
   const startTime = Date.now();
-  const { site_id, activity, user_id } = args;
+  const { site_id, activity, user_id, instance_id, message, context } = args;
   
   console.log(`🤖 Iniciando robot para sitio: ${site_id} con actividad: ${activity}`);
   if (user_id) {
     console.log(`👤 Usuario solicitante: ${user_id}`);
+  }
+  if (instance_id) {
+    console.log(`🆔 Instance ID: ${instance_id}`);
+  }
+  if (message) {
+    console.log(`💬 Mensaje inicial: ${message}`);
+  }
+  if (context) {
+    console.log(`📝 Contexto: ${context}`);
   }
   
   try {
@@ -95,6 +110,9 @@ export async function startRobotWorkflow(args: StartRobotWorkflowArgs): Promise<
       site_id,
       activity,
       user_id,
+      instance_id,
+      message,
+      context,
       robotId,
       executionTime,
       timestamp: new Date().toISOString(),
@@ -117,6 +135,9 @@ export async function startRobotWorkflow(args: StartRobotWorkflowArgs): Promise<
       site_id,
       activity,
       user_id,
+      instance_id,
+      message,
+      context,
       executionTime,
       timestamp: new Date().toISOString(),
       error: {

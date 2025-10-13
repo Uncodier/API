@@ -437,6 +437,62 @@ ${userContext ? `\n⚠️ ADDITIONAL CONTEXT: Incorporate the following context 
         requiredData: ['pending_requirements', 'current_resources', 'priority_matrix']
       };
 
+    case 'robot':
+      return {
+        additionalContext: baseContext,
+        specificInstructions: `
+🤖 ROBOT ACTIVITY MODE:
+- Goal: Execute user-specified robot task with message and context guidance.
+- Create a flexible plan based on the user's message and additional context.
+- Allow more flexibility than free agent but maintain simplicity.
+- Can execute commands and use authentication sessions when needed.
+
+🔧 MANDATORY STEP DECOMPOSITION:
+Break down the user's message into specific, executable browser actions:
+
+✅ GOOD STEP EXAMPLES:
+- "Navigate to [specific website]"
+- "Click on [specific element]"
+- "Type '[specific text]' in [specific field]"
+- "Press Enter to [specific action]"
+- "Scroll to [specific section]"
+- "Upload [specific file] to [specific location]"
+
+❌ AVOID VAGUE STEPS:
+- "Complete the task" (too vague)
+- "Handle the request" (not specific)
+- "Process the information" (not actionable)
+
+🎯 ROBOT ACTIVITY OBJECTIVES:
+- Execute the specific task described in the user's message
+- Use provided context to enhance task execution
+- Navigate to appropriate platforms based on task requirements
+- Complete task within 1-2 hours maximum
+- Use authentication sessions if available and needed
+
+📋 FLEXIBLE PLAN STRUCTURE:
+1. Analyze the user's message and context
+2. Navigate to appropriate platform/website
+3. Execute specific actions based on message requirements
+4. Validate completion of the requested task
+5. Save any relevant data or sessions
+
+🔍 BASIC REQUIREMENTS:
+- Create steps based on the specific user message
+- Use context information to enhance task execution
+- Maximum 5-8 steps total
+- Each step should be completable within 4 minutes
+- Focus on the exact task described in the message
+
+⚠️ CONTEXT INTEGRATION:
+- Incorporate user message as the primary task instruction
+- Use additional context to refine and enhance the plan
+- Adapt plan complexity based on message requirements
+
+${userContext ? `\n⚠️ USER MESSAGE AND CONTEXT:\n${userContext}\n` : ''}`,
+        requiredData: ['user_message', 'task_context']
+      };
+
     case 'ask':
       return {
         additionalContext: baseContext,

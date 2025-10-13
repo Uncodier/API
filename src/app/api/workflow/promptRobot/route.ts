@@ -7,6 +7,7 @@ interface PromptRobotWorkflowArgs {
   step_status: string;
   site_id: string;
   context: string;
+  activity: string;
 }
 
 interface WorkflowExecutionOptions {
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Extraer y validar parámetros del cuerpo de la petición
     const body = await request.json();
-    const { instance_id, message, step_status, site_id, context } = body;
+    const { instance_id, message, step_status, site_id, context, activity } = body;
 
     // Validación de parámetros requeridos
     if (!instance_id || typeof instance_id !== 'string') {
@@ -100,11 +101,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!activity || typeof activity !== 'string') {
+      console.error('❌ activity requerido y debe ser una cadena');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_ACTIVITY', 
+            message: 'activity es requerido y debe ser una cadena válida' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+
     console.log(`🤖 Ejecutando workflow Prompt Robot para instancia: ${instance_id}`);
     console.log(`💬 Mensaje: ${message}`);
     console.log(`📊 Estado del paso: ${step_status}`);
     console.log(`🏢 Site ID: ${site_id}`);
     console.log(`📝 Contexto: ${context}`);
+    console.log(`🎯 Actividad: ${activity}`);
 
     // Obtener instancia del servicio de workflows
     const workflowService = WorkflowService.getInstance();
@@ -115,7 +131,8 @@ export async function POST(request: NextRequest) {
       message,
       step_status,
       site_id,
-      context
+      context,
+      activity
     };
 
     // Opciones de ejecución del workflow
@@ -183,7 +200,8 @@ export async function GET() {
       message: 'string - Mensaje o comando para el robot (requerido)',
       step_status: 'string - Estado del paso actual (requerido)',
       site_id: 'string - UUID del sitio (requerido)',
-      context: 'string - Contexto de la operación (requerido)'
+      context: 'string - Contexto de la operación (requerido)',
+      activity: 'string - Actividad específica a realizar (requerido)'
     },
     stepStatusOptions: [
       'pending',
@@ -197,7 +215,8 @@ export async function GET() {
       message: 'navega a linkedin y busca posts de Santiago Zavala',
       step_status: 'pending',
       site_id: 'site_123',
-      context: 'Usuario quiere interactuar en LinkedIn'
+      context: 'Usuario quiere interactuar en LinkedIn',
+      activity: 'linkedin_search'
     }
   });
 }

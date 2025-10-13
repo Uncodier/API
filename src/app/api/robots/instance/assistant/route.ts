@@ -4,6 +4,45 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import { connectToInstance } from '@/lib/services/robot-plan-execution/instance-connector';
 
+/**
+ * Determine the instance type and available tools based on instance data and environment
+ */
+function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {
+  isScrapybaraInstance: boolean;
+  shouldUseSDKTools: boolean;
+  provider: 'scrapybara' | 'azure' | 'openai';
+  capabilities: {
+    hasPCTools: boolean;
+    hasBrowserAutomation: boolean;
+    hasFileEditing: boolean;
+    hasCommandExecution: boolean;
+  };
+} {
+  const providerEnv = process.env.ROBOT_SDK_PROVIDER;
+  const provider = (providerEnv === 'scrapybara' || providerEnv === 'azure' || providerEnv === 'openai') 
+    ? providerEnv 
+    : 'scrapybara';
+  
+  // Determine if this is a Scrapybara instance
+  const isScrapybaraInstance = provider === 'scrapybara';
+  const shouldUseSDKTools = use_sdk_tools || isScrapybaraInstance;
+  
+  // Determine capabilities based on instance type and tools
+  const capabilities = {
+    hasPCTools: shouldUseSDKTools && instance?.provider_instance_id,
+    hasBrowserAutomation: shouldUseSDKTools && instance?.provider_instance_id,
+    hasFileEditing: shouldUseSDKTools && instance?.provider_instance_id,
+    hasCommandExecution: shouldUseSDKTools && instance?.provider_instance_id,
+  };
+  
+  return {
+    isScrapybaraInstance,
+    shouldUseSDKTools,
+    provider,
+    capabilities,
+  };
+}
+
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
 // Assistant route that works with or without Scrapybara provisioning
@@ -219,22 +258,31 @@ export async function POST(request: NextRequest) {
         user_id: user_id,
       });
     } else if (instance.status === 'running' && instance.provider_instance_id) {
-      // Execute with Scrapybara tools if requested
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is running, using SDK tools: ${use_sdk_tools}`);
+      // Execute with appropriate tools based on instance type
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is running, determining tool availability`);
       
-      const providerEnv = process.env.ROBOT_SDK_PROVIDER;
-      const provider = (providerEnv === 'scrapybara' || providerEnv === 'azure' || providerEnv === 'openai') 
-        ? providerEnv 
-        : 'scrapybara';
+      const { isScrapybaraInstance, shouldUseSDKTools, provider, capabilities } = determineInstanceCapabilities(instance, use_sdk_tools);
       
-      // Build system prompt for running instance with tools
-      const baseSystemPrompt = use_sdk_tools 
-        ? 'You are a helpful AI assistant with access to browser automation tools (computer, bash, edit).'
-        : 'You are a helpful AI assistant.';
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Provider: ${provider}, Is Scrapybara: ${isScrapybaraInstance}, Use SDK tools: ${shouldUseSDKTools}`);
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Capabilities:`, capabilities);
       
-      const toolsContext = use_sdk_tools 
-        ? '\n\n🛠️ AVAILABLE SCRAPYBARA TOOLS:\n- computer(): Control browser, click, type, navigate\n- bash(): Execute shell commands\n- edit(): Edit files' 
-        : '';
+      // Build system prompt based on instance type and available tools
+      let baseSystemPrompt: string;
+      let toolsContext: string;
+      
+      if (capabilities.hasPCTools && isScrapybaraInstance) {
+        // Scrapybara instance with full automation tools
+        baseSystemPrompt = 'You are a helpful AI assistant with access to Scrapybara browser automation tools. You can control the computer, execute commands, and edit files.';
+        toolsContext = '\n\n🛠️ AVAILABLE SCRAPYBARA TOOLS:\n- computer(): Control browser, click, type, navigate, take screenshots\n- bash(): Execute shell commands and system operations\n- edit(): Edit files and manage file system\n\n💡 You have full PC management capabilities through these tools.\n\n🚨 IMPORTANT: This is a Scrapybara instance - you have access to browser automation and PC control tools.';
+      } else if (capabilities.hasPCTools && !isScrapybaraInstance) {
+        // Our assistant with PC management tools
+        baseSystemPrompt = 'You are a helpful AI assistant with access to PC management tools. You can control the computer, execute commands, and edit files.';
+        toolsContext = '\n\n🛠️ AVAILABLE PC MANAGEMENT TOOLS:\n- computer(): Control browser, click, type, navigate, take screenshots\n- bash(): Execute shell commands and system operations\n- edit(): Edit files and manage file system\n\n💡 You have full PC management capabilities through these tools.\n\n🚨 IMPORTANT: This is our assistant instance - you have access to PC management tools for computer control.';
+      } else {
+        // No tools available
+        baseSystemPrompt = 'You are a helpful AI assistant. Browser automation tools are not available in this mode.';
+        toolsContext = '\n\n⚠️ NOTE: PC management tools are not available in this mode. You can only provide text-based assistance.';
+      }
       
       const combinedSystemPrompt = [
         baseSystemPrompt,
@@ -245,7 +293,7 @@ export async function POST(request: NextRequest) {
       ].filter(Boolean).join('\n');
       
       executionResult = await executeAssistant(message, instance, {
-        use_sdk_tools: use_sdk_tools,
+        use_sdk_tools: shouldUseSDKTools,
         provider: provider,
         system_prompt: combinedSystemPrompt,
         custom_tools: customTools,

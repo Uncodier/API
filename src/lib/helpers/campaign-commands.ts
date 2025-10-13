@@ -273,15 +273,16 @@ export async function executeRobotActivityPlanning(
   }
 ): Promise<{activityPlanResults: any[] | null, planningCommandUuid: string | null}> {
   try {
-    // Prevent execution for free agent and ask activities
+    // Prevent execution for free agent, ask, and robot activities
     const normalizedActivity = activity.toLowerCase().trim().replace(/[\s-_]+/g, '');
     const isFreeAgent = normalizedActivity === 'freeagent' || 
                        activity.toLowerCase().trim() === 'free agent' || 
                        activity.toLowerCase().trim() === 'free-agent';
     const isAsk = activity.toLowerCase().trim() === 'ask';
+    const isRobot = normalizedActivity === 'robot';
     
-    if (isFreeAgent || isAsk) {
-      console.log(`🚫 EVITANDO: Comando de planificación para actividad restringida (${isFreeAgent ? 'free agent' : 'ask'}) - retornando null`);
+    if (isFreeAgent || isAsk || isRobot) {
+      console.log(`🚫 EVITANDO: Comando de planificación para actividad restringida (${isFreeAgent ? 'free agent' : isAsk ? 'ask' : 'robot'}) - retornando null`);
       return { activityPlanResults: null, planningCommandUuid: null };
     }
     

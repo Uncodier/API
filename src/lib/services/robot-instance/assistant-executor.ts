@@ -6,6 +6,7 @@
 import { OpenAIAgentExecutor } from '@/lib/custom-automation/openai-agent-executor';
 import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
+import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 export interface AssistantExecutionOptions {
@@ -60,13 +61,15 @@ export async function executeAssistant(
       });
 
       const remoteInstance = await client.get(instance.provider_instance_id);
+      
+      // Cast to UbuntuInstance since we expect Ubuntu instances for PC management
       const ubuntuInstance = remoteInstance as any;
-
-      // Setup Scrapybara tools
+      
+      // Setup Scrapybara tools using native Scrapybara tools
       const tools = [
-        ubuntuInstance.computer(),
-        ubuntuInstance.bash(),
-        ubuntuInstance.edit(),
+        bashTool(ubuntuInstance),
+        computerTool(ubuntuInstance),
+        editTool(ubuntuInstance),
       ];
 
       // Execute with Scrapybara

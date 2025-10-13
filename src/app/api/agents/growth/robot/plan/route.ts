@@ -35,13 +35,35 @@ const CreatePlanSchema = z.object({
   user_id: z.string().uuid('user_id debe ser un UUID válido'),
   instance_id: z.string().uuid('instance_id debe ser un UUID válido'),
   activity: z.string().min(3, 'activity es requerido'),
+  message: z.string().optional(),
+  context: z.union([
+    z.string(),
+    z.object({}).passthrough() // Permitir objetos y extraer después
+  ]).optional().transform((val) => {
+    if (!val) return undefined;
+    // Si es string, devolverlo tal como está
+    if (typeof val === 'string') return val;
+    // Si es objeto, intentar extraer el contexto
+    if (typeof val === 'object' && val !== null) {
+      // Buscar diferentes posibles campos de contexto
+      const contextFields = ['context', 'text', 'content', 'message', 'data'];
+      for (const field of contextFields) {
+        if (field in val && typeof (val as any)[field] === 'string') {
+          return (val as any)[field];
+        }
+      }
+      // Si no encuentra un campo de contexto, convertir a string
+      return JSON.stringify(val);
+    }
+    return String(val);
+  }), // Contexto específico del usuario
 });
 
 export async function POST(request: NextRequest) {
   try {
     // 1. Validar y parsear body -------------------------------------------------------
     const rawBody = await request.json();
-    const { site_id, user_id, instance_id, activity } = CreatePlanSchema.parse(rawBody);
+    const { site_id, user_id, instance_id, activity, message, context } = CreatePlanSchema.parse(rawBody);
 
     // 2. Recuperar sesiones de autenticación previas ---------------------------------
     const { data: previousSessions, error: sessionsError } = await supabaseAdmin
@@ -98,12 +120,13 @@ export async function POST(request: NextRequest) {
     let planData;
     let planningCommandUuid = null;
     
-    // Check for free agent variations more thoroughly to prevent unwanted command execution
+    // Check for free agent, ask, and robot variations more thoroughly to prevent unwanted command execution
     const normalizedActivity = activity.toLowerCase().trim().replace(/[\s-_]+/g, '');
     const isFreeAgent = normalizedActivity === 'freeagent' || 
                        activity.toLowerCase().trim() === 'free agent' || 
                        activity.toLowerCase().trim() === 'free-agent';
     const isAsk = activity.toLowerCase().trim() === 'ask';
+    const isRobot = normalizedActivity === 'robot';
     
     if (isFreeAgent) {
       console.log(`🆓 FREE AGENT MODE: Creando plan básico sin ejecutar comando robot`);
@@ -222,6 +245,127 @@ export async function POST(request: NextRequest) {
         ]
       };
       // No command id for Ask simple plan
+      planningCommandUuid = null;
+    } else if (isRobot) {
+      console.log(`🤖 ROBOT MODE: Creando plan básico sin ejecutar comando robot`);
+      
+      // Create user log when message is provided
+      if (message) {
+        try {
+          await supabaseAdmin.from('instance_logs').insert({
+            log_type: 'user_message',
+            level: 'info',
+            message: message,
+            details: { 
+              message: message,
+              context: context || null,
+              activity: activity
+            },
+            instance_id,
+            site_id,
+            user_id,
+          });
+          console.log(`📝 User message logged for robot activity`);
+        } catch (logError) {
+          console.error('Error logging user message:', logError);
+        }
+      }
+      
+      // Crear plan básico para Robot sin ejecutar comando
+      const robotContext = [
+        message ? `MESSAGE: ${message}` : '',
+        context ? `CONTEXT: ${context}` : ''
+      ].filter(Boolean).join('\n\n');
+      
+      planData = {
+        title: `Robot Activity - ${message ? message.substring(0, 50) + (message.length > 50 ? '...' : '') : 'Task'}`,
+        description: `Simple robot task based on user message${robotContext ? `\n\nContext:\n${robotContext}` : ''}`,
+        phases: [
+          {
+            phase_name: "Execute Robot Task",
+            description: `Execute the specific task described in the user's message${robotContext ? `\n\nContext:\n${robotContext}` : ''}`,
+            timeline: "60 minutos",
+            success_criteria: [
+              "Task completed successfully based on user message",
+              "All required actions executed as specified",
+              "Results validated and confirmed"
+            ],
+            steps: [
+              {
+                title: "Analyze user message and context",
+                description: `Review the user's message: "${message || 'No message provided'}"${context ? `\n\nAdditional context: ${context}` : ''}`,
+                step_number: 1,
+                automation_level: "automated",
+                estimated_duration: "2 minutos",
+                estimated_duration_minutes: 2,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              },
+              {
+                title: "Navigate to appropriate platform",
+                description: "Navigate to the website or platform required to complete the task",
+                step_number: 2,
+                automation_level: "automated",
+                estimated_duration: "3 minutos",
+                estimated_duration_minutes: 3,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              },
+              {
+                title: "Execute specific actions",
+                description: `Perform the specific actions required based on the user's message: "${message || 'No specific message'}"`,
+                step_number: 3,
+                automation_level: "automated",
+                estimated_duration: "10 minutos",
+                estimated_duration_minutes: 10,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              },
+              {
+                title: "Validate task completion",
+                description: "Verify that the requested task has been completed successfully",
+                step_number: 4,
+                automation_level: "automated",
+                estimated_duration: "3 minutos",
+                estimated_duration_minutes: 3,
+                required_authentication: "none",
+                expected_response_type: "step_completed",
+                human_intervention_reason: null
+              }
+            ]
+          }
+        ],
+        activity_type: "robot",
+        error_handling: [
+          "If navigation fails, try alternative approach or refresh page",
+          "If authentication is required, use available sessions or request new login",
+          "If task cannot be completed, provide clear error message and next steps"
+        ],
+        priority_level: "medium",
+        success_metrics: [
+          "Task completed as specified in user message",
+          "All required actions executed successfully",
+          "Results validated and confirmed"
+        ],
+        estimated_timeline: "60 minutos",
+        browser_requirements: [
+          "Chrome or Firefox browser",
+          "Conexión estable a internet"
+        ],
+        execution_objectives: [
+          "Execute the specific task described in the user's message",
+          "Use provided context to enhance task execution",
+          "Complete task within specified timeframe"
+        ],
+        required_integrations: [
+          "none"
+        ]
+      };
+      
+      // No command id for Robot simple plan
       planningCommandUuid = null;
     } else {
       console.log(`🤖 INICIANDO: Ejecutando planificación de actividad con Robot usando core unificado...`);

@@ -6,6 +6,8 @@ interface StartRobotWorkflowArgs {
   activity: string;
   user_id?: string;
   instance_id?: string;
+  message?: string;
+  context?: string;
 }
 
 interface WorkflowExecutionOptions {
@@ -26,7 +28,7 @@ export async function POST(request: NextRequest) {
 
     // Extraer y validar parámetros del cuerpo de la petición
     const body = await request.json();
-    const { site_id, activity, user_id, instance_id } = body;
+    const { site_id, activity, user_id, instance_id, message, context } = body;
 
     // Validación de parámetros requeridos
     if (!site_id || typeof site_id !== 'string') {
@@ -65,6 +67,12 @@ export async function POST(request: NextRequest) {
     if (instance_id) {
       console.log(`🆔 Instance ID: ${instance_id}`);
     }
+    if (message) {
+      console.log(`💬 Mensaje: ${message}`);
+    }
+    if (context) {
+      console.log(`📝 Contexto: ${context}`);
+    }
 
     // Obtener instancia del servicio de workflows
     const workflowService = WorkflowService.getInstance();
@@ -74,7 +82,9 @@ export async function POST(request: NextRequest) {
       site_id,
       activity,
       user_id,
-      instance_id
+      instance_id,
+      message,
+      context
     };
 
     // Opciones de ejecución del workflow
@@ -143,7 +153,9 @@ export async function GET() {
     },
     optionalParams: {
       user_id: 'string - UUID del usuario que solicita el robot (opcional)',
-      instance_id: 'string - ID de instancia preexistente a asociar (opcional)'
+      instance_id: 'string - ID de instancia preexistente a asociar (opcional)',
+      message: 'string - Mensaje inicial para el robot (opcional)',
+      context: 'string - Contexto adicional para el robot (opcional)'
     },
     robotTypes: {
       'sales-bot': 'Robot especializado en procesos de ventas',
@@ -164,7 +176,9 @@ export async function GET() {
       site_id: 'site_12345',
       activity: 'sales-lead-qualification',
       user_id: 'user_67890',
-      instance_id: 'instance_abc123'
+      instance_id: 'instance_abc123',
+      message: 'Hello, I need help with lead qualification',
+      context: 'Customer is interested in our premium package'
     }
   });
 }
