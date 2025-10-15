@@ -3,6 +3,66 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import { connectToInstance } from '@/lib/services/robot-plan-execution/instance-connector';
+import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
+import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
+import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
+
+/**
+ * Generate agent background using BackgroundBuilder service
+ */
+async function generateAgentBackground(siteId: string): Promise<string> {
+  try {
+    console.log(`🧩 [Assistant] Generating agent background for site: ${siteId}`);
+    
+    // Find the Growth Robot agent for this site
+    const robotAgent = await findGrowthRobotAgent(siteId);
+    if (!robotAgent) {
+      console.log(`⚠️ [Assistant] No Growth Robot agent found for site: ${siteId}`);
+      return '';
+    }
+    
+    console.log(`✅ [Assistant] Found Growth Robot agent: ${robotAgent.agentId}`);
+    
+    // Fetch agent data from database
+    const { data: agentData, error: agentError } = await supabaseAdmin
+      .from('agents')
+      .select('*')
+      .eq('id', robotAgent.agentId)
+      .single();
+    
+    if (agentError || !agentData) {
+      console.error(`❌ [Assistant] Error fetching agent data:`, agentError);
+      return '';
+    }
+    
+    // Get site information and campaigns
+    const siteInfo = await DataFetcher.getSiteInfo(siteId);
+    const activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
+    
+    console.log(`🔍 [Assistant] Site info available: ${siteInfo ? 'YES' : 'NO'}`);
+    console.log(`🔍 [Assistant] Active campaigns: ${activeCampaigns?.length || 0}`);
+    
+    // Generate background using BackgroundBuilder
+    const background = BackgroundBuilder.buildAgentPrompt(
+      agentData.id,
+      agentData.name,
+      agentData.description,
+      agentData.capabilities || [],
+      agentData.backstory,
+      agentData.system_prompt,
+      agentData.agent_prompt,
+      siteInfo,
+      activeCampaigns
+    );
+    
+    console.log(`✅ [Assistant] Generated agent background (${background.length} characters)`);
+    return background;
+    
+  } catch (error) {
+    console.error(`❌ [Assistant] Error generating agent background:`, error);
+    return '';
+  }
+}
 
 /**
  * Determine the instance type and available tools based on instance data and environment
@@ -144,11 +204,16 @@ export async function POST(request: NextRequest) {
         ? providerEnv 
         : 'azure';
       
+      // Generate agent background for RAG context
+      const agentBackground = await generateAgentBackground(providedSiteId);
+      
       // Build system prompt for new instance (simple context)
       const baseSystemPrompt = 'You are a helpful AI assistant.';
-      const combinedSystemPrompt = system_prompt 
-        ? `${baseSystemPrompt}\n\n${system_prompt}` 
-        : baseSystemPrompt;
+      const combinedSystemPrompt = [
+        agentBackground,
+        baseSystemPrompt,
+        system_prompt || ''
+      ].filter(Boolean).join('\n\n');
       
       const result = await executeAssistant(message, null, {
         use_sdk_tools: false, // Never use SDK tools for uninstantiated
@@ -236,12 +301,16 @@ export async function POST(request: NextRequest) {
         ? providerEnv 
         : 'azure';
       
+      // Generate agent background for RAG context
+      const agentBackground = await generateAgentBackground(site_id);
+      
       // Build system prompt for uninstantiated/paused instance
       const baseSystemPrompt = instance.status === 'paused' 
         ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
         : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
       
       const combinedSystemPrompt = [
+        agentBackground,
         baseSystemPrompt,
         system_prompt || '',
         historyContext,
@@ -284,7 +353,11 @@ export async function POST(request: NextRequest) {
         toolsContext = '\n\n⚠️ NOTE: PC management tools are not available in this mode. You can only provide text-based assistance.';
       }
       
+      // Generate agent background for RAG context
+      const agentBackground = await generateAgentBackground(site_id);
+      
       const combinedSystemPrompt = [
+        agentBackground,
         baseSystemPrompt,
         toolsContext,
         system_prompt || '',

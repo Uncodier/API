@@ -31,8 +31,8 @@ export async function POST(request: NextRequest) {
     });
 
     let authResult: any = { success: false };
-    // Only attempt auto-authentication when we actually created a fresh remote instance
-    if (justCreated && instanceRecord?.provider_instance_id) {
+    // Always attempt auto-authentication for new instances
+    if (instanceRecord?.provider_instance_id) {
       try {
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ Attempting auto-authentication for site_id: ${site_id}`);
         authResult = await autoAuthenticateInstance(instanceRecord.provider_instance_id, site_id);
@@ -53,14 +53,14 @@ export async function POST(request: NextRequest) {
         remote_instance_id: instanceRecord.provider_instance_id,
         cdp_url: instanceRecord.cdp_url,
         status: instanceRecord.status,
-        message: justCreated ? 'Instancia creada correctamente' : 'Instancia existente para esta actividad',
-        is_existing: !justCreated,
-        authentication: justCreated ? {
+        message: 'Instancia creada correctamente',
+        is_existing: false,
+        authentication: {
           applied: !!authResult.success,
           session_name: authResult.session?.name,
           auth_state_id: authResult.auth_state_id,
           error: authResult.error
-        } : undefined
+        }
       },
       { status: 200 },
     );

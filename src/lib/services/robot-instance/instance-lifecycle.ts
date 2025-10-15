@@ -104,39 +104,13 @@ export async function createOrResumeInstance(params: CreateOrResumeParams): Prom
     return { instanceRecord: instance, justCreated: false, resumed };
   }
 
-  // 2) Without instanceId, require siteId + activity to search or create
+  // 2) Without instanceId, require siteId + activity to create new instance
   if (!siteId || !activity) {
     throw new Error('siteId and activity are required when instanceId is not provided');
   }
 
-  // Search existing running/paused for this site + activity
-  const { data: existingInstance } = await supabaseAdmin
-    .from('remote_instances')
-    .select('*')
-    .eq('site_id', siteId)
-    .eq('name', activity)
-    .in('status', ['running', 'paused'])
-    .single();
-
-  if (existingInstance) {
-    let resumed = false;
-    if (existingInstance.status === 'paused' && existingInstance.provider_instance_id) {
-      try {
-        await resumeRemoteInstance(existingInstance.provider_instance_id, existingInstance.timeout_hours || 1);
-        await supabaseAdmin
-          .from('remote_instances')
-          .update({ status: 'running', updated_at: new Date().toISOString() })
-          .eq('id', existingInstance.id);
-        existingInstance.status = 'running';
-        resumed = true;
-      } catch {
-        // ignore resume errors
-      }
-    }
-    return { instanceRecord: existingInstance, justCreated: false, resumed };
-  }
-
-  // Create new instance
+  // Always create new instance - no longer search for existing instances by activity
+  // Instances are now paused/deleted in a controlled manner, and resume should be used explicitly
   const { dbRecord } = await createNewUbuntuInstance(siteId, activity);
   return { instanceRecord: dbRecord, justCreated: true, resumed: false };
 }
