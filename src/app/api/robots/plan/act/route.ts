@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { OpenAIAgentExecutor } from '@/lib/custom-automation';
 import { anthropic } from 'scrapybara/anthropic';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
+import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import {
   ActSchema,
   AgentResponseSchema,
@@ -415,6 +416,10 @@ export async function POST(request: NextRequest) {
     // 11. Setup and validate tools
     const ubuntuInstance = remoteInstance as any;
     let tools = setupTools(ubuntuInstance);
+    
+    // Add generateImage tool to the tools array
+    const generateImageToolInstance = generateImageTool(instance.site_id);
+    tools.push(generateImageToolInstance);
     
     const toolsValidation = await validateTools(tools, client, instance.provider_instance_id);
     if (!toolsValidation.valid) {

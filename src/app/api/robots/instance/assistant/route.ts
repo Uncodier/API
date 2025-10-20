@@ -6,6 +6,8 @@ import { connectToInstance } from '@/lib/services/robot-plan-execution/instance-
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
+import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
+import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 
 /**
  * Generate agent background using BackgroundBuilder service
@@ -207,19 +209,27 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(providedSiteId);
       
+      // Add generateImage tool to custom tools
+      const toolsWithImageGeneration = [
+        ...customTools,
+        generateImageTool(providedSiteId)
+      ];
+      
       // Build system prompt for new instance (simple context)
       const baseSystemPrompt = 'You are a helpful AI assistant.';
+      const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', newInstance.id);
       const combinedSystemPrompt = [
         agentBackground,
         baseSystemPrompt,
-        system_prompt || ''
+        system_prompt || '',
+        assetsContext
       ].filter(Boolean).join('\n\n');
       
       const result = await executeAssistant(message, null, {
         use_sdk_tools: false, // Never use SDK tools for uninstantiated
         provider: provider,
         system_prompt: combinedSystemPrompt,
-        custom_tools: customTools,
+        custom_tools: toolsWithImageGeneration,
         instance_id: newInstance.id,
         site_id: providedSiteId,
         user_id: userId,
@@ -271,9 +281,9 @@ export async function POST(request: NextRequest) {
     // Get historical logs for context
     const { data: historicalLogs } = await supabaseAdmin
       .from('instance_logs')
-      .select('log_type, message, created_at')
+      .select('log_type, message, created_at, tool_name, tool_result')
       .eq('instance_id', providedInstanceId)
-      .in('log_type', ['user_action', 'agent_action', 'execution_summary'])
+      .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
       .order('created_at', { ascending: true })
       .limit(10);
 
@@ -284,7 +294,27 @@ export async function POST(request: NextRequest) {
       historicalLogs.forEach((log, index) => {
         const timestamp = new Date(log.created_at).toLocaleTimeString();
         const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
-        historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+        
+        // Handle tool calls with special formatting for generate_image and generate_video
+        if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
+          if (log.tool_name === 'generate_image' || log.tool_name === 'generate_video') {
+            const toolResult = log.tool_result;
+            if (toolResult.success && toolResult.output && toolResult.output.images) {
+              const urls = toolResult.output.images.map((img: any) => img.url).filter(Boolean);
+              if (urls.length > 0) {
+                historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
+              } else {
+                historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+              }
+            } else {
+              historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+            }
+          } else {
+            historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+          }
+        } else {
+          historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+        }
       });
     }
 
@@ -304,24 +334,32 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
+      // Add generateImage tool to custom tools
+      const toolsWithImageGeneration = [
+        ...customTools,
+        generateImageTool(site_id)
+      ];
+      
       // Build system prompt for uninstantiated/paused instance
       const baseSystemPrompt = instance.status === 'paused' 
         ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
         : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
       
+      const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);
       const combinedSystemPrompt = [
         agentBackground,
         baseSystemPrompt,
         system_prompt || '',
         historyContext,
-        customTools.length > 0 ? `\n\n🛠️ AVAILABLE TOOLS: ${customTools.length} custom tool(s)` : ''
+        assetsContext,
+        toolsWithImageGeneration.length > 0 ? `\n\n🛠️ AVAILABLE TOOLS: ${toolsWithImageGeneration.length} custom tool(s)` : ''
       ].filter(Boolean).join('\n');
       
       executionResult = await executeAssistant(message, instance, {
         use_sdk_tools: false,
         provider: provider,
         system_prompt: combinedSystemPrompt,
-        custom_tools: customTools,
+        custom_tools: toolsWithImageGeneration,
         instance_id: providedInstanceId,
         site_id: site_id,
         user_id: user_id,
@@ -356,24 +394,46 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
+      // Add generateImage tool to custom tools
+      const toolsWithImageGeneration = [
+        ...customTools,
+        generateImageTool(site_id)
+      ];
+      
+      const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);
       const combinedSystemPrompt = [
         agentBackground,
         baseSystemPrompt,
         toolsContext,
         system_prompt || '',
         historyContext,
-        customTools.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${customTools.length} additional tool(s)` : ''
+        assetsContext,
+        toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
       ].filter(Boolean).join('\n');
       
-      executionResult = await executeAssistant(message, instance, {
-        use_sdk_tools: shouldUseSDKTools,
-        provider: provider,
-        system_prompt: combinedSystemPrompt,
-        custom_tools: customTools,
-        instance_id: providedInstanceId,
-        site_id: site_id,
-        user_id: user_id,
-      });
+      // Clean base64 data from system prompt if present
+      if (combinedSystemPrompt.includes('base64')) {
+        const cleanedSystemPrompt = combinedSystemPrompt.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
+        executionResult = await executeAssistant(message, instance, {
+          use_sdk_tools: shouldUseSDKTools,
+          provider: provider,
+          system_prompt: cleanedSystemPrompt,
+          custom_tools: toolsWithImageGeneration,
+          instance_id: providedInstanceId,
+          site_id: site_id,
+          user_id: user_id,
+        });
+      } else {
+        executionResult = await executeAssistant(message, instance, {
+          use_sdk_tools: shouldUseSDKTools,
+          provider: provider,
+          system_prompt: combinedSystemPrompt,
+          custom_tools: toolsWithImageGeneration,
+          instance_id: providedInstanceId,
+          site_id: site_id,
+          user_id: user_id,
+        });
+      }
     } else {
       return NextResponse.json(
         {

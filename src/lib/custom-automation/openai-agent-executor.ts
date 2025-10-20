@@ -45,10 +45,18 @@ function filterImages(messages: any[], imagesToKeep: number): void {
         const contentPart = msg.content[j];
         
         if (contentPart.type === 'image_url' && contentPart.image_url) {
-          if (imagesKept < imagesToKeep) {
-            imagesKept++;
+          // Validate base64 format before keeping
+          const imageUrl = contentPart.image_url.url;
+          if (imageUrl && imageUrl.startsWith('data:image/')) {
+            if (imagesKept < imagesToKeep) {
+              imagesKept++;
+            } else {
+              // Remove old images by splicing from array
+              msg.content.splice(j, 1);
+            }
           } else {
-            // Remove old images by splicing from array
+            // Remove invalid image URLs immediately
+            console.log(`🧹 [IMAGE_FILTER] Removing invalid image URL: ${imageUrl?.substring(0, 100)}...`);
             msg.content.splice(j, 1);
           }
         }
@@ -61,6 +69,22 @@ function filterImages(messages: any[], imagesToKeep: number): void {
                  msg.content[0].text.includes('Here are the')) {
         // If only descriptive text left without images, remove the whole message
         messages.splice(i, 1);
+      }
+    }
+    
+    // Also clean any base64 data from tool messages that might be causing issues
+    if (msg.role === 'tool' && typeof msg.content === 'string') {
+      // Remove any base64 image data from tool messages
+      if (msg.content.includes('base64') || msg.content.length > 50000) {
+        console.log(`🧹 [IMAGE_FILTER] Cleaning base64 data from tool message`);
+        msg.content = msg.content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
+      }
+      
+      // CRITICAL: Clean generateImage tool messages but keep them
+      if (msg.content.includes('generateImage') || msg.content.includes('image_urls') || msg.content.includes('provider')) {
+        console.log(`🧹 [IMAGE_FILTER] Cleaning generateImage tool message content`);
+        // Remove any base64 data but keep the message
+        msg.content = msg.content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
       }
     }
   }
@@ -189,6 +213,15 @@ export class OpenAIAgentExecutor {
    */
   private extractBase64Image(result: any): { cleanedResult: any; base64Image: string | null } {
     let base64Image: string | null = null;
+
+    // CRITICAL: Handle generateImage tool results properly
+    if (typeof result === 'object' && result !== null && result.provider && result.image_urls) {
+      console.log(`🧹 [IMAGE_FILTER] Processing generateImage tool result`);
+      return {
+        cleanedResult: result, // Return the full result, not just the message
+        base64Image: null
+      };
+    }
 
     if (typeof result === 'string') {
       // Check if it's a base64 image string
@@ -411,6 +444,9 @@ export class OpenAIAgentExecutor {
           };
         }
 
+        // Debug: Log messages before API call to identify base64 issues
+        console.log(`🔍 [DEBUG] Messages being sent to OpenAI:`, JSON.stringify(messages, null, 2).substring(0, 2000));
+        
         // Call Azure OpenAI API
         console.log(`⏱️ [TIMING] Calling Azure OpenAI API...`);
         const azureStartTime = Date.now();
