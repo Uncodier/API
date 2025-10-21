@@ -364,7 +364,7 @@ export class TeamNotificationService {
     contactEmail?: string;
   }): Promise<NotifyTeamResult> {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const conversationUrl = `${baseUrl}/sites/${params.siteId}/conversations/${params.conversationId}`;
+    const conversationUrl = `${baseUrl}/chat?conversationId=${params.conversationId}`;
     
     const title = `Human intervention requested${params.agentName ? ` by ${params.agentName}` : ''}`;
     const notificationMessage = `Human intervention is required in a conversation. Message: "${params.message}"`;
