@@ -975,6 +975,54 @@ export async function POST(request: Request) {
       console.log(`⚠️ Could not get enriched context`);
     }
     
+    // Add conversation history intelligence instructions
+    contextMessage += `\n\n=== CONVERSATION HISTORY INTELLIGENCE ===\n`;
+    contextMessage += `📚 ANALYZE THE CONVERSATION CONTEXT:\n`;
+    contextMessage += `- Review ALL previous conversation messages provided above\n`;
+    contextMessage += `- Identify if the lead has actively responded and engaged with previous messages\n`;
+    contextMessage += `- Note the lead's communication style, tone, and level of interest\n`;
+    contextMessage += `- Detect any specific questions, concerns, or topics the lead expressed interest in\n`;
+    contextMessage += `- Check the conversation status (active/inactive) and last message timestamp\n\n`;
+
+    contextMessage += `🎯 IF THE LEAD HAS RESPONDED (Engaged Lead):\n`;
+    contextMessage += `- Continue the conversation naturally, acknowledging their previous messages\n`;
+    contextMessage += `- Directly address any unanswered questions or concerns from past exchanges\n`;
+    contextMessage += `- Build upon topics they showed interest in\n`;
+    contextMessage += `- Reference specific points from their messages to show attentiveness\n`;
+    contextMessage += `- Match their communication style and level of formality\n`;
+    contextMessage += `- Provide relevant value based on what they've already shared\n`;
+    contextMessage += `- Use the same channel where they last responded\n`;
+    contextMessage += `- Consider using QUALIFY_LEAD tool to update status to "contacted" or "qualified" based on engagement level\n\n`;
+
+    contextMessage += `❄️ IF THE LEAD HAS NOT RESPONDED (Unengaged/Cold Lead):\n`;
+    contextMessage += `- Review what messages were already sent to avoid repetition\n`;
+    contextMessage += `- Try a completely different angle, value proposition, or approach\n`;
+    contextMessage += `- Consider switching to a different channel if available\n`;
+    contextMessage += `- Keep the message brief, high-value, and non-pushy\n`;
+    contextMessage += `- Include a clear, low-friction call-to-action\n`;
+    contextMessage += `- If multiple follow-ups have been sent with no response, consider using QUALIFY_LEAD tool to mark as "lost"\n\n`;
+
+    contextMessage += `📊 CONVERSATION STATUS GUIDELINES:\n`;
+    contextMessage += `- Active conversation (status: active) → Lead is engaged, continue natural dialogue\n`;
+    contextMessage += `- Inactive/closed conversation → Lead went cold, needs re-engagement strategy\n`;
+    contextMessage += `- Multiple active conversations → Highly engaged lead, provide maximum value\n`;
+    contextMessage += `- No previous conversations → First outreach, make strong first impression\n\n`;
+
+    contextMessage += `⏱️ TIMING & CADENCE AWARENESS:\n`;
+    contextMessage += `- Lead responded recently (< 24 hours) → Be responsive and timely, but not pushy\n`;
+    contextMessage += `- Lead hasn't responded in days → Acknowledge the time gap politely if appropriate\n`;
+    contextMessage += `- Multiple messages with no response → Reduce frequency, increase value\n`;
+    contextMessage += `- Last message was yours and no response → Wait appropriately or try new approach\n\n`;
+
+    contextMessage += `🔧 QUALIFY_LEAD TOOL USAGE:\n`;
+    contextMessage += `- Use QUALIFY_LEAD tool to update lead status based on conversation analysis\n`;
+    contextMessage += `- "contacted" → Lead has responded to your messages (first meaningful interaction)\n`;
+    contextMessage += `- "qualified" → Lead shows clear interest, asks questions, or requests information\n`;
+    contextMessage += `- "converted" → Lead has made a purchase or committed to buy\n`;
+    contextMessage += `- "lost" → Lead explicitly rejected or no response after multiple attempts\n`;
+    contextMessage += `- Always update status BEFORE drafting the follow-up message\n`;
+    contextMessage += `=== END OF CONVERSATION INTELLIGENCE ===\n`;
+    
     // Add copywriting guidelines
     contextMessage += `\n\n=== COPYWRITING GUIDELINES ===\n`;
     contextMessage += `🎯 IMPORTANT: If there are approved copywritings available for this lead or campaign, respect them as much as possible.\n`;
