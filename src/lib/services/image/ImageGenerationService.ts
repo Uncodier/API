@@ -110,6 +110,10 @@ export class ImageGenerationService {
   }): Promise<ImageGenerationResult> {
     const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/image`;
     
+    console.log(`[ImageGenService] 🌐 Calling: ${apiUrl}`);
+    console.log(`[ImageGenService] 🔑 API Key: ${process.env.SERVICE_API_KEY ? 'SET' : 'NOT_SET'}`);
+    console.log(`[ImageGenService] 🤖 Provider: ${params.provider}`);
+    
     const requestBody = {
       prompt: params.prompt,
       site_id: params.site_id,
@@ -121,38 +125,50 @@ export class ImageGenerationService {
       ...(params.reference_images && { reference_images: params.reference_images })
     };
 
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': process.env.SERVICE_API_KEY || '',
+        },
+        body: JSON.stringify(requestBody)
+      });
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.SERVICE_API_KEY || '',
-      },
-      body: JSON.stringify(requestBody)
-    });
+      console.log(`[ImageGenService] ✅ Fetch completed - Status: ${response.status}`);
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => 'Unknown error');
-      throw new Error(`API request failed: ${response.status} ${errorText}`);
-    }
-
-    const data = await response.json();
-    
-    if (data.error) {
-      throw new Error(data.error);
-    }
-
-    return {
-      success: true,
-      provider: data.provider,
-      images: data.images || [],
-      fallbackFrom: data.fallbackFrom,
-      metadata: {
-        size: params.size,
-        n: params.n,
-        quality: params.quality,
-        generated_at: new Date().toISOString()
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error');
+        console.error(`[ImageGenService] ❌ Response not OK: ${errorText.substring(0, 200)}`);
+        throw new Error(`API request failed: ${response.status} ${errorText}`);
       }
-    };
+
+      const data = await response.json();
+      
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      return {
+        success: true,
+        provider: data.provider,
+        images: data.images || [],
+        fallbackFrom: data.fallbackFrom,
+        metadata: {
+          size: params.size,
+          n: params.n,
+          quality: params.quality,
+          generated_at: new Date().toISOString()
+        }
+      };
+    } catch (error: any) {
+      console.error(`[ImageGenService] ❌ Fetch error:`, {
+        name: error.name,
+        message: error.message,
+        code: error.code,
+        cause: error.cause
+      });
+      throw error;
+    }
   }
 }

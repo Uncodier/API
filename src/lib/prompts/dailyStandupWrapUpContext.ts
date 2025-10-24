@@ -110,6 +110,14 @@ CRITICAL FORMAT RULES FOR OUTPUT (MUST FOLLOW):
 - Provide priorities as short bullets starting with '- ' under 140 characters each.
 - Avoid headings with symbols (#, **, etc.). Use simple sentences.
 
+TITLE REQUIREMENTS (CRITICAL):
+- The title/subject MUST always be a clear Call-to-Action (CTA) for the team
+- Use action verbs that direct the team to take specific action
+- Examples: "Review 5 high-priority leads and schedule demos", "Launch Facebook campaign optimization today", "Connect with 3 prospects before 2pm"
+- Avoid passive or descriptive titles like "Daily Report" or "Status Update"
+- Make the title actionable and time-sensitive when possible
+- Keep under 60 characters for email subject line compatibility
+
 ${operationalInputs}
 
 The summary should be executive-level, actionable, and provide clear visibility into the current state of operations across all business functions.`);
