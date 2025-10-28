@@ -158,6 +158,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         args: [args],
         taskQueue,
         workflowId,
+        searchAttributes: {
+          site_id: [args.site_id]
+        }
       });
 
       console.log(`✅ Workflow de envío de email completado: ${workflowId}`);
@@ -207,6 +210,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         args: [args],
         taskQueue,
         workflowId,
+        searchAttributes: {
+          site_id: [args.site_id]
+        }
       });
 
       console.log(`✅ Workflow de envío de WhatsApp completado: ${workflowId}`);
@@ -545,6 +551,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         args: [args],
         taskQueue,
         workflowId,
+        searchAttributes: {
+          site_id: [args.site_id]
+        }
       });
 
       console.log(`✅ Workflow de robot completado: ${workflowId}`);
@@ -599,6 +608,9 @@ export class BusinessWorkflowService extends BaseWorkflowService {
         args: [args],
         taskQueue,
         workflowId,
+        searchAttributes: {
+          site_id: [args.site_id]
+        }
       });
 
       console.log(`✅ Workflow de prompt robot completado: ${workflowId}`);

@@ -34,6 +34,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {
@@ -48,6 +51,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {
@@ -482,6 +488,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {
@@ -496,6 +505,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {
@@ -545,6 +557,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {
@@ -559,6 +574,9 @@ export class DataWorkflowService extends BaseWorkflowService {
           args: [args],
           taskQueue,
           workflowId,
+          searchAttributes: {
+            site_id: [args.site_id]
+          }
         });
 
         return {

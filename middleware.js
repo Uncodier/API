@@ -91,14 +91,21 @@ export default async function middleware(request) {
   
   // Si no hay origin (petición machine-to-machine), validar API key
   if (!origin) {
-    console.log('[Middleware] No origin detected - checking API key');
-    const apiKeyResponse = await apiKeyAuth(request);
-    // Si el middleware retorna algo diferente a NextResponse.next(), es un error
-    if (apiKeyResponse.status && apiKeyResponse.status !== 200) {
-      console.log('[Middleware] API key validation failed');
-      return apiKeyResponse;
+    // En desarrollo local, permitir requests sin API key si vienen de localhost
+    const isLocalhost = request.url.includes('localhost') || request.url.includes('127.0.0.1') || request.url.includes('0.0.0.0');
+    
+    if (isDevMode && isLocalhost) {
+      console.log('[Middleware] Localhost request in dev mode - skipping API key validation');
+    } else {
+      console.log('[Middleware] No origin detected - checking API key');
+      const apiKeyResponse = await apiKeyAuth(request);
+      // Si el middleware retorna algo diferente a NextResponse.next(), es un error
+      if (apiKeyResponse.status && apiKeyResponse.status !== 200) {
+        console.log('[Middleware] API key validation failed');
+        return apiKeyResponse;
+      }
+      console.log('[Middleware] API key validation passed');
     }
-    console.log('[Middleware] API key validation passed');
   }
   
   // En desarrollo, permitir todos los orígenes

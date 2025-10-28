@@ -1,0 +1,402 @@
+# Workflow Logs
+
+Query and retrieve Temporal workflow executions filtered by site ID. This endpoint provides comprehensive workflow execution history including status, inputs, outputs, and execution metrics.
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Endpoint
+
+```http
+GET /api/logs/workflows
+```
+
+## Query Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `site_id` | string | Yes | Site identifier to filter workflows |
+| `limit` | number | No | Number of workflows to return (1-100, default: 20) |
+| `pageToken` | string | No | Token for pagination to fetch next page of results |
+
+## Response Format
+
+```typescript
+{
+  success: boolean;
+  workflows: Array<{
+    workflowId: string;
+    runId: string;
+    type: string;
+    status: string;
+    startTime: string;
+    closeTime?: string;
+    executionTime?: number;
+    input: any;
+    result?: any;
+    failure?: any;
+  }>;
+  pagination: {
+    limit: number;
+    nextPageToken?: string;
+    hasMore: boolean;
+  };
+  meta: {
+    site_id: string;
+    total_found: number;
+    has_more: boolean;
+  };
+}
+```
+
+## Workflow Status Values
+
+- `RUNNING` - Workflow is currently executing
+- `COMPLETED` - Workflow finished successfully
+- `FAILED` - Workflow execution failed
+- `CANCELLED` - Workflow was cancelled
+- `TERMINATED` - Workflow was terminated
+- `TIMED_OUT` - Workflow exceeded timeout limit
+
+## Examples
+
+### Basic Query
+
+Retrieve the last 20 workflows for a site:
+
+```bash
+curl "http://localhost:3001/api/logs/workflows?site_id=test-site-123"
+```
+
+<UnifiedApiTester
+  endpoint="/api/logs/workflows"
+  method="GET"
+  queryParams={{
+    site_id: "test-site-123"
+  }}
+  description="Fetch recent workflows for a site"
+/>
+
+### With Custom Limit
+
+Retrieve only 10 workflows:
+
+```bash
+curl "http://localhost:3001/api/logs/workflows?site_id=test-site-123&limit=10"
+```
+
+<UnifiedApiTester
+  endpoint="/api/logs/workflows"
+  method="GET"
+  queryParams={{
+    site_id: "test-site-123",
+    limit: "10"
+  }}
+  description="Fetch 10 most recent workflows"
+/>
+
+### Pagination
+
+Use the `nextPageToken` from the previous response to fetch the next page:
+
+```bash
+curl "http://localhost:3001/api/logs/workflows?site_id=test-site-123&limit=20&pageToken=eyJza..."
+```
+
+<UnifiedApiTester
+  endpoint="/api/logs/workflows"
+  method="GET"
+  queryParams={{
+    site_id: "test-site-123",
+    limit: "20",
+    pageToken: "eyJza..."
+  }}
+  description="Fetch next page of workflows"
+/>
+
+## Response Examples
+
+### Success Response
+
+```json
+{
+  "success": true,
+  "workflows": [
+    {
+      "workflowId": "start-robot-test-site-123-1698765432-abc123",
+      "runId": "def456-789-ghi012",
+      "type": "startRobotWorkflow",
+      "status": "COMPLETED",
+      "startTime": "2024-10-28T10:30:45.123Z",
+      "closeTime": "2024-10-28T10:32:15.456Z",
+      "executionTime": 90333,
+      "input": {
+        "site_id": "test-site-123",
+        "activity": "ask",
+        "user_id": "user-456",
+        "message": "What are our sales metrics?"
+      },
+      "result": {
+        "success": true,
+        "response": "Based on your data...",
+        "metrics": {
+          "total_sales": 150000,
+          "conversion_rate": 0.15
+        }
+      }
+    },
+    {
+      "workflowId": "lead-generation-test-site-123-1698765000-xyz789",
+      "runId": "jkl345-678-mno901",
+      "type": "leadGenerationWorkflow",
+      "status": "RUNNING",
+      "startTime": "2024-10-28T10:25:00.000Z",
+      "input": {
+        "site_id": "test-site-123",
+        "max_leads": 50,
+        "search_topic": "SaaS companies in Mexico"
+      }
+    },
+    {
+      "workflowId": "send-email-test-site-123-1698764800-pqr234",
+      "runId": "stu567-890-vwx123",
+      "type": "sendEmailFromAgentWorkflow",
+      "status": "FAILED",
+      "startTime": "2024-10-28T10:20:00.000Z",
+      "closeTime": "2024-10-28T10:20:05.789Z",
+      "executionTime": 5789,
+      "input": {
+        "site_id": "test-site-123",
+        "email": "contact@example.com",
+        "subject": "Follow up",
+        "message": "Hello..."
+      },
+      "failure": {
+        "message": "Email delivery failed",
+        "cause": {
+          "message": "Invalid recipient address",
+          "source": "SendGrid",
+          "stackTrace": "..."
+        }
+      }
+    }
+  ],
+  "pagination": {
+    "limit": 20,
+    "nextPageToken": "eyJza2lwIjoyMCwic2l0ZV9pZCI6InRlc3Qtc2l0ZS0xMjMifQ==",
+    "hasMore": true
+  },
+  "meta": {
+    "site_id": "test-site-123",
+    "total_found": 3,
+    "has_more": true
+  }
+}
+```
+
+### Error Response - Missing site_id
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_SITE_ID",
+    "message": "site_id es requerido y debe ser una cadena válida"
+  }
+}
+```
+
+### Error Response - Invalid limit
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_LIMIT",
+    "message": "limit debe ser un número entre 1 y 100"
+  }
+}
+```
+
+### Error Response - Query Error
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "WORKFLOW_QUERY_ERROR",
+    "message": "Error al consultar workflows: Search attribute 'site_id' not configured"
+  }
+}
+```
+
+## Workflow Types
+
+Common workflow types you might encounter:
+
+| Workflow Type | Description |
+|--------------|-------------|
+| `startRobotWorkflow` | Initialize AI robot for tasks |
+| `promptRobotWorkflow` | Send prompt to active robot |
+| `sendEmailFromAgentWorkflow` | Send email via agent |
+| `sendWhatsappFromAgentWorkflow` | Send WhatsApp message |
+| `leadGenerationWorkflow` | Generate new leads |
+| `leadResearchWorkflow` | Research specific lead |
+| `leadFollowUpWorkflow` | Follow up with lead |
+| `analyzeSiteWorkflow` | Analyze site data |
+| `idealClientProfileMiningWorkflow` | Mine ideal client profiles |
+| `customerSupportMessageWorkflow` | Handle customer support |
+| `agentMessageWorkflow` | Process agent message |
+| `dailyStandUpWorkflow` | Daily standup automation |
+
+## Understanding Execution Time
+
+The `executionTime` field represents the total time (in milliseconds) from workflow start to completion:
+
+- **< 1000ms**: Very fast execution
+- **1000-10000ms**: Normal execution (1-10 seconds)
+- **10000-60000ms**: Longer execution (10-60 seconds)
+- **> 60000ms**: Extended execution (> 1 minute)
+
+## Filtering and Analysis
+
+### By Status
+
+Filter workflows by status in your application:
+
+```javascript
+const completedWorkflows = response.workflows.filter(w => w.status === 'COMPLETED');
+const failedWorkflows = response.workflows.filter(w => w.status === 'FAILED');
+const runningWorkflows = response.workflows.filter(w => w.status === 'RUNNING');
+```
+
+### By Type
+
+Group workflows by type:
+
+```javascript
+const workflowsByType = response.workflows.reduce((acc, workflow) => {
+  acc[workflow.type] = acc[workflow.type] || [];
+  acc[workflow.type].push(workflow);
+  return acc;
+}, {});
+```
+
+### Calculate Average Execution Time
+
+```javascript
+const completedWithTime = response.workflows.filter(w => w.executionTime);
+const avgTime = completedWithTime.reduce((sum, w) => sum + w.executionTime, 0) / completedWithTime.length;
+console.log(`Average execution time: ${avgTime}ms`);
+```
+
+## Important Notes
+
+### Search Attributes Configuration
+
+This endpoint requires that workflows have the `site_id` search attribute configured:
+
+1. **Temporal Server**: The `site_id` attribute must be registered as a keyword search attribute
+2. **Workflow Execution**: Workflows must be started with the `searchAttributes` parameter
+3. **Existing Workflows**: Workflows started before search attributes were added won't appear in results
+
+### Local Development Setup
+
+For local Temporal development, register the search attribute:
+
+```bash
+# Using Temporal CLI
+temporal operator search-attribute create \
+  --namespace default \
+  --name site_id \
+  --type Keyword
+```
+
+### Performance Considerations
+
+- **Pagination**: Use pagination for large result sets to avoid timeouts
+- **Limit**: Keep limit reasonable (≤50) for better performance
+- **Caching**: Consider caching results for frequently accessed sites
+- **Indexing**: Temporal indexes search attributes for fast queries
+
+## Use Cases
+
+### Monitoring Dashboard
+
+Build a real-time monitoring dashboard:
+
+```javascript
+// Poll for workflow status every 30 seconds
+setInterval(async () => {
+  const response = await fetch(`/api/logs/workflows?site_id=${siteId}&limit=10`);
+  const data = await response.json();
+  updateDashboard(data.workflows);
+}, 30000);
+```
+
+### Debugging Failed Workflows
+
+Identify and debug failed workflows:
+
+```javascript
+const response = await fetch(`/api/logs/workflows?site_id=${siteId}&limit=100`);
+const failed = response.workflows.filter(w => w.status === 'FAILED');
+
+failed.forEach(workflow => {
+  console.log(`Failed: ${workflow.type}`);
+  console.log(`Reason: ${workflow.failure?.message}`);
+  console.log(`Input: ${JSON.stringify(workflow.input)}`);
+});
+```
+
+### Audit Trail
+
+Create an audit trail of all workflow executions:
+
+```javascript
+async function fetchAllWorkflows(siteId) {
+  let allWorkflows = [];
+  let pageToken = null;
+  
+  do {
+    const url = `/api/logs/workflows?site_id=${siteId}&limit=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    
+    allWorkflows = allWorkflows.concat(data.workflows);
+    pageToken = data.pagination.nextPageToken;
+  } while (pageToken);
+  
+  return allWorkflows;
+}
+```
+
+## Related Endpoints
+
+- [Start Robot Workflow](/rest-api/agents/workflow/startRobot) - Start a new robot workflow
+- [Prompt Robot Workflow](/rest-api/agents/workflow/promptRobot) - Send prompt to robot
+- [Lead Generation](/rest-api/agents/sales/leadGeneration) - Generate leads workflow
+
+## Error Handling
+
+Always handle potential errors:
+
+```javascript
+try {
+  const response = await fetch(`/api/logs/workflows?site_id=${siteId}`);
+  const data = await response.json();
+  
+  if (!data.success) {
+    console.error('Query failed:', data.error.message);
+    return;
+  }
+  
+  // Process workflows
+  data.workflows.forEach(workflow => {
+    console.log(`${workflow.type}: ${workflow.status}`);
+  });
+  
+} catch (error) {
+  console.error('Network error:', error);
+}
+```
+

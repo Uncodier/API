@@ -31,6 +31,31 @@ export interface WorkflowExecutionResponse {
   type?: string;
 }
 
+export interface WorkflowListResponse {
+  success: boolean;
+  workflows: Array<{
+    workflowId: string;
+    runId: string;
+    type: string;
+    status: string;
+    startTime: string;
+    closeTime?: string;
+    executionTime?: number;
+    input: any;
+    result?: any;
+    failure?: any;
+  }>;
+  pagination: {
+    limit: number;
+    nextPageToken?: string;
+    hasMore: boolean;
+  };
+  error?: {
+    code: string;
+    message: string;
+  };
+}
+
 export abstract class BaseWorkflowService {
   protected client: Client | null = null;
   protected connection: Connection | null = null;
@@ -68,6 +93,14 @@ export abstract class BaseWorkflowService {
     let forcedByEnvironment = false;
     
     // Lógica de detección basada en configuración, no en environment
+    console.log(`🔍 Debug deployment detection:`, {
+      serverUrl,
+      apiKey: apiKey ? 'PRESENT' : 'ABSENT',
+      includesTmprl: serverUrl.includes('tmprl.cloud'),
+      includesTemporal: serverUrl.includes('temporal.cloud'),
+      includesAws: serverUrl.includes('aws.api.temporal.io')
+    });
+    
     if (apiKey && (serverUrl.includes('tmprl.cloud') || serverUrl.includes('temporal.cloud') || serverUrl.includes('aws.api.temporal.io'))) {
       deploymentType = 'cloud';
     } else if (serverUrl !== 'localhost:7233' && !apiKey) {
@@ -191,7 +224,8 @@ export abstract class BaseWorkflowService {
   }
 
   protected getTemporalApiKey(): string | undefined {
-    return process.env.TEMPORAL_CLOUD_API_KEY;
+    // Priorizar TEMPORAL_SERVICE_API_KEY para operaciones de lectura/servicio
+    return process.env.TEMPORAL_SERVICE_API_KEY || process.env.TEMPORAL_CLOUD_API_KEY;
   }
 
   protected getTemporalEnvironment(): string | undefined {
@@ -466,6 +500,201 @@ export abstract class BaseWorkflowService {
         error: {
           code: 'WORKFLOW_CANCEL_ERROR',
           message: error instanceof Error ? error.message : 'Error desconocido al cancelar workflow'
+        }
+      };
+    }
+  }
+
+  public async listWorkflowsBySiteId(
+    site_id: string, 
+    limit: number = 20, 
+    pageToken?: string
+  ): Promise<WorkflowListResponse> {
+    try {
+      const client = await this.initializeClient();
+      const namespace = this.getTemporalNamespace();
+      
+      console.log(`🔍 Querying workflows for site_id: ${site_id}, limit: ${limit}`);
+      
+      // Query workflows by site_id search attribute
+      console.log(`🔍 Attempting to list workflows for namespace: ${namespace}`);
+      
+      // Ensure connection is available
+      if (!this.connection) {
+        throw new Error('Temporal connection not initialized');
+      }
+      
+      // Use the connection's workflowService directly (gRPC API)
+      const workflowService = this.connection.workflowService;
+      
+      let response;
+      let useSearchAttribute = true;
+      
+      // Temporal List Filter doesn't support partial matching on WorkflowId
+      // We need to use manual filtering for site_id searches
+      if (site_id) {
+        // List more workflows to find the ones with the specific site_id
+        // Since we need to search through workflows to find partial matches
+        const searchLimit = Math.max(limit * 5, 100); // Search through 5x the limit or 100 workflows minimum
+        console.log(`🔍 Searching ${searchLimit} workflows for site_id: ${site_id}`);
+        response = await workflowService.listWorkflowExecutions({
+          namespace,
+          pageSize: searchLimit,
+          nextPageToken: pageToken ? Buffer.from(pageToken, 'base64') : undefined
+        });
+        console.log(`✅ Found ${response.executions.length} workflows to filter`);
+      } else {
+        // No site_id provided, list workflows normally
+        console.log(`🔍 Listing workflows without filter`);
+        response = await workflowService.listWorkflowExecutions({
+          namespace,
+          pageSize: limit,
+          nextPageToken: pageToken ? Buffer.from(pageToken, 'base64') : undefined
+        });
+        console.log(`✅ Found ${response.executions.length} workflows`);
+      }
+
+      console.log(`📊 Found ${response.executions.length} total workflows in namespace`);
+
+      // Debug: Log first few workflows to see their structure
+      if (response.executions.length > 0) {
+        const firstExecution = response.executions[0] as any;
+        console.log(`🔍 First workflow sample:`, {
+          workflowId: firstExecution.execution.workflowId,
+          hasInput: !!firstExecution.execution.input,
+          inputPreview: firstExecution.execution.input ? 
+            firstExecution.execution.input.substring(0, 100) + '...' : 'null',
+          searchAttributes: firstExecution.execution.searchAttributes,
+          memo: firstExecution.execution.memo
+        });
+      }
+
+      // Process workflow executions to extract detailed information first
+      const allWorkflows = await Promise.all(
+        response.executions.map(async (execution: any) => {
+          try {
+            // Get workflow handle for additional details
+            const handle = client.workflow.getHandle(execution.execution.workflowId, execution.execution.runId);
+            const description = await handle.describe();
+            
+            let input = null;
+            try {
+              if (execution.execution.input) {
+                input = JSON.parse(execution.execution.input);
+              }
+            } catch (parseError) {
+              console.warn(`⚠️ Could not parse input for workflow ${execution.execution.workflowId}:`, parseError);
+              input = execution.execution.input;
+            }
+
+            let executionTime: number | undefined;
+            if (execution.execution.closeTime && execution.execution.startTime) {
+              const startTime = new Date(execution.execution.startTime.seconds * 1000 + execution.execution.startTime.nanos / 1000000);
+              const closeTime = new Date(execution.execution.closeTime.seconds * 1000 + execution.execution.closeTime.nanos / 1000000);
+              executionTime = closeTime.getTime() - startTime.getTime();
+            }
+
+            const startTime = execution.execution.startTime ?
+              new Date(execution.execution.startTime.seconds * 1000 + execution.execution.startTime.nanos / 1000000).toISOString() :
+              new Date().toISOString();
+
+            const closeTime = execution.execution.closeTime ?
+              new Date(execution.execution.closeTime.seconds * 1000 + execution.execution.closeTime.nanos / 1000000).toISOString() :
+              undefined;
+
+            return {
+              workflowId: execution.execution.workflowId,
+              runId: execution.execution.runId,
+              type: execution.execution.type?.name || 'unknown',
+              status: execution.execution.status?.name || 'unknown',
+              startTime,
+              closeTime,
+              executionTime,
+              input,
+              result: description.status?.name === 'COMPLETED' ? (description as any).result : undefined,
+              failure: description.status?.name === 'FAILED' ? (description as any).failure : undefined
+            };
+          } catch (detailError) {
+            console.warn(`⚠️ Could not get details for workflow ${execution.execution.workflowId}:`, detailError);
+            const safeStartTime = execution.execution.startTime ?
+              new Date(execution.execution.startTime.seconds * 1000 + execution.execution.startTime.nanos / 1000000).toISOString() :
+              new Date().toISOString();
+
+            const safeCloseTime = execution.execution.closeTime ?
+              new Date(execution.execution.closeTime.seconds * 1000 + execution.execution.closeTime.nanos / 1000000).toISOString() :
+              undefined;
+
+            return {
+              workflowId: execution.execution.workflowId,
+              runId: execution.execution.runId,
+              type: execution.execution.type?.name || 'unknown',
+              status: execution.execution.status?.name || 'unknown',
+              startTime: safeStartTime,
+              closeTime: safeCloseTime,
+              input: null,
+              result: undefined,
+              failure: undefined
+            };
+          }
+        })
+      );
+
+      // Filter workflows by site_id since Temporal filtering may not work
+      let workflows = allWorkflows;
+      
+      if (site_id) {
+        console.log(`🔍 Filtering workflows by site_id: "${site_id}"`);
+        
+        workflows = allWorkflows.filter((workflow: any) => {
+          // Check if workflowId contains the site_id
+          if (workflow.workflowId.includes(site_id)) {
+            console.log(`✅ Found matching workflow (workflowId): ${workflow.workflowId}`);
+            return true;
+          }
+          
+          // Check if input contains the site_id
+          if (workflow.input) {
+            try {
+              const inputStr = JSON.stringify(workflow.input);
+              if (inputStr.includes(site_id)) {
+                console.log(`✅ Found matching workflow (input): ${workflow.workflowId}`);
+                return true;
+              }
+            } catch (e) {
+              // Ignore parsing errors
+            }
+          }
+          
+          return false;
+        });
+        
+        console.log(`📊 Found ${workflows.length} workflows matching site_id: ${site_id}`);
+      } else {
+        console.log(`🔍 Debug mode: Returning all workflows without filtering`);
+      }
+
+      return {
+        success: true,
+        workflows,
+        pagination: {
+          limit,
+          nextPageToken: response.nextPageToken ? Buffer.from(response.nextPageToken).toString('base64') : undefined,
+          hasMore: !!response.nextPageToken
+        }
+      };
+
+    } catch (error) {
+      console.error(`❌ Error querying workflows for site_id ${site_id}:`, error);
+      return {
+        success: false,
+        workflows: [],
+        pagination: {
+          limit,
+          hasMore: false
+        },
+        error: {
+          code: 'WORKFLOW_QUERY_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al consultar workflows'
         }
       };
     }

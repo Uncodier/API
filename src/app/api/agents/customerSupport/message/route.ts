@@ -1730,7 +1730,7 @@ export async function POST(request: Request) {
       // Set model for customer support
       // Use GPT-5-mini with minimal reasoning effort for deep thinking
       modelType: 'openai',
-      modelId: 'gpt-5-mini',
+      modelId: 'gpt-5',
       reasoningEffort: 'minimal',
       verbosity: 'low',
       // Add tools-specific model

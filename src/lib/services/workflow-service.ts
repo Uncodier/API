@@ -3,7 +3,8 @@ import { DataWorkflowService } from './workflow/data-workflow-service';
 import { BaseWorkflowService } from './workflow/base-workflow-service';
 import type { 
   WorkflowExecutionOptions, 
-  WorkflowExecutionResponse 
+  WorkflowExecutionResponse,
+  WorkflowListResponse
 } from './workflow/base-workflow-service';
 import type { 
   AnalysisData, 
@@ -146,6 +147,16 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.dailyStrategicAccountsWorkflow(args, options);
   }
 
+  // Método para consultar workflows por site_id
+  public async listWorkflowsBySiteId(
+    site_id: string, 
+    limit: number = 20, 
+    pageToken?: string
+  ): Promise<WorkflowListResponse> {
+    // Llamar directamente al método de BaseWorkflowService
+    return super.listWorkflowsBySiteId(site_id, limit, pageToken);
+  }
+
   // Métodos de configuración y reporte (heredados de BaseWorkflowService)
   public getConfigurationReport(): {
     deploymentType: 'local' | 'cloud' | 'custom';
@@ -275,6 +286,7 @@ export type {
   WhatsAppMessageWorkflowArgs, 
   WorkflowExecutionResponse, 
   WorkflowExecutionOptions,
+  WorkflowListResponse,
   EmailWorkflowArgs,
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,

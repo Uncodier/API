@@ -36,5 +36,9 @@
   "agents": {
     "title": "Agentes",
     "type": "page"
+  },
+  "logs": {
+    "title": "Logs",
+    "type": "page"
   }
 } 
