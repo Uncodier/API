@@ -157,10 +157,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       const result = await client.workflow.execute('sendEmailFromAgentWorkflow', {
         args: [args],
         taskQueue,
-        workflowId,
-        searchAttributes: {
-          site_id: [args.site_id]
-        }
+        workflowId
       });
 
       console.log(`✅ Workflow de envío de email completado: ${workflowId}`);
@@ -209,10 +206,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       const result = await client.workflow.execute('sendWhatsappFromAgentWorkflow', {
         args: [args],
         taskQueue,
-        workflowId,
-        searchAttributes: {
-          site_id: [args.site_id]
-        }
+        workflowId
       });
 
       console.log(`✅ Workflow de envío de WhatsApp completado: ${workflowId}`);
@@ -550,10 +544,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       const result = await client.workflow.execute('startRobotWorkflow', {
         args: [args],
         taskQueue,
-        workflowId,
-        searchAttributes: {
-          site_id: [args.site_id]
-        }
+        workflowId
       });
 
       console.log(`✅ Workflow de robot completado: ${workflowId}`);
@@ -607,10 +598,7 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       const result = await client.workflow.execute('promptRobotWorkflow', {
         args: [args],
         taskQueue,
-        workflowId,
-        searchAttributes: {
-          site_id: [args.site_id]
-        }
+        workflowId
       });
 
       console.log(`✅ Workflow de prompt robot completado: ${workflowId}`);

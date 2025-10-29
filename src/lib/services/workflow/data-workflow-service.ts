@@ -33,10 +33,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const handle = await client.workflow.start('idealClientProfileMiningWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
@@ -50,10 +47,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const result = await client.workflow.execute('idealClientProfileMiningWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
@@ -487,10 +481,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const handle = await client.workflow.start('leadGenerationWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
@@ -504,10 +495,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const result = await client.workflow.execute('leadGenerationWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
@@ -556,10 +544,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const handle = await client.workflow.start('analyzeSiteWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
@@ -573,10 +558,7 @@ export class DataWorkflowService extends BaseWorkflowService {
         const result = await client.workflow.execute('analyzeSiteWorkflow', {
           args: [args],
           taskQueue,
-          workflowId,
-          searchAttributes: {
-            site_id: [args.site_id]
-          }
+          workflowId
         });
 
         return {
