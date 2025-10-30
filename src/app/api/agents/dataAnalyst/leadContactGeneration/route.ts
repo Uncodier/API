@@ -576,6 +576,52 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
   return finalPatterns;
 }
 
+// Validate that generated emails don't use the site's domain
+function validateEmailsNotUsingSiteDomain(
+  emails: string[], 
+  siteDomain: string | null, 
+  leadDomain: string
+): { validEmails: string[], filteredCount: number, needsFallback: boolean } {
+  if (!siteDomain) {
+    return { validEmails: emails, filteredCount: 0, needsFallback: false };
+  }
+  
+  const siteDomainClean = siteDomain.toLowerCase().trim();
+  const leadDomainClean = leadDomain.toLowerCase().trim();
+  
+  const validEmails = emails.filter(email => {
+    const emailLower = email.toLowerCase();
+    const emailDomain = emailLower.split('@')[1];
+    
+    // Check if email uses site domain or its subdomains
+    if (emailDomain === siteDomainClean || emailDomain.endsWith(`.${siteDomainClean}`)) {
+      console.log(`🚫 Filtered generated email using site domain: ${email}`);
+      return false;
+    }
+    
+    // Ensure email uses the lead's domain
+    if (emailDomain !== leadDomainClean && !emailDomain.endsWith(`.${leadDomainClean}`)) {
+      console.log(`🚫 Filtered generated email not using lead domain: ${email}`);
+      return false;
+    }
+    
+    return true;
+  });
+  
+  // Check if we need to generate fallback emails because all were filtered
+  const needsFallback = validEmails.length === 0 && emails.length > 0;
+  
+  if (needsFallback) {
+    console.log(`⚠️ All generated emails were filtered (using site domain). Will generate fallback emails for lead domain: ${leadDomain}`);
+  }
+  
+  return { 
+    validEmails, 
+    filteredCount: emails.length - validEmails.length,
+    needsFallback
+  };
+}
+
 // Inicializar el sistema de comandos
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -901,6 +947,33 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
           emailGenerationResult = resultWithEmailGeneration.email_generation_analysis;
           responseData.email_generation_analysis = emailGenerationResult;
         }
+        
+        // Validate generated emails don't use site domain
+        if (emailGenerationResult?.generated_emails && Array.isArray(emailGenerationResult.generated_emails)) {
+          const { validEmails, filteredCount, needsFallback } = validateEmailsNotUsingSiteDomain(
+            emailGenerationResult.generated_emails,
+            siteDomainNote,
+            domain
+          );
+          
+          if (filteredCount > 0) {
+            console.log(`⚠️ Filtered ${filteredCount} emails that violated domain policy`);
+            emailGenerationResult.generated_emails = validEmails;
+            responseData.email_generation_analysis = emailGenerationResult;
+            responseData.domain_validation = {
+              filtered_count: filteredCount,
+              reason: 'Emails using site domain were removed'
+            };
+          }
+          
+          // If all emails were filtered, generate fallback emails
+          if (needsFallback) {
+            console.log(`🔄 Generating fallback emails for lead domain: ${domain}`);
+            const fallbackEmails = generateEmailPatterns(name, domain, context);
+            responseData.fallback_emails = fallbackEmails;
+            responseData.message += ' - All AI emails filtered, using fallback generation';
+          }
+        }
       } catch (error) {
         console.error('Error extracting email_generation_analysis from completed command:', error);
       }
@@ -910,6 +983,42 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
     if (!emailGenerationResult && basicEmailPatterns.length > 0) {
       responseData.fallback_emails = basicEmailPatterns;
       responseData.message += ' - Using basic pattern generation as fallback';
+    }
+    
+    // Validate fallback emails as well
+    if (responseData.fallback_emails) {
+      const { validEmails, filteredCount, needsFallback } = validateEmailsNotUsingSiteDomain(
+        responseData.fallback_emails,
+        siteDomainNote,
+        domain
+      );
+      
+      if (filteredCount > 0) {
+        console.log(`⚠️ Filtered ${filteredCount} fallback emails that violated domain policy`);
+        responseData.fallback_emails = validEmails;
+        responseData.domain_validation = {
+          filtered_count: filteredCount,
+          reason: 'Fallback emails using site domain were removed'
+        };
+      }
+      
+      // If all fallback emails were also filtered, generate basic safe emails
+      if (needsFallback) {
+        console.log(`🔄 All fallback emails filtered, generating basic safe emails for lead domain: ${domain}`);
+        const basicSafeEmails = [
+          `info@${domain}`,
+          `contact@${domain}`,
+          `admin@${domain}`,
+          `support@${domain}`,
+          `hello@${domain}`
+        ];
+        responseData.fallback_emails = basicSafeEmails;
+        responseData.message += ' - All emails filtered, using basic safe emails';
+        responseData.domain_validation = {
+          filtered_count: filteredCount,
+          reason: 'All emails filtered, using basic safe email patterns'
+        };
+      }
     }
     
     return NextResponse.json({
