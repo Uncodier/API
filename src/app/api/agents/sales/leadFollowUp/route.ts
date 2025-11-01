@@ -413,7 +413,13 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
           console.log(`🔑 Database UUID found in metadata: ${dbUuid}`);
         }
         
-        if (executedCommand.status === 'completed' || executedCommand.status === 'failed') {
+        // Accept commands with status 'completed' OR 'failed' if they have valid results
+        // This matches customerSupport behavior: process results even if status is 'failed'
+        const hasValidResults = executedCommand.results && Array.isArray(executedCommand.results) && executedCommand.results.length > 0;
+        const shouldAccept = executedCommand.status === 'completed' || 
+                           (executedCommand.status === 'failed' && hasValidResults);
+        
+        if (shouldAccept) {
           console.log(`✅ Command ${commandId} completed with status: ${executedCommand.status}`);
           
           // Try to get database UUID if we still don't have it
@@ -427,7 +433,6 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
           // Consider a command "completed" if:
           // 1. Status is 'completed', OR
           // 2. Status is 'failed' but has valid results (error was handled gracefully)
-          const hasValidResults = executedCommand.results && executedCommand.results.length > 0;
           const isEffectivelyCompleted = executedCommand.status === 'completed' || 
                                        (executedCommand.status === 'failed' && hasValidResults);
           
@@ -1192,8 +1197,13 @@ export async function POST(request: Request) {
     console.log(`⏳ PHASE 1: Waiting for sales command completion...`);
     const { command: completedSalesCommand, dbUuid: salesDbUuid, completed: salesCompleted } = await waitForCommandCompletion(salesCommandId);
     
-    if (!salesCompleted || !completedSalesCommand) {
-      console.error(`❌ PHASE 1: Sales command did not complete correctly`);
+    // Update completion check logic: allow processing even if status is 'failed' but results are available
+    // Change from: !salesCompleted || !completedSalesCommand
+    // To: !completedSalesCommand || (!salesCompleted && !hasValidResults)
+    const hasValidResults = completedSalesCommand?.results && Array.isArray(completedSalesCommand.results) && completedSalesCommand.results.length > 0;
+    
+    if (!completedSalesCommand || (!salesCompleted && !hasValidResults)) {
+      console.error(`❌ PHASE 1: Sales command did not complete correctly and has no recoverable results`);
       
       // Provide more detailed error information
       const errorDetails = {
@@ -1201,7 +1211,7 @@ export async function POST(request: Request) {
         completed: salesCompleted,
         hasCommand: !!completedSalesCommand,
         commandStatus: completedSalesCommand?.status || 'unknown',
-        hasResults: !!(completedSalesCommand?.results && completedSalesCommand.results.length > 0)
+        hasResults: hasValidResults
       };
       
       console.error(`❌ PHASE 1: Error details:`, errorDetails);
@@ -1211,7 +1221,7 @@ export async function POST(request: Request) {
           success: false, 
           error: { 
             code: 'SALES_COMMAND_FAILED', 
-            message: 'Sales command did not complete successfully',
+            message: 'Sales command did not complete successfully and has no recoverable results',
             details: errorDetails
           } 
         },
@@ -1219,17 +1229,24 @@ export async function POST(request: Request) {
       );
     }
     
+    // Log if we're processing results even though command failed
+    if (completedSalesCommand.status === 'failed' && hasValidResults) {
+      console.warn(`⚠️ PHASE 1: Sales command failed but has recoverable results - processing anyway (like customerSupport)`);
+    }
+    
     // Log completion status with more detail
     if (completedSalesCommand.status === 'completed') {
       console.log(`✅ PHASE 1: Sales command completed successfully`);
     } else if (completedSalesCommand.status === 'failed') {
-      console.log(`⚠️ PHASE 1: Sales command failed but has recoverable results`);
+      console.log(`⚠️ PHASE 1: Sales command failed but processing results anyway (like customerSupport)`);
       console.log(`🔄 PHASE 1: Error was handled gracefully, proceeding with available results`);
+      console.log(`📊 PHASE 1: Command status: failed, but has ${completedSalesCommand.results?.length || 0} results to process`);
     }
     
     console.log(`📊 PHASE 1: Results obtained:`, JSON.stringify(completedSalesCommand.results, null, 2));
     
     // Extract follow-up content from results
+    // Process results even if command status is 'failed' (like customerSupport does)
     let salesFollowUpContent = null;
     if (completedSalesCommand.results && Array.isArray(completedSalesCommand.results)) {
       console.log(`🔍 PHASE 1: Complete results structure:`, JSON.stringify(completedSalesCommand.results, null, 2));
@@ -1263,13 +1280,14 @@ export async function POST(request: Request) {
     console.log(`📊 PHASE 1: Follow-up content extracted:`, JSON.stringify(salesFollowUpContent, null, 2));
     
     // Verify if we have valid content
+    // Process results even if command status is 'failed' (like customerSupport does)
     if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
       console.error(`❌ PHASE 1: Could not extract follow-up content from results`);
       console.log(`🔍 PHASE 1: Available results structure:`, JSON.stringify(completedSalesCommand.results, null, 2));
       
-      // If the command failed due to timeout but we need to continue, create a fallback response
-      if (completedSalesCommand.status === 'failed') {
-        console.log(`🔄 PHASE 1: Command failed, checking if we can create fallback content...`);
+      // If the command failed, try to create fallback content (similar to customerSupport approach)
+      if (completedSalesCommand.status === 'failed' || !salesCompleted) {
+        console.log(`🔄 PHASE 1: Command failed or didn't complete, checking if we can create fallback content...`);
         
         // Check if we have error information that might be useful
         const errorResult = completedSalesCommand.results?.find((r: any) => r.error || r.error_type);
@@ -1278,18 +1296,23 @@ export async function POST(request: Request) {
           
           // Create a basic fallback content structure
           salesFollowUpContent = {
-            strategy: "Follow-up strategy (generated after processing timeout)",
+            strategy: "Follow-up strategy (generated after tool execution error)",
             title: "Personalized Follow-up",
             message: "Thank you for your interest. We'd like to follow up on your inquiry and provide you with more information that might be helpful.",
             channel: "email", // Default to email as safest option
             _metadata: {
               fallback: true,
-              original_error: errorResult.error_type,
+              original_error: errorResult.error_type || completedSalesCommand.error,
+              command_status: completedSalesCommand.status,
               generated_at: new Date().toISOString()
             }
           };
           
           console.log(`🔧 PHASE 1: Fallback content created:`, JSON.stringify(salesFollowUpContent, null, 2));
+        } else {
+          // Even if no error result, log that we're proceeding with minimal fallback
+          console.warn(`⚠️ PHASE 1: No error result found, but command status is ${completedSalesCommand.status}`);
+          console.warn(`⚠️ PHASE 1: This may indicate a tool execution failure, but we'll proceed with minimal fallback`);
         }
       }
     }

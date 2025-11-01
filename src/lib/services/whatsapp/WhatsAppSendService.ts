@@ -487,7 +487,7 @@ export class WhatsAppSendService {
    * Desencripta un token usando CryptoJS con el mismo patrón que EmailConfigService
    */
   private static decryptToken(encryptedValue: string): string | null {
-    const encryptionKey = process.env.ENCRYPTION_KEY || '';
+    const encryptionKey = process.env.ENCRYPTION_KEY;
     
     if (!encryptionKey) {
       console.error('❌ [WhatsAppSendService] ENCRYPTION_KEY no está configurada');
@@ -499,53 +499,18 @@ export class WhatsAppSendService {
       const combinedKey = encryptionKey + salt;
       
       try {
-        console.log('🔑 [WhatsAppSendService] Intentando desencriptar con clave del environment...');
-        // 1. Intentar con la clave del environment
         const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
         const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
         
         if (decryptedText) {
-          console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave del environment');
           return decryptedText;
         }
-
-        throw new Error("La desencriptación produjo un texto vacío");
+        
+        console.error('❌ [WhatsAppSendService] La desencriptación produjo un texto vacío');
+        return null;
       } catch (error) {
-        try {
-          console.log('🔑 [WhatsAppSendService] Intentando con clave fija original...');
-          // 2. Intentar con la clave fija original
-          const originalKey = 'Encryption-key';
-          const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
-          const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-          
-          if (decryptedText) {
-            console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave original');
-            return decryptedText;
-          }
-          
-          throw new Error("La desencriptación produjo un texto vacío con clave original");
-        } catch (errorOriginal) {
-          // 3. Intentar con clave alternativa en desarrollo
-          const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
-          if (altEncryptionKey && process.env.NODE_ENV === 'development') {
-            try {
-              console.log('🔑 [WhatsAppSendService] Intentando con clave alternativa de desarrollo...');
-              const altCombinedKey = altEncryptionKey + salt;
-              const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
-              const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-              
-              if (decryptedText) {
-                console.log('✅ [WhatsAppSendService] Desencriptado exitosamente con clave alternativa');
-                return decryptedText;
-              }
-            } catch (altError) {
-              console.log('❌ [WhatsAppSendService] Falló clave alternativa también');
-            }
-          }
-          
-          console.error('❌ [WhatsAppSendService] No se pudo desencriptar el token con ninguna clave disponible');
-          return null;
-        }
+        console.error('❌ [WhatsAppSendService] Error al desencriptar el token:', error instanceof Error ? error.message : 'Unknown error');
+        return null;
       }
     }
     

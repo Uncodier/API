@@ -29,10 +29,19 @@ export const API_KEYS = {
     key: 'site-analyzer-test-key',
     secret: 'site-analyzer-test-secret',
   },
-  // Production key (should be stored in environment variables)
-  production: {
-    key: process.env.API_KEY || 'site-analyzer-prod-key',
-    secret: process.env.API_SECRET || 'site-analyzer-prod-secret',
+  // Production key (must be stored in environment variables)
+  get production() {
+    const apiKey = process.env.API_KEY;
+    const apiSecret = process.env.API_SECRET;
+    
+    if (!apiKey || !apiSecret) {
+      throw new Error('API_KEY and API_SECRET environment variables are required for production');
+    }
+    
+    return {
+      key: apiKey,
+      secret: apiSecret,
+    };
   },
   // Custom key for the other server
   otherServer: {

@@ -176,10 +176,11 @@ export class TwilioValidationService {
    */
   private static decryptToken(encryptedValue: string): string | null {
     try {
-      const encryptionKey = process.env.ENCRYPTION_KEY || '';
+      const encryptionKey = process.env.ENCRYPTION_KEY;
       
       if (!encryptionKey) {
-        throw new Error("Missing ENCRYPTION_KEY environment variable");
+        console.error('[TwilioValidation] Missing ENCRYPTION_KEY environment variable');
+        return null;
       }
       
       if (encryptedValue.includes(':')) {
@@ -187,57 +188,33 @@ export class TwilioValidationService {
         const combinedKey = encryptionKey + salt;
         
         try {
-          // 1. Intentar con la clave del environment
           const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
           const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
           
           if (decryptedText) {
             return decryptedText;
           }
-
-          throw new Error("La desencriptación produjo un texto vacío");
+          
+          console.error('[TwilioValidation] Decryption produced empty result');
+          return null;
         } catch (error) {
-          try {
-            // 2. Intentar con la clave fija original
-            const originalKey = 'Encryption-key';
-            const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
-            const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-            
-            if (decryptedText) {
-              return decryptedText;
-            }
-            
-            throw new Error("La desencriptación produjo un texto vacío con clave original");
-          } catch (errorOriginal) {
-            // 3. Intentar con clave alternativa en desarrollo
-            const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
-            if (altEncryptionKey && process.env.NODE_ENV === 'development') {
-              const altCombinedKey = altEncryptionKey + salt;
-              const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
-              const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-              
-              if (decryptedText) {
-                return decryptedText;
-              }
-            }
-            
-            throw new Error("No se pudo desencriptar el token con ninguna clave disponible");
-          }
+          console.error('[TwilioValidation] Error decrypting token:', error instanceof Error ? error.message : 'Unknown error');
+          return null;
         }
       }
       
-      // Si no tiene el formato salt:encrypted, intentar desencriptar directamente
+      // If not in salt:encrypted format, try decrypting directly
       try {
         const decrypted = CryptoJS.AES.decrypt(encryptedValue, encryptionKey);
         const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
         return decryptedText || null;
       } catch (error) {
-        console.error('[TwilioValidation] Error al desencriptar token:', error);
+        console.error('[TwilioValidation] Error decrypting token (direct format):', error instanceof Error ? error.message : 'Unknown error');
         return null;
       }
       
     } catch (error) {
-      console.error('[TwilioValidation] Error general en desencriptación:', error);
+      console.error('[TwilioValidation] General decryption error:', error instanceof Error ? error.message : 'Unknown error');
       return null;
     }
   }

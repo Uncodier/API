@@ -322,14 +322,20 @@ async function processWhatsAppMessage(
  */
 export async function GET(request: NextRequest) {
   try {
+    // Get the verification token from environment variables
+    const verifyToken = process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN;
+    
+    // Validate that the token is configured
+    if (!verifyToken) {
+      console.error('❌ WHATSAPP_WEBHOOK_VERIFY_TOKEN environment variable is not configured');
+      return new NextResponse('Verification token not configured', { status: 500 });
+    }
+    
     // Extract the query parameters required by WhatsApp verification
     const searchParams = request.nextUrl.searchParams;
     const mode = searchParams.get('hub.mode');
     const token = searchParams.get('hub.verify_token');
     const challenge = searchParams.get('hub.challenge');
-    
-    // Hardcoded verification token
-    const verifyToken = 'fg3eU9TPc32AXB5Tf6T6996P2FyXwVr7@Yp9MW2Uh3$b3&*bsq^D959$v7E82cSt';
     
     // Log verification attempt
     console.log(`🔄 Verificación de webhook WhatsApp: mode=${mode}, token=${token ? 'provided' : 'missing'}`);

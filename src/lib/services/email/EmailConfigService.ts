@@ -180,7 +180,7 @@ export class EmailConfigService {
    * Desencripta un token usando la clave de encriptación
    */
   private static decryptToken(encryptedValue: string): string {
-    const encryptionKey = process.env.ENCRYPTION_KEY || '';
+    const encryptionKey = process.env.ENCRYPTION_KEY;
     
     if (!encryptionKey) {
       throw new Error("Missing ENCRYPTION_KEY environment variable");
@@ -191,45 +191,19 @@ export class EmailConfigService {
       const combinedKey = encryptionKey + salt;
       
       try {
-        // 1. Intentar con la clave del environment
         const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
         const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
         
         if (decryptedText) {
           return decryptedText;
         }
-
-        throw new Error("La desencriptación produjo un texto vacío");
+        
+        throw new Error("Decryption produced empty result");
       } catch (error) {
-        try {
-          // 2. Intentar con la clave fija original
-          const originalKey = 'Encryption-key';
-          const decrypted = CryptoJS.AES.decrypt(encrypted, originalKey + salt);
-          const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-          
-          if (decryptedText) {
-            return decryptedText;
-          }
-          
-          throw new Error("La desencriptación produjo un texto vacío con clave original");
-        } catch (errorOriginal) {
-          // 3. Intentar con clave alternativa en desarrollo
-          const altEncryptionKey = process.env.ALT_ENCRYPTION_KEY;
-          if (altEncryptionKey && process.env.NODE_ENV === 'development') {
-            const altCombinedKey = altEncryptionKey + salt;
-            const decrypted = CryptoJS.AES.decrypt(encrypted, altCombinedKey);
-            const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-            
-            if (decryptedText) {
-              return decryptedText;
-            }
-          }
-          
-          throw new Error("No se pudo desencriptar el token con ninguna clave disponible");
-        }
+        throw new Error(`Failed to decrypt token: ${error instanceof Error ? error.message : 'Unknown error'}`);
       }
     }
     
-    throw new Error("Formato de token no soportado, se esperaba salt:encrypted");
+    throw new Error("Unsupported token format, expected salt:encrypted");
   }
 } 
