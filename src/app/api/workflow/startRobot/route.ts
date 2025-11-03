@@ -92,7 +92,7 @@ export async function POST(request: NextRequest) {
       priority: 'high', // Los robots tienen alta prioridad
       async: false, // Esperamos el resultado
       retryAttempts: 3,
-      taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+      taskQueue: 'high', // Same queue as customerSupport for fast execution
       workflowId: `start-robot-${site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     };
 

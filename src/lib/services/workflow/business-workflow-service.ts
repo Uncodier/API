@@ -118,6 +118,11 @@ interface PromptRobotWorkflowArgs {
   context: string;
 }
 
+interface StopRobotWorkflowArgs {
+  instance_id: string;
+  site_id: string;
+}
+
 export class BusinessWorkflowService extends BaseWorkflowService {
   private static instance: BusinessWorkflowService;
 
@@ -621,6 +626,57 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       };
     }
   }
+
+  /**
+   * Ejecuta el workflow para detener un robot automatizado
+   */
+  public async stopRobot(args: StopRobotWorkflowArgs, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.instance_id || !args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requieren instance_id y site_id para detener el robot'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `stop-robot-${args.instance_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🛑 Iniciando workflow de stop robot: ${workflowId}`);
+      console.log(`🆔 Instance ID: ${args.instance_id}`);
+      console.log(`🏢 Site ID: ${args.site_id}`);
+
+      const result = await client.workflow.execute('stopRobotWorkflow', {
+        args: [args],
+        taskQueue,
+        workflowId
+      });
+
+      console.log(`✅ Workflow de stop robot completado: ${workflowId}`);
+
+      return {
+        success: true,
+        workflowId,
+        status: 'completed',
+        data: result
+      };
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de stop robot:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de stop robot'
+        }
+      };
+    }
+  }
 }
 
 // Exportar interfaces para uso externo
@@ -633,5 +689,6 @@ export type {
   CustomerSupportMessageWorkflowArgs,
   AgentMessageWorkflowArgs,
   StartRobotWorkflowArgs,
-  PromptRobotWorkflowArgs
+  PromptRobotWorkflowArgs,
+  StopRobotWorkflowArgs
 }; 
