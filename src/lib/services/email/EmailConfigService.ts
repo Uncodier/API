@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
-import CryptoJS from 'crypto-js';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { decryptToken } from '@/lib/utils/token-decryption';
 
 export interface EmailConfig {
   user?: string;
@@ -119,7 +119,11 @@ export class EmailConfigService {
         const { data: withIdentifier } = await query.eq('identifier', email).maybeSingle();
         if (withIdentifier?.encrypted_value) {
           console.log(`[EmailConfigService] ✅ Token encontrado con identifier, desencriptando localmente...`);
-          return this.decryptToken(withIdentifier.encrypted_value);
+          const decryptedToken = this.decryptToken(withIdentifier.encrypted_value);
+          if (decryptedToken) {
+            return decryptedToken;
+          }
+          console.log(`[EmailConfigService] ⚠️ Desencriptación local falló, intentando sin identifier...`);
         }
       }
 
@@ -127,15 +131,11 @@ export class EmailConfigService {
       const { data: withoutIdentifier } = await query.maybeSingle();
       if (withoutIdentifier?.encrypted_value) {
         console.log(`[EmailConfigService] ✅ Token encontrado sin identifier, desencriptando localmente...`);
-        return this.decryptToken(withoutIdentifier.encrypted_value);
-      }
-
-      // 2. SOLO COMO FALLBACK: Intentar obtener del servicio de desencriptación (MÁS LENTO)
-      console.log(`[EmailConfigService] ⚠️ Token no encontrado en DB, intentando servicio de desencriptación...`);
-      const tokenFromService = await this.getTokenFromService(siteId);
-      if (tokenFromService) {
-        console.log(`[EmailConfigService] ✅ Token obtenido del servicio de desencriptación`);
-        return tokenFromService;
+        const decryptedToken = this.decryptToken(withoutIdentifier.encrypted_value);
+        if (decryptedToken) {
+          return decryptedToken;
+        }
+        console.log(`[EmailConfigService] ⚠️ Desencriptación local falló`);
       }
 
       console.log(`[EmailConfigService] ❌ No se pudo obtener token de ninguna fuente`);
@@ -147,63 +147,9 @@ export class EmailConfigService {
   }
 
   /**
-   * Obtiene el token del servicio de desencriptación
+   * Desencripta un token usando la utilidad compartida de desencriptación
    */
-  private static async getTokenFromService(siteId: string): Promise<string | null> {
-    try {
-      const baseUrl = process.env.NEXT_PUBLIC_ORIGIN || process.env.VERCEL_URL || 'http://localhost:3000';
-      const decryptUrl = new URL('/api/secure-tokens/decrypt', baseUrl).toString();
-      
-      const response = await fetch(decryptUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          site_id: siteId,
-          token_type: 'email'
-        })
-      });
-      
-      const result = await response.json();
-      
-      if (!response.ok || !result.success || !result.data?.tokenValue) {
-        return null;
-      }
-      
-      const decryptedValue = result.data.tokenValue;
-      return typeof decryptedValue === 'object' ? JSON.stringify(decryptedValue) : decryptedValue;
-    } catch (error) {
-      return null;
-    }
-  }
-
-  /**
-   * Desencripta un token usando la clave de encriptación
-   */
-  private static decryptToken(encryptedValue: string): string {
-    const encryptionKey = process.env.ENCRYPTION_KEY;
-    
-    if (!encryptionKey) {
-      throw new Error("Missing ENCRYPTION_KEY environment variable");
-    }
-    
-    if (encryptedValue.includes(':')) {
-      const [salt, encrypted] = encryptedValue.split(':');
-      const combinedKey = encryptionKey + salt;
-      
-      try {
-        const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
-        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-        
-        if (decryptedText) {
-          return decryptedText;
-        }
-        
-        throw new Error("Decryption produced empty result");
-      } catch (error) {
-        throw new Error(`Failed to decrypt token: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    }
-    
-    throw new Error("Unsupported token format, expected salt:encrypted");
+  private static decryptToken(encryptedValue: string): string | null {
+    return decryptToken(encryptedValue);
   }
 } 

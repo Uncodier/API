@@ -1,8 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import CryptoJS from 'crypto-js';
 import { WhatsAppTemplateService } from './WhatsAppTemplateService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
+import { decryptToken } from '@/lib/utils/token-decryption';
 
 export interface SendWhatsAppParams {
   phone_number: string;
@@ -484,38 +484,10 @@ export class WhatsAppSendService {
   }
 
   /**
-   * Desencripta un token usando CryptoJS con el mismo patrón que EmailConfigService
+   * Desencripta un token usando la utilidad compartida de desencriptación
    */
   private static decryptToken(encryptedValue: string): string | null {
-    const encryptionKey = process.env.ENCRYPTION_KEY;
-    
-    if (!encryptionKey) {
-      console.error('❌ [WhatsAppSendService] ENCRYPTION_KEY no está configurada');
-      return null;
-    }
-    
-    if (encryptedValue.includes(':')) {
-      const [salt, encrypted] = encryptedValue.split(':');
-      const combinedKey = encryptionKey + salt;
-      
-      try {
-        const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
-        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-        
-        if (decryptedText) {
-          return decryptedText;
-        }
-        
-        console.error('❌ [WhatsAppSendService] La desencriptación produjo un texto vacío');
-        return null;
-      } catch (error) {
-        console.error('❌ [WhatsAppSendService] Error al desencriptar el token:', error instanceof Error ? error.message : 'Unknown error');
-        return null;
-      }
-    }
-    
-    console.error('❌ [WhatsAppSendService] Formato de token no soportado, se esperaba salt:encrypted');
-    return null;
+    return decryptToken(encryptedValue);
   }
 
   /**

@@ -4,7 +4,7 @@
 
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import CryptoJS from 'crypto-js';
+import { decryptToken } from '@/lib/utils/token-decryption';
 
 interface TwilioValidationResult {
   isValid: boolean;
@@ -172,50 +172,9 @@ export class TwilioValidationService {
   }
 
   /**
-   * Desencripta un token usando la misma lógica que EmailConfigService
+   * Desencripta un token usando la utilidad compartida de desencriptación
    */
   private static decryptToken(encryptedValue: string): string | null {
-    try {
-      const encryptionKey = process.env.ENCRYPTION_KEY;
-      
-      if (!encryptionKey) {
-        console.error('[TwilioValidation] Missing ENCRYPTION_KEY environment variable');
-        return null;
-      }
-      
-      if (encryptedValue.includes(':')) {
-        const [salt, encrypted] = encryptedValue.split(':');
-        const combinedKey = encryptionKey + salt;
-        
-        try {
-          const decrypted = CryptoJS.AES.decrypt(encrypted, combinedKey);
-          const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-          
-          if (decryptedText) {
-            return decryptedText;
-          }
-          
-          console.error('[TwilioValidation] Decryption produced empty result');
-          return null;
-        } catch (error) {
-          console.error('[TwilioValidation] Error decrypting token:', error instanceof Error ? error.message : 'Unknown error');
-          return null;
-        }
-      }
-      
-      // If not in salt:encrypted format, try decrypting directly
-      try {
-        const decrypted = CryptoJS.AES.decrypt(encryptedValue, encryptionKey);
-        const decryptedText = decrypted.toString(CryptoJS.enc.Utf8);
-        return decryptedText || null;
-      } catch (error) {
-        console.error('[TwilioValidation] Error decrypting token (direct format):', error instanceof Error ? error.message : 'Unknown error');
-        return null;
-      }
-      
-    } catch (error) {
-      console.error('[TwilioValidation] General decryption error:', error instanceof Error ? error.message : 'Unknown error');
-      return null;
-    }
+    return decryptToken(encryptedValue);
   }
 } 
