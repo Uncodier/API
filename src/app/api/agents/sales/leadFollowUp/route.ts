@@ -1005,7 +1005,7 @@ export async function POST(request: Request) {
     contextMessage += `- Consider switching to a different channel if available\n`;
     contextMessage += `- Keep the message brief, high-value, and non-pushy\n`;
     contextMessage += `- Include a clear, low-friction call-to-action\n`;
-    contextMessage += `- If multiple follow-ups have been sent with no response, consider using QUALIFY_LEAD tool to mark as "lost"\n\n`;
+    contextMessage += `- CRITICAL: No response or multiple follow-ups without response does NOT qualify as "lost". Continue nurturing the lead.\n\n`;
 
     contextMessage += `📊 CONVERSATION STATUS GUIDELINES:\n`;
     contextMessage += `- Active conversation (status: active) → Lead is engaged, continue natural dialogue\n`;
@@ -1021,11 +1021,13 @@ export async function POST(request: Request) {
 
     contextMessage += `🔧 QUALIFY_LEAD TOOL USAGE:\n`;
     contextMessage += `- Use QUALIFY_LEAD tool to update lead status based on conversation analysis\n`;
-    contextMessage += `- "contacted" → Lead has responded to your messages (first meaningful interaction)\n`;
+    contextMessage += `- "contacted" → Lead has responded to your messages (first meaningful interaction). Use this for first outreach.\n`;
     contextMessage += `- "qualified" → Lead shows clear interest, asks questions, or requests information\n`;
     contextMessage += `- "converted" → Lead has made a purchase or committed to buy\n`;
-    contextMessage += `- "lost" → Lead explicitly rejected or no response after multiple attempts\n`;
-    contextMessage += `- Always update status BEFORE drafting the follow-up message\n`;
+    contextMessage += `- "lost" → ONLY use when: (a) Lead EXPLICITLY requests to stop being contacted (e.g., "stop contacting me", "remove me from your list", "I'm not interested, please stop"), OR (b) Lead clearly does NOT qualify as Ideal Customer Profile (ICP) based on company criteria (wrong industry, wrong company size, no budget, wrong geographic location, etc.)\n`;
+    contextMessage += `- DO NOT mark as "lost" for: no response, multiple follow-ups without response, ambiguous interest, or first contact\n`;
+    contextMessage += `- Update status AFTER analyzing conversation history, only when clear evidence exists\n`;
+    contextMessage += `- If unsure about status, prefer "contacted" over "lost"\n`;
     contextMessage += `=== END OF CONVERSATION INTELLIGENCE ===\n`;
     
     // Add copywriting guidelines
@@ -1044,18 +1046,26 @@ export async function POST(request: Request) {
 
     // Lead Qualification Policy & Tool Usage
     contextMessage += `\n=== LEAD QUALIFICATION POLICY ===\n`;
-    contextMessage += `Always reflect the latest state by updating the lead status using the QUALIFY_LEAD tool when appropriate.\n`;
-    contextMessage += `- contacted → first meaningful two-way interaction (lead replies or attends a call)\n`;
+    contextMessage += `Update the lead status using the QUALIFY_LEAD tool when appropriate, AFTER analyzing conversation history and only when clear evidence exists.\n`;
+    contextMessage += `\nSTATUS DEFINITIONS:\n`;
+    contextMessage += `- contacted → first meaningful two-way interaction (lead replies or attends a call). Use this for first outreach.\n`;
     contextMessage += `- qualified → ICP fit + clear interest (e.g., requested demo, positive signals, BANT fit, meeting booked)\n`;
     contextMessage += `- converted → deal won (payment received, contract signed, clear verbal commit with PO/date)\n`;
-    contextMessage += `- lost → explicitly not interested, selected competitor, no response after agreed cadence, no budget/timing\n`;
+    contextMessage += `- lost → ONLY use when:\n`;
+    contextMessage += `  (a) Lead EXPLICITLY requests to stop being contacted (e.g., "stop contacting me", "remove me from your list", "I'm not interested, please stop", "don't contact me again")\n`;
+    contextMessage += `  (b) Lead clearly does NOT qualify as Ideal Customer Profile (ICP) based on company criteria (e.g., wrong industry, wrong company size, no budget, wrong geographic location, etc.)\n`;
+    contextMessage += `\nCRITICAL PROHIBITIONS:\n`;
+    contextMessage += `- DO NOT mark as "lost" unless the lead EXPLICITLY requests to stop being contacted OR clearly does not qualify as ICP\n`;
+    contextMessage += `- DO NOT mark as "lost" for: no response, multiple follow-ups without response, ambiguous interest, or first contact\n`;
+    contextMessage += `- When initiating first contact, mark as "contacted", NOT "lost"\n`;
+    contextMessage += `- If unsure about status, prefer "contacted" over "lost"\n`;
     contextMessage += `\nWHEN TO USE QUALIFY_LEAD:\n`;
     contextMessage += `- After each significant interaction that changes the pipeline stage.\n`;
     contextMessage += `- Immediately after booking a meeting (qualified) or closing a sale (converted).\n`;
-    contextMessage += `- After explicit rejection or disqualification (use lost; do not invent statuses).\n`;
+    contextMessage += `- After explicit rejection or clear ICP disqualification (use lost only in these cases; do not invent statuses).\n`;
     contextMessage += `\nHOW TO CALL QUALIFY_LEAD (only one identifier is needed in addition to site_id):\n`;
     contextMessage += `- Required fields: site_id, status; Optional: lead_id | email | phone, notes.\n`;
-    contextMessage += `Return to drafting messages only after ensuring the status is updated.\n`;
+    contextMessage += `Return to drafting messages only after ensuring the status is updated (if status update is needed).\n`;
 
     // Determine which communication channels are available (consider site config)
     console.log(`[LeadFollowUp:${requestId}] 📞 Lead contact availability - Email: ${hasEmail ? 'YES' : 'NO'}, Phone: ${hasPhone ? 'YES' : 'NO'}`);
