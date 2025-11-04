@@ -8,6 +8,7 @@ import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
 import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
@@ -72,13 +73,50 @@ export async function executeAssistant(
         editTool(ubuntuInstance),
       ];
 
-      // Execute with Scrapybara
-      const executionResult = await client.act({
-        model: anthropic(),
-        tools: [...tools, ...custom_tools],
-        system: system_prompt,
-        prompt: prompt,
+      // Convert custom tools to Scrapybara format if needed
+      // Replace generateImageTool (OpenAI format) with generateImageToolScrapybara
+      const convertedCustomTools = custom_tools.map((tool) => {
+        // Check if this is generateImageTool (OpenAI format) by name
+        if (tool?.name === 'generate_image' && site_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting generateImageTool to Scrapybara format`);
+          return generateImageToolScrapybara(ubuntuInstance, site_id);
+        }
+        // Keep other tools as-is (assuming they're already Scrapybara-compatible)
+        return tool;
       });
+
+      // Execute with Scrapybara - wrap in try-catch for better error handling
+      let executionResult;
+      try {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing Scrapybara client.act() with ${tools.length + convertedCustomTools.length} tools`);
+        executionResult = await client.act({
+          model: anthropic(),
+          tools: [...tools, ...convertedCustomTools],
+          system: system_prompt,
+          prompt: prompt,
+        });
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara client.act() completed successfully`);
+      } catch (actError: any) {
+        console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error in Scrapybara client.act():`, {
+          message: actError.message,
+          name: actError.name,
+          code: actError.code,
+          cause: actError.cause?.message || actError.cause,
+          stack: actError.stack?.substring(0, 500)
+        });
+        
+        // Check if it's a fetch/network error
+        if (actError.message?.includes('fetch failed') || actError.message?.includes('ECONNREFUSED') || actError.cause?.code === 'ECONNREFUSED') {
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎ Network error detected - this may indicate:`);
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎   1. Scrapybara API endpoint is unreachable`);
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎   2. Instance ${instance.provider_instance_id} may be stopped or terminated`);
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎   3. Network timeout during streaming`);
+          console.error(`₍ᐢ•(ܫ)•ᐢ₎   4. API key or authentication issue`);
+        }
+        
+        // Re-throw with more context
+        throw new Error(`Scrapybara execution failed: ${actError.message || 'Unknown error'}. This may be a network issue, instance timeout, or API connectivity problem.`);
+      }
 
       result = {
         text: executionResult.text || '',
