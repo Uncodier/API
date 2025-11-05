@@ -114,29 +114,10 @@ export class BackgroundBuilder {
       description?: string;
     }>
   ): string {
-    console.log(`🧩 [BackgroundBuilder] Construyendo prompt para ${name} (${id})`);
-    console.log(`🧩 [BackgroundBuilder] AgentPrompt disponible: ${agentPrompt ? 'SÍ' : 'NO'} - Longitud: ${agentPrompt ? agentPrompt.length : 0}`);
-    console.log(`🧩 [BackgroundBuilder] SystemPrompt disponible: ${systemPrompt ? 'SÍ' : 'NO'} - Longitud: ${systemPrompt ? systemPrompt.length : 0}`);
-    console.log(`🧩 [BackgroundBuilder] Backstory disponible: ${backstory ? 'SÍ' : 'NO'} - Longitud: ${backstory ? backstory.length : 0}`);
-    console.log(`🧩 [BackgroundBuilder] SiteInfo disponible: ${siteInfo ? 'SÍ' : 'NO'}`);
-    if (siteInfo) {
-      console.log(`🧩 [BackgroundBuilder] SiteInfo.site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
-      console.log(`🧩 [BackgroundBuilder] SiteInfo.settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
-      if (siteInfo.site) {
-        console.log(`🧩 [BackgroundBuilder] SiteInfo.site tiene los campos: ${Object.keys(siteInfo.site).join(', ')}`);
-      }
-      if (siteInfo.settings) {
-        console.log(`🧩 [BackgroundBuilder] SiteInfo.settings tiene los campos: ${Object.keys(siteInfo.settings).join(', ')}`);
-      }
-    }
-    console.log(`🧩 [BackgroundBuilder] Capabilities recibidas (${capabilities.length}): ${capabilities.join(', ')}`);
+    // Reduced verbosity - only log essentials
+    console.log(`🧩 [BackgroundBuilder] Building prompt for ${name}`);
     
-    // Log específico para branding
-    if (siteInfo && siteInfo.settings && siteInfo.settings.branding) {
-      console.log(`🧩 [BackgroundBuilder] Branding disponible: SÍ`);
-    } else {
-      console.log(`🧩 [BackgroundBuilder] Branding disponible: NO`);
-    }
+    // Reduced verbosity - branding check removed
     
     // Construir el prompt de forma estructurada por bloques
     const sections = [
@@ -159,7 +140,7 @@ export class BackgroundBuilder {
       .filter(section => section.trim() !== '')
       .join('\n\n');
     
-    console.log(`📏 [BackgroundBuilder] Longitud total del prompt generado: ${finalPrompt.length} caracteres`);
+    // Reduced verbosity
     
     // Verificaciones de control
     this.verifyPromptSections(finalPrompt, systemPrompt, agentPrompt, backstory, siteInfo);
@@ -188,7 +169,7 @@ export class BackgroundBuilder {
   private static createBackstorySection(backstory?: string): string {
     if (!backstory || !backstory.trim()) return '';
     
-    console.log(`🔍 [BackgroundBuilder] Añadiendo backstory del agente: ${backstory.substring(0, 50)}...`);
+    // Reduced verbosity
     return `# Backstory\n${backstory}`;
   }
   
@@ -198,12 +179,12 @@ export class BackgroundBuilder {
   private static createSiteInfoSection(siteInfo?: { site: any | null; settings: any | null; copywriting?: any[] | null }): string {
     if (!siteInfo || (!siteInfo.site && !siteInfo.settings && (!siteInfo.copywriting || siteInfo.copywriting.length === 0))) return '';
     
-    console.log(`🔍 [BackgroundBuilder] Iniciando creación de sección de sitio`);
+    // Reduced verbosity
     let siteSection = '# Site Information\n';
     
     // Añadir información básica del sitio
     if (siteInfo.site) {
-      console.log(`🔍 [BackgroundBuilder] Añadiendo información del sitio: ${siteInfo.site.name || 'Sitio Desconocido'}`);
+      // Reduced verbosity
       
       siteSection += `## Site Details\n`;
       siteSection += `Name: ${siteInfo.site.name || 'Not specified'}\n`;
@@ -219,7 +200,7 @@ export class BackgroundBuilder {
       
       // Agregar horarios de atención si están disponibles (desde site)
       if (siteInfo.site.business_hours && Object.keys(siteInfo.site.business_hours).length > 0) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo business_hours desde site`);
+        // Reduced verbosity
         siteSection += `\n## Business Hours\n`;
         try {
           const businessHours = typeof siteInfo.site.business_hours === 'string'
@@ -253,13 +234,10 @@ export class BackgroundBuilder {
     }
     
     // Copywriting (contenido de copywriting desde tabla separada)
-    console.log(`🔍 [BackgroundBuilder] Verificando copywriting en siteInfo`);
-    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting exists:`, !!siteInfo.copywriting);
-    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting type:`, typeof siteInfo.copywriting);
-    console.log(`🔍 [BackgroundBuilder] siteInfo.copywriting value:`, siteInfo.copywriting);
+    // Reduced verbosity - copywriting check
     
     if (siteInfo.copywriting && siteInfo.copywriting.length > 0) {
-      console.log(`🔍 [BackgroundBuilder] Procesando copywriting (${siteInfo.copywriting.length} elementos)`);
+      // Reduced verbosity
       try {
         // Los datos ya vienen procesados desde la base de datos
         const copywritingData = siteInfo.copywriting;
@@ -269,7 +247,7 @@ export class BackgroundBuilder {
           ? copywritingData.filter((item: any) => item && item.status === 'approved') 
           : [];
           
-        console.log(`🔍 [BackgroundBuilder] Añadiendo copywriting aprobado (${approvedCopywriting.length} elementos aprobados de ${copywritingData.length} totales)`);
+        // Reduced verbosity
           
         if (approvedCopywriting.length > 0) {
           siteSection += `\n## Copywriting Content\n`;
@@ -329,8 +307,7 @@ export class BackgroundBuilder {
     
     // Añadir configuración del sitio si está disponible
     if (siteInfo.settings) {
-      console.log(`🔍 [BackgroundBuilder] Añadiendo configuración del sitio (type: ${typeof siteInfo.settings})`);
-      console.log(`🔍 [BackgroundBuilder] Settings keys: ${Object.keys(siteInfo.settings).join(', ')}`);
+      // Reduced verbosity
       
       siteSection += `\n## Site Configuration\n`;
       
@@ -341,7 +318,7 @@ export class BackgroundBuilder {
       
       // Business Model si está disponible
       if (siteInfo.settings.business_model) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo business_model`);
+        // Reduced verbosity
         try {
           const businessModelData = typeof siteInfo.settings.business_model === 'string'
             ? JSON.parse(siteInfo.settings.business_model)
@@ -393,11 +370,11 @@ export class BackgroundBuilder {
       // Análisis SWOT
       if (siteInfo.settings.swot) {
         try {
-          console.log(`🔍 [BackgroundBuilder] Añadiendo SWOT (type: ${typeof siteInfo.settings.swot})`);
+          // Reduced verbosity
           if (typeof siteInfo.settings.swot === 'string') {
-            console.log(`🔍 [BackgroundBuilder] SWOT es un string, intentando parsear: ${siteInfo.settings.swot.substring(0, 50)}...`);
+            // Reduced verbosity
           } else {
-            console.log(`🔍 [BackgroundBuilder] SWOT keys: ${Object.keys(siteInfo.settings.swot).join(', ')}`);
+            // Reduced verbosity
           }
           
           // Añadimos estructura mejorada para SWOT
@@ -421,7 +398,7 @@ export class BackgroundBuilder {
       
       // Información de marketing
       if (siteInfo.settings.marketing_budget) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo marketing_budget`);
+        // Reduced verbosity
         try {
           // Mejorar estructura del presupuesto de marketing
           const budgetData = typeof siteInfo.settings.marketing_budget === 'string'
@@ -447,19 +424,19 @@ export class BackgroundBuilder {
       
       // Productos (en una sección separada)
       if (siteInfo.settings.products) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo products`);
+        // Reduced verbosity
         siteSection += `\n## Products\n${JSON.stringify(siteInfo.settings.products)}\n`;
       }
       
       // Servicios (en una sección separada)
       if (siteInfo.settings.services) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo services`);
+        // Reduced verbosity
         siteSection += `\n## Services\n${JSON.stringify(siteInfo.settings.services)}\n`;
       }
       
       // Branding (información de identidad de marca)
       if (siteInfo.settings.branding) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo branding`);
+        // Reduced verbosity
         siteSection += `\n## Brand Identity\n`;
         try {
           const brandingData = typeof siteInfo.settings.branding === 'string'
@@ -566,7 +543,7 @@ export class BackgroundBuilder {
       
       // Ubicaciones con procesamiento de restrictions
       if (siteInfo.settings.locations) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo locations`);
+        // Reduced verbosity
         
         try {
           // Parsear locations si es string
@@ -581,13 +558,9 @@ export class BackgroundBuilder {
                   // Validar la estructura de la location usando el schema
                   const validatedLocation = LocationSchema.parse(location);
                   
-                  // Procesar restrictions si existe
+                  // Procesar restrictions si existe (reduced verbosity)
                   if (validatedLocation.restrictions) {
-                    console.log(`✅ [BackgroundBuilder] Location ${index + 1} tiene restrictions válidas:`, {
-                      enabled: validatedLocation.restrictions.enabled,
-                      excludedCount: validatedLocation.restrictions.excluded_addresses.length,
-                      includedCount: validatedLocation.restrictions.included_addresses.length
-                    });
+                    // Location has restrictions - processing silently
                   }
                   
                   return validatedLocation;
@@ -656,13 +629,13 @@ export class BackgroundBuilder {
       }
       
       if (siteInfo.settings.marketing_channels) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo marketing_channels`);
+        // Reduced verbosity
         siteSection += `\n## Marketing Channels\n${JSON.stringify(siteInfo.settings.marketing_channels)}\n`;
       }
       
       // Channels - información pública de canales de comunicación
       if (siteInfo.settings.channels) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo channels`);
+        // Reduced verbosity
         try {
           const channelsData = typeof siteInfo.settings.channels === 'string'
             ? JSON.parse(siteInfo.settings.channels)
@@ -770,7 +743,7 @@ export class BackgroundBuilder {
       }
       
       if (siteInfo.settings.social_media) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo social_media`);
+        // Reduced verbosity
         
         // Parsear social_media si es string (con try/catch preventivo)
         let socialMediaData: any = null;
@@ -844,29 +817,29 @@ export class BackgroundBuilder {
       
       // Customer Journey Tactics (CRITICAL INFORMATION)
       if (siteInfo.settings.customer_journey) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo customer_journey tactics`);
+        // Reduced verbosity
         siteSection += this.createCustomerJourneySection(siteInfo.settings.customer_journey);
       }
       
       // Agregar objetivos/metas si están disponibles
       if (siteInfo.settings.goals) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo goals`);
+        // Reduced verbosity
         siteSection += `\n## Goals\n${JSON.stringify(siteInfo.settings.goals)}\n`;
       }
       
       // Información del equipo
       if (siteInfo.settings.team_members) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo team_members`);
+        // Reduced verbosity
         siteSection += `\n## Team Members\n${JSON.stringify(siteInfo.settings.team_members)}\n`;
       }
       
       if (siteInfo.settings.team_roles) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo team_roles`);
+        // Reduced verbosity
         siteSection += `\n## Team Roles\n${JSON.stringify(siteInfo.settings.team_roles)}\n`;
       }
       
       if (siteInfo.settings.org_structure) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo org_structure`);
+        // Reduced verbosity
         siteSection += `\n## Organizational Structure\n${JSON.stringify(siteInfo.settings.org_structure)}\n`;
       }
       
@@ -875,7 +848,7 @@ export class BackgroundBuilder {
       if (siteInfo.settings.business_hours && 
           Object.keys(siteInfo.settings.business_hours).length > 0 &&
           (!siteInfo.site || !siteInfo.site.business_hours || Object.keys(siteInfo.site.business_hours).length === 0)) {
-        console.log(`🔍 [BackgroundBuilder] Añadiendo business_hours desde site_settings`);
+        // Reduced verbosity
         siteSection += `\n## Business Hours\n`;
         try {
           const businessHours = typeof siteInfo.settings.business_hours === 'string'
@@ -910,7 +883,7 @@ export class BackgroundBuilder {
       console.log(`⚠️ [BackgroundBuilder] No hay settings disponibles en siteInfo`);
     }
     
-    console.log(`🔍 [BackgroundBuilder] Sección de sitio creada (${siteSection.length} caracteres)`);
+    // Reduced verbosity
     return siteSection;
   }
 
@@ -923,7 +896,7 @@ export class BackgroundBuilder {
   }>): string {
     if (!activeCampaigns || activeCampaigns.length === 0) return '';
     
-    console.log(`🔍 [BackgroundBuilder] Añadiendo ${activeCampaigns.length} campañas activas al background`);
+    // Reduced verbosity
     
     let campaignsSection = '# Active Campaigns\n';
     campaignsSection += 'The following campaigns are currently active for this site:\n\n';
@@ -936,7 +909,7 @@ export class BackgroundBuilder {
       campaignsSection += '\n';
     });
     
-    console.log(`🔍 [BackgroundBuilder] Sección de campañas activas creada (${campaignsSection.length} caracteres)`);
+    // Reduced verbosity
     return campaignsSection;
   }
   
@@ -977,7 +950,7 @@ export class BackgroundBuilder {
   private static createSystemSection(systemPrompt?: string): string {
     if (!systemPrompt || !systemPrompt.trim()) return '';
     
-    console.log(`🔍 [BackgroundBuilder] Añadiendo systemPrompt: ${systemPrompt.substring(0, 50)}...`);
+    // Reduced verbosity
     return `# System Instructions\n${systemPrompt}`;
   }
   
@@ -987,7 +960,7 @@ export class BackgroundBuilder {
   private static createCustomInstructionsSection(agentPrompt?: string): string {
     if (!agentPrompt || !agentPrompt.trim()) return '';
     
-    console.log(`🔍 [BackgroundBuilder] Añadiendo prompt específico del agente: ${agentPrompt.substring(0, 50)}...`);
+    // Reduced verbosity
     return `# Agent Custom Instructions\n${agentPrompt}`;
   }
   
@@ -1210,7 +1183,7 @@ export class BackgroundBuilder {
         journeySection += '\n';
       });
       
-      console.log(`🔍 [BackgroundBuilder] Sección de Customer Journey creada (${journeySection.length} caracteres)`);
+      // Reduced verbosity
       return journeySection;
       
     } catch (error) {

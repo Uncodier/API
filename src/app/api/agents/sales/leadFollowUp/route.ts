@@ -10,6 +10,16 @@ import {
   safeStringify
 } from '@/lib/helpers/lead-context-helper';
 
+// Helper to safely stringify JSON without crashing on circular references or large objects
+function safeJsonStringify(obj: any, maxLength: number = 500): string {
+  try {
+    const str = JSON.stringify(obj, null, 2);
+    return str.length > maxLength ? str.substring(0, maxLength) + '... [truncated]' : str;
+  } catch (error: any) {
+    return `[JSON serialization error: ${error.message}]`;
+  }
+}
+
 // Helper to parse both JSON and multipart/form-data requests
 async function parseIncomingRequest(request: Request, requestId?: string): Promise<{ body: any, files: Record<string, any> }> {
   const contentType = request.headers.get('content-type') || '';
@@ -622,7 +632,7 @@ async function executeCopywriterRefinement(
         }
       }
       
-      console.log(`📊 PHASE 2: Refined content extracted:`, JSON.stringify(refinedContent, null, 2));
+      console.log(`📊 PHASE 2: Refined content extracted:`, safeJsonStringify(refinedContent));
       
       return {
         commandId: copywriterCommandId,
@@ -694,8 +704,9 @@ async function getAgentInfo(agentId: string): Promise<{ user_id: string; site_id
 
 
 export async function POST(request: Request) {
+  const requestId = uuidv4();
+  
   try {
-    const requestId = uuidv4();
     console.log(`[LeadFollowUp:${requestId}] ▶️ Incoming request`);
     const { body: rawBody, files } = await parseIncomingRequest(request, requestId);
     // Normalize keys to camelCase aliases
@@ -1207,6 +1218,15 @@ export async function POST(request: Request) {
     console.log(`⏳ PHASE 1: Waiting for sales command completion...`);
     const { command: completedSalesCommand, dbUuid: salesDbUuid, completed: salesCompleted } = await waitForCommandCompletion(salesCommandId);
     
+    // Check for tool execution failures - these are non-fatal, continue processing
+    const toolExecutionFailed = completedSalesCommand?.tool_execution_failed || false;
+    const toolExecutionError = completedSalesCommand?.tool_execution_error || null;
+    
+    if (toolExecutionFailed) {
+      console.warn(`⚠️ PHASE 1: Tool execution failed but command continued:`, toolExecutionError);
+      // Continue processing - don't crash
+    }
+    
     // Update completion check logic: allow processing even if status is 'failed' but results are available
     // Change from: !salesCompleted || !completedSalesCommand
     // To: !completedSalesCommand || (!salesCompleted && !hasValidResults)
@@ -1232,7 +1252,8 @@ export async function POST(request: Request) {
           error: { 
             code: 'SALES_COMMAND_FAILED', 
             message: 'Sales command did not complete successfully and has no recoverable results',
-            details: errorDetails
+            details: errorDetails,
+            tool_execution_error: toolExecutionError // Include tool error for debugging
           } 
         },
         { status: 500 }
@@ -1253,16 +1274,41 @@ export async function POST(request: Request) {
       console.log(`📊 PHASE 1: Command status: failed, but has ${completedSalesCommand.results?.length || 0} results to process`);
     }
     
-    console.log(`📊 PHASE 1: Results obtained:`, JSON.stringify(completedSalesCommand.results, null, 2));
+    console.log(`📊 PHASE 1: Results obtained:`, safeJsonStringify(completedSalesCommand.results));
+    
+    // 🔍 DIAGNOSTIC: Log functions/tools execution status
+    if (completedSalesCommand.functions && Array.isArray(completedSalesCommand.functions)) {
+      console.log(`🔧 [DIAGNOSTIC] Functions in command: ${completedSalesCommand.functions.length}`);
+      completedSalesCommand.functions.forEach((fn: any, idx: number) => {
+        console.log(`🔧 [DIAGNOSTIC] Function ${idx + 1}:`, {
+          name: fn.name || fn.function_name,
+          status: fn.status,
+          hasResult: !!fn.result,
+          hasError: !!fn.error,
+          resultType: fn.result ? typeof fn.result : 'none'
+        });
+      });
+    } else {
+      console.log(`🔧 [DIAGNOSTIC] No functions found in completedSalesCommand`);
+    }
     
     // Extract follow-up content from results
     // Process results even if command status is 'failed' (like customerSupport does)
     let salesFollowUpContent = null;
     if (completedSalesCommand.results && Array.isArray(completedSalesCommand.results)) {
-      console.log(`🔍 PHASE 1: Complete results structure:`, JSON.stringify(completedSalesCommand.results, null, 2));
+      console.log(`🔍 PHASE 1: Complete results structure:`, safeJsonStringify(completedSalesCommand.results));
       
       for (const result of completedSalesCommand.results) {
         console.log(`🔍 PHASE 1: Analyzing result:`, Object.keys(result));
+        
+        // 🔍 DIAGNOSTIC: Log detailed result structure for edge case detection
+        console.log(`🔍 [DIAGNOSTIC] Result details:`, {
+          hasFollowUpContent: !!result.follow_up_content,
+          followUpContentType: result.follow_up_content ? typeof result.follow_up_content : 'none',
+          isArray: Array.isArray(result.follow_up_content),
+          resultKeys: Object.keys(result),
+          resultSize: safeJsonStringify(result).length
+        });
         
         // Search for follow_up_content (now expecting object, not array)
         if (result.follow_up_content && typeof result.follow_up_content === 'object' && !Array.isArray(result.follow_up_content)) {
@@ -1287,13 +1333,13 @@ export async function POST(request: Request) {
       }
     }
     
-    console.log(`📊 PHASE 1: Follow-up content extracted:`, JSON.stringify(salesFollowUpContent, null, 2));
+    console.log(`📊 PHASE 1: Follow-up content extracted:`, safeJsonStringify(salesFollowUpContent));
     
     // Verify if we have valid content
     // Process results even if command status is 'failed' (like customerSupport does)
     if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
       console.error(`❌ PHASE 1: Could not extract follow-up content from results`);
-      console.log(`🔍 PHASE 1: Available results structure:`, JSON.stringify(completedSalesCommand.results, null, 2));
+      console.log(`🔍 PHASE 1: Available results structure:`, safeJsonStringify(completedSalesCommand.results));
       
       // If the command failed, try to create fallback content (similar to customerSupport approach)
       if (completedSalesCommand.status === 'failed' || !salesCompleted) {
@@ -1318,7 +1364,7 @@ export async function POST(request: Request) {
             }
           };
           
-          console.log(`🔧 PHASE 1: Fallback content created:`, JSON.stringify(salesFollowUpContent, null, 2));
+          console.log(`🔧 PHASE 1: Fallback content created:`, safeJsonStringify(salesFollowUpContent));
         } else {
           // Even if no error result, log that we're proceeding with minimal fallback
           console.warn(`⚠️ PHASE 1: No error result found, but command status is ${completedSalesCommand.status}`);
@@ -1393,7 +1439,7 @@ export async function POST(request: Request) {
     
     console.log(`📊 FINAL EXTRACTION: Using ${copywriterCompleted ? 'COPYWRITER' : 'SALES'} command for final content`);
     console.log(`📊 FINAL EXTRACTION: salesFollowUpContent available:`, !!salesFollowUpContent);
-    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent:`, JSON.stringify(salesFollowUpContent, null, 2));
+    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent:`, safeJsonStringify(salesFollowUpContent));
     console.log(`📊 FINAL EXTRACTION: finalCommand exists:`, !!finalCommand);
     console.log(`📊 FINAL EXTRACTION: finalCommand.results exists:`, !!(finalCommand && finalCommand.results));
     console.log(`📊 FINAL EXTRACTION: finalCommand.results is array:`, !!(finalCommand && finalCommand.results && Array.isArray(finalCommand.results)));
@@ -1422,7 +1468,7 @@ export async function POST(request: Request) {
           console.log(`📊 FINAL EXTRACTION: Found follow_up_content (sales mode)`);
           console.log(`📊 FINAL EXTRACTION: follow_up_content type:`, typeof result.follow_up_content);
           console.log(`📊 FINAL EXTRACTION: follow_up_content is array:`, Array.isArray(result.follow_up_content));
-          console.log(`📊 FINAL EXTRACTION: follow_up_content content:`, JSON.stringify(result.follow_up_content, null, 2));
+          console.log(`📊 FINAL EXTRACTION: follow_up_content content:`, safeJsonStringify(result.follow_up_content));
           
           if (Array.isArray(result.follow_up_content)) {
             finalContent = result.follow_up_content;
@@ -1430,7 +1476,7 @@ export async function POST(request: Request) {
           } else if (typeof result.follow_up_content === 'object') {
             finalContent = [result.follow_up_content]; // Convert object to array
             console.log(`📊 FINAL EXTRACTION: Converted follow_up_content object to array`);
-            console.log(`📊 FINAL EXTRACTION: finalContent after conversion:`, JSON.stringify(finalContent, null, 2));
+            console.log(`📊 FINAL EXTRACTION: finalContent after conversion:`, safeJsonStringify(finalContent));
           }
           break;
         }
@@ -1458,13 +1504,13 @@ export async function POST(request: Request) {
       console.error(`❌ FINAL EXTRACTION: Could not access finalCommand.results`);
     }
     
-    console.log(`📊 FINAL EXTRACTION: Final finalContent:`, JSON.stringify(finalContent, null, 2));
+    console.log(`📊 FINAL EXTRACTION: Final finalContent:`, safeJsonStringify(finalContent));
     console.log(`📊 FINAL EXTRACTION: finalContent length:`, finalContent.length);
     
     // 🔧 FALLBACK: Si finalContent está vacío pero tenemos salesFollowUpContent, usarlo
     if ((!finalContent || finalContent.length === 0) && salesFollowUpContent && typeof salesFollowUpContent === 'object') {
       console.log(`🔄 FALLBACK: finalContent is empty, using salesFollowUpContent as fallback`);
-      console.log(`🔄 FALLBACK: salesFollowUpContent:`, JSON.stringify(salesFollowUpContent, null, 2));
+      console.log(`🔄 FALLBACK: salesFollowUpContent:`, safeJsonStringify(salesFollowUpContent));
       finalContent = [salesFollowUpContent];
       console.log(`✅ FALLBACK: Set finalContent from salesFollowUpContent`);
     }
@@ -1474,9 +1520,21 @@ export async function POST(request: Request) {
     
     console.log(`🏗️ MESSAGE STRUCTURING: Starting with finalContent length: ${finalContent.length}`);
     
+    // 🔍 DIAGNOSTIC: Check finalContent before processing
+    try {
+      console.log(`🔍 [DIAGNOSTIC] finalContent check:`, {
+        isArray: Array.isArray(finalContent),
+        length: finalContent?.length || 0,
+        type: typeof finalContent,
+        canStringify: !!safeJsonStringify(finalContent)
+      });
+    } catch (diagError: any) {
+      console.error(`❌ [DIAGNOSTIC] Error checking finalContent:`, diagError.message);
+    }
+    
     if (finalContent && Array.isArray(finalContent)) {
       finalContent.forEach((item: any, index: number) => {
-        console.log(`🏗️ MESSAGE STRUCTURING: Processing item ${index}:`, JSON.stringify(item, null, 2));
+        console.log(`🏗️ MESSAGE STRUCTURING: Processing item ${index}:`, safeJsonStringify(item));
         console.log(`🏗️ MESSAGE STRUCTURING: Item has channel:`, !!item.channel);
         console.log(`🏗️ MESSAGE STRUCTURING: Item channel value:`, item.channel);
         
@@ -1499,7 +1557,7 @@ export async function POST(request: Request) {
     
     console.log(`🚀 Sequence completed - Sales: ${salesCompleted ? 'SUCCESS' : 'FAILED'}, Copywriter: ${copywriterCompleted ? 'SUCCESS' : 'FAILED'}`);
     console.log(`📦 Messages structured by channel:`, Object.keys(messages));
-    console.log(`📦 Messages content:`, JSON.stringify(messages, null, 2));
+    console.log(`📦 Messages content:`, safeJsonStringify(messages));
     
     // ===== MANUAL CHANNEL FILTERING =====
     console.log(`🔧 STARTING MANUAL CHANNEL FILTERING FOR SITE: ${siteId}`);
@@ -1602,20 +1660,60 @@ export async function POST(request: Request) {
       };
     }
     
+    // Add tool execution status if tools were used
+    if (completedSalesCommand?.functions && completedSalesCommand.functions.length > 0) {
+      console.log(`🔧 [DIAGNOSTIC] Processing tool execution metadata...`);
+      
+      const toolsExecuted = completedSalesCommand.functions.length;
+      const toolsFailed = completedSalesCommand.functions.filter((f: any) => f.status === 'failed' || f.status === 'error').length;
+      const toolsCompleted = completedSalesCommand.functions.filter((f: any) => f.status === 'completed' || f.status === 'success').length;
+      
+      responseData.tool_execution = {
+        total: toolsExecuted,
+        completed: toolsCompleted,
+        failed: toolsFailed,
+        errors: completedSalesCommand.functions
+          .filter((f: any) => (f.status === 'failed' || f.status === 'error') && f.error)
+          .map((f: any) => `${f.name || f.function_name || 'unknown'}: ${f.error}`)
+      };
+      
+      console.log(`🔧 [DIAGNOSTIC] Tool execution metadata created:`, responseData.tool_execution);
+      
+      if (toolsFailed > 0) {
+        console.warn(`⚠️ ${toolsFailed}/${toolsExecuted} tools failed during execution`);
+      }
+    }
+    
+    // 🔍 DIAGNOSTIC: Log response data structure before returning
+    console.log(`🔍 [DIAGNOSTIC] Final response structure:`, {
+      hasMessages: !!responseData.messages,
+      messageChannels: Object.keys(responseData.messages || {}),
+      hasLead: !!responseData.lead,
+      hasCommandIds: !!responseData.command_ids,
+      hasChannelCorrections: !!responseData.channel_corrections,
+      hasToolExecution: !!responseData.tool_execution,
+      canStringify: !!safeJsonStringify(responseData)
+    });
+    
+    console.log(`✅ [LeadFollowUp:${requestId}] Returning successful response`);
+    
     return NextResponse.json({
       success: true,
       data: responseData
     });
     
   } catch (error: any) {
-    console.error('General error in lead follow-up route:', error?.stack || error);
+    console.error(`❌ [LeadFollowUp:${requestId}] UNHANDLED ERROR:`, error);
+    console.error(`❌ [LeadFollowUp:${requestId}] Error message:`, error.message);
+    console.error(`❌ [LeadFollowUp:${requestId}] Stack trace:`, error.stack);
     
     return NextResponse.json(
       { 
         success: false, 
         error: { 
-          code: 'SYSTEM_ERROR', 
-          message: 'An internal system error occurred' 
+          code: 'UNHANDLED_ERROR', 
+          message: error.message || 'An internal system error occurred',
+          trace_id: requestId
         } 
       },
       { status: 500 }

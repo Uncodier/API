@@ -539,8 +539,16 @@ export class ToolEvaluator extends Base {
       console.log(`[ToolEvaluator] Tool execution completed with ${results.length} results`);
       return results;
     } catch (error: any) {
-      console.error(`[ToolEvaluator] Error executing tools:`, error);
-      throw new Error(`Failed to execute selected tools: ${error.message}`);
+      console.error(`[ToolEvaluator] Error executing tools (non-fatal):`, error);
+      // DON'T throw - return error as result so command can continue
+      return [{
+        id: 'tool_execution_error',
+        function_name: 'tool_execution',
+        status: 'error',
+        error: error.message || 'Unknown tool execution error',
+        output: null,
+        arguments: '{}'
+      }];
     }
   }
 }

@@ -283,14 +283,16 @@ export class CommandProcessor {
       // Evaluar herramientas
       const toolResult = await toolEvaluator.executeCommand(command);
       
-      // Verificar resultado
-      if (toolResult.status === 'failed') {
-        console.error(`❌ [CommandProcessor] Error en evaluación de herramientas:`, toolResult.error);
-        throw new Error(`Error en evaluación de herramientas: ${toolResult.error}`);
-      }
-      
       // Actualizar el comando con los resultados y functions
-      const updatedCommand = toolResult.updatedCommand || command;
+      let updatedCommand = toolResult.updatedCommand || command;
+      
+      // Verificar resultado - NO throw, solo marcar el fallo
+      if (toolResult.status === 'failed') {
+        console.error(`❌ [CommandProcessor] Error en evaluación de herramientas (no fatal):`, toolResult.error);
+        // Marcar que la ejecución de tools falló pero continuar
+        updatedCommand.tool_execution_failed = true;
+        updatedCommand.tool_execution_error = toolResult.error;
+      }
       
       // Verificar si las funciones se crearon correctamente
       if (updatedCommand.functions) {
@@ -351,9 +353,13 @@ export class CommandProcessor {
       
       console.log(`🧰 [CommandProcessor] FIN procesamiento de herramientas para comando: ${command.id}`);
       return updatedCommand;
-    } catch (error) {
-      console.error(`❌ [CommandProcessor] Error procesando herramientas:`, error);
-      throw error;
+    } catch (error: any) {
+      console.error(`❌ [CommandProcessor] Error procesando herramientas (no fatal):`, error);
+      // NO throw - marcar el error y continuar
+      const updatedCommand = { ...command };
+      updatedCommand.tool_execution_failed = true;
+      updatedCommand.tool_execution_error = error.message || 'Unknown tool processing error';
+      return updatedCommand;
     }
   }
   
