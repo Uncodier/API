@@ -347,24 +347,29 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Crear una nueva conversación si no existe
     if (!effectiveConversationId) {
       // Late re-check: try to find an existing conversation again to avoid race conditions (especially for WhatsApp)
-      try {
-        if (siteId && (validatedLeadId || visitorId)) {
-          const lateOrigin = origin || undefined;
-          const lateExistingConversationId = await ConversationService.findExistingConversation(
-            validatedLeadId,
-            visitorId,
-            siteId,
-            lateOrigin,
-            undefined,
-            undefined
-          );
-          if (lateExistingConversationId) {
-            effectiveConversationId = lateExistingConversationId;
-            console.log(`♻️ Late re-check found existing conversation: ${effectiveConversationId}`);
+      // Skip late re-check for website_chat origin - always create new conversations
+      if (origin !== 'website_chat') {
+        try {
+          if (siteId && (validatedLeadId || visitorId)) {
+            const lateOrigin = origin || undefined;
+            const lateExistingConversationId = await ConversationService.findExistingConversation(
+              validatedLeadId,
+              visitorId,
+              siteId,
+              lateOrigin,
+              undefined,
+              undefined
+            );
+            if (lateExistingConversationId) {
+              effectiveConversationId = lateExistingConversationId;
+              console.log(`♻️ Late re-check found existing conversation: ${effectiveConversationId}`);
+            }
           }
+        } catch (lateErr) {
+          console.log('⚠️ Late re-check for existing conversation failed:', lateErr);
         }
-      } catch (lateErr) {
-        console.log('⚠️ Late re-check for existing conversation failed:', lateErr);
+      } else {
+        console.log(`🌐 Skipping late re-check for website_chat origin - will create new conversation`);
       }
 
       // If still no conversation, create a new one
@@ -1285,7 +1290,7 @@ export async function POST(request: Request) {
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
       // Add lead_id as a basic property if it exists
       ...(effectiveLeadId ? { lead_id: effectiveLeadId } : {}),
-      description: 'Respond helpfully to the customer, assist with order status inquiries, and provide solutions for any issues with their recent purchase.',
+      description: 'Respond helpfully to the customer inquiries about your business.',
       // Set the target as a message with content
       targets: [
         {

@@ -24,6 +24,8 @@ export default ProcessorInitializer;
 // Services
 export { CommandService } from './services/command/CommandService';
 export { PortkeyConnector } from './services/PortkeyConnector';
+export { SupervisorService } from './services/SupervisorService';
+export type { SupervisorAnalysis, SupervisorResult } from './services/SupervisorService';
 
 // Agents / Processors
 export { Base } from './agents/Base';
