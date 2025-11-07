@@ -306,17 +306,11 @@ function filterAndCorrectMessageChannel(
   configuredChannels: string[],
   leadContact?: { hasEmail?: boolean; hasPhone?: boolean; leadEmail?: string | null; leadPhone?: string | null }
 ): { correctedMessages: any, corrections: string[] } {
-  console.log(`🔧 CHANNEL FILTER: Starting manual channel filtering...`);
-  console.log(`🔧 CHANNEL FILTER: Configured channels: [${configuredChannels.join(', ')}]`);
-  console.log(`🔧 CHANNEL FILTER: Original messages channels: [${Object.keys(messages).join(', ')}]`);
-  
   const corrections: string[] = [];
   const correctedMessages: any = {};
   
   // Process each message channel
   for (const [originalChannel, messageData] of Object.entries(messages)) {
-    console.log(`🔧 CHANNEL FILTER: Processing channel: ${originalChannel}`);
-    
     let targetChannel = originalChannel;
     let needsCorrection = false;
     const leadHasEmail = !!leadContact?.hasEmail && !!(leadContact?.leadEmail && String(leadContact.leadEmail).trim() !== '');
@@ -332,13 +326,9 @@ function filterAndCorrectMessageChannel(
           needsCorrection = true;
           const reason = !whatsappConfigured ? 'WhatsApp not configured' : 'Lead has no phone number';
           corrections.push(`Changed ${originalChannel} → ${targetChannel} (${reason})`);
-          console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp → Email (${reason})`);
         } else {
-          console.log(`🔧 CHANNEL FILTER: ❌ Cannot use WhatsApp (configured=${whatsappConfigured}), leadHasPhone=${leadHasPhone}. No valid email fallback.`);
           continue; // Skip this message if no valid alternative
         }
-      } else if (whatsappConfigured && leadHasPhone) {
-        console.log(`🔧 CHANNEL FILTER: ✅ WhatsApp is properly configured and lead has phone`);
       }
     } else if (originalChannel === 'email') {
       // If Email not configured OR lead lacks email, try fallback to WhatsApp
@@ -349,20 +339,12 @@ function filterAndCorrectMessageChannel(
           needsCorrection = true;
           const reason = !emailConfigured ? 'Email not configured' : 'Lead has no email address';
           corrections.push(`Changed ${originalChannel} → ${targetChannel} (${reason})`);
-          console.log(`🔧 CHANNEL FILTER: ✅ Email → WhatsApp (${reason})`);
         } else {
-          console.log(`🔧 CHANNEL FILTER: ❌ Cannot use Email (configured=${emailConfigured}), leadHasEmail=${leadHasEmail}. No valid WhatsApp fallback.`);
           continue; // Skip this message if no valid alternative
         }
-      } else if (emailConfigured && leadHasEmail) {
-        console.log(`🔧 CHANNEL FILTER: ✅ Email is properly configured and lead has email`);
       }
-    } else if (configuredChannels.includes(originalChannel)) {
-      // For other channels, accept if configured
-      console.log(`🔧 CHANNEL FILTER: ✅ ${originalChannel} is properly configured`);
-    } else {
+    } else if (!configuredChannels.includes(originalChannel)) {
       // Channel not supported or not configured, skip
-      console.log(`🔧 CHANNEL FILTER: ⚠️ Skipping ${originalChannel} (not configured)`);
       continue;
     }
     
@@ -380,13 +362,7 @@ function filterAndCorrectMessageChannel(
       const reason = lastCorrection.includes('(') ? lastCorrection.substring(lastCorrection.indexOf('(') + 1, lastCorrection.lastIndexOf(')')) : 'Channel correction applied';
       correctedMessages[targetChannel].correction_reason = reason;
     }
-    
-    console.log(`🔧 CHANNEL FILTER: Message added for channel: ${targetChannel}`);
   }
-  
-  console.log(`🔧 CHANNEL FILTER: Filtering completed`);
-  console.log(`🔧 CHANNEL FILTER: Final channels: [${Object.keys(correctedMessages).join(', ')}]`);
-  console.log(`🔧 CHANNEL FILTER: Corrections applied: ${corrections.length}`);
   
   return {
     correctedMessages,
@@ -485,15 +461,11 @@ async function executeCopywriterRefinement(
   leadId: string
 ): Promise<{ commandId: string; dbUuid: string | null; command: any } | null> {
   try {
-    console.log(`📝 PHASE 2: Executing copywriter refinement for agent: ${agentId}`);
-    
     // Prepare context for second phase including first phase results
-    console.log(`📝 PHASE 2: Preparing context for copywriter...`);
     let copywriterContext = baseContext;
     
     // Add first phase results to context
     if (salesFollowUpContent && typeof salesFollowUpContent === 'object') {
-      console.log(`📝 PHASE 2: Adding phase 1 results to context`);
       copywriterContext += `\n\n--- SALES TEAM INPUT (Phase 1 Results) ---\n`;
       copywriterContext += `The Sales/CRM Specialist has provided the following initial follow-up content that you need to refine:\n\n`;
       
@@ -523,16 +495,9 @@ async function executeCopywriterRefinement(
       copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
       copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
       copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n\n`;
-      
-      console.log(`📝 PHASE 2: Structured context prepared with ${copywriterContext.length} characters`);
-    } else {
-      console.log(`⚠️ PHASE 2: No follow-up content found in sales results`);
     }
     
     // Create command for copywriter based on available channels from phase 1
-    console.log(`🏗️ PHASE 2: Creating command for copywriter...`);
-    console.log(`🏗️ PHASE 2: Parameters - userId: ${userId}, agentId: ${agentId}, siteId: ${siteId}`);
-    
     // Build refinement target based on phase 1 content
     let refinementTarget: {title: string, message: string, channel: string} | null = null;
     
@@ -578,8 +543,6 @@ async function executeCopywriterRefinement(
       }
     }
     
-    console.log(`📋 PHASE 2: Refinement target configured for channel: ${refinementTarget?.channel || 'none'}`);
-    
     const copywriterCommand = CommandFactory.createCommand({
       task: 'lead nurture copywriting',
       userId: userId,
@@ -608,19 +571,13 @@ async function executeCopywriterRefinement(
       ]
     });
     
-    console.log(`🏗️ PHASE 2: Command created, sending for processing...`);
-    
     // Submit copywriter command
     const copywriterCommandId = await commandService.submitCommand(copywriterCommand);
-    console.log(`✅ PHASE 2: Copywriter command created successfully with internal ID: ${copywriterCommandId}`);
     
     // Wait for copywriter command to complete
-    console.log(`⏳ PHASE 2: Waiting for copywriter command completion...`);
     const result = await waitForCommandCompletion(copywriterCommandId);
     
     if (result && result.completed && result.command) {
-      console.log(`✅ PHASE 2: Copywriter command completed successfully`);
-      
       // Extract refined content from results
       let refinedContent = [];
       if (result.command.results && Array.isArray(result.command.results)) {
@@ -632,8 +589,6 @@ async function executeCopywriterRefinement(
         }
       }
       
-      console.log(`📊 PHASE 2: Refined content extracted:`, safeJsonStringify(refinedContent));
-      
       return {
         commandId: copywriterCommandId,
         dbUuid: result.dbUuid,
@@ -644,7 +599,7 @@ async function executeCopywriterRefinement(
       return null;
     }
   } catch (error: any) {
-    console.error(`❌ PHASE 2: Error creating/executing copywriter command:`, error);
+    console.error(`❌ PHASE 2: Error creating/executing copywriter command:`, error.message);
     return null;
   }
 }
@@ -1224,7 +1179,56 @@ export async function POST(request: Request) {
     
     if (toolExecutionFailed) {
       console.warn(`⚠️ PHASE 1: Tool execution failed but command continued:`, toolExecutionError);
+      console.warn(`⚠️ PHASE 1: This is non-fatal - continuing with available results`);
       // Continue processing - don't crash
+      // Tool execution failures don't prevent command completion if we have results
+    }
+    
+    // Validate tool execution results if they exist
+    if (completedSalesCommand?.functions && Array.isArray(completedSalesCommand.functions)) {
+      const toolResults = completedSalesCommand.functions;
+      console.log(`🔧 PHASE 1: Validating ${toolResults.length} tool execution results`);
+      
+      toolResults.forEach((toolResult: any, index: number) => {
+        const toolName = toolResult.function_name || toolResult.name || 'unknown';
+        const toolStatus = toolResult.status || 'unknown';
+        
+        console.log(`🔧 PHASE 1: Tool #${index + 1} (${toolName}): status=${toolStatus}`);
+        
+        if (toolStatus === 'error' || toolStatus === 'failed') {
+          console.warn(`⚠️ PHASE 1: Tool ${toolName} execution failed:`, toolResult.error);
+          // This is expected if tool_execution_failed is true, continue processing
+        } else if (toolStatus === 'success') {
+          // Validate that output is not malformed
+          if (toolResult.output) {
+            try {
+              const outputStr = typeof toolResult.output === 'string' 
+                ? toolResult.output 
+                : JSON.stringify(toolResult.output);
+              
+              if (outputStr.length > 10 * 1024 * 1024) {
+                console.warn(`⚠️ PHASE 1: Tool ${toolName} output is very large (${Math.round(outputStr.length / 1024)}KB)`);
+              }
+              
+              // Check for malformed responses (duplicate objects with string values)
+              if (typeof toolResult.output === 'object' && !Array.isArray(toolResult.output)) {
+                const outputKeys = Object.keys(toolResult.output);
+                const hasStringValues = outputKeys.some(key => 
+                  typeof toolResult.output[key] === 'string' && 
+                  ['success', 'lead', 'status_changed', 'status_change', 'next_actions'].includes(toolResult.output[key])
+                );
+                
+                if (hasStringValues) {
+                  console.warn(`⚠️ PHASE 1: Tool ${toolName} output appears to have malformed response structure`);
+                  console.warn(`⚠️ PHASE 1: Output keys:`, outputKeys);
+                }
+              }
+            } catch (validationError: any) {
+              console.warn(`⚠️ PHASE 1: Error validating tool ${toolName} output:`, validationError.message);
+            }
+          }
+        }
+      });
     }
     
     // Update completion check logic: allow processing even if status is 'failed' but results are available
@@ -1262,94 +1266,44 @@ export async function POST(request: Request) {
     
     // Log if we're processing results even though command failed
     if (completedSalesCommand.status === 'failed' && hasValidResults) {
-      console.warn(`⚠️ PHASE 1: Sales command failed but has recoverable results - processing anyway (like customerSupport)`);
-    }
-    
-    // Log completion status with more detail
-    if (completedSalesCommand.status === 'completed') {
-      console.log(`✅ PHASE 1: Sales command completed successfully`);
-    } else if (completedSalesCommand.status === 'failed') {
-      console.log(`⚠️ PHASE 1: Sales command failed but processing results anyway (like customerSupport)`);
-      console.log(`🔄 PHASE 1: Error was handled gracefully, proceeding with available results`);
-      console.log(`📊 PHASE 1: Command status: failed, but has ${completedSalesCommand.results?.length || 0} results to process`);
-    }
-    
-    console.log(`📊 PHASE 1: Results obtained:`, safeJsonStringify(completedSalesCommand.results));
-    
-    // 🔍 DIAGNOSTIC: Log functions/tools execution status
-    if (completedSalesCommand.functions && Array.isArray(completedSalesCommand.functions)) {
-      console.log(`🔧 [DIAGNOSTIC] Functions in command: ${completedSalesCommand.functions.length}`);
-      completedSalesCommand.functions.forEach((fn: any, idx: number) => {
-        console.log(`🔧 [DIAGNOSTIC] Function ${idx + 1}:`, {
-          name: fn.name || fn.function_name,
-          status: fn.status,
-          hasResult: !!fn.result,
-          hasError: !!fn.error,
-          resultType: fn.result ? typeof fn.result : 'none'
-        });
-      });
-    } else {
-      console.log(`🔧 [DIAGNOSTIC] No functions found in completedSalesCommand`);
+      console.warn(`⚠️ PHASE 1: Sales command failed but has recoverable results - processing anyway`);
     }
     
     // Extract follow-up content from results
     // Process results even if command status is 'failed' (like customerSupport does)
     let salesFollowUpContent = null;
     if (completedSalesCommand.results && Array.isArray(completedSalesCommand.results)) {
-      console.log(`🔍 PHASE 1: Complete results structure:`, safeJsonStringify(completedSalesCommand.results));
-      
       for (const result of completedSalesCommand.results) {
-        console.log(`🔍 PHASE 1: Analyzing result:`, Object.keys(result));
-        
-        // 🔍 DIAGNOSTIC: Log detailed result structure for edge case detection
-        console.log(`🔍 [DIAGNOSTIC] Result details:`, {
-          hasFollowUpContent: !!result.follow_up_content,
-          followUpContentType: result.follow_up_content ? typeof result.follow_up_content : 'none',
-          isArray: Array.isArray(result.follow_up_content),
-          resultKeys: Object.keys(result),
-          resultSize: safeJsonStringify(result).length
-        });
-        
         // Search for follow_up_content (now expecting object, not array)
         if (result.follow_up_content && typeof result.follow_up_content === 'object' && !Array.isArray(result.follow_up_content)) {
           salesFollowUpContent = result.follow_up_content;
-          console.log(`✅ PHASE 1: Found follow_up_content object`);
           break;
         }
         
         // Search for other possible structures
         if (result.content && typeof result.content === 'object' && !Array.isArray(result.content)) {
           salesFollowUpContent = result.content;
-          console.log(`✅ PHASE 1: Found content object`);
           break;
         }
         
         // Legacy support for array format (convert first element)
         if (result.follow_up_content && Array.isArray(result.follow_up_content) && result.follow_up_content.length > 0) {
           salesFollowUpContent = result.follow_up_content[0];
-          console.log(`✅ PHASE 1: Found follow_up_content array, using first element`);
           break;
         }
       }
     }
     
-    console.log(`📊 PHASE 1: Follow-up content extracted:`, safeJsonStringify(salesFollowUpContent));
-    
     // Verify if we have valid content
     // Process results even if command status is 'failed' (like customerSupport does)
     if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
       console.error(`❌ PHASE 1: Could not extract follow-up content from results`);
-      console.log(`🔍 PHASE 1: Available results structure:`, safeJsonStringify(completedSalesCommand.results));
       
       // If the command failed, try to create fallback content (similar to customerSupport approach)
       if (completedSalesCommand.status === 'failed' || !salesCompleted) {
-        console.log(`🔄 PHASE 1: Command failed or didn't complete, checking if we can create fallback content...`);
-        
         // Check if we have error information that might be useful
         const errorResult = completedSalesCommand.results?.find((r: any) => r.error || r.error_type);
         if (errorResult) {
-          console.log(`⚠️ PHASE 1: Creating fallback response due to: ${errorResult.error_type || 'unknown error'}`);
-          
           // Create a basic fallback content structure
           salesFollowUpContent = {
             strategy: "Follow-up strategy (generated after tool execution error)",
@@ -1363,19 +1317,11 @@ export async function POST(request: Request) {
               generated_at: new Date().toISOString()
             }
           };
-          
-          console.log(`🔧 PHASE 1: Fallback content created:`, safeJsonStringify(salesFollowUpContent));
-        } else {
-          // Even if no error result, log that we're proceeding with minimal fallback
-          console.warn(`⚠️ PHASE 1: No error result found, but command status is ${completedSalesCommand.status}`);
-          console.warn(`⚠️ PHASE 1: This may indicate a tool execution failure, but we'll proceed with minimal fallback`);
         }
       }
     }
     
     // PHASE 2: Search for copywriter and create second command
-    console.log(`🚀 PHASE 2: Starting copywriter search for site: ${siteId}`);
-    
     // Search for active copywriter
     const copywriterAgent = await findActiveCopywriter(siteId);
     let copywriterAgentId: string | null = null;
@@ -1386,10 +1332,6 @@ export async function POST(request: Request) {
       copywriterAgentId = copywriterAgent.agentId;
       copywriterUserId = copywriterAgent.userId;
       shouldExecutePhase2 = true;
-      console.log(`🤖 PHASE 2: Copywriter found successfully: ${copywriterAgentId} (user_id: ${copywriterUserId})`);
-    } else {
-      console.log(`⚠️ PHASE 2: No active copywriter found for site: ${siteId}`);
-      console.log(`⚠️ PHASE 2: Skipping second phase - will only execute sales phase`);
     }
     
     // Variables for phase 2
@@ -1400,8 +1342,6 @@ export async function POST(request: Request) {
     
     // Only execute phase 2 if copywriter is available AND sales content exists
     if (shouldExecutePhase2 && copywriterAgentId && typeof copywriterAgentId === 'string' && salesFollowUpContent && typeof salesFollowUpContent === 'object') {
-      console.log(`🚀 PHASE 2: Executing copywriter phase...`);
-      
       // Execute helper function for copywriter
       const copywriterResult = await executeCopywriterRefinement(
         siteId,
@@ -1417,19 +1357,8 @@ export async function POST(request: Request) {
         copywriterDbUuid = copywriterResult.dbUuid;
         completedCopywriterCommand = copywriterResult.command;
         copywriterCompleted = true;
-        console.log(`✅ PHASE 2: Copywriter command completed successfully`);
       } else {
         console.error(`❌ PHASE 2: Copywriter command did not complete correctly`);
-      }
-    } else {
-      if (!shouldExecutePhase2) {
-        console.log(`⏭️ PHASE 2: Skipping copywriter phase - no agent available`);
-      } else if (!copywriterAgentId) {
-        console.log(`⏭️ PHASE 2: Skipping copywriter phase - agentId is null`);
-      } else if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
-        console.log(`⏭️ PHASE 2: Skipping copywriter phase - no sales content to refine`);
-      } else {
-        console.log(`⏭️ PHASE 2: Skipping copywriter phase - condition not met`);
       }
     }
     
@@ -1437,127 +1366,64 @@ export async function POST(request: Request) {
     const finalCommand = copywriterCompleted ? completedCopywriterCommand : completedSalesCommand;
     let finalContent = [];
     
-    console.log(`📊 FINAL EXTRACTION: Using ${copywriterCompleted ? 'COPYWRITER' : 'SALES'} command for final content`);
-    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent available:`, !!salesFollowUpContent);
-    console.log(`📊 FINAL EXTRACTION: salesFollowUpContent:`, safeJsonStringify(salesFollowUpContent));
-    console.log(`📊 FINAL EXTRACTION: finalCommand exists:`, !!finalCommand);
-    console.log(`📊 FINAL EXTRACTION: finalCommand.results exists:`, !!(finalCommand && finalCommand.results));
-    console.log(`📊 FINAL EXTRACTION: finalCommand.results is array:`, !!(finalCommand && finalCommand.results && Array.isArray(finalCommand.results)));
-    
     // Extract content from final command
     if (finalCommand && finalCommand.results && Array.isArray(finalCommand.results)) {
-      console.log(`📊 FINAL EXTRACTION: Processing ${finalCommand.results.length} results`);
-      
       for (const result of finalCommand.results) {
-        console.log(`📊 FINAL EXTRACTION: Processing result with keys:`, Object.keys(result));
-        
         // For copywriter, search for refined_content (can be object or array)
         if (copywriterCompleted && result.refined_content) {
-          console.log(`📊 FINAL EXTRACTION: Found refined_content (copywriter mode)`);
           if (Array.isArray(result.refined_content)) {
             finalContent = result.refined_content;
-            console.log(`📊 FINAL EXTRACTION: Using refined_content array with ${finalContent.length} items`);
           } else if (typeof result.refined_content === 'object') {
             finalContent = [result.refined_content]; // Convert object to array
-            console.log(`📊 FINAL EXTRACTION: Converted refined_content object to array`);
           }
           break;
         }
         // For sales, search for follow_up_content (can be object or array)
         else if (!copywriterCompleted && result.follow_up_content) {
-          console.log(`📊 FINAL EXTRACTION: Found follow_up_content (sales mode)`);
-          console.log(`📊 FINAL EXTRACTION: follow_up_content type:`, typeof result.follow_up_content);
-          console.log(`📊 FINAL EXTRACTION: follow_up_content is array:`, Array.isArray(result.follow_up_content));
-          console.log(`📊 FINAL EXTRACTION: follow_up_content content:`, safeJsonStringify(result.follow_up_content));
-          
           if (Array.isArray(result.follow_up_content)) {
             finalContent = result.follow_up_content;
-            console.log(`📊 FINAL EXTRACTION: Using follow_up_content array with ${finalContent.length} items`);
           } else if (typeof result.follow_up_content === 'object') {
             finalContent = [result.follow_up_content]; // Convert object to array
-            console.log(`📊 FINAL EXTRACTION: Converted follow_up_content object to array`);
-            console.log(`📊 FINAL EXTRACTION: finalContent after conversion:`, safeJsonStringify(finalContent));
           }
           break;
         }
         // Fallbacks
         else if (result.content && Array.isArray(result.content)) {
-          console.log(`📊 FINAL EXTRACTION: Using fallback content array`);
           finalContent = result.content;
           break;
         }
         else if (result.content && typeof result.content === 'object') {
-          console.log(`📊 FINAL EXTRACTION: Using fallback content object`);
           finalContent = [result.content]; // Convert object to array
           break;
         }
         else if (Array.isArray(result)) {
-          console.log(`📊 FINAL EXTRACTION: Using result as array`);
           finalContent = result;
           break;
         }
-        else {
-          console.log(`📊 FINAL EXTRACTION: No matching content found in this result`);
-        }
       }
-    } else {
-      console.error(`❌ FINAL EXTRACTION: Could not access finalCommand.results`);
     }
-    
-    console.log(`📊 FINAL EXTRACTION: Final finalContent:`, safeJsonStringify(finalContent));
-    console.log(`📊 FINAL EXTRACTION: finalContent length:`, finalContent.length);
     
     // 🔧 FALLBACK: Si finalContent está vacío pero tenemos salesFollowUpContent, usarlo
     if ((!finalContent || finalContent.length === 0) && salesFollowUpContent && typeof salesFollowUpContent === 'object') {
-      console.log(`🔄 FALLBACK: finalContent is empty, using salesFollowUpContent as fallback`);
-      console.log(`🔄 FALLBACK: salesFollowUpContent:`, safeJsonStringify(salesFollowUpContent));
       finalContent = [salesFollowUpContent];
-      console.log(`✅ FALLBACK: Set finalContent from salesFollowUpContent`);
     }
     
     // Organize messages by channel
     const messages: any = {};
     
-    console.log(`🏗️ MESSAGE STRUCTURING: Starting with finalContent length: ${finalContent.length}`);
-    
-    // 🔍 DIAGNOSTIC: Check finalContent before processing
-    try {
-      console.log(`🔍 [DIAGNOSTIC] finalContent check:`, {
-        isArray: Array.isArray(finalContent),
-        length: finalContent?.length || 0,
-        type: typeof finalContent,
-        canStringify: !!safeJsonStringify(finalContent)
-      });
-    } catch (diagError: any) {
-      console.error(`❌ [DIAGNOSTIC] Error checking finalContent:`, diagError.message);
-    }
-    
     if (finalContent && Array.isArray(finalContent)) {
-      finalContent.forEach((item: any, index: number) => {
-        console.log(`🏗️ MESSAGE STRUCTURING: Processing item ${index}:`, safeJsonStringify(item));
-        console.log(`🏗️ MESSAGE STRUCTURING: Item has channel:`, !!item.channel);
-        console.log(`🏗️ MESSAGE STRUCTURING: Item channel value:`, item.channel);
-        
+      finalContent.forEach((item: any) => {
         if (item.channel) {
           messages[item.channel] = {
             title: item.title || '',
             message: item.message || '',
             strategy: item.strategy || ''
           };
-          console.log(`✅ MESSAGE STRUCTURING: Added message for channel ${item.channel}`);
-        } else {
-          console.log(`⚠️ MESSAGE STRUCTURING: Item ${index} has no channel property`);
         }
       });
     } else {
       console.error(`❌ MESSAGE STRUCTURING: finalContent is not a valid array`);
-      console.log(`❌ MESSAGE STRUCTURING: finalContent type:`, typeof finalContent);
-      console.log(`❌ MESSAGE STRUCTURING: finalContent is array:`, Array.isArray(finalContent));
     }
-    
-    console.log(`🚀 Sequence completed - Sales: ${salesCompleted ? 'SUCCESS' : 'FAILED'}, Copywriter: ${copywriterCompleted ? 'SUCCESS' : 'FAILED'}`);
-    console.log(`📦 Messages structured by channel:`, Object.keys(messages));
-    console.log(`📦 Messages content:`, safeJsonStringify(messages));
     
     // ===== MANUAL CHANNEL FILTERING =====
     console.log(`🔧 STARTING MANUAL CHANNEL FILTERING FOR SITE: ${siteId}`);
@@ -1626,12 +1492,6 @@ export async function POST(request: Request) {
       );
     }
     
-    console.log(`✅ CHANNEL FILTERING COMPLETED`);
-    console.log(`📋 Final messages after filtering:`, Object.keys(correctedMessages));
-    if (corrections.length > 0) {
-      console.log(`🔄 Channel corrections applied:`, corrections);
-    }
-    
     // ===== END MANUAL CHANNEL FILTERING =====
     
     // 🔧 CORRECCIÓN: Usar UUIDs de la base de datos en lugar de IDs internos
@@ -1639,11 +1499,6 @@ export async function POST(request: Request) {
       sales: salesDbUuid || salesCommandId, // Priorizar UUID de DB
       copywriter: copywriterDbUuid || copywriterCommandId // Priorizar UUID de DB
     };
-    
-    console.log(`🔑 Final command IDs to return:`, {
-      sales: finalCommandIds.sales + (salesDbUuid ? ' (DB UUID)' : ' (internal ID)'),
-      copywriter: finalCommandIds.copywriter + (copywriterDbUuid ? ' (DB UUID)' : ' (internal ID)')
-    });
     
     const responseData: any = {
       messages: correctedMessages, // Return filtered messages instead of original
@@ -1662,40 +1517,56 @@ export async function POST(request: Request) {
     
     // Add tool execution status if tools were used
     if (completedSalesCommand?.functions && completedSalesCommand.functions.length > 0) {
-      console.log(`🔧 [DIAGNOSTIC] Processing tool execution metadata...`);
-      
       const toolsExecuted = completedSalesCommand.functions.length;
       const toolsFailed = completedSalesCommand.functions.filter((f: any) => f.status === 'failed' || f.status === 'error').length;
       const toolsCompleted = completedSalesCommand.functions.filter((f: any) => f.status === 'completed' || f.status === 'success').length;
+      
+      // Extract tool execution details safely
+      const toolErrors: string[] = [];
+      completedSalesCommand.functions.forEach((f: any) => {
+        if ((f.status === 'failed' || f.status === 'error') && f.error) {
+          const toolName = f.name || f.function_name || 'unknown';
+          const errorMsg = typeof f.error === 'string' ? f.error : JSON.stringify(f.error);
+          toolErrors.push(`${toolName}: ${errorMsg.substring(0, 200)}`); // Limit error message length
+        }
+      });
       
       responseData.tool_execution = {
         total: toolsExecuted,
         completed: toolsCompleted,
         failed: toolsFailed,
-        errors: completedSalesCommand.functions
-          .filter((f: any) => (f.status === 'failed' || f.status === 'error') && f.error)
-          .map((f: any) => `${f.name || f.function_name || 'unknown'}: ${f.error}`)
+        errors: toolErrors,
+        execution_failed: toolExecutionFailed,
+        execution_error: toolExecutionError ? (typeof toolExecutionError === 'string' ? toolExecutionError : JSON.stringify(toolExecutionError)).substring(0, 500) : null
       };
       
-      console.log(`🔧 [DIAGNOSTIC] Tool execution metadata created:`, responseData.tool_execution);
+      console.log(`🔧 [DIAGNOSTIC] Tool execution metadata created:`, {
+        total: responseData.tool_execution.total,
+        completed: responseData.tool_execution.completed,
+        failed: responseData.tool_execution.failed,
+        execution_failed: responseData.tool_execution.execution_failed
+      });
       
       if (toolsFailed > 0) {
         console.warn(`⚠️ ${toolsFailed}/${toolsExecuted} tools failed during execution`);
+        console.warn(`⚠️ Tool execution failures are non-fatal - command completed successfully`);
       }
+      
+      if (toolExecutionFailed) {
+        console.warn(`⚠️ Tool execution failed at command level, but processing continued with available results`);
+      }
+    } else if (toolExecutionFailed) {
+      // Even if no functions array, log the tool execution failure
+      responseData.tool_execution = {
+        total: 0,
+        completed: 0,
+        failed: 0,
+        errors: [],
+        execution_failed: true,
+        execution_error: toolExecutionError ? (typeof toolExecutionError === 'string' ? toolExecutionError : JSON.stringify(toolExecutionError)).substring(0, 500) : null
+      };
+      console.warn(`⚠️ Tool execution failed but no functions array available`);
     }
-    
-    // 🔍 DIAGNOSTIC: Log response data structure before returning
-    console.log(`🔍 [DIAGNOSTIC] Final response structure:`, {
-      hasMessages: !!responseData.messages,
-      messageChannels: Object.keys(responseData.messages || {}),
-      hasLead: !!responseData.lead,
-      hasCommandIds: !!responseData.command_ids,
-      hasChannelCorrections: !!responseData.channel_corrections,
-      hasToolExecution: !!responseData.tool_execution,
-      canStringify: !!safeJsonStringify(responseData)
-    });
-    
-    console.log(`✅ [LeadFollowUp:${requestId}] Returning successful response`);
     
     return NextResponse.json({
       success: true,

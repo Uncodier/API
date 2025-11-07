@@ -96,12 +96,70 @@ async function executeComposioAction(functionName: string, args: any): Promise<a
 }
 
 /**
+ * Helper function to safely stringify large objects without causing memory issues
+ */
+function safeStringify(obj: any, maxLength: number = 10000): string {
+  try {
+    const str = JSON.stringify(obj, null, 2);
+    if (str.length > maxLength) {
+      return str.substring(0, maxLength) + '... [truncated]';
+    }
+    return str;
+  } catch (error: any) {
+    return `[JSON serialization error: ${error.message}]`;
+  }
+}
+
+/**
+ * Helper function to validate and clean response data
+ */
+function validateAndCleanResponse(data: any, toolName: string): any {
+  if (!data) {
+    return null;
+  }
+
+  // Check if response is too large (might cause serialization issues)
+  try {
+    const sizeEstimate = JSON.stringify(data).length;
+    const maxSize = 10 * 1024 * 1024; // 10MB limit
+    
+    if (sizeEstimate > maxSize) {
+      console.warn(`[ToolExecutor] Response for ${toolName} is very large (${Math.round(sizeEstimate / 1024)}KB), may cause issues`);
+      
+      // For QUALIFY_LEAD, we can safely extract just the essential data
+      if (toolName === 'QUALIFY_LEAD' && data.success && data.lead) {
+        return {
+          success: data.success,
+          lead: {
+            id: data.lead.id,
+            email: data.lead.email,
+            name: data.lead.name,
+            status: data.lead.status,
+            updated_at: data.lead.updated_at
+          },
+          status_changed: data.status_changed,
+          status_change: data.status_change,
+          next_actions: data.next_actions
+        };
+      }
+    }
+  } catch (error: any) {
+    console.warn(`[ToolExecutor] Could not estimate response size for ${toolName}:`, error.message);
+  }
+
+  return data;
+}
+
+/**
  * Ejecuta una herramienta personalizada usando Temporal Workflow
  * @param toolName Nombre de la herramienta
  * @param args Argumentos para la herramienta
  * @returns Resultado de la ejecución
  */
 async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
+  const startTime = Date.now();
+  const workflowTimeout = parseInt(process.env.TOOL_WORKFLOW_TIMEOUT_MS || '30000', 10); // Default 30 seconds
+  
   try {
     const apiConfig = getCustomToolDefinition(toolName);
     if (!apiConfig) {
@@ -134,29 +192,39 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
       priority: 'medium' as const
     };
     
-    console.log(`[ToolExecutor] Iniciando workflow para ${toolName}, ID: ${workflowOptions.workflowId}`);
+    // Create a timeout promise
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`Workflow timeout after ${workflowTimeout}ms for ${toolName}`));
+      }, workflowTimeout);
+    });
     
-    // Ejecutar workflow usando el servicio existente
-    const result = await workflowService.executeWorkflow(
+    // Ejecutar workflow usando el servicio existente con timeout
+    const workflowPromise = workflowService.executeWorkflow(
       'executeToolWorkflow',
       workflowInput,
       workflowOptions
     );
     
-    console.log(`[ToolExecutor] Resultado completo del workflow para ${toolName}:`, JSON.stringify(result, null, 2));
+    const result = await Promise.race([workflowPromise, timeoutPromise]);
+    const executionTime = Date.now() - startTime;
     
     // Verificar si el workflow fue exitoso
     if (result.success) {
-      console.log(`[ToolExecutor] Workflow ejecutado exitosamente para ${toolName}`);
-      
       // Extraer los datos del resultado del workflow
       // El resultado puede tener diferentes estructuras dependiendo del tipo de respuesta
       if (result.data) {
-        console.log(`[ToolExecutor] Datos extraídos del workflow para ${toolName}:`, JSON.stringify(result.data, null, 2));
-        return result.data;
+        // Validate and clean the response
+        const cleanedData = validateAndCleanResponse(result.data, toolName);
+        
+        if (cleanedData) {
+          return cleanedData;
+        } else {
+          console.warn(`[ToolExecutor] Response data validation failed for ${toolName}`);
+          return { success: true, message: `Tool ${toolName} executed but response validation failed` };
+        }
       } else {
         // Si no hay datos específicos, retornar indicador de éxito
-        console.log(`[ToolExecutor] Workflow exitoso pero sin datos específicos para ${toolName}`);
         return { success: true, message: `Tool ${toolName} executed successfully` };
       }
     } else {
@@ -192,7 +260,13 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
     }
     
   } catch (error: any) {
-    console.error(`[ToolExecutor] Error ejecutando herramienta via workflow ${toolName}:`, error);
+    const executionTime = Date.now() - startTime;
+    console.error(`[ToolExecutor] Error ejecutando herramienta via workflow ${toolName} (${executionTime}ms):`, error.message);
+    
+    // Si es un timeout, proporcionar contexto específico
+    if (error.message && error.message.includes('timeout')) {
+      throw new Error(`Tool execution timeout for ${toolName} after ${workflowTimeout}ms`);
+    }
     
     // Si es un error de Temporal, proporcionar contexto adicional
     if (error.message && (error.message.includes('workflow') || error.message.includes('temporal'))) {
@@ -202,6 +276,11 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
     // Si es un error de conexión a Temporal, sugerir verificar configuración
     if (error.code === 'ECONNREFUSED' || error.message.includes('connection')) {
       throw new Error(`Cannot connect to Temporal server for ${toolName}. Please verify TEMPORAL_SERVER_URL and network connectivity.`);
+    }
+    
+    // Si es un error de serialización, proporcionar contexto
+    if (error.message && (error.message.includes('circular') || error.message.includes('serialize'))) {
+      throw new Error(`Response serialization error for ${toolName}: ${error.message}`);
     }
     
     throw error;
@@ -218,21 +297,16 @@ export async function executeTools(
   functionCalls: FunctionCall[],
   toolsMap: ToolsMap
 ): Promise<ToolExecutionResult[]> {
-  console.log(`[ToolExecutor] Executing ${functionCalls.length} tools`);
+  const executionStartTime = Date.now();
   
   const results: ToolExecutionResult[] = [];
   
-  // Registrar solo las herramientas que serán utilizadas
-  const requiredTools = functionCalls.map(call => call.name || 'unknown_function').filter(name => name !== 'unknown_function');
-  console.log(`[ToolExecutor] Required tools for execution: ${requiredTools.join(', ') || 'none'}`);
-  
   for (const call of functionCalls) {
+    const callStartTime = Date.now();
     try {
       // Obtener el nombre y argumentos de la función (ahora en la raíz)
       const functionName = call.name || 'unknown_function';
       const functionArgs = call.arguments || '{}';
-      
-      console.log(`[ToolExecutor] Processing function call: ${functionName}`);
       
       // Preservar el ID original para correlacionar resultados
       const callId = call.id || `call_${Math.random().toString(36).substring(2, 8)}`;
@@ -282,25 +356,22 @@ export async function executeTools(
         
         // 2. Si existe una implementación en el mapa principal, ejecutarla
         if (toolFunction) {
-          console.log(`[ToolExecutor] Executing tool from toolsMap: ${functionName}`);
           output = await toolFunction(parsedArgs);
           success = true;
         } 
         // 3. Si no existe pero es una herramienta personalizada, ejecutarla mediante la definición API
         else if (hasCustomTool(functionName)) {
-          console.log(`[ToolExecutor] Executing custom API tool: ${functionName}`);
           output = await executeCustomApiTool(functionName, parsedArgs);
           success = true;
         }
         // 4. Si ninguna de las anteriores, intentar con Composio
         else {
-          console.log(`[ToolExecutor] No se encontró implementación para ${functionName}, intentando con Composio`);
           try {
             output = await executeComposioAction(functionName, parsedArgs);
             success = true;
           } catch (composioError: any) {
             errorMessage = `Composio action failed: ${composioError.message}`;
-            console.error(`[ToolExecutor] Error en Composio:`, composioError);
+            console.error(`[ToolExecutor] Error en Composio:`, composioError.message);
             throw new Error(errorMessage);
           }
         }
@@ -318,7 +389,7 @@ export async function executeTools(
         }
       } catch (execError: any) {
         // Capturar errores de ejecución específicos
-        console.error(`[ToolExecutor] Error executing tool ${functionName}:`, execError);
+        console.error(`[ToolExecutor] Error executing tool ${functionName}:`, execError.message);
         results.push({
           id: callId,
           function_name: functionName,
@@ -350,32 +421,10 @@ export async function executeTools(
     }
   }
   
-  console.log(`[ToolExecutor] Completed execution of ${functionCalls.length} tools`);
+  const errorCount = results.filter(r => r.status === 'error').length;
   
-  // Mostrar resumen detallado para cada resultado
-  console.log(`[ToolExecutor] 📊 Resumen de resultados de ejecución:`);
-  for (const result of results) {
-    const statusEmoji = result.status === 'success' ? '✅' : '❌';
-    console.log(`[ToolExecutor] ${statusEmoji} Función: ${result.function_name} (ID: ${result.id})`);
-    console.log(`[ToolExecutor]    Status: ${result.status}`);
-    if (result.error) {
-      // Extraer solo la parte importante del mensaje de error
-      let errorMsg = result.error;
-      try {
-        // Si es un JSON, intentar extraer el mensaje
-        const errorObj = JSON.parse(result.error);
-        errorMsg = errorObj.message || errorObj.reason || result.error;
-      } catch (e) {
-        // No es JSON, usar como está
-      }
-      console.log(`[ToolExecutor]    Error: ${errorMsg.length > 100 ? errorMsg.substring(0, 100) + '...' : errorMsg}`);
-    }
-    if (result.output) {
-      const outputStr = typeof result.output === 'string' 
-        ? result.output 
-        : JSON.stringify(result.output);
-      console.log(`[ToolExecutor]    Output: ${outputStr.length > 50 ? outputStr.substring(0, 50) + '...' : outputStr}`);
-    }
+  if (errorCount > 0) {
+    console.warn(`[ToolExecutor] ${errorCount} tool(s) failed during execution`);
   }
   
   return results;

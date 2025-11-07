@@ -161,33 +161,26 @@ export class CommandProcessor {
    * Este paso es EXPLÍCITO y CRÍTICO para el procesamiento correcto
    */
   private async initializeAgent(command: DbCommand): Promise<DbCommand> {
-    console.log(`🧠 [CommandProcessor] INICIO inicialización de agente para comando: ${command.id}`);
-    
     // Si ya tiene agent_background, verificar que sea válido
     if (command.agent_background) {
       if (command.agent_background.length < 50) {
         console.warn(`⚠️ [CommandProcessor] agent_background demasiado corto (${command.agent_background.length} caracteres)`);
       } else {
-        console.log(`✅ [CommandProcessor] Comando ya tiene agent_background (${command.agent_background.length} caracteres)`);
         return command;
       }
     }
     
     // Si no tiene agent_background pero tiene agent_id, intentar generarlo
     if (command.agent_id) {
-      console.log(`🔍 [CommandProcessor] Generando agent_background para agent_id: ${command.agent_id}`);
-      
       // Decidir qué procesador usar para generar el background
       let processor: Base | null = null;
       
       // Si existe un procesador predefinido para este agent_id, usarlo
       if (this.processors[command.agent_id]) {
-        console.log(`✅ [CommandProcessor] Usando procesador predefinido: ${command.agent_id}`);
         processor = this.processors[command.agent_id];
       } 
       // Si es un UUID, probablemente sea un agente en la base de datos
       else if (DatabaseAdapter.isValidUUID(command.agent_id)) {
-        console.log(`✅ [CommandProcessor] agent_id es un UUID, usando procesador base para generar background`);
         // Usar ToolEvaluator como procesador base porque siempre debería estar disponible
         processor = this.processors['tool_evaluator'];
       } else {
@@ -205,7 +198,6 @@ export class CommandProcessor {
       try {
         // Generar agent_background usando el servicio dedicado
         const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id, command.id);
-        console.log(`✅ [CommandProcessor] Background generado para agente ${command.agent_id} (${agentBackground.length} caracteres)`);
         
         // Actualizar el comando con el background generado
         command = {
@@ -218,7 +210,6 @@ export class CommandProcessor {
           await DatabaseAdapter.updateCommand(command.id, {
             agent_background: agentBackground
           });
-          console.log(`💾 [CommandProcessor] agent_background guardado en base de datos`);
         } catch (dbError) {
           console.error(`❌ [CommandProcessor] Error al guardar agent_background en BD:`, dbError);
           
@@ -227,7 +218,6 @@ export class CommandProcessor {
             await this.commandService.updateCommand(command.id, {
               agent_background: agentBackground
             });
-            console.log(`🔄 [CommandProcessor] Fallback: agent_background guardado via CommandService`);
           } catch (cmdError: unknown) {
             console.error(`❌ [CommandProcessor] Error crítico al guardar agent_background:`, cmdError);
             // No fail fatal aquí, seguimos con el agent_background en memoria
@@ -236,7 +226,6 @@ export class CommandProcessor {
         
         // SIEMPRE guardar en caché para este flujo
         CommandCache.setAgentBackground(command.id, agentBackground);
-        console.log(`🧠 [CommandProcessor] agent_background guardado en caché`);
       } catch (error: unknown) {
         console.error(`❌ [CommandProcessor] Error generando agent_background:`, error);
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -248,7 +237,6 @@ export class CommandProcessor {
       throw new Error(errorMsg);
     }
     
-    console.log(`🧠 [CommandProcessor] FIN inicialización de agente para comando: ${command.id}`);
     return command;
   }
   
@@ -256,8 +244,6 @@ export class CommandProcessor {
    * Procesa las herramientas del comando
    */
   private async processTools(command: DbCommand): Promise<DbCommand> {
-    console.log(`🧰 [CommandProcessor] INICIO procesamiento de herramientas para comando: ${command.id}`);
-    
     // Obtener el procesador para evaluar herramientas
     const toolEvaluator = this.processors['tool_evaluator'] as ToolEvaluator;
     
@@ -276,7 +262,6 @@ export class CommandProcessor {
     try {
       // Enriquecer con herramientas de Composio si la integración está habilitada
       if (isComposioEnabled()) {
-        console.log(`🔌 [CommandProcessor] Enriqueciendo comando con herramientas de Composio`);
         command = await enrichWithComposioTools(command);
       }
       
@@ -296,17 +281,61 @@ export class CommandProcessor {
       
       // Verificar si las funciones se crearon correctamente
       if (updatedCommand.functions) {
-        console.log(`✅ [CommandProcessor] Se generaron ${updatedCommand.functions.length} funciones en la evaluación`);
-        
-        // Loguear información sobre las funciones para diagnóstico
+        // Validar y limpiar funciones para evitar problemas de serialización
+        const validatedFunctions: any[] = [];
         updatedCommand.functions.forEach((func: any, index: number) => {
           if (func) {
             const funcName = func.function ? func.function.name : (func.name || 'unknown');
-            console.log(`📌 [CommandProcessor] Función #${index + 1}: ${funcName}`);
+            
+            // Validar que el output no sea demasiado grande o tenga problemas de serialización
+            if (func.output) {
+              try {
+                const outputStr = typeof func.output === 'string' ? func.output : JSON.stringify(func.output);
+                const maxOutputSize = 5 * 1024 * 1024; // 5MB limit
+                
+                if (outputStr.length > maxOutputSize) {
+                  console.warn(`⚠️ [CommandProcessor] Función ${funcName} tiene output muy grande (${Math.round(outputStr.length / 1024)}KB), truncando`);
+                  
+                  // Para QUALIFY_LEAD, mantener solo datos esenciales
+                  if (funcName === 'QUALIFY_LEAD' && typeof func.output === 'object' && func.output.success) {
+                    func.output = {
+                      success: func.output.success,
+                      lead: func.output.lead ? {
+                        id: func.output.lead.id,
+                        email: func.output.lead.email,
+                        name: func.output.lead.name,
+                        status: func.output.lead.status,
+                        updated_at: func.output.lead.updated_at
+                      } : null,
+                      status_changed: func.output.status_changed,
+                      status_change: func.output.status_change,
+                      next_actions: func.output.next_actions
+                    };
+                  } else {
+                    // Para otros tools, truncar el output
+                    func.output = outputStr.substring(0, maxOutputSize) + '... [truncated]';
+                  }
+                }
+                
+                // Intentar serializar para detectar problemas
+                JSON.stringify(func.output);
+                validatedFunctions.push(func);
+              } catch (serializationError: any) {
+                console.error(`❌ [CommandProcessor] Error serializando output de función ${funcName}:`, serializationError.message);
+                // Mantener la función pero con output simplificado
+                func.output = `[Serialization error: ${serializationError.message}]`;
+                validatedFunctions.push(func);
+              }
+            } else {
+              validatedFunctions.push(func);
+            }
           } else {
             console.warn(`⚠️ [CommandProcessor] Función #${index + 1} es null o undefined`);
           }
         });
+        
+        // Reemplazar funciones con versiones validadas
+        updatedCommand.functions = validatedFunctions;
       } else {
         console.warn(`⚠️ [CommandProcessor] No se generaron funciones en la evaluación de herramientas`);
         // Inicializar el array de funciones si no existe
@@ -332,33 +361,80 @@ export class CommandProcessor {
         };
         
         // Solo incluir funciones si están definidas y no vacías
-        if (updatedCommand.functions) {
-          updateData.functions = updatedCommand.functions;
-          console.log(`💾 [CommandProcessor] Guardando ${updatedCommand.functions.length} funciones en base de datos`);
+        if (updatedCommand.functions && updatedCommand.functions.length > 0) {
+          // Validar que las funciones se pueden serializar antes de guardar
+          try {
+            const functionsStr = JSON.stringify(updatedCommand.functions);
+            const maxFunctionsSize = 10 * 1024 * 1024; // 10MB limit
+            
+            if (functionsStr.length > maxFunctionsSize) {
+              console.warn(`⚠️ [CommandProcessor] Funciones demasiado grandes (${Math.round(functionsStr.length / 1024)}KB), simplificando outputs`);
+              
+              // Simplificar outputs de funciones grandes
+              updatedCommand.functions = updatedCommand.functions.map((func: any) => {
+                if (func.output && typeof func.output === 'object') {
+                  const funcName = func.function ? func.function.name : (func.name || 'unknown');
+                  if (funcName === 'QUALIFY_LEAD' && func.output.success && func.output.lead) {
+                    func.output = {
+                      success: func.output.success,
+                      lead: {
+                        id: func.output.lead.id,
+                        email: func.output.lead.email,
+                        name: func.output.lead.name,
+                        status: func.output.lead.status,
+                        updated_at: func.output.lead.updated_at
+                      },
+                      status_changed: func.output.status_changed,
+                      status_change: func.output.status_change,
+                      next_actions: func.output.next_actions
+                    };
+                  }
+                }
+                return func;
+              });
+            }
+            
+            updateData.functions = updatedCommand.functions;
+          } catch (serializationError: any) {
+            console.error(`❌ [CommandProcessor] Error serializando funciones antes de guardar:`, serializationError.message);
+            // No incluir funciones si no se pueden serializar, pero continuar
+            console.warn(`⚠️ [CommandProcessor] Omitiendo funciones en actualización debido a error de serialización`);
+          }
         }
         
         await this.commandService.updateCommand(command.id, updateData);
-        console.log(`💾 [CommandProcessor] Tokens y funciones actualizados en base de datos`);
         
-        // Verificar tras la actualización
+        // Verificar tras la actualización solo si hay problemas
         const comandoActualizado = await this.commandService.getCommandById(command.id);
-        if (comandoActualizado && comandoActualizado.functions) {
-          console.log(`✅ [CommandProcessor] Verificación: el comando tiene ${comandoActualizado.functions.length} funciones después de la actualización`);
-        } else {
-          console.warn(`⚠️ [CommandProcessor] Las funciones no fueron persistidas correctamente`);
+        if (updatedCommand.functions && updatedCommand.functions.length > 0) {
+          if (!comandoActualizado || !comandoActualizado.functions || comandoActualizado.functions.length === 0) {
+            console.warn(`⚠️ [CommandProcessor] Las funciones no fueron persistidas correctamente`);
+          }
         }
-      } catch (updateError) {
-        console.error(`❌ [CommandProcessor] Error al actualizar tokens y funciones:`, updateError);
+      } catch (updateError: any) {
+        console.error(`❌ [CommandProcessor] Error al actualizar tokens y funciones:`, updateError.message);
+        // No throw - continuar procesamiento aunque falle la actualización
       }
       
-      console.log(`🧰 [CommandProcessor] FIN procesamiento de herramientas para comando: ${command.id}`);
       return updatedCommand;
     } catch (error: any) {
-      console.error(`❌ [CommandProcessor] Error procesando herramientas (no fatal):`, error);
+      console.error(`❌ [CommandProcessor] Error procesando herramientas (no fatal):`, {
+        message: error.message,
+        name: error.name,
+        code: error.code,
+        stack: error.stack?.substring(0, 500)
+      });
       // NO throw - marcar el error y continuar
       const updatedCommand = { ...command };
       updatedCommand.tool_execution_failed = true;
       updatedCommand.tool_execution_error = error.message || 'Unknown tool processing error';
+      
+      // Asegurar que functions existe incluso si hay error
+      if (!updatedCommand.functions) {
+        updatedCommand.functions = [];
+      }
+      
+      console.warn(`⚠️ [CommandProcessor] Continuando procesamiento a pesar del error en herramientas`);
       return updatedCommand;
     }
   }
