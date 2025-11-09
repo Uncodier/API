@@ -20,6 +20,7 @@ const corsConfig = {
       'https://docs.uncodie.com',
       'https://api.uncodie.com',
       'https://api.makinari.com',
+      'https://backend.makinari.com',
       // También permitir orígenes de desarrollo en producción para pruebas
       'http://localhost:3000',
       'http://localhost:3456',
@@ -54,6 +55,7 @@ const corsConfig = {
       'http://192.168.0.62:7233',
       // Dominios de producción para desarrollo y testing
       'https://api.makinari.com',
+      'https://backend.makinari.com',
       // Dominios de Twilio para desarrollo y testing
       'https://twilio.com',
       'https://www.twilio.com',
