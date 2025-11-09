@@ -79,6 +79,8 @@ export interface DbCommand {
     [key: string]: any;
   };
   error?: string;
+  tool_execution_failed?: boolean;
+  tool_execution_error?: string;
 }
 
 // Command Execution Result
