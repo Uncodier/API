@@ -19,7 +19,9 @@ const corsConfig = {
     origins: [
       'https://docs.uncodie.com',
       'https://api.uncodie.com',
+      "https://backend.uncodie.com",
       'https://api.makinari.com',
+      "https://app.makinari.com",
       'https://backend.makinari.com',
       // También permitir orígenes de desarrollo en producción para pruebas
       'http://localhost:3000',
