@@ -110,7 +110,7 @@ function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {
 // Assistant route that works with or without Scrapybara provisioning
 // ------------------------------------------------------------------------------------
 
-export const maxDuration = 120; // 2 minutes - increased for Scrapybara SDK streaming operations
+export const maxDuration = 300; // 5 minutes - maximum for Vercel Pro plan, allows for longer Scrapybara SDK streaming operations
 
 const AssistantSchema = z.object({
   instance_id: z.string().uuid('instance_id must be valid UUID').optional(),

@@ -20,6 +20,9 @@
     },
     "src/app/api/ai/video/route.ts": {
       "maxDuration": 300
+    },
+    "src/app/api/robots/instance/assistant/route.ts": {
+      "maxDuration": 300
     }
   },
   "regions": ["iad1"]

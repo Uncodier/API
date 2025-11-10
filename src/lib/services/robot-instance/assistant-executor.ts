@@ -28,6 +28,140 @@ export interface AssistantExecutionResult {
 }
 
 /**
+ * Create onStep callback handler for assistant execution
+ * Logs steps and tool calls in real-time during execution
+ */
+function createAssistantOnStepHandler(
+  instance_id: string | undefined,
+  site_id: string | undefined,
+  user_id: string | undefined,
+  provider: string
+) {
+  return async (step: any) => {
+    // Log step information
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT STEP] Text: ${step.text?.substring(0, 100) || 'No text'}...`);
+    if (step.toolCalls?.length > 0) {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT STEP] Tool calls: ${step.toolCalls.length}`);
+    }
+
+    // Only log if instance_id is provided
+    if (!instance_id) {
+      return;
+    }
+
+    // Create parent log for the step
+    const logMessage = step.text?.trim().substring(0, 500) || 'Assistant step execution';
+    
+    const { data: parentLogData, error: parentLogError } = await supabaseAdmin
+      .from('instance_logs')
+      .insert({
+        log_type: 'agent_action',
+        level: 'info',
+        message: logMessage,
+        tokens_used: step.usage ? {
+          promptTokens: step.usage.promptTokens || step.usage.input_tokens,
+          completionTokens: step.usage.completionTokens || step.usage.output_tokens,
+          totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
+        } : {},
+        details: {
+          provider,
+          response_type: 'assistant_step',
+          raw_text: step.text,
+          total_tool_calls: step.toolCalls?.length || 0,
+        },
+        instance_id: instance_id,
+        site_id: site_id,
+        user_id: user_id,
+      })
+      .select()
+      .single();
+
+    if (parentLogError) {
+      console.error('❌ Error saving assistant step log:', parentLogError);
+      return;
+    }
+
+    const parentLogId = parentLogData?.id;
+
+    // Log individual tool calls if any
+    if (step.toolCalls && step.toolCalls.length > 0 && parentLogId) {
+      let savedToolCalls = 0;
+      let failedToolCalls = 0;
+
+      for (const toolCall of step.toolCalls) {
+        // Find corresponding tool result
+        const toolResult = step.toolResults?.find(
+          (tr: any) => tr.toolCallId === toolCall.id || tr.toolCallId === toolCall.toolCallId
+        );
+
+        // Extract screenshot if it's a computer tool
+        let screenshotBase64 = null;
+        if (toolResult && toolCall.toolName === 'computer') {
+          screenshotBase64 = toolResult.base64Image || null;
+        }
+
+        const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
+          log_type: 'tool_call',
+          level: 'info',
+          message: `${toolCall.toolName}: ${toolCall.args ? Object.entries(toolCall.args).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
+          tool_name: toolCall.toolName,
+          tool_call_id: toolCall.id || toolCall.toolCallId,
+          tool_args: toolCall.args || {},
+          tool_result: toolResult ? {
+            success: !toolResult.isError,
+            output: (() => {
+              // Clean output of any base64 image
+              const rawOutput = toolResult.result || toolResult.content || '';
+              if (typeof rawOutput === 'string') {
+                if (rawOutput.includes('base64,')) {
+                  return 'Screenshot captured successfully';
+                }
+                return rawOutput;
+              }
+              if (typeof rawOutput === 'object' && rawOutput !== null) {
+                const cleanOutput = { ...rawOutput };
+                delete cleanOutput.base64Image;
+                return cleanOutput;
+              }
+              return rawOutput;
+            })(),
+            error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
+          } : {},
+          screenshot_base64: screenshotBase64,
+          parent_log_id: parentLogId,
+          duration_ms: step.usage?.duration_ms || null,
+          tokens_used: step.usage ? {
+            promptTokens: step.usage.promptTokens || step.usage.input_tokens,
+            completionTokens: step.usage.completionTokens || step.usage.output_tokens,
+            totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
+          } : {},
+          details: {
+            provider,
+            response_type: 'assistant_tool_call',
+            tool_sequence_number: step.toolCalls.indexOf(toolCall) + 1,
+            total_tool_calls: step.toolCalls.length,
+          },
+          instance_id: instance_id,
+          site_id: site_id,
+          user_id: user_id,
+        });
+
+        if (toolLogError) {
+          console.error(`❌ Error saving tool log for ${toolCall.toolName}:`, toolLogError);
+          failedToolCalls++;
+        } else {
+          savedToolCalls++;
+        }
+      }
+
+      if (savedToolCalls > 0 || failedToolCalls > 0) {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Tool calls saved: ${savedToolCalls}/${step.toolCalls.length} (${failedToolCalls} failed)`);
+      }
+    }
+  };
+}
+
+/**
  * Execute assistant with OpenAI/Azure (no Scrapybara tools)
  */
 export async function executeAssistant(
@@ -94,6 +228,7 @@ export async function executeAssistant(
           tools: [...tools, ...convertedCustomTools],
           system: system_prompt,
           prompt: prompt,
+          onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
         });
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara client.act() completed successfully`);
       } catch (actError: any) {
@@ -161,116 +296,9 @@ export async function executeAssistant(
       };
     }
 
-    // Log assistant response, tool calls, and execution summary if instance_id provided
+    // Log execution summary if instance_id provided
+    // Note: Individual steps and tool calls are already logged in real-time via onStep callback
     if (instance_id) {
-      // First, log the assistant's main response as agent_action
-      const { data: mainLog, error: mainLogError } = await supabaseAdmin
-        .from('instance_logs')
-        .insert({
-          log_type: 'agent_action',
-          level: 'info',
-          message: result.text,
-          details: {
-            provider,
-            use_sdk_tools,
-            response_type: 'assistant_response',
-            prompt_preview: prompt.substring(0, 100),
-            steps_count: result.steps?.length || 0,
-          },
-          instance_id: instance_id,
-          site_id: site_id,
-          user_id: user_id,
-          tokens_used: result.usage,
-        })
-        .select()
-        .single();
-
-      const parentLogId = mainLog?.id || null;
-
-      if (mainLogError) {
-        console.error(`❌ Error saving agent_action log:`, mainLogError);
-      }
-
-      // Log individual tool calls if any steps exist
-      if (result.steps && result.steps.length > 0) {
-        let totalToolCalls = 0;
-        let savedToolCalls = 0;
-        let failedToolCalls = 0;
-
-        for (const step of result.steps) {
-          // Log each tool call in this step
-          if (step.toolCalls && step.toolCalls.length > 0) {
-            for (const toolCall of step.toolCalls) {
-              totalToolCalls++;
-              
-              // Find corresponding tool result
-              const toolResult = step.toolResults?.find(
-                (tr: any) => tr.toolCallId === toolCall.id || tr.toolCallId === toolCall.toolCallId
-              );
-
-              // Extract screenshot if it's a computer tool
-              let screenshotBase64 = null;
-              if (toolResult && toolCall.toolName === 'computer') {
-                screenshotBase64 = toolResult.base64Image || null;
-              }
-
-              const { error: toolLogError } = await supabaseAdmin.from('instance_logs').insert({
-                log_type: 'tool_call',
-                level: 'info',
-                message: `${toolCall.toolName}: ${toolCall.args ? Object.entries(toolCall.args).map(([k, v]) => `${k}=${v}`).join(', ') : 'no args'}`,
-                tool_name: toolCall.toolName,
-                tool_call_id: toolCall.id || toolCall.toolCallId,
-                tool_args: toolCall.args || {},
-                tool_result: toolResult ? {
-                  success: !toolResult.isError,
-                  output: (() => {
-                    // Clean output of any base64 image
-                    const rawOutput = toolResult.result || toolResult.content || '';
-                    if (typeof rawOutput === 'string') {
-                      if (rawOutput.includes('base64,')) {
-                        return 'Screenshot captured successfully';
-                      }
-                      return rawOutput;
-                    }
-                    if (typeof rawOutput === 'object' && rawOutput !== null) {
-                      const cleanOutput = { ...rawOutput };
-                      delete cleanOutput.base64Image;
-                      return cleanOutput;
-                    }
-                    return rawOutput;
-                  })(),
-                  error: toolResult.isError ? (toolResult.error || toolResult.result) : null,
-                } : {},
-                screenshot_base64: screenshotBase64,
-                parent_log_id: parentLogId,
-                details: {
-                  provider,
-                  response_type: 'assistant_tool_call',
-                  tool_sequence_number: step.toolCalls.indexOf(toolCall) + 1,
-                  total_tool_calls: step.toolCalls.length,
-                },
-                instance_id: instance_id,
-                site_id: site_id,
-                user_id: user_id,
-                tokens_used: step.usage || {},
-              });
-
-              if (toolLogError) {
-                console.error(`❌ Error saving tool log for ${toolCall.toolName}:`, toolLogError);
-                failedToolCalls++;
-              } else {
-                savedToolCalls++;
-              }
-            }
-          }
-        }
-
-        if (totalToolCalls > 0) {
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Tool calls saved: ${savedToolCalls}/${totalToolCalls} (${failedToolCalls} failed)`);
-        }
-      }
-
-      // Log execution summary
       await supabaseAdmin.from('instance_logs').insert({
         log_type: 'execution_summary',
         level: 'info',
