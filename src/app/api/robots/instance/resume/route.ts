@@ -45,9 +45,9 @@ export async function POST(request: NextRequest) {
       }, { status: 200 });
     }
 
-    if (instance.status === 'stopped' || instance.status === 'error') {
+    if (instance.status === 'error') {
       return NextResponse.json({
-        error: 'Cannot resume stopped or error instances',
+        error: 'Cannot resume error instances',
         instance_id,
         current_status: instance.status
       }, { status: 400 });
@@ -56,9 +56,10 @@ export async function POST(request: NextRequest) {
     let actionTaken = '';
     let providerInstanceId = instance.provider_instance_id;
 
-    // 3. Handle uninstantiated instances (create new Scrapybara instance)
-    if (needsProvisioning(instance)) {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated, provisioning new Scrapybara instance...`);
+    // 3. Handle uninstantiated or stopped instances (create new Scrapybara instance)
+    if (needsProvisioning(instance) || instance.status === 'stopped') {
+      const statusMsg = instance.status === 'stopped' ? 'stopped' : 'uninstantiated';
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is ${statusMsg}, provisioning new Scrapybara instance...`);
       
       try {
         const provisionResult = await provisionScrapybaraInstance(
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest) {
         error: `Cannot resume instance in ${instance.status} state`,
         instance_id,
         current_status: instance.status,
-        supported_states: ['paused', 'uninstantiated']
+        supported_states: ['paused', 'uninstantiated', 'stopped']
       }, { status: 400 });
     }
 

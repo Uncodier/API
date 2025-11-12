@@ -4,7 +4,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/delete
-// Fully stop/terminate a remote instance in Scrapybara and update DB status
+// Stop instance in Scrapybara and delete the instance record from database
 // ------------------------------------------------------------------------------------
 
 export const maxDuration = 60; // 1 minute
@@ -29,19 +29,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     }
 
-    // Idempotency: if already stopped, return OK
-    if (instance.status === 'stopped') {
-      return NextResponse.json(
-        { instance_id, status: 'stopped', message: 'Instance already stopped' },
-        { status: 200 },
-      );
-    }
-
-    // 2) Stop/terminate in Scrapybara (only if instance exists) -------------------
+    // 2) Stop/terminate in Scrapybara (only if instance exists and not already stopped) -------------------
     let scrapybaraStopped = false;
     
-    // Only try to stop in Scrapybara if we have a provider_instance_id
-    if (instance.provider_instance_id && instance.status !== 'uninstantiated') {
+    // Only try to stop in Scrapybara if we have a provider_instance_id and it's not already stopped
+    if (instance.provider_instance_id && instance.status !== 'uninstantiated' && instance.status !== 'stopped') {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Stopping Scrapybara instance: ${instance.provider_instance_id}`);
       
       const stopResponse = await fetch(
@@ -68,18 +60,7 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated or has no provider_instance_id, skipping Scrapybara stop`);
     }
 
-    // 3) Update DB status -----------------------------------------------------------
-    const { error: updateError } = await supabaseAdmin
-      .from('remote_instances')
-      .update({ status: 'stopped', updated_at: new Date().toISOString() })
-      .eq('id', instance_id);
-
-    if (updateError) {
-      console.error('Error updating instance status:', updateError);
-      return NextResponse.json({ error: 'Failed to update instance status' }, { status: 500 });
-    }
-
-    // 4) Mark in-progress/paused plans as failed -----------------------------------
+    // 3) Mark in-progress/paused plans as failed before deletion -------------------
     const { data: affectedPlans } = await supabaseAdmin
       .from('instance_plans')
       .select('id, title')
@@ -91,20 +72,42 @@ export async function POST(request: NextRequest) {
         .from('instance_plans')
         .update({
           status: 'failed',
-          error_message: 'Instance was terminated',
+          error_message: 'Instance was deleted',
           updated_at: new Date().toISOString(),
         })
         .eq('instance_id', instance_id)
         .in('status', ['in_progress', 'paused']);
     }
 
+    // 4) Delete related instance_plans records --------------------------------------
+    const { error: deletePlansError } = await supabaseAdmin
+      .from('instance_plans')
+      .delete()
+      .eq('instance_id', instance_id);
+
+    if (deletePlansError) {
+      console.error('Error deleting instance plans:', deletePlansError);
+      // Continue with instance deletion even if plans deletion fails
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Failed to delete plans, but continuing with instance deletion`);
+    }
+
+    // 5) Delete instance record from DB ---------------------------------------------
+    const { error: deleteError } = await supabaseAdmin
+      .from('remote_instances')
+      .delete()
+      .eq('id', instance_id);
+
+    if (deleteError) {
+      console.error('Error deleting instance from database:', deleteError);
+      return NextResponse.json({ error: 'Failed to delete instance from database' }, { status: 500 });
+    }
+
     return NextResponse.json(
       {
         instance_id,
         provider_instance_id: instance.provider_instance_id,
-        status: 'stopped',
         message: scrapybaraStopped 
-          ? 'Instance stopped and destroyed successfully' 
+          ? 'Instance stopped in Scrapybara and deleted from database successfully' 
           : 'Instance deleted from database (no Scrapybara instance to stop)',
         scrapybara_stopped: scrapybaraStopped,
         affected_plans: affectedPlans?.length || 0,

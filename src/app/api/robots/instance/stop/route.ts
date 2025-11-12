@@ -1,25 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { markRunningPlansAsFailed } from '@/lib/helpers/plan-lifecycle';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/stop
-// Pausa una instancia remota específica y actualiza su estado en la BD
+// Fully stop/terminate a remote instance in Scrapybara and update DB status
 // ------------------------------------------------------------------------------------
 
-export const maxDuration = 60; // 1 minuto
+export const maxDuration = 60; // 1 minute
 
-const PauseInstanceSchema = z.object({
-  instance_id: z.string().uuid('instance_id debe ser un UUID válido'),
+const StopInstanceSchema = z.object({
+  instance_id: z.string().uuid('instance_id must be a valid UUID'),
 });
 
 export async function POST(request: NextRequest) {
   try {
     const rawBody = await request.json();
-    const { instance_id } = PauseInstanceSchema.parse(rawBody);
+    const { instance_id } = StopInstanceSchema.parse(rawBody);
 
-    // 1. Buscar la instancia en la BD -----------------------------------------------
+    // 1) Fetch instance from DB ------------------------------------------------------
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
       .select('*')
@@ -27,64 +26,93 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (instanceError || !instance) {
-      return NextResponse.json({ error: 'Instancia no encontrada' }, { status: 404 });
+      return NextResponse.json({ error: 'Instance not found' }, { status: 404 });
     }
 
-    if (instance.status === 'paused') {
-      return NextResponse.json({ message: 'La instancia ya está pausada' }, { status: 200 });
+    // Idempotency: if already stopped, return OK
+    if (instance.status === 'stopped') {
+      return NextResponse.json(
+        { instance_id, status: 'stopped', message: 'Instance already stopped' },
+        { status: 200 },
+      );
     }
 
-    // 2. Pausar instancia en Scrapybara usando API REST ----------------------------
-    const scrapybaraInstanceId = instance.provider_instance_id ?? instance.id;
+    // 2) Stop/terminate in Scrapybara (only if instance exists) -------------------
+    let scrapybaraStopped = false;
     
-    const pauseResponse = await fetch(`https://api.scrapybara.com/v1/instance/${scrapybaraInstanceId}/pause`, {
-      method: 'POST',
-      headers: {
-        'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
-        'Content-Type': 'application/json',
-      },
-    });
+    // Only try to stop in Scrapybara if we have a provider_instance_id
+    if (instance.provider_instance_id && instance.status !== 'uninstantiated') {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Stopping Scrapybara instance: ${instance.provider_instance_id}`);
+      
+      const stopResponse = await fetch(
+        `https://api.scrapybara.com/v1/instance/${instance.provider_instance_id}/stop`,
+        {
+          method: 'POST',
+          headers: {
+            'x-api-key': process.env.SCRAPYBARA_API_KEY || '',
+            'Content-Type': 'application/json',
+          },
+        },
+      );
 
-    if (!pauseResponse.ok) {
-      const errorText = await pauseResponse.text();
-      console.error('Error pausando instancia en Scrapybara:', errorText);
-      return NextResponse.json({ 
-        error: `Error al pausar instancia: ${pauseResponse.status} ${errorText}` 
-      }, { status: 500 });
+      if (stopResponse.ok) {
+        scrapybaraStopped = true;
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara instance stopped successfully`);
+      } else {
+        const errorText = await stopResponse.text();
+        console.error('Error stopping/terminating instance in Scrapybara:', errorText);
+        // Continue anyway - we'll still mark as stopped in DB
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Scrapybara stop failed, but continuing with DB cleanup`);
+      }
+    } else {
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated or has no provider_instance_id, skipping Scrapybara stop`);
     }
 
-    // 3. Actualizar estado en la BD -----------------------------------------------
+    // 3) Update DB status -----------------------------------------------------------
     const { error: updateError } = await supabaseAdmin
       .from('remote_instances')
-      .update({ 
-        status: 'paused'
-      })
+      .update({ status: 'stopped', updated_at: new Date().toISOString() })
       .eq('id', instance_id);
 
     if (updateError) {
-      console.error('Error actualizando estado de instancia:', updateError);
-      return NextResponse.json({ error: 'Error al actualizar el estado' }, { status: 500 });
+      console.error('Error updating instance status:', updateError);
+      return NextResponse.json({ error: 'Failed to update instance status' }, { status: 500 });
     }
 
-    // 4. Mark running plans as failed -----------------------------------------
-    const failedPlansResult = await markRunningPlansAsFailed(
-      instance_id,
-      'Instance was paused while plan was in progress'
-    );
+    // 4) Mark in-progress/paused plans as failed -----------------------------------
+    const { data: affectedPlans } = await supabaseAdmin
+      .from('instance_plans')
+      .select('id, title')
+      .eq('instance_id', instance_id)
+      .in('status', ['in_progress', 'paused']);
+
+    if (affectedPlans && affectedPlans.length > 0) {
+      await supabaseAdmin
+        .from('instance_plans')
+        .update({
+          status: 'failed',
+          error_message: 'Instance was terminated',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('instance_id', instance_id)
+        .in('status', ['in_progress', 'paused']);
+    }
 
     return NextResponse.json(
       {
         instance_id,
-        status: 'paused',
-        message: 'Instance paused successfully',
-        affected_plans: failedPlansResult.completedCount,
-        plan_failure_success: failedPlansResult.success,
-        plan_failure_errors: failedPlansResult.errors,
+        provider_instance_id: instance.provider_instance_id,
+        status: 'stopped',
+        message: scrapybaraStopped 
+          ? 'Instance stopped successfully' 
+          : 'Instance marked as stopped in database (no Scrapybara instance to stop)',
+        scrapybara_stopped: scrapybaraStopped,
+        affected_plans: affectedPlans?.length || 0,
       },
       { status: 200 },
     );
   } catch (err: any) {
-    console.error('Error en POST /robots/instance/stop:', err);
+    console.error('Error in POST /robots/instance/stop:', err);
     return NextResponse.json({ error: err.message }, { status: 500 });
   }
 }
