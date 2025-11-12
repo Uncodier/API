@@ -807,7 +807,7 @@ CREATE TABLE public.settings (
   business_hours jsonb DEFAULT '[]'::jsonb,
   branding jsonb DEFAULT NULL,
   customer_journey jsonb DEFAULT '{"awareness": {"metrics": [], "actions": [], "tactics": []}, "consideration": {"metrics": [], "actions": [], "tactics": []}, "decision": {"metrics": [], "actions": [], "tactics": []}, "purchase": {"metrics": [], "actions": [], "tactics": []}, "retention": {"metrics": [], "actions": [], "tactics": []}, "referral": {"metrics": [], "actions": [], "tactics": []}}'::jsonb,
-  activities jsonb DEFAULT '{"daily_resume_and_stand_up": {"status": "default"}, "local_lead_generation": {"status": "default"}, "icp_lead_generation": {"status": "default"}, "leads_initial_cold_outreach": {"status": "default"}, "leads_follow_up": {"status": "default"}, "email_sync": {"status": "default"}}'::jsonb,
+  activities jsonb DEFAULT '{"daily_resume_and_stand_up": {"status": "default"}, "local_lead_generation": {"status": "default"}, "icp_lead_generation": {"status": "default"}, "leads_initial_cold_outreach": {"status": "default"}, "leads_follow_up": {"status": "default"}, "email_sync": {"status": "default"}, "assign_leads_to_team": {"status": "inactive"}, "notify_team_on_inbound_conversations": {"status": "default"}, "supervise_conversations": {"status": "inactive"}}'::jsonb,
   CONSTRAINT settings_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_settings FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT settings_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)

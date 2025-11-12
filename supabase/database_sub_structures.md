@@ -933,15 +933,21 @@ Agent activities toggles. Defines whether each activity is active by default or 
   "icp_lead_generation": { "status": "default" },
   "leads_initial_cold_outreach": { "status": "default" },
   "leads_follow_up": { "status": "default" },
-  "email_sync": { "status": "default" }
+  "email_sync": { "status": "default" },
+  "assign_leads_to_team": { "status": "inactive" },
+  "notify_team_on_inbound_conversations": { "status": "default" },
+  "supervise_conversations": { "status": "inactive" }
 }
 ```
 
-**Allowed values:** `status: "default" | "inactive"`
+**Allowed values:** 
+- Most activities: `status: "default" | "inactive"`
+- `assign_leads_to_team` and `supervise_conversations`: `status: "inactive" | "active"`
 
 **Notes:**
 - When `default`, the platform enables the activity by default according to company business hours and best practices.
 - Company business hours can be configured in Context and are respected by activities scheduling.
+- Activities with `"inactive" | "active"` pattern are opt-in features that must be explicitly enabled.
 
 ### `integrations` (jsonb)
 Third-party integrations and their connection status.
