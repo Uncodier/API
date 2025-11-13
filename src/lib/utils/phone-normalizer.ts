@@ -3,6 +3,76 @@
  * Maneja diferentes formatos como códigos de país, ladas, y caracteres de formato
  */
 
+// Cache for normalization results
+const searchCache = new Map<string, string[]>();
+const storageCache = new Map<string, string>();
+
+/**
+ * Generates a normalized cache key by removing spaces and formatting characters
+ * This ensures that "+52 5544414173" and "+525544414173" use the same cache entry
+ * 
+ * @param phone - Phone number in any format
+ * @returns Normalized cache key (cleaned phone number)
+ */
+function getCacheKey(phone: string): string {
+  if (!phone || typeof phone !== 'string') {
+    return '';
+  }
+  // Remove spaces, dashes, parentheses, dots, etc.
+  let cleaned = phone.replace(/[\s\-\(\)\.]/g, '');
+  // Remove non-numeric characters except the initial +
+  cleaned = cleaned.replace(/[^\d+]/g, '');
+  return cleaned;
+}
+
+/**
+ * Generates variants with spaces for international format numbers
+ * This helps match numbers stored with spaces (e.g., "+52 5544414173")
+ * 
+ * @param cleaned - Cleaned phone number (no spaces)
+ * @returns Array of variants with common spacing patterns
+ */
+function generateSpacedVariants(cleaned: string): string[] {
+  const variants: string[] = [];
+  
+  // Only generate spaced variants for international format (+XX...)
+  if (!cleaned.startsWith('+')) {
+    return variants;
+  }
+  
+  const withoutPlus = cleaned.substring(1);
+  
+  // Pattern 1: +XX XXXXXXXXXX (country code + space + rest)
+  // For Mexico (+52): +52 XXXXXXXXXX
+  if (withoutPlus.length >= 10) {
+    // Try country codes of 1, 2, or 3 digits
+    for (let ccLen = 1; ccLen <= 3 && ccLen < withoutPlus.length; ccLen++) {
+      const cc = withoutPlus.substring(0, ccLen);
+      const rest = withoutPlus.substring(ccLen);
+      
+      // +XX XXXXXXXXXX
+      if (rest.length >= 10) {
+        variants.push(`+${cc} ${rest}`);
+      }
+      
+      // +XX XX XXXX XXXX (common formatting for 10-digit numbers)
+      if (rest.length === 10) {
+        const area = rest.substring(0, 2);
+        const part1 = rest.substring(2, 6);
+        const part2 = rest.substring(6);
+        variants.push(`+${cc} ${area} ${part1} ${part2}`);
+      }
+      
+      // +XX XXXXXXXXX (9 digits)
+      if (rest.length === 9) {
+        variants.push(`+${cc} ${rest}`);
+      }
+    }
+  }
+  
+  return variants;
+}
+
 /**
  * Normaliza un número de teléfono removiendo caracteres de formato
  * y generando las variantes más comunes para búsqueda
@@ -13,6 +83,16 @@
 export function normalizePhoneForSearch(phone: string): string[] {
   if (!phone || typeof phone !== 'string') {
     return [];
+  }
+
+  // Check cache first using normalized key
+  const cacheKey = getCacheKey(phone);
+  if (cacheKey && searchCache.has(cacheKey)) {
+    const cached = searchCache.get(cacheKey);
+    if (cached) {
+      console.log(`📞 [Cache Hit] Variantes desde cache para "${phone}" (key: ${cacheKey}): ${cached.length} variantes`);
+      return cached;
+    }
   }
 
   // Remover espacios, guiones, paréntesis, puntos, etc.
@@ -59,6 +139,8 @@ export function normalizePhoneForSearch(phone: string): string[] {
           const restNoTrunk = rest.substring(1);
           variants.push(`+${cc}${restNoTrunk}`);
           variants.push(`${cc}${restNoTrunk}`);
+          // Also add the rest without country code (for cases like +5215555551234 -> 15555551234)
+          variants.push(rest);
         }
       }
     }
@@ -102,8 +184,19 @@ export function normalizePhoneForSearch(phone: string): string[] {
     variants.push(digitsOnly.slice(-10));
   }
   
+  // Add variants with spaces to match numbers stored with spaces
+  // This is critical for matching "+52 5544414173" with "+525544414173"
+  const spacedVariants = generateSpacedVariants(cleaned);
+  variants.push(...spacedVariants);
+  
   // Remover duplicados y números vacíos
   const uniqueVariants = Array.from(new Set(variants)).filter(v => v.length > 0);
+  
+  // Store in cache using normalized key
+  if (cacheKey) {
+    searchCache.set(cacheKey, uniqueVariants);
+    console.log(`📞 [Cache Set] Variantes guardadas en cache para "${phone}" (key: ${cacheKey}): ${uniqueVariants.length} variantes`);
+  }
   
   console.log(`📞 Generadas ${uniqueVariants.length} variantes para "${phone}": ${uniqueVariants.join(', ')}`);
   
@@ -120,6 +213,16 @@ export function normalizePhoneForSearch(phone: string): string[] {
 export function normalizePhoneForStorage(phone: string): string {
   if (!phone || typeof phone !== 'string') {
     return '';
+  }
+
+  // Check cache first using normalized key
+  const cacheKey = getCacheKey(phone);
+  if (cacheKey && storageCache.has(cacheKey)) {
+    const cached = storageCache.get(cacheKey);
+    if (cached !== undefined) {
+      console.log(`📞 [Cache Hit] Normalización desde cache para "${phone}" (key: ${cacheKey}): "${cached}"`);
+      return cached;
+    }
   }
 
   // Remover espacios, guiones, paréntesis, puntos, etc.
@@ -156,8 +259,10 @@ export function normalizePhoneForStorage(phone: string): string {
   }
   
   // Mantener heurística MX existente (compatibilidad)
+  // Para números de 11 dígitos que empiezan con 1, mantener el 1 como parte del número
+  // Esto es para casos como 15555551234 -> +5215555551234 (no +525555551234)
   if (cleaned.length === 11 && cleaned.startsWith('1')) {
-    return `+52${cleaned.substring(1)}`;
+    return `+52${cleaned}`;
   }
   
   // Para números de 12 dígitos que empiecen con 52, agregar +
@@ -166,7 +271,15 @@ export function normalizePhoneForStorage(phone: string): string {
   }
   
   // Para otros casos, retornar el número limpio sin modificar
-  return cleaned;
+  const result = cleaned;
+  
+  // Store in cache using normalized key
+  if (cacheKey) {
+    storageCache.set(cacheKey, result);
+    console.log(`📞 [Cache Set] Normalización guardada en cache para "${phone}" (key: ${cacheKey}): "${result}"`);
+  }
+  
+  return result;
 }
 
 /**

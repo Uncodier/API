@@ -167,4 +167,47 @@ describe('Phone Number Normalizer', () => {
       expect(attemptPhoneRescue('0000')).toBe(null); // Muy corto después de limpiar
     });
   });
+
+  describe('phone number matching with spaces', () => {
+    it('should detect +525544414173 and +52 5544414173 as equivalent', () => {
+      const phone1 = '+525544414173';
+      const phone2 = '+52 5544414173';
+      
+      expect(arePhoneNumbersEquivalent(phone1, phone2)).toBe(true);
+    });
+
+    it('should generate variants with spaces for +525544414173', () => {
+      const variants = normalizePhoneForSearch('+525544414173');
+      
+      // Should include the spaced variant
+      expect(variants).toContain('+52 5544414173');
+      // Should also include the unspaced variant
+      expect(variants).toContain('+525544414173');
+    });
+
+    it('should generate variants with spaces for +52 5544414173', () => {
+      const variants = normalizePhoneForSearch('+52 5544414173');
+      
+      // Should include the spaced variant
+      expect(variants).toContain('+52 5544414173');
+      // Should also include the unspaced variant
+      expect(variants).toContain('+525544414173');
+    });
+
+    it('should share cache entries for +525544414173 and +52 5544414173', () => {
+      // First call should populate cache
+      const variants1 = normalizePhoneForSearch('+525544414173');
+      
+      // Second call with space should use same cache key and return same variants
+      const variants2 = normalizePhoneForSearch('+52 5544414173');
+      
+      // They should have overlapping variants
+      const sharedVariants = variants1.filter(v => variants2.includes(v));
+      expect(sharedVariants.length).toBeGreaterThan(0);
+      
+      // Both should include the key variants
+      expect(variants1).toContain('+52 5544414173');
+      expect(variants2).toContain('+525544414173');
+    });
+  });
 }); 

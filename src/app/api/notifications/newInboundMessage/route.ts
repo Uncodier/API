@@ -102,6 +102,7 @@ function generateNewInboundMessageHtml(data: {
   conversationUrl: string;
   logoUrl?: string;
   priority: string;
+  contactType: 'email' | 'phone';
 }): string {
   const priorityColors = {
     low: { bg: '#f0f9ff', color: '#0369a1', badge: '#e0f2fe' },
@@ -161,10 +162,17 @@ function generateNewInboundMessageHtml(data: {
                 <span style="color: #1e293b; font-size: 15px;">${data.leadName}</span>
               </div>
               <div>
+                ${data.contactType === 'email' ? `
                 <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Email:</span>
                 <a href="mailto:${data.leadEmail}" style="color: #3b82f6; text-decoration: none; font-size: 15px;">
                   ${data.leadEmail}
                 </a>
+                ` : `
+                <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Phone:</span>
+                <a href="tel:${data.leadEmail}" style="color: #3b82f6; text-decoration: none; font-size: 15px;">
+                  ${data.leadEmail}
+                </a>
+                `}
               </div>
             </div>
           </div>
@@ -324,7 +332,9 @@ export async function POST(request: NextRequest) {
     
     try {
       const leadName = leadInfo.name || 'Unknown Lead';
-      const leadEmail = leadInfo.email || 'No email';
+      // Use email if available, otherwise use phone, otherwise use fallback text
+      const leadContact = leadInfo.email || leadInfo.phone || 'No contact info';
+      const contactType: 'email' | 'phone' = leadInfo.email ? 'email' : (leadInfo.phone ? 'phone' : 'email');
       
       const teamNotificationResult = await TeamNotificationService.notifyTeam({
         siteId: siteId,
@@ -332,12 +342,13 @@ export async function POST(request: NextRequest) {
         message: `You have received a new message from ${leadName}: ${message.substring(0, 100)}${message.length > 100 ? '...' : ''}`,
         htmlContent: generateNewInboundMessageHtml({
           leadName,
-          leadEmail,
+          leadEmail: leadContact,
           message,
           siteName: siteInfo.name || 'Unknown Site',
           conversationUrl,
           logoUrl: siteInfo.logo_url,
-          priority: priority as string
+          priority: priority as string,
+          contactType
         }),
         priority: priority as any,
         type: NotificationType.INFO,
@@ -383,7 +394,9 @@ export async function POST(request: NextRequest) {
         site_id: siteId,
         lead_info: {
           name: leadInfo.name,
-          email: leadInfo.email
+          email: leadInfo.email,
+          phone: leadInfo.phone,
+          contact_method: leadInfo.email ? 'email' : (leadInfo.phone ? 'phone' : 'none')
         },
         site_info: {
           name: siteInfo.name
