@@ -456,8 +456,8 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
       departmentalPatterns.push(`info@${domain}`);
       departmentalPatterns.push(`contact@${domain}`);
       departmentalPatterns.push(`admin@${domain}`);
-      departmentalPatterns.push(`support@${domain}`);
       departmentalPatterns.push(`hello@${domain}`);
+      departmentalPatterns.push(`sales@${domain}`);
     }
   }
   
@@ -512,9 +512,9 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
         `general@${domain}`,
         `reception@${domain}`,
         `mail@${domain}`,
-        `help@${domain}`,
         `service@${domain}`,
-        `business@${domain}`
+        `business@${domain}`,
+        `info@${domain}`
       ];
       
       for (const pattern of moreGenericEmails) {
@@ -529,6 +529,9 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
   // Verificar si es un puesto directivo para agregar emails genéricos adicionales
   const isExecutive = isExecutivePosition(context);
   let finalPatterns = uniquePatterns.slice(0, 15);
+  
+  // Filter out support/help/assistance emails to avoid robot loops
+  finalPatterns = filterSupportHelpAssistanceEmails(finalPatterns);
   
   if (isExecutive) {
     // Para puestos directivos, agregar 5 emails genéricos adicionales
@@ -571,6 +574,9 @@ function generateEmailPatterns(name: string, domain: string, context: string = '
         executiveSeen.add(email);
       }
     }
+    
+    // Filter out support/help/assistance emails from executive patterns as well
+    finalPatterns = filterSupportHelpAssistanceEmails(finalPatterns);
   }
   
   return finalPatterns;
@@ -620,6 +626,30 @@ function validateEmailsNotUsingSiteDomain(
     filteredCount: emails.length - validEmails.length,
     needsFallback
   };
+}
+
+// Filter out support/help/assistance emails to avoid robot loops and poor contact points
+function filterSupportHelpAssistanceEmails(emails: string[]): string[] {
+  const blockedPrefixes = [
+    'support', 'help', 'assistance', 'soporte', 'ayuda', 'asistencia',
+    'support-team', 'helpdesk', 'help-desk', 'customer-support', 'customer-service',
+    'soporte-tecnico', 'atencion-cliente', 'servicio-cliente'
+  ];
+  
+  return emails.filter(email => {
+    const emailLower = email.toLowerCase();
+    const localPart = emailLower.split('@')[0];
+    
+    // Check if email starts with any blocked prefix
+    for (const prefix of blockedPrefixes) {
+      if (localPart === prefix || localPart.startsWith(`${prefix}.`) || localPart.startsWith(`${prefix}-`)) {
+        console.log(`🚫 Filtered support/help/assistance email: ${email}`);
+        return false;
+      }
+    }
+    
+    return true;
+  });
 }
 
 // Inicializar el sistema de comandos
@@ -751,7 +781,7 @@ MANDATORY EMAIL STRUCTURE:
 1. **Personal Patterns (10 emails)**: Use name variations with cultural considerations
 2. **Departmental/Generic Patterns (5 emails)**: 
    - IF role/department detected in context: Use department-specific patterns (e.g., sales.firstname@domain.com, firstname@marketing.domain.com)
-   - IF NO clear role/department: Use generic contact patterns (e.g., info@domain.com, contact@domain.com, admin@domain.com, support@domain.com, hello@domain.com)
+   - IF NO clear role/department: Use generic contact patterns (e.g., info@domain.com, contact@domain.com, admin@domain.com, hello@domain.com, sales@domain.com)
 3. **Executive Generic Patterns (5 emails - ONLY for executive positions)**:
    - Spanish/Hispanic: direccion@domain.com, gerencia@domain.com, presidencia@domain.com, ejecutivos@domain.com, administracion@domain.com
    - English/Other: management@domain.com, executive@domain.com, leadership@domain.com, board@domain.com, corporate@domain.com
@@ -773,7 +803,7 @@ Consider:
    - Role-based: manager.firstname@domain.com, director.firstname@domain.com
 7. **Generic contact emails** (when no department detected):
    - info@domain.com, contact@domain.com, admin@domain.com
-   - support@domain.com, hello@domain.com, ventas@domain.com (for Spanish)
+   - hello@domain.com, ventas@domain.com, sales@domain.com (for Spanish)
    - hola@domain.com, contacto@domain.com (for Hispanic regions)
 8. Cultural variations in separators and ordering
 9. Use of initials vs full names (varies by culture and hierarchy)
@@ -789,6 +819,13 @@ CRITICAL REQUIREMENTS:
 - For EXECUTIVES: Include executive generic emails in emails 16-20
 - Apply cultural naming conventions based on detected language/region
 - Consider regional business email etiquette and formality levels
+
+PROHIBITED EMAIL PATTERNS (CRITICAL - DO NOT GENERATE):
+- NEVER generate emails with support, help, assistance, soporte, ayuda, or asistencia prefixes
+- These include: support@, help@, assistance@, soporte@, ayuda@, asistencia@, support-team@, helpdesk@, etc.
+- REASON: These email addresses typically lead to automated responses and robot loops, creating poor contact points for lead generation
+- They are often managed by automated systems rather than actual decision-makers
+- Instead, use alternatives like: info@, contact@, sales@, hello@, or department-specific patterns
 \nABSOLUTE DOMAIN POLICY (Do NOT violate):
 - Use ONLY the lead's domain provided: ${domain}
 - The site's/company's domain is ${siteDomainNote || 'N/A'} (from ${siteUrl || 'N/A'}).
@@ -956,14 +993,20 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
             domain
           );
           
-          if (filteredCount > 0) {
-            console.log(`⚠️ Filtered ${filteredCount} emails that violated domain policy`);
-            emailGenerationResult.generated_emails = validEmails;
+          // Filter out support/help/assistance emails
+          const filteredSupportEmails = filterSupportHelpAssistanceEmails(validEmails);
+          const supportFilteredCount = validEmails.length - filteredSupportEmails.length;
+          
+          if (filteredCount > 0 || supportFilteredCount > 0) {
+            console.log(`⚠️ Filtered ${filteredCount} emails that violated domain policy and ${supportFilteredCount} support/help/assistance emails`);
+            emailGenerationResult.generated_emails = filteredSupportEmails;
             responseData.email_generation_analysis = emailGenerationResult;
             responseData.domain_validation = {
-              filtered_count: filteredCount,
-              reason: 'Emails using site domain were removed'
+              filtered_count: filteredCount + supportFilteredCount,
+              reason: 'Emails using site domain or support/help/assistance patterns were removed'
             };
+          } else {
+            emailGenerationResult.generated_emails = filteredSupportEmails;
           }
           
           // If all emails were filtered, generate fallback emails
@@ -993,13 +1036,19 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
         domain
       );
       
-      if (filteredCount > 0) {
-        console.log(`⚠️ Filtered ${filteredCount} fallback emails that violated domain policy`);
-        responseData.fallback_emails = validEmails;
+      // Filter out support/help/assistance emails from fallback emails
+      const filteredSupportEmails = filterSupportHelpAssistanceEmails(validEmails);
+      const supportFilteredCount = validEmails.length - filteredSupportEmails.length;
+      
+      if (filteredCount > 0 || supportFilteredCount > 0) {
+        console.log(`⚠️ Filtered ${filteredCount} fallback emails that violated domain policy and ${supportFilteredCount} support/help/assistance emails`);
+        responseData.fallback_emails = filteredSupportEmails;
         responseData.domain_validation = {
-          filtered_count: filteredCount,
-          reason: 'Fallback emails using site domain were removed'
+          filtered_count: filteredCount + supportFilteredCount,
+          reason: 'Fallback emails using site domain or support/help/assistance patterns were removed'
         };
+      } else {
+        responseData.fallback_emails = filteredSupportEmails;
       }
       
       // If all fallback emails were also filtered, generate basic safe emails
@@ -1009,8 +1058,8 @@ IMPORTANT: Return the emails in strict order of probability considering both uni
           `info@${domain}`,
           `contact@${domain}`,
           `admin@${domain}`,
-          `support@${domain}`,
-          `hello@${domain}`
+          `hello@${domain}`,
+          `sales@${domain}`
         ];
         responseData.fallback_emails = basicSafeEmails;
         responseData.message += ' - All emails filtered, using basic safe emails';
