@@ -255,7 +255,11 @@ function generateDailyStandUpHtml(data: {
     day: 'numeric' 
   });
   
-  const safeSubject = escapeHtml(data.subject);
+  const resolvedSubject = data.subject && data.subject.trim().length > 0
+    ? data.subject
+    : 'Daily Stand-Up';
+  const safeSubject = escapeHtml(resolvedSubject);
+  const headerTitle = safeSubject;
   const safeMessageHtml = renderMessageWithLists(data.message);
   return `
     <!DOCTYPE html>
@@ -283,27 +287,12 @@ function generateDailyStandUpHtml(data: {
             </div>
           </div>
           `}
-          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">☀️ Daily Stand-Up</h1>
+          <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600; letter-spacing: -0.025em;">☀️ ${headerTitle}</h1>
           <p style="margin: 8px 0 0; color: rgba(255, 255, 255, 0.9); font-size: 16px; font-weight: 400;">${currentDate}</p>
         </div>
         
         <!-- Content -->
         <div style="padding: 40px;">
-          
-          <!-- Greeting -->
-          <div style="margin-bottom: 32px;">
-            <h2 style="margin: 0 0 16px; font-size: 20px; color: #1e293b; font-weight: 600;">
-              Hello team! 👋
-            </h2>
-            <p style="margin: 0; font-size: 16px; color: #475569; line-height: 1.7;">
-              Your ${data.siteName} agent has updates to share with you.
-            </p>
-          </div>
-          
-          <!-- Subject -->
-          <div style="margin-bottom: 32px;">
-          <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">📋 ${safeSubject}</h3>
-          </div>
           
           <!-- Main Message (plain, no colored container) -->
           <div style="margin-bottom: 32px;">

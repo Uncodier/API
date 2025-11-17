@@ -1,23 +1,31 @@
 ---
 title: AI Video Generation API
-description: Video generation endpoint placeholder
+description: Generate short videos via Google Gemini Veo 3.1
 ---
 
 import { UnifiedApiTester } from '@/components/ApiTester'
 
 # AI Video Generation (`/api/ai/video`)
 
-This endpoint is not implemented yet. It returns `501 Not Implemented`.
+Generate short clips (up to ~60 seconds) using Google's Gemini Veo 3.1 model. The route mirrors the `/api/ai/image` flow: it validates the payload, invokes Gemini, polls until the job finishes, stores the resulting file in Supabase Storage (`generative_videos` bucket), and returns a public URL.
 
 ## Try it
 
 <UnifiedApiTester 
   apiId="ai-video"
   title="AI Video Generation"
-  description="Placeholder endpoint that returns 501."
+  description="Generate a short clip with Gemini Veo 3.1."
   defaultEndpoint="/api/ai/video"
   defaultMethod="POST"
-  defaultBody={`{\n  "prompt": "a cinematic desert scene at sunset"\n}`}
+  defaultBody={`{
+  "prompt": "Slow cinematic pan across bioluminescent trees in a misty forest",
+  "site_id": "00000000-0000-4000-8000-000000000000",
+  "duration_seconds": 12,
+  "aspect_ratio": "16:9",
+  "reference_images": [
+    "https://example.com/reference/still.png"
+  ]
+}`}
 />
 
 ## Endpoint
@@ -30,15 +38,51 @@ POST /api/ai/video
 
 | Field | Type | Description | Required |
 |------|------|-------------|----------|
-| prompt | string | Text prompt describing the video to generate | Yes |
-| provider | string | Provider id (reserved for future use) | No |
+| prompt | string | Natural-language description of the video. | Yes |
+| site_id | string (UUID) | Site used for storage ownership & billing. | Yes |
+| provider | 'gemini' | Provider identifier (currently Gemini only). | No (default 'gemini') |
+| duration_seconds | number | Desired length in seconds (capped at 60). | No |
+| aspect_ratio | '1:1' \| '4:3' \| '3:4' \| '16:9' \| '9:16' \| '3:2' \| '2:3' | Target aspect ratio. | No |
+| reference_images | string[] | Up to 3 HTTPS URLs used as visual references. | No |
+| quality | 'preview' \| 'standard' \| 'pro' | Informative hint passed to the prompt. | No |
+| model | string | Override Gemini model (default `veo-3.1-generate-preview`). | No |
 
-## Example
+## Example Request
+
+```bash
+curl -X POST https://your-api.com/api/ai/video \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <token>" \
+  -d '{
+    "prompt": "Handheld shot of an explorer walking through neon-lit ruins",
+    "site_id": "f12a0f69-70f4-4d70-9e55-3c86d3c8c111",
+    "duration_seconds": 20,
+    "aspect_ratio": "9:16",
+    "reference_images": [
+      "https://cdn.example.com/concepts/explorer.jpg"
+    ]
+  }'
+```
+
+## Example Response
 
 ```json
 {
-  "prompt": "a cinematic desert scene at sunset"
+  "provider": "gemini",
+  "videos": [
+    {
+      "url": "https://supabase.example.com/storage/v1/object/public/generative_videos/f12a0f69/1729100590000.mp4",
+      "mimeType": "video/mp4"
+    }
+  ],
+  "metadata": {
+    "model": "veo-3.1-generate-preview",
+    "duration_seconds": 20,
+    "aspect_ratio": "9:16",
+    "quality": null,
+    "generated_at": "2025-03-15T12:34:56.789Z"
+  }
 }
 ```
 
-
+> **Note:** Generation is asynchronous; the server polls Gemini every ~10 seconds (up to 10 minutes). The response returns a hosted URL once the file is saved to Supabase.

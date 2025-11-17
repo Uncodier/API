@@ -166,6 +166,28 @@ function buildLeadsAndMessagesSummaryFromSalesMemories(salesMemories: any[]) {
   return summary;
 }
 
+// Fetch latest system notifications (global announcements / improvements)
+async function getSystemNotificationMemories(limit = 15) {
+  try {
+    const { data, error } = await supabaseAdmin
+      .from('system_memories')
+      .select('*')
+      .eq('system_type', 'system_notifications')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    
+    if (error) {
+      console.error('Error al obtener system notifications:', error);
+      return [];
+    }
+    
+    return data || [];
+  } catch (error) {
+    console.error('Error inesperado al obtener system notifications:', error);
+    return [];
+  }
+}
+
 // Función para esperar a que un comando se complete
 async function waitForCommandCompletion(commandService: any, commandId: string, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
@@ -260,10 +282,11 @@ export async function POST(request: Request) {
     }
     
     // Preparar contexto con todas las memorias y análisis previos
-    const systemMemories = memoriesData.memories.filter(m => m.type === 'daily_standup_system');
+    const systemAnalysisMemories = memoriesData.memories.filter(m => m.type === 'daily_standup_system');
     const salesMemories = memoriesData.memories.filter(m => m.type === 'daily_standup_sales');
     const supportMemories = memoriesData.memories.filter(m => m.type === 'daily_standup_support');
     const growthMemories = memoriesData.memories.filter(m => m.type === 'daily_standup_growth');
+    const systemNotificationMemories = await getSystemNotificationMemories();
     
     const leadsAndMessagesSummary = buildLeadsAndMessagesSummaryFromSalesMemories(salesMemories);
 
@@ -278,7 +301,8 @@ export async function POST(request: Request) {
 
     const contextMessage = buildWrapUpContext({
       siteId: site_id,
-      systemMemories,
+      systemMemories: systemAnalysisMemories,
+      systemNotifications: systemNotificationMemories,
       salesMemories,
       supportMemories,
       growthMemories,

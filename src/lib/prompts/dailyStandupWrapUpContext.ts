@@ -1,6 +1,7 @@
 export function buildWrapUpContext(params: {
   siteId: string;
   systemMemories: any[];
+  systemNotifications?: any[];
   salesMemories: any[];
   supportMemories: any[];
   growthMemories: any[];
@@ -13,7 +14,16 @@ export function buildWrapUpContext(params: {
     counts: { leads: number; conversations: number; tasks: number; pendingContents: number };
   };
 }) {
-  const { siteId, systemMemories, salesMemories, supportMemories, growthMemories, standupCommands, wrapUpInputs } = params;
+  const {
+    siteId,
+    systemMemories,
+    systemNotifications = [],
+    salesMemories,
+    supportMemories,
+    growthMemories,
+    standupCommands,
+    wrapUpInputs
+  } = params;
 
   const lines = (s: string) => s;
 
@@ -33,7 +43,23 @@ export function buildWrapUpContext(params: {
     ? `=== GROWTH ANALYSIS ===\n${growthMemories.map((mem: any, index: number) => `${index + 1}. Memory ID: ${mem.id}\n   Command ID: ${mem.command_id}\n   Data: ${JSON.stringify(mem.data).substring(0, 300)}...`).join('\n')}`
     : '';
 
-  const consolidatedSections = [systemSection, salesSection, supportSection, growthSection].filter(Boolean).join('\n\n');
+  const systemNotificationSection = systemNotifications.length > 0
+    ? `=== SYSTEM ANNOUNCEMENTS & IMPROVEMENTS (context only) ===
+${systemNotifications.map((mem: any, index: number) => {
+        const title = mem?.data?.title || mem?.key || `Notification ${index + 1}`;
+        const summary = typeof mem?.data?.summary === 'string'
+          ? mem.data.summary
+          : JSON.stringify(mem?.data ?? {});
+        const actionHint = mem?.data?.action || mem?.data?.cta || '';
+        const rawData = JSON.stringify(mem ?? {}, null, 2);
+        return `${index + 1}. ${title}
+   Created: ${mem?.created_at || mem?.createdAt || 'Unknown'}
+   Summary: ${summary}
+   Raw Data: ${rawData}${actionHint ? `\n   Suggested Action: ${actionHint}` : ''}`;
+      }).join('\n')}`
+    : '';
+
+  const consolidatedSections = [systemSection, salesSection, supportSection, growthSection, systemNotificationSection].filter(Boolean).join('\n\n');
 
   const commandsSection = (standupCommands || []).slice(0, 10).map((cmd: any, index: number) => `${index + 1}. ${cmd.task} - Status: ${cmd.status} - Created: ${cmd.created_at}`).join('\n');
 
@@ -64,7 +90,7 @@ New Tasks (up to 10):
 ${tasksLines.join('\n')}
 `);
 
-  const context = lines(`Daily StandUp - Executive Summary & Wrap-Up for Site: ${siteId}
+  const context = lines(`Weekly StandUp - Kickoff & Wrap-Up for Site: ${siteId}
 
 CONSOLIDATED ANALYSIS FROM ALL DEPARTMENTS:
 ${consolidatedSections}
@@ -73,98 +99,63 @@ RECENT STANDUP COMMANDS SUMMARY:
 ${commandsSection}
 
 EXECUTIVE SUMMARY REQUIREMENTS:
-Please consolidate all the departmental analyses into a comprehensive daily standup report focusing on:
+Please consolidate all departmental analyses into a weekly standup report that clearly states whether you are opening the week (Monday kickoff) or closing it (Friday wrap). Always cover:
 
-1. **Overall Business Health**: Cross-departmental insights and systemic issues
-2. **Key Performance Indicators**: Critical metrics from system, sales, support, and growth
-3. **Resource Allocation**: Team capacity and workload distribution across departments
-4. **Strategic Priorities**: Action items and recommendations for immediate attention
-5. **Risk Assessment**: Potential issues and bottlenecks identified across departments
-6. **Growth Opportunities**: Identified opportunities for optimization and expansion
-7. **Next Steps**: Concrete action plan for the next 24 hours
-8. **Key actions for the human team to take**: based on the analysis and recommendations of the rest te ai team, that would make the best results for the company
+1. **Overall Business Health**: Cross-departmental insights and systemic issues for the entire Monday-Sunday window
+2. **Key Performance Indicators**: Weekly metrics from system, sales, support, and growth tied to paid media and lifecycle performance
+3. **Resource Allocation**: Capacity and ownership signals that affect the remaining days of the current week
+4. **Strategic Priorities**: Start-of-week launch items or end-of-week closure tasks that unblock pipeline goals across marketing and revenue
+5. **Risk Assessment**: Issues that could derail the week if not solved by midweek (kickoff) or before the weekend (wrap)
+6. **Growth Opportunities**: Weekly experiments, automations, or channel expansions that should open Monday or conclude Friday
+7. **Next Steps**: Concrete plan for the rest of the week (kickoff) or a Monday-ready handoff (wrap)
+8. **Key actions for the team**: Tie each action to the kickoff or wrap context explicitly
+9. **System Announcements & Improvements**: Call out platform changes, product updates, or automation improvements and explain the operational impact
+
+WEEKLY RITUAL CADENCE:
+- Monday standups initiate the week: lock Week N goals, confirm campaign calendars, and clear blockers by Wednesday.
+- Friday standups close the loop: report wins, document learnings, and prep weekend automations or Monday jumpstart.
+- If no day is specified, assume kickoff when today <= Wednesday and wrap when today >= Thursday.
 
 IMPORTANT:
-- Consider the team size, of the company, the swot, focus in account setup or campaign requirments, things the user can accomplish thorugh the day.
-- Avoid complex tasks, that would make the user to do a lot of work, and not be able to do it. (you can mention it, but not make it as a priority)
-- Avoid referening as human, use the team member or role when required.
+- Always anchor recommendations to the weekly window and specify if each action fuels the kickoff (start of week) or ensures the wrap (end of week).
+- Consider team size, SWOT, account setup, channel requirements, and what can realistically be achieved within the remaining days.
+- Avoid prioritizing complex, multi-day projects during the wrap unless they directly unblock Monday.
+- Avoid referencing "human"; use the role or team member when required.
 - The summary should be in the language of the company.
-- Make list of priorities for the day.
-- Be concise and to the point. Try to generate tasks, not general recommendations.
-- Avoid obvious things like, attend clients, be consice in which client, what task, what content or campaign.
-- Be short, if only one task may be acomplished, just mention that one task that could make the rest easier or more effective.
+- Make a priorities list tied to kickoff acceleration or wrap closure.
+- Be concise and task-driven. Mention channels, clients, content, or automation flows explicitly.
+- Avoid obvious statements; specify the concrete deliverable.
+- Keep it short; if one action unlocks the week, highlight only that.
+- System announcements must appear inside Highlights, Risks, or Next Actions with their weekly impact clearly stated.
 
 CLIENT ACTIVATION & INVITATION GUIDELINES:
-- Use a helpful, proactive tone that nudges the client to take one concrete step in Uncodie today.
-- Close with one clear invitation to use Uncodie (e.g., "Log in to your Uncodie dashboard to start today's priority" or "Enable your campaign in Uncodie now").
-- Reference specific Uncodie actions relevant to the day: review new leads, connect inbox, approve a campaign, launch a template, adjust targeting, or check the pipeline.
-- Keep the invitation plain text and compliant with output rules (no markdown, emojis, or links); make it achievable within 5 minutes.
-- If priorities are very limited, offer one quick-win CTA that unlocks the next steps.
+- Use a helpful, proactive tone nudging the client to take one kickoff or wrap step inside Uncodie.
+- Close with one clear invitation aligned to the kickoff or wrap context.
+- Reference Uncodie actions that match the moment, emphasizing tasks achievable within the same session.
+- Keep the invitation plain text (no markdown, emojis, or links) and under 5 minutes of effort.
+- If priorities are limited, offer a single quick-win CTA that unlocks Monday readiness or Friday closure.
 
 CRITICAL FORMAT RULES FOR OUTPUT (MUST FOLLOW):
 - Output must be plain text only. Do not use markdown, HTML, emojis, or code fences.
 - Use ASCII characters only. Avoid smart quotes and special symbols.
 - Use simple dashes '-' for bullet points when needed.
-- Do NOT include a 'Status:' line in the message. Status must be provided ONLY in the 'health' object (status, reason, priorities).
-- Start the message with the single most useful, actionable item for the team.
+- Do NOT include a 'Status:' line in the message. Status must live ONLY in the 'health' object (status, reason, priorities).
+- Start the message with the single most useful kickoff or wrap action.
 - Provide priorities as short bullets starting with '- ' under 140 characters each.
 - Avoid headings with symbols (#, **, etc.). Use simple sentences.
 
 TITLE REQUIREMENTS (CRITICAL):
-- The title/subject MUST always be a clear Call-to-Action (CTA) for the team
-- Use action verbs that direct the team to take specific action
-- Examples: "Review 5 high-priority leads and schedule demos", "Launch Facebook campaign optimization today", "Connect with 3 prospects before 2pm"
-- Avoid passive or descriptive titles like "Daily Report" or "Status Update"
-- Make the title actionable and time-sensitive when possible
-- Keep under 60 characters for email subject line compatibility
+- The title/subject MUST always be a kickoff or wrap CTA for the team.
+- Use action verbs that direct the team to take start-of-week or end-of-week action.
+- Avoid passive or descriptive titles like "Weekly Report" or "Status Update".
+- Make the title actionable and time-sensitive when possible.
+- Keep under 60 characters for email subject line compatibility.
 
 ${operationalInputs}
 
 The summary should be executive-level, actionable, and provide clear visibility into the current state of operations across all business functions.`);
   
-  const exampleReport = `Daily Executive Report - Marketing (2025-09-14)
-
-One-line summary: we are pushing CPL < $10 and 5 ICP demos today; we have good lead volume, but Facebook shows fatigue and needs creative rotation.
-
-Current status (last 24h):
-- Leads: 28 | CPL: $11.40 (target <$10)
-- Email CTR: 4.9%
-- Demos scheduled: 3
-- Pipeline created: $7,200 | New MRR: $0 (closings estimated Tuesday)
-
-What worked yesterday:
-- Launched 3 creative variations for the ROI Challenge (initial learnings to optimize hooks).
-- Published founder video on LinkedIn + snippet on TikTok (good initial organic traction for awareness).
-- Activated WhatsApp nurturing for cold leads (first positive replies).
-
-Today’s priorities:
-- Optimize the ad copy with the highest CPM (hypothesis: more direct hook + test benefit in the first line).
-- Qualify 10 leads and hand off to sales (focused on ICP: SaaS 10-50 employees).
-- Ship a mini ROI calculator landing with 1 CTA to demo to capture high intent.
-
-Risks and mitigation:
-- Fatigue on Facebook (+22% in CPL) -> rotate creatives today 18:00 and refresh test audiences.
-
-Decisions required (by 12:00):
-- Move +$20 budget to TikTok today vs keep on LinkedIn. Recommendation: controlled test on TikTok (small split) to read CPM/CPV and decide expansion tomorrow. If approved, activate at 14:00.
-
-Dependencies:
-- Design: 2 hero variants for the landing (ETA 16:00) for a quick A/B test.
-
-Upcoming milestones:
-- Draft agenda for partner webinar: tomorrow 10:00.
-
-Market insight:
-- Agencies request a 72h SLA for demos to proceed with white-label; this can be a differentiator if we formalize it in the commercial proposal.
-
-Specific actions I need today:
-- TikTok budget confirmation (deadline 12:00).
-- Quick approval of the updated ad copy (I will share the final version at 13:30).`;
-
-  return `${context}
-
-EXAMPLE REPORT (FORMAT GUIDE):
-${exampleReport}`;
+  return `${context}`;
 }
 
 
