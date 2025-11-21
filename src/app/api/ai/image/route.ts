@@ -7,6 +7,7 @@ type Provider = 'azure' | 'gemini' | 'vercel';
 interface ImageRequestBody {
   prompt: string;
   site_id: string;
+  instance_id?: string;
   provider?: Provider;
   size?: '256x256' | '512x512' | '1024x1024';
   n?: number;
@@ -137,7 +138,8 @@ async function saveFileRecord(
   provider: string,
   prompt: string,
   model?: string,
-  userId?: string
+  userId?: string,
+  instanceId?: string
 ): Promise<any> {
   try {
     const timestamp = Date.now();
@@ -194,6 +196,11 @@ async function saveFileRecord(
       insertData.user_id = ownerUserId;
     }
 
+    // Add instance_id if provided to link the asset to the instance
+    if (instanceId) {
+      insertData.instance_id = instanceId;
+    }
+
     const { data, error } = await supabaseAdmin
       .from('assets')
       .insert(insertData)
@@ -212,7 +219,7 @@ async function saveFileRecord(
   }
 }
 
-async function generateWithAzure(prompt: string, siteId: string, size?: string, n?: number, quality?: 'standard' | 'hd' | number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', reference_images?: string[]) {
+async function generateWithAzure(prompt: string, siteId: string, size?: string, n?: number, quality?: 'standard' | 'hd' | number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', reference_images?: string[], instanceId?: string) {
   try {
     // Use the same environment variables as the assistant service
     const endpoint = getEnv('MICROSOFT_AZURE_OPENAI_ENDPOINT');
@@ -330,7 +337,9 @@ async function generateWithAzure(prompt: string, siteId: string, size?: string, 
           uploadResult.mimeType,
           'azure',
           prompt,
-          deployment
+          deployment,
+          undefined,
+          instanceId
         );
         console.log('[Azure] File record saved successfully');
       } catch (dbError: any) {
@@ -366,7 +375,7 @@ async function generateWithAzure(prompt: string, siteId: string, size?: string, 
   }
 }
 
-async function generateWithGemini(prompt: string, siteId: string, size?: string, n?: number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', quality?: 'standard' | 'hd' | number, reference_images?: string[]) {
+async function generateWithGemini(prompt: string, siteId: string, size?: string, n?: number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', quality?: 'standard' | 'hd' | number, reference_images?: string[], instanceId?: string) {
   const apiKey = getEnv('GEMINI_API_KEY') || getEnv('GOOGLE_CLOUD_API_KEY');
   const model = getEnv('GOOGLE_CLOUD_IMAGES_MODEL') || 'gemini-2.5-flash-image';
 
@@ -555,7 +564,9 @@ async function generateWithGemini(prompt: string, siteId: string, size?: string,
               uploadResult.mimeType,
               'gemini',
               prompt,
-              model
+              model,
+              undefined,
+              instanceId
             );
             console.log('[Gemini] File record saved successfully');
           } catch (dbError: any) {
@@ -601,7 +612,7 @@ async function generateWithGemini(prompt: string, siteId: string, size?: string,
   }
 }
 
-async function generateWithVercelGateway(prompt: string, siteId: string, size?: string, n?: number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', reference_images?: string[]) {
+async function generateWithVercelGateway(prompt: string, siteId: string, size?: string, n?: number, ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3', reference_images?: string[], instanceId?: string) {
   const baseURL = getEnv('VERCEL_AI_GATEWAY_OPENAI');
   const apiKey = getEnv('VERCEL_AI_GATEWAY_API_KEY');
 
@@ -698,7 +709,9 @@ async function generateWithVercelGateway(prompt: string, siteId: string, size?: 
           uploadResult.mimeType,
           'vercel',
           prompt,
-          'gpt-image-1'
+          'gpt-image-1',
+          undefined,
+          instanceId
         );
         console.log('[Vercel] File record saved successfully');
       } catch (dbError: any) {
@@ -723,7 +736,7 @@ async function generateWithVercelGateway(prompt: string, siteId: string, size?: 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as ImageRequestBody;
-    const { prompt, site_id, provider = 'gemini', size, n, quality, ratio, reference_images } = body || {};
+    const { prompt, site_id, instance_id, provider = 'gemini', size, n, quality, ratio, reference_images } = body || {};
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'Parameter "prompt" is required' }, { status: 400 });
@@ -756,23 +769,23 @@ export async function POST(request: NextRequest) {
 
     if (provider === 'azure') {
       try {
-        const result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images);
+        const result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
         return NextResponse.json(result);
       } catch (err) {
         console.warn('[image api] Azure provider failed, trying Vercel fallback...', err);
-        const fallback = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images);
+        const fallback = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
         return NextResponse.json({ ...fallback, fallbackFrom: 'azure' });
       }
     }
 
     if (provider === 'gemini') {
       try {
-        const result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images);
+        const result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
         return NextResponse.json(result);
       } catch (err) {
         console.warn('[image api] Gemini provider failed, trying Azure fallback...', err);
         try {
-          const fallback = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images);
+          const fallback = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
           return NextResponse.json({ ...fallback, fallbackFrom: 'gemini' });
         } catch (fallbackErr: any) {
           console.error('[image api] Azure fallback also failed:', fallbackErr);
@@ -782,7 +795,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (provider === 'vercel') {
-      const result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images);
+      const result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
       return NextResponse.json(result);
     }
 

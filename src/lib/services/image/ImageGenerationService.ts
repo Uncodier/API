@@ -6,6 +6,7 @@
 export interface ImageGenerationParams {
   prompt: string;
   site_id: string;
+  instance_id?: string;
   provider?: 'azure' | 'gemini' | 'vercel';
   size?: '256x256' | '512x512' | '1024x1024';
   n?: number;
@@ -41,6 +42,7 @@ export class ImageGenerationService {
     const {
       prompt,
       site_id,
+      instance_id,
       provider = 'gemini', // Default to gemini as specified
       size = '1024x1024',
       n = 1,
@@ -60,6 +62,7 @@ export class ImageGenerationService {
         const result = await this.callImageAPI({
           prompt,
           site_id,
+          instance_id,
           provider: currentProvider,
           size,
           n,
@@ -101,6 +104,7 @@ export class ImageGenerationService {
   private static async callImageAPI(params: {
     prompt: string;
     site_id: string;
+    instance_id?: string;
     provider: 'azure' | 'gemini' | 'vercel';
     size: string;
     n: number;
@@ -117,6 +121,7 @@ export class ImageGenerationService {
     const requestBody = {
       prompt: params.prompt,
       site_id: params.site_id,
+      ...(params.instance_id && { instance_id: params.instance_id }),
       provider: params.provider,
       size: params.size,
       n: params.n,

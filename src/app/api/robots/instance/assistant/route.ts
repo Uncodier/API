@@ -212,7 +212,7 @@ export async function POST(request: NextRequest) {
       // Add generateImage tool to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(providedSiteId)
+        generateImageTool(providedSiteId, newInstance.id)
       ];
       
       // Build system prompt for new instance (simple context)
@@ -326,10 +326,8 @@ export async function POST(request: NextRequest) {
       const statusType = (instance.status === 'paused' || instance.status === 'stopped') ? 'paused' : 'uninstantiated';
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is ${statusType}, using OpenAI assistant without tools`);
       
-      const providerEnv = process.env.ROBOT_SDK_PROVIDER;
-      const provider = (providerEnv === 'scrapybara' || providerEnv === 'azure' || providerEnv === 'openai') 
-        ? providerEnv 
-        : 'azure';
+      // Force Azure when instance is not running to avoid any Scrapybara provider usage
+      const provider = 'azure';
       
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
@@ -337,7 +335,7 @@ export async function POST(request: NextRequest) {
       // Add generateImage tool to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(site_id)
+        generateImageTool(site_id, providedInstanceId)
       ];
       
       // Build system prompt for uninstantiated/paused/stopped instance
@@ -397,7 +395,7 @@ export async function POST(request: NextRequest) {
       // Add generateImage tool to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(site_id)
+        generateImageTool(site_id, providedInstanceId)
       ];
       
       const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);

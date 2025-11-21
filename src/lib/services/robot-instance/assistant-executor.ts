@@ -270,6 +270,7 @@ export async function executeAssistant(
         tools: custom_tools, // Only custom tools, no Scrapybara tools
         system: system_prompt,
         prompt: prompt,
+        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
         // No schema for simple chat
       });
 

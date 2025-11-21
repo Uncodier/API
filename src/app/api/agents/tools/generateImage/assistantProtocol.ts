@@ -21,9 +21,10 @@ export interface GenerateImageToolParams {
 /**
  * Creates a generateImage tool for OpenAI/assistant compatibility
  * @param site_id - The site ID to use for image generation
+ * @param instance_id - Optional instance ID to link generated images to the instance
  * @returns Tool definition compatible with OpenAI function calling
  */
-export function generateImageTool(site_id: string) {
+export function generateImageTool(site_id: string, instance_id?: string) {
   return {
     name: 'generate_image',
     description: 'Generate images using AI with automatic provider fallback. Supports multiple AI providers (Gemini, Azure, Vercel) with automatic fallback if one fails. Images are automatically saved to storage and can be used in conversations or content.',
@@ -91,6 +92,7 @@ export function generateImageTool(site_id: string) {
         const serviceParams: ImageGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
+          instance_id: instance_id,
           provider: 'gemini', // Force Gemini only
           size: args.size,
           n: args.n,
