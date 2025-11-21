@@ -218,7 +218,7 @@ Execute an agent with tools.
 - `onStep?: (step: Step) => void` - Callback for each step
 - `maxIterations?: number` - Max tool loops (default: 50)
 - `temperature?: number` - Model temperature (default: 1) - Not supported for o-series models
-- `reasoningEffort?: 'low' | 'medium' | 'high'` - Reasoning effort for o-series models (o1, o3, GPT-5). Default: 'low'
+- `reasoningEffort?: 'low' | 'medium' | 'high'` - Reasoning effort for o-series models (o1, o3, GPT-5.1). Default: 'low'
 - `verbosity?: 'low' | 'medium' | 'high'` - Output verbosity for o-series models. Default: 'low'
 
 **Returns:**

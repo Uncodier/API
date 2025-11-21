@@ -150,7 +150,7 @@ export interface ActOptions {
   onStep?: (step: Step) => Promise<void> | void;
   maxIterations?: number;
   temperature?: number;
-  reasoningEffort?: 'low' | 'medium' | 'high'; // For o-series models (o1, o3, GPT-5)
+  reasoningEffort?: 'low' | 'medium' | 'high'; // For o-series models (o1, o3, GPT-5.1)
   verbosity?: 'low' | 'medium' | 'high'; // Output verbosity for o-series models
 }
 
@@ -355,7 +355,7 @@ export class OpenAIAgentExecutor {
     let consecutiveIdenticalScreenshots = 0;
 
     // CRITICAL: Persistent screenshot buffer to maintain visual context across iterations
-    // GPT-5 (o-series) can handle multiple images, so we keep last N screenshots for context
+    // GPT-5.1 (o-series) can handle multiple images, so we keep last N screenshots for context
     const MAX_SCREENSHOT_HISTORY = 5;
     const screenshotHistory: string[] = [];
 
@@ -417,13 +417,13 @@ export class OpenAIAgentExecutor {
         // Only include temperature if it's not the default (1)
         // Azure OpenAI rejects non-default temperature values for some models
         // NOTE: o-series models (o1, o3) don't support temperature parameter
-        const isReasoningModel = deploymentName.includes('o1') || deploymentName.includes('o3') || deploymentName.includes('gpt-5');
+        const isReasoningModel = deploymentName.includes('o1') || deploymentName.includes('o3') || deploymentName.includes('gpt-5.1');
         
         if (!isReasoningModel && temperature !== 1) {
           completionOptions.temperature = temperature;
         }
         
-        // Add reasoning_effort and verbosity for o-series models (GPT-5 family: o1, o3, etc.)
+        // Add reasoning_effort and verbosity for o-series models (GPT-5.1 family: o1, o3, etc.)
         if (isReasoningModel) {
           completionOptions.reasoning_effort = reasoningEffort; // Options: low, medium, high
           completionOptions.verbosity = verbosity; // Options: low, medium, high
@@ -775,7 +775,7 @@ export class OpenAIAgentExecutor {
           
           // NOW add collected images as a single user message AFTER all tool messages
           // CRITICAL: Use persistent screenshot history for better context across iterations
-          // GPT-5 can handle multiple images, so we send the full history (last N screenshots)
+          // GPT-5.1 can handle multiple images, so we send the full history (last N screenshots)
           const shouldIncludeScreenshots = iterations <= 3 || iterations % 3 === 0;
           
           // Use screenshot history instead of just current iteration's images

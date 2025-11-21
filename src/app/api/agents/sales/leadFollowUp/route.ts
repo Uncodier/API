@@ -558,7 +558,7 @@ async function executeCopywriterRefinement(
         }
       ],
       context: copywriterContext,
-      model: 'openai:gpt-5',
+      model: 'openai:gpt-5.1',
       supervisor: [
         {
           agent_role: 'creative_director',

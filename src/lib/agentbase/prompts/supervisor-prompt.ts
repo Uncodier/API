@@ -1,5 +1,5 @@
 /**
- * Supervisor System Prompt for GPT-5
+ * Supervisor System Prompt for GPT-5.1
  * Analyzes command execution to detect errors and suggest system improvements
  */
 
@@ -412,7 +412,7 @@ Return your analysis in the specified JSON format.
 };
 
 /**
- * Prompt for GPT-5 similarity analysis and filtering of new suggestions
+ * Prompt for GPT-5.1 similarity analysis and filtering of new suggestions
  * Takes existing suggestions from memory + new suggestions from analysis
  * Returns only truly new suggestions that should be added
  */

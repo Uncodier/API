@@ -177,7 +177,7 @@ export class ToolEvaluator extends Base {
         
         // Set temperature based on model type
         if (parsedModelId.startsWith('gpt-5')) {
-          // GPT-5 family doesn't support custom temperature, must use default 1.0
+          // GPT-5.1 family doesn't support custom temperature, must use default 1.0
           modelOptions.temperature = 1.0;
         } else {
           // For other models (like gpt-4o), use command temperature or default
