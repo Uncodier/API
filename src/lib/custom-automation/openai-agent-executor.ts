@@ -599,53 +599,68 @@ export class OpenAIAgentExecutor {
                 result = `Waited for ${duration}ms`;
                 console.log(`⚡ [WAIT_LOCAL] Local wait completed`);
               } else {
-                // Execute tool normally via Scrapybara
-                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Calling ${toolCall.toolName}.execute() with Scrapybara SDK...`);
+                // Check if this is a Scrapybara tool (computer, bash, edit) or a local tool (generate_image, etc.)
+                const isScrapybaraTool = ['computer', 'bash', 'edit'].includes(toolCall.toolName);
+                
+                if (isScrapybaraTool) {
+                  // Execute tool via Scrapybara SDK
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Calling ${toolCall.toolName}.execute() with Scrapybara SDK...`);
+                } else {
+                  // Execute tool locally (e.g., generate_image)
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [LOCAL] Executing ${toolCall.toolName}.execute() locally...`);
+                }
+                
                 result = await tool.execute(toolCall.args);
                 
                 // Log raw result details for debugging
                 if (result === undefined || result === null) {
-                  console.warn(`⚠️ [SCRAPYBARA] ${toolCall.toolName} returned ${result === undefined ? 'undefined' : 'null'}`);
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.warn(`⚠️ ${logPrefix} ${toolCall.toolName} returned ${result === undefined ? 'undefined' : 'null'}`);
                 } else if (typeof result === 'object') {
                   const keys = Object.keys(result);
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Result is object with keys: [${keys.join(', ')}]`);
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ ${logPrefix} Result is object with keys: [${keys.join(', ')}]`);
                   
-                  // CRITICAL: Check for errors and validate action execution
-                  if (result.error && result.error.length > 0) {
-                    console.error(`⚠️ [SCRAPYBARA] Error field contains: "${result.error}"`);
-                  }
-                  
-                  if (result.output && result.output.length > 0) {
-                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Output: "${result.output.substring(0, 200)}"`);
-                  }
-                  
-                  // Check for common error fields
-                  if (result.failed || result.success === false) {
-                    console.error(`⚠️ [SCRAPYBARA] Result indicates failure:`, result.failed || 'success=false');
-                  }
-                  
-                  // CRITICAL: For non-screenshot actions, empty output+error might indicate failure
-                  if (toolCall.args.action !== 'take_screenshot' && 
-                      (!result.output || result.output === '') && 
-                      (!result.error || result.error === '')) {
-                    console.warn(`⚠️ [SCRAPYBARA] ${toolCall.args.action} returned empty output and error - action may not have executed`);
-                    console.warn(`⚠️ [SCRAPYBARA] This usually indicates the browser window lost focus or X11 display has input issues`);
-                    console.warn(`⚠️ [SCRAPYBARA] Full result keys:`, Object.keys(result).join(', '));
-                  }
-                  
-                  // Log system messages if present - THIS MAY CONTAIN THE REAL ERROR
-                  if (result.system) {
-                    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] System info:`, JSON.stringify(result.system));
+                  // Scrapybara-specific logging (only for Scrapybara tools)
+                  if (isScrapybaraTool) {
+                    // CRITICAL: Check for errors and validate action execution
+                    if (result.error && result.error.length > 0) {
+                      console.error(`⚠️ [SCRAPYBARA] Error field contains: "${result.error}"`);
+                    }
                     
-                    // Check if system contains error information
-                    if (typeof result.system === 'object') {
-                      if (result.system.error || result.system.message || result.system.status) {
-                        console.error(`🚨 [SCRAPYBARA_SYSTEM] System field indicates issue:`, result.system);
+                    if (result.output && result.output.length > 0) {
+                      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Output: "${result.output.substring(0, 200)}"`);
+                    }
+                    
+                    // Check for common error fields
+                    if (result.failed || result.success === false) {
+                      console.error(`⚠️ [SCRAPYBARA] Result indicates failure:`, result.failed || 'success=false');
+                    }
+                    
+                    // CRITICAL: For non-screenshot actions, empty output+error might indicate failure
+                    if (toolCall.args.action !== 'take_screenshot' && 
+                        (!result.output || result.output === '') && 
+                        (!result.error || result.error === '')) {
+                      console.warn(`⚠️ [SCRAPYBARA] ${toolCall.args.action} returned empty output and error - action may not have executed`);
+                      console.warn(`⚠️ [SCRAPYBARA] This usually indicates the browser window lost focus or X11 display has input issues`);
+                      console.warn(`⚠️ [SCRAPYBARA] Full result keys:`, Object.keys(result).join(', '));
+                    }
+                    
+                    // Log system messages if present - THIS MAY CONTAIN THE REAL ERROR
+                    if (result.system) {
+                      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] System info:`, JSON.stringify(result.system));
+                      
+                      // Check if system contains error information
+                      if (typeof result.system === 'object') {
+                        if (result.system.error || result.system.message || result.system.status) {
+                          console.error(`🚨 [SCRAPYBARA_SYSTEM] System field indicates issue:`, result.system);
+                        }
                       }
                     }
                   }
                 } else {
-                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Result type: ${typeof result}, length: ${String(result).length}`);
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ ${logPrefix} Result type: ${typeof result}, length: ${String(result).length}`);
                 }
               }
               
