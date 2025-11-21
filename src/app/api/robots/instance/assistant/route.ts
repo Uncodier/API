@@ -321,9 +321,9 @@ export async function POST(request: NextRequest) {
     // Determine execution mode based on instance status
     let executionResult;
 
-    if (instance.status === 'uninstantiated' || instance.status === 'paused') {
-      // Execute without Scrapybara tools (treat paused as uninstantiated for assistant)
-      const statusType = instance.status === 'paused' ? 'paused' : 'uninstantiated';
+    if (instance.status === 'uninstantiated' || instance.status === 'paused' || instance.status === 'stopped') {
+      // Execute without Scrapybara tools (treat paused/stopped as uninstantiated for assistant)
+      const statusType = (instance.status === 'paused' || instance.status === 'stopped') ? 'paused' : 'uninstantiated';
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is ${statusType}, using OpenAI assistant without tools`);
       
       const providerEnv = process.env.ROBOT_SDK_PROVIDER;
@@ -340,8 +340,8 @@ export async function POST(request: NextRequest) {
         generateImageTool(site_id)
       ];
       
-      // Build system prompt for uninstantiated/paused instance
-      const baseSystemPrompt = instance.status === 'paused' 
+      // Build system prompt for uninstantiated/paused/stopped instance
+      const baseSystemPrompt = (instance.status === 'paused' || instance.status === 'stopped')
         ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
         : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
       
@@ -439,7 +439,7 @@ export async function POST(request: NextRequest) {
         {
           error: 'Instance is not in a valid state for execution',
           status: instance.status,
-          message: 'Instance must be uninstantiated, paused, or running',
+          message: 'Instance must be uninstantiated, paused, stopped, or running',
         },
         { status: 400 }
       );

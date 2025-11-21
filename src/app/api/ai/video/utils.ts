@@ -46,3 +46,4 @@ export async function bufferFromDownload(downloadResult: any): Promise<Buffer> {
   throw new Error('Unsupported Gemini download response format.');
 }
 
+
