@@ -306,9 +306,24 @@ async function validateLeadExists(leadId: string): Promise<boolean> {
 }
 
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean) {
   try {
-    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}`);
+    console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}, is_robot=${isRobot || false}, is_transactional_message=${isTransactionalMessage || false}, is_erratic=${isErratic || false}`);
+    
+    // Si es robot, mensaje transaccional o errático, lanzar error para detener el flujo de creación en DB
+    if (isRobot || isTransactionalMessage || isErratic) {
+      console.log(`🚨 SKIP_DATABASE: is_robot=${isRobot}, is_transactional_message=${isTransactionalMessage}, is_erratic=${isErratic} - No se crearán objetos en la base de datos`);
+      const error: any = new Error('SKIP_DATABASE');
+      error.code = 'SKIP_DATABASE';
+      error.results = {
+        message: assistantMessage,
+        conversation_title: conversationTitle,
+        is_robot: isRobot || false,
+        is_transactional_message: isTransactionalMessage || false,
+        is_erratic: isErratic || false
+      };
+      throw error;
+    }
     
     // Validar que el lead existe si se proporciona un leadId
     let validatedLeadId: string | undefined = leadId;
@@ -1295,12 +1310,18 @@ export async function POST(request: Request) {
       targets: [
         {
           message: {
-            content: "message example" // Will be filled by the agent
+            content: "message example", // Will be filled by the agent
+            is_robot: undefined, // Optional: set to true if this is a robot/automated interaction
+            is_transactional_message: undefined, // Optional: set to true if this is a transactional/automatic message
+            is_erratic: undefined // Optional: set to true if the message is nonsensical or makes no sense
           }
         },
         {
           conversation: {
-            title: "conversation title" // Will be filled by the agent
+            title: "conversation title", // Will be filled by the agent
+            is_robot: undefined, // Optional: set to true if this is a robot/automated interaction
+            is_transactional_message: undefined, // Optional: set to true if this is a transactional/automatic message
+            is_erratic: undefined // Optional: set to true if the message is nonsensical or makes no sense
           }
         }
       ],
@@ -1858,20 +1879,107 @@ export async function POST(request: Request) {
       
       console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
       
+      // Extraer flags is_robot, is_transactional_message e is_erratic de los resultados
+      let isRobot: boolean | undefined = undefined;
+      let isTransactionalMessage: boolean | undefined = undefined;
+      let isErratic: boolean | undefined = undefined;
+      
+      if (executedCommand.results && Array.isArray(executedCommand.results)) {
+        // Buscar flags en message target
+        const messageResult = executedCommand.results.find((r: any) => 
+          r.message && typeof r.message === 'object'
+        );
+        if (messageResult && messageResult.message) {
+          if (typeof messageResult.message.is_robot === 'boolean') {
+            isRobot = messageResult.message.is_robot;
+            console.log(`🤖 Flag is_robot encontrado en message: ${isRobot}`);
+          }
+          if (typeof messageResult.message.is_transactional_message === 'boolean') {
+            isTransactionalMessage = messageResult.message.is_transactional_message;
+            console.log(`📧 Flag is_transactional_message encontrado en message: ${isTransactionalMessage}`);
+          }
+          if (typeof messageResult.message.is_erratic === 'boolean') {
+            isErratic = messageResult.message.is_erratic;
+            console.log(`⚠️ Flag is_erratic encontrado en message: ${isErratic}`);
+          }
+        }
+        
+        // Buscar flags en conversation target
+        const conversationResult = executedCommand.results.find((r: any) => 
+          r.conversation && typeof r.conversation === 'object'
+        );
+        if (conversationResult && conversationResult.conversation) {
+          if (typeof conversationResult.conversation.is_robot === 'boolean') {
+            isRobot = conversationResult.conversation.is_robot;
+            console.log(`🤖 Flag is_robot encontrado en conversation: ${isRobot}`);
+          }
+          if (typeof conversationResult.conversation.is_transactional_message === 'boolean') {
+            isTransactionalMessage = conversationResult.conversation.is_transactional_message;
+            console.log(`📧 Flag is_transactional_message encontrado en conversation: ${isTransactionalMessage}`);
+          }
+          if (typeof conversationResult.conversation.is_erratic === 'boolean') {
+            isErratic = conversationResult.conversation.is_erratic;
+            console.log(`⚠️ Flag is_erratic encontrado en conversation: ${isErratic}`);
+          }
+        }
+      }
+      
       // Usando lead_id efectivo al guardar los mensajes
-      const savedMessages = await saveMessages(
-        effectiveUserId, 
-        message, 
-        assistantMessage, 
-        effectiveConversationId, 
-        conversationTitle, 
-        effectiveLeadId || undefined, 
-        visitor_id, 
-        effectiveAgentId, 
-        effectiveSiteId, 
-        effectiveDbUuid || undefined,
-        effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
-      );
+      // Envolver en try-catch para manejar error SKIP_DATABASE
+      let savedMessages;
+      try {
+        savedMessages = await saveMessages(
+          effectiveUserId, 
+          message, 
+          assistantMessage, 
+          effectiveConversationId, 
+          conversationTitle, 
+          effectiveLeadId || undefined, 
+          visitor_id, 
+          effectiveAgentId, 
+          effectiveSiteId, 
+          effectiveDbUuid || undefined,
+          effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
+          isRobot,
+          isTransactionalMessage,
+          isErratic
+        );
+      } catch (error: any) {
+        // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
+        if (error.code === 'SKIP_DATABASE' && error.results) {
+          console.log(`🚨 SKIP_DATABASE detectado - retornando resultados sin crear objetos en DB`);
+          return NextResponse.json(
+            { 
+              success: true, 
+              data: { 
+                command_id: effectiveDbUuid,
+                skip_database: true,
+                results: {
+                  message: error.results.message || assistantMessage,
+                  conversation_title: error.results.conversation_title || conversationTitle,
+                  is_robot: error.results.is_robot || false,
+                  is_transactional_message: error.results.is_transactional_message || false,
+                  is_erratic: error.results.is_erratic || false
+                },
+                lead_id: effectiveLeadId || null,
+                task_id: taskId || null,
+                debug: {
+                  agent_id: effectiveAgentId,
+                  user_id: effectiveUserId,
+                  agent_user_id: agentUserId,
+                  site_id: effectiveSiteId
+                }
+              } 
+            },
+            { 
+              status: 200,
+              headers: corsHeaders(request)
+            }
+          );
+        }
+        // Si es otro error, relanzarlo
+        throw error;
+      }
       
       if (!savedMessages) {
         console.error(`❌ Error al guardar mensajes en la base de datos`);
@@ -2026,20 +2134,96 @@ export async function POST(request: Request) {
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
+    // Extraer flags is_robot e is_transactional_message de los resultados
+    let isRobot: boolean | undefined = undefined;
+    let isTransactionalMessage: boolean | undefined = undefined;
+    
+    if (executedCommand.results && Array.isArray(executedCommand.results)) {
+      // Buscar flags en message target
+      const messageResult = executedCommand.results.find((r: any) => 
+        r.message && typeof r.message === 'object'
+      );
+      if (messageResult && messageResult.message) {
+        if (typeof messageResult.message.is_robot === 'boolean') {
+          isRobot = messageResult.message.is_robot;
+          console.log(`🤖 Flag is_robot encontrado en message: ${isRobot}`);
+        }
+        if (typeof messageResult.message.is_transactional_message === 'boolean') {
+          isTransactionalMessage = messageResult.message.is_transactional_message;
+          console.log(`📧 Flag is_transactional_message encontrado en message: ${isTransactionalMessage}`);
+        }
+      }
+      
+      // Buscar flags en conversation target
+      const conversationResult = executedCommand.results.find((r: any) => 
+        r.conversation && typeof r.conversation === 'object'
+      );
+      if (conversationResult && conversationResult.conversation) {
+        if (typeof conversationResult.conversation.is_robot === 'boolean') {
+          isRobot = conversationResult.conversation.is_robot;
+          console.log(`🤖 Flag is_robot encontrado en conversation: ${isRobot}`);
+        }
+        if (typeof conversationResult.conversation.is_transactional_message === 'boolean') {
+          isTransactionalMessage = conversationResult.conversation.is_transactional_message;
+          console.log(`📧 Flag is_transactional_message encontrado en conversation: ${isTransactionalMessage}`);
+        }
+      }
+    }
+    
     // Usando lead_id efectivo al guardar los mensajes
-    const savedMessages = await saveMessages(
-      effectiveUserId, 
-      message, 
-      assistantMessage, 
-      effectiveConversationId, 
-      conversationTitle, 
-      effectiveLeadId || undefined,
-      visitor_id, 
-      effectiveAgentId, 
-      effectiveSiteId, 
-      effectiveDbUuid || undefined,
-      effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined) // Usar origin si está disponible, o leadOrigin si no es 'chat'
-    );
+    // Envolver en try-catch para manejar error SKIP_DATABASE
+    let savedMessages;
+    try {
+      savedMessages = await saveMessages(
+        effectiveUserId, 
+        message, 
+        assistantMessage, 
+        effectiveConversationId, 
+        conversationTitle, 
+        effectiveLeadId || undefined, 
+        visitor_id, 
+        effectiveAgentId, 
+        effectiveSiteId, 
+        effectiveDbUuid || undefined,
+        effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
+        isRobot,
+        isTransactionalMessage
+      );
+    } catch (error: any) {
+      // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
+      if (error.code === 'SKIP_DATABASE' && error.results) {
+        console.log(`🚨 SKIP_DATABASE detectado - retornando resultados sin crear objetos en DB`);
+        return NextResponse.json(
+          { 
+            success: true, 
+            data: { 
+              command_id: effectiveDbUuid,
+              skip_database: true,
+              results: {
+                message: error.results.message || assistantMessage,
+                conversation_title: error.results.conversation_title || conversationTitle,
+                is_robot: error.results.is_robot || false,
+                is_transactional_message: error.results.is_transactional_message || false
+              },
+              lead_id: effectiveLeadId || null,
+              task_id: taskId || null,
+              debug: {
+                agent_id: effectiveAgentId,
+                user_id: effectiveUserId,
+                agent_user_id: agentUserId,
+                site_id: effectiveSiteId
+              }
+            } 
+          },
+          { 
+            status: 200,
+            headers: corsHeaders(request)
+          }
+        );
+      }
+      // Si es otro error, relanzarlo
+      throw error;
+    }
     
     if (!savedMessages) {
       console.error(`❌ Error al guardar mensajes en la base de datos`);
