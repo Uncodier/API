@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Build payload with default for do_contacts_enrichment
+    // Build payload
     const payload: Record<string, unknown> = {};
     if (hasPersonId) {
       payload.person_id = body.person_id;
@@ -53,13 +53,12 @@ export async function POST(req: NextRequest) {
     if (hasLinkedInId) {
       payload.linkedin_public_identifier = body.linkedin_public_identifier;
     }
-    payload.do_contacts_enrichment = body.do_contacts_enrichment ?? false;
 
     const url = `https://api-v2.forager.ai/api/${encodeURIComponent(
       foragerAccountId
-    )}/datastorage/person_contacts_lookup/work_emails/`;
+    )}/datastorage/person_detail_lookup/`;
 
-    logInfo('finder.person_contacts_lookup.work_emails', 'Upstream request', { url, body: payload });
+    logInfo('finder.person_contacts_lookup.details', 'Upstream request', { url, body: payload });
 
     const upstreamResponse = await fetch(url, {
       method: 'POST',
@@ -78,7 +77,7 @@ export async function POST(req: NextRequest) {
         ? await upstreamResponse.json().catch(() => ({ error: 'Upstream error (invalid JSON)' }))
         : await upstreamResponse.text().catch(() => 'Upstream error');
 
-      logError('finder.person_contacts_lookup.work_emails', 'Upstream error', {
+      logError('finder.person_contacts_lookup.details', 'Upstream error', {
         url,
         params: payload,
         upstream: {
@@ -100,7 +99,7 @@ export async function POST(req: NextRequest) {
       };
 
       return NextResponse.json(
-        { error: 'Work emails lookup service temporarily unavailable', debug },
+        { error: 'Person detail lookup service temporarily unavailable', debug },
         { status: upstreamResponse.status }
       );
     }
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(typeof data === 'string' ? { data } : data);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    logError('finder.person_contacts_lookup.work_emails', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack, params: requestBody } : { error, params: requestBody });
+    logError('finder.person_contacts_lookup.details', 'Handler exception', error instanceof Error ? { message: error.message, stack: error.stack, params: requestBody } : { error, params: requestBody });
     return NextResponse.json(
       { error: 'Internal error', message, debug: { params: requestBody } },
       { status: 500 }
@@ -118,3 +117,7 @@ export async function POST(req: NextRequest) {
 }
 
 export const dynamic = 'force-dynamic';
+
+
+
+

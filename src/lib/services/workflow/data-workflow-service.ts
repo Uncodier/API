@@ -456,6 +456,84 @@ export class DataWorkflowService extends BaseWorkflowService {
   }
 
   /**
+   * Ejecuta el workflow para enriquecimiento de leads
+   */
+  public async enrichLead(args: { 
+    linkedin_profile?: string; 
+    person_id?: string; 
+    site_id: string; 
+    userId?: string 
+  }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    try {
+      if (!args.site_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere site_id para el enriquecimiento de lead'
+          }
+        };
+      }
+
+      if (!args.linkedin_profile && !args.person_id) {
+        return {
+          success: false,
+          error: {
+            code: 'INVALID_ARGUMENTS',
+            message: 'Se requiere al menos linkedin_profile o person_id para el enriquecimiento de lead'
+          }
+        };
+      }
+
+      const client = await this.initializeClient();
+      
+      const workflowId = options?.workflowId || `enrich-lead-${args.site_id}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
+
+      console.log(`🔍 Iniciando workflow de enriquecimiento de lead: ${workflowId}`);
+
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('enrichLeadWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      } else {
+        const result = await client.workflow.execute('enrichLeadWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        return {
+          success: true,
+          workflowId,
+          status: 'completed',
+          data: result
+        };
+      }
+
+    } catch (error) {
+      console.error('❌ Error al ejecutar workflow de enriquecimiento de lead:', error);
+      return {
+        success: false,
+        error: {
+          code: 'WORKFLOW_EXECUTION_ERROR',
+          message: error instanceof Error ? error.message : 'Error desconocido al ejecutar workflow de enriquecimiento de lead'
+        }
+      };
+    }
+  }
+
+  /**
    * Ejecuta el workflow para generación de leads
    */
   public async leadGeneration(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {

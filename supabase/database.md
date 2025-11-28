@@ -494,6 +494,7 @@ CREATE TABLE public.leads (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   name text NOT NULL,
   email text NOT NULL,
+  personal_email text,
   position text,
   segment_id uuid,
   status text NOT NULL CHECK (status = ANY (ARRAY['new'::text, 'contacted'::text, 'qualified'::text, 'converted'::text, 'lost'::text])),
@@ -1923,6 +1924,8 @@ You can subscribe an endpoint to any of these. Deliveries are recorded in `webho
   - location (text)
   - emails (jsonb)
   - phones (jsonb)
+  - personal_emails (jsonb, array)
+  - linkedin_profile (text, URL)
   - raw_result (jsonb, required)
   - created_at / updated_at
   - Unique: (external_person_id, external_role_id)

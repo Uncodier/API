@@ -107,6 +107,15 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.leadResearch(args, options);
   }
 
+  public async enrichLead(args: { 
+    linkedin_profile?: string; 
+    person_id?: string; 
+    site_id: string; 
+    userId?: string 
+  }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.enrichLead(args, options);
+  }
+
   public async leadGeneration(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.dataService.leadGeneration(args, options);
   }

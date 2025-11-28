@@ -71,6 +71,7 @@ LIMIT 1;
 
 ## Table of Contents
 - [Leads JSONb Fields](#leads-jsonb-fields)
+- [Persons JSONb Fields](#persons-jsonb-fields)
 - [Segments JSONb Fields](#segments-jsonb-fields)
 - [Settings JSONb Fields](#settings-jsonb-fields)
 - [Conversations JSONb Fields](#conversations-jsonb-fields)
@@ -221,6 +222,29 @@ Generic metadata for additional lead information.
   }
 }
 ```
+
+---
+
+## Persons JSONb Fields
+
+### `personal_emails` (jsonb)
+Stores an array of personal email addresses for the person.
+
+**Default:** `[]`
+
+**Structure:**
+```json
+[
+  "john.doe@gmail.com",
+  "johndoe@yahoo.com",
+  "john.doe.personal@outlook.com"
+]
+```
+
+**Notes:**
+- Array of email address strings
+- Used to store multiple personal email addresses associated with a person
+- Distinct from the `emails` field which may contain work or other email types
 
 ---
 
