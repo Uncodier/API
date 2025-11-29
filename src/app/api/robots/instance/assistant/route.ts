@@ -7,6 +7,7 @@ import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
+import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 
 /**
@@ -209,10 +210,11 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(providedSiteId);
       
-      // Add generateImage tool to custom tools
+      // Add generateImage and generateVideo tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(providedSiteId, newInstance.id)
+        generateImageTool(providedSiteId, newInstance.id),
+        generateVideoTool(providedSiteId, newInstance.id)
       ];
       
       // Build system prompt for new instance (simple context)
@@ -297,10 +299,22 @@ export async function POST(request: NextRequest) {
         
         // Handle tool calls with special formatting for generate_image and generate_video
         if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
-          if (log.tool_name === 'generate_image' || log.tool_name === 'generate_video') {
+          if (log.tool_name === 'generate_image') {
             const toolResult = log.tool_result;
             if (toolResult.success && toolResult.output && toolResult.output.images) {
               const urls = toolResult.output.images.map((img: any) => img.url).filter(Boolean);
+              if (urls.length > 0) {
+                historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
+              } else {
+                historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+              }
+            } else {
+              historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+            }
+          } else if (log.tool_name === 'generate_video') {
+            const toolResult = log.tool_result;
+            if (toolResult.success && toolResult.output && toolResult.output.videos) {
+              const urls = toolResult.output.videos.map((video: any) => video.url).filter(Boolean);
               if (urls.length > 0) {
                 historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
               } else {
@@ -332,10 +346,11 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage tool to custom tools
+      // Add generateImage and generateVideo tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(site_id, providedInstanceId)
+        generateImageTool(site_id, providedInstanceId),
+        generateVideoTool(site_id, providedInstanceId)
       ];
       
       // Build system prompt for uninstantiated/paused/stopped instance
@@ -392,10 +407,11 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage tool to custom tools
+      // Add generateImage and generateVideo tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
-        generateImageTool(site_id, providedInstanceId)
+        generateImageTool(site_id, providedInstanceId),
+        generateVideoTool(site_id, providedInstanceId)
       ];
       
       const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);

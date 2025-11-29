@@ -27,6 +27,7 @@ interface VideoGenerationResult {
     duration_seconds?: number;
     aspect_ratio?: AspectRatio;
     quality?: VideoQuality;
+    resolution?: '720p' | '1080p';
     generated_at: string;
     fallbackFrom?: Provider;
   };
@@ -166,6 +167,77 @@ async function saveFileRecord(
   }
 }
 
+/**
+ * Maps duration_seconds to valid Gemini API values: 4, 6, or 8
+ * Rounds up to the nearest valid value (e.g., 20 → 8, 5 → 6, 3 → 4)
+ * When using reference_images, duration must be 8 seconds
+ */
+function mapDurationToValidValue(
+  seconds: number | undefined,
+  hasReferenceImages: boolean
+): 4 | 6 | 8 | undefined {
+  if (seconds === undefined) {
+    return undefined;
+  }
+
+  // If reference images, must be 8
+  if (hasReferenceImages) {
+    return 8;
+  }
+
+  // Round up to nearest valid value
+  if (seconds <= 4) {
+    return 4;
+  }
+  if (seconds <= 6) {
+    return 6;
+  }
+  return 8;
+}
+
+/**
+ * Maps quality parameter to resolution
+ * - "preview" → "720p"
+ * - "standard" → "720p"
+ * - "pro" → "1080p" (with constraints: requires duration 8 and aspect_ratio 16:9)
+ */
+function mapQualityToResolution(
+  quality: VideoQuality | undefined,
+  duration: 4 | 6 | 8 | undefined,
+  aspectRatio: AspectRatio | undefined
+): '720p' | '1080p' {
+  if (quality === 'pro') {
+    // 1080p only works with duration 8 and aspect_ratio 16:9
+    if (duration === 8 && (!aspectRatio || aspectRatio === '16:9')) {
+      return '1080p';
+    }
+    // Fallback to 720p if constraints not met
+    return '720p';
+  }
+  // preview and standard both use 720p
+  return '720p';
+}
+
+/**
+ * Validates that aspect ratio is compatible with Gemini API
+ * Gemini only supports "16:9" and "9:16"
+ */
+function validateAspectRatioForGemini(aspectRatio: AspectRatio | undefined): '16:9' | '9:16' | undefined {
+  if (!aspectRatio) {
+    return undefined;
+  }
+
+  // Gemini only supports 16:9 and 9:16
+  if (aspectRatio === '16:9' || aspectRatio === '9:16') {
+    return aspectRatio;
+  }
+
+  // For other aspect ratios, we'll use 16:9 as default
+  // This could be logged as a warning
+  console.warn(`[Gemini Video] Aspect ratio ${aspectRatio} not supported by Gemini, using 16:9 as default`);
+  return '16:9';
+}
+
 function buildPrompt(prompt: string, aspectRatio?: AspectRatio, durationSeconds?: number, quality?: VideoQuality) {
   const hints: string[] = [];
 
@@ -215,17 +287,78 @@ async function generateWithGemini(options: {
     }
   }
 
+  const hasReferenceImages = references.length > 0;
+
+  // Map duration to valid Gemini values
+  const mappedDuration = mapDurationToValidValue(options.durationSeconds, hasReferenceImages);
+
+  // Validate and map aspect ratio (Gemini only supports 16:9 and 9:16)
+  const mappedAspectRatio = validateAspectRatioForGemini(options.aspectRatio);
+
+  // Map quality to resolution
+  const mappedResolution = mapQualityToResolution(options.quality, mappedDuration, mappedAspectRatio);
+
+  // Log warning if quality "pro" was requested but couldn't use 1080p
+  if (options.quality === 'pro' && mappedResolution === '720p') {
+    const reasons: string[] = [];
+    if (mappedDuration !== 8) {
+      reasons.push(`duration must be 8 seconds (got ${mappedDuration})`);
+    }
+    if (mappedAspectRatio && mappedAspectRatio !== '16:9') {
+      reasons.push(`aspect_ratio must be "16:9" (got "${mappedAspectRatio}")`);
+    }
+    if (reasons.length > 0) {
+      console.warn(
+        `[Gemini Video] Quality "pro" requested but degraded to 720p. Reasons: ${reasons.join(', ')}. 1080p requires duration=8 and aspect_ratio="16:9".`
+      );
+    }
+  }
+
+  // Validate resolution constraints
+  if (mappedResolution === '1080p') {
+    if (mappedDuration !== 8) {
+      throw new Error('1080p resolution requires duration of 8 seconds');
+    }
+    if (mappedAspectRatio && mappedAspectRatio !== '16:9') {
+      throw new Error('1080p resolution only supports aspect ratio 16:9');
+    }
+  }
+
   console.log('[Gemini Video] Starting generation', {
     model,
     siteId: options.siteId,
-    aspectRatio: options.aspectRatio,
-    durationSeconds: options.durationSeconds,
+    originalAspectRatio: options.aspectRatio,
+    mappedAspectRatio,
+    originalDuration: options.durationSeconds,
+    mappedDuration,
+    quality: options.quality,
+    resolution: mappedResolution,
     references: references.length,
   });
+
+  // Build config object for Gemini API
+  const config: any = {};
+  if (mappedAspectRatio) {
+    config.aspectRatio = mappedAspectRatio;
+  }
+  if (mappedResolution) {
+    config.resolution = mappedResolution;
+  }
+  if (mappedDuration) {
+    config.durationSeconds = mappedDuration;
+  }
+
+  // Store mapped values for later use in metadata
+  const videoConfig = {
+    mappedDuration,
+    mappedAspectRatio,
+    mappedResolution,
+  };
 
   let operation: any = await ai.models.generateVideos({
     model,
     prompt: finalPrompt,
+    ...(Object.keys(config).length > 0 ? { config } : {}),
     ...(references[0]
       ? {
           image: {
@@ -342,9 +475,12 @@ async function generateWithGemini(options: {
       options.prompt,
       model,
       {
-        duration_seconds: options.durationSeconds,
-        aspect_ratio: options.aspectRatio,
+        duration_seconds: videoConfig.mappedDuration ?? options.durationSeconds,
+        aspect_ratio: videoConfig.mappedAspectRatio || options.aspectRatio,
         quality: options.quality,
+        resolution: videoConfig.mappedResolution,
+        original_duration_seconds: options.durationSeconds,
+        original_aspect_ratio: options.aspectRatio,
       }
     );
   } catch (error) {
@@ -361,9 +497,10 @@ async function generateWithGemini(options: {
     ],
     metadata: {
       model,
-      duration_seconds: options.durationSeconds,
-      aspect_ratio: options.aspectRatio,
+      duration_seconds: videoConfig.mappedDuration ?? options.durationSeconds,
+      aspect_ratio: videoConfig.mappedAspectRatio || options.aspectRatio,
       quality: options.quality,
+      resolution: videoConfig.mappedResolution,
       generated_at: new Date().toISOString(),
     },
   };
@@ -419,6 +556,10 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Note: Quality "pro" will automatically degrade to 720p if constraints aren't met
+    // (duration must be 8 and aspect_ratio must be 16:9 for 1080p)
+    // This is handled in mapQualityToResolution function
+
     if (reference_images !== undefined) {
       if (!Array.isArray(reference_images)) {
         return NextResponse.json({ error: 'Parameter "reference_images" must be an array of URLs' }, { status: 400 });
@@ -442,16 +583,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Unsupported provider: ${provider}` }, { status: 400 });
     }
 
-    const sanitizedDuration =
-      typeof duration_seconds === 'number'
-        ? Math.min(Math.round(duration_seconds), MAX_DURATION_SECONDS)
-        : undefined;
-
+    // Duration will be mapped to valid values (4, 6, 8) in generateWithGemini
+    // No need to sanitize here, just pass through
     const result = await generateWithGemini({
       prompt,
       siteId: site_id,
       aspectRatio: aspect_ratio,
-      durationSeconds: sanitizedDuration,
+      durationSeconds: duration_seconds,
       referenceImages: reference_images,
       quality,
       model,

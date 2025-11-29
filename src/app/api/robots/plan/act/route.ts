@@ -4,6 +4,7 @@ import { OpenAIAgentExecutor } from '@/lib/custom-automation';
 import { anthropic } from 'scrapybara/anthropic';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
+import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
 import {
   ActSchema,
   AgentResponseSchema,
@@ -417,9 +418,11 @@ export async function POST(request: NextRequest) {
     const ubuntuInstance = remoteInstance as any;
     let tools = setupTools(ubuntuInstance);
     
-    // Add generateImage tool to the tools array (Scrapybara-compatible version)
+    // Add generateImage and generateVideo tools to the tools array (Scrapybara-compatible version)
     const generateImageToolInstance = generateImageToolScrapybara(ubuntuInstance, instance.site_id);
+    const generateVideoToolInstance = generateVideoToolScrapybara(ubuntuInstance, instance.site_id);
     tools.push(generateImageToolInstance);
+    tools.push(generateVideoToolInstance);
     
     const toolsValidation = await validateTools(tools, client, instance.provider_instance_id);
     if (!toolsValidation.valid) {
