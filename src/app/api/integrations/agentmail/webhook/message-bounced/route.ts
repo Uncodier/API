@@ -14,19 +14,13 @@ export async function POST(request: NextRequest) {
     const body = await request.text();
 
     // Verify Svix signature
+    // Try specific secret, fallback to general secret via verifySvixWebhook
     const webhookSecret = process.env.AGENTMAIL_WEBHOOK_SECRET_MESSAGE_BOUNCED;
-    if (!webhookSecret) {
-      console.error('❌ [AgentMail] AGENTMAIL_WEBHOOK_SECRET_MESSAGE_BOUNCED not configured');
-      return NextResponse.json(
-        { success: false, error: 'Webhook configuration error' },
-        { status: 500 }
-      );
-    }
-
     let payload;
     try {
       payload = await verifySvixWebhook(body, webhookSecret);
     } catch (error: any) {
+      // verifySvixWebhook will throw if neither specific nor general secret is configured
       console.error('❌ [AgentMail] Signature verification failed:', error.message);
       return NextResponse.json(
         { success: false, error: 'Webhook verification failed', details: error.message },
