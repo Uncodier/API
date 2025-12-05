@@ -1,0 +1,353 @@
+---
+title: 'Send Email'
+description: 'Send emails automatically from an AI agent using AgentMail integration or native SMTP'
+---
+
+import { UnifiedApiTester } from '@/components/ApiTester';
+
+## Send Email
+
+This tool allows AI agents to send emails automatically to leads, customers, or any specified email address. The tool supports both AgentMail integration (when configured) and native SMTP email sending as a fallback.
+
+### Description
+
+The Send Email tool sends emails using either the AgentMail integration or the site's configured SMTP settings. The system automatically selects the best available method:
+
+1. **AgentMail Integration**: If `agent_email` channel is configured and active, emails are sent via AgentMail API
+2. **Native SMTP Fallback**: If AgentMail is not available, the tool falls back to native SMTP using the site's email configuration
+
+The tool automatically:
+- Generates and attaches agent signatures to emails
+- Validates email formats for both sender and recipient
+- Saves sent emails to `synced_objects` to prevent duplicates during synchronization
+- Provides detailed logging and error handling
+
+### Input Schema
+
+```json
+{
+  "email": "string", // Required - Recipient email address
+  "subject": "string", // Required - Email subject line
+  "message": "string", // Required - Email message content (plain text or HTML)
+  "site_id": "string", // Required - Site ID to retrieve email configuration
+  "from": "string", // Optional - Sender name (email address is obtained from site configuration)
+  "agent_id": "string", // Optional - Agent ID for logging and tracking
+  "conversation_id": "string", // Optional - Conversation ID for context tracking
+  "lead_id": "string" // Optional - Lead ID for relationship tracking
+}
+```
+
+### Parameters
+
+| Name            | Type     | Required | Description                                                                 |
+|-----------------|----------|----------|-----------------------------------------------------------------------------|
+| email           | string   | Yes      | Recipient email address                                                     |
+| subject         | string   | Yes      | Email subject line                                                          |
+| message         | string   | Yes      | Email message content (supports plain text and HTML)                        |
+| site_id         | string   | Yes      | Site ID to retrieve email configuration from settings                       |
+| from            | string   | No       | Sender name (optional). The sender email is obtained from site configuration |
+| agent_id        | string   | No       | Agent ID for logging and tracking purposes                                  |
+| conversation_id | string   | No       | Conversation ID for context tracking                                        |
+| lead_id         | string   | No       | Lead ID for relationship tracking                                           |
+
+### Test API
+
+Use the integrated API Tester to test this endpoint interactively:
+
+<UnifiedApiTester apiId="sendEmail" />
+
+#### API Tester Features:
+
+- **Preconfigured fields**: Includes all necessary parameters with realistic examples
+- **Automatic validation**: Verifies email formats and required fields
+- **Message preview**: Shows how the email will be formatted
+- **Code generation**: Automatic examples in cURL, JavaScript, Python, and PHP
+- **Real-time response**: Shows server response and send status
+- **Temporary email handling**: Detects and handles the special 'no-email@example.com' email
+
+#### Form Fields:
+
+**Required:**
+- `email`: Recipient email address
+- `subject`: Email subject line
+- `message`: Message content
+- `site_id`: Site ID to retrieve email configuration
+
+**Optional:**
+- `from`: Sender name (email is obtained from site configuration)
+- `agent_id`: Agent ID for logging
+- `conversation_id`: Conversation ID for logging
+- `lead_id`: Lead ID for logging
+
+### Output Schema
+
+#### Success Response (AgentMail)
+
+```json
+{
+  "success": true,
+  "status": "sent",
+  "email_id": "string",
+  "external_message_id": "string",
+  "recipient": "string",
+  "sender": "string",
+  "subject": "string",
+  "message_preview": "string",
+  "sent_at": "string",
+  "thread_id": "string"
+}
+```
+
+#### Success Response (Native SMTP)
+
+```json
+{
+  "success": true,
+  "status": "sent",
+  "email_id": "string",
+  "external_message_id": "string",
+  "recipient": "string",
+  "sender": "string",
+  "subject": "string",
+  "message_preview": "string",
+  "sent_at": "string"
+}
+```
+
+### Response Fields
+
+| Field              | Type    | Description                                                                 |
+|--------------------|---------|-----------------------------------------------------------------------------|
+| success            | boolean | Indicates if the email was sent successfully                                |
+| status             | string  | Email status: "sent", "skipped", or "failed"                                |
+| email_id           | string  | Unique message ID from the email provider (SendGrid or AgentMail)            |
+| external_message_id| string  | External message ID for tracking (envelope_id or message_id)                |
+| recipient          | string  | Recipient email address                                                     |
+| sender             | string  | Sender email address                                                        |
+| subject            | string  | Email subject line                                                          |
+| message_preview    | string  | Preview of the first 200 characters of the message                           |
+| sent_at            | string  | ISO 8601 timestamp of when the email was sent                               |
+| thread_id          | string  | Thread ID (AgentMail only) - Used for email thread tracking                 |
+
+### Email Configuration
+
+The sender email address is determined automatically from the site's configuration:
+
+#### AgentMail Configuration
+
+If AgentMail is configured and active, the sender email is constructed from:
+- `settings.channels.agent_email.username`
+- `settings.channels.agent_email.domain`
+
+Result: `username@domain`
+
+#### Native SMTP Configuration
+
+If using native SMTP, the sender email is obtained from:
+- `settings.channels.email.email`
+
+The `from` parameter (if provided) is used as the sender's display name.
+
+### AgentMail vs Native SMTP
+
+The tool automatically selects the email sending method based on site configuration:
+
+1. **AgentMail Priority**: If `agent_email` channel is configured with `status: "active"`, the tool uses AgentMail
+2. **Automatic Fallback**: If AgentMail fails or is not configured, the tool automatically falls back to native SMTP
+3. **Configuration Check**: The tool validates that either AgentMail or native email is properly configured
+
+#### AgentMail Requirements
+
+- `settings.channels.agent_email.status` must be `"active"`
+- `settings.channels.agent_email.username` and `domain` must be configured
+- `AGENTMAIL_API_KEY` environment variable must be set
+
+#### Native SMTP Requirements
+
+- `settings.channels.email.email` must be configured
+- SMTP credentials must be stored securely via `/api/secure-tokens` endpoint
+- Valid SMTP server configuration (host, port, credentials)
+
+### Agent Signature
+
+The tool automatically generates and attaches agent signatures to emails:
+
+- **Automatic Generation**: Signatures are generated using `EmailSignatureService.generateAgentSignature()`
+- **HTML Format**: Signatures are formatted as HTML and appended to the message
+- **Site-Based**: Signatures are customized based on `site_id` and optional `from` parameter
+- **Graceful Handling**: If signature generation fails, the email is still sent without a signature
+
+### Error Codes
+
+| Code                      | Status | Description                                                                 |
+|---------------------------|--------|-----------------------------------------------------------------------------|
+| INVALID_REQUEST           | 400    | Missing required fields or invalid email format                             |
+| SITE_CONFIG_NOT_FOUND     | 404    | Site configuration not found in settings table                              |
+| EMAIL_NOT_CONFIGURED      | 400    | Email is not configured for this site in settings                           |
+| INVALID_CONFIGURED_EMAIL  | 400    | The configured email in site settings has an invalid format                 |
+| EMAIL_CONFIG_NOT_FOUND    | 404    | SMTP configuration or email token not found in secure_tokens               |
+| AGENTMAIL_SEND_FAILED     | 500    | Failed to send message via AgentMail (only if no SMTP fallback available)  |
+| INTERNAL_SERVER_ERROR     | 500    | An internal server error occurred while sending the email                  |
+
+### Error Response Format
+
+```json
+{
+  "success": false,
+  "error": {
+    "code": "ERROR_CODE",
+    "message": "Human-readable error message"
+  }
+}
+```
+
+### Example Usage
+
+#### Basic Email Send
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "sendEmail",
+    input: {
+      email: "customer@example.com",
+      subject: "Thank you for your interest",
+      message: "Dear Customer,\n\nThank you for reaching out to us. We will get back to you soon.\n\nBest regards,\nSupport Team",
+      site_id: "site-12345"
+    }
+  }
+]);
+
+if (result.success) {
+  console.log(`Email sent successfully. ID: ${result.email_id}`);
+  console.log(`Status: ${result.status}`);
+}
+```
+
+#### Email with Context Tracking
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "sendEmail",
+    input: {
+      email: "lead@company.com",
+      from: "Sales Team",
+      subject: "Follow-up on your inquiry",
+      message: "Hi there,\n\nWe wanted to follow up on your recent inquiry about our services...",
+      site_id: "site-12345",
+      agent_id: "agent-abc123",
+      conversation_id: "conv-xyz789",
+      lead_id: "lead-456"
+    }
+  }
+]);
+```
+
+#### HTML Email Content
+
+```javascript
+const result = await agent.useTools([
+  {
+    name: "sendEmail",
+    input: {
+      email: "client@business.com",
+      subject: "Your proposal is ready",
+      message: "<h1>Hello!</h1><p>Your custom proposal is ready for review.</p><ul><li>Feature 1</li><li>Feature 2</li></ul>",
+      site_id: "site-12345"
+    }
+  }
+]);
+```
+
+### Special Email Handling
+
+#### Temporary Email Address
+
+The tool handles the special email address `no-email@example.com`:
+- **Detection**: Automatically recognized as a temporary email
+- **No Real Send**: No actual email is sent to this address
+- **Simulated Response**: Returns a successful response with `status: "skipped"`
+- **Use Cases**: Testing, development, or handling leads without valid email addresses
+
+### Duplicate Prevention
+
+The tool automatically saves sent emails to `synced_objects` to prevent duplicates:
+
+- **AgentMail**: Saves `message_id` as `external_id` with provider `"agentmail"`
+- **Native SMTP**: Saves `envelope_id` (preferred) or `email_id` (fallback) with provider `"smtp_send_service"`
+- **Status**: Marked as `"processed"` to indicate it was sent via API, not synced
+- **Metadata**: Includes recipient, sender, subject, preview, timestamps, and context IDs
+
+### Notes
+
+- **Email Format**: The tool accepts both plain text and HTML content in the `message` field
+- **Signature Attachment**: Agent signatures are automatically generated and appended to emails
+- **Thread Tracking**: AgentMail responses include `thread_id` for email thread management
+- **Logging**: All email sends are logged with detailed information for debugging
+- **Configuration Priority**: AgentMail is preferred when available, with automatic fallback to SMTP
+- **Validation**: Both sender and recipient email formats are validated before sending
+- **Error Recovery**: If AgentMail fails and SMTP is configured, the tool automatically retries with SMTP
+- **Response Codes**: 
+  - `201 Created`: Email sent successfully
+  - `200 OK`: Email skipped (temporary email address)
+  - `400 Bad Request`: Invalid parameters or configuration
+  - `404 Not Found`: Site or email configuration not found
+  - `500 Internal Server Error`: Server error during send
+
+### Configuration Requirements
+
+#### Site Settings Structure
+
+```json
+{
+  "channels": {
+    "agent_email": {
+      "status": "active",
+      "username": "sales",
+      "domain": "example.com",
+      "data": {
+        "username": "sales",
+        "domain": "example.com"
+      }
+    },
+    "email": {
+      "email": "support@example.com",
+      "status": "synced",
+      "enabled": true,
+      "provider": "Gmail",
+      "incomingPort": "993",
+      "outgoingPort": "587",
+      "incomingServer": "imap.gmail.com",
+      "outgoingServer": "smtp.gmail.com"
+    }
+  }
+}
+```
+
+#### Environment Variables
+
+- `AGENTMAIL_API_KEY`: Required for AgentMail integration (optional if only using SMTP)
+- `ENCRYPTION_KEY`: Required for decrypting SMTP credentials from secure_tokens
+
+#### Secure Token Storage
+
+SMTP credentials must be stored securely using the `/api/secure-tokens` endpoint:
+
+```bash
+POST /api/secure-tokens
+{
+  "site_id": "site-12345",
+  "token_type": "email",
+  "identifier": "support@example.com",
+  "token_value": {
+    "email": "support@example.com",
+    "password": "app-specific-password",
+    "smtpHost": "smtp.gmail.com",
+    "smtpPort": 587,
+    "imapHost": "imap.gmail.com",
+    "imapPort": 993
+  }
+}
+```
+

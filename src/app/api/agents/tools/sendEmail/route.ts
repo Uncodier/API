@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
+import { sendMessage } from '@/lib/integrations/agentmail/agentmail-service';
 
 /**
  * Endpoint para enviar emails desde un agente
@@ -111,7 +112,9 @@ export async function POST(request: NextRequest) {
       dataStructure: siteSettings ? {
         hasChannels: !!siteSettings.channels,
         hasEmailConfig: !!siteSettings.channels?.email,
-        emailConfigKeys: siteSettings.channels?.email ? Object.keys(siteSettings.channels.email) : []
+        hasAgentEmailConfig: !!siteSettings.channels?.agent_email,
+        emailConfigKeys: siteSettings.channels?.email ? Object.keys(siteSettings.channels.email) : [],
+        agentEmailConfigKeys: siteSettings.channels?.agent_email ? Object.keys(siteSettings.channels.agent_email) : []
       } : null
     });
       
@@ -133,6 +136,201 @@ export async function POST(request: NextRequest) {
         { status: 404 }
       );
     }
+    
+    // Check if agent_email channel is configured and active
+    const agentEmailConfig = siteSettings.channels?.agent_email;
+    const isAgentEmailActive = agentEmailConfig && agentEmailConfig.status === 'active';
+    
+    console.log(`[SEND_EMAIL] 🔍 Verificando configuración de agent_email:`, {
+      hasAgentEmailConfig: !!agentEmailConfig,
+      agentEmailStatus: agentEmailConfig?.status,
+      isAgentEmailActive,
+      hasUsername: !!(agentEmailConfig?.username || agentEmailConfig?.data?.username),
+      hasDomain: !!(agentEmailConfig?.domain || agentEmailConfig?.data?.domain)
+    });
+    
+    // If agent_email is active, use AgentMail integration
+    if (isAgentEmailActive) {
+      console.log(`[SEND_EMAIL] 📧 Usando integración AgentMail`);
+      
+      // Validate AgentMail API key
+      if (!process.env.AGENTMAIL_API_KEY) {
+        console.warn(`[SEND_EMAIL] ⚠️ AGENTMAIL_API_KEY no configurado, fallback a email nativo`);
+        // Fall through to native email
+      } else {
+        // Construct inbox_id from username@domain
+        const username = agentEmailConfig.username || agentEmailConfig.data?.username;
+        const domain = agentEmailConfig.domain || agentEmailConfig.data?.domain;
+        
+        if (!username || !domain) {
+          console.warn(`[SEND_EMAIL] ⚠️ agent_email configurado pero falta username o domain, fallback a email nativo`);
+          // Fall through to native email
+        } else {
+          const inboxId = `${username}@${domain}`;
+          console.log(`[SEND_EMAIL] 📬 Inbox ID determinado: ${inboxId}`);
+          
+          // Validate recipient email format
+          const targetEmail = email === 'no-email@example.com' ? email : email;
+          const isTargetEmailValid = targetEmail === 'no-email@example.com' || EmailSendService.isValidEmail(targetEmail);
+          
+          if (!isTargetEmailValid) {
+            console.log(`[SEND_EMAIL] ❌ Email destinatario tiene formato inválido: ${targetEmail}`);
+            
+            return NextResponse.json(
+              { 
+                success: false, 
+                error: { 
+                  code: 'INVALID_REQUEST', 
+                  message: 'Invalid recipient email format' 
+                } 
+              },
+              { status: 400 }
+            );
+          }
+          
+          // Generate signature before sending
+          console.log(`[SEND_EMAIL] 🖋️ Generando firma del agente para AgentMail`);
+          let signatureHtml = '';
+          try {
+            const signature = await EmailSignatureService.generateAgentSignature(site_id, from);
+            signatureHtml = signature.formatted;
+            
+            console.log(`[SEND_EMAIL] ✅ Firma del agente generada exitosamente:`, {
+              hasSignature: !!signatureHtml,
+              signatureLength: signatureHtml?.length || 0
+            });
+          } catch (signatureError) {
+            console.warn(`[SEND_EMAIL] ⚠️ No se pudo generar la firma del agente:`, {
+              site_id,
+              from,
+              error: (signatureError as Error)?.message || String(signatureError)
+            });
+            // Continue without signature
+          }
+          
+          // Prepare HTML content with signature
+          let htmlContent = message;
+          if (signatureHtml) {
+            htmlContent = `${message}\n\n${signatureHtml}`;
+          }
+          
+          try {
+            // Send via AgentMail
+            const agentmailParams = {
+              to: targetEmail,
+              subject,
+              text: message, // Plain text version
+              html: htmlContent, // HTML version with signature
+            };
+            
+            console.log(`[SEND_EMAIL] 📤 Enviando mensaje vía AgentMail:`, {
+              inboxId,
+              recipient: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
+              subjectLength: subject?.length || 0,
+              messageLength: message?.length || 0,
+              hasSignature: !!signatureHtml
+            });
+            
+            const agentmailResponse = await sendMessage(inboxId, agentmailParams);
+            
+            console.log(`[SEND_EMAIL] ✅ Mensaje enviado vía AgentMail:`, {
+              message_id: agentmailResponse.message_id,
+              thread_id: agentmailResponse.thread_id
+            });
+            
+            // Determine sender email (from agent_email config or fallback)
+            const senderEmail = agentEmailConfig.username && agentEmailConfig.domain 
+              ? `${agentEmailConfig.username}@${agentEmailConfig.domain}`
+              : (siteSettings.channels?.email?.email || 'noreply@agentmail.to');
+            
+            // Save to synced_objects to avoid duplicates in sync
+            if (agentmailResponse.message_id) {
+              try {
+                await SyncedObjectsService.createObject({
+                  external_id: agentmailResponse.message_id,
+                  site_id: site_id,
+                  object_type: 'sent_email',
+                  status: 'processed',
+                  provider: 'agentmail',
+                  metadata: {
+                    recipient: targetEmail,
+                    sender: senderEmail,
+                    subject: subject,
+                    message_preview: message.substring(0, 200),
+                    sent_at: new Date().toISOString(),
+                    agent_id,
+                    conversation_id,
+                    lead_id,
+                    agentmail_message_id: agentmailResponse.message_id,
+                    agentmail_thread_id: agentmailResponse.thread_id,
+                    agentmail_inbox_id: inboxId,
+                    source: 'api_send_agentmail',
+                    processed_at: new Date().toISOString()
+                  }
+                });
+                
+                console.log(`✅ [SEND_EMAIL] AgentMail message_id ${agentmailResponse.message_id} guardado en synced_objects`);
+              } catch (syncError) {
+                console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar AgentMail message_id en synced_objects:`, syncError);
+              }
+            }
+            
+            // Transform AgentMail response to match expected format
+            const responseData = {
+              success: true,
+              status: 'sent',
+              email_id: agentmailResponse.message_id,
+              external_message_id: agentmailResponse.message_id,
+              recipient: targetEmail,
+              sender: senderEmail,
+              subject: subject,
+              message_preview: message.substring(0, 200) + (message.length > 200 ? '...' : ''),
+              sent_at: new Date().toISOString(),
+              thread_id: agentmailResponse.thread_id
+            };
+            
+            console.log(`[SEND_EMAIL] ✅ Proceso completado exitosamente vía AgentMail:`, {
+              status: 'sent',
+              message_id: agentmailResponse.message_id,
+              recipient: targetEmail,
+              duration: `${Date.now() - startTime}ms`
+            });
+            
+            return NextResponse.json(responseData, { status: 201 });
+            
+          } catch (agentmailError: any) {
+            console.error(`[SEND_EMAIL] ❌ Error enviando vía AgentMail:`, {
+              error: agentmailError?.message || String(agentmailError),
+              errorType: agentmailError?.constructor?.name,
+              inboxId,
+              site_id
+            });
+            
+            // If AgentMail fails and we have native email configured, fall back to native email
+            const configuredEmail = siteSettings.channels?.email?.email;
+            if (configuredEmail) {
+              console.log(`[SEND_EMAIL] 🔄 Fallback a email nativo debido a error en AgentMail`);
+              // Continue to native email flow below
+            } else {
+              // No fallback available, return error
+              return NextResponse.json(
+                { 
+                  success: false, 
+                  error: { 
+                    code: 'AGENTMAIL_SEND_FAILED', 
+                    message: agentmailError?.message || 'Failed to send message via AgentMail' 
+                  } 
+                },
+                { status: 500 }
+              );
+            }
+          }
+        }
+      }
+    }
+    
+    // Native email flow (fallback or when agent_email is not active)
+    console.log(`[SEND_EMAIL] 📧 Usando email nativo (SMTP)`);
     
     const configuredEmail = siteSettings.channels?.email?.email;
     console.log(`[SEND_EMAIL] 📧 Email configurado encontrado:`, {
