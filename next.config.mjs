@@ -1,5 +1,7 @@
 import nextra from 'nextra'
 import { getNextJsCorsConfig } from './cors.config.js'
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
 
 const withNextra = nextra({
   contentDirBasePath: '/',
@@ -22,13 +24,6 @@ export default withNextra({
   experimental: {
     serverActions: {
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
-    },
-    // Configure Turbopack to exclude test files from node_modules
-    turbo: {
-      resolveAlias: {
-        // Exclude problematic test files
-      },
-      resolveExtensions: ['.js', '.jsx', '.ts', '.tsx', '.json'],
     }
   },
   typescript: {
@@ -43,8 +38,17 @@ export default withNextra({
     // Desactivar la optimización de imágenes en desarrollo para evitar advertencias de Sharp
     unoptimized: process.env.NODE_ENV === 'development',
   },
+  // Exclude problematic packages from server bundle (Next.js 16 feature)
+  // This prevents Next.js from bundling these packages and their test files
+  serverExternalPackages: [
+    'why-is-node-running',
+    'thread-stream',
+    'imapflow',
+    'pino'
+  ],
+  
   // Configuración adicional para CSS Modules
-  webpack: (config, { dev }) => {
+  webpack: (config, { dev, isServer }) => {
     // Solución para suprimir las advertencias de binarios precompilados
     if (dev) {
       // Configurar Webpack para mostrar solo errores, no advertencias
@@ -52,6 +56,41 @@ export default withNextra({
         level: 'error'
       };
     }
+    
+    // Exclude test files and problematic modules from node_modules
+    config.resolve = config.resolve || {};
+    config.resolve.alias = config.resolve.alias || {};
+    
+    // Ignore test files and development-only modules
+    config.resolve.alias['why-is-node-running'] = false;
+    
+    // Add IgnorePlugin to exclude test files from node_modules
+    config.plugins = config.plugins || [];
+    
+    // Ignore test files in thread-stream package
+    // webpack is available in the webpack config context
+    const { IgnorePlugin } = require('webpack');
+    config.plugins.push(
+      new IgnorePlugin({
+        resourceRegExp: /^\.\/test\//,
+        contextRegExp: /thread-stream/,
+      }),
+      new IgnorePlugin({
+        resourceRegExp: /why-is-node-running/,
+      }),
+      // Ignore all test files in node_modules
+      new IgnorePlugin({
+        checkResource(resource, context) {
+          // Ignore test files in node_modules
+          if (context.includes('node_modules')) {
+            if (resource.includes('.test.') || resource.includes('/test/')) {
+              return true;
+            }
+          }
+          return false;
+        },
+      })
+    );
     
     return config;
   },

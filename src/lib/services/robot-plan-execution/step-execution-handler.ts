@@ -176,8 +176,8 @@ export function createOnStepHandler(
         logMessage = stepStructuredResponse.assistant_message.trim();
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT_MESSAGE] From extraction: ${logMessage.substring(0, 100)}...`);
       } else {
-        // If no structured response, use text but limited
-        logMessage = step.text.trim().substring(0, 500) || 'Executing plan step';
+        // If no structured response, use full text
+        logMessage = step.text.trim() || 'Executing plan step';
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT_MESSAGE] Fallback to text: ${logMessage.substring(0, 100)}...`);
       }
     }

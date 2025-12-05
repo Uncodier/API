@@ -51,7 +51,7 @@ function createAssistantOnStepHandler(
     }
 
     // Create parent log for the step
-    const logMessage = step.text?.trim().substring(0, 500) || 'Assistant step execution';
+    const logMessage = step.text?.trim() || 'Assistant step execution';
     
     const { data: parentLogData, error: parentLogError } = await supabaseAdmin
       .from('instance_logs')
