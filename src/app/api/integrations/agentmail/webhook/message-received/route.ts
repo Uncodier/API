@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySvixWebhook } from '@/lib/integrations/agentmail/svix-verification';
-import { findMessageByAgentMailId, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { WorkflowService } from '@/lib/services/workflow-service';
 
 /**
  * POST handler for AgentMail message.received webhook event
- * Updates the message status when a message is received
+ * Triggers customerSupport workflow for incoming messages
  */
 export async function POST(request: NextRequest) {
   try {
@@ -49,121 +48,96 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find message in database
-    const foundMessage = await findMessageByAgentMailId(message.message_id);
+    console.log(`📨 [AgentMail] Processing incoming message: ${message.message_id}`);
 
-    if (!foundMessage) {
-      console.log(`⚠️ [AgentMail] Message not found: ${message.message_id}`);
+    // Get site_id from inbox_id
+    let siteId: string | undefined;
+    let userId: string | undefined;
+
+    if (message.inbox_id) {
+      const { data: settings, error: settingsError } = await supabaseAdmin
+        .from('settings')
+        .select('site_id')
+        .filter('channels->agent_email->>inbox_id', 'eq', message.inbox_id)
+        .single();
+
+      if (!settingsError && settings) {
+        siteId = settings.site_id;
+        
+        // Get user_id from site
+        if (siteId) {
+          const { data: site, error: siteError } = await supabaseAdmin
+            .from('sites')
+            .select('user_id')
+            .eq('id', siteId)
+            .single();
+          
+          if (!siteError && site) {
+            userId = site.user_id;
+          }
+        }
+      } else {
+        console.warn(`⚠️ [AgentMail] inbox_id not found in settings: ${message.inbox_id}`);
+      }
+    }
+
+    // Extract email and name from message.from field
+    // Format can be: "Name <email@example.com>" or just "email@example.com"
+    let email: string | undefined;
+    let name: string | undefined;
+
+    if (message.from) {
+      const fromMatch = message.from.match(/^(.+?)\s*<(.+?)>$|^(.+?)$/);
+      if (fromMatch) {
+        if (fromMatch[2]) {
+          // Format: "Name <email@example.com>"
+          name = fromMatch[1].trim();
+          email = fromMatch[2].trim();
+        } else if (fromMatch[3]) {
+          // Format: "email@example.com" or just the email
+          const potentialEmail = fromMatch[3].trim();
+          if (potentialEmail.includes('@')) {
+            email = potentialEmail;
+          } else {
+            name = potentialEmail;
+          }
+        }
+      }
+    }
+
+    // Extract message content from payload
+    const messageContent = message.body || message.text || message.content || message.html || '';
+
+    // Validate that we have at least the message content and one identifier
+    if (!messageContent) {
+      console.warn(`⚠️ [AgentMail] Message content is empty, skipping workflow`);
       return NextResponse.json(
-        { success: false, error: 'Message not found', message_id: message.message_id },
-        { status: 404 }
+        { success: true, message_id: message.message_id, event_type: 'message.received', skipped: 'no_content' },
+        { status: 200 }
       );
     }
 
-    // Update message with received event
-    const updateResult = await updateMessageWithAgentMailEvent({
-      messageId: foundMessage.id,
-      status: 'received',
-      eventType: 'message.received',
-      eventMetadata: {
-        inbox_id: message.inbox_id,
-        thread_id: message.thread_id,
-        from: message.from,
-        to: message.to,
-        subject: message.subject,
-        timestamp: message.timestamp,
-      },
-      timestamp: message.timestamp || payload.event_id,
-    });
-
-    if (!updateResult.success) {
+    if (!siteId && !userId && !email) {
+      console.warn(`⚠️ [AgentMail] No identifiers found (site_id, userId, or email), skipping workflow`);
       return NextResponse.json(
-        { success: false, error: 'Failed to update message', details: updateResult.error },
-        { status: 500 }
+        { success: true, message_id: message.message_id, event_type: 'message.received', skipped: 'no_identifiers' },
+        { status: 200 }
       );
     }
-
-    console.log(`✅ [AgentMail] message.received processed successfully for message: ${message.message_id}`);
 
     // Trigger customerSupportWorkflow asynchronously (non-blocking)
-    // Fetch complete message data and trigger workflow in background
     (async () => {
       try {
-        // Fetch complete message data from database
-        const { data: fullMessage, error: messageError } = await supabaseAdmin
-          .from('messages')
-          .select('id, conversation_id, visitor_id, lead_id, agent_id, content')
-          .eq('id', foundMessage.id)
-          .single();
-
-        if (messageError || !fullMessage) {
-          console.error(`❌ [AgentMail] Error fetching message data:`, messageError);
-          return;
-        }
-
-        // Fetch conversation data to get site_id and user_id
-        let siteId: string | undefined;
-        let userId: string | undefined;
-
-        if (fullMessage.conversation_id) {
-          const { data: conversation, error: convError } = await supabaseAdmin
-            .from('conversations')
-            .select('site_id, user_id')
-            .eq('id', fullMessage.conversation_id)
-            .single();
-
-          if (!convError && conversation) {
-            siteId = conversation.site_id;
-            userId = conversation.user_id;
-          }
-        }
-
-        // Extract email and name from message.from field
-        // Format can be: "Name <email@example.com>" or just "email@example.com"
-        let email: string | undefined;
-        let name: string | undefined;
-
-        if (message.from) {
-          const fromMatch = message.from.match(/^(.+?)\s*<(.+?)>$|^(.+?)$/);
-          if (fromMatch) {
-            if (fromMatch[2]) {
-              // Format: "Name <email@example.com>"
-              name = fromMatch[1].trim();
-              email = fromMatch[2].trim();
-            } else if (fromMatch[3]) {
-              // Format: "email@example.com" or just the email
-              const potentialEmail = fromMatch[3].trim();
-              if (potentialEmail.includes('@')) {
-                email = potentialEmail;
-              } else {
-                name = potentialEmail;
-              }
-            }
-          }
-        }
-
-        // Validate that we have at least the message content and one identifier
-        if (!fullMessage.content) {
-          console.warn(`⚠️ [AgentMail] Message content is empty, skipping workflow`);
-          return;
-        }
-
-        if (!fullMessage.visitor_id && !fullMessage.lead_id && !userId && !siteId) {
-          console.warn(`⚠️ [AgentMail] No identifiers found (visitor_id, lead_id, userId, or site_id), skipping workflow`);
-          return;
-        }
-
-        // Call customerSupportWorkflow
         const workflowService = WorkflowService.getInstance();
         const workflowResult = await workflowService.customerSupportMessage(
           {
-            conversationId: fullMessage.conversation_id,
+            conversationId: undefined, // Workflow will create conversation if needed
             userId: userId,
-            message: fullMessage.content,
-            agentId: fullMessage.agent_id,
+            message: messageContent,
+            agentId: undefined, // Workflow will determine agent
             site_id: siteId,
-            lead_id: fullMessage.lead_id,
-            visitor_id: fullMessage.visitor_id,
+            lead_id: undefined, // Workflow will create/find lead
+            visitor_id: undefined,
             name: name,
             email: email,
             origin: 'email',
