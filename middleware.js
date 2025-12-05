@@ -23,6 +23,9 @@ export default async function middleware(request) {
   // Verificar si es la ruta de WhatsApp webhook (tiene su propia validación de Twilio)
   const isWhatsAppWebhook = request.nextUrl.pathname === '/api/agents/whatsapp';
   
+  // Verificar si es un webhook de AgentMail (tiene su propia validación de Svix)
+  const isAgentMailWebhook = request.nextUrl.pathname.startsWith('/api/integrations/agentmail/webhook/');
+  
   // Obtener el origen
   const origin = request.headers.get('origin');
   
@@ -32,6 +35,7 @@ export default async function middleware(request) {
     origin: origin || 'NO_ORIGIN',
     isDevMode,
     isWhatsAppWebhook,
+    isAgentMailWebhook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
       'authorization': request.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
@@ -45,6 +49,15 @@ export default async function middleware(request) {
     const response = NextResponse.next();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-WhatsApp-Webhook', 'true');
+    return response;
+  }
+  
+  // Para AgentMail webhooks, permitir sin validación (Svix valida con firma)
+  if (isAgentMailWebhook) {
+    console.log('[Middleware] AgentMail webhook detected - skipping origin/API validation');
+    const response = NextResponse.next();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-AgentMail-Webhook', 'true');
     return response;
   }
   
