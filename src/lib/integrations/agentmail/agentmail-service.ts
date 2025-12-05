@@ -246,6 +246,16 @@ export async function createInbox(
       if (response.status === 400) {
         throw new Error(`Validation Error: ${error.message || error.error}`);
       } else if (response.status === 403) {
+        // Check if error is due to domain not being verified
+        const errorMsg = error.message || error.error || '';
+        if (errorMsg.toLowerCase().includes('not verified') || 
+            (errorMsg.toLowerCase().includes('domain') && errorMsg.toLowerCase().includes('verified'))) {
+          // Create a special error that can be caught and handled as a pending state
+          const domainNotVerifiedError: any = new Error(`Domain Not Verified: ${errorMsg}`);
+          domainNotVerifiedError.isDomainNotVerified = true;
+          domainNotVerifiedError.statusCode = 403;
+          throw domainNotVerifiedError;
+        }
         throw new Error(`Forbidden: ${error.message || error.error}`);
       } else if (response.status === 404) {
         throw new Error(`Not Found: ${error.message || error.error}`);
@@ -631,6 +641,196 @@ export async function getZoneFile(domain_id: string): Promise<string> {
     }
     console.error('[AgentMail] Error getting zone file:', error);
     throw new Error(`Failed to get zone file via AgentMail: ${error.message || 'Unknown error'}`);
+  }
+}
+
+/**
+ * Gets domain information including DNS records via AgentMail API
+ * @param domain_id Domain ID (domain name)
+ * @returns Domain information with DNS records
+ * @throws Error if API call fails
+ */
+export async function getDomainInfo(domain_id: string): Promise<CreateDomainResponse | null> {
+  const apiKey = process.env.AGENTMAIL_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('AGENTMAIL_API_KEY environment variable is not configured');
+  }
+
+  if (!domain_id) {
+    throw new Error('domain_id is required');
+  }
+
+  // Try to get domain info from the domains endpoint
+  // Note: AgentMail API might not have a direct GET endpoint for domain info
+  // In that case, we'll return null and the zone file can be used instead
+  const url = `${AGENTMAIL_BASE_URL}/v0/domains/${encodeURIComponent(domain_id)}`;
+
+  console.log(`[AgentMail] Getting domain info for: ${domain_id}`);
+  console.log(`[AgentMail] Request URL: ${url}`);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+      },
+    });
+
+    if (!response.ok) {
+      // If endpoint doesn't exist (404) or other error, return null
+      // The zone file endpoint can be used as fallback
+      if (response.status === 404) {
+        console.log(`[AgentMail] Domain info endpoint not available, zone file can be used instead`);
+        return null;
+      }
+      
+      const responseText = await response.text();
+      let responseData: any;
+
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (parseError) {
+        responseData = { error: responseText };
+      }
+
+      const error: AgentMailError = responseData;
+      console.error('[AgentMail] API error getting domain info:', {
+        status: response.status,
+        error: error.error,
+        message: error.message,
+        code: error.code,
+      });
+
+      // Return null instead of throwing, so we can continue with zone file
+      return null;
+    }
+
+    const responseData = await response.json();
+
+    // Validate response structure
+    if (!responseData.domain_id) {
+      return null;
+    }
+
+    console.log(`[AgentMail] Domain info retrieved successfully for: ${domain_id}`);
+
+    return {
+      domain_id: responseData.domain_id,
+      status: responseData.status || 'NOT_STARTED',
+      feedback_enabled: responseData.feedback_enabled || false,
+      records: responseData.records || [],
+      updated_at: responseData.updated_at || new Date().toISOString(),
+      created_at: responseData.created_at || new Date().toISOString(),
+      pod_id: responseData.pod_id || null,
+      client_id: responseData.client_id || null,
+    };
+  } catch (error: any) {
+    // Return null instead of throwing, so we can continue
+    console.log(`[AgentMail] Could not get domain info, zone file can be used instead: ${error.message}`);
+    return null;
+  }
+}
+
+export interface VerifyDomainResponse {
+  domain_id: string;
+  status: 'PENDING' | 'VERIFYING' | 'READY' | 'VERIFIED';
+  feedback_enabled?: boolean;
+  records?: DnsRecord[];
+  updated_at: string;
+  created_at?: string;
+  pod_id?: string | null;
+  client_id?: string | null;
+}
+
+/**
+ * Verifies a domain via AgentMail API
+ * @param domain_id Domain ID (domain name)
+ * @returns Verification response with domain status
+ * @throws Error if API call fails
+ */
+export async function verifyDomain(domain_id: string): Promise<VerifyDomainResponse> {
+  const apiKey = process.env.AGENTMAIL_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('AGENTMAIL_API_KEY environment variable is not configured');
+  }
+
+  if (!domain_id) {
+    throw new Error('domain_id is required');
+  }
+
+  const url = `${AGENTMAIL_BASE_URL}/v0/domains/${encodeURIComponent(domain_id)}/verify`;
+
+  console.log(`[AgentMail] Verifying domain: ${domain_id}`);
+  console.log(`[AgentMail] Request URL: ${url}`);
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const responseText = await response.text();
+    let responseData: any;
+
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('[AgentMail] Failed to parse response:', responseText);
+      throw new Error(`Invalid JSON response from AgentMail API: ${responseText}`);
+    }
+
+    if (!response.ok) {
+      const error: AgentMailError = responseData;
+      console.error('[AgentMail] API error:', {
+        status: response.status,
+        error: error.error,
+        message: error.message,
+        code: error.code,
+      });
+
+      // Map AgentMail error codes to appropriate error messages
+      if (response.status === 400) {
+        throw new Error(`Validation Error: ${error.message || error.error}`);
+      } else if (response.status === 403) {
+        throw new Error(`Forbidden: ${error.message || error.error}`);
+      } else if (response.status === 404) {
+        throw new Error(`Not Found: ${error.message || error.error}`);
+      } else {
+        throw new Error(`AgentMail API Error: ${error.message || error.error || 'Unknown error'}`);
+      }
+    }
+
+    // Validate response structure
+    if (!responseData.domain_id) {
+      throw new Error('Invalid response from AgentMail API: missing domain_id');
+    }
+
+    console.log(`[AgentMail] Domain verified successfully:`, {
+      domain_id: responseData.domain_id,
+      status: responseData.status,
+    });
+
+    return {
+      domain_id: responseData.domain_id,
+      status: responseData.status || 'VERIFYING',
+      feedback_enabled: responseData.feedback_enabled,
+      records: responseData.records || [],
+      updated_at: responseData.updated_at || new Date().toISOString(),
+      created_at: responseData.created_at,
+      pod_id: responseData.pod_id || null,
+      client_id: responseData.client_id || null,
+    };
+  } catch (error: any) {
+    if (error.message && error.message.includes('AgentMail API')) {
+      throw error;
+    }
+    console.error('[AgentMail] Error verifying domain:', error);
+    throw new Error(`Failed to verify domain via AgentMail: ${error.message || 'Unknown error'}`);
   }
 }
 

@@ -6,6 +6,8 @@ import {
   createInbox,
   CreateDomainParams,
   CreateInboxParams,
+  CreateDomainResponse,
+  getDomainInfo,
 } from '@/lib/integrations/agentmail/agentmail-service';
 
 /**
@@ -97,9 +99,10 @@ export async function POST(request: NextRequest) {
 
     let domainId: string | null = null;
     let inboxId: string | null = null;
-    let finalStatus: 'active' | 'requested' = 'active';
+    let finalStatus: 'active' | 'requested' | 'waiting_for_verification' = 'active';
     let errorMessage: string | null = null;
     let requestedResource: 'domain' | 'inbox' | null = null;
+    let domainResponse: CreateDomainResponse | null = null;
 
     // Step 1: Check if domain exists
     console.log(`[AgentMail] Checking if domain exists: ${domain}`);
@@ -129,7 +132,7 @@ export async function POST(request: NextRequest) {
           feedback_enabled: true, // Default to true
         };
 
-        const domainResponse = await createDomain(domainParams);
+        domainResponse = await createDomain(domainParams);
         domainId = domainResponse.domain_id;
         console.log(`[AgentMail] Domain created successfully: ${domainId}`);
       } catch (error: any) {
@@ -162,7 +165,18 @@ export async function POST(request: NextRequest) {
       }
     } else {
       console.log(`[AgentMail] Domain already exists: ${domain}`);
-      // Domain exists, we can continue with inbox creation
+      // Domain exists, set domainId for later use
+      domainId = domain;
+      // Try to get domain information if possible (for DNS records)
+      try {
+        domainResponse = await getDomainInfo(domain);
+        if (domainResponse) {
+          console.log(`[AgentMail] Domain info retrieved: status=${domainResponse.status}`);
+        }
+      } catch (error: any) {
+        console.log(`[AgentMail] Could not get domain info: ${error.message}`);
+        // Continue without domain info, zone file can be used if needed
+      }
     }
 
     // Step 3: Create inbox (only if domain was created successfully or already existed)
@@ -182,14 +196,25 @@ export async function POST(request: NextRequest) {
       } catch (error: any) {
         console.error('[AgentMail] Error creating inbox:', error);
         
-        // Check if error indicates quota exceeded or similar
         const errorMsg = error.message || '';
+        
+        // Check if error is due to domain not being verified
+        const isDomainNotVerified = error.isDomainNotVerified || 
+                                   (errorMsg.toLowerCase().includes('domain') && 
+                                    errorMsg.toLowerCase().includes('not verified'));
+        
+        // Check if error indicates quota exceeded or similar
         const isQuotaError = errorMsg.toLowerCase().includes('quota') ||
                             errorMsg.toLowerCase().includes('limit') ||
                             errorMsg.toLowerCase().includes('exceeded') ||
                             errorMsg.toLowerCase().includes('unavailable');
 
-        if (isQuotaError) {
+        if (isDomainNotVerified) {
+          console.log('[AgentMail] Domain not verified detected, setting status to waiting_for_verification');
+          finalStatus = 'waiting_for_verification';
+          errorMessage = errorMsg;
+          requestedResource = 'domain';
+        } else if (isQuotaError) {
           console.log('[AgentMail] Inbox creation quota error detected, setting status to requested');
           finalStatus = 'requested';
           errorMessage = errorMsg;
@@ -239,6 +264,11 @@ export async function POST(request: NextRequest) {
             ...(domainId && { domain_id: domainId }),
             created_at: new Date().toISOString(),
             ...(errorMessage && { error_message: errorMessage }),
+            // Include DNS records if domain was created and is waiting for verification
+            ...(domainResponse && finalStatus === 'waiting_for_verification' && domainResponse.records && {
+              dns_records: domainResponse.records,
+              domain_status: domainResponse.status,
+            }),
           },
         };
 
@@ -262,7 +292,7 @@ export async function POST(request: NextRequest) {
       console.warn('[AgentMail] Continuing despite settings update error');
     }
 
-    // Step 5: Send notification if status is 'requested'
+    // Step 5: Send notification if status is 'requested' (only for quota errors, not for domain verification)
     if (finalStatus === 'requested' && errorMessage) {
       console.log(`[AgentMail] Sending notification for quota error`);
       try {
@@ -279,12 +309,17 @@ export async function POST(request: NextRequest) {
       status: finalStatus,
       message: finalStatus === 'active'
         ? 'Inbox and domain created successfully'
+        : finalStatus === 'waiting_for_verification'
+        ? 'Domain created successfully. Please verify the domain by adding the DNS records.'
         : 'Request received but quota limit reached. Status set to requested.',
       ...(inboxId && { inbox_id: inboxId }),
       ...(domainId && { domain_id: domainId }),
     };
 
-    if (finalStatus === 'requested') {
+    if (finalStatus === 'waiting_for_verification') {
+      response.dns_records = domainResponse?.records || [];
+      response.domain_status = domainResponse?.status || 'NOT_STARTED';
+    } else if (finalStatus === 'requested') {
       response.error = {
         code: 'QUOTA_EXCEEDED',
         message: errorMessage,
