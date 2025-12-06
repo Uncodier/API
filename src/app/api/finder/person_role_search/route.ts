@@ -25,6 +25,12 @@ export async function POST(req: NextRequest) {
 
     requestBody = await req.json();
 
+    // Log incoming request to debug what properties are received
+    logInfo('finder.person_role_search', 'Incoming request body', { 
+      body: requestBody,
+      hasOrganizationDomains: requestBody && typeof requestBody === 'object' && 'organization_domains' in requestBody
+    });
+
     // Normalize payload (allow 0-indexed pages; coerce to non-negative integer)
     const normalizePage = (val: unknown): unknown => {
       if (typeof val === 'number') return Math.max(0, Math.trunc(val));
@@ -35,9 +41,11 @@ export async function POST(req: NextRequest) {
       return val;
     };
 
+    // Preserve all properties including organization_domains
     let payload: unknown = requestBody;
     if (requestBody && typeof requestBody === 'object') {
       const obj = { ...(requestBody as Record<string, unknown>) };
+      // Only normalize page, preserve everything else including organization_domains
       if ('page' in obj) {
         obj.page = normalizePage((obj as any).page);
       }
@@ -48,7 +56,16 @@ export async function POST(req: NextRequest) {
       foragerAccountId
     )}/datastorage/person_role_search/`;
 
-    logInfo('finder.person_role_search', 'Upstream request', { url, body: payload });
+    // Log payload with explicit check for organization_domains
+    const payloadObj = payload && typeof payload === 'object' ? payload as Record<string, unknown> : null;
+    const orgDomains = payloadObj && 'organization_domains' in payloadObj ? payloadObj.organization_domains : undefined;
+    
+    logInfo('finder.person_role_search', 'Upstream request', { 
+      url, 
+      body: payload,
+      organization_domains: orgDomains,
+      organization_domains_type: Array.isArray(orgDomains) ? 'array' : typeof orgDomains
+    });
 
     const upstreamResponse = await fetch(url, {
       method: 'POST',

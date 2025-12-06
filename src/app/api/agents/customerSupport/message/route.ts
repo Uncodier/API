@@ -305,8 +305,116 @@ async function validateLeadExists(leadId: string): Promise<boolean> {
   }
 }
 
+// Function to check if a message with origin_message_id already exists and was responded to
+async function checkDuplicateOriginMessage(
+  originMessageId: string,
+  conversationId?: string,
+  leadId?: string,
+  siteId?: string
+): Promise<{ isDuplicate: boolean; existingMessageId?: string; conversationId?: string }> {
+  try {
+    if (!originMessageId) {
+      return { isDuplicate: false };
+    }
+
+    console.log(`🔍 [DUPLICATE_CHECK] Checking for duplicate origin_message_id: ${originMessageId}`);
+
+    // Build query to find messages with matching origin_message_id
+    let query = supabaseAdmin
+      .from('messages')
+      .select('id, conversation_id, role, created_at')
+      .filter('custom_data->>origin_message_id', 'eq', originMessageId)
+      .order('created_at', { ascending: false });
+
+    // If we have conversationId, filter by it for better performance
+    if (conversationId) {
+      query = query.eq('conversation_id', conversationId);
+    }
+
+    // If we have leadId, filter by it
+    if (leadId) {
+      query = query.eq('lead_id', leadId);
+    }
+
+    // If we have siteId, we can filter by conversation's site_id
+    // But we need to join with conversations table, so let's get all matches first
+    const { data: matchingMessages, error } = await query;
+
+    if (error) {
+      console.error(`❌ [DUPLICATE_CHECK] Error querying messages:`, error);
+      return { isDuplicate: false };
+    }
+
+    if (!matchingMessages || matchingMessages.length === 0) {
+      console.log(`✅ [DUPLICATE_CHECK] No messages found with origin_message_id: ${originMessageId}`);
+      return { isDuplicate: false };
+    }
+
+    console.log(`📊 [DUPLICATE_CHECK] Found ${matchingMessages.length} message(s) with origin_message_id: ${originMessageId}`);
+
+    // Group messages by conversation_id
+    const messagesByConversation = new Map<string, typeof matchingMessages>();
+    for (const msg of matchingMessages) {
+      if (!msg.conversation_id) continue;
+      if (!messagesByConversation.has(msg.conversation_id)) {
+        messagesByConversation.set(msg.conversation_id, []);
+      }
+      messagesByConversation.get(msg.conversation_id)!.push(msg);
+    }
+
+    // Check each conversation for user message + assistant response
+    for (const [convId, messages] of Array.from(messagesByConversation.entries())) {
+      // If we have siteId, verify the conversation belongs to that site
+      if (siteId) {
+        const { data: conv, error: convError } = await supabaseAdmin
+          .from('conversations')
+          .select('site_id')
+          .eq('id', convId)
+          .single();
+
+        if (convError || !conv || conv.site_id !== siteId) {
+          continue;
+        }
+      }
+
+      // Find user message (should be the one with origin_message_id)
+      const userMessage = messages.find((m: { id: any; conversation_id: any; role: any; created_at: any }) => m.role === 'user');
+      if (!userMessage) continue;
+
+      // Check if there's an assistant message after the user message
+      const { data: assistantMessages, error: assistantError } = await supabaseAdmin
+        .from('messages')
+        .select('id, created_at')
+        .eq('conversation_id', convId)
+        .eq('role', 'assistant')
+        .gt('created_at', userMessage.created_at)
+        .limit(1);
+
+      if (assistantError) {
+        console.error(`❌ [DUPLICATE_CHECK] Error checking assistant messages:`, assistantError);
+        continue;
+      }
+
+      if (assistantMessages && assistantMessages.length > 0) {
+        console.log(`⚠️ [DUPLICATE_CHECK] Duplicate found! Message ${userMessage.id} with origin_message_id ${originMessageId} already has an assistant response in conversation ${convId}`);
+        return {
+          isDuplicate: true,
+          existingMessageId: userMessage.id,
+          conversationId: convId
+        };
+      }
+    }
+
+    console.log(`✅ [DUPLICATE_CHECK] No duplicate responses found for origin_message_id: ${originMessageId}`);
+    return { isDuplicate: false };
+  } catch (error: any) {
+    console.error(`❌ [DUPLICATE_CHECK] Error in checkDuplicateOriginMessage:`, error);
+    return { isDuplicate: false };
+  }
+}
+
 // Función para guardar mensajes en la base de datos
-async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean) {
+async function saveMessages(userId: string, userMessage: string, assistantMessage: string, conversationId?: string, conversationTitle?: string, leadId?: string, visitorId?: string, agentId?: string, siteId?: string, commandId?: string, origin?: string, isRobot?: boolean, isTransactionalMessage?: boolean, isErratic?: boolean, originMessageId?: string) {
   try {
     console.log(`💾 Guardando mensajes con: user_id=${userId}, agent_id=${agentId || 'N/A'}, site_id=${siteId || 'N/A'}, lead_id=${leadId || 'N/A'}, visitor_id=${visitorId || 'N/A'}, command_id=${commandId || 'N/A'}, origin=${origin || 'N/A'}, is_robot=${isRobot || false}, is_transactional_message=${isTransactionalMessage || false}, is_erratic=${isErratic || false}`);
     
@@ -515,6 +623,14 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     // Agregar command_id si está presente y es un UUID válido
     if (commandId && isValidUUID(commandId)) {
       userMessageObj.command_id = commandId;
+    }
+    
+    // Agregar origin_message_id a custom_data si está presente
+    if (originMessageId) {
+      userMessageObj.custom_data = {
+        ...(userMessageObj.custom_data || {}),
+        origin_message_id: originMessageId
+      };
     }
     
     console.log(`💬 Guardando mensaje de usuario para conversación: ${effectiveConversationId}`);
@@ -894,7 +1010,8 @@ export async function POST(request: Request) {
       phone,
       website_chat_origin, // Nuevo parámetro para indicar si el origen es "website_chat"
       lead_notification, // Nuevo parámetro para indicar si se debe enviar una notificación por email
-      origin // Nuevo parámetro para indicar el canal de origen: 'website', 'email', 'whatsapp'
+      origin, // Nuevo parámetro para indicar el canal de origen: 'website', 'email', 'whatsapp'
+      origin_message_id // Parámetro opcional que se agrega como metadata al message del user
     } = body;
     
     /**
@@ -919,6 +1036,8 @@ export async function POST(request: Request) {
      * - origin: String opcional que indica el canal de origen de la conversación
      *   Valores posibles: "website", "email", "whatsapp"
      *   Se establece en conversation.custom_data.channel y en lead/visitor.origin
+     * - origin_message_id: String opcional que se agrega como metadata al message del user
+     *   Se almacena en message.custom_data.origin_message_id
      */
     
     // Verificamos si tenemos al menos un identificador de usuario o cliente
@@ -956,6 +1075,30 @@ export async function POST(request: Request) {
         { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } },
         { status: 400 }
       );
+    }
+    
+    // Check for duplicate origin_message_id before processing
+    if (origin_message_id) {
+      const duplicateCheck = await checkDuplicateOriginMessage(
+        origin_message_id,
+        conversationId,
+        lead_id,
+        site_id
+      );
+      
+      if (duplicateCheck.isDuplicate) {
+        console.log(`⚠️ [DUPLICATE_CHECK] Message with origin_message_id ${origin_message_id} already processed and responded to. Skipping duplicate.`);
+        return NextResponse.json(
+          {
+            success: true,
+            message_id: duplicateCheck.existingMessageId,
+            conversation_id: duplicateCheck.conversationId,
+            skipped: 'duplicate',
+            reason: 'Message with this origin_message_id already exists and was responded to'
+          },
+          { status: 200 }
+        );
+      }
     }
     
     // Validar el parámetro origin si está presente
@@ -1942,7 +2085,8 @@ export async function POST(request: Request) {
           effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
           isRobot,
           isTransactionalMessage,
-          isErratic
+          isErratic,
+          origin_message_id
         );
       } catch (error: any) {
         // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
@@ -2187,7 +2331,9 @@ export async function POST(request: Request) {
         effectiveDbUuid || undefined,
         effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
         isRobot,
-        isTransactionalMessage
+        isTransactionalMessage,
+        undefined,
+        origin_message_id
       );
     } catch (error: any) {
       // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB

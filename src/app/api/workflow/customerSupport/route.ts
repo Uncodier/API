@@ -15,6 +15,7 @@ interface CustomerSupportWorkflowArgs {
   website_chat_origin?: boolean;
   lead_notification?: string;
   origin?: string;
+  origin_message_id?: string;
 }
 
 interface WorkflowExecutionOptions {
@@ -48,7 +49,8 @@ export async function POST(request: NextRequest) {
       phone,
       website_chat_origin,
       lead_notification,
-      origin
+      origin,
+      origin_message_id
     } = body;
 
     // Validación del mensaje (requerido)
@@ -100,7 +102,8 @@ export async function POST(request: NextRequest) {
       phone,
       website_chat_origin,
       lead_notification,
-      origin
+      origin,
+      origin_message_id
     };
 
     // Opciones de ejecución del workflow

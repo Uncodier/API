@@ -223,6 +223,7 @@ export async function POST(request: NextRequest) {
             name: name,
             email: email,
             origin: 'email',
+            origin_message_id: message.message_id,
           },
           {
             priority: 'high',

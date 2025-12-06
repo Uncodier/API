@@ -87,6 +87,7 @@ interface CustomerSupportMessageWorkflowArgs {
   website_chat_origin?: boolean;
   lead_notification?: string;
   origin?: string;
+  origin_message_id?: string;
 }
 
 interface AgentMessageWorkflowArgs {
