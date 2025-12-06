@@ -124,9 +124,9 @@ export class ComprehensiveEmailFilterService {
     
     for (const email of emails) {
       try {
-        // 🎯 USAR LA MISMA LÓGICA QUE sendEmail PARA CONSISTENCIA
-        // Usar el servicio de SentEmailDuplicationService para consistencia
-        const envelopeId = SentEmailDuplicationService.generateEnvelopeBasedId(email);
+        // 🎯 USAR ReceivedEmailDuplicationService PARA EMAILS RECIBIDOS
+        // Esto asegura consistencia con saveProcessedEmails que también usa este servicio
+        const envelopeId = ReceivedEmailDuplicationService.generateReceivedEmailEnvelopeId(email);
         if (envelopeId) {
           emailToEnvelopeMap.set(email, envelopeId);
         } else {
