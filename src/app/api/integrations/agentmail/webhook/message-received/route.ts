@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySvixWebhook } from '@/lib/integrations/agentmail/svix-verification';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { findMessageByAgentMailId } from '@/lib/integrations/agentmail/message-updater';
+import { ConversationService } from '@/lib/services/conversation-service';
 
 /**
  * POST handler for AgentMail message.received webhook event
@@ -50,10 +52,27 @@ export async function POST(request: NextRequest) {
 
     console.log(`📨 [AgentMail] Processing incoming message: ${message.message_id}`);
 
-    // Get site_id from inbox_id
+    // Check if message was already processed (prevent duplicates)
+    const existingMessage = await findMessageByAgentMailId(message.message_id);
+    if (existingMessage) {
+      console.log(`⚠️ [AgentMail] Message ${message.message_id} already processed, skipping duplicate`);
+      return NextResponse.json(
+        { 
+          success: true, 
+          message_id: message.message_id, 
+          event_type: 'message.received', 
+          skipped: 'duplicate',
+          existing_message_id: existingMessage.id
+        },
+        { status: 200 }
+      );
+    }
+
+    // Get site_id from inbox_id or domain
     let siteId: string | undefined;
     let userId: string | undefined;
 
+    // First try to find by inbox_id
     if (message.inbox_id) {
       const { data: settings, error: settingsError } = await supabaseAdmin
         .from('settings')
@@ -63,8 +82,33 @@ export async function POST(request: NextRequest) {
 
       if (!settingsError && settings) {
         siteId = settings.site_id;
+      } else {
+        console.warn(`⚠️ [AgentMail] inbox_id not found in settings: ${message.inbox_id}`);
         
-        // Get user_id from site
+        // If inbox_id lookup failed, try to find by domain
+        // Extract domain from inbox_id (format: username@domain.com)
+        const domainMatch = message.inbox_id.match(/@(.+)$/);
+        if (domainMatch && domainMatch[1]) {
+          const domain = domainMatch[1].toLowerCase().trim();
+          console.log(`🔍 [AgentMail] Trying to find site_id by domain: ${domain}`);
+          
+          const { data: settingsByDomain, error: domainError } = await supabaseAdmin
+            .from('settings')
+            .select('site_id')
+            .filter('channels->agent_email->>domain', 'eq', domain)
+            .single();
+
+          if (!domainError && settingsByDomain) {
+            siteId = settingsByDomain.site_id;
+            console.log(`✅ [AgentMail] Found site_id by domain: ${siteId}`);
+          } else {
+            console.warn(`⚠️ [AgentMail] Domain not found in settings: ${domain}`);
+          }
+        }
+      }
+    }
+
+    // Get user_id from site if we found a site_id
         if (siteId) {
           const { data: site, error: siteError } = await supabaseAdmin
             .from('sites')
@@ -74,10 +118,6 @@ export async function POST(request: NextRequest) {
           
           if (!siteError && site) {
             userId = site.user_id;
-          }
-        }
-      } else {
-        console.warn(`⚠️ [AgentMail] inbox_id not found in settings: ${message.inbox_id}`);
       }
     }
 
@@ -125,18 +165,60 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Find lead by email and existing email conversation
+    let leadId: string | undefined;
+    let conversationId: string | undefined;
+
+    if (email && siteId) {
+      try {
+        // Find lead by email
+        const { data: lead, error: leadError } = await supabaseAdmin
+          .from('leads')
+          .select('id')
+          .eq('email', email.toLowerCase().trim())
+          .eq('site_id', siteId)
+          .limit(1)
+          .single();
+
+        if (!leadError && lead) {
+          leadId = lead.id;
+          console.log(`✅ [AgentMail] Found lead by email: ${leadId}`);
+
+          // Find existing open email conversation for this lead
+          const existingConversationId = await ConversationService.findExistingConversation(
+            leadId,
+            undefined, // visitorId
+            siteId,
+            'email' // origin/channel
+          );
+
+          if (existingConversationId) {
+            conversationId = existingConversationId;
+            console.log(`✅ [AgentMail] Found existing email conversation: ${conversationId}`);
+          } else {
+            console.log(`ℹ️ [AgentMail] No existing email conversation found for lead ${leadId}`);
+          }
+        } else {
+          console.log(`ℹ️ [AgentMail] No lead found for email: ${email}`);
+        }
+      } catch (error: any) {
+        console.warn(`⚠️ [AgentMail] Error finding lead/conversation:`, error.message);
+        // Continue without lead/conversation - workflow will create them if needed
+      }
+    }
+
     // Trigger customerSupportWorkflow asynchronously (non-blocking)
     (async () => {
       try {
         const workflowService = WorkflowService.getInstance();
         const workflowResult = await workflowService.customerSupportMessage(
           {
-            conversationId: undefined, // Workflow will create conversation if needed
+            conversationId: conversationId, // Use existing conversation if found
             userId: userId,
             message: messageContent,
             agentId: undefined, // Workflow will determine agent
             site_id: siteId,
-            lead_id: undefined, // Workflow will create/find lead
+            lead_id: leadId, // Use existing lead if found
             visitor_id: undefined,
             name: name,
             email: email,
