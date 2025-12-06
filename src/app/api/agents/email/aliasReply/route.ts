@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
   const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
   await EmailProcessingService.saveProcessedEmails(
     emailsToSave,
-    guardResult.filtered,
+    limited,
     emailToEnvelopeMap,
     siteId
   );

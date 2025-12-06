@@ -152,9 +152,17 @@ export async function POST(request: NextRequest) {
       .is('assignee_id', null)
       .in('email', uniqueAddresses);
     if (!error && assignedLeads) {
-      console.log(`[LEADS_REPLY] DB returned ${assignedLeads.length} unassigned leads:`, assignedLeads.map(l => l.email));
-      assignedLeads.forEach(lead => {
-        if (lead?.email) assignedLeadsMap.set(String(lead.email).toLowerCase(), lead);
+      // Double-check: filter out any leads that have assignee_id (shouldn't happen but safety check)
+      const trulyUnassignedLeads = assignedLeads.filter(lead => !lead.assignee_id);
+      if (trulyUnassignedLeads.length !== assignedLeads.length) {
+        const assignedCount = assignedLeads.length - trulyUnassignedLeads.length;
+        console.warn(`[LEADS_REPLY] ⚠️ Found ${assignedCount} leads with assignee_id in query results (should be 0). Filtering them out.`);
+      }
+      console.log(`[LEADS_REPLY] DB returned ${trulyUnassignedLeads.length} unassigned leads (after validation):`, trulyUnassignedLeads.map(l => ({ email: l.email, assignee_id: l.assignee_id })));
+      trulyUnassignedLeads.forEach(lead => {
+        if (lead?.email && !lead.assignee_id) {
+          assignedLeadsMap.set(String(lead.email).toLowerCase(), lead);
+        }
       });
     }
     if (error) {
@@ -187,9 +195,18 @@ export async function POST(request: NextRequest) {
     .map(email => {
       const { effectiveFrom } = computeEffectiveFrom(email);
       const leadInfo = assignedLeadsMap.get(effectiveFrom);
-      return leadInfo ? { ...email, leadInfo } : null;
+      // Additional safety check: ensure leadInfo exists and has no assignee_id
+      if (leadInfo && !leadInfo.assignee_id) {
+        return { ...email, leadInfo };
+      }
+      if (leadInfo && leadInfo.assignee_id) {
+        console.warn(`[LEADS_REPLY] 🚫 Skipping email from lead with assignee_id: ${effectiveFrom} (assignee: ${leadInfo.assignee_id})`);
+      }
+      return null;
     })
     .filter(Boolean) as any[];
+  
+  console.log(`[LEADS_REPLY] 📊 Emails from unassigned leads (after validation): ${emailsFromAssignedLeads.length}`);
 
   // Prioritize unique messages up to limit
   const selectedIds = new Set<string>();
@@ -209,7 +226,7 @@ export async function POST(request: NextRequest) {
   const emailsToSave = EmailProcessingService.filterEmailsToSave(directResponseEmails);
   await EmailProcessingService.saveProcessedEmails(
     emailsToSave,
-    guardResult.filtered,
+    prioritized,
     emailToEnvelopeMap,
     siteId
   );
