@@ -18,6 +18,7 @@ import { validateResults } from './targetEvaluator/validateResults.js';
 interface ValidationResult {
   isValid: boolean;
   error?: string;
+  correctedResults?: any[]; // Resultados corregidos si se detectó una estructura malformada
 }
 
 export class TargetProcessor extends Base {
@@ -25,10 +26,10 @@ export class TargetProcessor extends Base {
   private defaultOptions: PortkeyModelOptions;
   readonly systemPrompt?: string;
   readonly agentSystemPrompt?: string;
-  
+
   constructor(
-    id: string, 
-    name: string, 
+    id: string,
+    name: string,
     connector: PortkeyConnector,
     capabilities: string[] = ['target_processing'],
     defaultOptions?: PortkeyModelOptions,
@@ -46,34 +47,34 @@ export class TargetProcessor extends Base {
     };
     this.systemPrompt = systemPrompt;
     this.agentSystemPrompt = agentSystemPrompt;
-    
+
     if (this.systemPrompt) {
       console.log(`[TargetProcessor] System prompt provided: ${this.systemPrompt.substring(0, 100)}...`);
     }
-    
+
     if (this.agentSystemPrompt) {
       console.log(`[TargetProcessor] Agent system prompt provided: ${this.agentSystemPrompt.substring(0, 100)}...`);
     }
   }
-  
+
   async executeCommand(command: DbCommand): Promise<CommandExecutionResult> {
     try {
       // Verificar si existe agent_background
       if (!command.agent_background) {
         console.log(`[TargetProcessor] Comando sin agent_background, intentando recuperar...`);
-        
+
         // Intentar recuperar desde la caché
         const cachedCommand = CommandCache.getCachedCommand(command.id);
         if (cachedCommand?.agent_background) {
           console.log(`[TargetProcessor] agent_background recuperado desde caché`);
           command.agent_background = cachedCommand.agent_background;
-        } 
+        }
         // Si no está en caché y tenemos agent_id, intentar obtenerlo de la BD
         else if (command.agent_id) {
           try {
             // Verificar directamente en BD a través de DatabaseAdapter
             const verification = await DatabaseAdapter.verifyAgentBackground(command.id);
-            
+
             if (verification.hasBackground && verification.value) {
               command.agent_background = verification.value;
               console.log(`[TargetProcessor] agent_background recuperado desde BD`);
@@ -88,9 +89,9 @@ export class TargetProcessor extends Base {
           throw new Error(`Comando sin agent_id ni agent_background. Imposible continuar.`);
         }
       }
-      
+
       console.log(`[TargetProcessor] Processing command: ${command.id}`);
-      
+
       if (!command.targets || command.targets.length === 0) {
         console.log(`[TargetProcessor] No targets to process`);
         return {
@@ -99,44 +100,44 @@ export class TargetProcessor extends Base {
           error: 'No targets specified for processing'
         };
       }
-      
+
       // Log targets para diagnóstico
       console.log(`[TargetProcessor] Targets definidos (${command.targets.length}):`, JSON.stringify(command.targets.map(t => {
         const keys = Object.keys(t);
         return `{${keys.join(',')}}`;
       })));
-      
+
       // Generate formatted prompt using formatTargetProcessorPrompt
       const userMessage = command.context || 'No user message provided';
       const formattedUserMessage = typeof userMessage === 'string' ? userMessage : JSON.stringify(userMessage);
-      
+
       // Generate the target-specific formatted prompt
       const formattedTargetPrompt = formatTargetProcessorPrompt(
         formattedUserMessage,
-        command.targets 
+        command.targets
       );
-      
+
       console.log(`[TargetProcessor] Generated formatted target prompt: ${formattedTargetPrompt.substring(0, 100)}...`);
-      
+
       // Use the general system prompt from our class or the default
       const targetSystemPrompt = this.systemPrompt || TARGET_PROCESSOR_SYSTEM_PROMPT;
       const agentPrompt = this.agentSystemPrompt || "";
-      
+
       // Prepare merged system prompts but replace the user message with our formatted target prompt
       const messages = prepareMessagesForTarget(
         {
           ...command,
           // Override the context with our formatted target prompt
           context: formattedTargetPrompt
-        }, 
-        targetSystemPrompt, 
+        },
+        targetSystemPrompt,
         agentPrompt
       );
-      
+
       // Parse model field if it contains modelType:modelId format
       let parsedModelType = command.model_type || this.defaultOptions.modelType;
       let parsedModelId = command.model_id || this.defaultOptions.modelId;
-      
+
       if (command.model && command.model.includes(':')) {
         const [modelType, modelId] = command.model.split(':');
         // Validate modelType
@@ -151,7 +152,7 @@ export class TargetProcessor extends Base {
       } else if (command.model) {
         parsedModelId = command.model;
       }
-      
+
       // Configure model options - default to non-streaming for stability
       const isGpt51Family = parsedModelType === 'openai' && (parsedModelId === 'gpt-5.1' || parsedModelId === 'gpt-5-mini' || parsedModelId === 'gpt-5-nano');
       const defaultMax = isGpt51Family ? 32768 : (this.defaultOptions.maxTokens || 16384);
@@ -165,19 +166,19 @@ export class TargetProcessor extends Base {
           includeUsage: true
         }
       };
-      
+
       console.log(`[TargetProcessor] Using model: ${modelOptions.modelId}`);
       console.log(`[TargetProcessor] Calling LLM with ${messages.length} messages - STREAMING ${modelOptions.stream ? 'ENABLED' : 'DISABLED'}`);
-      
+
       // Call LLM to process target
       let llmResponse;
       try {
         llmResponse = await this.connector.callAgent(messages, modelOptions);
       } catch (error: any) {
         // Check if it's a rate limit error
-        if (error.message?.includes('Rate limit exceeded') || 
-            error.message?.includes('exceeded token rate limit') ||
-            error.message?.includes('AIServices S0 pricing tier')) {
+        if (error.message?.includes('Rate limit exceeded') ||
+          error.message?.includes('exceeded token rate limit') ||
+          error.message?.includes('AIServices S0 pricing tier')) {
           console.error(`[TargetProcessor] Rate limit error from connector: ${error.message}`);
           return {
             status: 'failed',
@@ -186,7 +187,7 @@ export class TargetProcessor extends Base {
         }
         throw error; // Re-throw other errors
       }
-      
+
       // Guard against error-shaped responses mistakenly returned as success
       if (llmResponse && typeof llmResponse === 'object' && (llmResponse.error || (typeof llmResponse.content === 'string' && llmResponse.content.startsWith('Error calling LLM:')))) {
         const errMsg = llmResponse.error || llmResponse.content;
@@ -196,31 +197,31 @@ export class TargetProcessor extends Base {
           error: typeof errMsg === 'string' ? errMsg : JSON.stringify(errMsg)
         };
       }
-      
+
       // Handle streaming response
       if (llmResponse.isStream) {
         console.log(`[TargetProcessor] Processing streaming response...`);
         return await StreamingResponseProcessor.processStreamingResponse(
-          llmResponse.stream, 
-          command, 
+          llmResponse.stream,
+          command,
           llmResponse.modelInfo,
           this.fillTargetWithContent.bind(this)
         );
       }
-      
+
       // Extract token usage
       const tokenUsage = extractTokenUsage(llmResponse);
-      
+
       // Extract content from response
-      const responseContent = typeof llmResponse === 'object' && llmResponse.content 
-        ? llmResponse.content 
+      const responseContent = typeof llmResponse === 'object' && llmResponse.content
+        ? llmResponse.content
         : llmResponse;
-        
+
       console.log(`[TargetProcessor] Response received: ${typeof responseContent === 'string' ? responseContent.substring(0, 100) + '...' : 'non-string'}`);
-      
+
       // Procesar el contenido del LLM para obtener el results
       let results;
-      
+
       // Convertir la respuesta a un arreglo de objetos si es necesario
       try {
         if (typeof responseContent === 'string') {
@@ -286,14 +287,15 @@ export class TargetProcessor extends Base {
           });
           console.log(`[TargetProcessor] Estructura de targets preservada con fallback`);
         }
-        
+
         // Log para verificar estructura de resultados
         console.log(`[TargetProcessor] ESTRUCTURA DE RESULTADOS: ${results.map((r: any, i: number) => {
           return `Resultado ${i}: ${Object.keys(r).join(',')}`;
         }).join(' | ')}`);
-        
+
       } catch (error) {
         console.error(`[TargetProcessor] Error procesando respuesta:`, error);
+        // En caso de error crítico, preservar estructura de targets con mensaje de error
         // En caso de error crítico, preservar estructura de targets con mensaje de error
         results = command.targets.map((target, index) => {
           const targetCopy = JSON.parse(JSON.stringify(target));
@@ -301,23 +303,30 @@ export class TargetProcessor extends Base {
           return this.fillTargetWithContent(targetCopy, errorContent);
         });
       }
-      
+
       // Validar los resultados usando el servicio validateResults
       const validation = validateResults(results, command.targets) as ValidationResult;
-      
+
       if (!validation.isValid) {
         console.warn(`[TargetProcessor] Validación de resultados falló: ${validation.error}`);
         throw new Error(`Validación de resultados falló: ${validation.error}`);
       }
-      
+
+      // 🔧 Si la validación devolvió resultados corregidos (estructura malformada detectada y corregida),
+      // usar esos resultados en lugar de los originales
+      if (validation.correctedResults) {
+        console.log(`[TargetProcessor] ✅ Usando resultados corregidos de la validación (${validation.correctedResults.length} elementos)`);
+        results = validation.correctedResults;
+      }
+
       // Log detailed results summary
       console.log(`[TargetProcessor] Results procesados y validados: ${results.length} elementos`);
-      
+
       // Crear una copia independiente de los resultados para el comando
       const resultsCopy = JSON.parse(JSON.stringify(results));
-      
 
-      
+
+
       // Asegurar que el agent_background se mantenga en el comando actualizado si existe
       // Crear una copia limpia del comando para evitar referencias circulares
       const updatedCommand = {
@@ -325,39 +334,39 @@ export class TargetProcessor extends Base {
         results: resultsCopy,
         updated_at: new Date().toISOString()
       };
-      
 
-      
+
+
       // Verificar si el comando actualizado tiene resultados
       if (!updatedCommand.results || updatedCommand.results.length === 0) {
         console.error(`[TargetProcessor] ⚠️ ALERTA: EL COMANDO ACTUALIZADO NO TIENE RESULTADOS`);
       }
-      
+
       // Guardar en caché para futuras consultas
       // Guardar los resultados en la caché siempre, independientemente de agent_background
       CommandCache.cacheCommand(command.id, {
         ...command,
         results: resultsCopy
       });
-      
 
-      
-      
 
-      
+
+
+
+
       // Asegurar que los resultados no estén vacíos antes de retornarlos
       if (resultsCopy.length === 0) {
         console.error(`[TargetProcessor] ALERTA CRÍTICA: No hay resultados a retornar. Creando resultados basados en estructura de targets.`);
-        
+
         // Crear resultados usando la estructura de targets con contenido por defecto
         const defaultResults = command.targets.map((target, index) => {
           const targetCopy = JSON.parse(JSON.stringify(target));
           const defaultContent = typeof responseContent === 'string' ? responseContent : 'Procesamiento completado sin resultados específicos';
           return this.fillTargetWithContent(targetCopy, defaultContent);
         });
-        
+
         resultsCopy.push(...defaultResults);
-        
+
         // Actualizar también el comando con estos resultados mínimos
         if (!updatedCommand.results) {
           updatedCommand.results = [...defaultResults];
@@ -366,9 +375,9 @@ export class TargetProcessor extends Base {
         }
         console.log(`[TargetProcessor] ${defaultResults.length} resultados mínimos creados preservando estructura de targets`);
       }
-      
 
-      
+
+
       // Crear el resultado final
       const finalResult = {
         status: 'completed' as const,
@@ -377,9 +386,9 @@ export class TargetProcessor extends Base {
         inputTokens: tokenUsage.inputTokens,
         outputTokens: tokenUsage.outputTokens
       };
-      
 
-      
+
+
       // Return result
       return finalResult;
     } catch (error: any) {
@@ -390,7 +399,7 @@ export class TargetProcessor extends Base {
       };
     }
   }
-  
+
   /**
    * Rellena un target con contenido preservando su estructura original
    * @param target El target original a llenar
@@ -401,12 +410,12 @@ export class TargetProcessor extends Base {
     if (!target || typeof target !== 'object') {
       return target;
     }
-    
+
     const result = { ...target };
-    
+
     // Buscar propiedades que puedan contener el contenido
     const possibleContentFields = ['content', 'contents', 'text', 'message', 'description', 'value'];
-    
+
     for (const field of possibleContentFields) {
       if (field in result) {
         // Si encontramos un campo de contenido, llenarlo con el contenido proporcionado
@@ -422,7 +431,7 @@ export class TargetProcessor extends Base {
         break;
       }
     }
-    
+
     // Si no encontramos campos de contenido obvios, buscar el primer campo string o objeto
     if (!possibleContentFields.some(field => field in result)) {
       const keys = Object.keys(result);
@@ -436,7 +445,7 @@ export class TargetProcessor extends Base {
         }
       }
     }
-    
+
     return result;
   }
 
