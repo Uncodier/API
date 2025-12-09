@@ -39,21 +39,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const message = payload.message;
-    if (!message || !message.message_id) {
+    // Handle both 'send' (new format) and 'message' (old format) properties
+    const messageData = payload.send || payload.message;
+
+    if (!messageData || !messageData.message_id) {
       return NextResponse.json(
-        { success: false, error: 'Missing message.message_id in payload' },
+        { success: false, error: 'Missing message_id in payload (checked send and message objects)' },
         { status: 400 }
       );
     }
 
     // Find message in database
-    const foundMessage = await findMessageByAgentMailId(message.message_id);
+    const foundMessage = await findMessageByAgentMailId(messageData.message_id);
 
     if (!foundMessage) {
-      console.log(`⚠️ [AgentMail] Message not found: ${message.message_id}`);
+      console.log(`⚠️ [AgentMail] Message not found: ${messageData.message_id}`);
       return NextResponse.json(
-        { success: false, error: 'Message not found', message_id: message.message_id },
+        { success: false, error: 'Message not found', message_id: messageData.message_id },
         { status: 404 }
       );
     }
@@ -64,14 +66,16 @@ export async function POST(request: NextRequest) {
       status: 'sent',
       eventType: 'message.sent',
       eventMetadata: {
-        inbox_id: message.inbox_id,
-        thread_id: message.thread_id,
-        from: message.from,
-        to: message.to,
-        subject: message.subject,
-        timestamp: message.timestamp,
+        inbox_id: messageData.inbox_id,
+        thread_id: messageData.thread_id,
+        from: messageData.from || messageData.inbox_id,
+        to: messageData.recipients || messageData.to,
+        subject: messageData.subject,
+        timestamp: messageData.timestamp,
+        organization_id: messageData.organization_id,
+        pod_id: messageData.pod_id,
       },
-      timestamp: message.timestamp || payload.event_id,
+      timestamp: messageData.timestamp || payload.event_id,
     });
 
     if (!updateResult.success) {
@@ -81,10 +85,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`✅ [AgentMail] message.sent processed successfully for message: ${message.message_id}`);
+    console.log(`✅ [AgentMail] message.sent processed successfully for message: ${messageData.message_id}`);
 
     return NextResponse.json(
-      { success: true, message_id: message.message_id, event_type: 'message.sent' },
+      { success: true, message_id: messageData.message_id, event_type: 'message.sent' },
       { status: 200 }
     );
   } catch (error: any) {

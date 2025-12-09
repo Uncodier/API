@@ -6,9 +6,10 @@ import { getZoneFile } from '@/lib/integrations/agentmail/agentmail-service';
  */
 export async function GET(
   request: NextRequest,
-  { params }: { params: { domain_id: string } }
+  props: { params: Promise<{ domain_id: string }> }
 ) {
   try {
+    const params = await props.params;
     const domain_id = params.domain_id;
 
     console.log(`📧 [AgentMail] Get zone file request received for domain: ${domain_id}`);
@@ -122,4 +123,3 @@ export async function GET(
     );
   }
 }
-

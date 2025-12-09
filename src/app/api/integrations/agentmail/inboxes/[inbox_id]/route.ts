@@ -6,9 +6,10 @@ import { deleteInbox } from '@/lib/integrations/agentmail/agentmail-service';
  */
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { inbox_id: string } }
+  props: { params: Promise<{ inbox_id: string }> }
 ) {
   try {
+    const params = await props.params;
     const inbox_id = params.inbox_id;
 
     console.log(`📧 [AgentMail] Delete inbox request received for: ${inbox_id}`);
@@ -124,11 +125,3 @@ export async function DELETE(
     );
   }
 }
-
-
-
-
-
-
-
-

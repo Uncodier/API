@@ -6,9 +6,10 @@ import { verifyDomain } from '@/lib/integrations/agentmail/agentmail-service';
  */
 export async function POST(
   request: NextRequest,
-  { params }: { params: { domain_id: string } }
+  props: { params: Promise<{ domain_id: string }> }
 ) {
   try {
+    const params = await props.params;
     const domain_id = params.domain_id;
 
     console.log(`📧 [AgentMail] Verify domain request received for: ${domain_id}`);
@@ -127,4 +128,3 @@ export async function POST(
     );
   }
 }
-

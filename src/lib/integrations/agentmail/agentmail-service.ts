@@ -778,7 +778,12 @@ export async function verifyDomain(domain_id: string): Promise<VerifyDomainRespo
     let responseData: any;
 
     try {
-      responseData = JSON.parse(responseText);
+      if (!responseText && response.ok) {
+        console.log('[AgentMail] Received empty response body with OK status');
+        responseData = {};
+      } else {
+        responseData = JSON.parse(responseText);
+      }
     } catch (parseError) {
       console.error('[AgentMail] Failed to parse response:', responseText);
       throw new Error(`Invalid JSON response from AgentMail API: ${responseText}`);
@@ -805,9 +810,19 @@ export async function verifyDomain(domain_id: string): Promise<VerifyDomainRespo
       }
     }
 
-    // Validate response structure
+    // Handle empty success response or missing fields
     if (!responseData.domain_id) {
-      throw new Error('Invalid response from AgentMail API: missing domain_id');
+      if (response.ok) {
+        console.log('[AgentMail] Response missing domain_id, using requested domain_id');
+        responseData = {
+          ...responseData,
+          domain_id: domain_id,
+          status: responseData.status || 'VERIFYING',
+          updated_at: responseData.updated_at || new Date().toISOString(),
+        };
+      } else {
+        throw new Error('Invalid response from AgentMail API: missing domain_id');
+      }
     }
 
     console.log(`[AgentMail] Domain verified successfully:`, {
@@ -833,4 +848,3 @@ export async function verifyDomain(domain_id: string): Promise<VerifyDomainRespo
     throw new Error(`Failed to verify domain via AgentMail: ${error.message || 'Unknown error'}`);
   }
 }
-
