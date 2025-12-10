@@ -12,16 +12,18 @@ POST /api/agents/sales/leadFollowUp
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `siteId` | string | Yes | ID of the website where the lead originated |
-| `leadId` | string | Yes | ID of the lead to follow up with |
-| `userId` | string | No | ID of the sales representative responsible for the lead |
-| `agent_id` | string | No | ID of the agent to handle the follow-up sequence |
+| `siteId` or `site_id` | string (UUID) | Yes | UUID of the website where the lead originated |
+| `leadId` or `lead_id` | string (UUID) | Yes | UUID of the lead to follow up with |
+| `userId` or `user_id` | string (UUID) | No | UUID of the sales representative responsible for the lead. If not provided, the system will search for an active sales agent for the site |
+| `agent_id` or `agentId` | string (UUID) | No | UUID of the agent to handle the follow-up sequence. If not provided, the system will search for an active sales agent for the site |
+| `visitorId` or `visitor_id` | string (UUID) | No | UUID of the visitor associated with the lead |
 | `followUpType` | string | No | Type of follow-up (e.g., "email", "call", "meeting") |
 | `leadStage` | string | No | Current stage of the lead in the sales pipeline |
-| `previousInteractions` | array | No | Array of previous interactions with the lead |
-| `leadData` | object | No | Additional data about the lead (e.g., interests, pain points) |
+| `previousInteractions` | array | No | Array of previous interactions with the lead. Each interaction should have `date`, `type`, and `summary` or `content` fields |
+| `leadData` | object | No | Additional data about the lead (e.g., name, company, position, email, phone, pain_points, budget_range). If not provided, the system will fetch it from the database |
 | `productInterest` | array | No | Array of products or services the lead has shown interest in |
 | `followUpInterval` | string | No | Desired interval for follow-ups (e.g., "3 days", "1 week") |
+| `phone_number` | string | No | Phone number for WhatsApp communication. Must be a valid phone number with at least 7 digits if provided |
 
 ### Example Request
 
@@ -71,18 +73,22 @@ import { UnifiedApiTester } from '@/components/ApiTester';
 You can test this API directly using our API Tester interface. The Sales API tester allows you to generate lead follow-up sequences with different parameters and see the results.
 
 Required fields:
-- **Site ID**: The ID of the website where the lead originated
-- **Lead ID**: The ID of the lead to follow up with
+- **Site ID**: The UUID of the website where the lead originated
+- **Lead ID**: The UUID of the lead to follow up with
 
 Optional fields:
-- **User ID**: The ID of the sales representative responsible for the lead
-- **Agent ID**: The ID of the agent to handle the follow-up sequence
+- **User ID**: The UUID of the sales representative responsible for the lead. If not provided, the system will search for an active sales agent for the site
+- **Agent ID**: The UUID of the agent to handle the follow-up sequence. If not provided, the system will search for an active sales agent for the site
+- **Visitor ID**: The UUID of the visitor associated with the lead
 - **Follow-up Type**: Type of follow-up desired (email, call, meeting)
 - **Lead Stage**: Current stage of the lead in the sales pipeline
-- **Previous Interactions**: Array of previous interactions with the lead
-- **Lead Data**: Additional data about the lead
-- **Product Interest**: Array of products or services the lead has shown interest in
-- **Follow-up Interval**: Desired interval for follow-ups
+- **Previous Interactions**: Array of previous interactions with the lead (JSON format)
+- **Lead Data**: Additional data about the lead (JSON format). If not provided, the system will fetch it from the database
+- **Product Interest**: Array of products or services the lead has shown interest in (JSON format)
+- **Follow-up Interval**: Desired interval for follow-ups (e.g., "3 days", "1 week")
+- **Phone Number**: Phone number for WhatsApp communication. Must be valid with at least 7 digits if provided
+
+Note: The API accepts both camelCase (`siteId`, `leadId`, `userId`, `agentId`, `visitorId`) and snake_case (`site_id`, `lead_id`, `user_id`, `agent_id`, `visitor_id`) parameter names for compatibility.
 
 The API Tester makes it easy to see example requests in various programming languages and test the endpoint directly.
 
