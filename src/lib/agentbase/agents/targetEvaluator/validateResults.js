@@ -58,16 +58,20 @@ function detectMalformedTargetArray(results) {
  * Extrae el contenido real de una estructura malformada que contiene
  * objetos de definición de targets
  * @param {Array} results Los resultados malformados
+ * @param {Array} targets Los targets originales para comparar estructura
  * @returns {Array} Los resultados corregidos con el contenido extraído
  */
-function extractNestedContent(results) {
+function extractNestedContent(results, targets = []) {
   if (!Array.isArray(results)) {
     return results;
   }
 
   const extractedContent = [];
 
-  for (const result of results) {
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const correspondingTarget = targets[i];
+
     if (typeof result !== 'object' || result === null) {
       // Si no es un objeto, mantenerlo como está
       extractedContent.push(result);
@@ -77,12 +81,29 @@ function extractNestedContent(results) {
     const keys = Object.keys(result);
 
     // Si el objeto tiene una sola propiedad que es una definición de target,
-    // extraer el contenido de esa propiedad
+    // verificar si esta estructura coincide con el target correspondiente
     if (keys.length === 1 && TARGET_DEFINITION_PROPERTIES.includes(keys[0])) {
       const targetKey = keys[0];
       const nestedValue = result[targetKey];
 
-      // Si el valor anidado es un objeto o array válido, usarlo
+      // 🔧 FIX: Si el target correspondiente tiene la misma estructura (una key con objeto anidado),
+      // entonces esta es la estructura CORRECTA, no malformada. No extraer.
+      if (correspondingTarget && typeof correspondingTarget === 'object') {
+        const targetKeys = Object.keys(correspondingTarget);
+        // Si el target tiene exactamente la misma estructura (una key que coincide),
+        // preservar la estructura original
+        if (targetKeys.length === 1 && targetKeys[0] === targetKey && 
+            typeof correspondingTarget[targetKey] === 'object' && 
+            !Array.isArray(correspondingTarget[targetKey])) {
+          // Esta es la estructura correcta, mantenerla tal cual
+          extractedContent.push(result);
+          console.log(`[extractNestedContent] Estructura correcta preservada para '${targetKey}' (coincide con target)`);
+          continue;
+        }
+      }
+
+      // Si el valor anidado es un objeto o array válido, y NO coincide con el target,
+      // entonces sí es malformado y debemos extraer
       if (nestedValue && (typeof nestedValue === 'object' || Array.isArray(nestedValue))) {
         // Si es un array, expandirlo
         if (Array.isArray(nestedValue)) {
@@ -90,7 +111,7 @@ function extractNestedContent(results) {
         } else {
           extractedContent.push(nestedValue);
         }
-        console.log(`[extractNestedContent] Extraído contenido de propiedad '${targetKey}'`);
+        console.log(`[extractNestedContent] Extraído contenido de propiedad '${targetKey}' (estructura no coincide con target)`);
         continue;
       }
     }
@@ -172,19 +193,44 @@ export function validateResults(results, targets) {
   console.log(`[validateResults] Verificando ${results.length} resultados contra ${targets.length} targets`);
 
   // 🔍 NUEVA VALIDACIÓN: Detectar estructura malformada con objetos de definición de targets
+  // 🔧 FIX: Solo detectar como malformado si la estructura NO coincide con los targets
   let correctedResults = null;
   if (detectMalformedTargetArray(results)) {
-    console.warn(`[validateResults] ⚠️ ESTRUCTURA MALFORMADA DETECTADA: Los resultados contienen objetos de definición de targets en lugar de contenido real`);
-    console.log(`[validateResults] Intentando extraer contenido anidado...`);
+    // Verificar si la estructura realmente es malformada comparándola con los targets
+    const isActuallyMalformed = results.some((result, index) => {
+      if (typeof result !== 'object' || result === null) return false;
+      const target = targets[index];
+      if (!target || typeof target !== 'object') return true; // Sin target para comparar, considerar malformado
+      
+      const resultKeys = Object.keys(result);
+      const targetKeys = Object.keys(target);
+      
+      // Si el resultado tiene una sola key que es una propiedad de target definition
+      if (resultKeys.length === 1 && TARGET_DEFINITION_PROPERTIES.includes(resultKeys[0])) {
+        // Verificar si el target tiene la misma estructura
+        if (targetKeys.length === 1 && targetKeys[0] === resultKeys[0]) {
+          // Estructura coincide con target, NO es malformado
+          return false;
+        }
+      }
+      return true; // Estructura no coincide, es malformado
+    });
 
-    const extracted = extractNestedContent(results);
+    if (isActuallyMalformed) {
+      console.warn(`[validateResults] ⚠️ ESTRUCTURA MALFORMADA DETECTADA: Los resultados contienen objetos de definición de targets en lugar de contenido real`);
+      console.log(`[validateResults] Intentando extraer contenido anidado...`);
 
-    if (extracted && Array.isArray(extracted) && extracted.length > 0) {
-      console.log(`[validateResults] ✅ Contenido extraído exitosamente: ${extracted.length} elementos`);
-      correctedResults = extracted;
-      results = extracted; // Usar los resultados corregidos para la validación
+      const extracted = extractNestedContent(results, targets);
+
+      if (extracted && Array.isArray(extracted) && extracted.length > 0) {
+        console.log(`[validateResults] ✅ Contenido extraído exitosamente: ${extracted.length} elementos`);
+        correctedResults = extracted;
+        results = extracted; // Usar los resultados corregidos para la validación
+      } else {
+        console.error(`[validateResults] ❌ No se pudo extraer contenido válido de la estructura malformada`);
+      }
     } else {
-      console.error(`[validateResults] ❌ No se pudo extraer contenido válido de la estructura malformada`);
+      console.log(`[validateResults] ✅ Estructura detectada como correcta (coincide con targets), no extrayendo`);
     }
   }
 

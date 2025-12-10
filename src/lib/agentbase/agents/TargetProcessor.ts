@@ -412,6 +412,30 @@ export class TargetProcessor extends Base {
     }
 
     const result = { ...target };
+    const targetKeys = Object.keys(result);
+
+    // 🔧 FIX: Si el target tiene una sola key con un objeto anidado (e.g., { follow_up_content: {...} }),
+    // y el contenido es un objeto que tiene esa misma key, preservar la estructura anidada
+    if (targetKeys.length === 1) {
+      const targetKey = targetKeys[0];
+      const targetValue = result[targetKey];
+      
+      // Si el valor del target es un objeto (no array, no string vacío)
+      if (typeof targetValue === 'object' && targetValue !== null && !Array.isArray(targetValue)) {
+        // Si el contenido es un objeto y tiene la misma key, usar ese contenido directamente
+        if (typeof content === 'object' && content !== null && !Array.isArray(content)) {
+          if (content[targetKey]) {
+            // El contenido tiene la misma estructura, preservarla
+            return { [targetKey]: content[targetKey] };
+          } else if (Object.keys(content).length > 0) {
+            // El contenido es un objeto pero sin la key, rellenar el objeto anidado con el contenido
+            return { [targetKey]: this.fillTargetWithContent(targetValue, content) };
+          }
+        }
+        // Si el contenido es un string o array, rellenar recursivamente el objeto anidado
+        return { [targetKey]: this.fillTargetWithContent(targetValue, content) };
+      }
+    }
 
     // Buscar propiedades que puedan contener el contenido
     const possibleContentFields = ['content', 'contents', 'text', 'message', 'description', 'value'];

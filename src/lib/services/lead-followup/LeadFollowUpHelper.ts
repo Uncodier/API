@@ -258,11 +258,14 @@ export async function getSiteChannelsConfiguration(siteId: string): Promise<{
     
     if (error) {
       console.error(`❌ Error fetching settings:`, error);
+      const errorMessage = error && typeof error === 'object' && 'message' in error 
+        ? (error as any).message 
+        : 'Unknown error';
       return {
         hasChannels: false,
         configuredChannels: [],
         channelsDetails: {},
-        warning: `Error retrieving settings: ${error.message}`
+        warning: `Error retrieving settings: ${errorMessage}`
       };
     }
     
@@ -272,9 +275,7 @@ export async function getSiteChannelsConfiguration(siteId: string): Promise<{
       console.warn(warning);
       console.log(`📊 Settings record check:`, {
         siteId,
-        recordExists: false,
-        errorCode: error?.code,
-        errorMessage: error?.message
+        recordExists: false
       });
       
       return {
@@ -399,9 +400,18 @@ export async function getSiteChannelsConfiguration(siteId: string): Promise<{
       isActive: isAgentEmailActive
     });
     
-    if (isAgentEmailActive) {
-      // If email is not yet in configuredChannels (or standard email was invalid), use agent_email
-      if (!configuredChannels.includes('email')) {
+    // 🔧 ENHANCEMENT: If standard email is configured, log that agent_email is available as backup
+    // Only require agent_email to be active if standard email is missing
+    if (agentEmailConfig) {
+      if (configuredChannels.includes('email')) {
+        // Standard email already configured, agent_email is available as backup
+        console.log(`ℹ️ Agent email available as backup (standard email already configured):`, {
+          status: agentEmailConfig.status,
+          isActive: isAgentEmailActive,
+          note: 'Agent email can be used as fallback if standard email fails'
+        });
+      } else if (isAgentEmailActive) {
+        // Standard email not configured, use agent_email
         configuredChannels.push('email');
         
         // Try to get email from different possible locations
@@ -411,7 +421,7 @@ export async function getSiteChannelsConfiguration(siteId: string): Promise<{
         const agentEmailAddress = agentEmailConfig.email || 
           (username && domain ? `${username}@${domain}` : null);
         
-        console.log(`✅ Agent email channel configured:`, {
+        console.log(`✅ Agent email channel configured (standard email missing):`, {
           email: agentEmailAddress,
           username,
           domain,
@@ -425,14 +435,13 @@ export async function getSiteChannelsConfiguration(siteId: string): Promise<{
           description: 'Agent Email'
         };
       } else {
-        console.log(`ℹ️ Agent email available but standard email already configured`);
+        console.log(`❌ Agent email NOT active and standard email not configured:`, {
+          hasConfig: !!agentEmailConfig,
+          status: agentEmailConfig?.status,
+          isActive: isAgentEmailActive,
+          note: 'No email channel available'
+        });
       }
-    } else {
-      console.log(`❌ Agent email NOT active:`, {
-        hasConfig: !!agentEmailConfig,
-        status: agentEmailConfig?.status,
-        isActive: isAgentEmailActive
-      });
     }
     
     // 3. WhatsApp (Standard)

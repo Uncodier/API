@@ -658,6 +658,26 @@ export async function POST(request: Request) {
           break;
         }
         
+        // 🔧 FALLBACK: Handle flattened structure (temporary workaround)
+        // If agentbase flattened the structure, check if result has channel, title, message directly
+        if (result.channel && result.title && result.message) {
+          salesFollowUpContent = {
+            channel: result.channel,
+            title: result.title,
+            message: result.message,
+            strategy: result.strategy || '',
+            message_language: result.message_language || 'en'
+          };
+          console.log(`[LeadFollowUp:${requestId}] ⚠️ Found flattened structure (fallback):`, {
+            hasChannel: !!salesFollowUpContent.channel,
+            channel: salesFollowUpContent.channel,
+            hasTitle: !!salesFollowUpContent.title,
+            hasMessage: !!salesFollowUpContent.message,
+            note: 'Structure was flattened by agentbase, using fallback extraction'
+          });
+          break;
+        }
+        
         // Search for other possible structures
         if (result.content && typeof result.content === 'object' && !Array.isArray(result.content)) {
           salesFollowUpContent = result.content;
@@ -681,7 +701,7 @@ export async function POST(request: Request) {
       
       if (!salesFollowUpContent) {
         console.warn(`[LeadFollowUp:${requestId}] ⚠️ No follow_up_content found in results. Full results structure:`, 
-          JSON.stringify(completedSalesCommand.results, null, 2).substring(0, 1000));
+          JSON.stringify(completedSalesCommand.results, null, 2));
       }
     }
     
@@ -689,6 +709,19 @@ export async function POST(request: Request) {
     // Process results even if command status is 'failed' (like customerSupport does)
     if (!salesFollowUpContent || typeof salesFollowUpContent !== 'object') {
       console.error(`❌ PHASE 1: Could not extract follow-up content from results`);
+      console.error(`[LeadFollowUp:${requestId}] 📊 Diagnostic info:`, {
+        hasResults: !!(completedSalesCommand?.results),
+        resultsCount: completedSalesCommand?.results?.length || 0,
+        resultsStructure: completedSalesCommand?.results?.map((r: any) => ({
+          keys: Object.keys(r),
+          hasFollowUpContent: !!r.follow_up_content,
+          hasChannel: !!r.channel,
+          hasTitle: !!r.title,
+          hasMessage: !!r.message
+        })) || [],
+        commandStatus: completedSalesCommand?.status,
+        configuredChannels: channelConfig.configuredChannels
+      });
       
       // If the command failed, try to create fallback content (similar to customerSupport approach)
       if (completedSalesCommand.status === 'failed' || !salesCompleted) {
@@ -788,6 +821,21 @@ export async function POST(request: Request) {
           }
           break;
         }
+        // 🔧 FALLBACK: Handle flattened structure for final extraction (temporary workaround)
+        else if (!copywriterCompleted && result.channel && result.title && result.message) {
+          finalContent = [{
+            channel: result.channel,
+            title: result.title,
+            message: result.message,
+            strategy: result.strategy || '',
+            message_language: result.message_language || 'en'
+          }];
+          console.log(`[LeadFollowUp:${requestId}] ⚠️ Found flattened structure in final extraction (fallback):`, {
+            channel: result.channel,
+            note: 'Structure was flattened by agentbase, using fallback extraction'
+          });
+          break;
+        }
         // Fallbacks
         else if (result.content && Array.isArray(result.content)) {
           finalContent = result.content;
@@ -840,7 +888,40 @@ export async function POST(request: Request) {
           };
           console.log(`[LeadFollowUp:${requestId}] ✅ Added message for channel: ${item.channel}`);
         } else {
-          console.warn(`[LeadFollowUp:${requestId}] ⚠️ Item ${index} has no channel property:`, Object.keys(item));
+          // 🔧 Channel inference: If content has title and message but no channel, infer from context
+          if (item.title && item.message) {
+            let inferredChannel: string | null = null;
+            
+            // Prefer email if lead has email and email is configured
+            if (hasEmail && channelConfig.configuredChannels.includes('email')) {
+              inferredChannel = 'email';
+            }
+            // Prefer whatsapp if lead has phone and whatsapp is configured
+            else if (hasPhone && channelConfig.configuredChannels.includes('whatsapp')) {
+              inferredChannel = 'whatsapp';
+            }
+            // Fallback to first configured channel
+            else if (channelConfig.configuredChannels.length > 0) {
+              inferredChannel = channelConfig.configuredChannels[0];
+            }
+            
+            if (inferredChannel) {
+              messages[inferredChannel] = {
+                title: item.title || '',
+                message: item.message || '',
+                strategy: item.strategy || '',
+                _metadata: {
+                  channel_inferred: true,
+                  original_channel: null
+                }
+              };
+              console.log(`[LeadFollowUp:${requestId}] ⚠️ Item ${index} had no channel, inferred: ${inferredChannel}`);
+            } else {
+              console.warn(`[LeadFollowUp:${requestId}] ⚠️ Item ${index} has no channel property and cannot infer:`, Object.keys(item));
+            }
+          } else {
+            console.warn(`[LeadFollowUp:${requestId}] ⚠️ Item ${index} has no channel property:`, Object.keys(item));
+          }
         }
       });
     } else {
@@ -917,19 +998,44 @@ export async function POST(request: Request) {
       
       // If we have no original messages, the problem is content extraction, not channel filtering
       if (Object.keys(messages).length === 0) {
+        // Enhanced error diagnostics
+        const diagnosticInfo: any = {
+          command_status: completedSalesCommand?.status || 'unknown',
+          has_results: !!(completedSalesCommand?.results && completedSalesCommand.results.length > 0),
+          results_count: completedSalesCommand?.results?.length || 0,
+          configured_channels: channelConfig.configuredChannels,
+          trace_id: requestId
+        };
+        
+        // Add detailed results structure
+        if (completedSalesCommand?.results) {
+          diagnosticInfo.results_structure = completedSalesCommand.results.map((r: any) => ({
+            keys: Object.keys(r),
+            has_follow_up_content: !!r.follow_up_content,
+            has_channel: !!r.channel,
+            has_title: !!r.title,
+            has_message: !!r.message,
+            sample_keys: Object.keys(r).slice(0, 10)
+          }));
+        }
+        
+        // Add extraction attempt info
+        diagnosticInfo.extraction_attempts = {
+          checked_follow_up_content: true,
+          checked_flattened_structure: true,
+          checked_content_field: true,
+          sales_content_found: !!salesFollowUpContent,
+          sales_content_channel: salesFollowUpContent?.channel || null,
+          final_content_length: finalContent?.length || 0
+        };
+        
         return NextResponse.json(
           { 
             success: false, 
             error: { 
               code: 'NO_CONTENT_GENERATED', 
               message: 'The AI command did not generate any follow-up content with a valid channel. This may indicate an issue with the command execution or response structure.',
-              details: {
-                command_status: completedSalesCommand?.status || 'unknown',
-                has_results: !!(completedSalesCommand?.results && completedSalesCommand.results.length > 0),
-                results_count: completedSalesCommand?.results?.length || 0,
-                configured_channels: channelConfig.configuredChannels,
-                trace_id: requestId
-              },
+              details: diagnosticInfo,
               trace_id: requestId
             } 
           },
@@ -956,6 +1062,52 @@ export async function POST(request: Request) {
     }
     
     // ===== END MANUAL CHANNEL FILTERING =====
+    
+    // 🔧 VALIDATION: Ensure at least one message survives after processing
+    if (Object.keys(correctedMessages).length === 0) {
+      console.error(`[LeadFollowUp:${requestId}] ❌ VALIDATION ERROR: No messages survived after channel filtering`);
+      console.error(`[LeadFollowUp:${requestId}] 📊 Validation debug info:`, {
+        originalMessagesCount: Object.keys(messages).length,
+        originalChannels: Object.keys(messages),
+        configuredChannels: channelConfig.configuredChannels,
+        correctionsApplied: corrections,
+        hasSalesContent: !!salesFollowUpContent,
+        salesContentChannel: salesFollowUpContent?.channel,
+        finalContentLength: finalContent?.length || 0,
+        leadHasEmail: hasEmail,
+        leadHasPhone: hasPhone
+      });
+      
+      // This should not happen if filtering worked correctly, but provide detailed error
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'NO_VALID_MESSAGES_AFTER_FILTERING', 
+            message: 'No valid messages remained after channel filtering. This indicates a mismatch between generated content channels and configured channels.',
+            details: {
+              original_channels: Object.keys(messages),
+              configured_channels: channelConfig.configuredChannels,
+              corrections_applied: corrections,
+              lead_contact_info: {
+                has_email: hasEmail,
+                has_phone: hasPhone,
+                email: effectiveLeadData?.email || null,
+                phone: effectiveLeadData?.phone || null
+              },
+              extraction_info: {
+                sales_content_found: !!salesFollowUpContent,
+                sales_content_channel: salesFollowUpContent?.channel || null,
+                final_content_items: finalContent?.length || 0
+              },
+              trace_id: requestId
+            },
+            trace_id: requestId
+          } 
+        },
+        { status: 400 }
+      );
+    }
     
     // 🔧 CORRECCIÓN: Usar UUIDs de la base de datos en lugar de IDs internos
     const finalCommandIds = {
