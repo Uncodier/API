@@ -230,14 +230,44 @@ async function getSiteChannelsConfiguration(siteId: string): Promise<{
     const channelsDetails: Record<string, any> = {};
     
     // Check each available channel type
-    if (channels.email && (channels.email.email || channels.email.aliases)) {
+    
+    // 1. Email (Standard)
+    const emailConfig = channels.email;
+    const isEmailEnabled = emailConfig && (emailConfig.enabled !== false) && (emailConfig.status !== 'not_configured');
+    
+    if (emailConfig && (emailConfig.email || emailConfig.aliases) && isEmailEnabled) {
       configuredChannels.push('email');
       channelsDetails.email = {
         type: 'email',
-        email: channels.email.email || null,
-        aliases: channels.email.aliases || [],
+        email: emailConfig.email || null,
+        aliases: emailConfig.aliases || [],
         description: 'Email marketing and outreach'
       };
+    }
+    
+    // 2. Agent Email (New)
+    const agentEmailConfig = channels.agent_email;
+    const isAgentEmailActive = agentEmailConfig && String(agentEmailConfig.status) === 'active';
+    
+    if (isAgentEmailActive) {
+      // If email is not yet in configuredChannels (or standard email was invalid), use agent_email
+      if (!configuredChannels.includes('email')) {
+        configuredChannels.push('email');
+        
+        // Try to get email from different possible locations
+        // Priority: 1) direct email field, 2) username@domain from top level, 3) username@domain from data object
+        const username = agentEmailConfig.username || agentEmailConfig.data?.username;
+        const domain = agentEmailConfig.domain || agentEmailConfig.data?.domain;
+        const agentEmailAddress = agentEmailConfig.email || 
+          (username && domain ? `${username}@${domain}` : null);
+        
+        channelsDetails.email = {
+          type: 'email',
+          email: agentEmailAddress,
+          aliases: [],
+          description: 'Agent Email'
+        };
+      }
     }
     
     if (channels.whatsapp) {
@@ -252,6 +282,20 @@ async function getSiteChannelsConfiguration(siteId: string): Promise<{
           description: 'WhatsApp Business messaging'
         };
       }
+    }
+    
+    // Check agent_whatsapp
+    const agentWhatsappConfig = channels.agent_whatsapp;
+    if (agentWhatsappConfig && String(agentWhatsappConfig.status) === 'active') {
+       if (!configuredChannels.includes('whatsapp')) {
+         configuredChannels.push('whatsapp');
+         const waNumber = agentWhatsappConfig.phone_number || agentWhatsappConfig.existingNumber || agentWhatsappConfig.number || agentWhatsappConfig.phone;
+         channelsDetails.whatsapp = {
+             type: 'whatsapp',
+             phone_number: waNumber,
+             description: 'Agent WhatsApp'
+         };
+       }
     }
     
     return {
