@@ -72,6 +72,12 @@ function extractNestedContent(results, targets = []) {
     const result = results[i];
     const correspondingTarget = targets[i];
 
+    // FIX: Flatten arrays if they appear as results
+    if (Array.isArray(result)) {
+      extractedContent.push(...result);
+      continue;
+    }
+
     if (typeof result !== 'object' || result === null) {
       // Si no es un objeto, mantenerlo como está
       extractedContent.push(result);
@@ -79,6 +85,36 @@ function extractNestedContent(results, targets = []) {
     }
 
     const keys = Object.keys(result);
+
+    // 1. IMPROVED: Check if we have the specific target key in the result
+    if (correspondingTarget && typeof correspondingTarget === 'object') {
+        const targetKeys = Object.keys(correspondingTarget);
+        if (targetKeys.length === 1) {
+            const targetKey = targetKeys[0];
+            
+            // If result HAS the target key, use it!
+            if (result[targetKey] !== undefined) {
+                // If structure matches exactly (1 key), preserve it
+                if (keys.length === 1) {
+                    extractedContent.push(result);
+                    console.log(`[extractNestedContent] Estructura correcta preservada para '${targetKey}' (match exacto)`);
+                    continue;
+                }
+                
+                // If extra keys but we have the target key, preserve the target key content wrapped
+                // Only if the content is substantial (object/array/string)
+                const content = result[targetKey];
+                // 🔧 FIX: Strict check for substantial content (not null/false/0/empty) matching expected types
+                if (content && (typeof content === 'object' || typeof content === 'string')) {
+                    const preserved = {};
+                    preserved[targetKey] = content;
+                    extractedContent.push(preserved);
+                    console.log(`[extractNestedContent] Contenido preservado para '${targetKey}' (filtrando extra keys)`);
+                    continue;
+                }
+            }
+        }
+    }
 
     // Si el objeto tiene una sola propiedad que es una definición de target,
     // verificar si esta estructura coincide con el target correspondiente
@@ -195,29 +231,60 @@ export function validateResults(results, targets) {
   // 🔍 NUEVA VALIDACIÓN: Detectar estructura malformada con objetos de definición de targets
   // 🔧 FIX: Solo detectar como malformado si la estructura NO coincide con los targets
   let correctedResults = null;
-  if (detectMalformedTargetArray(results)) {
-    // Verificar si la estructura realmente es malformada comparándola con los targets
-    const isActuallyMalformed = results.some((result, index) => {
+  const isMalformedArray = detectMalformedTargetArray(results);
+
+  // 🔧 FIX: If any result has extra keys but contains all target keys, we should process it as malformed to clean it up
+  const hasExtraKeysButMatches = results.some((result, index) => {
       if (typeof result !== 'object' || result === null) return false;
       const target = targets[index];
-      if (!target || typeof target !== 'object') return true; // Sin target para comparar, considerar malformado
+      if (!target || typeof target !== 'object') return false;
       
-      const resultKeys = Object.keys(result);
       const targetKeys = Object.keys(target);
+      const resultKeys = Object.keys(result);
       
-      // Si el resultado tiene una sola key que es una propiedad de target definition
-      if (resultKeys.length === 1 && TARGET_DEFINITION_PROPERTIES.includes(resultKeys[0])) {
-        // Verificar si el target tiene la misma estructura
-        if (targetKeys.length === 1 && targetKeys[0] === resultKeys[0]) {
-          // Estructura coincide con target, NO es malformado
-          return false;
-        }
+      // If result has fewer keys than target, it's missing data (handled by other validation), not "extra keys"
+      if (resultKeys.length <= targetKeys.length) return false;
+      
+      // Check if all target keys are present in result
+      const allTargetKeysPresent = targetKeys.every(key => result[key] !== undefined);
+      
+      if (allTargetKeysPresent) {
+          return true; // Has all target keys PLUS extra keys
       }
-      return true; // Estructura no coincide, es malformado
-    });
+      
+      return false;
+  });
 
-    if (isActuallyMalformed) {
-      console.warn(`[validateResults] ⚠️ ESTRUCTURA MALFORMADA DETECTADA: Los resultados contienen objetos de definición de targets en lugar de contenido real`);
+  if (isMalformedArray || hasExtraKeysButMatches) {
+    let shouldExtract = false;
+
+    if (hasExtraKeysButMatches) {
+        shouldExtract = true;
+    } else if (isMalformedArray) {
+        // Verificar si la estructura realmente es malformada comparándola con los targets
+        const isActuallyMalformed = results.some((result, index) => {
+        if (typeof result !== 'object' || result === null) return false;
+        const target = targets[index];
+        if (!target || typeof target !== 'object') return true; // Sin target para comparar, considerar malformado
+        
+        const resultKeys = Object.keys(result);
+        const targetKeys = Object.keys(target);
+        
+        // Si el resultado tiene una sola key que es una propiedad de target definition
+        if (resultKeys.length === 1 && TARGET_DEFINITION_PROPERTIES.includes(resultKeys[0])) {
+            // Verificar si el target tiene la misma estructura
+            if (targetKeys.length === 1 && targetKeys[0] === resultKeys[0]) {
+            // Estructura coincide con target, NO es malformado
+            return false;
+            }
+        }
+        return true; // Estructura no coincide, es malformado
+        });
+        shouldExtract = isActuallyMalformed;
+    }
+
+    if (shouldExtract) {
+      console.warn(`[validateResults] ⚠️ ESTRUCTURA MALFORMADA DETECTADA: Los resultados contienen objetos de definición de targets en lugar de contenido real (o llaves extra)`);
       console.log(`[validateResults] Intentando extraer contenido anidado...`);
 
       const extracted = extractNestedContent(results, targets);
@@ -240,9 +307,9 @@ export function validateResults(results, targets) {
   for (let i = 0; i < results.length; i++) {
     const result = results[i];
 
-    // Los resultados deben ser objetos
-    if (typeof result !== 'object' || result === null) {
-      console.warn(`[validateResults] El resultado ${i} no es un objeto válido: ${typeof result}`);
+    // Los resultados deben ser objetos (y no arrays)
+    if (typeof result !== 'object' || result === null || Array.isArray(result)) {
+      console.warn(`[validateResults] El resultado ${i} no es un objeto válido: ${typeof result} (isArray: ${Array.isArray(result)})`);
       continue;
     }
 

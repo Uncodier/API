@@ -777,7 +777,8 @@ export async function executeCopywriterRefinement(
       copywriterContext += `11. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
       copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
       copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
-      copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n\n`;
+      copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n`;
+      copywriterContext += `15. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object.\n\n`;
     }
     
     // Create command for copywriter based on available channels from phase 1
@@ -826,18 +827,25 @@ export async function executeCopywriterRefinement(
       }
     }
     
+    if (!refinementTarget) {
+      console.error(`❌ PHASE 2: Cannot create copywriter command - refinementTarget is null (missing channel in sales content?)`);
+      return null;
+    }
+    
     const copywriterCommand = CommandFactory.createCommand({
       task: 'lead nurture copywriting',
       userId: userId,
       agentId: agentId,
       site_id: siteId,
-      description: 'Polish and improve the follow-up content created by the sales team without changing the core strategy. Act as a writing coach to enhance clarity, flow, and persuasion while preserving the sales team approach, channel selection, and fundamental messaging. Focus on making the existing content more engaging and effective.',
+      description: 'Polish and improve the follow-up content created by the sales team without changing the core strategy. Act as a writing coach to enhance clarity, flow, and persuasion while preserving the sales team approach, channel selection, and fundamental messaging. Focus on making the existing content more engaging and effective. Generate the refined title and message as separate fields.',
       targets: [
         {
           deep_thinking: "Analyze the sales team's strategically selected follow-up content and identify specific areas for copywriting improvement. Focus on enhancing clarity, flow, and persuasion while respecting and preserving the core sales strategy, channel selection, and messaging approach."
         },
         {
-          refined_content: refinementTarget
+          refined_title: refinementTarget.title,
+          refined_message: refinementTarget.message,
+          channel: `Confirm the channel for this message (must be '${refinementTarget.channel}')`
         }
       ],
       context: copywriterContext,
