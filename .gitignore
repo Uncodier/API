@@ -51,3 +51,4 @@ public/_pagefind/
 # Ignorar carpetas node_modules numeradas (ej: node_modules 2, node_modules 3, etc)
 node_modules\ *
 node_modules[\ ]*
+.npm-cache
