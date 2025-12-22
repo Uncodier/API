@@ -166,7 +166,8 @@ export class LeadContextBuilder {
   
   static getChannelSelectionInstructions(availableChannels: string[]): string {
     let contextMessage = `\n\n=== AVAILABLE COMMUNICATION CHANNELS ===\n`;
-    contextMessage += `The following channels are available for this lead:\n`;
+    contextMessage += `The following channels are CONFIGURED and AVAILABLE for this lead:\n`;
+    contextMessage += `CONFIGURED CHANNELS: ${availableChannels.join(', ')}\n\n`;
     
     if (availableChannels.includes('email')) {
       contextMessage += `• EMAIL: Professional communication, detailed information, document attachments\n`;
@@ -174,8 +175,12 @@ export class LeadContextBuilder {
     if (availableChannels.includes('whatsapp')) {
       contextMessage += `• WHATSAPP: Immediate communication, casual messaging, mobile-first leads\n`;
     }
-    contextMessage += `• NOTIFICATION: In-app notifications for active platform users, short messages\n`;
-    contextMessage += `• WEB: Website popups/banners for visitors, offers and demos\n`;
+    if (availableChannels.includes('notification')) {
+      contextMessage += `• NOTIFICATION: In-app notifications for active platform users, short messages\n`;
+    }
+    if (availableChannels.includes('web')) {
+      contextMessage += `• WEB: Website popups/banners for visitors, offers and demos\n`;
+    }
     
     contextMessage += `\n=== CRITICAL INSTRUCTIONS FOR CHANNEL SELECTION ===\n`;
     contextMessage += `🚨 FUNDAMENTAL RULE: ONLY CONTACT THROUGH ONE CHANNEL AT A TIME 🚨\n`;
@@ -183,12 +188,21 @@ export class LeadContextBuilder {
     contextMessage += `- A lead should receive communication through only one channel per interaction\n`;
     contextMessage += `- Contacting through multiple channels creates annoyance and may push prospects away\n`;
     contextMessage += `- Choose the channel MOST LIKELY to generate a positive response\n`;
+    
+    contextMessage += `\n🚨 VALIDATION RULES 🚨\n`;
+    contextMessage += `- You MUST select a channel that is BOTH configured for the site AND has required contact info for the lead\n`;
+    contextMessage += `- VALID CHANNELS: You can ONLY select from: ${availableChannels.join(', ')}\n`;
+    contextMessage += `- If you select an invalid channel (not in the list above or missing required contact info), the system will fail - be precise\n`;
+    contextMessage += `- Email channel requires: lead must have a valid email address\n`;
+    contextMessage += `- WhatsApp channel requires: lead must have a valid phone number\n`;
+    contextMessage += `- Notification and Web channels: always available (no specific contact info required)\n`;
+    
     contextMessage += `\nPREFERENCE HEURISTICS:\n`;
     contextMessage += `- If the lead has NO email but has a phone, and WhatsApp is configured for the site, prefer WHATSAPP.\n`;
     contextMessage += `- If the lead has NO phone but has an email, and Email is configured, prefer EMAIL.\n`;
     contextMessage += `- If both are available and configured, choose based on persona/context (e.g., quick mobile contact → WhatsApp; formal/business or attachments → Email).\n`;
-    contextMessage += `- If you choose a channel that is NOT available for the lead (missing email/phone) or NOT configured for the site, you MUST propose the valid alternative instead.\n`;
-    contextMessage += `\n⚠️ IMPORTANT: You MUST select and return content for ONLY ONE CHANNEL.\n`;
+    contextMessage += `- If you choose a channel that is NOT available for the lead (missing email/phone) or NOT configured for the site, you MUST select the valid alternative from the configured channels list.\n`;
+    contextMessage += `\n⚠️ IMPORTANT: You MUST select and return content for ONLY ONE CHANNEL from the configured list: ${availableChannels.join(', ')}\n`;
     contextMessage += `⚠️ Base your decision on the lead's history, context, and profile shown above.\n`;
     contextMessage += `\n🚫 SIGNATURE RULES: DO NOT add any signature, sign-off, or identification as an AI agent.\n`;
     contextMessage += `Messages are sent from real company employees' email addresses and should not include agent signatures.\n`;

@@ -239,18 +239,32 @@ export class LeadFollowUpService {
       userId: effectiveUserId,
       agentId: effectiveAgentId,
       site_id: siteId,
-      description: 'Generate a personalized follow-up message for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead. IMPORTANT: Based on the lead\'s history, profile and context, select ONLY the most effective channel to avoid harassing the user. You must choose only 1 channel from the available ones, the one with the highest probability of success according to the lead\'s context.',
+      description: `Generate a personalized follow-up message for a qualified lead, focusing on addressing their pain points and interests, with appropriate timing between touchpoints. You want to delight and nurture the lead. 
+
+CRITICAL VALIDATION RULES:
+- MANDATORY: title and message must be non-empty strings with actual content. NEVER return empty title or message fields.
+- CHANNEL VALIDATION: You MUST select ONLY from these configured channels: ${availableChannels.join(', ')}. If the lead lacks required contact info for a channel (e.g., no email for email channel, no phone for whatsapp), you MUST select the valid alternative from the configured channels.
+- SINGLE CHANNEL: Based on the lead's history, profile and context, select ONLY the most effective channel to avoid harassing the user. Choose only 1 channel from the available ones, the one with the highest probability of success according to the lead's context.
+- ERROR PREVENTION: If you select an invalid channel or return empty fields, the system will fail. Be precise and validate your output.`,
       targets: [
         {
-          deep_thinking: "Analyze the lead information, their interaction history, preferences, and profile to determine the single most effective communication channel. Consider factors like: lead's communication preferences, previous interactions, urgency level, lead stage, and professional context. Choose only ONE channel to avoid overwhelming the lead."
+          deep_thinking: `Analyze the lead information, their interaction history, preferences, and profile to determine the single most effective communication channel. 
+
+VALIDATION CHECKLIST:
+1. Review configured channels: ${availableChannels.join(', ')}
+2. Verify lead has required contact info for selected channel (email for email channel, phone for whatsapp)
+3. If selected channel is not available, choose valid alternative from configured channels
+4. Consider factors like: lead's communication preferences, previous interactions, urgency level, lead stage, and professional context
+5. Choose only ONE channel to avoid overwhelming the lead
+6. Ensure you can generate meaningful, non-empty title and message content for the selected channel`
         },
         {
           follow_up_content: {
             strategy: "comprehensive sale strategy based on lead analysis",
             message_language: "language for the message content (e.g., 'en', 'es', 'fr')",
-            title: "compelling title or subject line for the selected channel",
-            message: "personalized message content optimized for the chosen channel",
-            channel: "the single most effective channel selected (email/whatsapp/notification/web)"
+            title: "compelling title or subject line for the selected channel (MANDATORY: must be non-empty string with actual content)",
+            message: "personalized message content optimized for the chosen channel (MANDATORY: must be non-empty string with actual content)",
+            channel: `the single most effective channel selected - MUST be one of: ${availableChannels.join(', ')}. Validate that lead has required contact info for this channel.`
           }
         }
       ],
@@ -378,7 +392,7 @@ export class LeadFollowUpService {
       
       // If the command failed, try to create fallback content
       if (completedSalesCommand.status === 'failed' || !salesCompleted) {
-        salesFollowUpContent = this.createFallbackContent(completedSalesCommand);
+        salesFollowUpContent = this.createFallbackContent(completedSalesCommand, availableChannels);
       }
     }
     
@@ -425,7 +439,7 @@ export class LeadFollowUpService {
     
     // Extract messages from final result (prioritize copywriter if exists)
     const finalCommand = copywriterCompleted ? completedCopywriterCommand : completedSalesCommand;
-    let finalContent = this.extractFinalContent(finalCommand, copywriterCompleted, salesFollowUpContent, requestId);
+    let finalContent = this.extractFinalContent(finalCommand, copywriterCompleted, salesFollowUpContent, requestId, availableChannels);
     
     // Organize messages by channel
     const messages: any = this.organizeMessagesByChannel(finalContent, hasEmail, hasPhone, channelConfig, requestId);
@@ -648,29 +662,73 @@ export class LeadFollowUpService {
     return salesFollowUpContent;
   }
   
-  private createFallbackContent(completedSalesCommand: any): any {
+  private createFallbackContent(completedSalesCommand: any, availableChannels: string[]): any {
       const errorResult = completedSalesCommand.results?.find((r: any) => r.error || r.error_type);
       if (errorResult) {
+        // Validate that we have at least one available channel (should never be empty after early validation)
+        if (availableChannels.length === 0) {
+          console.error(`❌ CRITICAL: availableChannels is empty in createFallbackContent - this should never happen after early validation`);
+          throw {
+            code: 'NO_AVAILABLE_CHANNELS',
+            message: 'No available channels found for fallback content. This indicates a system validation error.',
+            status: 500
+          };
+        }
+        
+        // Use first available channel from validated list
+        const fallbackChannel = availableChannels[0];
+        
         return {
           strategy: "Follow-up strategy (generated after tool execution error)",
           title: "Personalized Follow-up",
           message: "Thank you for your interest. We'd like to follow up on your inquiry and provide you with more information that might be helpful.",
-          channel: "email", // Default to email as safest option
+          channel: fallbackChannel,
           _metadata: {
             fallback: true,
             original_error: errorResult.error_type || completedSalesCommand.error,
             command_status: completedSalesCommand.status,
-            generated_at: new Date().toISOString()
+            generated_at: new Date().toISOString(),
+            fallback_channel_source: 'availableChannels'
           }
         };
       }
       return null;
   }
 
-  private extractFinalContent(finalCommand: any, copywriterCompleted: boolean, salesFollowUpContent: any, requestId: string): any[] {
+  private extractFinalContent(finalCommand: any, copywriterCompleted: boolean, salesFollowUpContent: any, requestId: string, availableChannels: string[]): any[] {
     let finalContent: any[] = [];
     
     console.log(`[LeadFollowUp:${requestId}] 📦 Extracting final content from ${copywriterCompleted ? 'copywriter' : 'sales'} command`);
+    
+    // Helper function to normalize channel names (agent_email -> email, agent_whatsapp -> whatsapp)
+    // Also normalizes to lowercase to handle case variations (Email -> email, EMAIL -> email)
+    const normalizeChannel = (channel: string | undefined): string | undefined => {
+      if (!channel) return undefined;
+      const lowerChannel = channel.toLowerCase();
+      if (lowerChannel === 'agent_email') return 'email';
+      if (lowerChannel === 'agent_whatsapp') return 'whatsapp';
+      return lowerChannel;
+    };
+    
+    // Helper function to get a valid fallback channel from availableChannels
+    const getValidFallbackChannel = (): string => {
+      // Validate that we have at least one available channel (should never be empty after early validation)
+      if (availableChannels.length === 0) {
+        console.error(`❌ CRITICAL: availableChannels is empty in getValidFallbackChannel - this should never happen after early validation`);
+        throw {
+          code: 'NO_AVAILABLE_CHANNELS',
+          message: 'No available channels found for fallback. This indicates a system validation error.',
+          status: 500
+        };
+      }
+      
+      // Prefer notification or web as they're always available and don't require contact info
+      const preferredFallback = availableChannels.find(ch => ch === 'notification' || ch === 'web');
+      if (preferredFallback) return preferredFallback;
+      
+      // Otherwise use first available channel from validated list
+      return availableChannels[0];
+    };
     
     // Extract content from final command
     if (finalCommand && finalCommand.results && Array.isArray(finalCommand.results)) {
@@ -680,24 +738,50 @@ export class LeadFollowUpService {
         
         // For copywriter, search for refined_content (can be object or array) or flattened fields
         if (copywriterCompleted) {
+          // CRITICAL: Always preserve channel from sales content - copywriter does not return channel
+          // Normalize channel name and validate it's in availableChannels
+          let preservedChannel = normalizeChannel(salesFollowUpContent?.channel);
+          
+          // If channel is not in availableChannels, use a valid fallback
+          if (!preservedChannel || !availableChannels.includes(preservedChannel)) {
+            const fallbackChannel = getValidFallbackChannel();
+            console.log(`[LeadFollowUp:${requestId}] ⚠️ Sales channel '${preservedChannel || 'undefined'}' not in availableChannels [${availableChannels.join(', ')}], using fallback: ${fallbackChannel}`);
+            preservedChannel = fallbackChannel;
+          }
+          
           if (result.refined_content) {
             if (Array.isArray(result.refined_content)) {
-              finalContent = result.refined_content;
+              // Always use preserved channel - copywriter should not modify channels
+              // Remove any channel that copywriter might have returned
+              finalContent = result.refined_content.map((item: any) => {
+                const { channel: _, ...itemWithoutChannel } = item;
+                return {
+                  ...itemWithoutChannel,
+                  channel: preservedChannel
+                };
+              });
             } else if (typeof result.refined_content === 'object') {
-              finalContent = [result.refined_content]; // Convert object to array
+              // Always use preserved channel - copywriter should not modify channels
+              // Remove any channel that copywriter might have returned
+              const { channel: _, ...contentWithoutChannel } = result.refined_content;
+              finalContent = [{
+                ...contentWithoutChannel,
+                channel: preservedChannel
+              }];
             }
             break;
           }
           // Handle flattened fields (new format)
           else if (result.refined_title && result.refined_message) {
              finalContent = [{
-                channel: result.channel || salesFollowUpContent?.channel || 'email',
+                channel: preservedChannel, // Always use sales channel - copywriter doesn't modify it
                 title: result.refined_title,
                 message: result.refined_message
              }];
              console.log(`[LeadFollowUp:${requestId}] ✅ Found flattened refined content:`, {
                 hasChannel: !!finalContent[0].channel,
-                channel: finalContent[0].channel
+                channel: finalContent[0].channel,
+                note: 'Channel preserved from sales content'
              });
              break;
           }
@@ -747,6 +831,47 @@ export class LeadFollowUpService {
     if ((!finalContent || finalContent.length === 0) && salesFollowUpContent && typeof salesFollowUpContent === 'object') {
       console.log(`[LeadFollowUp:${requestId}] 🔧 Using salesFollowUpContent as fallback`);
       finalContent = [salesFollowUpContent];
+    }
+    
+    // 🔧 VALIDATION: Ensure all content items have a valid channel
+    if (finalContent && finalContent.length > 0) {
+      finalContent = finalContent.map((item: any) => {
+        if (!item.channel) {
+          // Try to use sales channel, but validate it's in availableChannels
+          let channelToUse = normalizeChannel(salesFollowUpContent?.channel);
+          
+          if (!channelToUse || !availableChannels.includes(channelToUse)) {
+            channelToUse = getValidFallbackChannel();
+            console.log(`[LeadFollowUp:${requestId}] ⚠️ Missing or invalid channel in content item, using fallback: ${channelToUse}`);
+          } else {
+            console.log(`[LeadFollowUp:${requestId}] ⚠️ Missing channel in content item, using sales channel: ${channelToUse}`);
+          }
+          
+          return {
+            ...item,
+            channel: channelToUse
+          };
+        } else {
+          // Normalize and validate existing channel
+          const normalizedChannel = normalizeChannel(item.channel);
+          if (!normalizedChannel || !availableChannels.includes(normalizedChannel)) {
+            const fallbackChannel = getValidFallbackChannel();
+            console.log(`[LeadFollowUp:${requestId}] ⚠️ Invalid channel '${item.channel}' in content item, using fallback: ${fallbackChannel}`);
+            return {
+              ...item,
+              channel: fallbackChannel
+            };
+          }
+          // Update channel to normalized version if it was agent_email/agent_whatsapp
+          if (normalizedChannel !== item.channel) {
+            return {
+              ...item,
+              channel: normalizedChannel
+            };
+          }
+        }
+        return item;
+      });
     }
     
     return finalContent;

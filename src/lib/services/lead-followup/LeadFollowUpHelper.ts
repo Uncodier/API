@@ -763,11 +763,18 @@ export async function executeCopywriterRefinement(
       copywriterContext += `Your task is to IMPROVE and ENHANCE the sales content above, not to replace it completely.\n`;
       copywriterContext += `The sales team has already done excellent strategic work selecting the right channel and approach.\n`;
       copywriterContext += `IMPORTANT: The sales team has already selected the most effective channel (${salesFollowUpContent.channel}) to avoid overwhelming the lead.\n`;
+      
+      copywriterContext += `\n🚨 CRITICAL VALIDATION RULES 🚨\n`;
+      copywriterContext += `- MANDATORY: refined_title and refined_message must be non-empty strings with actual content. NEVER return empty refined_title or refined_message fields.\n`;
+      copywriterContext += `- CHANNEL PRESERVATION: DO NOT return or modify the channel - it is already correctly set by the sales team to '${salesFollowUpContent.channel}'. The channel is handled automatically by the system.\n`;
+      copywriterContext += `- FALLBACK RULE: If you cannot improve the content meaningfully, return the original title and message unchanged rather than empty fields. It is better to return unchanged content than empty content.\n`;
+      copywriterContext += `- ERROR PREVENTION: If you return empty fields, the system will fail. Always ensure your output contains valid, non-empty text.\n\n`;
+      
       copywriterContext += `Your role is to POLISH and REFINE what they've created. For the selected content, you must:\n`;
-      copywriterContext += `1. PRESERVE the original CHANNEL (${salesFollowUpContent.channel}) and overall strategy\n`;
+      copywriterContext += `1. PRESERVE the original CHANNEL (${salesFollowUpContent.channel}) - DO NOT return or modify channel in your response\n`;
       copywriterContext += `2. MAINTAIN the core sales message and intent - don't change the fundamental approach\n`;
-      copywriterContext += `3. ENHANCE the TITLE to make it more engaging while keeping the same purpose\n`;
-      copywriterContext += `4. IMPROVE the MESSAGE with better copywriting flow, clarity, and persuasion techniques\n`;
+      copywriterContext += `3. ENHANCE the TITLE to make it more engaging while keeping the same purpose (MANDATORY: must be non-empty string)\n`;
+      copywriterContext += `4. IMPROVE the MESSAGE with better copywriting flow, clarity, and persuasion techniques (MANDATORY: must be non-empty string)\n`;
       copywriterContext += `5. OPTIMIZE language for better emotional connection while preserving sales objectives\n`;
       copywriterContext += `6. STRENGTHEN calls-to-action without changing the intended next step\n`;
       copywriterContext += `7. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
@@ -778,7 +785,7 @@ export async function executeCopywriterRefinement(
       copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
       copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
       copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n`;
-      copywriterContext += `15. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object.\n\n`;
+      copywriterContext += `15. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object. DO NOT include 'channel' field - it is preserved automatically.\n\n`;
     }
     
     // Create command for copywriter based on available channels from phase 1
@@ -844,8 +851,7 @@ export async function executeCopywriterRefinement(
         },
         {
           refined_title: refinementTarget.title,
-          refined_message: refinementTarget.message,
-          channel: `Confirm the channel for this message (must be '${refinementTarget.channel}')`
+          refined_message: refinementTarget.message
         }
       ],
       context: copywriterContext,
