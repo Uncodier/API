@@ -766,6 +766,7 @@ export async function executeCopywriterRefinement(
       
       copywriterContext += `\n🚨 CRITICAL VALIDATION RULES 🚨\n`;
       copywriterContext += `- MANDATORY: refined_title and refined_message must be non-empty strings with actual content. NEVER return empty refined_title or refined_message fields.\n`;
+      copywriterContext += `- CRITICAL: DO NOT return the instruction text literally. The target descriptions (refined_title, refined_message) are INSTRUCTIONS for what to generate, NOT literal values to return. You must GENERATE actual content based on these instructions.\n`;
       copywriterContext += `- CHANNEL PRESERVATION: DO NOT return or modify the channel - it is already correctly set by the sales team to '${salesFollowUpContent.channel}'. The channel is handled automatically by the system.\n`;
       copywriterContext += `- FALLBACK RULE: If you cannot improve the content meaningfully, return the original title and message unchanged rather than empty fields. It is better to return unchanged content than empty content.\n`;
       copywriterContext += `- ERROR PREVENTION: If you return empty fields, the system will fail. Always ensure your output contains valid, non-empty text.\n\n`;
@@ -799,36 +800,36 @@ export async function executeCopywriterRefinement(
       switch (channel) {
         case 'email':
           refinementTarget = {
-            title: `Refined and compelling email subject line that increases open rates (in ${messageLanguage})`,
-            message: `Enhanced email message with persuasive copy, clear value proposition, and strong call-to-action (in ${messageLanguage})`,
+            title: `Generate a refined and compelling email subject line that increases open rates. Write in ${messageLanguage}.`,
+            message: `Generate an enhanced email message with persuasive copy, clear value proposition, and strong call-to-action. Write in ${messageLanguage}.`,
             channel: channel
           };
           break;
         case 'whatsapp':
           refinementTarget = {
-            title: `Improved WhatsApp message with casual yet professional tone (in ${messageLanguage})`,
-            message: `Refined WhatsApp content that feels personal, direct, and encourages immediate response (in ${messageLanguage})`,
+            title: `Generate an improved WhatsApp message with casual yet professional tone. Write in ${messageLanguage}.`,
+            message: `Generate refined WhatsApp content that feels personal, direct, and encourages immediate response. Write in ${messageLanguage}.`,
             channel: channel
           };
           break;
         case 'notification':
           refinementTarget = {
-            title: `Enhanced in-app notification that captures attention (in ${messageLanguage})`,
-            message: `Optimized notification message that's concise, actionable, and drives user engagement (in ${messageLanguage})`,
+            title: `Generate an enhanced in-app notification that captures attention. Write in ${messageLanguage}.`,
+            message: `Generate an optimized notification message that's concise, actionable, and drives user engagement. Write in ${messageLanguage}.`,
             channel: channel
           };
           break;
         case 'web':
           refinementTarget = {
-            title: `Polished web popup/banner headline that converts (in ${messageLanguage})`,
-            message: `Compelling web message with persuasive copy that motivates visitors to take action (in ${messageLanguage})`,
+            title: `Generate a polished web popup/banner headline that converts. Write in ${messageLanguage}.`,
+            message: `Generate a compelling web message with persuasive copy that motivates visitors to take action. Write in ${messageLanguage}.`,
             channel: channel
           };
           break;
         default:
           refinementTarget = {
-            title: `Refined ${channel} headline with improved copy (in ${messageLanguage})`,
-            message: `Enhanced ${channel} message content with better persuasion and engagement (in ${messageLanguage})`,
+            title: `Generate a refined ${channel} headline with improved copy. Write in ${messageLanguage}.`,
+            message: `Generate enhanced ${channel} message content with better persuasion and engagement. Write in ${messageLanguage}.`,
             channel: channel
           };
       }
