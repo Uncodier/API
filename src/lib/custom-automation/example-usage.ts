@@ -83,7 +83,7 @@ export async function executeAgentWithOpenAI(
     onStep: onStep,
     maxIterations: 50,
     temperature: 1, // Azure OpenAI default (0.7 not supported on all models)
-    reasoningEffort: 'low', // For o-series models (o1, o3, GPT-5.1): 'low' | 'medium' | 'high'
+    reasoningEffort: 'low', // For o-series models (o1, o3, GPT-5.2): 'low' | 'medium' | 'high'
     verbosity: 'low', // For o-series models - output verbosity: 'low' | 'medium' | 'high'
   });
 

@@ -857,7 +857,7 @@ export async function POST(request: Request) {
         }
       ],
       // Set model instead of model_id
-      model: 'gpt-5.1',
+      model: 'gpt-5.2',
       modelType: 'openai'
     });
     

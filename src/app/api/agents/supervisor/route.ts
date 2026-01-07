@@ -55,7 +55,7 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Supervisor] Command found: ${command.id}, Status: ${command.status}`);
 
-    // Analyze command with GPT-5.1
+    // Analyze command with GPT-5.2
     const analysisResult: SupervisorResult = await supervisorService.analyzeCommand(command, conversation_id);
 
     if (!analysisResult.success) {

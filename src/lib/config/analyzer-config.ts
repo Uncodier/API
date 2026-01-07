@@ -11,7 +11,7 @@ export const AVAILABLE_MODELS = {
     { id: 'claude-instant-1.2', name: 'Claude Instant' }
   ],
   openai: [
-    { id: 'gpt-5.1', name: 'GPT-5.1' },
+    { id: 'gpt-5.2', name: 'GPT-5.2' },
     { id: 'gpt-5-nano', name: 'GPT-5 Nano' },
     { id: 'gpt-4-vision-preview', name: 'GPT-4 Vision' },
     { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
