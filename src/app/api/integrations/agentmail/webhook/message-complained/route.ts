@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySvixWebhook } from '@/lib/integrations/agentmail/svix-verification';
-import { findMessageByAgentMailId, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
+import { findMessageWithFallback, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
 
 /**
  * POST handler for AgentMail message.complained webhook event
@@ -47,8 +47,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find message in database
-    const foundMessage = await findMessageByAgentMailId(message.message_id);
+    // Find message in database with fallback mechanism
+    let recipient = Array.isArray(message.to) ? message.to[0] : message.to;
+    
+    // Ensure recipient is a string and not undefined
+    if (!recipient || (Array.isArray(recipient) && recipient.length === 0)) {
+      recipient = undefined;
+    }
+    
+    const foundMessage = await findMessageWithFallback(
+      message.message_id,
+      {
+        recipient,
+        timestamp: message.timestamp || payload.event_id,
+        subject: message.subject,
+      }
+    );
 
     if (!foundMessage) {
       console.log(`⚠️ [AgentMail] Message not found: ${message.message_id}`);
@@ -56,6 +70,10 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Message not found', message_id: message.message_id },
         { status: 404 }
       );
+    }
+
+    if (foundMessage.foundViaFallback) {
+      console.log(`✅ [AgentMail] Message found via fallback search: ${foundMessage.id}`);
     }
 
     // Update message with complained event
@@ -73,6 +91,7 @@ export async function POST(request: NextRequest) {
         complaint_reason: message.complaint_reason || 'Unknown',
       },
       timestamp: message.timestamp || payload.event_id,
+      agentmailMessageId: foundMessage.foundViaFallback ? message.message_id : undefined,
     });
 
     if (!updateResult.success) {

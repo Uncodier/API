@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySvixWebhook } from '@/lib/integrations/agentmail/svix-verification';
-import { findMessageByAgentMailId, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
+import { findMessageWithFallback, updateMessageWithAgentMailEvent } from '@/lib/integrations/agentmail/message-updater';
 
 /**
  * POST handler for AgentMail message.delivered webhook event
@@ -49,8 +49,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find message in database
-    const foundMessage = await findMessageByAgentMailId(messageData.message_id);
+    // Find message in database with fallback mechanism
+    let recipient = messageData.recipients?.[0] || messageData.to;
+    
+    // Ensure recipient is a string, extract from array if needed
+    if (Array.isArray(recipient)) {
+      recipient = recipient[0];
+    }
+    
+    const foundMessage = await findMessageWithFallback(
+      messageData.message_id,
+      {
+        recipient,
+        timestamp: messageData.timestamp || payload.event_id,
+        subject: messageData.subject,
+      }
+    );
 
     if (!foundMessage) {
       console.log(`⚠️ [AgentMail] Message not found: ${messageData.message_id}`);
@@ -58,6 +72,10 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'Message not found', message_id: messageData.message_id },
         { status: 404 }
       );
+    }
+
+    if (foundMessage.foundViaFallback) {
+      console.log(`✅ [AgentMail] Message found via fallback search: ${foundMessage.id}`);
     }
 
     // Update message with delivered event
@@ -76,6 +94,7 @@ export async function POST(request: NextRequest) {
         pod_id: messageData.pod_id,
       },
       timestamp: messageData.timestamp || payload.event_id,
+      agentmailMessageId: foundMessage.foundViaFallback ? messageData.message_id : undefined,
     });
 
     if (!updateResult.success) {

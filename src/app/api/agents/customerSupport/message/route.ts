@@ -622,7 +622,27 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     // Agregar command_id si está presente y es un UUID válido
     if (commandId && isValidUUID(commandId)) {
-      userMessageObj.command_id = commandId;
+      // Verify command exists in database before adding to message
+      const { data: commandExists, error: commandCheckError } = await supabaseAdmin
+        .from('commands')
+        .select('id')
+        .eq('id', commandId)
+        .single();
+      
+      if (commandCheckError) {
+        // Check if it's a "no rows found" error (PGRST116) or a real database error
+        if (commandCheckError.code === 'PGRST116') {
+          console.warn(`⚠️ Command ${commandId} does not exist in database (PGRST116), skipping command_id in user message`);
+        } else {
+          // Real database error - log it but don't add command_id to avoid invalid foreign key
+          console.error(`❌ Database error checking command ${commandId}:`, commandCheckError);
+          console.warn(`⚠️ Skipping command_id in user message due to database error (cannot verify existence)`);
+        }
+      } else if (commandExists) {
+        userMessageObj.command_id = commandId;
+      } else {
+        console.warn(`⚠️ Command ${commandId} does not exist in database, skipping command_id in user message`);
+      }
     }
     
     // Agregar origin_message_id a custom_data si está presente
@@ -670,7 +690,27 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
     
     // Agregar command_id si está presente y es un UUID válido
     if (commandId && isValidUUID(commandId)) {
-      assistantMessageObj.command_id = commandId;
+      // Verify command exists in database before adding to message
+      const { data: commandExists, error: commandCheckError } = await supabaseAdmin
+        .from('commands')
+        .select('id')
+        .eq('id', commandId)
+        .single();
+      
+      if (commandCheckError) {
+        // Check if it's a "no rows found" error (PGRST116) or a real database error
+        if (commandCheckError.code === 'PGRST116') {
+          console.warn(`⚠️ Command ${commandId} does not exist in database (PGRST116), skipping command_id in assistant message`);
+        } else {
+          // Real database error - log it but don't add command_id to avoid invalid foreign key
+          console.error(`❌ Database error checking command ${commandId}:`, commandCheckError);
+          console.warn(`⚠️ Skipping command_id in assistant message due to database error (cannot verify existence)`);
+        }
+      } else if (commandExists) {
+        assistantMessageObj.command_id = commandId;
+      } else {
+        console.warn(`⚠️ Command ${commandId} does not exist in database, skipping command_id in assistant message`);
+      }
     }
     
     console.log(`💬 Guardando mensaje de asistente para conversación: ${effectiveConversationId}`);
@@ -707,7 +747,13 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
       assistantMessageId: savedAssistantMessage.id,
       conversationTitle
     };
-  } catch (error) {
+  } catch (error: any) {
+    // If this is a SKIP_DATABASE error, re-throw it so it can be handled by the caller
+    if (error.code === 'SKIP_DATABASE') {
+      console.log(`🔄 Re-throwing SKIP_DATABASE error to be handled by caller`);
+      throw error;
+    }
+    // For any other error, log and return null
     console.error('Error al guardar mensajes en la base de datos:', error);
     return null;
   }
@@ -1454,17 +1500,17 @@ export async function POST(request: Request) {
         {
           message: {
             content: "message example", // Will be filled by the agent
-            is_robot: undefined, // Optional: set to true if this is a robot/automated interaction
-            is_transactional_message: undefined, // Optional: set to true if this is a transactional/automatic message
-            is_erratic: undefined // Optional: set to true if the message is nonsensical or makes no sense
+            is_robot: false, // Set to true if this is a robot/automated interaction that should not be saved to DB
+            is_transactional_message: false, // Set to true if this is a transactional/automatic message that should not be saved to DB
+            is_erratic: false // Set to true if the message is nonsensical or makes no sense and should not be saved to DB
           }
         },
         {
           conversation: {
             title: "conversation title", // Will be filled by the agent
-            is_robot: undefined, // Optional: set to true if this is a robot/automated interaction
-            is_transactional_message: undefined, // Optional: set to true if this is a transactional/automatic message
-            is_erratic: undefined // Optional: set to true if the message is nonsensical or makes no sense
+            is_robot: false, // Set to true if this conversation is with a robot/bot and should not be saved to DB
+            is_transactional_message: false, // Set to true if this is a transactional conversation that should not be saved to DB
+            is_erratic: false // Set to true if the conversation is nonsensical and should not be saved to DB
           }
         }
       ],
@@ -1916,282 +1962,27 @@ export async function POST(request: Request) {
     let initialDbUuid = await getCommandDbUuid(internalCommandId);
     if (initialDbUuid) {
       console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
+    } else {
+      console.warn(`⚠️ No se pudo obtener UUID inicialmente, esperando a que el comando se complete...`);
+    }
+    
+    // Validar y reintentar si no se obtuvo un UUID válido
+    if (!initialDbUuid || !isValidUUID(initialDbUuid)) {
+      console.error(`❌ Failed to retrieve valid database UUID for command ${internalCommandId}`);
+      // Additional retry logic
+      await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+      const retryUuid = await getCommandDbUuid(internalCommandId);
+      if (retryUuid && isValidUUID(retryUuid)) {
+        initialDbUuid = retryUuid;
+        console.log(`✅ Retry successful: ${initialDbUuid}`);
+      }
     }
     
     // Esperar a que el comando se complete utilizando nuestra función
     const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
     
-    // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
-    const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
-    
-    // Verificar que tenemos un UUID de base de datos válido
-    if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
-      console.error(`❌ No se pudo obtener un UUID válido de la base de datos para el comando ${internalCommandId}`);
-      
-      // En este caso, seguimos adelante con el ID interno en lugar de fallar
-      console.log(`⚠️ Continuando con el ID interno como respaldo: ${internalCommandId}`);
-      
-      if (!completed || !executedCommand) {
-        console.error(`❌ Error en ejecución del comando, completed=${completed}, executedCommand=${!!executedCommand}`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: { 
-              code: 'COMMAND_EXECUTION_FAILED', 
-              message: 'The command did not complete successfully in the expected time' 
-            },
-            debug: {
-              agent_id: effectiveAgentId,
-              user_id: effectiveUserId,
-              agent_user_id: agentUserId,
-              site_id: effectiveSiteId
-            }
-          },
-          { 
-            status: 500,
-            headers: corsHeaders(request)
-          }
-        );
-      }
-      
-      // Extraer la respuesta del asistente
-      let assistantMessage = "No response generated";
-      let conversationTitle = null;
-      
-      // Obtener resultados si existen
-      if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        console.log(`🔍 Analizando resultados del comando - Total de resultados: ${executedCommand.results.length}`);
-        
-        // Extraer el título de la conversación de los resultados
-        const conversationResults = executedCommand.results.find((r: any) => 
-          r.conversation && r.conversation.title
-        );
-        
-        if (conversationResults) {
-          conversationTitle = conversationResults.conversation.title;
-          console.log(`🏷️ Título de conversación encontrado: "${conversationTitle}"`);
-        } else {
-          // Búsqueda alternativa del título en otras estructuras posibles
-          const altTitleResults = executedCommand.results.find((r: any) => 
-            (r.content && r.content.conversation && r.content.conversation.title) ||
-            (r.type === 'conversation' && r.content && r.content.title)
-          );
-          
-          if (altTitleResults) {
-            if (altTitleResults.content && altTitleResults.content.conversation) {
-              conversationTitle = altTitleResults.content.conversation.title;
-            } else if (altTitleResults.content && altTitleResults.content.title) {
-              conversationTitle = altTitleResults.content.title;
-            }
-            console.log(`🏷️ Título de conversación encontrado (formato alternativo): "${conversationTitle}"`);
-          }
-        }
-        
-        // Buscar mensajes en los resultados - enfocado específicamente en la estructura de customer support
-        console.log(`🔍 Buscando mensaje del asistente en los resultados...`);
-        
-        // Formato específico para customer support: { message: { content: string } }
-        const messageResults = executedCommand.results.filter((r: any) => 
-          r.message && typeof r.message === 'object' && r.message.content && typeof r.message.content === 'string'
-        );
-        console.log(`📝 Resultados con estructura message.content: ${messageResults.length}`);
-        
-        if (messageResults.length > 0) {
-          assistantMessage = messageResults[0].message.content;
-          console.log(`✅ Mensaje extraído: ${assistantMessage.substring(0, 100)}...`);
-        } else {
-          // Log para debugging si no se encuentra la estructura esperada
-          console.log(`⚠️ No se encontró la estructura esperada { message: { content: string } }`);
-          console.log(`📋 Estructuras encontradas:`, executedCommand.results.map((r: any, i: number) => {
-            return `Resultado ${i}: ${Object.keys(r).join(',')}`
-          }).join(' | '));
-          
-          // Fallback muy conservador: solo si hay exactamente 1 resultado y es un string directo
-          if (executedCommand.results.length === 1 && typeof executedCommand.results[0] === 'string') {
-            assistantMessage = executedCommand.results[0];
-            console.log(`⚠️ Usando fallback para string directo: ${assistantMessage.substring(0, 100)}...`);
-          } else {
-            console.log(`❌ No se pudo extraer mensaje - estructura no reconocida para customer support`);
-            console.log(`📋 Estructura completa de results:`, JSON.stringify(executedCommand.results, null, 2));
-          }
-        }
-      } else {
-        console.log(`⚠️ No hay resultados disponibles en el comando ejecutado`);
-        console.log(`📋 executedCommand.results:`, executedCommand.results);
-      }
-      
-      console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
-      
-      // Extraer flags is_robot, is_transactional_message e is_erratic de los resultados
-      let isRobot: boolean | undefined = undefined;
-      let isTransactionalMessage: boolean | undefined = undefined;
-      let isErratic: boolean | undefined = undefined;
-      
-      if (executedCommand.results && Array.isArray(executedCommand.results)) {
-        // Buscar flags en message target
-        const messageResult = executedCommand.results.find((r: any) => 
-          r.message && typeof r.message === 'object'
-        );
-        if (messageResult && messageResult.message) {
-          if (typeof messageResult.message.is_robot === 'boolean') {
-            isRobot = messageResult.message.is_robot;
-            console.log(`🤖 Flag is_robot encontrado en message: ${isRobot}`);
-          }
-          if (typeof messageResult.message.is_transactional_message === 'boolean') {
-            isTransactionalMessage = messageResult.message.is_transactional_message;
-            console.log(`📧 Flag is_transactional_message encontrado en message: ${isTransactionalMessage}`);
-          }
-          if (typeof messageResult.message.is_erratic === 'boolean') {
-            isErratic = messageResult.message.is_erratic;
-            console.log(`⚠️ Flag is_erratic encontrado en message: ${isErratic}`);
-          }
-        }
-        
-        // Buscar flags en conversation target
-        const conversationResult = executedCommand.results.find((r: any) => 
-          r.conversation && typeof r.conversation === 'object'
-        );
-        if (conversationResult && conversationResult.conversation) {
-          if (typeof conversationResult.conversation.is_robot === 'boolean') {
-            isRobot = conversationResult.conversation.is_robot;
-            console.log(`🤖 Flag is_robot encontrado en conversation: ${isRobot}`);
-          }
-          if (typeof conversationResult.conversation.is_transactional_message === 'boolean') {
-            isTransactionalMessage = conversationResult.conversation.is_transactional_message;
-            console.log(`📧 Flag is_transactional_message encontrado en conversation: ${isTransactionalMessage}`);
-          }
-          if (typeof conversationResult.conversation.is_erratic === 'boolean') {
-            isErratic = conversationResult.conversation.is_erratic;
-            console.log(`⚠️ Flag is_erratic encontrado en conversation: ${isErratic}`);
-          }
-        }
-      }
-      
-      // Usando lead_id efectivo al guardar los mensajes
-      // Envolver en try-catch para manejar error SKIP_DATABASE
-      let savedMessages;
-      try {
-        savedMessages = await saveMessages(
-          effectiveUserId, 
-          message, 
-          assistantMessage, 
-          effectiveConversationId, 
-          conversationTitle, 
-          effectiveLeadId || undefined, 
-          visitor_id, 
-          effectiveAgentId, 
-          effectiveSiteId, 
-          effectiveDbUuid || undefined,
-          effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
-          isRobot,
-          isTransactionalMessage,
-          isErratic,
-          origin_message_id
-        );
-      } catch (error: any) {
-        // Si el error es SKIP_DATABASE, retornar respuesta sin crear objetos en DB
-        if (error.code === 'SKIP_DATABASE' && error.results) {
-          console.log(`🚨 SKIP_DATABASE detectado - retornando resultados sin crear objetos en DB`);
-          return NextResponse.json(
-            { 
-              success: true, 
-              data: { 
-                command_id: effectiveDbUuid,
-                skip_database: true,
-                results: {
-                  message: error.results.message || assistantMessage,
-                  conversation_title: error.results.conversation_title || conversationTitle,
-                  is_robot: error.results.is_robot || false,
-                  is_transactional_message: error.results.is_transactional_message || false,
-                  is_erratic: error.results.is_erratic || false
-                },
-                lead_id: effectiveLeadId || null,
-                task_id: taskId || null,
-                debug: {
-                  agent_id: effectiveAgentId,
-                  user_id: effectiveUserId,
-                  agent_user_id: agentUserId,
-                  site_id: effectiveSiteId
-                }
-              } 
-            },
-            { 
-              status: 200,
-              headers: corsHeaders(request)
-            }
-          );
-        }
-        // Si es otro error, relanzarlo
-        throw error;
-      }
-      
-      if (!savedMessages) {
-        console.error(`❌ Error al guardar mensajes en la base de datos`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: { 
-              code: 'DATABASE_ERROR', 
-              message: 'The command completed but the messages could not be saved to the database' 
-            },
-            data: {
-              command_id: effectiveDbUuid,
-              message: assistantMessage,
-              conversation_title: conversationTitle,
-              lead_id: effectiveLeadId || null
-            },
-            debug: {
-              agent_id: effectiveAgentId,
-              user_id: effectiveUserId,
-              agent_user_id: agentUserId,
-              site_id: effectiveSiteId
-            }
-          },
-          { 
-            status: 500,
-            headers: corsHeaders(request)
-          }
-        );
-      }
-      
-      // Notificación por email removida - se eliminó sendLeadNotificationEmail
-      
-      return NextResponse.json(
-        { 
-          success: true, 
-          data: { 
-            command_id: effectiveDbUuid,
-            conversation_id: savedMessages.conversationId,
-            conversation_title: savedMessages.conversationTitle,
-            lead_id: effectiveLeadId || null,
-            task_id: taskId || null,
-            messages: {
-              user: {
-                content: message,
-                message_id: savedMessages.userMessageId,
-                command_id: effectiveDbUuid
-              },
-              assistant: {
-                content: assistantMessage,
-                message_id: savedMessages.assistantMessageId,
-                command_id: effectiveDbUuid
-              }
-            },
-            debug: {
-              agent_id: effectiveAgentId,
-              user_id: effectiveUserId,
-              agent_user_id: agentUserId,
-              site_id: effectiveSiteId
-            }
-          } 
-        },
-        { 
-          status: 200,
-          headers: corsHeaders(request)
-        }
-      );
-    }
-    
+    // CRITICAL: Verify command completed successfully BEFORE processing results
+    // This check must run regardless of UUID validity
     if (!completed || !executedCommand) {
       console.error(`❌ Error en ejecución del comando, completed=${completed}, executedCommand=${!!executedCommand}`);
       return NextResponse.json(
@@ -2205,7 +1996,8 @@ export async function POST(request: Request) {
             agent_id: effectiveAgentId,
             user_id: effectiveUserId,
             agent_user_id: agentUserId,
-            site_id: effectiveSiteId
+            site_id: effectiveSiteId,
+            command_id: internalCommandId
           }
         },
         { 
@@ -2213,6 +2005,23 @@ export async function POST(request: Request) {
           headers: corsHeaders(request)
         }
       );
+    }
+    
+    // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
+    let effectiveDbUuid: string | null | undefined = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
+    
+    // Verificar que tenemos un UUID de base de datos válido
+    if (!effectiveDbUuid || !isValidUUID(effectiveDbUuid)) {
+      console.error(`❌ No se pudo obtener un UUID válido de la base de datos para el comando ${internalCommandId}`);
+      console.error(`❌ effectiveDbUuid recibido: ${effectiveDbUuid}`);
+      console.error(`❌ dbUuid from completion: ${dbUuid}`);
+      console.error(`❌ initialDbUuid: ${initialDbUuid}`);
+      
+      // Set to undefined to prevent passing invalid UUID to saveMessages
+      // This will cause saveMessages to skip adding command_id, which is safer than passing invalid ID
+      const invalidUuid = effectiveDbUuid;
+      effectiveDbUuid = undefined;
+      console.log(`⚠️ Setting effectiveDbUuid to undefined to prevent foreign key errors. Original value was: ${invalidUuid}`);
     }
     
     // Extraer la respuesta del asistente
@@ -2278,9 +2087,10 @@ export async function POST(request: Request) {
     
     console.log(`💬 Mensaje del asistente: ${assistantMessage.substring(0, 50)}...`);
     
-    // Extraer flags is_robot e is_transactional_message de los resultados
+    // Extraer flags is_robot, is_transactional_message e is_erratic de los resultados
     let isRobot: boolean | undefined = undefined;
     let isTransactionalMessage: boolean | undefined = undefined;
+    let isErratic: boolean | undefined = undefined;
     
     if (executedCommand.results && Array.isArray(executedCommand.results)) {
       // Buscar flags en message target
@@ -2296,6 +2106,10 @@ export async function POST(request: Request) {
           isTransactionalMessage = messageResult.message.is_transactional_message;
           console.log(`📧 Flag is_transactional_message encontrado en message: ${isTransactionalMessage}`);
         }
+        if (typeof messageResult.message.is_erratic === 'boolean') {
+          isErratic = messageResult.message.is_erratic;
+          console.log(`⚠️ Flag is_erratic encontrado en message: ${isErratic}`);
+        }
       }
       
       // Buscar flags en conversation target
@@ -2310,6 +2124,10 @@ export async function POST(request: Request) {
         if (typeof conversationResult.conversation.is_transactional_message === 'boolean') {
           isTransactionalMessage = conversationResult.conversation.is_transactional_message;
           console.log(`📧 Flag is_transactional_message encontrado en conversation: ${isTransactionalMessage}`);
+        }
+        if (typeof conversationResult.conversation.is_erratic === 'boolean') {
+          isErratic = conversationResult.conversation.is_erratic;
+          console.log(`⚠️ Flag is_erratic encontrado en conversation: ${isErratic}`);
         }
       }
     }
@@ -2328,11 +2146,11 @@ export async function POST(request: Request) {
         visitor_id, 
         effectiveAgentId, 
         effectiveSiteId, 
-        effectiveDbUuid || undefined,
+        (effectiveDbUuid && isValidUUID(effectiveDbUuid)) ? effectiveDbUuid : undefined,
         effectiveOrigin || (leadOrigin !== 'chat' ? leadOrigin : undefined), // Usar origin si está disponible, o leadOrigin si no es 'chat'
         isRobot,
         isTransactionalMessage,
-        undefined,
+        isErratic,
         origin_message_id
       );
     } catch (error: any) {
@@ -2349,7 +2167,8 @@ export async function POST(request: Request) {
                 message: error.results.message || assistantMessage,
                 conversation_title: error.results.conversation_title || conversationTitle,
                 is_robot: error.results.is_robot || false,
-                is_transactional_message: error.results.is_transactional_message || false
+                is_transactional_message: error.results.is_transactional_message || false,
+                is_erratic: error.results.is_erratic || false
               },
               lead_id: effectiveLeadId || null,
               task_id: taskId || null,
@@ -2373,24 +2192,30 @@ export async function POST(request: Request) {
     
     if (!savedMessages) {
       console.error(`❌ Error al guardar mensajes en la base de datos`);
+      console.error(`❌ Context: command_id=${effectiveDbUuid}, lead_id=${effectiveLeadId}, conversation_id=${effectiveConversationId}`);
       return NextResponse.json(
         { 
           success: false, 
           error: { 
             code: 'DATABASE_ERROR', 
-            message: 'The command completed but the messages could not be saved to the database' 
+            message: 'The command completed successfully but the messages could not be saved to the database. This may be due to a foreign key constraint failure, missing required data, or database connection issue. Check server logs for details.',
+            details: 'saveMessages() returned null instead of saved messages. Possible causes: invalid foreign key references (command_id, lead_id, conversation_id), database constraint violations, or connection errors.'
           },
           data: {
             command_id: effectiveDbUuid,
             message: assistantMessage,
             conversation_title: conversationTitle,
-            lead_id: effectiveLeadId || null
+            lead_id: effectiveLeadId || null,
+            conversation_id: effectiveConversationId || null
           },
           debug: {
             agent_id: effectiveAgentId,
             user_id: effectiveUserId,
             agent_user_id: agentUserId,
-            site_id: effectiveSiteId
+            site_id: effectiveSiteId,
+            is_robot: isRobot,
+            is_transactional: isTransactionalMessage,
+            is_erratic: isErratic
           }
         },
         { 
