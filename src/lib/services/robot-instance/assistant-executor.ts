@@ -10,6 +10,7 @@ import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
+import { renameInstanceToolScrapybara } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
@@ -209,7 +210,7 @@ export async function executeAssistant(
       ];
 
       // Convert custom tools to Scrapybara format if needed
-      // Replace generateImageTool and generateVideoTool (OpenAI format) with Scrapybara versions
+      // Replace generateImageTool, generateVideoTool, and renameInstanceTool (OpenAI format) with Scrapybara versions
       const convertedCustomTools = custom_tools.map((tool) => {
         // Check if this is generateImageTool (OpenAI format) by name
         if (tool?.name === 'generate_image' && site_id) {
@@ -220,6 +221,11 @@ export async function executeAssistant(
         if (tool?.name === 'generate_video' && site_id) {
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting generateVideoTool to Scrapybara format`);
           return generateVideoToolScrapybara(ubuntuInstance, site_id);
+        }
+        // Check if this is renameInstanceTool (OpenAI format) by name
+        if (tool?.name === 'rename_instance' && site_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting renameInstanceTool to Scrapybara format`);
+          return renameInstanceToolScrapybara(ubuntuInstance, site_id, instance_id);
         }
         // Keep other tools as-is (assuming they're already Scrapybara-compatible)
         return tool;

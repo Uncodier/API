@@ -8,6 +8,7 @@ import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServ
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
+import { renameInstanceTool } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 
 /**
@@ -210,21 +211,35 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(providedSiteId);
       
-      // Add generateImage and generateVideo tools to custom tools
+      // Add generateImage, generateVideo, and renameInstance tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(providedSiteId, newInstance.id),
-        generateVideoTool(providedSiteId, newInstance.id)
+        generateVideoTool(providedSiteId, newInstance.id),
+        renameInstanceTool(providedSiteId, newInstance.id)
       ];
       
       // Build system prompt for new instance (simple context)
       const baseSystemPrompt = 'You are a helpful AI assistant.';
       const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', newInstance.id);
+      
+      // Check if instance name is generic and add instruction to rename
+      const instanceName = newInstance.name || '';
+      const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
+      const isGenericName = genericNames.some(generic => 
+        instanceName.toLowerCase().includes(generic.toLowerCase())
+      );
+      
+      const renameInstruction = isGenericName 
+        ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the rename_instance tool to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call rename_instance. Do this automatically without asking the user.`
+        : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the rename_instance tool to update it with a more descriptive name.`;
+      
       const combinedSystemPrompt = [
         agentBackground,
         baseSystemPrompt,
         system_prompt || '',
-        assetsContext
+        assetsContext,
+        renameInstruction
       ].filter(Boolean).join('\n\n');
       
       const result = await executeAssistant(message, null, {
@@ -346,17 +361,29 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage and generateVideo tools to custom tools
+      // Add generateImage, generateVideo, and renameInstance tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(site_id, providedInstanceId),
-        generateVideoTool(site_id, providedInstanceId)
+        generateVideoTool(site_id, providedInstanceId),
+        renameInstanceTool(site_id, providedInstanceId)
       ];
       
       // Build system prompt for uninstantiated/paused/stopped instance
       const baseSystemPrompt = (instance.status === 'paused' || instance.status === 'stopped')
         ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
         : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
+      
+      // Check if instance name is generic and add instruction to rename
+      const instanceName = instance.name || '';
+      const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
+      const isGenericName = genericNames.some(generic => 
+        instanceName.toLowerCase().includes(generic.toLowerCase())
+      );
+      
+      const renameInstruction = isGenericName 
+        ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the rename_instance tool to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call rename_instance. Do this automatically without asking the user.`
+        : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the rename_instance tool to update it with a more descriptive name.`;
       
       const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);
       const combinedSystemPrompt = [
@@ -365,6 +392,7 @@ export async function POST(request: NextRequest) {
         system_prompt || '',
         historyContext,
         assetsContext,
+        renameInstruction,
         toolsWithImageGeneration.length > 0 ? `\n\n🛠️ AVAILABLE TOOLS: ${toolsWithImageGeneration.length} custom tool(s)` : ''
       ].filter(Boolean).join('\n');
       
@@ -407,12 +435,24 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage and generateVideo tools to custom tools
+      // Add generateImage, generateVideo, and renameInstance tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(site_id, providedInstanceId),
-        generateVideoTool(site_id, providedInstanceId)
+        generateVideoTool(site_id, providedInstanceId),
+        renameInstanceTool(site_id, providedInstanceId)
       ];
+      
+      // Check if instance name is generic and add instruction to rename
+      const instanceName = instance.name || '';
+      const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
+      const isGenericName = genericNames.some(generic => 
+        instanceName.toLowerCase().includes(generic.toLowerCase())
+      );
+      
+      const renameInstruction = isGenericName 
+        ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the rename_instance tool to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call rename_instance. Do this automatically without asking the user.`
+        : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the rename_instance tool to update it with a more descriptive name.`;
       
       const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', providedInstanceId);
       const combinedSystemPrompt = [
@@ -422,6 +462,7 @@ export async function POST(request: NextRequest) {
         system_prompt || '',
         historyContext,
         assetsContext,
+        renameInstruction,
         toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
       ].filter(Boolean).join('\n');
       
