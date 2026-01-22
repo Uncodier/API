@@ -1,70 +1,9 @@
 ---
 title: Stakeholder Coordination
-description: Orquesta una llamada con stakeholders, genera resúmenes y crea tareas a partir de la discusión
+description: Orchestrate a stakeholder call, generate summaries, and create tasks based on the discussion
 ---
 
 import { UnifiedApiTester } from '@/components/ApiTester';
-
-# API de Coordinación de Stakeholders de CMO
-
-Esta API facilita la orquestación de llamadas con stakeholders para el agente CMO, proporcionando guía estructurada y generando resúmenes detallados y tareas accionables tras la reunión.
-
-## Endpoint
-
-`POST /api/agents/cmo/stakeholder-coordination`
-
-## Request Body
-
-| Campo | Tipo | Requerido | Descripción |
-|-------|------|-----------|-------------|
-| meeting_title | string | No | Título de la reunión. Si no se proporciona, será generado dinámicamente. |
-| meeting_objective | string | No | Objetivo principal de la reunión. Si no se proporciona, será generado dinámicamente. |
-| participants | array of strings | Sí | Correos electrónicos o nombres de los participantes de la reunión. |
-| meeting_agenda | string | No | Puntos de agenda para la llamada. |
-| phone_numbers | array of strings | No | Números de teléfono para iniciar una llamada real utilizando Vapi. |
-| visitor_id | string | No* | Identificador del visitante si está disponible. |
-| lead_id | string | No* | Identificador del lead si está disponible. |
-| userId | string | No* | Identificador del usuario si está disponible. |
-| conversationId | string | No | Identificador de la conversación si este comando es parte de una conversación existente. |
-| agentId | string | No | Identificador específico del agente a utilizar. |
-| site_id | string | Sí | Identificador del sitio para contextualizar la reunión. |
-| include_context_summary | boolean | No | Si se debe incluir un resumen de contexto detallado (tareas existentes, requisitos, campañas, etc.). Por defecto es true. |
-
-\* Debe proporcionarse al menos uno de estos identificadores: visitor_id, lead_id o userId.
-
-## Response
-
-| Campo | Tipo | Descripción |
-|-------|------|-------------|
-| success | boolean | Indica si la solicitud fue exitosa. |
-| data.command_id | string | Identificador único del comando creado. |
-| data.conversation_id | string | Identificador de la conversación asociada. |
-| data.status | string | Estado de la solicitud (e.g., "completed", "in_progress"). |
-| data.meeting_details | object | Detalles de la reunión, incluyendo título y objetivo. |
-| data.system_prompts | array | Instrucciones del sistema utilizadas para guiar al agente antes y después de la llamada. |
-| data.context_summary | object | Resumen de contexto si fue solicitado, incluyendo tareas, requisitos, campañas, etc. |
-| data.call | object | Información sobre la llamada telefónica si se proporcionaron números de teléfono. |
-
-## Ejemplo de Uso
-
-<UnifiedApiTester apiId="cmo-stakeholder-coordination" />
-
-## Características
-
-- Validación completa de parámetros y manejo de errores
-- Generación dinámica de títulos y objetivos de reunión si no se proporcionan
-- Generación de resumen de contexto detallado para informar la discusión
-- Soporte para iniciación de llamadas telefónicas reales con Vapi
-- Instrucciones estructuradas para el agente antes y después de la llamada
-- Creación de resúmenes completos post-llamada con puntos clave, decisiones y tareas
-
-## Casos de Uso
-
-- Organizar reuniones estratégicas con stakeholders de marketing
-- Facilitar discusiones sobre presupuesto y asignación de recursos
-- Revisar el rendimiento de campañas y planificar próximos pasos
-- Generar resúmenes detallados con tareas accionables tras las reuniones
-- Iniciar llamadas telefónicas reales con stakeholders de marketing
 
 ## English Documentation
 
