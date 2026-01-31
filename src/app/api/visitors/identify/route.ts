@@ -51,67 +51,146 @@ const identifySchema = z.object({
   path: ["lead_id", "traits"],
 });
 
-/**
- * Busca un lead existente por email, phone o name
- */
-async function findExistingLead(
-  siteId: string, 
-  email?: string, 
-  phone?: string, 
-  name?: string
-): Promise<any | null> {
-  if (!email && !phone && !name) {
-    return null;
-  }
+/** Normalize email for upsert: trim + lowercase so same person always matches */
+function normalizeEmailForUpsert(email?: string | null): string | undefined {
+  if (email == null || typeof email !== 'string') return undefined;
+  const v = email.trim().toLowerCase();
+  return v === '' ? undefined : v;
+}
 
-  let orFilters: string[] = [];
-  
-  if (email) orFilters.push(`email.eq."${email}"`);
-  if (phone) {
-    // Generar variantes normalizadas del teléfono para búsqueda más flexible
-    const phoneVariants = normalizePhoneForSearch(phone);
-    phoneVariants.forEach(variant => {
-      orFilters.push(`phone.eq."${variant}"`);
-    });
-  }
-  if (name) orFilters.push(`name.eq."${name}"`);
-  
-  const { data: leads, error } = await supabaseAdmin
-    .from('leads')
-    .select('*')
-    .eq('site_id', siteId)
-    .or(orFilters.join(','))
-    .limit(1);
-
-  if (error) {
-    console.error('[findExistingLead] Error searching for lead:', error);
-    throw error;
-  }
-
-  return leads && leads.length > 0 ? leads[0] : null;
+/** Normalize name for upsert: trim + lowercase so same person always matches */
+function normalizeNameForUpsert(name?: string | null): string | undefined {
+  if (name == null || typeof name !== 'string') return undefined;
+  const v = name.trim().toLowerCase();
+  return v === '' ? undefined : v;
 }
 
 /**
- * Crea un nuevo lead
+ * Find existing lead by normalized email, name, or phone (upsert key).
+ * Priority: email (normalized then raw for legacy), then name, then phone.
+ */
+async function findExistingLead(
+  siteId: string,
+  opts: {
+    email?: string | null;
+    emailNormalized?: string | null;
+    phone?: string | null;
+    name?: string | null;
+    nameNormalized?: string | null;
+  }
+): Promise<any | null> {
+  const { email, emailNormalized, phone, name, nameNormalized } = opts;
+  if (!email && !emailNormalized && !phone && !name && !nameNormalized) {
+    return null;
+  }
+
+  // 1. By normalized email (primary upsert key)
+  if (emailNormalized) {
+    const { data: byEmail, error: e1 } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('email', emailNormalized)
+      .limit(1)
+      .maybeSingle();
+    if (!e1 && byEmail) return byEmail;
+    if (e1) console.error('[findExistingLead] Error by normalized email:', e1);
+  }
+
+  // 2. By raw email (legacy rows not yet normalized)
+  if (email && email !== emailNormalized) {
+    const { data: byRawEmail, error: e2 } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('email', email)
+      .limit(1)
+      .maybeSingle();
+    if (!e2 && byRawEmail) return byRawEmail;
+    if (e2) console.error('[findExistingLead] Error by raw email:', e2);
+  }
+
+  // 3. By normalized name
+  if (nameNormalized) {
+    const { data: byName, error: e3 } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('name', nameNormalized)
+      .limit(1)
+      .maybeSingle();
+    if (!e3 && byName) return byName;
+    if (e3) console.error('[findExistingLead] Error by normalized name:', e3);
+  }
+
+  // 4. By raw name (legacy)
+  if (name && name !== nameNormalized) {
+    const { data: byRawName, error: e4 } = await supabaseAdmin
+      .from('leads')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('name', name)
+      .limit(1)
+      .maybeSingle();
+    if (!e4 && byRawName) return byRawName;
+    if (e4) console.error('[findExistingLead] Error by raw name:', e4);
+  }
+
+  // 5. By phone variants
+  if (phone) {
+    const phoneVariants = normalizePhoneForSearch(phone);
+    for (const variant of phoneVariants) {
+      const { data: byPhone, error: e5 } = await supabaseAdmin
+        .from('leads')
+        .select('*')
+        .eq('site_id', siteId)
+        .eq('phone', variant)
+        .limit(1)
+        .maybeSingle();
+      if (!e5 && byPhone) return byPhone;
+      if (e5) console.error('[findExistingLead] Error by phone:', e5);
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Build traits with normalized email/name for storage (upsert consistency).
+ */
+function traitsForStorage(traits: any): any {
+  if (!traits) return traits;
+  const emailNorm = normalizeEmailForUpsert(traits.email);
+  const nameNorm = normalizeNameForUpsert(traits.name);
+  return {
+    ...traits,
+    email: emailNorm ?? traits.email,
+    name: nameNorm ?? traits.name,
+  };
+}
+
+/**
+ * Create a new lead (stores normalized email/name for upsert).
  */
 async function createNewLead(siteId: string, userIdFromSite: string, traits: any): Promise<any> {
+  const t = traitsForStorage(traits);
   const { data: newLead, error } = await supabaseAdmin
     .from('leads')
     .insert([{
       site_id: siteId,
       user_id: userIdFromSite,
-      email: traits?.email,
-      phone: traits?.phone ? normalizePhoneForStorage(traits.phone) : undefined,
-      name: traits?.name,
-      position: traits?.position,
+      email: t?.email,
+      phone: t?.phone ? normalizePhoneForStorage(t.phone) : undefined,
+      name: t?.name,
+      position: t?.position,
       status: 'contacted',
       notes: '',
-      origin: traits?.origin || 'website',
-      birthday: traits?.birthday,
-      social_networks: traits?.social_networks || {},
-      address: traits?.address || {},
-      company: traits?.company || {},
-      subscription: traits?.subscription || {},
+      origin: t?.origin || 'website',
+      birthday: t?.birthday,
+      social_networks: t?.social_networks || {},
+      address: t?.address || {},
+      company: t?.company || {},
+      subscription: t?.subscription || {},
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     }])
@@ -138,9 +217,12 @@ async function updateLeadIfNeeded(lead: any, traits: any): Promise<any> {
   const updatedFields: any = {};
   let needsUpdate = false;
 
-  if (traits.email && traits.email !== lead.email) {
-    updatedFields.email = traits.email;
-    needsUpdate = true;
+  if (traits.email) {
+    const newEmail = normalizeEmailForUpsert(traits.email) ?? traits.email;
+    if (newEmail !== lead.email) {
+      updatedFields.email = newEmail;
+      needsUpdate = true;
+    }
   }
   if (traits.phone) {
     const normalizedPhone = normalizePhoneForStorage(traits.phone);
@@ -149,9 +231,12 @@ async function updateLeadIfNeeded(lead: any, traits: any): Promise<any> {
       needsUpdate = true;
     }
   }
-  if (traits.name && traits.name !== lead.name) {
-    updatedFields.name = traits.name;
-    needsUpdate = true;
+  if (traits.name) {
+    const newName = normalizeNameForUpsert(traits.name) ?? traits.name;
+    if (newName !== lead.name) {
+      updatedFields.name = newName;
+      needsUpdate = true;
+    }
   }
   if (traits.position && traits.position !== lead.position) {
     updatedFields.position = traits.position;
@@ -354,23 +439,28 @@ export async function POST(request: NextRequest) {
       console.log("[POST /api/visitors/identify] Lead found and updated:", lead.id);
 
     } else {
-      // 2. Si no viene con lead_id, buscarlo por cualquiera de los parámetros
-      console.log("[POST /api/visitors/identify] Searching for existing lead with traits:", validatedData.traits);
-      
-      lead = await findExistingLead(
-        validatedData.site_id,
-        validatedData.traits?.email,
-        validatedData.traits?.phone,
-        validatedData.traits?.name
-      );
+      // 2. Upsert by normalized email/name/phone (find existing or create)
+      const normalizedEmail = normalizeEmailForUpsert(validatedData.traits?.email);
+      const normalizedName = normalizeNameForUpsert(validatedData.traits?.name);
+      console.log("[POST /api/visitors/identify] Searching for existing lead (upsert key):", {
+        emailNormalized: normalizedEmail,
+        nameNormalized: normalizedName,
+        phone: validatedData.traits?.phone ? '[present]' : undefined,
+      });
+
+      lead = await findExistingLead(validatedData.site_id, {
+        email: validatedData.traits?.email,
+        emailNormalized: normalizedEmail,
+        phone: validatedData.traits?.phone,
+        name: validatedData.traits?.name,
+        nameNormalized: normalizedName,
+      });
 
       if (lead) {
-        // Lead encontrado, actualizar si es necesario
         lead = await updateLeadIfNeeded(lead, validatedData.traits);
         console.log("[POST /api/visitors/identify] Existing lead found and updated:", lead.id);
       } else {
-        // Lead no encontrado, crear uno nuevo
-        console.log("[POST /api/visitors/identify] Creating new lead");
+        console.log("[POST /api/visitors/identify] Creating new lead (upsert miss)");
         lead = await createNewLead(validatedData.site_id, site.user_id, validatedData.traits);
         console.log("[POST /api/visitors/identify] New lead created:", lead.id);
       }
