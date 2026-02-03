@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { EmailSendService } from './EmailSendService';
 
 export interface SignatureData {
   companyName?: string;
@@ -210,16 +211,16 @@ export class EmailSignatureService {
 
     // Nombre del agente
     if (shouldShowAgent) {
-      rightColumnContent.push(`<div style="font-weight: 600; font-size: 16px; color: #333; margin-bottom: 4px;">${agentName}</div>`);
+      rightColumnContent.push(`<div style="font-weight: 600; font-size: 16px; color: #333; margin-bottom: 4px;">${EmailSendService.escapeHtml(agentName!)}</div>`);
     }
 
     // Nombre de la empresa con about en la misma línea
     if (shouldShowCompany) {
-      let companyLine = `<div style="font-size: 14px; color: #007bff; margin-bottom: 8px;">${data.companyName}`;
+      let companyLine = `<div style="font-size: 14px; color: #007bff; margin-bottom: 8px;">${EmailSendService.escapeHtml(data.companyName!)}`;
       
       // Agregar about en la misma línea si existe y es corto
       if (data.about && data.about.length < 150) {
-        companyLine += ` - <span style="font-style: italic; color: #666;">"${data.about}"</span>`;
+        companyLine += ` - <span style="font-style: italic; color: #666;">"${EmailSendService.escapeHtml(data.about)}"</span>`;
       }
       
       companyLine += `</div>`;
@@ -228,18 +229,24 @@ export class EmailSignatureService {
 
     // Email
     if (data.emailAddress) {
-      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">📧 <a href="mailto:${data.emailAddress}" style="color: #007bff; text-decoration: none;">${data.emailAddress}</a></div>`);
+      const escapedEmail = EmailSendService.escapeHtml(data.emailAddress);
+      const attrEmail = EmailSendService.escapeAttr(data.emailAddress);
+      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">📧 <a href="mailto:${attrEmail}" style="color: #007bff; text-decoration: none;">${escapedEmail}</a></div>`);
     }
 
     // Website
     if (data.siteUrl) {
-      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">🌐 <a href="${data.siteUrl}" style="color: #007bff; text-decoration: none;">${data.siteUrl}</a></div>`);
+      const escapedUrl = EmailSendService.escapeHtml(data.siteUrl);
+      const attrUrl = EmailSendService.escapeAttr(data.siteUrl);
+      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">🌐 <a href="${attrUrl}" style="color: #007bff; text-decoration: none;">${escapedUrl}</a></div>`);
     }
 
     // Teléfono
     const phone = this.extractContactPhone(data);
     if (phone) {
-      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">📞 <a href="tel:${phone}" style="color: #333; text-decoration: none;">${phone}</a></div>`);
+      const escapedPhone = EmailSendService.escapeHtml(phone);
+      const attrPhone = EmailSendService.escapeAttr(phone);
+      rightColumnContent.push(`<div style="font-size: 13px; margin: 2px 0;">📞 <a href="tel:${attrPhone}" style="color: #333; text-decoration: none;">${escapedPhone}</a></div>`);
     }
 
     // Si no hay contenido de información, usar genérico
@@ -249,11 +256,12 @@ export class EmailSignatureService {
 
     // Estructura de 2 columnas: logo centrado verticalmente + información
     if (data.logoUrl) {
+      const attrLogoUrl = EmailSendService.escapeAttr(data.logoUrl);
       return `
         <table style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; border-collapse: collapse; width: 100%; max-width: 400px;">
           <tr>
             <td style="vertical-align: middle; padding-right: 15px; width: 60px; text-align: center;">
-              <img src="${data.logoUrl}" alt="Logo" style="width: 50px; height: 50px; object-fit: contain;">
+              <img src="${attrLogoUrl}" alt="Logo" style="width: 50px; height: 50px; object-fit: contain;">
             </td>
             <td style="vertical-align: middle;">
               ${rightColumnContent.join('')}
@@ -308,7 +316,8 @@ export class EmailSignatureService {
   private static buildBasicSignature(agentName?: string): GeneratedSignature {
     const name = agentName || 'Equipo de Atención al Cliente';
     const plainText = name;
-    const formatted = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.4; max-width: 300px;"><div style="font-weight: 600; font-size: 16px; color: #333;">${name}</div></div>`;
+    const escapedName = EmailSendService.escapeHtml(name);
+    const formatted = `<div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.4; max-width: 300px;"><div style="font-weight: 600; font-size: 16px; color: #333;">${escapedName}</div></div>`;
 
     return {
       plainText,

@@ -134,11 +134,12 @@ export async function getLeadConversations(leadId: string, includeMessages: bool
       return [];
     }
     
-    // Si se solicitan mensajes, obtener los últimos 5 mensajes de cada conversación
+    // Si se solicitan mensajes, obtener los últimos mensajes de cada conversación
     if (includeMessages) {
       for (const conversation of data) {
         try {
-          const messages = await getConversationMessages(conversation.id, 5);
+          // Aumentado el límite de mensajes por conversación para dar más contexto
+          const messages = await getConversationMessages(conversation.id, 20);
           conversation.messages = messages;
         } catch (msgError) {
           console.error(`Error obteniendo mensajes para conversación ${conversation.id}:`, msgError);
@@ -155,7 +156,7 @@ export async function getLeadConversations(leadId: string, includeMessages: bool
 }
 
 // Función para obtener los últimos mensajes de una conversación
-export async function getConversationMessages(conversationId: string, limit: number = 5): Promise<Array<{role: string, content: string, created_at?: string}>> {
+export async function getConversationMessages(conversationId: string, limit: number = 20): Promise<Array<{role: string, content: string, created_at?: string}>> {
   try {
     if (!isValidUUID(conversationId)) {
       console.error(`ID de conversación no válido: ${conversationId}`);

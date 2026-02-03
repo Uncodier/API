@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from './sendgrid-service';
 import { NotificationService, NotificationType, NotificationPriority } from './notification-service';
+import { EmailSendService } from './email/EmailSendService';
 
 /**
  * Interfaz para los datos del miembro del equipo
@@ -330,14 +331,14 @@ export class TeamNotificationService {
     
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-        <h2 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">${title}</h2>
+        <h2 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">${EmailSendService.escapeHtml(title)}</h2>
         
         <div style="font-size: 16px; line-height: 1.6; margin: 20px 0;">
-          ${message}
+          ${EmailSendService.renderMessageWithLists(message)}
         </div>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${siteUrl}" 
+          <a href="${EmailSendService.escapeAttr(siteUrl)}" 
              style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Ir al sitio
           </a>

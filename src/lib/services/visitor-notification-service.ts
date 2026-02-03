@@ -1,4 +1,5 @@
 import { sendGridService } from './sendgrid-service';
+import { EmailSendService } from './email/EmailSendService';
 
 /**
  * Parámetros para notificar al visitante
@@ -93,9 +94,13 @@ export class VisitorNotificationService {
    * Genera el HTML para el email de confirmación al visitante
    */
   private static generateMessageReceivedHtml(params: NotifyVisitorParams): string {
-    const greeting = params.visitorName ? `Hi ${params.visitorName}` : "Hello";
-    const agentText = params.agentName ? `our AI assistant ${params.agentName}` : "our AI assistant";
+    const greeting = params.visitorName ? `Hi ${EmailSendService.escapeHtml(params.visitorName)}` : "Hello";
+    const agentText = params.agentName ? `our AI assistant ${EmailSendService.escapeHtml(params.agentName)}` : "our AI assistant";
     const supportEmail = params.supportEmail || this.getSupportEmail();
+    const escapedSupportEmail = EmailSendService.escapeHtml(supportEmail);
+    const attrSupportEmail = EmailSendService.escapeAttr(supportEmail);
+    const companyName = EmailSendService.escapeHtml(this.getCompanyName());
+    const brandingText = EmailSendService.escapeHtml(this.getBrandingText());
     
     return `
       <!DOCTYPE html>
@@ -139,7 +144,7 @@ export class VisitorNotificationService {
               <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Your Message</h3>
               <div style="background-color: #f8fafc; border-left: 4px solid #10b981; padding: 20px 24px; border-radius: 0 8px 8px 0;">
                 <p style="margin: 0; font-size: 16px; color: #475569; font-style: italic; line-height: 1.7;">
-                  "${params.message}"
+                  "${EmailSendService.escapeHtml(params.message)}"
                 </p>
               </div>
             </div>
@@ -149,9 +154,9 @@ export class VisitorNotificationService {
             <div style="margin-bottom: 32px;">
               <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Conversation Summary</h3>
               <div style="background-color: #f1f5f9; padding: 20px 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
-                <p style="margin: 0; font-size: 15px; color: #475569; line-height: 1.6;">
-                  ${params.summary}
-                </p>
+                <div style="margin: 0; font-size: 15px; color: #475569; line-height: 1.6;">
+                  ${EmailSendService.renderMessageWithLists(params.summary)}
+                </div>
               </div>
             </div>
             ` : ''}
@@ -186,8 +191,8 @@ export class VisitorNotificationService {
                 </p>
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Email:</span>
-                  <a href="mailto:${supportEmail}" style="color: #3b82f6; text-decoration: none; font-size: 15px;">
-                    ${supportEmail}
+                  <a href="mailto:${attrSupportEmail}" style="color: #3b82f6; text-decoration: none; font-size: 15px;">
+                    ${escapedSupportEmail}
                   </a>
                 </div>
               </div>

@@ -784,9 +784,11 @@ export async function executeCopywriterRefinement(
       copywriterContext += `10. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off. NEVER sign as the agent or AI - emails are sent from real company employees\n`;
       copywriterContext += `11. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
       copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
-      copywriterContext += `13. 🎯 COPYWRITING APPROVAL PRIORITY: If there are approved copywritings available for this lead/campaign, respect them as much as possible. Only personalize with lead-specific information (name, company, pain points) to increase conversion. Maintain approved tone, structure, and core messaging.\n`;
-      copywriterContext += `14. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n`;
-      copywriterContext += `15. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object. DO NOT include 'channel' field - it is preserved automatically.\n\n`;
+      copywriterContext += `13. 🎯 STRATEGIC ALIGNMENT: If a specific copy strategy or approved templates are available for this lead/campaign, you MUST adhere to them strictly. Use the established strategy as your foundation and only personalize where necessary to increase relevance and conversion.\n`;
+      copywriterContext += `14. ⛓️ SEQUENCE AWARENESS: Analyze the lead's position in the follow-up sequence. Adjust the tone and content based on how many times they've been contacted. If it's an early touchpoint, focus on curiosity and value; if it's a later one, increase the sense of urgency or offer a different perspective while remaining professional.\n`;
+      copywriterContext += `15. 🚀 RESPONSE MAXIMIZATION: Your primary goal is to get a reply. Use strong hooks, psychological triggers (like social proof or reciprocity), and clear, low-friction calls-to-action to maximize the probability of a response.\n`;
+      copywriterContext += `16. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n`;
+      copywriterContext += `17. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object. DO NOT include 'channel' field - it is preserved automatically.\n\n`;
     }
     
     // Create command for copywriter based on available channels from phase 1
@@ -845,10 +847,10 @@ export async function executeCopywriterRefinement(
       userId: userId,
       agentId: agentId,
       site_id: siteId,
-      description: 'Polish and improve the follow-up content created by the sales team without changing the core strategy. Act as a writing coach to enhance clarity, flow, and persuasion while preserving the sales team approach, channel selection, and fundamental messaging. Focus on making the existing content more engaging and effective. Generate the refined title and message as separate fields.',
+      description: 'Refine and optimize lead follow-up content to maximize response rates. Act as a strategic writing coach, adjusting the tone based on the lead\'s position in the follow-up sequence and strictly adhering to any established copy strategies. Enhance clarity, flow, and persuasion while preserving the sales team\'s core intent and channel selection.',
       targets: [
         {
-          deep_thinking: "Analyze the sales team's strategically selected follow-up content and identify specific areas for copywriting improvement. Focus on enhancing clarity, flow, and persuasion while respecting and preserving the core sales strategy, channel selection, and messaging approach."
+          deep_thinking: "Analyze the lead's follow-up history and sequence position. Identify the best copywriting approach to maximize response probability while strictly following any provided copy strategy. Evaluate the sales team's input and refine it to be more compelling, personalized, and effective for the specific channel selected."
         },
         {
           refined_title: refinementTarget.title,

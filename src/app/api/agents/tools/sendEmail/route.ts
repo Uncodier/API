@@ -3,99 +3,32 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
-import { sendMessage } from '@/lib/integrations/agentmail/agentmail-service';
+import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
 
 /**
  * Endpoint para enviar emails desde un agente
- * 
- * @param request Solicitud entrante con los datos del email a enviar
- * @returns Respuesta con el estado del envío
- * 
- * Parámetros de la solicitud:
- * - email: (Requerido) Email del destinatario
- * - from: (Opcional) Nombre del remitente (el email se obtiene de la configuración del sitio)
- * - subject: (Requerido) Asunto del email
- * - message: (Requerido) Contenido del mensaje
- * - site_id: (Requerido) ID del sitio para obtener configuración SMTP
  */
 export async function POST(request: NextRequest) {
-  const startTime = Date.now();
-  
   try {
-    console.log(`[SEND_EMAIL] 🚀 Iniciando proceso de envío de email`);
-    
     const body = await request.json();
-    
-    // Log inicial con información básica de la request
-    console.log(`[SEND_EMAIL] 📋 Request recibida:`, {
-      url: request.url,
-      method: request.method,
-      hasBody: !!body,
-      bodySize: JSON.stringify(body).length,
-      timestamp: new Date().toISOString()
-    });
-    
-    // Extraer parámetros de la solicitud
     const { 
-      email, 
-      from, 
-      subject, 
-      message,
-      agent_id,
-      conversation_id,
-      lead_id,
-      site_id
+      email, from, subject, message, agent_id, conversation_id, lead_id, site_id 
     } = body;
     
-    // Log detallado de los parámetros recibidos
-    console.log(`[SEND_EMAIL] 📝 Parámetros recibidos:`, {
-      email: email ? `${email.substring(0, 3)}***${email.includes('@') ? email.substring(email.indexOf('@')) : ''}` : 'undefined',
-      from: from || 'no-especificado',
-      subject: subject ? `${subject.substring(0, 50)}${subject.length > 50 ? '...' : ''}` : 'undefined',
-      messageLength: message?.length || 0,
-      agent_id: agent_id || 'no-especificado',
-      conversation_id: conversation_id || 'no-especificado',
-      lead_id: lead_id || 'no-especificado',
-      site_id: site_id || 'undefined'
-    });
-    
-    // Validar parámetros requeridos
-    console.log(`[SEND_EMAIL] 🔍 Iniciando validación de parámetros requeridos`);
-    
-    const requiredFields = [
-      { field: 'email', value: email },
-      { field: 'subject', value: subject },
-      { field: 'message', value: message },
-      { field: 'site_id', value: site_id }
-    ];
-
-    for (const { field, value } of requiredFields) {
-      console.log(`[SEND_EMAIL] 🔍 Validando campo '${field}':`, {
-        hasValue: !!value,
-        valueType: typeof value,
-        valueLength: value?.length || 0,
-        isEmpty: value === '' || value === null || value === undefined
-      });
-      
-      if (!value) {
-        console.log(`[SEND_EMAIL] ❌ Error de validación: Campo '${field}' requerido no proporcionado`);
-        return NextResponse.json(
-          { 
-            success: false, 
-            error: { 
-              code: 'INVALID_REQUEST', 
-              message: `${field} is required` 
-            } 
-          },
-          { status: 400 }
-        );
-      }
+    if (!email || !subject || !message || !site_id) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'email, subject, message, and site_id are required' } },
+        { status: 400 }
+      );
     }
-    
-    console.log(`[SEND_EMAIL] ✅ Validación de parámetros requeridos completada exitosamente`);
-    
-    // Obtener configuración del sitio para validar el email del remitente
-    console.log(`[SEND_EMAIL] 🔍 Obteniendo configuración del sitio para site_id: ${site_id}`);
+
+    // Validate recipient email format before any API calls
+    if (email !== 'no-email@example.com' && !EmailSendService.isValidEmail(email)) {
+      return NextResponse.json(
+        { success: false, error: { code: 'INVALID_REQUEST', message: 'Invalid recipient email format' } },
+        { status: 400 }
+      );
+    }
     
     const { data: siteSettings, error: settingsError } = await supabaseAdmin
       .from('settings')
@@ -103,512 +36,122 @@ export async function POST(request: NextRequest) {
       .eq('site_id', site_id)
       .single();
     
-    console.log(`[SEND_EMAIL] 📊 Resultado de consulta de configuración:`, {
-      hasData: !!siteSettings,
-      hasError: !!settingsError,
-      errorCode: settingsError?.code,
-      errorMessage: settingsError?.message,
-      errorDetails: settingsError?.details,
-      dataStructure: siteSettings ? {
-        hasChannels: !!siteSettings.channels,
-        hasEmailConfig: !!siteSettings.channels?.email,
-        hasAgentEmailConfig: !!siteSettings.channels?.agent_email,
-        emailConfigKeys: siteSettings.channels?.email ? Object.keys(siteSettings.channels.email) : [],
-        agentEmailConfigKeys: siteSettings.channels?.agent_email ? Object.keys(siteSettings.channels.agent_email) : []
-      } : null
-    });
-      
     if (settingsError || !siteSettings) {
-      console.log(`[SEND_EMAIL] ❌ Error obteniendo configuración del sitio:`, {
-        site_id,
-        error: settingsError,
-        hasData: !!siteSettings
-      });
-      
       return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'SITE_CONFIG_NOT_FOUND', 
-            message: 'Site configuration not found or email not configured' 
-          } 
-        },
+        { success: false, error: { code: 'SITE_CONFIG_NOT_FOUND', message: 'Site configuration not found' } },
         { status: 404 }
       );
     }
     
-    // Check if agent_email channel is configured and active
     const agentEmailConfig = siteSettings.channels?.agent_email;
     const isAgentEmailActive = agentEmailConfig && agentEmailConfig.status === 'active';
+    const configuredEmail = siteSettings.channels?.email?.email;
+
+    // 0. Crear registro de mensaje para tracking (compartido entre AgentMail y SMTP)
+    let trackingId: string | undefined;
+    try {
+      const { data: newMessage } = await supabaseAdmin
+        .from('messages')
+        .insert([{
+          conversation_id, lead_id, agent_id, content: message, role: 'assistant',
+          custom_data: { 
+            subject, 
+            recipient: email, 
+            sender: configuredEmail || 'pending', 
+            source: 'email_tool' 
+          }
+        }])
+        .select('id')
+        .single();
+      if (newMessage) trackingId = newMessage.id;
+    } catch (err) {
+      console.warn(`[SEND_EMAIL] Tracking message error:`, err);
+    }
     
-    console.log(`[SEND_EMAIL] 🔍 Verificando configuración de agent_email:`, {
-      hasAgentEmailConfig: !!agentEmailConfig,
-      agentEmailStatus: agentEmailConfig?.status,
-      isAgentEmailActive,
-      hasUsername: !!(agentEmailConfig?.username || agentEmailConfig?.data?.username),
-      hasDomain: !!(agentEmailConfig?.domain || agentEmailConfig?.data?.domain)
-    });
-    
-    // If agent_email is active, use AgentMail integration
-    if (isAgentEmailActive) {
-      console.log(`[SEND_EMAIL] 📧 Usando integración AgentMail`);
+    // 1. Integración AgentMail
+    if (isAgentEmailActive && process.env.AGENTMAIL_API_KEY) {
+      const username = agentEmailConfig.username || agentEmailConfig.data?.username;
+      const domain = agentEmailConfig.domain || agentEmailConfig.data?.domain;
       
-      // Validate AgentMail API key
-      if (!process.env.AGENTMAIL_API_KEY) {
-        console.warn(`[SEND_EMAIL] ⚠️ AGENTMAIL_API_KEY no configurado, fallback a email nativo`);
-        // Fall through to native email
-      } else {
-        // Construct inbox_id from username@domain
-        const username = agentEmailConfig.username || agentEmailConfig.data?.username;
-        const domain = agentEmailConfig.domain || agentEmailConfig.data?.domain;
-        
-        if (!username || !domain) {
-          console.warn(`[SEND_EMAIL] ⚠️ agent_email configurado pero falta username o domain, fallback a email nativo`);
-          // Fall through to native email
-        } else {
-          const inboxId = `${username}@${domain}`;
-          console.log(`[SEND_EMAIL] 📬 Inbox ID determinado: ${inboxId}`);
+      if (username && domain) {
+        try {
+          const signature = await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
           
-          // Validate recipient email format
-          const targetEmail = email === 'no-email@example.com' ? email : email;
-          const isTargetEmailValid = targetEmail === 'no-email@example.com' || EmailSendService.isValidEmail(targetEmail);
+          const result = await AgentMailSendService.sendViaAgentMail({
+            email, subject, message, agent_id, conversation_id, lead_id, site_id,
+            username, domain, senderEmail: `${username}@${domain}`,
+            signatureHtml: signature.formatted,
+            trackingId // Pasamos el trackingId para evitar duplicados
+          });
           
-          if (!isTargetEmailValid) {
-            console.log(`[SEND_EMAIL] ❌ Email destinatario tiene formato inválido: ${targetEmail}`);
-            
-            return NextResponse.json(
-              { 
-                success: false, 
-                error: { 
-                  code: 'INVALID_REQUEST', 
-                  message: 'Invalid recipient email format' 
-                } 
-              },
-              { status: 400 }
-            );
-          }
-          
-          // Generate signature before sending
-          console.log(`[SEND_EMAIL] 🖋️ Generando firma del agente para AgentMail`);
-          let signatureHtml = '';
-          try {
-            const signature = await EmailSignatureService.generateAgentSignature(site_id, from);
-            signatureHtml = signature.formatted;
-            
-            console.log(`[SEND_EMAIL] ✅ Firma del agente generada exitosamente:`, {
-              hasSignature: !!signatureHtml,
-              signatureLength: signatureHtml?.length || 0
-            });
-          } catch (signatureError) {
-            console.warn(`[SEND_EMAIL] ⚠️ No se pudo generar la firma del agente:`, {
-              site_id,
-              from,
-              error: (signatureError as Error)?.message || String(signatureError)
-            });
-            // Continue without signature
-          }
-          
-          // Prepare HTML content with signature
-          let htmlContent = message;
-          if (signatureHtml) {
-            htmlContent = `${message}\n\n${signatureHtml}`;
-          }
-          
-          try {
-            // Send via AgentMail
-            const agentmailParams = {
-              to: targetEmail,
-              subject,
-              text: message, // Plain text version
-              html: htmlContent, // HTML version with signature
-            };
-            
-            console.log(`[SEND_EMAIL] 📤 Enviando mensaje vía AgentMail:`, {
-              inboxId,
-              recipient: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
-              subjectLength: subject?.length || 0,
-              messageLength: message?.length || 0,
-              hasSignature: !!signatureHtml
-            });
-            
-            const agentmailResponse = await sendMessage(inboxId, agentmailParams);
-            
-            console.log(`[SEND_EMAIL] ✅ Mensaje enviado vía AgentMail:`, {
-              message_id: agentmailResponse.message_id,
-              thread_id: agentmailResponse.thread_id
-            });
-            
-            // Determine sender email (from agent_email config or fallback)
-            const senderEmail = agentEmailConfig.username && agentEmailConfig.domain 
-              ? `${agentEmailConfig.username}@${agentEmailConfig.domain}`
-              : (siteSettings.channels?.email?.email || 'noreply@agentmail.to');
-            
-            // Save to synced_objects to avoid duplicates in sync
-            if (agentmailResponse.message_id) {
-              try {
-                await SyncedObjectsService.createObject({
-                  external_id: agentmailResponse.message_id,
-                  site_id: site_id,
-                  object_type: 'sent_email',
-                  status: 'processed',
-                  provider: 'agentmail',
-                  metadata: {
-                    recipient: targetEmail,
-                    sender: senderEmail,
-                    subject: subject,
-                    message_preview: message.substring(0, 200),
-                    sent_at: new Date().toISOString(),
-                    agent_id,
-                    conversation_id,
-                    lead_id,
-                    agentmail_message_id: agentmailResponse.message_id,
-                    agentmail_thread_id: agentmailResponse.thread_id,
-                    agentmail_inbox_id: inboxId,
-                    source: 'api_send_agentmail',
-                    processed_at: new Date().toISOString()
-                  }
-                });
-                
-                console.log(`✅ [SEND_EMAIL] AgentMail message_id ${agentmailResponse.message_id} guardado en synced_objects`);
-              } catch (syncError) {
-                console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar AgentMail message_id en synced_objects:`, syncError);
-              }
-            }
-            
-            // Transform AgentMail response to match expected format
-            const responseData = {
-              success: true,
-              status: 'sent',
-              email_id: agentmailResponse.message_id,
-              external_message_id: agentmailResponse.message_id,
-              recipient: targetEmail,
-              sender: senderEmail,
-              subject: subject,
-              message_preview: message.substring(0, 200) + (message.length > 200 ? '...' : ''),
-              sent_at: new Date().toISOString(),
-              thread_id: agentmailResponse.thread_id
-            };
-            
-            console.log(`[SEND_EMAIL] ✅ Proceso completado exitosamente vía AgentMail:`, {
-              status: 'sent',
-              message_id: agentmailResponse.message_id,
-              recipient: targetEmail,
-              duration: `${Date.now() - startTime}ms`
-            });
-            
-            return NextResponse.json(responseData, { status: 201 });
-            
-          } catch (agentmailError: any) {
-            console.error(`[SEND_EMAIL] ❌ Error enviando vía AgentMail:`, {
-              error: agentmailError?.message || String(agentmailError),
-              errorType: agentmailError?.constructor?.name,
-              inboxId,
-              site_id
-            });
-            
-            // If AgentMail fails and we have native email configured, fall back to native email
-            const configuredEmail = siteSettings.channels?.email?.email;
-            if (configuredEmail) {
-              console.log(`[SEND_EMAIL] 🔄 Fallback a email nativo debido a error en AgentMail`);
-              // Continue to native email flow below
-            } else {
-              // No fallback available, return error
-              return NextResponse.json(
-                { 
-                  success: false, 
-                  error: { 
-                    code: 'AGENTMAIL_SEND_FAILED', 
-                    message: agentmailError?.message || 'Failed to send message via AgentMail' 
-                  } 
-                },
-                { status: 500 }
-              );
-            }
+          return NextResponse.json(result, { status: 201 });
+        } catch (error: any) {
+          console.error(`[SEND_EMAIL] AgentMail error:`, error);
+          if (!configuredEmail) {
+            return NextResponse.json({ success: false, error: { code: 'AGENTMAIL_FAILED', message: error.message } }, { status: 500 });
           }
         }
       }
     }
     
-    // Native email flow (fallback or when agent_email is not active)
-    console.log(`[SEND_EMAIL] 📧 Usando email nativo (SMTP)`);
-    
-    const configuredEmail = siteSettings.channels?.email?.email;
-    console.log(`[SEND_EMAIL] 📧 Email configurado encontrado:`, {
-      hasConfiguredEmail: !!configuredEmail,
-      emailMask: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'no-encontrado',
-      channelsStructure: siteSettings.channels ? Object.keys(siteSettings.channels) : []
-    });
-    
-    if (!configuredEmail) {
-      console.log(`[SEND_EMAIL] ❌ Email no configurado para el sitio ${site_id}`);
-      
+    // 2. Email nativo (SMTP)
+    if (!configuredEmail || !EmailSendService.isValidEmail(configuredEmail)) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'EMAIL_NOT_CONFIGURED', 
-            message: 'Email is not configured for this site. Please configure email in site settings.' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    // Validar formato del email configurado
-    console.log(`[SEND_EMAIL] 🔍 Validando formato del email configurado`);
-    const isConfiguredEmailValid = EmailSendService.isValidEmail(configuredEmail);
-    
-    console.log(`[SEND_EMAIL] 📧 Validación de email configurado:`, {
-      email: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'null',
-      isValid: isConfiguredEmailValid
-    });
-    
-    if (!isConfiguredEmailValid) {
-      console.log(`[SEND_EMAIL] ❌ Email configurado tiene formato inválido: ${configuredEmail}`);
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_CONFIGURED_EMAIL', 
-            message: 'The configured email in site settings has an invalid format' 
-          } 
-        },
-        { status: 400 }
-      );
-    }
-    
-    // Validar formato del email destinatario
-    const targetEmail = email === 'no-email@example.com' ? email : email;
-    console.log(`[SEND_EMAIL] 🔍 Validando formato del email destinatario`);
-    
-    const isTargetEmailValid = targetEmail === 'no-email@example.com' || EmailSendService.isValidEmail(targetEmail);
-    
-    console.log(`[SEND_EMAIL] 📧 Validación de email destinatario:`, {
-      originalEmail: email ? `${email.substring(0, 3)}***${email.includes('@') ? email.substring(email.indexOf('@')) : ''}` : 'null',
-      targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
-      isSpecialCase: targetEmail === 'no-email@example.com',
-      isValid: isTargetEmailValid
-    });
-    
-    if (!isTargetEmailValid) {
-      console.log(`[SEND_EMAIL] ❌ Email destinatario tiene formato inválido: ${targetEmail}`);
-      
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_REQUEST', 
-            message: 'Invalid recipient email format' 
-          } 
-        },
+        { success: false, error: { code: 'EMAIL_NOT_CONFIGURED', message: 'Valid SMTP email not configured' } },
         { status: 400 }
       );
     }
 
-    // Generar firma del agente basada en la información del sitio
-    console.log(`[SEND_EMAIL] 🖋️ Generando firma del agente para site_id: ${site_id}, from: ${from || 'no-especificado'}`);
-    let signatureHtml = '';
-    try {
-      const signature = await EmailSignatureService.generateAgentSignature(site_id, from);
-      // Solo usar la versión HTML de la firma, no agregarla al texto plano
-      signatureHtml = signature.formatted;
-      
-      console.log(`[SEND_EMAIL] ✅ Firma del agente generada exitosamente:`, {
-        hasSignature: !!signatureHtml,
-        signatureLength: signatureHtml?.length || 0,
-        signaturePreview: signatureHtml ? signatureHtml.substring(0, 100) + '...' : 'vacía'
-      });
-    } catch (signatureError) {
-      console.warn(`[SEND_EMAIL] ⚠️ No se pudo generar la firma del agente:`, {
-        site_id,
-        from,
-        error: (signatureError as Error)?.message || String(signatureError),
-        errorType: signatureError?.constructor?.name
-      });
-      // Continuar sin firma si hay error
+    const signature = await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
+    
+    // Actualizar registro de tracking para reflejar que se usa SMTP
+    if (trackingId) {
+      try {
+        await supabaseAdmin
+          .from('messages')
+          .update({
+            custom_data: { 
+              subject, 
+              recipient: email, 
+              sender: configuredEmail, 
+              source: 'smtp_tool' 
+            }
+          })
+          .eq('id', trackingId);
+      } catch (updateErr) {
+        console.warn(`[SEND_EMAIL] Error updating tracking message for SMTP fallback:`, updateErr);
+      }
     }
 
-    // Preparar parámetros para EmailSendService
-    const emailParams = {
-      email: targetEmail,
-      from: from || '', // Nombre del remitente (opcional)
-      fromEmail: configuredEmail, // Email del remitente desde configuración
-      subject,
-      message: message, // Usar el mensaje original sin agregar firma aquí
-      signatureHtml, // Pasar la firma HTML
-      agent_id,
-      conversation_id,
-      lead_id,
-      site_id
+    const emailParams: any = {
+      email, from: from || '', fromEmail: configuredEmail, subject, message,
+      signatureHtml: signature.formatted, agent_id, conversation_id, lead_id, site_id,
+      trackingId
     };
-    
-    console.log(`[SEND_EMAIL] 📤 Llamando a EmailSendService con parámetros:`, {
-      targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
-      fromName: from || 'sin-nombre',
-      fromEmail: configuredEmail ? `${configuredEmail.substring(0, 3)}***${configuredEmail.includes('@') ? configuredEmail.substring(configuredEmail.indexOf('@')) : ''}` : 'null',
-      subjectLength: subject?.length || 0,
-      messageLength: message?.length || 0,
-      hasSignature: !!signatureHtml,
-      agent_id: agent_id || 'no-especificado',
-      conversation_id: conversation_id || 'no-especificado',
-      lead_id: lead_id || 'no-especificado',
-      site_id: site_id || 'undefined'
-    });
 
-    // Enviar el email usando el servicio
     const result = await EmailSendService.sendEmail(emailParams);
-    
-    console.log(`[SEND_EMAIL] 📨 Resultado de EmailSendService:`, {
-      success: result.success,
-      status: result.status,
-      hasEmailId: !!result.email_id,
-      hasEnvelopeId: !!result.envelope_id,
-      hasError: !!result.error,
-      errorCode: result.error?.code,
-      errorMessage: result.error?.message,
-      recipient: result.recipient,
-      sender: result.sender,
-      sentAt: result.sent_at
-    });
+    if (!result.success) return NextResponse.json({ success: false, error: result.error }, { status: 500 });
 
-    // 🔍 DEBUG: Verificar qué IDs están disponibles en el resultado
-    console.log(`[SEND_EMAIL] 🔍 DEBUG - Resultado del envío:`, {
-      success: result.success,
-      status: result.status,
-      email_id: result.email_id,
-      envelope_id: result.envelope_id,
-      hasEnvelopeId: !!result.envelope_id,
-      willUseEnvelopeId: !!(result.envelope_id && result.status === 'sent'),
-      willUseFallback: !!(result.email_id && result.status === 'sent' && !result.envelope_id)
-    });
-
-    if (!result.success) {
-      console.log(`[SEND_EMAIL] ❌ Error en EmailSendService:`, {
-        errorCode: result.error?.code,
-        errorMessage: result.error?.message,
-        errorDetails: (result.error as any)?.details || result.error,
-        site_id,
-        targetEmail: targetEmail ? `${targetEmail.substring(0, 3)}***${targetEmail.includes('@') ? targetEmail.substring(targetEmail.indexOf('@')) : ''}` : 'null',
-        agent_id: agent_id || 'no-especificado'
-      });
-      
-      const statusCode = result.error?.code === 'EMAIL_CONFIG_NOT_FOUND' ? 404 : 500;
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: result.error
-        },
-        { status: statusCode }
-      );
-    }
-
-    // 🎯 NUEVO: Guardar el messageId en synced_objects para evitar duplicaciones en sync
-    if (result.envelope_id && result.status === 'sent') {
+    const externalId = result.envelope_id || result.email_id;
+    if (externalId && result.status === 'sent') {
       try {
         await SyncedObjectsService.createObject({
-          external_id: result.envelope_id, // 🔄 Usar envelope_id en lugar de email_id para correlación perfecta
-          site_id: site_id,
-          object_type: 'sent_email',
-          status: 'processed', // Marcar como ya procesado
-          provider: 'smtp_send_service',
+          external_id: externalId, site_id, object_type: 'sent_email', status: 'processed', provider: 'smtp_send_service',
           metadata: {
-            // Información del email enviado
-            recipient: result.recipient,
-            sender: result.sender,
-            subject: result.subject,
-            message_preview: result.message_preview,
-            sent_at: result.sent_at,
-            
-            // Información del contexto
-            agent_id,
-            conversation_id,
-            lead_id,
-            
-            // IDs para correlación
-            smtp_message_id: result.email_id, // MessageId original del SMTP
-            envelope_id: result.envelope_id,  // ID basado en envelope para correlación
-            
-            // Marcar que fue enviado por API, no sincronizado
-            source: 'api_send',
-            processed_at: new Date().toISOString()
+            recipient: result.recipient, sender: result.sender, subject: result.subject,
+            message_preview: result.message_preview, sent_at: result.sent_at,
+            agent_id, conversation_id, lead_id, smtp_message_id: result.email_id,
+            envelope_id: result.envelope_id, source: 'api_send', processed_at: new Date().toISOString()
           }
         });
-        
-        console.log(`✅ [SEND_EMAIL] Envelope ID ${result.envelope_id} guardado en synced_objects para evitar duplicación en sync`);
       } catch (syncError) {
-        // No fallar el envío si hay error guardando en sync, solo logear
-        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar envelope ID en synced_objects:`, syncError);
-      }
-    } else if (result.email_id && result.status === 'sent') {
-      // Fallback: usar email_id si no hay envelope_id (compatibilidad con versiones anteriores)
-      try {
-        await SyncedObjectsService.createObject({
-          external_id: result.email_id, // Fallback al messageId de nodemailer
-          site_id: site_id,
-          object_type: 'sent_email',
-          status: 'processed',
-          provider: 'smtp_send_service',
-          metadata: {
-            recipient: result.recipient,
-            sender: result.sender,
-            subject: result.subject,
-            message_preview: result.message_preview,
-            sent_at: result.sent_at,
-            agent_id,
-            conversation_id,
-            lead_id,
-            smtp_message_id: result.email_id,
-            source: 'api_send_fallback',
-            processed_at: new Date().toISOString()
-          }
-        });
-        
-        console.log(`✅ [SEND_EMAIL] MessageId ${result.email_id} guardado en synced_objects (fallback) para evitar duplicación en sync`);
-      } catch (syncError) {
-        console.warn(`⚠️ [SEND_EMAIL] No se pudo guardar messageId en synced_objects (fallback):`, syncError);
+        console.warn(`[SEND_EMAIL] SyncedObject error:`, syncError);
       }
     }
 
-    // Agregar external_message_id a la respuesta para metadata del mensaje
-    const responseData = {
-      ...result,
-      external_message_id: result.envelope_id || result.email_id // 🔄 Usar envelope_id cuando esté disponible, fallback a email_id
-    };
-
-    const statusCode = result.status === 'skipped' ? 200 : 201;
-    
-    console.log(`[SEND_EMAIL] ✅ Proceso completado exitosamente:`, {
-      status: result.status,
-      statusCode,
-      hasExternalMessageId: !!(result.envelope_id || result.email_id),
-      externalMessageId: (result.envelope_id || result.email_id) ? `${(result.envelope_id || result.email_id)!.substring(0, 8)}...` : 'no-disponible',
-      recipient: result.recipient,
-      duration: `${Date.now() - startTime}ms`
-    });
-    
-    return NextResponse.json(responseData, { status: statusCode });
-    
-  } catch (error) {
-    console.error(`[SEND_EMAIL] 💥 Error crítico en endpoint send_email_from_agent:`, {
-      error: (error as Error)?.message || String(error),
-      errorType: (error as Error)?.constructor?.name,
-      stack: (error as Error)?.stack,
-      timestamp: new Date().toISOString(),
-      // Información de contexto disponible en este punto
-      requestUrl: request?.url,
-      requestMethod: request?.method
-    });
-    
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: { 
-          code: 'INTERNAL_SERVER_ERROR', 
-          message: 'An internal server error occurred while sending the email' 
-        } 
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ ...result, external_message_id: externalId }, { status: result.status === 'skipped' ? 200 : 201 });
+  } catch (error: any) {
+    console.error(`[SEND_EMAIL] Critical error:`, error);
+    return NextResponse.json({ success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: error.message } }, { status: 500 });
   }
-} 
+}

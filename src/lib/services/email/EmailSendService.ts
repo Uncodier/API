@@ -2,6 +2,7 @@ import { EmailConfigService } from './EmailConfigService';
 import { SentEmailDuplicationService } from './SentEmailDuplicationService';
 import nodemailer from 'nodemailer';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { EmailTrackingService } from '../tracking/EmailTrackingService';
 
 export interface SendEmailParams {
   email: string;
@@ -14,6 +15,7 @@ export interface SendEmailParams {
   conversation_id?: string;
   lead_id?: string;
   site_id: string;
+  trackingId?: string; // 🆕 ID para rastreo de apertura y clics
 }
 
 export interface SendEmailResult {
@@ -43,7 +45,19 @@ export class EmailSendService {
    * Envía un email usando la configuración SMTP del sitio
    */
   static async sendEmail(params: SendEmailParams): Promise<SendEmailResult> {
-    const { email, from, fromEmail, subject, message, signatureHtml, agent_id, conversation_id, lead_id, site_id } = params;
+    const { 
+      email, 
+      from, 
+      fromEmail, 
+      subject, 
+      message, 
+      signatureHtml, 
+      agent_id, 
+      conversation_id, 
+      lead_id, 
+      site_id,
+      trackingId
+    } = params;
     
     // Si el email es el temporal, no enviar email real
     if (email === 'no-email@example.com') {
@@ -97,7 +111,13 @@ export class EmailSendService {
       });
 
       // Preparar el contenido HTML del email
-      const htmlContent = this.buildHtmlContent(message, siteInfo, signatureHtml);
+      let htmlContent = this.buildHtmlContent(message, siteInfo, signatureHtml);
+
+      // Inyectar rastreo si se proporciona trackingId
+      if (params.trackingId) {
+        console.log(`[EMAIL_SEND] 🎯 Inyectando rastreo con trackingId: ${params.trackingId}`);
+        htmlContent = EmailTrackingService.injectTracking(htmlContent, params.trackingId);
+      }
 
       // Determinar el nombre y email del remitente
       const fromName = from || 'AI Assistant';
@@ -226,7 +246,7 @@ export class EmailSendService {
   /**
    * Escapa caracteres HTML especiales para prevenir inyección y preservar texto
    */
-  private static escapeHtml(input: string): string {
+  public static escapeHtml(input: string): string {
     return input
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -236,9 +256,22 @@ export class EmailSendService {
   }
 
   /**
+   * Escapa caracteres para su uso en atributos HTML (como href, src, etc)
+   * Se incluye el escape de '&' para cumplir con el estándar HTML en atributos.
+   */
+  public static escapeAttr(input: string): string {
+    return input
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  }
+
+  /**
    * Convierte texto plano a HTML con soporte para listas con -, *, • y 1. 2.
    */
-  private static renderMessageWithLists(message: string): string {
+  public static renderMessageWithLists(message: string): string {
     const lines = message.split('\n');
     const htmlParts: string[] = [];
 

@@ -2,71 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { NotificationType } from '@/lib/services/notification-service';
+import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { z } from 'zod';
 
 // Configurar timeout máximo a 2 minutos
 export const maxDuration = 120;
-
-// Utilidades para sanear/maquetar contenido
-function escapeHtml(input: string): string {
-  return input
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
-function renderMessageWithLists(message: string): string {
-  const lines = message.split('\n');
-  const htmlParts: string[] = [];
-
-  const isBullet = (line: string) => /^\s*(?:[-*•]\s+)/.test(line);
-  const isNumbered = (line: string) => /^\s*\d+[\.)]\s+/.test(line);
-
-  let i = 0;
-  while (i < lines.length) {
-    const raw = lines[i] ?? '';
-    const line = raw.trimEnd();
-
-    if (isBullet(line)) {
-      const items: string[] = [];
-      while (i < lines.length && isBullet((lines[i] ?? '').trimEnd())) {
-        const itemText = (lines[i] ?? '')
-          .replace(/^\s*[-*•]\s+/, '')
-          .trim();
-        items.push(`<li style="margin: 4px 0;">${escapeHtml(itemText)}</li>`);
-        i++;
-      }
-      htmlParts.push(`<ul style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: disc;">${items.join('')}</ul>`);
-      continue;
-    }
-
-    if (isNumbered(line)) {
-      const items: string[] = [];
-      while (i < lines.length && isNumbered((lines[i] ?? '').trimEnd())) {
-        const itemText = (lines[i] ?? '')
-          .replace(/^\s*\d+[\.)]\s+/, '')
-          .trim();
-        items.push(`<li style="margin: 4px 0;">${escapeHtml(itemText)}</li>`);
-        i++;
-      }
-      htmlParts.push(`<ol style="margin: 0 0 16px 20px; padding-left: 18px; list-style-type: decimal;">${items.join('')}</ol>`);
-      continue;
-    }
-
-    if (line.trim().length === 0) {
-      htmlParts.push('<br>');
-      i++;
-      continue;
-    }
-
-    htmlParts.push(`<p style="margin: 0 0 16px 0;">${escapeHtml(line.trim())}</p>`);
-    i++;
-  }
-
-  return htmlParts.join('');
-}
 
 // Schema de validación para la request
 const DailyStandUpSchema = z.object({
@@ -258,29 +198,29 @@ function generateDailyStandUpHtml(data: {
   const resolvedSubject = data.subject && data.subject.trim().length > 0
     ? data.subject
     : 'Daily Stand-Up';
-  const safeSubject = escapeHtml(resolvedSubject);
+  const safeSubject = EmailSendService.escapeHtml(resolvedSubject);
   const headerTitle = safeSubject;
-  const safeMessageHtml = renderMessageWithLists(data.message);
+  const safeMessageHtml = EmailSendService.renderMessageWithLists(data.message);
   return `
     <!DOCTYPE html>
     <html lang="en">
     <head>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <title>${safeSubject} - ${escapeHtml(data.siteName)}</title>
+      <title>${safeSubject} - ${EmailSendService.escapeHtml(data.siteName)}</title>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
       
       <!-- Main Container -->
       <div style="max-width: 600px; margin: 40px auto; background-color: #ffffff; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
         
-        <!-- Header -->
-        <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); padding: 32px 40px; text-align: center;">
-          ${data.logoUrl ? `
-          <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
-            <img src="${data.logoUrl}" alt="${data.siteName} Logo" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
-          </div>
-          ` : `
+    <!-- Header -->
+    <div style="background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); padding: 32px 40px; text-align: center;">
+      ${data.logoUrl ? `
+      <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 16px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
+        <img src="${EmailSendService.escapeAttr(data.logoUrl)}" alt="${EmailSendService.escapeHtml(data.siteName)} Logo" style="width: 64px; height: 64px; border-radius: 50%; object-fit: cover; background-color: #ffffff; display: block;" />
+      </div>
+      ` : `
           <div style="display: inline-block; background-color: rgba(255, 255, 255, 0.1); border-radius: 50%; padding: 24px; margin-bottom: 16px; width: 96px; height: 96px; box-sizing: border-box;">
             <div style="width: 48px; height: 48px; background-color: #ffffff; border-radius: 50%; position: relative; margin: 0 auto;">
               <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 16px; height: 16px; background-color: #8b5cf6; border-radius: 50%;"></div>
@@ -318,16 +258,16 @@ function generateDailyStandUpHtml(data: {
           </div>
           ` : ''}
           
-          <!-- Call-to-Action -->
-          ${data.siteUrl ? `
-          <div style="text-align: center; margin: 40px 0 32px;">
-            <a href="${data.siteUrl}" 
-               style="display: inline-block; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
-              🚀 View Dashboard
-            </a>
-          </div>
-          ` : ''}
-          
+      <!-- Call-to-Action -->
+      ${data.siteUrl ? `
+      <div style="text-align: center; margin: 40px 0 32px;">
+        <a href="${EmailSendService.escapeAttr(data.siteUrl)}" 
+           style="display: inline-block; background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);">
+          🚀 View Dashboard
+        </a>
+      </div>
+      ` : ''}
+
           <!-- Friendly Note -->
           <div style="margin-top: 32px; padding: 16px; background-color: #fef3c7; border-radius: 6px; border-left: 3px solid #f59e0b;">
             <p style="margin: 0; color: #92400e; font-size: 14px; line-height: 1.5;">

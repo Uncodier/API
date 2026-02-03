@@ -1,5 +1,6 @@
 import sgMail from '@sendgrid/mail';
 import { v4 as uuidv4 } from 'uuid';
+import { EmailSendService } from './email/EmailSendService';
 
 /**
  * Configuración de SendGrid
@@ -347,26 +348,30 @@ export class SendGridService {
    * Genera HTML para email de bienvenida
    */
   private generateWelcomeEmailHtml(userData: { name: string; email: string }): string {
+    const escapedName = EmailSendService.escapeHtml(userData.name);
+    const escapedEmail = EmailSendService.escapeHtml(userData.email);
+    const companyName = EmailSendService.escapeHtml(this.getCompanyName());
+    
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #6366f1; margin: 0;">¡Bienvenido a ${this.getCompanyName()}!</h1>
+          <h1 style="color: #6366f1; margin: 0;">¡Bienvenido a ${companyName}!</h1>
         </div>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          Hola <strong>${userData.name}</strong>,
+          Hola <strong>${escapedName}</strong>,
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          ¡Gracias por unirte a ${this.getCompanyName()}! Estamos emocionados de tenerte en nuestra plataforma.
+          ¡Gracias por unirte a ${companyName}! Estamos emocionados de tenerte en nuestra plataforma.
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          Tu cuenta ha sido creada exitosamente con el email: <strong>${userData.email}</strong>
+          Tu cuenta ha sido creada exitosamente con el email: <strong>${escapedEmail}</strong>
         </p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${this.getAppUrl()}" 
+          <a href="${EmailSendService.escapeAttr(this.getAppUrl())}" 
              style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Acceder a mi cuenta
           </a>
@@ -392,7 +397,9 @@ export class SendGridService {
     contactEmail?: string;
     conversationUrl: string;
   }): string {
-    const agentText = interventionData.agentName ? `Agent <strong>${interventionData.agentName}</strong>` : "The system";
+    const agentText = interventionData.agentName 
+      ? `Agent <strong>${EmailSendService.escapeHtml(interventionData.agentName)}</strong>` 
+      : "The system";
     const hasContactInfo = interventionData.contactName || interventionData.contactEmail;
     
     // Priority colors and labels
@@ -448,7 +455,7 @@ export class SendGridService {
               <!-- Message Quote -->
               <div style="background-color: #f8fafc; border-left: 4px solid #667eea; padding: 20px 24px; border-radius: 0 8px 8px 0; margin: 24px 0;">
                 <p style="margin: 0; font-size: 16px; color: #475569; font-style: italic; line-height: 1.7;">
-                  "${interventionData.message}"
+                  "${EmailSendService.escapeHtml(interventionData.message)}"
                 </p>
               </div>
             </div>
@@ -458,9 +465,9 @@ export class SendGridService {
             <div style="margin-bottom: 32px;">
               <h3 style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Conversation Summary</h3>
               <div style="background-color: #f1f5f9; padding: 20px 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
-                <p style="margin: 0; font-size: 15px; color: #475569; line-height: 1.6;">
-                  ${interventionData.summary}
-                </p>
+                <div style="margin: 0; font-size: 15px; color: #475569; line-height: 1.6;">
+                  ${EmailSendService.renderMessageWithLists(interventionData.summary)}
+                </div>
               </div>
             </div>
             ` : ''}
@@ -473,14 +480,14 @@ export class SendGridService {
                 ${interventionData.contactName ? `
                 <div style="margin-bottom: 12px;">
                   <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Name:</span>
-                  <span style="color: #1e293b; font-size: 15px;">${interventionData.contactName}</span>
+                  <span style="color: #1e293b; font-size: 15px;">${EmailSendService.escapeHtml(interventionData.contactName)}</span>
                 </div>
                 ` : ''}
                 ${interventionData.contactEmail ? `
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 60px;">Email:</span>
-                  <a href="mailto:${interventionData.contactEmail}" style="color: #3b82f6; text-decoration: none; font-size: 15px; border-bottom: 1px solid transparent; transition: border-color 0.2s;">
-                    ${interventionData.contactEmail}
+                  <a href="mailto:${EmailSendService.escapeAttr(interventionData.contactEmail)}" style="color: #3b82f6; text-decoration: none; font-size: 15px; border-bottom: 1px solid transparent; transition: border-color 0.2s;">
+                    ${EmailSendService.escapeHtml(interventionData.contactEmail)}
                   </a>
                 </div>
                 ` : ''}
@@ -490,7 +497,7 @@ export class SendGridService {
             
             <!-- Action Button -->
             <div style="text-align: center; margin: 40px 0 32px;">
-              <a href="${interventionData.conversationUrl}" 
+              <a href="${EmailSendService.escapeAttr(interventionData.conversationUrl)}" 
                  style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #ffffff; padding: 16px 32px; text-decoration: none; border-radius: 8px; font-weight: 600; font-size: 16px; letter-spacing: -0.025em; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); transition: transform 0.2s, box-shadow 0.2s;">
                 View Conversation →
               </a>
@@ -499,7 +506,7 @@ export class SendGridService {
             <!-- Conversation ID -->
             <div style="text-align: center; margin-bottom: 24px;">
               <p style="margin: 0; color: #64748b; font-size: 13px; font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;">
-                Conversation ID: ${interventionData.conversationId}
+                Conversation ID: ${EmailSendService.escapeHtml(interventionData.conversationId)}
               </p>
             </div>
             
@@ -508,7 +515,7 @@ export class SendGridService {
           <!-- Footer -->
           <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
             <p style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
-              This email was generated automatically by ${this.getCompanyName()}.<br>
+              This email was generated automatically by ${EmailSendService.escapeHtml(this.getCompanyName())}.<br>
               Please do not reply to this message.
             </p>
           </div>
@@ -518,7 +525,7 @@ export class SendGridService {
         <!-- Powered by -->
         <div style="text-align: center; margin: 24px 0;">
           <p style="margin: 0; color: #94a3b8; font-size: 12px;">
-            Powered by <strong style="color: #667eea;">${this.getBrandingText()}</strong>
+            Powered by <strong style="color: #667eea;">${EmailSendService.escapeHtml(this.getBrandingText())}</strong>
           </p>
         </div>
         
@@ -535,20 +542,23 @@ export class SendGridService {
     resetUrl: string;
     expiresAt: Date;
   }): string {
+    const escapedName = EmailSendService.escapeHtml(resetData.name);
+    const companyName = EmailSendService.escapeHtml(this.getCompanyName());
+    
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #333; text-align: center; margin-bottom: 30px;">Restablecer contraseña</h2>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          Hola <strong>${resetData.name}</strong>,
+          Hola <strong>${escapedName}</strong>,
         </p>
         
         <p style="font-size: 16px; margin-bottom: 20px;">
-          Hemos recibido una solicitud para restablecer la contraseña de tu cuenta en ${this.getCompanyName()}.
+          Hemos recibido una solicitud para restablecer la contraseña de tu cuenta en ${companyName}.
         </p>
         
         <div style="text-align: center; margin: 30px 0;">
-          <a href="${resetData.resetUrl}" 
+          <a href="${EmailSendService.escapeAttr(resetData.resetUrl)}" 
              style="display: inline-block; background-color: #dc2626; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Restablecer contraseña
           </a>
