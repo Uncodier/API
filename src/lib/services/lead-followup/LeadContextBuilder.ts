@@ -131,7 +131,19 @@ export class LeadContextBuilder {
            `- Only personalize approved copywritings with lead-specific information to increase conversion\n` +
            `- Maintain the core message, tone, and structure of approved content\n` +
            `- Use lead data (name, company, pain points, etc.) to customize approved messages\n` +
-           `- Focus on lead-specific personalization rather than completely rewriting approved content\n` +
+           `- Focus on lead-specific personalization rather than completely rewriting approved content\n\n` +
+           `=== HIGH-IMPACT CONTENT STRATEGY ===\n` +
+           `The content of your email plays a huge role in whether it’s seen as a valuable message or as spam.\n\n` +
+           `1. Personalize Everything\n` +
+           `Address your recipients by name in the subject line and email body. Use other data points you have to make the email feel like a one-to-one conversation, not a mass blast. Generic emails are a major red flag for spam filters.\n\n` +
+           `2. Write Like a Human, Not a Marketer\n` +
+           `Avoid “spammy” keywords (e.g., “free,” “buy now,” “limited time offer”), excessive exclamation points, and using all caps. Write in a natural, conversational tone. The goal is to start a conversation, not to close a sale in the first email.\n\n` +
+           `3. Be Strategic with images\n` +
+           `Any type of image that isn’t an attachment but included in the message body actually sets off the spam alarms. Don’t do it. Also get rid of your open-tracker while you’re at it because how EVERY service checks if the recipient of your email opened your message is by encoding a small image into the body. Hurts deliverability!!\n\n` +
+           `4. CTA Selection\n` +
+           `Email providers are wary of emails links, especially in the first message of a conversation. A great strategy is to send your initial outreach with no links or images. Wait for the recipient to reply, and then send your call-to-action (CTA) link. This behavior is viewed far more favorably, as it’s now viewd as a “conversation.”\n\n` +
+           `5. HTML + Text\n` +
+           `Email providers oftentimes flag emails that only include HTML as spam. Providing a plain text alternative demonstrates the legitimacy of your message to providers like Gmail and increases the chances of it reaching the recipient’s inbox.\n\n` +
            `🌍 LANGUAGE & ACCENT GUIDELINES:\n` +
            `- Analyze the prospect's information (name, company, location, user agent, etc.) to determine their most likely language and accent\n` +
            `- Send messages in the language and accent most probable for the prospect based on their profile and context\n` +

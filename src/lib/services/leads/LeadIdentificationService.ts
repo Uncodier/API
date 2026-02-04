@@ -33,12 +33,31 @@ export class LeadIdentificationService {
     const emailNorm = this.normalizeEmail(traits?.email);
     const nameNorm = this.normalizeName(traits?.name);
 
-    if (!emailNorm || !nameNorm) {
-      // If we don't have both email and name, we can't safely upsert on the composite key
-      // but the DB constraint requires both. We'll fallback to search if needed,
-      // but the goal is to use the atomic upsert.
-      // For now, if one is missing, we try to find first (non-atomic, but better than nothing)
-      // and then insert. However, the user asked for name/email constraint.
+    if (!emailNorm && !nameNorm) {
+      // Case: Both email and name are missing.
+      // We cannot safely upsert on (site_id, name, email) because it would default to ('', '')
+      // and merge all such leads into one single record per site, violating the intent of individual leads.
+
+      // 1. Try to find by phone if available
+      if (traits?.phone) {
+        const phoneNorm = normalizePhoneForStorage(traits.phone);
+        if (phoneNorm) {
+          const { data: existingLead } = await supabaseAdmin
+            .from('leads')
+            .select('id')
+            .eq('site_id', site_id)
+            .eq('phone', phoneNorm)
+            .maybeSingle();
+
+          if (existingLead) {
+            return await this.updateExistingLead(existingLead.id, traits);
+          }
+        }
+      }
+
+      // 2. If we cannot identify by phone (or no phone provided), we cannot create a new lead safely.
+      // We reject the request rather than creating a duplicate/merged "anonymous" lead.
+      throw new Error('Cannot identify lead: Either name or email is required to create a new lead when no matching phone is found.');
     }
 
     const leadData: any = {

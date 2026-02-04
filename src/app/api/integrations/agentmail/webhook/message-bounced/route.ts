@@ -39,7 +39,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const message = payload.message;
+    let message = payload.message;
+
+    // Handle 'bounce' object structure if 'message' is missing (common in some provider payloads)
+    if (!message && payload.bounce) {
+      const bounce = payload.bounce;
+      const recipients = bounce.recipients?.map((r: any) => r.address) || [];
+      
+      // Construct a descriptive bounce reason combining type and sub_type
+      let bounceReason = bounce.type || 'Unknown';
+      if (bounce.sub_type) {
+        bounceReason = `${bounceReason} - ${bounce.sub_type}`;
+      }
+      
+      message = {
+        message_id: bounce.message_id,
+        inbox_id: bounce.inbox_id,
+        thread_id: bounce.thread_id,
+        from: undefined, // Not available in bounce object
+        to: recipients,
+        subject: undefined, // Not available in bounce object
+        timestamp: bounce.timestamp,
+        bounce_reason: bounceReason,
+      };
+      
+      console.log(`ℹ️ [AgentMail] Parsed 'bounce' object from payload. Message ID: ${message.message_id}`);
+    }
+
     if (!message || !message.message_id) {
       return NextResponse.json(
         { success: false, error: 'Missing message.message_id in payload' },
