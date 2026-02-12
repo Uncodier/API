@@ -109,6 +109,43 @@ export class AgentMailSendService {
 
     const agentmailResponse = await sendMessage(inboxId, agentmailParams);
 
+    // Update message tracking with AgentMail details
+    if (trackingId) {
+      try {
+        await supabaseAdmin
+          .from('messages')
+          .update({
+            custom_data: {
+              ...(trackingId ? await supabaseAdmin.from('messages').select('custom_data').eq('id', trackingId).single().then(r => r.data?.custom_data) : {}),
+              agentmail_message_id: agentmailResponse.message_id,
+              agentmail_thread_id: agentmailResponse.thread_id,
+              agentmail_inbox_id: inboxId,
+              delivery: {
+                status: 'sent',
+                channel: 'agentmail',
+                details: {
+                  channel: 'agentmail',
+                  recipient: targetEmail,
+                  subject: subject,
+                  timestamp: new Date().toISOString(),
+                  api_messageId: agentmailResponse.message_id,
+                },
+                success: true,
+                timestamp: new Date().toISOString(),
+              },
+              // Ensure recipient field is present for fallback searches
+              recipient: targetEmail,
+              subject: subject,
+            }
+          })
+          .eq('id', trackingId);
+          
+        console.log(`[AGENTMAIL_SEND] ✅ Updated message ${trackingId} with AgentMail ID: ${agentmailResponse.message_id}`);
+      } catch (updateError) {
+        console.warn(`[AGENTMAIL_SEND] ⚠️ Error updating message with AgentMail ID:`, updateError);
+      }
+    }
+
     // Save to synced_objects
     if (agentmailResponse.message_id) {
       try {

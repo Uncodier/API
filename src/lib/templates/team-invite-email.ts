@@ -224,4 +224,3 @@ export function generateTeamInviteHtml(data: TeamInviteEmailData): string {
     </html>
   `;
 }
-} 

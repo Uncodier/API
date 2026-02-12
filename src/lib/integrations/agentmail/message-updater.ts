@@ -150,6 +150,11 @@ export async function findMessageByDeliveryDetails(
         }
       }
       
+      // 4. custom_data.recipient (used by AgentMailSendService/EmailSendService)
+      if (customData.recipient === recipient) {
+        return true;
+      }
+      
       return false;
     });
 
