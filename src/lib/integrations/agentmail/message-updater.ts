@@ -95,30 +95,52 @@ export async function findMessageByDeliveryDetails(
     const timeStart = new Date(eventTime.getTime() - 5 * 60 * 1000).toISOString();
     const timeEnd = new Date(eventTime.getTime() + 5 * 60 * 1000).toISOString();
 
-    // Build the base query with time window and role filter
-    let query = supabaseAdmin
-      .from('messages')
-      .select('id, custom_data, created_at')
-      .gte('created_at', timeStart)
-      .lte('created_at', timeEnd)
-      .eq('role', 'assistant') // Sent messages are assistant role
-      .order('created_at', { ascending: false })
-      .limit(50); // Get more results to filter in-memory
+    // Helper function to query messages
+    const queryMessages = async (start: string, end: string) => {
+      return await supabaseAdmin
+        .from('messages')
+        .select('id, custom_data, created_at')
+        .gte('created_at', start)
+        .lte('created_at', end)
+        .eq('role', 'assistant') // Sent messages are assistant role
+        .order('created_at', { ascending: false })
+        .limit(50); // Get more results to filter in-memory
+    };
 
-    // Execute query without recipient filter (will filter in-memory)
-    const { data: allMessages, error } = await query;
+    // Phase 1: Search in short time window (±5 minutes)
+    let { data: allMessages, error } = await queryMessages(timeStart, timeEnd);
 
     if (error) {
       console.error('[AgentMail] ❌ Query error in fallback search:', error);
       return null;
     }
 
+    // Phase 2: If no messages found, search in extended time window (±24 hours)
     if (!allMessages || allMessages.length === 0) {
-      console.log('[AgentMail] ⚠️ No messages found in time window');
-      return null;
+      console.log('[AgentMail] ⚠️ No messages found in short time window (±5 min). Extending search to ±24h...');
+      
+      const extendedStart = new Date(eventTime.getTime() - 24 * 60 * 60 * 1000).toISOString();
+      const extendedEnd = new Date(eventTime.getTime() + 24 * 60 * 60 * 1000).toISOString();
+      
+      const { data: extendedMessages, error: extendedError } = await queryMessages(extendedStart, extendedEnd);
+      
+      if (extendedError) {
+        console.error('[AgentMail] ❌ Query error in extended fallback search:', extendedError);
+        return null;
+      }
+      
+      if (!extendedMessages || extendedMessages.length === 0) {
+        console.log('[AgentMail] ⚠️ No messages found in extended time window (±24h)');
+        return null;
+      }
+
+      console.log(`[AgentMail] 🔍 Found ${extendedMessages.length} messages in extended window (±24h)`);
+      allMessages = extendedMessages;
+    } else {
+      console.log(`[AgentMail] 🔍 Found ${allMessages.length} messages in short time window (±5 min)`);
     }
 
-    console.log(`[AgentMail] 🔍 Found ${allMessages.length} messages in time window, filtering by recipient...`);
+    console.log(`[AgentMail] 🔍 Filtering ${allMessages.length} candidate messages by recipient...`);
 
     // Filter messages by recipient in-memory (handle multiple storage locations and formats)
     const matchingMessages = allMessages.filter(msg => {
