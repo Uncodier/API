@@ -111,7 +111,8 @@ export class WorkflowService extends BaseWorkflowService {
     linkedin_profile?: string; 
     person_id?: string; 
     site_id: string; 
-    userId?: string 
+    userId?: string; 
+    company_name?: string 
   }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     return this.dataService.enrichLead(args, options);
   }

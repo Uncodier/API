@@ -462,7 +462,8 @@ export class DataWorkflowService extends BaseWorkflowService {
     linkedin_profile?: string; 
     person_id?: string; 
     site_id: string; 
-    userId?: string 
+    userId?: string; 
+    company_name?: string 
   }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
     try {
       if (!args.site_id) {

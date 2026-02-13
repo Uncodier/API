@@ -6,6 +6,7 @@ interface EnrichLeadWorkflowArgs {
   person_id?: string;
   site_id: string;
   userId?: string;
+  company_name?: string;
 }
 
 interface WorkflowExecutionOptions {
@@ -26,7 +27,7 @@ export async function POST(request: NextRequest) {
 
     // Validar y extraer parámetros del cuerpo de la petición
     const body = await request.json();
-    const { linkedin_profile, person_id, site_id, userId } = body;
+    const { linkedin_profile, person_id, site_id, userId, company_name } = body;
 
     // Validación del site_id
     if (!site_id || typeof site_id !== 'string') {
@@ -101,6 +102,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (company_name !== undefined && company_name !== null && typeof company_name !== 'string') {
+      console.error('❌ company_name must be a string');
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: { 
+            code: 'INVALID_COMPANY_NAME', 
+            message: 'company_name must be a valid string' 
+          } 
+        },
+        { status: 400 }
+      );
+    }
+
     console.log(`📝 Ejecutando workflow de enriquecimiento de lead para site_id: ${site_id}`);
 
     // Obtener instancia del servicio de workflows
@@ -111,7 +126,8 @@ export async function POST(request: NextRequest) {
       site_id,
       ...(linkedin_profile && { linkedin_profile }),
       ...(person_id && { person_id }),
-      ...(userId && { userId })
+      ...(userId && { userId }),
+      ...(company_name && { company_name })
     };
 
     // Opciones de ejecución del workflow
@@ -157,6 +173,7 @@ export async function POST(request: NextRequest) {
           linkedin_profile,
           person_id,
           userId,
+          company_name,
           workflowId: result.workflowId,
           executionId: result.executionId,
           runId: result.runId,
@@ -197,7 +214,8 @@ export async function GET() {
       person_id: 'string - ID de la persona (al menos uno requerido junto con linkedin_profile)'
     },
     optionalParams: {
-      userId: 'string - ID del usuario'
+      userId: 'string - ID del usuario',
+      company_name: 'string - Company name for lead enrichment'
     },
     example: {
       site_id: 'site_12345',
