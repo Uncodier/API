@@ -9,6 +9,7 @@ import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/D
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
 import { renameInstanceTool } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
+import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 
 /**
@@ -211,12 +212,13 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(providedSiteId);
       
-      // Add generateImage, generateVideo, and renameInstance tools to custom tools
+      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(providedSiteId, newInstance.id),
         generateVideoTool(providedSiteId, newInstance.id),
-        renameInstanceTool(providedSiteId, newInstance.id)
+        renameInstanceTool(providedSiteId, newInstance.id),
+        updateSiteSettingsTool(providedSiteId)
       ];
       
       // Build system prompt for new instance (simple context)
@@ -375,12 +377,13 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage, generateVideo, and renameInstance tools to custom tools
+      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(site_id, providedInstanceId),
         generateVideoTool(site_id, providedInstanceId),
-        renameInstanceTool(site_id, providedInstanceId)
+        renameInstanceTool(site_id, providedInstanceId),
+        updateSiteSettingsTool(site_id)
       ];
       
       // Build system prompt for uninstantiated/paused/stopped/error instance
@@ -454,12 +457,13 @@ export async function POST(request: NextRequest) {
       // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
       
-      // Add generateImage, generateVideo, and renameInstance tools to custom tools
+      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
       const toolsWithImageGeneration = [
         ...customTools,
         generateImageTool(site_id, providedInstanceId),
         generateVideoTool(site_id, providedInstanceId),
-        renameInstanceTool(site_id, providedInstanceId)
+        renameInstanceTool(site_id, providedInstanceId),
+        updateSiteSettingsTool(site_id)
       ];
       
       // Check if instance name is generic and add instruction to rename

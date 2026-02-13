@@ -11,6 +11,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
 import { renameInstanceToolScrapybara } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
+import { updateSiteSettingsToolScrapybara } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
@@ -226,6 +227,11 @@ export async function executeAssistant(
         if (tool?.name === 'rename_instance' && site_id) {
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting renameInstanceTool to Scrapybara format`);
           return renameInstanceToolScrapybara(ubuntuInstance, site_id, instance_id);
+        }
+        // Check if this is updateSiteSettingsTool (OpenAI format) by name
+        if (tool?.name === 'update_site_settings' && site_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting updateSiteSettingsTool to Scrapybara format`);
+          return updateSiteSettingsToolScrapybara(ubuntuInstance, site_id);
         }
         // Keep other tools as-is (assuming they're already Scrapybara-compatible)
         return tool;

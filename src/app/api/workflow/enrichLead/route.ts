@@ -102,18 +102,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (company_name !== undefined && company_name !== null && typeof company_name !== 'string') {
-      console.error('❌ company_name must be a string');
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: { 
-            code: 'INVALID_COMPANY_NAME', 
-            message: 'company_name must be a valid string' 
-          } 
-        },
-        { status: 400 }
-      );
+    if (company_name !== undefined && company_name !== null) {
+      if (typeof company_name !== 'string' || company_name.trim() === '') {
+        console.error('❌ company_name must be a non-empty string');
+        return NextResponse.json(
+          { 
+            success: false, 
+            error: { 
+              code: 'INVALID_COMPANY_NAME', 
+              message: 'company_name must be a valid non-empty string' 
+            } 
+          },
+          { status: 400 }
+        );
+      }
     }
 
     console.log(`📝 Ejecutando workflow de enriquecimiento de lead para site_id: ${site_id}`);
