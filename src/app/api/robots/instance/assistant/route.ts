@@ -348,11 +348,25 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine execution mode based on instance status
+    // error / running without provider = use assistant-only mode (no browser tools)
     let executionResult;
 
-    if (instance.status === 'uninstantiated' || instance.status === 'paused' || instance.status === 'stopped') {
-      // Execute without Scrapybara tools (treat paused/stopped as uninstantiated for assistant)
-      const statusType = (instance.status === 'paused' || instance.status === 'stopped') ? 'paused' : 'uninstantiated';
+    const useAssistantOnly =
+      instance.status === 'uninstantiated' ||
+      instance.status === 'paused' ||
+      instance.status === 'stopped' ||
+      instance.status === 'error' ||
+      (instance.status === 'running' && !instance.provider_instance_id);
+
+    if (useAssistantOnly) {
+      const statusType =
+        instance.status === 'paused' || instance.status === 'stopped'
+          ? 'paused'
+          : instance.status === 'error'
+            ? 'error'
+            : instance.status === 'running' && !instance.provider_instance_id
+              ? 'running (no provider)'
+              : 'uninstantiated';
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is ${statusType}, using OpenAI assistant without tools`);
       
       // Force Azure when instance is not running to avoid any Scrapybara provider usage
@@ -369,10 +383,15 @@ export async function POST(request: NextRequest) {
         renameInstanceTool(site_id, providedInstanceId)
       ];
       
-      // Build system prompt for uninstantiated/paused/stopped instance
-      const baseSystemPrompt = (instance.status === 'paused' || instance.status === 'stopped')
-        ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
-        : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
+      // Build system prompt for uninstantiated/paused/stopped/error instance
+      const baseSystemPrompt =
+        instance.status === 'paused' || instance.status === 'stopped'
+          ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
+          : instance.status === 'error'
+            ? 'You are a helpful AI assistant. Browser automation encountered an error and is not available, but you can still help with questions and advice.'
+            : instance.status === 'running' && !instance.provider_instance_id
+              ? 'You are a helpful AI assistant. Browser automation is still provisioning and not yet available.'
+              : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
       
       // Check if instance name is generic and add instruction to rename
       const instanceName = instance.name || '';
@@ -490,11 +509,17 @@ export async function POST(request: NextRequest) {
         });
       }
     } else {
+      console.error(`❌ [Assistant] Instance invalid state for execution:`, {
+        instance_id: providedInstanceId,
+        status: instance.status,
+        provider_instance_id: instance.provider_instance_id,
+        message: 'Instance must be uninstantiated, paused, stopped, or running',
+      });
       return NextResponse.json(
         {
           error: 'Instance is not in a valid state for execution',
           status: instance.status,
-          message: 'Instance must be uninstantiated, paused, stopped, or running',
+          message: 'Instance must be uninstantiated, paused, stopped, running, or error',
         },
         { status: 400 }
       );

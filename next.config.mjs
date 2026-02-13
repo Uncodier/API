@@ -44,7 +44,8 @@ export default withNextra({
     'why-is-node-running',
     'thread-stream',
     'imapflow',
-    'pino'
+    'pino',
+    'composio-core'
   ],
   
   // Configuración adicional para CSS Modules
