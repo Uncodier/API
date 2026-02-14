@@ -67,7 +67,7 @@ export class LeadIdentificationService {
       email: emailNorm ?? traits?.email ?? '',
       phone: traits?.phone ? normalizePhoneForStorage(traits.phone) : undefined,
       position: traits?.position,
-      status: 'contacted',
+      status: 'qualified',
       origin: traits?.origin || 'website',
       birthday: traits?.birthday,
       social_networks: traits?.social_networks || {},

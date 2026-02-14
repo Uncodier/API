@@ -137,6 +137,10 @@ export class WorkflowService extends BaseWorkflowService {
     return this.dataService.dailyProspectionWorkflow(args, options);
   }
 
+  public async leadQualificationWorkflow(args: { site_id: string }, options?: WorkflowExecutionOptions): Promise<WorkflowExecutionResponse> {
+    return this.dataService.leadQualificationWorkflow(args, options);
+  }
+
   public async leadInvalidation(args: { 
     lead_id: string; 
     email: string; 

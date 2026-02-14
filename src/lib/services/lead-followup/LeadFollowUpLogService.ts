@@ -143,7 +143,7 @@ export class LeadFollowUpLogService {
       const messageRecord: any = {
         conversation_id: conversationId,
         content: messageContent,
-        role: 'system',
+        role: 'assistant',
         user_id: userId,
         custom_data: {
           channel: channel,
