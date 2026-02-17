@@ -127,6 +127,8 @@ export class LeadContextBuilder {
   
   static getCopywritingGuidelines(): string {
     return `\n\n=== COPYWRITING GUIDELINES ===\n` +
+           `🚨 CRITICAL - EXPLICIT COPY & SEQUENCE ADHERENCE 🚨\n` +
+           `When explicit copies, message templates, or predefined message sequences are provided in the context, you MUST adhere to them as closely as possible. Do NOT deviate, paraphrase freely, or replace them with your own wording unless strictly necessary for lead-specific personalization (e.g., name, company). Preserve the original structure, tone, and key messaging.\n\n` +
            `🎯 IMPORTANT: If there are approved copywritings available for this lead or campaign, respect them as much as possible.\n` +
            `- Only personalize approved copywritings with lead-specific information to increase conversion\n` +
            `- Maintain the core message, tone, and structure of approved content\n` +

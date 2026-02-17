@@ -140,7 +140,7 @@ Name:`;
         },
       ],
       temperature: 0.8,
-      max_tokens: 30,
+      max_completion_tokens: 30,
     });
 
     let generatedName = response.choices[0]?.message?.content?.trim() || '';
@@ -275,7 +275,7 @@ Only respond with valid JSON, nothing else.`;
         },
       ],
       temperature: 0.3,
-      max_tokens: 100,
+      max_completion_tokens: 100,
       response_format: { type: 'json_object' },
     });
 

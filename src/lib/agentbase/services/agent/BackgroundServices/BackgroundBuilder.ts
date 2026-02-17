@@ -265,6 +265,7 @@ export class BackgroundBuilder {
                 content: item.content,
                 target_audience: item.target_audience || null,
                 use_case: item.use_case || null,
+                notes: item.notes || null,
                 status: item.status || 'draft',
                 tags: item.tags || []
               });
@@ -286,6 +287,10 @@ export class BackgroundBuilder {
               
               if (item.use_case) {
                 siteSection += `   Use Case: ${item.use_case}\n`;
+              }
+              
+              if (item.notes) {
+                siteSection += `   Notes: ${item.notes}\n`;
               }
               
               if (item.tags && item.tags.length > 0) {

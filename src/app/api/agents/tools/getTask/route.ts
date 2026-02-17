@@ -32,7 +32,7 @@ const GetTasksSchema = z.object({
 });
 
 /**
- * Tipos de tareas válidos
+ * Tipos de tareas válidos (referencia para documentación; la DB acepta cualquier type)
  */
 const VALID_TASK_TYPES = [
   'follow_up',
@@ -44,8 +44,73 @@ const VALID_TASK_TYPES = [
   'meeting_preparation',
   'market_research',
   'product_feedback',
-  'administrative'
+  'administrative',
+  'website_visit',
+  'demo',
+  'meeting',
+  'email',
+  'call',
+  'quote',
+  'contract',
+  'payment',
+  'referral',
+  'feedback',
 ];
+
+/**
+ * Core logic for getTask - callable from route or assistant protocol
+ */
+export async function getTaskCore(filters: Record<string, unknown>) {
+  const validatedFilters = GetTasksSchema.parse(filters);
+  const filterObj = { ...validatedFilters };
+
+  if (!validatedFilters.include_archived && filterObj.status === 'archived') {
+    throw new Error('No se pueden obtener tareas archivadas cuando include_archived es false');
+  }
+  if (!validatedFilters.include_completed && filterObj.stage === 'completed') {
+    throw new Error('No se pueden obtener tareas completadas cuando include_completed es false');
+  }
+
+  const [tasksResult, stats] = await Promise.all([
+    getTasks(filterObj),
+    getTaskStats(filterObj),
+  ]);
+
+  return {
+    success: true,
+    data: {
+      tasks: tasksResult.tasks,
+      pagination: {
+        total: tasksResult.total,
+        count: tasksResult.tasks.length,
+        offset: filterObj.offset,
+        limit: filterObj.limit,
+        has_more: tasksResult.hasMore,
+      },
+      filters_applied: {
+        ...validatedFilters,
+        ...(validatedFilters.user_id && { user_id: validatedFilters.user_id }),
+        ...(validatedFilters.site_id && { site_id: validatedFilters.site_id }),
+        ...(validatedFilters.lead_id && { lead_id: validatedFilters.lead_id }),
+        ...(validatedFilters.type && { type: validatedFilters.type }),
+        ...(validatedFilters.status && { status: validatedFilters.status }),
+        ...(validatedFilters.stage && { stage: validatedFilters.stage }),
+        ...(validatedFilters.priority && { priority: validatedFilters.priority }),
+        ...(validatedFilters.search && { search: validatedFilters.search }),
+      },
+      summary: {
+        total_tasks: stats.total,
+        by_status: stats.byStatus,
+        by_stage: stats.byStage,
+        by_priority: stats.byPriority,
+        by_type: stats.byType,
+        overdue_tasks: stats.overdue,
+        due_today: stats.dueToday,
+        due_this_week: stats.dueThisWeek,
+      },
+    },
+  };
+}
 
 /**
  * POST endpoint para obtener tareas con filtros
@@ -57,89 +122,8 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     console.log('[GetTask] Filtros recibidos:', JSON.stringify(body, null, 2));
 
-    // Validar los filtros de entrada
-    const validatedFilters = GetTasksSchema.parse(body);
-    console.log('[GetTask] Filtros validados correctamente');
-
-    // Validar que el tipo de tarea sea válido si se proporciona
-    if (validatedFilters.type && !VALID_TASK_TYPES.includes(validatedFilters.type)) {
-      return NextResponse.json({
-        success: false,
-        error: `Tipo de tarea inválido. Tipos válidos: ${VALID_TASK_TYPES.join(', ')}`
-      }, { status: 400 });
-    }
-
-    // Aplicar filtros de inclusión/exclusión
-    const filters = { ...validatedFilters };
-
-    // Si no incluir archivadas, filtrar por status - pero solo si se especifica archived
-    if (!validatedFilters.include_archived) {
-      if (filters.status === 'archived') {
-        return NextResponse.json({
-          success: false,
-          error: 'No se pueden obtener tareas archivadas cuando include_archived es false'
-        }, { status: 400 });
-      }
-    }
-
-    // Si no incluir completadas, filtrar por stage - pero solo si se especifica completed
-    if (!validatedFilters.include_completed) {
-      if (filters.stage === 'completed') {
-        return NextResponse.json({
-          success: false,
-          error: 'No se pueden obtener tareas completadas cuando include_completed es false'
-        }, { status: 400 });
-      }
-    }
-
-    console.log('[GetTask] Aplicando filtros:', filters);
-
-    // Obtener tareas y estadísticas en paralelo
-    const [tasksResult, stats] = await Promise.all([
-      getTasks(filters),
-      getTaskStats(filters)
-    ]);
-
-    console.log(`[GetTask] Encontradas ${tasksResult.tasks.length} tareas`);
-
-    // Preparar respuesta
-    const response = {
-      success: true,
-      data: {
-        tasks: tasksResult.tasks,
-        pagination: {
-          total: tasksResult.total,
-          count: tasksResult.tasks.length,
-          offset: filters.offset,
-          limit: filters.limit,
-          has_more: tasksResult.hasMore
-        },
-        filters_applied: {
-          ...validatedFilters,
-          ...(validatedFilters.user_id && { user_id: validatedFilters.user_id }),
-          ...(validatedFilters.site_id && { site_id: validatedFilters.site_id }),
-          ...(validatedFilters.lead_id && { lead_id: validatedFilters.lead_id }),
-          ...(validatedFilters.type && { type: validatedFilters.type }),
-          ...(validatedFilters.status && { status: validatedFilters.status }),
-          ...(validatedFilters.stage && { stage: validatedFilters.stage }),
-          ...(validatedFilters.priority && { priority: validatedFilters.priority }),
-          ...(validatedFilters.search && { search: validatedFilters.search })
-        },
-        summary: {
-          total_tasks: stats.total,
-          by_status: stats.byStatus,
-          by_stage: stats.byStage,
-          by_priority: stats.byPriority,
-          by_type: stats.byType,
-          overdue_tasks: stats.overdue,
-          due_today: stats.dueToday,
-          due_this_week: stats.dueThisWeek
-        }
-      }
-    };
-
-    return NextResponse.json(response, { status: 200 });
-
+    const result = await getTaskCore(body);
+    return NextResponse.json(result, { status: 200 });
   } catch (error) {
     console.error('[GetTask] Error inesperado:', error);
 
@@ -148,6 +132,13 @@ export async function POST(request: NextRequest) {
         success: false,
         error: 'Filtros de entrada inválidos',
         details: error.errors
+      }, { status: 400 });
+    }
+
+    if (error instanceof Error && error.message.includes('No se pueden obtener')) {
+      return NextResponse.json({
+        success: false,
+        error: error.message
       }, { status: 400 });
     }
 

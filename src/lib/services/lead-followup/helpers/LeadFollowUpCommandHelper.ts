@@ -2,6 +2,58 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { isValidUUID } from './LeadFollowUpUtils';
 
+// Format site approved copywriting for copywriter context (explicit inclusion for adherence)
+async function getSiteCopiesSection(siteId: string): Promise<string> {
+  try {
+    if (!isValidUUID(siteId)) return '';
+    const { data, error } = await supabaseAdmin
+      .from('copywriting')
+      .select('*')
+      .eq('site_id', siteId)
+      .eq('status', 'approved')
+      .order('created_at', { ascending: false });
+
+    if (error || !data || data.length === 0) return '';
+
+    const approved = data.filter((item: any) => item && item.status === 'approved' && item.copy_type && item.title && item.content);
+    if (approved.length === 0) return '';
+
+    const organized: Record<string, any[]> = {};
+    approved.forEach((item: any) => {
+      if (!organized[item.copy_type]) organized[item.copy_type] = [];
+      organized[item.copy_type].push({
+        title: item.title,
+        content: item.content,
+        target_audience: item.target_audience || null,
+        use_case: item.use_case || null,
+        notes: item.notes || null,
+        tags: item.tags || []
+      });
+    });
+
+    let section = `\n\n--- SITE APPROVED COPIES (MANDATORY ADHERENCE) ---\n`;
+    section += `These are the site's approved copywriting templates. You MUST adhere to them strictly. Use them as foundation—only personalize with lead data (name, company, etc.). Preserve structure, tone, and key messaging.\n\n`;
+
+    Object.entries(organized).forEach(([copyType, items]) => {
+      const formattedType = copyType.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase());
+      section += `### ${formattedType}\n`;
+      items.forEach((item: any, idx: number) => {
+        section += `${idx + 1}. **${item.title}**\n   Content: ${item.content}\n`;
+        if (item.target_audience) section += `   Target Audience: ${item.target_audience}\n`;
+        if (item.use_case) section += `   Use Case: ${item.use_case}\n`;
+        if (item.notes) section += `   Notes: ${item.notes}\n`;
+        if (item.tags?.length) section += `   Tags: ${item.tags.join(', ')}\n`;
+        section += `\n`;
+      });
+    });
+    section += `--- END SITE COPIES ---\n`;
+    return section;
+  } catch (e) {
+    console.error('[LeadFollowUpCommandHelper] Error fetching site copies:', e);
+    return '';
+  }
+}
+
 // Initialize agent and get command service
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();
@@ -153,49 +205,49 @@ export async function executeCopywriterRefinement(
   try {
     // Prepare context for second phase including first phase results
     let copywriterContext = baseContext;
-    
-    // Add first phase results to context
+
+    // Add site approved copies explicitly for greater adherence (copywriter may already have them in background)
+    const siteCopiesSection = await getSiteCopiesSection(siteId);
+    if (siteCopiesSection) {
+      copywriterContext += siteCopiesSection;
+    }
+
+    // Add first phase results to context (channel, strategy, language only - NOT title/message; copywriter chooses those)
     if (salesFollowUpContent && typeof salesFollowUpContent === 'object') {
       copywriterContext += `\n\n--- SALES TEAM INPUT (Phase 1 Results) ---\n`;
-      copywriterContext += `The Sales/CRM Specialist has provided the following initial follow-up content that you need to refine:\n\n`;
+      copywriterContext += `The Sales/CRM Specialist has selected the channel and strategic approach. YOU must create the title and message from scratch based on the lead context:\n\n`;
       
-      copywriterContext += `SELECTED CONTENT:\n`;
+      copywriterContext += `SALES STRATEGIC INPUT (channel & approach only):\n`;
       copywriterContext += `├─ Channel: ${salesFollowUpContent.channel || 'Not specified'}\n`;
-      copywriterContext += `├─ Title: ${salesFollowUpContent.title || 'Not specified'}\n`;
       copywriterContext += `├─ Strategy: ${salesFollowUpContent.strategy || 'Not specified'}\n`;
-      copywriterContext += `├─ Message Language: ${salesFollowUpContent.message_language || 'Not specified'}\n`;
-      copywriterContext += `└─ Message: ${salesFollowUpContent.message || 'Not specified'}\n\n`;
+      copywriterContext += `└─ Message Language: ${salesFollowUpContent.message_language || 'Not specified'}\n\n`;
       
       copywriterContext += `--- COPYWRITER INSTRUCTIONS ---\n`;
-      copywriterContext += `Your task is to IMPROVE and ENHANCE the sales content above, not to replace it completely.\n`;
-      copywriterContext += `The sales team has already done excellent strategic work selecting the right channel and approach.\n`;
-      copywriterContext += `IMPORTANT: The sales team has already selected the most effective channel (${salesFollowUpContent.channel}) to avoid overwhelming the lead.\n`;
+      copywriterContext += `Your task is to CREATE the title and message for the follow-up. The sales team has selected the channel and strategy; you choose the actual copy.\n`;
+      copywriterContext += `IMPORTANT: The sales team has selected the most effective channel (${salesFollowUpContent.channel}) to avoid overwhelming the lead. Use only this channel.\n`;
       
       copywriterContext += `\n🚨 CRITICAL VALIDATION RULES 🚨\n`;
       copywriterContext += `- MANDATORY: refined_title and refined_message must be non-empty strings with actual content. NEVER return empty refined_title or refined_message fields.\n`;
       copywriterContext += `- CRITICAL: DO NOT return the instruction text literally. The target descriptions (refined_title, refined_message) are INSTRUCTIONS for what to generate, NOT literal values to return. You must GENERATE actual content based on these instructions.\n`;
       copywriterContext += `- CHANNEL PRESERVATION: DO NOT return or modify the channel - it is already correctly set by the sales team to '${salesFollowUpContent.channel}'. The channel is handled automatically by the system.\n`;
-      copywriterContext += `- FALLBACK RULE: If you cannot improve the content meaningfully, return the original title and message unchanged rather than empty fields. It is better to return unchanged content than empty content.\n`;
       copywriterContext += `- ERROR PREVENTION: If you return empty fields, the system will fail. Always ensure your output contains valid, non-empty text.\n\n`;
       
-      copywriterContext += `Your role is to POLISH and REFINE what they've created. For the selected content, you must:\n`;
+      copywriterContext += `Your role is to CREATE compelling copy. You must:\n`;
       copywriterContext += `1. PRESERVE the original CHANNEL (${salesFollowUpContent.channel}) - DO NOT return or modify channel in your response\n`;
-      copywriterContext += `2. MAINTAIN the core sales message and intent - don't change the fundamental approach\n`;
-      copywriterContext += `3. ENHANCE the TITLE to make it more engaging while keeping the same purpose (MANDATORY: must be non-empty string)\n`;
-      copywriterContext += `4. IMPROVE the MESSAGE with better copywriting flow, clarity, and persuasion techniques (MANDATORY: must be non-empty string)\n`;
-      copywriterContext += `5. OPTIMIZE language for better emotional connection while preserving sales objectives\n`;
-      copywriterContext += `6. STRENGTHEN calls-to-action without changing the intended next step\n`;
-      copywriterContext += `7. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
-      copywriterContext += `8. Use ONLY the real information provided in the lead context\n`;
-      copywriterContext += `9. Write final content ready to send without additional editing\n`;
-      copywriterContext += `10. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off. NEVER sign as the agent or AI - emails are sent from real company employees\n`;
-      copywriterContext += `11. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
-      copywriterContext += `12. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
-      copywriterContext += `13. 🎯 STRATEGIC ALIGNMENT: If a specific copy strategy or approved templates are available for this lead/campaign, you MUST adhere to them strictly. Use the established strategy as your foundation and only personalize where necessary to increase relevance and conversion.\n`;
-      copywriterContext += `14. ⛓️ SEQUENCE AWARENESS: Analyze the lead's position in the follow-up sequence. Adjust the tone and content based on how many times they've been contacted. If it's an early touchpoint, focus on curiosity and value; if it's a later one, increase the sense of urgency or offer a different perspective while remaining professional.\n`;
-      copywriterContext += `15. 🚀 RESPONSE MAXIMIZATION: Your primary goal is to get a reply. Use strong hooks, psychological triggers (like social proof or reciprocity), and clear, low-friction calls-to-action to maximize the probability of a response.\n`;
-      copywriterContext += `16. 🔑 KEY PRINCIPLE: Think of yourself as a writing coach helping the sales team express their ideas more effectively, not as someone replacing their work.\n`;
-      copywriterContext += `17. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object. DO NOT include 'channel' field - it is preserved automatically.\n\n`;
+      copywriterContext += `2. CREATE an engaging TITLE appropriate for the channel and strategy (MANDATORY: must be non-empty string)\n`;
+      copywriterContext += `3. CREATE a persuasive MESSAGE with clear value proposition and strong call-to-action (MANDATORY: must be non-empty string)\n`;
+      copywriterContext += `4. OPTIMIZE language for emotional connection and sales objectives\n`;
+      copywriterContext += `5. DO NOT use placeholders or variables like [Name], {Company}, {{Variable}}, etc.\n`;
+      copywriterContext += `6. Use ONLY the real information provided in the lead context\n`;
+      copywriterContext += `7. Write final content ready to send without additional editing\n`;
+      copywriterContext += `8. SIGNATURE RULES: ALL CHANNELS already include automatic signatures/identifications, so DO NOT add any signature or sign-off. NEVER sign as the agent or AI - emails are sent from real company employees\n`;
+      copywriterContext += `9. INTRODUCTION RULES: When introducing yourself or the company, always speak about the COMPANY, its RESULTS, ACHIEVEMENTS, or SERVICES - never about yourself as a person\n`;
+      copywriterContext += `10. Focus on company value proposition, case studies, testimonials, or business outcomes rather than personal introductions\n`;
+      copywriterContext += `11. 🎯 STRATEGIC ALIGNMENT: If a specific copy strategy or approved templates are available for this lead/campaign, you MUST adhere to them strictly. Use the established strategy as your foundation and only personalize where necessary to increase relevance and conversion.\n`;
+      copywriterContext += `12. 🚨 EXPLICIT COPY & SEQUENCE ADHERENCE: When explicit copies, message templates, or predefined message sequences are provided, you MUST stick to them as closely as possible. Polish and personalize with lead data. Preserve structure, tone, and key messaging.\n`;
+      copywriterContext += `13. ⛓️ SEQUENCE AWARENESS: Analyze the lead's position in the follow-up sequence. Adjust the tone and content based on how many times they've been contacted. If it's an early touchpoint, focus on curiosity and value; if it's a later one, increase the sense of urgency or offer a different perspective while remaining professional.\n`;
+      copywriterContext += `14. 🚀 RESPONSE MAXIMIZATION: Your primary goal is to get a reply. Use strong hooks, psychological triggers (like social proof or reciprocity), and clear, low-friction calls-to-action to maximize the probability of a response.\n`;
+      copywriterContext += `15. ⚠️ OUTPUT FORMAT: Return 'refined_title' and 'refined_message' as separate fields as requested. Do not wrap them in a 'content' object. DO NOT include 'channel' field - it is preserved automatically.\n\n`;
     }
     
     // Create command for copywriter based on available channels from phase 1

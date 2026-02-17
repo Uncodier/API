@@ -12,6 +12,9 @@ import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImag
 import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
 import { renameInstanceToolScrapybara } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
 import { updateSiteSettingsToolScrapybara } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
+import { webSearchToolScrapybara } from '@/app/api/agents/tools/webSearch/assistantProtocol';
+import { saveOnMemoryToolScrapybara } from '@/app/api/agents/tools/saveOnMemory/assistantProtocol';
+import { getMemoriesToolScrapybara } from '@/app/api/agents/tools/getMemories/assistantProtocol';
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
@@ -33,6 +36,7 @@ export interface AssistantExecutionResult {
 /**
  * Create onStep callback handler for assistant execution
  * Logs steps and tool calls in real-time during execution
+ * When streamingLogId is provided, UPDATE that existing log instead of INSERT (streaming path)
  */
 function createAssistantOnStepHandler(
   instance_id: string | undefined,
@@ -40,7 +44,7 @@ function createAssistantOnStepHandler(
   user_id: string | undefined,
   provider: string
 ) {
-  return async (step: any) => {
+  return async (step: any, meta?: { streamingLogId?: string }) => {
     // Log step information
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ [ASSISTANT STEP] Text: ${step.text?.substring(0, 100) || 'No text'}...`);
     if (step.toolCalls?.length > 0) {
@@ -52,39 +56,57 @@ function createAssistantOnStepHandler(
       return;
     }
 
-    // Create parent log for the step
     const logMessage = step.text?.trim() || 'Assistant step execution';
-    
-    const { data: parentLogData, error: parentLogError } = await supabaseAdmin
-      .from('instance_logs')
-      .insert({
-        log_type: 'agent_action',
-        level: 'info',
-        message: logMessage,
-        tokens_used: step.usage ? {
-          promptTokens: step.usage.promptTokens || step.usage.input_tokens,
-          completionTokens: step.usage.completionTokens || step.usage.output_tokens,
-          totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
-        } : {},
-        details: {
-          provider,
-          response_type: 'assistant_step',
-          raw_text: step.text,
-          total_tool_calls: step.toolCalls?.length || 0,
-        },
-        instance_id: instance_id,
-        site_id: site_id,
-        user_id: user_id,
-      })
-      .select()
-      .single();
+    const logPayload = {
+      message: logMessage,
+      tokens_used: step.usage ? {
+        promptTokens: step.usage.promptTokens || step.usage.input_tokens,
+        completionTokens: step.usage.completionTokens || step.usage.output_tokens,
+        totalTokens: step.usage.totalTokens || (step.usage.input_tokens + step.usage.output_tokens),
+      } : {},
+      details: {
+        provider,
+        response_type: 'assistant_step',
+        raw_text: step.text,
+        total_tool_calls: step.toolCalls?.length || 0,
+      },
+    };
 
-    if (parentLogError) {
-      console.error('❌ Error saving assistant step log:', parentLogError);
-      return;
+    let parentLogId: string;
+
+    if (meta?.streamingLogId) {
+      // Streaming path: UPDATE the log we created during streaming
+      const { error: updateError } = await supabaseAdmin
+        .from('instance_logs')
+        .update(logPayload)
+        .eq('id', meta.streamingLogId);
+
+      if (updateError) {
+        console.error('❌ Error updating streaming assistant step log:', updateError);
+        return;
+      }
+      parentLogId = meta.streamingLogId;
+    } else {
+      // Non-streaming path: INSERT new log
+      const { data: parentLogData, error: parentLogError } = await supabaseAdmin
+        .from('instance_logs')
+        .insert({
+          log_type: 'agent_action',
+          level: 'info',
+          ...logPayload,
+          instance_id: instance_id,
+          site_id: site_id,
+          user_id: user_id,
+        })
+        .select()
+        .single();
+
+      if (parentLogError) {
+        console.error('❌ Error saving assistant step log:', parentLogError);
+        return;
+      }
+      parentLogId = parentLogData?.id;
     }
-
-    const parentLogId = parentLogData?.id;
 
     // Log individual tool calls if any
     if (step.toolCalls && step.toolCalls.length > 0 && parentLogId) {
@@ -165,6 +187,121 @@ function createAssistantOnStepHandler(
 }
 
 /**
+ * Create streaming callbacks for real-time instance_log updates.
+ * onStreamStart: INSERT a placeholder log, return its id.
+ * onStreamChunk: UPDATE that log with accumulated text (triggers Supabase Realtime UPDATE for subscribers).
+ */
+function createStreamingLogCallbacks(
+  instance_id: string,
+  site_id: string,
+  user_id: string | undefined,
+  provider: string
+): { onStreamStart: () => Promise<string>; onStreamChunk: (logId: string, accumulatedText: string) => Promise<void> } {
+  return {
+    onStreamStart: async () => {
+      const { data, error } = await supabaseAdmin
+        .from('instance_logs')
+        .insert({
+          log_type: 'agent_action',
+          level: 'info',
+          message: '',
+          details: { provider, response_type: 'assistant_step', streaming: true },
+          instance_id,
+          site_id,
+          user_id,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        console.error('❌ Error creating streaming log:', error);
+        throw new Error(`Failed to create streaming log: ${error.message}`);
+      }
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [STREAM] Created log ${data.id} for instance ${instance_id}`);
+      return data.id;
+    },
+    onStreamChunk: async (logId: string, accumulatedText: string) => {
+      const { error } = await supabaseAdmin
+        .from('instance_logs')
+        .update({ message: accumulatedText })
+        .eq('id', logId);
+      if (error) {
+        console.error('❌ Error updating streaming log chunk:', error);
+      }
+    },
+  };
+}
+
+/**
+ * Create streaming callbacks for reasoning/thinking content (o-series, etc).
+ * Inserts and updates instance_log with log_type: 'thinking'.
+ * onReasoningTokensUsed: Fallback when Chat Completions API doesn't expose reasoning in stream
+ * (reasoning tokens are internal). Creates a thinking log so user knows the model did reason.
+ */
+function createThinkingStreamLogCallbacks(
+  instance_id: string,
+  site_id: string,
+  user_id: string | undefined,
+  provider: string
+): {
+  onThinkingStreamStart: () => Promise<string>;
+  onThinkingStreamChunk: (logId: string, accumulatedText: string) => Promise<void>;
+  onReasoningTokensUsed: (reasoningTokensCount: number) => Promise<void>;
+} {
+  return {
+    onThinkingStreamStart: async () => {
+      const { data, error } = await supabaseAdmin
+        .from('instance_logs')
+        .insert({
+          log_type: 'thinking',
+          level: 'info',
+          message: '',
+          details: { provider, response_type: 'reasoning', streaming: true },
+          instance_id,
+          site_id,
+          user_id,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        console.error('❌ Error creating thinking streaming log:', error);
+        throw new Error(`Failed to create thinking streaming log: ${error.message}`);
+      }
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Created log ${data.id} for instance ${instance_id}`);
+      return data.id;
+    },
+    onThinkingStreamChunk: async (logId: string, accumulatedText: string) => {
+      const { error } = await supabaseAdmin
+        .from('instance_logs')
+        .update({ message: accumulatedText })
+        .eq('id', logId);
+      if (error) {
+        console.error('❌ Error updating thinking streaming log chunk:', error);
+      }
+    },
+    onReasoningTokensUsed: async (reasoningTokensCount: number) => {
+      const { error } = await supabaseAdmin.from('instance_logs').insert({
+        log_type: 'thinking',
+        level: 'info',
+        message: `Model used ${reasoningTokensCount} reasoning tokens.`,
+        details: {
+          provider,
+          response_type: 'reasoning_tokens_fallback',
+          reasoning_tokens: reasoningTokensCount,
+        },
+        instance_id,
+        site_id,
+        user_id,
+      });
+      if (error) {
+        console.error('❌ Error creating reasoning tokens fallback log:', error);
+      } else {
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Created fallback log: ${reasoningTokensCount} reasoning tokens used`);
+      }
+    },
+  };
+}
+
+/**
  * Execute assistant with OpenAI/Azure (no Scrapybara tools)
  */
 export async function executeAssistant(
@@ -233,6 +370,21 @@ export async function executeAssistant(
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting updateSiteSettingsTool to Scrapybara format`);
           return updateSiteSettingsToolScrapybara(ubuntuInstance, site_id);
         }
+        // Check if this is webSearch (OpenAI format) by name
+        if (tool?.name === 'webSearch') {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting webSearch tool to Scrapybara format`);
+          return webSearchToolScrapybara(ubuntuInstance);
+        }
+        // Check if this is save_on_memory (OpenAI format) by name
+        if (tool?.name === 'save_on_memory' && site_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting saveOnMemory tool to Scrapybara format`);
+          return saveOnMemoryToolScrapybara(ubuntuInstance, site_id, user_id ?? '', instance_id);
+        }
+        // Check if this is get_memories (OpenAI format) by name
+        if (tool?.name === 'get_memories' && site_id) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ Converting getMemories tool to Scrapybara format`);
+          return getMemoriesToolScrapybara(ubuntuInstance, site_id, user_id, instance_id);
+        }
         // Keep other tools as-is (assuming they're already Scrapybara-compatible)
         return tool;
       });
@@ -283,12 +435,26 @@ export async function executeAssistant(
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using OpenAI/Azure assistant without Scrapybara tools`);
       
       const executor = new OpenAIAgentExecutor();
-      
+      const streamingCallbacks =
+        instance_id && site_id
+          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
+          : undefined;
+      const thinkingStreamCallbacks =
+        instance_id && site_id
+          ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
+          : undefined;
+
       const executionResult = await executor.act({
         tools: custom_tools, // Only custom tools, no Scrapybara tools
         system: system_prompt,
         prompt: prompt,
         onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
+        stream: !!streamingCallbacks,
+        onStreamStart: streamingCallbacks?.onStreamStart,
+        onStreamChunk: streamingCallbacks?.onStreamChunk,
+        onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
+        onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
+        onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
         // No schema for simple chat
       });
 

@@ -1,112 +1,16 @@
+'use workflow';
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
-import { connectToInstance } from '@/lib/services/robot-plan-execution/instance-connector';
-import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
-import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
-import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
-import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
-import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
-import { renameInstanceTool } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
-import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
-
-/**
- * Generate agent background using BackgroundBuilder service
- */
-async function generateAgentBackground(siteId: string): Promise<string> {
-  try {
-    console.log(`🧩 [Assistant] Generating agent background for site: ${siteId}`);
-    
-    // Find the Growth Robot agent for this site
-    const robotAgent = await findGrowthRobotAgent(siteId);
-    if (!robotAgent) {
-      console.log(`⚠️ [Assistant] No Growth Robot agent found for site: ${siteId}`);
-      return '';
-    }
-    
-    console.log(`✅ [Assistant] Found Growth Robot agent: ${robotAgent.agentId}`);
-    
-    // Fetch agent data from database
-    const { data: agentData, error: agentError } = await supabaseAdmin
-      .from('agents')
-      .select('*')
-      .eq('id', robotAgent.agentId)
-      .single();
-    
-    if (agentError || !agentData) {
-      console.error(`❌ [Assistant] Error fetching agent data:`, agentError);
-      return '';
-    }
-    
-    // Get site information and campaigns
-    const siteInfo = await DataFetcher.getSiteInfo(siteId);
-    const activeCampaigns = await DataFetcher.getActiveCampaigns(siteId);
-    
-    console.log(`🔍 [Assistant] Site info available: ${siteInfo ? 'YES' : 'NO'}`);
-    console.log(`🔍 [Assistant] Active campaigns: ${activeCampaigns?.length || 0}`);
-    
-    // Generate background using BackgroundBuilder
-    const background = BackgroundBuilder.buildAgentPrompt(
-      agentData.id,
-      agentData.name,
-      agentData.description,
-      agentData.capabilities || [],
-      agentData.backstory,
-      agentData.system_prompt,
-      agentData.agent_prompt,
-      siteInfo,
-      activeCampaigns
-    );
-    
-    console.log(`✅ [Assistant] Generated agent background (${background.length} characters)`);
-    return background;
-    
-  } catch (error) {
-    console.error(`❌ [Assistant] Error generating agent background:`, error);
-    return '';
-  }
-}
-
-/**
- * Determine the instance type and available tools based on instance data and environment
- */
-function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {
-  isScrapybaraInstance: boolean;
-  shouldUseSDKTools: boolean;
-  provider: 'scrapybara' | 'azure' | 'openai';
-  capabilities: {
-    hasPCTools: boolean;
-    hasBrowserAutomation: boolean;
-    hasFileEditing: boolean;
-    hasCommandExecution: boolean;
-  };
-} {
-  const providerEnv = process.env.ROBOT_SDK_PROVIDER;
-  const provider = (providerEnv === 'scrapybara' || providerEnv === 'azure' || providerEnv === 'openai') 
-    ? providerEnv 
-    : 'scrapybara';
-  
-  // Determine if this is a Scrapybara instance
-  const isScrapybaraInstance = provider === 'scrapybara';
-  const shouldUseSDKTools = use_sdk_tools || isScrapybaraInstance;
-  
-  // Determine capabilities based on instance type and tools
-  const capabilities = {
-    hasPCTools: shouldUseSDKTools && instance?.provider_instance_id,
-    hasBrowserAutomation: shouldUseSDKTools && instance?.provider_instance_id,
-    hasFileEditing: shouldUseSDKTools && instance?.provider_instance_id,
-    hasCommandExecution: shouldUseSDKTools && instance?.provider_instance_id,
-  };
-  
-  return {
-    isScrapybaraInstance,
-    shouldUseSDKTools,
-    provider,
-    capabilities,
-  };
-}
+import {
+  fetchMemoriesContext,
+  generateAgentBackground,
+  getAssistantTools,
+  determineInstanceCapabilities,
+  ICP_CATEGORY_IDS_INSTRUCTION
+} from './utils';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -209,17 +113,12 @@ export async function POST(request: NextRequest) {
         ? providerEnv 
         : 'azure';
       
-      // Generate agent background for RAG context
+      // Generate agent background and memories context
       const agentBackground = await generateAgentBackground(providedSiteId);
-      
-      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
-      const toolsWithImageGeneration = [
-        ...customTools,
-        generateImageTool(providedSiteId, newInstance.id),
-        generateVideoTool(providedSiteId, newInstance.id),
-        renameInstanceTool(providedSiteId, newInstance.id),
-        updateSiteSettingsTool(providedSiteId)
-      ];
+      const memoriesContext = await fetchMemoriesContext(providedSiteId, userId, newInstance.id);
+
+      // Get all tools including custom ones
+      const toolsWithImageGeneration = getAssistantTools(providedSiteId, userId, newInstance.id, customTools);
       
       // Build system prompt for new instance (simple context)
       const baseSystemPrompt = 'You are a helpful AI assistant.';
@@ -240,7 +139,9 @@ export async function POST(request: NextRequest) {
         agentBackground,
         baseSystemPrompt,
         system_prompt || '',
+        memoriesContext,
         assetsContext,
+        ICP_CATEGORY_IDS_INSTRUCTION,
         renameInstruction
       ].filter(Boolean).join('\n\n');
       
@@ -304,7 +205,7 @@ export async function POST(request: NextRequest) {
       .eq('instance_id', providedInstanceId)
       .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
       .order('created_at', { ascending: true })
-      .limit(10);
+      .limit(500);
 
     // Build context from historical logs
     let historyContext = '';
@@ -314,24 +215,13 @@ export async function POST(request: NextRequest) {
         const timestamp = new Date(log.created_at).toLocaleTimeString();
         const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
         
-        // Handle tool calls with special formatting for generate_image and generate_video
+        // Handle tool calls with special formatting
         if (log.log_type === 'tool_call' && log.tool_name && log.tool_result) {
-          if (log.tool_name === 'generate_image') {
+          if (['generate_image', 'generate_video'].includes(log.tool_name)) {
             const toolResult = log.tool_result;
-            if (toolResult.success && toolResult.output && toolResult.output.images) {
-              const urls = toolResult.output.images.map((img: any) => img.url).filter(Boolean);
-              if (urls.length > 0) {
-                historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
-              } else {
-                historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
-              }
-            } else {
-              historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
-            }
-          } else if (log.tool_name === 'generate_video') {
-            const toolResult = log.tool_result;
-            if (toolResult.success && toolResult.output && toolResult.output.videos) {
-              const urls = toolResult.output.videos.map((video: any) => video.url).filter(Boolean);
+            const outputKey = log.tool_name === 'generate_image' ? 'images' : 'videos';
+            if (toolResult.success && toolResult.output && toolResult.output[outputKey]) {
+              const urls = toolResult.output[outputKey].map((item: any) => item.url).filter(Boolean);
               if (urls.length > 0) {
                 historyContext += `[${timestamp}] ${role}: Generated ${log.tool_name} - URLs: ${urls.join(', ')}\n`;
               } else {
@@ -350,7 +240,6 @@ export async function POST(request: NextRequest) {
     }
 
     // Determine execution mode based on instance status
-    // error / running without provider = use assistant-only mode (no browser tools)
     let executionResult;
 
     const useAssistantOnly =
@@ -371,22 +260,12 @@ export async function POST(request: NextRequest) {
               : 'uninstantiated';
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is ${statusType}, using OpenAI assistant without tools`);
       
-      // Force Azure when instance is not running to avoid any Scrapybara provider usage
       const provider = 'azure';
       
-      // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
+      const memoriesContext = await fetchMemoriesContext(site_id, user_id, providedInstanceId);
+      const toolsWithImageGeneration = getAssistantTools(site_id, user_id, providedInstanceId, customTools);
       
-      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
-      const toolsWithImageGeneration = [
-        ...customTools,
-        generateImageTool(site_id, providedInstanceId),
-        generateVideoTool(site_id, providedInstanceId),
-        renameInstanceTool(site_id, providedInstanceId),
-        updateSiteSettingsTool(site_id)
-      ];
-      
-      // Build system prompt for uninstantiated/paused/stopped/error instance
       const baseSystemPrompt =
         instance.status === 'paused' || instance.status === 'stopped'
           ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
@@ -396,7 +275,6 @@ export async function POST(request: NextRequest) {
               ? 'You are a helpful AI assistant. Browser automation is still provisioning and not yet available.'
               : 'You are a helpful AI assistant. This is an uninstantiated instance without browser automation tools.';
       
-      // Check if instance name is generic and add instruction to rename
       const instanceName = instance.name || '';
       const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
       const isGenericName = genericNames.some(generic => 
@@ -412,8 +290,10 @@ export async function POST(request: NextRequest) {
         agentBackground,
         baseSystemPrompt,
         system_prompt || '',
+        memoriesContext,
         historyContext,
         assetsContext,
+        ICP_CATEGORY_IDS_INSTRUCTION,
         renameInstruction,
         toolsWithImageGeneration.length > 0 ? `\n\n🛠️ AVAILABLE TOOLS: ${toolsWithImageGeneration.length} custom tool(s)` : ''
       ].filter(Boolean).join('\n');
@@ -428,7 +308,6 @@ export async function POST(request: NextRequest) {
         user_id: user_id,
       });
     } else if (instance.status === 'running' && instance.provider_instance_id) {
-      // Execute with appropriate tools based on instance type
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is running, determining tool availability`);
       
       const { isScrapybaraInstance, shouldUseSDKTools, provider, capabilities } = determineInstanceCapabilities(instance, use_sdk_tools);
@@ -436,37 +315,24 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Provider: ${provider}, Is Scrapybara: ${isScrapybaraInstance}, Use SDK tools: ${shouldUseSDKTools}`);
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Capabilities:`, capabilities);
       
-      // Build system prompt based on instance type and available tools
       let baseSystemPrompt: string;
       let toolsContext: string;
       
       if (capabilities.hasPCTools && isScrapybaraInstance) {
-        // Scrapybara instance with full automation tools
         baseSystemPrompt = 'You are a helpful AI assistant with access to Scrapybara browser automation tools. You can control the computer, execute commands, and edit files.';
         toolsContext = '\n\n🛠️ AVAILABLE SCRAPYBARA TOOLS:\n- computer(): Control browser, click, type, navigate, take screenshots\n- bash(): Execute shell commands and system operations\n- edit(): Edit files and manage file system\n\n💡 You have full PC management capabilities through these tools.\n\n🚨 IMPORTANT: This is a Scrapybara instance - you have access to browser automation and PC control tools.';
       } else if (capabilities.hasPCTools && !isScrapybaraInstance) {
-        // Our assistant with PC management tools
         baseSystemPrompt = 'You are a helpful AI assistant with access to PC management tools. You can control the computer, execute commands, and edit files.';
         toolsContext = '\n\n🛠️ AVAILABLE PC MANAGEMENT TOOLS:\n- computer(): Control browser, click, type, navigate, take screenshots\n- bash(): Execute shell commands and system operations\n- edit(): Edit files and manage file system\n\n💡 You have full PC management capabilities through these tools.\n\n🚨 IMPORTANT: This is our assistant instance - you have access to PC management tools for computer control.';
       } else {
-        // No tools available
         baseSystemPrompt = 'You are a helpful AI assistant. Browser automation tools are not available in this mode.';
         toolsContext = '\n\n⚠️ NOTE: PC management tools are not available in this mode. You can only provide text-based assistance.';
       }
       
-      // Generate agent background for RAG context
       const agentBackground = await generateAgentBackground(site_id);
+      const memoriesContext = await fetchMemoriesContext(site_id, user_id, providedInstanceId);
+      const toolsWithImageGeneration = getAssistantTools(site_id, user_id, providedInstanceId, customTools);
       
-      // Add generateImage, generateVideo, renameInstance, and updateSiteSettings tools to custom tools
-      const toolsWithImageGeneration = [
-        ...customTools,
-        generateImageTool(site_id, providedInstanceId),
-        generateVideoTool(site_id, providedInstanceId),
-        renameInstanceTool(site_id, providedInstanceId),
-        updateSiteSettingsTool(site_id)
-      ];
-      
-      // Check if instance name is generic and add instruction to rename
       const instanceName = instance.name || '';
       const genericNames = ['Assistant Session', 'New Instance', 'Untitled', 'Instance', 'Session', 'Assistant'];
       const isGenericName = genericNames.some(generic => 
@@ -483,35 +349,29 @@ export async function POST(request: NextRequest) {
         baseSystemPrompt,
         toolsContext,
         system_prompt || '',
+        memoriesContext,
         historyContext,
         assetsContext,
+        ICP_CATEGORY_IDS_INSTRUCTION,
         renameInstruction,
         toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
       ].filter(Boolean).join('\n');
       
       // Clean base64 data from system prompt if present
+      let finalSystemPrompt = combinedSystemPrompt;
       if (combinedSystemPrompt.includes('base64')) {
-        const cleanedSystemPrompt = combinedSystemPrompt.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
-        executionResult = await executeAssistant(message, instance, {
-          use_sdk_tools: shouldUseSDKTools,
-          provider: provider,
-          system_prompt: cleanedSystemPrompt,
-          custom_tools: toolsWithImageGeneration,
-          instance_id: providedInstanceId,
-          site_id: site_id,
-          user_id: user_id,
-        });
-      } else {
-        executionResult = await executeAssistant(message, instance, {
-          use_sdk_tools: shouldUseSDKTools,
-          provider: provider,
-          system_prompt: combinedSystemPrompt,
-          custom_tools: toolsWithImageGeneration,
-          instance_id: providedInstanceId,
-          site_id: site_id,
-          user_id: user_id,
-        });
+        finalSystemPrompt = combinedSystemPrompt.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
       }
+      
+      executionResult = await executeAssistant(message, instance, {
+        use_sdk_tools: shouldUseSDKTools,
+        provider: provider,
+        system_prompt: finalSystemPrompt,
+        custom_tools: toolsWithImageGeneration,
+        instance_id: providedInstanceId,
+        site_id: site_id,
+        user_id: user_id,
+      });
     } else {
       console.error(`❌ [Assistant] Instance invalid state for execution:`, {
         instance_id: providedInstanceId,
@@ -549,4 +409,3 @@ export async function POST(request: NextRequest) {
     }, { status: 500 });
   }
 }
-

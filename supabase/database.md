@@ -1324,7 +1324,7 @@ CREATE TABLE public.automation_auth_sessions (
 -- Detailed logs of all actions, tool calls, and results within instances
 CREATE TABLE public.instance_logs (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
-  log_type text NOT NULL CHECK (log_type = ANY (ARRAY['system'::text, 'user_action'::text, 'agent_action'::text, 'tool_call'::text, 'tool_result'::text, 'error'::text, 'performance'::text])),
+  log_type text NOT NULL CHECK (log_type = ANY (ARRAY['system'::text, 'user_action'::text, 'agent_action'::text, 'tool_call'::text, 'tool_result'::text, 'error'::text, 'performance'::text, 'thinking'::text])),
   level text NOT NULL DEFAULT 'info' CHECK (level = ANY (ARRAY['debug'::text, 'info'::text, 'warn'::text, 'error'::text, 'critical'::text])),
   message text NOT NULL,
   details jsonb DEFAULT '{}'::jsonb,

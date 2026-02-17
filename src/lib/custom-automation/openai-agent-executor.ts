@@ -147,11 +147,23 @@ export interface ActOptions {
   prompt?: string;
   messages?: Message[];
   schema?: z.ZodType<any>;
-  onStep?: (step: Step) => Promise<void> | void;
+  onStep?: (step: Step, meta?: { streamingLogId?: string }) => Promise<void> | void;
   maxIterations?: number;
   temperature?: number;
   reasoningEffort?: 'low' | 'medium' | 'high'; // For o-series models (o1, o3, GPT-5.2)
   verbosity?: 'low' | 'medium' | 'high'; // Output verbosity for o-series models
+  /** Enable streaming - content chunks will be sent to onStreamChunk. Requires onStreamStart/onStreamChunk. */
+  stream?: boolean;
+  /** Called when first content chunk arrives - should INSERT log row and return log id for updates */
+  onStreamStart?: () => Promise<string>;
+  /** Called with accumulated text as chunks arrive - update instance_log for real-time display */
+  onStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  /** Called when first reasoning/thinking chunk arrives - INSERT thinking log, return id */
+  onThinkingStreamStart?: () => Promise<string>;
+  /** Called with accumulated thinking text as chunks arrive - update instance_log (log_type: thinking) */
+  onThinkingStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  /** Fallback: Chat Completions API does NOT expose reasoning content in stream. When usage contains reasoning_tokens, call this to create a thinking log with a placeholder. */
+  onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
 }
 
 export interface ActResponse {
@@ -270,6 +282,148 @@ export class OpenAIAgentExecutor {
   }
 
   /**
+   * Run streaming completion: iterate over chunks, accumulate message, call onStreamChunk.
+   * Supports reasoning/thinking via delta.reasoning_content or delta.reasoning (o-series, etc).
+   * Throttles DB updates to ~80ms to avoid excessive instance_log writes.
+   */
+  private async runStreamingCompletion(
+    completionOptions: Record<string, any>,
+    callbacks: {
+      onStreamStart: () => Promise<string>;
+      onStreamChunk: (logId: string, text: string) => Promise<void>;
+      onThinkingStreamStart?: () => Promise<string>;
+      onThinkingStreamChunk?: (logId: string, text: string) => Promise<void>;
+      onReasoningTokensUsed?: (count: number) => Promise<void>;
+    },
+    totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number }
+  ): Promise<{
+    message: any;
+    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    finish_reason?: string;
+    streamingLogId?: string;
+  }> {
+    const opts = {
+      ...completionOptions,
+      stream: true,
+      stream_options: { include_usage: true }, // Required to get usage (incl. reasoning_tokens) in final chunk
+    };
+    const stream = await this.client.chat.completions.create(opts);
+
+    let content = '';
+    let reasoningContent = '';
+    const toolCallsAccum: Record<number, { id?: string; type: 'function'; function: { name?: string; arguments?: string } }> = {};
+    let finishReason: string | undefined;
+    let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+    let streamingLogId: string | undefined;
+    let thinkingLogId: string | undefined;
+    const STREAM_THROTTLE_MS = 80;
+    let lastEmitTime = 0;
+    let lastThinkingEmitTime = 0;
+
+    for await (const chunk of stream as AsyncIterable<any>) {
+      // Usage can arrive in a final chunk with choices: [] - must process BEFORE any continue
+      if (chunk.usage) {
+        usage = chunk.usage;
+        totalUsage.promptTokens += chunk.usage.prompt_tokens || 0;
+        totalUsage.completionTokens += chunk.usage.completion_tokens || 0;
+        totalUsage.totalTokens += chunk.usage.total_tokens || 0;
+      }
+
+      const choice = chunk.choices?.[0];
+      if (!choice) continue; // Usage-only chunk (choices empty) - we already captured usage above
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+
+      const delta = choice.delta || {};
+
+      // Reasoning/thinking (o-series, GPT-5 with reasoning_content or reasoning in delta)
+      const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+      if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
+        reasoningContent += reasoningDelta;
+        if (!thinkingLogId) {
+          thinkingLogId = await callbacks.onThinkingStreamStart();
+        }
+        const now = Date.now();
+        if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
+          lastThinkingEmitTime = now;
+          await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+        }
+      }
+
+      if (typeof delta.content === 'string' && delta.content) {
+        content += delta.content;
+        if (!streamingLogId) {
+          streamingLogId = await callbacks.onStreamStart();
+        }
+        const now = Date.now();
+        if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
+          lastEmitTime = now;
+          await callbacks.onStreamChunk(streamingLogId, content);
+        }
+      }
+
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!toolCallsAccum[idx]) {
+            toolCallsAccum[idx] = { type: 'function', function: {} };
+          }
+          if (tc.id) toolCallsAccum[idx].id = tc.id;
+          if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
+          if (tc.function?.arguments) {
+            toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
+          }
+        }
+      }
+    }
+
+    // Final emit for any remaining content
+    if (streamingLogId && content) {
+      await callbacks.onStreamChunk(streamingLogId, content);
+    }
+    // Final emit for any remaining thinking
+    if (thinkingLogId && reasoningContent && callbacks.onThinkingStreamChunk) {
+      await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+    }
+
+    // Fallback: Chat Completions API does NOT expose reasoning content in delta. When model used
+    // reasoning_tokens (o-series, GPT-5), create a thinking log so user knows the model did reason.
+    if (!thinkingLogId && callbacks.onReasoningTokensUsed && usage) {
+      const u = usage as any;
+      const reasoningTokens =
+        u?.completion_tokens_details?.reasoning_tokens ??
+        u?.output_tokens_details?.reasoning_tokens ??
+        u?.reasoning_tokens ??
+        0;
+      if (reasoningTokens > 0) {
+        await callbacks.onReasoningTokensUsed(reasoningTokens);
+      }
+    }
+
+    const toolCallsArray = Object.keys(toolCallsAccum)
+      .map((k) => Number(k))
+      .sort((a, b) => a - b)
+      .map((idx) => toolCallsAccum[idx])
+      .filter((tc) => tc.id && tc.function?.name);
+
+    const message: any = {
+      role: 'assistant',
+      content: content || null,
+    };
+    if (toolCallsArray.length > 0) {
+      message.tool_calls = toolCallsArray.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
+      }));
+    }
+
+    return { message, usage, finish_reason: finishReason, streamingLogId };
+  }
+
+  /**
    * Main execution method that mimics Scrapybara's act() functionality
    */
   async act(options: ActOptions): Promise<ActResponse> {
@@ -285,6 +439,12 @@ export class OpenAIAgentExecutor {
       temperature = 1, // Changed from 0.7 to 1 (Azure OpenAI default)
       reasoningEffort = 'low', // Default to low for o-series models
       verbosity = 'low', // Default to low for concise responses
+      stream: useStreaming = false,
+      onStreamStart,
+      onStreamChunk,
+      onThinkingStreamStart,
+      onThinkingStreamChunk,
+      onReasoningTokensUsed,
     } = options;
 
     // Use provided model or fall back to deployment
@@ -447,22 +607,51 @@ export class OpenAIAgentExecutor {
         // Debug: Log messages before API call to identify base64 issues
         console.log(`🔍 [DEBUG] Messages being sent to OpenAI:`, JSON.stringify(messages, null, 2).substring(0, 2000));
         
-        // Call Azure OpenAI API
-        console.log(`⏱️ [TIMING] Calling Azure OpenAI API...`);
-        const azureStartTime = Date.now();
-        const completion = await this.client.chat.completions.create(completionOptions);
-        const azureEndTime = Date.now();
-        const azureDuration = azureEndTime - azureStartTime;
-        console.log(`⏱️ [TIMING] Azure OpenAI response received in ${azureDuration}ms (${(azureDuration/1000).toFixed(1)}s)`);
+        const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
+        const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
         
-        const response = completion.choices[0];
+        let response: { message: any; usage?: any; finish_reason?: string };
+        
+        if (useStreamingPath) {
+          // Streaming path: iterate over chunks, accumulate message, call onStreamChunk
+          const streamCallbacks: Parameters<typeof this.runStreamingCompletion>[1] = {
+            onStreamStart: onStreamStart!,
+            onStreamChunk: onStreamChunk!,
+            onReasoningTokensUsed: onReasoningTokensUsed,
+          };
+          if (useThinkingStream) {
+            streamCallbacks.onThinkingStreamStart = onThinkingStreamStart!;
+            streamCallbacks.onThinkingStreamChunk = onThinkingStreamChunk!;
+          }
+          response = await this.runStreamingCompletion(
+            completionOptions,
+            streamCallbacks,
+            totalUsage
+          );
+        } else {
+          // Non-streaming path (original behavior)
+          console.log(`⏱️ [TIMING] Calling Azure OpenAI API...`);
+          const azureStartTime = Date.now();
+          const completion = await this.client.chat.completions.create(completionOptions);
+          const azureEndTime = Date.now();
+          const azureDuration = azureEndTime - azureStartTime;
+          console.log(`⏱️ [TIMING] Azure OpenAI response received in ${azureDuration}ms (${(azureDuration/1000).toFixed(1)}s)`);
+          
+          const choice = completion.choices[0];
+          response = {
+            message: choice.message,
+            usage: completion.usage,
+            finish_reason: choice.finish_reason ?? undefined,
+          } as any;
+        }
+
         const message = response.message;
 
         // Track usage
-        if (completion.usage) {
-          totalUsage.promptTokens += completion.usage.prompt_tokens;
-          totalUsage.completionTokens += completion.usage.completion_tokens;
-          totalUsage.totalTokens += completion.usage.total_tokens;
+        if (response.usage) {
+          totalUsage.promptTokens += response.usage.prompt_tokens;
+          totalUsage.completionTokens += response.usage.completion_tokens;
+          totalUsage.totalTokens += response.usage.total_tokens;
         }
 
         // Add assistant message to history
@@ -472,9 +661,9 @@ export class OpenAIAgentExecutor {
         const step: Step = {
           text: message.content || '',
           usage: {
-            promptTokens: completion.usage?.prompt_tokens || 0,
-            completionTokens: completion.usage?.completion_tokens || 0,
-            totalTokens: completion.usage?.total_tokens || 0,
+            promptTokens: response.usage?.prompt_tokens || 0,
+            completionTokens: response.usage?.completion_tokens || 0,
+            totalTokens: response.usage?.total_tokens || 0,
           },
         };
 
@@ -851,11 +1040,12 @@ export class OpenAIAgentExecutor {
 
         // Call onStep callback
         if (onStep) {
-          await onStep(step);
+          const streamingLogId = (response as any).streamingLogId;
+          await onStep(step, streamingLogId ? { streamingLogId } : undefined);
         }
 
         // Check if we should stop
-        const shouldStop = response.finish_reason === 'stop' || 
+        const shouldStop = (response as any).finish_reason === 'stop' || 
                           (schema && finalOutput !== undefined) ||
                           !message.tool_calls;
         

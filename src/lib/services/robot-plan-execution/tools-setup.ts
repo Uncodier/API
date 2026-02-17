@@ -4,6 +4,7 @@
  */
 
 import { bashTool, computerTool, editTool } from 'scrapybara/tools';
+import { webSearchToolScrapybara } from '@/app/api/agents/tools/webSearch/assistantProtocol';
 import { ScrapybaraClient } from 'scrapybara';
 
 /**
@@ -116,12 +117,14 @@ export function setupTools(ubuntuInstance: any) {
     createToolWithRetry(bashTool(ubuntuInstance), 'bash', 2),
     createToolWithRetry(computerTool(ubuntuInstance), 'computer', 2),
     createToolWithRetry(editTool(ubuntuInstance), 'edit', 1),
+    createToolWithRetry(webSearchToolScrapybara(ubuntuInstance), 'webSearch', 2),
   ] as any;
   
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Using Scrapybara SDK tools with retry logic:`);
   console.log(`  - bashTool: Execute bash commands (max 2 retries)`);
   console.log(`  - computerTool: Mouse, keyboard, screenshot actions (max 2 retries)`);
   console.log(`  - editTool: File editing operations (max 1 retry)`);
+  console.log(`  - webSearchTool: Perform web searches (max 2 retries)`);
   
   return tools;
 }
