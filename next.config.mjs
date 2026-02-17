@@ -1,4 +1,6 @@
 import nextra from 'nextra'
+import pkg from 'workflow/next'
+const { withWorkflow } = pkg
 import { getNextJsCorsConfig } from './cors.config.js'
 import { createRequire } from 'module'
 const require = createRequire(import.meta.url)
@@ -19,7 +21,7 @@ const corsConfig = getNextJsCorsConfig();
 console.log(`[NEXT-CONFIG] Configuración CORS cargada con ${corsConfig.length} entradas`);
 
 // You can include other Next.js configuration options here, in addition to Nextra settings:
-export default withNextra({
+const nextraConfig = withNextra({
   reactStrictMode: true,
   experimental: {
     serverActions: {
@@ -162,3 +164,5 @@ export default withNextra({
     return allHeaders;
   }
 })
+
+export default withWorkflow(nextraConfig)

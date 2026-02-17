@@ -33,6 +33,7 @@ import { getFinderCategoryIdsTool } from '@/app/api/agents/tools/getFinderCatego
 import { getContentTool } from '@/app/api/agents/tools/getContent/assistantProtocol';
 import { createContentTool } from '@/app/api/agents/tools/createContent/assistantProtocol';
 import { updateContentTool } from '@/app/api/agents/tools/updateContent/assistantProtocol';
+import { searchRegionVenuesTool } from '@/app/api/agents/tools/searchRegionVenues/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -198,5 +199,6 @@ export const getAssistantTools = (
     getContentTool(siteId, userId),
     createContentTool(siteId, userId),
     updateContentTool(siteId, userId),
+    searchRegionVenuesTool(siteId),
   ];
 };
