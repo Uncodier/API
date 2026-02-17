@@ -31,7 +31,7 @@ Proporciona una interfaz fácil de usar para:
 - Intentar reparar un JSON incompleto
 - Continuar la generación de un JSON incompleto
 
-### 3. API de Continuación (`/api/continuation/route.ts`)
+### 3. API de Continuación (`/api/ai/continuation/route.ts`)
 
 Expone un endpoint HTTP para:
 - Verificar si un JSON está incompleto (GET)
@@ -100,8 +100,8 @@ if (continuationClient.isIncomplete(jsonString)) {
 ### Uso de la API
 
 ```typescript
-// POST /api/continuation
-const response = await fetch('/api/continuation', {
+// POST /api/ai/continuation
+const response = await fetch('/api/ai/continuation', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',

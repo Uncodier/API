@@ -1,7 +1,7 @@
 'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
+import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
   fetchMemoriesContext,
@@ -11,8 +11,22 @@ import {
   ICP_CATEGORY_IDS_INSTRUCTION
 } from './utils';
 
-// Define the core logic as a step function
-export async function executeAssistantLogic(
+export interface AssistantContext {
+  instance: any;
+  systemPrompt: string;
+  customTools: any[];
+  executionOptions: {
+    use_sdk_tools: boolean;
+    provider: 'scrapybara' | 'azure' | 'openai';
+    instance_id: string;
+    site_id: string;
+    user_id: string;
+  };
+  initialMessage: string;
+}
+
+// Step 1: Prepare context (fetch data, build prompts)
+export async function prepareAssistantContext(
   instanceId: string,
   message: string,
   siteId: string,
@@ -20,7 +34,7 @@ export async function executeAssistantLogic(
   customTools: any[],
   useSdkTools: boolean,
   systemPrompt?: string
-) {
+): Promise<AssistantContext> {
   'use step';
   
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
@@ -34,7 +48,7 @@ export async function executeAssistantLogic(
     throw new Error(`Instance not found: ${instanceId}`);
   }
 
-  // Log execution start (optional, but good for debugging)
+  // Log execution start
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);
 
   // Fetch historical logs
@@ -117,7 +131,11 @@ export async function executeAssistantLogic(
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
+  
+  // Get tools list just for counting/prompt purposes here
+  // We do NOT pass these instantiated tools in the return value to avoid serialization issues
   const toolsWithImageGeneration = getAssistantTools(siteId, userId, instanceId, customTools);
+  
   const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', instanceId);
 
   // Instance renaming logic prompt
@@ -150,23 +168,45 @@ export async function executeAssistantLogic(
     finalSystemPrompt = combinedSystemPrompt.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
   }
 
-  // Execute
-  const executionResult = await executeAssistant(message, instance, {
-    use_sdk_tools: shouldUseSDKTools && !useAssistantOnly,
-    provider: finalProvider,
-    system_prompt: finalSystemPrompt,
-    custom_tools: toolsWithImageGeneration,
-    instance_id: instanceId,
-    site_id: siteId,
-    user_id: userId,
-  });
-
   return {
-    instance_id: instanceId,
-    status: instance.status,
-    message: 'Execution completed successfully',
-    assistant_response: executionResult.text,
-    output: executionResult.output,
-    usage: executionResult.usage,
+    instance,
+    systemPrompt: finalSystemPrompt,
+    customTools, // Pass definitions, not instantiated tools
+    initialMessage: message,
+    executionOptions: {
+      use_sdk_tools: shouldUseSDKTools && !useAssistantOnly,
+      provider: finalProvider as any,
+      instance_id: instanceId,
+      site_id: siteId,
+      user_id: userId,
+    }
   };
+}
+
+// Step 2: Execute one turn of the assistant
+export async function processAssistantTurn(
+  context: AssistantContext,
+  messages: any[]
+) {
+  'use step';
+  
+  // Re-instantiate tools here inside the step where they will be used
+  const fullTools = getAssistantTools(
+    context.executionOptions.site_id,
+    context.executionOptions.user_id,
+    context.executionOptions.instance_id,
+    context.customTools
+  );
+  
+  // Re-assemble execution options
+  const options = {
+    ...context.executionOptions,
+    system_prompt: context.systemPrompt,
+    custom_tools: fullTools,
+  };
+
+  // Execute one step
+  const result = await executeAssistantStep(messages, context.instance, options);
+
+  return result;
 }
