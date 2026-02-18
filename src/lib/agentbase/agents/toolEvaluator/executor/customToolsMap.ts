@@ -199,7 +199,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
    */
   IDENTIFY_LEAD: {
     endpoint: {
-      url: '/api/agents/tools/identify-lead',
+      url: '/api/agents/tools/leads/identify',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -755,7 +755,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
    */
   CREATE_TASK: {
     endpoint: {
-      url: '/api/agents/tools/createTask',
+      url: '/api/agents/tools/tasks/create',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -842,7 +842,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
    */
   GET_TASKS: {
     endpoint: {
-      url: '/api/agents/tools/getTask',
+      url: '/api/agents/tools/tasks/get',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -896,7 +896,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
    */
   QUALIFY_LEAD: {
     endpoint: {
-      url: '/api/agents/tools/qualify-lead',
+      url: '/api/agents/tools/leads/qualify',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -974,7 +974,7 @@ export const customTools: Record<string, ApiResponseConfig> = {
    */
   UPDATE_TASK: {
     endpoint: {
-      url: '/api/agents/tools/updateTask',
+      url: '/api/agents/tools/tasks/update',
       method: 'PUT',
       headers: {
         'Content-Type': 'application/json'

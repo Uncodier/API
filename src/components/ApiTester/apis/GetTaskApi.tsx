@@ -57,7 +57,7 @@ const GetTaskApi: BaseApiConfig = {
   id: 'get-task',
   name: 'Get Tasks API',
   description: 'API para obtener tareas del sistema. Principalmente diseñada para trabajar con lead_id.',
-  defaultEndpoint: '/api/agents/tools/getTask',
+  defaultEndpoint: '/api/agents/tools/tasks/get',
 
   // Obtener el estado inicial
   getInitialState: (props: GetTaskApiProps): GetTaskApiState => {

@@ -28,8 +28,12 @@ export function renameInstanceTool(site_id: string, instance_id?: string) {
           type: 'string',
           description: 'Optional context about what the user is trying to accomplish. If not provided, will analyze recent conversation history from instance logs to determine the objective.',
         },
+        site_id: {
+          type: 'string',
+          description: 'Site UUID (required).'
+        }
       },
-      required: [],
+      required: ['site_id'],
     },
     execute: async (args: RenameInstanceToolParams) => {
       try {
@@ -47,7 +51,7 @@ export function renameInstanceTool(site_id: string, instance_id?: string) {
 
         // Call the rename core function directly (server-side)
         const { renameInstanceCore } = await import('./route');
-        const result = await renameInstanceCore(instance_id, args.context);
+        const result = await renameInstanceCore(instance_id, args.site_id, args.context);
 
         if (result.renamed) {
           console.log(`[RenameInstanceTool] ✅ Instance renamed: "${result.old_name}" → "${result.new_name}"`);

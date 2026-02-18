@@ -55,7 +55,7 @@ export class ContinuationClient {
   /**
    * Construye una URL absoluta de manera segura
    * 
-   * @param path Ruta relativa (por ejemplo, '/api/ai/continuation')
+   * @param path Ruta relativa (por ejemplo, '/api/ai/text/continuation')
    * @returns URL absoluta como string
    */
   private buildUrl(path: string): string {
@@ -155,7 +155,7 @@ export class ContinuationClient {
     try {
       // Determinar si estamos en el cliente o en el servidor
       const isServer = typeof window === 'undefined';
-      const apiUrl = this.buildUrl('/api/ai/continuation');
+      const apiUrl = this.buildUrl('/api/ai/text/continuation');
       
       if (this.debugMode) {
         console.log(`[Continuation Client] Sending request to ${apiUrl} (${isServer ? 'server' : 'client'})`);

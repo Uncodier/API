@@ -1,4 +1,4 @@
-import { POST } from '@/app/api/agents/tools/qualify-lead/route';
+import { POST } from '@/app/api/agents/tools/leads/qualify/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { NextRequest } from 'next/server';
 
@@ -9,7 +9,7 @@ jest.mock('@/lib/database/supabase-client', () => ({
   }
 }));
 
-describe('/api/agents/tools/qualify-lead', () => {
+describe('/api/agents/tools/leads/qualify', () => {
   const mockSiteId = '123e4567-e89b-12d3-a456-426614174000';
   const mockLeadId = '123e4567-e89b-12d3-a456-426614174001';
   const mockEmail = 'test@example.com';
@@ -21,7 +21,7 @@ describe('/api/agents/tools/qualify-lead', () => {
 
   describe('Validation', () => {
     it('should return 400 if site_id is missing', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           lead_id: mockLeadId,
@@ -38,7 +38,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if site_id is not a valid UUID', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: 'invalid-uuid',
@@ -56,7 +56,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if no identifier is provided', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -73,7 +73,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if status is missing', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -90,7 +90,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if status is invalid', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -108,7 +108,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if lead_id is not a valid UUID', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -126,7 +126,7 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 400 if email format is invalid', async () => {
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -162,24 +162,19 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn(), update: jest.fn(), single: jest.fn() };
+      // SELECT: select().eq(site_id).eq(id) - 1st eq returns chainable, 2nd returns Promise
+      // UPDATE: update().eq(id).select().single() - 3rd eq returns chainable, single returns Promise
+      chainable.eq
+        .mockReturnValueOnce(chainable)
+        .mockResolvedValueOnce({ data: [mockLead], error: null })
+        .mockReturnValueOnce(chainable);
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      // First call - search for lead
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      // Second call - update lead
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -203,15 +198,13 @@ describe('/api/agents/tools/qualify-lead', () => {
     });
 
     it('should return 404 if lead not found', async () => {
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockResolvedValue({ data: [], error: null });
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn() };
+      // SELECT: eq(site_id) returns chainable, eq(id) returns Promise with empty data
+      chainable.eq.mockReturnValueOnce(chainable).mockResolvedValueOnce({ data: [], error: null });
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq
-      });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -247,24 +240,17 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn(), update: jest.fn(), single: jest.fn() };
+      chainable.eq
+        .mockReturnValueOnce(chainable)
+        .mockResolvedValueOnce({ data: [mockLead], error: null })
+        .mockReturnValueOnce(chainable);
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      // First call - search for lead
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      // Second call - update lead
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -302,26 +288,16 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockIlike = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn().mockReturnThis(), ilike: jest.fn(), update: jest.fn(), single: jest.fn() };
+      // SELECT: select().eq(site_id).ilike(phone) - ilike returns Promise (no .single())
+      chainable.ilike.mockResolvedValueOnce({ data: [mockLead], error: null });
+      // UPDATE: update().eq(id).select().single()
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      // First call - search for lead
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      // Second call - update lead
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        ilike: mockIlike,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -352,15 +328,13 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: '2024-01-01T00:00:00Z'
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockResolvedValue({ data: [mockLead], error: null });
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn() };
+      // SELECT only - no update when status already set
+      chainable.eq.mockReturnValueOnce(chainable).mockResolvedValueOnce({ data: [mockLead], error: null });
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq
-      });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -399,22 +373,17 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn(), update: jest.fn(), single: jest.fn() };
+      chainable.eq
+        .mockReturnValueOnce(chainable)
+        .mockResolvedValueOnce({ data: [mockLead], error: null })
+        .mockReturnValueOnce(chainable);
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -451,22 +420,17 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn(), update: jest.fn(), single: jest.fn() };
+      chainable.eq
+        .mockReturnValueOnce(chainable)
+        .mockResolvedValueOnce({ data: [mockLead], error: null })
+        .mockReturnValueOnce(chainable);
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,
@@ -507,22 +471,17 @@ describe('/api/agents/tools/qualify-lead', () => {
         updated_at: new Date().toISOString()
       };
 
-      const mockSelect = jest.fn().mockReturnThis();
-      const mockEq = jest.fn().mockReturnThis();
-      const mockUpdate = jest.fn().mockReturnThis();
-      const mockSingle = jest.fn();
+      const chainable = { select: jest.fn().mockReturnThis(), eq: jest.fn(), update: jest.fn(), single: jest.fn() };
+      chainable.eq
+        .mockReturnValueOnce(chainable)
+        .mockResolvedValueOnce({ data: [mockLead], error: null })
+        .mockReturnValueOnce(chainable);
+      chainable.update.mockReturnValue(chainable);
+      chainable.single.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
 
-      mockSingle.mockResolvedValueOnce({ data: [mockLead], error: null });
-      mockSingle.mockResolvedValueOnce({ data: mockUpdatedLead, error: null });
+      (supabaseAdmin.from as jest.Mock).mockReturnValue(chainable);
 
-      (supabaseAdmin.from as jest.Mock).mockReturnValue({
-        select: mockSelect,
-        eq: mockEq,
-        update: mockUpdate,
-        single: mockSingle
-      });
-
-      const request = new NextRequest('http://localhost:3000/api/agents/tools/qualify-lead', {
+      const request = new NextRequest('http://localhost:3000/api/agents/tools/leads/qualify', {
         method: 'POST',
         body: JSON.stringify({
           site_id: mockSiteId,

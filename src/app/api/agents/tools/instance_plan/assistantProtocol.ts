@@ -1,0 +1,203 @@
+/**
+ * Assistant Protocol Wrapper for Instance Plan Tool
+ * Unified tool for managing instance plans (create, list, update)
+ */
+
+import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/route';
+import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/create/route';
+import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+
+export interface InstancePlanToolParams {
+  action: 'create' | 'list' | 'update' | 'execute_step';
+  
+  // Common/Create/Update params
+  instance_id: string; // Required for create/list
+  plan_id?: string; // Required for update
+  title?: string;
+  description?: string;
+  plan_type?: 'objective' | 'task';
+  status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'paused';
+  steps?: any[];
+  site_id?: string;
+  user_id?: string;
+  agent_id?: string;
+  
+  // List params
+  limit?: number;
+  offset?: number;
+
+  // Execute step params
+  step_id?: string;
+  step_output?: string;
+  step_status?: 'pending' | 'in_progress' | 'completed' | 'failed';
+}
+
+export function instancePlanTool(site_id: string, instance_id: string, user_id?: string) {
+  return {
+    name: 'instance_plan',
+    description:
+      'Manage instance plans. IMPORTANT: Instance plans are strict execution paths for YOU (the agent), composed of tool calls, processes, reviews, discussions, or user inputs to ensure task success. They are NOT general plans for the user. Use action="create" to define a new execution path (use when the plan is different from the previous one). Use action="list" to get current plans; use action="update" to add new steps or reopen an existing plan (same objective, just new steps). Use action="execute_step" to execute and record the result of each step individually. Always finish execution with a summary.',
+    parameters: {
+      type: 'object',
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['create', 'list', 'update', 'execute_step'],
+          description: 'Action to perform on instance plans.'
+        },
+        instance_id: { type: 'string', description: 'Instance UUID (required for create/list if not running in instance context)' },
+        plan_id: { type: 'string', description: 'Plan UUID (required for update, and execute_step)' },
+        step_id: { type: 'string', description: 'Step UUID (required for execute_step)' },
+        step_output: { type: 'string', description: 'Output of the executed step (required for execute_step)' },
+        step_status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Status of the executed step (required for execute_step)' },
+        title: { type: 'string', description: 'Plan title' },
+        description: { type: 'string', description: 'Plan description' },
+        plan_type: { type: 'string', enum: ['objective', 'task'], description: 'Type of plan. Must be one of: objective, task. Default: objective' },
+        status: { 
+          type: 'string', 
+          enum: ['pending', 'in_progress', 'completed', 'failed', 'cancelled', 'paused'],
+          description: 'Plan status. For create, use "pending" or leave empty for default.' 
+        },
+          steps: { 
+            type: 'array', 
+            items: { 
+              type: 'object', 
+              properties: {
+                id: { type: 'string', description: 'Unique ID for the step' },
+                title: { type: 'string', description: 'Title of the step' },
+                description: { type: 'string', description: 'Description of the step' },
+                order: { type: 'number', description: 'Order of execution' },
+                status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Status of the step' },
+                type: { type: 'string', description: 'Type of step (e.g., task, research, content_creation)' },
+                instructions: { type: 'string', description: 'Detailed instructions for the step' },
+                expected_output: { type: 'string', description: 'Expected output of the step' },
+                actual_output: { type: 'string', description: 'Actual output after execution' },
+                started_at: { type: 'string', format: 'date-time', description: 'ISO 8601 datetime when step started' },
+                completed_at: { type: 'string', format: 'date-time', description: 'ISO 8601 datetime when step completed' },
+                duration_seconds: { type: 'number', description: 'Duration of step execution in seconds' },
+                retry_count: { type: 'number', description: 'Number of times the step was retried' },
+                error_message: { type: 'string', description: 'Error message if step failed' },
+                artifacts: { type: 'array', items: { type: 'object' }, description: 'Artifacts generated by the step' },
+              },
+              required: ['title'],
+            },
+            description: 'Array of plan steps with detailed properties.' 
+          },
+        site_id: { type: 'string', description: 'Site UUID' },
+        user_id: { type: 'string', description: 'User UUID' },
+        agent_id: { type: 'string', description: 'Agent UUID' },
+        limit: { type: 'number', description: 'Limit results' },
+        offset: { type: 'number', description: 'Offset results' },
+      },
+      required: ['action'],
+    },
+    execute: async (args: InstancePlanToolParams) => {
+      console.log('[InstancePlanTool] Execute called with args:', args);
+      const { action, ...params } = args;
+
+      // Default instance_id if not provided but available in closure
+      if (!params.instance_id && instance_id) {
+        params.instance_id = instance_id;
+      }
+      
+      // Default site_id if not provided but available in closure
+      if (!params.site_id && site_id) {
+        params.site_id = site_id;
+      }
+
+      // Default user_id if not provided but available in closure
+      if (!params.user_id && user_id) {
+        params.user_id = user_id;
+      }
+
+      if (action === 'create') {
+        console.log('[InstancePlanTool] Creating instance plan with instance_id:', params.instance_id);
+        if (!params.instance_id) {
+             throw new Error('Missing required field: instance_id');
+        }
+        const body = {
+          ...params,
+          site_id: params.site_id || site_id,
+          user_id: params.user_id || user_id,
+        };
+        
+        return createInstancePlanCore(body);
+      }
+
+      if (action === 'execute_step') {
+        console.log('[InstancePlanTool] Executing step with plan_id:', params.plan_id, 'and step_id:', params.step_id);
+        if (!params.plan_id) {
+          throw new Error('Missing required field for execute_step: plan_id');
+        }
+        if (!params.step_id) {
+          throw new Error('Missing required field for execute_step: step_id');
+        }
+        if (!params.step_status) {
+          throw new Error('Missing required field for execute_step: step_status');
+        }
+
+        try {
+          const body = {
+            plan_id: params.plan_id,
+            site_id: params.site_id || site_id,
+            instance_id: params.instance_id || instance_id,
+            steps: [{
+              id: params.step_id,
+              actual_output: params.step_output,
+              status: params.step_status,
+            }],
+          };
+          const result = await updateInstancePlanCore(body);
+
+          // Log the step execution
+          if (params.instance_id || instance_id) {
+            await supabaseAdmin.from('instance_logs').insert({
+              instance_id: params.instance_id || instance_id,
+              site_id: params.site_id || site_id,
+              user_id: params.user_id || user_id,
+              log_type: 'step_execution',
+              level: 'info',
+              message: `Step Execution: ${params.step_status} - ${params.step_output ? params.step_output.substring(0, 50) + '...' : 'No output'}`,
+              details: {
+                plan_id: params.plan_id,
+                step_id: params.step_id,
+                output: params.step_output,
+                status: params.step_status
+              }
+            });
+          }
+
+          console.log('[InstancePlanTool] execute_step result:', result);
+          return result;
+        } catch (error: any) {
+          console.error('[InstancePlanTool] Error during execute_step:', error);
+          // Re-throw the error or return a structured error response
+          throw new Error(`Failed to execute step: ${error.message || 'Unknown error'}`);
+        }
+      }
+
+      if (action === 'update') {
+        if (!params.plan_id) {
+            throw new Error('Missing required field for update: plan_id');
+        }
+        const body = {
+          ...params,
+          site_id: params.site_id || site_id,
+        };
+        
+        return updateInstancePlanCore(body);
+      }
+
+      if (action === 'list') {
+        const filters = {
+          ...params,
+          instance_id: params.instance_id || instance_id,
+        };
+        return getInstancePlansCore(filters);
+      }
+
+      throw new Error(`Invalid action: ${action}`);
+    },
+  };
+}

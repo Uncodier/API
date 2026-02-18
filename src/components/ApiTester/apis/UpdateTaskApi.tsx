@@ -40,7 +40,7 @@ const UpdateTaskApi: BaseApiConfig = {
   id: 'update-task',
   name: 'Update Task API',
   description: 'API para actualizar tareas existentes en el sistema',
-  defaultEndpoint: '/api/agents/tools/updateTask',
+  defaultEndpoint: '/api/agents/tools/tasks/update',
 
   // Obtener el estado inicial
   getInitialState: (props: UpdateTaskApiProps): UpdateTaskApiState => {

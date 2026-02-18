@@ -10,30 +10,31 @@ import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistan
 import { renameInstanceTool } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
-import { saveOnMemoryTool } from '@/app/api/agents/tools/saveOnMemory/assistantProtocol';
-import { getMemoriesTool } from '@/app/api/agents/tools/getMemories/assistantProtocol';
-import { createTaskTool } from '@/app/api/agents/tools/createTask/assistantProtocol';
-import { getTaskTool } from '@/app/api/agents/tools/getTask/assistantProtocol';
-import { updateTaskTool } from '@/app/api/agents/tools/updateTask/assistantProtocol';
-import { getRequirementsTool } from '@/app/api/agents/tools/getRequirements/assistantProtocol';
-import { createRequirementTool } from '@/app/api/agents/tools/createRequirement/assistantProtocol';
-import { updateRequirementTool } from '@/app/api/agents/tools/updateRequirement/assistantProtocol';
-import { getLeadTool } from '@/app/api/agents/tools/getLead/assistantProtocol';
-import { createLeadTool } from '@/app/api/agents/tools/createLead/assistantProtocol';
-import { updateLeadTool } from '@/app/api/agents/tools/updateLead/assistantProtocol';
+import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
+import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
+import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
+import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
+import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
 import { sendEmailTool } from '@/app/api/agents/tools/sendEmail/assistantProtocol';
+import { configureEmailTool } from '@/app/api/agents/tools/configureEmail/assistantProtocol';
 import { salesOrderTool } from '@/app/api/agents/tools/sales-order/assistantProtocol';
-import { scheduleDateTool } from '@/app/api/agents/tools/schedule-date/assistantProtocol';
-import { qualifyLeadTool } from '@/app/api/agents/tools/qualify-lead/assistantProtocol';
-import { identifyLeadTool } from '@/app/api/agents/tools/identify-lead/assistantProtocol';
-import { getAvailableAppointmentSlotsTool } from '@/app/api/agents/tools/get-available-appointment-slots/assistantProtocol';
+import { salesTool } from '@/app/api/agents/tools/sales/assistantProtocol';
+import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
 import { analyzeICPTotalCountTool } from '@/app/api/agents/tools/analyzeICPTotalCount/assistantProtocol';
 import { createIcpMiningTool } from '@/app/api/agents/tools/createIcpMining/assistantProtocol';
 import { getFinderCategoryIdsTool } from '@/app/api/agents/tools/getFinderCategoryIds/assistantProtocol';
-import { getContentTool } from '@/app/api/agents/tools/getContent/assistantProtocol';
-import { createContentTool } from '@/app/api/agents/tools/createContent/assistantProtocol';
-import { updateContentTool } from '@/app/api/agents/tools/updateContent/assistantProtocol';
 import { searchRegionVenuesTool } from '@/app/api/agents/tools/searchRegionVenues/assistantProtocol';
+import { webhooksTool } from '@/app/api/agents/tools/webhooks/assistantProtocol';
+import { urlToMarkdownTool } from '@/app/api/agents/tools/urlToMarkdown/assistantProtocol';
+import { urlToSitemapTool } from '@/app/api/agents/tools/urlToSitemap/assistantProtocol';
+import { segmentsTool } from '@/app/api/agents/tools/segments/assistantProtocol';
+import { campaignsTool } from '@/app/api/agents/tools/campaigns/assistantProtocol';
+import { assetsTool } from '@/app/api/agents/tools/assets/assistantProtocol';
+import { instancePlanTool } from '@/app/api/agents/tools/instance_plan/assistantProtocol';
+import { workflowsTool } from '@/app/api/agents/tools/workflows/assistantProtocol';
+import { copywritingTool } from '@/app/api/agents/tools/copywriting/assistantProtocol';
+import { sendWhatsAppTool } from '@/app/api/agents/tools/sendWhatsApp/assistantProtocol';
+import { whatsappTemplateTool } from '@/app/api/agents/tools/whatsappTemplate/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -176,29 +177,30 @@ export const getAssistantTools = (
     renameInstanceTool(siteId, instanceId),
     updateSiteSettingsTool(siteId),
     webSearchTool(),
-    saveOnMemoryTool(siteId, userId, instanceId),
-    getMemoriesTool(siteId, userId, instanceId),
-    createTaskTool(siteId, userId),
-    getTaskTool(siteId, userId),
-    updateTaskTool(siteId, userId),
-    getRequirementsTool(siteId, userId),
-    createRequirementTool(siteId, userId),
-    updateRequirementTool(siteId, userId),
-    getLeadTool(siteId, userId),
-    createLeadTool(siteId, userId),
-    updateLeadTool(siteId, userId),
+    memoriesTool(siteId, userId ?? '', instanceId),
+    tasksTool(siteId, userId),
+    requirementsTool(siteId, userId),
+    leadsTool(siteId, userId),
+    contentTool(siteId, userId),
     sendEmailTool(siteId),
+    configureEmailTool(siteId),
     salesOrderTool(siteId),
-    scheduleDateTool(siteId, instanceId),
-    qualifyLeadTool(siteId),
-    identifyLeadTool(siteId),
-    getAvailableAppointmentSlotsTool(siteId),
+    salesTool(siteId),
+    schedulingTool(siteId, instanceId),
     getFinderCategoryIdsTool(siteId),
     analyzeICPTotalCountTool(siteId),
     createIcpMiningTool(siteId),
-    getContentTool(siteId, userId),
-    createContentTool(siteId, userId),
-    updateContentTool(siteId, userId),
     searchRegionVenuesTool(siteId),
+    webhooksTool(),
+    urlToMarkdownTool(),
+    urlToSitemapTool(),
+    segmentsTool(siteId, userId),
+    campaignsTool(siteId, userId),
+    assetsTool(siteId, userId),
+    instancePlanTool(siteId, instanceId, userId),
+    workflowsTool(siteId, userId),
+    copywritingTool(siteId, userId),
+    sendWhatsAppTool(siteId),
+    whatsappTemplateTool(siteId),
   ];
 };

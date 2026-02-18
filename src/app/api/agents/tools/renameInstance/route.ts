@@ -295,18 +295,26 @@ Only respond with valid JSON, nothing else.`;
  * Core function to rename an instance based on context and objective
  * Can be called directly from tools or from the API route
  */
-export async function renameInstanceCore(instance_id: string, context?: string) {
+export async function renameInstanceCore(instance_id: string, site_id: string, context?: string) {
   console.log(`[RENAME_INSTANCE] 🏷️ Starting instance rename`);
   console.log(`[RENAME_INSTANCE] 📝 Instance ID: ${instance_id}`);
+  console.log(`[RENAME_INSTANCE] 🏢 Site ID: ${site_id}`);
 
   // Validate required parameters
   if (!instance_id || typeof instance_id !== 'string') {
     throw new Error('instance_id is required and must be a string');
   }
 
-  // Validate instance_id format
+  if (!site_id || typeof site_id !== 'string') {
+    throw new Error('site_id is required and must be a string');
+  }
+
+  // Validate UUID formats
   if (!isValidUUID(instance_id)) {
     throw new Error('instance_id must be a valid UUID');
+  }
+  if (!isValidUUID(site_id)) {
+    throw new Error('site_id must be a valid UUID');
   }
 
   // Get instance
@@ -318,6 +326,10 @@ export async function renameInstanceCore(instance_id: string, context?: string) 
 
   if (instanceError || !instance) {
     throw new Error('Instance not found');
+  }
+
+  if (instance.site_id !== site_id) {
+    throw new Error('La instancia no pertenece a este sitio');
   }
 
     console.log(`[RENAME_INSTANCE] ✅ Instance found: ${instance.name}`);

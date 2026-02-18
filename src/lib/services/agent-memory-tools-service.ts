@@ -117,6 +117,111 @@ export async function saveOnAgentMemory(
   }
 }
 
+/**
+ * Update an existing agent memory
+ */
+export async function updateAgentMemory(
+  memoryId: string,
+  agentId: string,
+  updates: {
+    content?: string;
+    key?: string;
+    summary?: string;
+  }
+): Promise<AgentMemoryResult> {
+  try {
+    if (!memoryId) {
+      return {
+        success: false,
+        error: 'Memory ID is required for update',
+      };
+    }
+
+    // First fetch the existing memory to merge data
+    const { data: existing, error: fetchError } = await supabaseAdmin
+      .from('agent_memories')
+      .select('data, key')
+      .eq('id', memoryId)
+      .eq('agent_id', agentId)
+      .single();
+
+    if (fetchError || !existing) {
+      return {
+        success: false,
+        error: fetchError?.message || 'Memory not found or access denied',
+      };
+    }
+
+    const updatePayload: Record<string, any> = {
+      updated_at: new Date().toISOString(),
+    };
+
+    if (updates.key) {
+      updatePayload.key = updates.key;
+    }
+
+    if (updates.content || updates.summary) {
+      const currentData = (existing.data as Record<string, any>) || {};
+      updatePayload.data = {
+        ...currentData,
+        ...(updates.content ? { content: updates.content } : {}),
+        ...(updates.summary ? { summary: updates.summary } : {}),
+      };
+    }
+
+    const { error: updateError } = await supabaseAdmin
+      .from('agent_memories')
+      .update(updatePayload)
+      .eq('id', memoryId)
+      .eq('agent_id', agentId);
+
+    if (updateError) {
+      console.error('[AgentMemoryTools] Error updating memory:', updateError);
+      return { success: false, error: updateError.message };
+    }
+
+    return { success: true, memoryId };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[AgentMemoryTools] updateAgentMemory error:', err);
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Delete an agent memory
+ */
+export async function deleteAgentMemory(
+  memoryId: string,
+  agentId: string
+): Promise<AgentMemoryResult> {
+  try {
+    if (!memoryId) {
+      return {
+        success: false,
+        error: 'Memory ID is required for deletion',
+      };
+    }
+
+    const { error } = await supabaseAdmin
+      .from('agent_memories')
+      .delete()
+      .eq('id', memoryId)
+      .eq('agent_id', agentId);
+
+    if (error) {
+      console.error('[AgentMemoryTools] Error deleting memory:', error);
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, memoryId };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Unknown error';
+    console.error('[AgentMemoryTools] deleteAgentMemory error:', err);
+    return { success: false, error: msg };
+  }
+}
+
 export interface GetContextMemoriesOptions {
   instance_id?: string;
   limit?: number;

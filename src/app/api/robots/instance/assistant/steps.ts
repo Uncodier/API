@@ -38,11 +38,23 @@ export async function prepareAssistantContext(
   'use step';
   
   // We need to fetch the instance data inside the workflow to ensure we have the latest state
-  const { data: instance, error: instanceError } = await supabaseAdmin
+  let instanceResult = await supabaseAdmin
     .from('remote_instances')
     .select('*')
     .eq('id', instanceId)
     .single();
+    
+  // Fallback to robot_instances
+  if (instanceResult.error || !instanceResult.data) {
+    console.log(`[Workflow] Instance not found in remote_instances, checking robot_instances: ${instanceId}`);
+    instanceResult = await supabaseAdmin
+      .from('robot_instances')
+      .select('*')
+      .eq('id', instanceId)
+      .single();
+  }
+
+  const { data: instance, error: instanceError } = instanceResult;
 
   if (instanceError || !instance) {
     throw new Error(`Instance not found: ${instanceId}`);
@@ -149,11 +161,35 @@ export async function prepareAssistantContext(
     ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the rename_instance tool to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call rename_instance. Do this automatically without asking the user.`
     : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the rename_instance tool to update it with a more descriptive name.`;
 
+  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}\n`;
+
+  // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
+  const planModeInstruction =
+    systemPrompt?.toLowerCase().trim() === 'plan'
+      ? `\n\n📋 PLAN MODE: Your system prompt is set to "plan". You MUST always use the instance_plan tool: create or list the execution plan (action "create" or "list") as appropriate, then execute steps with action "execute_step" when carrying out the plan. Do not skip using instance_plan when the user asks for planning or task execution.
+
+PLAN vs STEPS:
+- If the user's request describes a DIFFERENT plan (new objective, new scope, or different approach than the previous plan): use action "create" to create a NEW plan. Do not reuse or update the old plan.
+- If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.`
+      : '';
+
+  const whatsappInstruction = `
+📱 WHATSAPP TOOLS (sendWhatsApp and whatsappTemplate):
+- To send a WhatsApp message: use sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id and lead_id for tracking.
+- If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next:
+  1) Call whatsappTemplate with action "create_template", same phone_number and message (and conversation_id if available). If the result includes template_id, then
+  2) Call whatsappTemplate with action "send_template", template_id from step 1, phone_number, and original_message (the same message text).
+- If create_template returns template_required: false, the conversation is within 24h—use sendWhatsApp instead; do not use send_template.
+- Always use international phone format (country code + number, e.g. +1..., +34..., +52...).`;
+
   const combinedSystemPrompt = [
     agentBackground,
+    instanceContext,
     baseSystemPrompt,
     toolsContext,
     systemPrompt || '',
+    planModeInstruction,
+    whatsappInstruction,
     memoriesContext,
     historyContext,
     assetsContext,

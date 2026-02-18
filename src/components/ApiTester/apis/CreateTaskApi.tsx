@@ -43,7 +43,7 @@ const CreateTaskApi: BaseApiConfig = {
   id: 'create-task',
   name: 'Create Task API',
   description: 'API para crear nuevas tareas en el sistema',
-  defaultEndpoint: '/api/agents/tools/createTask',
+  defaultEndpoint: '/api/agents/tools/tasks/create',
 
   // Obtener el estado inicial
   getInitialState: (props: CreateTaskApiProps): CreateTaskApiState => {
