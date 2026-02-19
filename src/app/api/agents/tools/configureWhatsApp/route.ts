@@ -221,13 +221,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result, { status });
   } catch (error: unknown) {
     console.error('[configureWhatsApp] Request error:', error);
-    return NextResponse.json(
-      {
-        success: false,
-        action: undefined,
-        error: error instanceof Error ? error.message : 'Internal server error',
-      },
-      { status: 500 }
-    );
+    const result: ConfigureWhatsAppResult = {
+      success: false,
+      action: 'get_config',
+      error: error instanceof Error ? error.message : 'Internal server error',
+    };
+    return NextResponse.json(result, { status: 500 });
   }
 }

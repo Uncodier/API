@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { logInfo } from '@/lib/utils/api-response-utils';
+import { normalizePersonRoleSearchPayload } from '@/lib/finder/normalize-person-role-search-payload';
 
 export async function POST(req: NextRequest) {
   let requestBody: unknown;
@@ -25,7 +26,6 @@ export async function POST(req: NextRequest) {
 
     requestBody = await req.json();
 
-    // Normalize payload (ensure page starts at 1 if provided)
     const normalizePage = (val: unknown): unknown => {
       if (val === 0 || val === '0') return 1;
       if (typeof val === 'number') return Math.max(1, Math.trunc(val));
@@ -39,9 +39,7 @@ export async function POST(req: NextRequest) {
     let payload: unknown = requestBody;
     if (requestBody && typeof requestBody === 'object') {
       const obj = { ...(requestBody as Record<string, unknown>) };
-      if ('page' in obj) {
-        obj.page = normalizePage((obj as any).page);
-      }
+      normalizePersonRoleSearchPayload(obj, { normalizePage });
       payload = obj;
     }
 
