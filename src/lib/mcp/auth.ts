@@ -6,14 +6,14 @@
 import { ApiKeyService } from '@/lib/services/api-keys/ApiKeyService';
 
 /**
- * Extracts API key from request (same as middleware: x-api-key or Authorization Bearer).
+ * Extracts API key from request (same as middleware: X-API-Key or Authorization: Bearer <key> only).
+ * Only the Bearer scheme is accepted for Authorization; other schemes are ignored.
  */
 export function getApiKeyFromRequest(request: Request): string | null {
   const xKey = request.headers.get('x-api-key');
   if (xKey) return xKey.trim();
   const auth = request.headers.get('authorization');
   if (auth?.startsWith('Bearer ')) return auth.slice(7).trim();
-  if (auth) return auth.trim();
   return null;
 }
 

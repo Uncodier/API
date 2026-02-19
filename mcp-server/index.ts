@@ -22,4 +22,8 @@ async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
-main();
+
+main().catch((err) => {
+  console.error('MCP server failed to connect:', err);
+  process.exit(1);
+});
