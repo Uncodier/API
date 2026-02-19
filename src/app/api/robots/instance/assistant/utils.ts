@@ -17,6 +17,7 @@ import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
 import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
 import { sendEmailTool } from '@/app/api/agents/tools/sendEmail/assistantProtocol';
 import { configureEmailTool } from '@/app/api/agents/tools/configureEmail/assistantProtocol';
+import { configureWhatsAppTool } from '@/app/api/agents/tools/configureWhatsApp/assistantProtocol';
 import { salesOrderTool } from '@/app/api/agents/tools/sales-order/assistantProtocol';
 import { salesTool } from '@/app/api/agents/tools/sales/assistantProtocol';
 import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
@@ -184,6 +185,7 @@ export const getAssistantTools = (
     contentTool(siteId, userId),
     sendEmailTool(siteId),
     configureEmailTool(siteId),
+    configureWhatsAppTool(siteId),
     salesOrderTool(siteId),
     salesTool(siteId),
     schedulingTool(siteId, instanceId),

@@ -157,12 +157,14 @@ async function fetchHtmlWithPuppeteer(url: string, timeout: number): Promise<str
     });
     
     // Manejar errores de recursos
-    page.on('error', err => {
-      console.warn(`[fetchHtmlWithPuppeteer] Error en la página: ${err.message}`);
+    page.on('error', (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[fetchHtmlWithPuppeteer] Error en la página: ${msg}`);
     });
-    
-    page.on('pageerror', err => {
-      console.warn(`[fetchHtmlWithPuppeteer] Error de JavaScript en la página: ${err.message}`);
+
+    page.on('pageerror', (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[fetchHtmlWithPuppeteer] Error de JavaScript en la página: ${msg}`);
     });
     
     // Manejar solicitudes fallidas
