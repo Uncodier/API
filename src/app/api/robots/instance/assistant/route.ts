@@ -17,7 +17,7 @@ import { executeAssistant } from '@/lib/services/robot-instance/assistant-execut
 // Assistant route that triggers a Vercel Workflow for execution
 // ------------------------------------------------------------------------------------
 
-export const maxDuration = 300; // 5 minutes
+export const maxDuration = 800; // 13 min (Pro + Fluid Compute); falls back to 300s without it
 
 const AssistantSchema = z.object({
   instance_id: z.string().uuid('instance_id must be valid UUID').optional(),

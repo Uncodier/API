@@ -540,6 +540,7 @@ CREATE TABLE public.messages (
   role text NOT NULL CHECK (role = ANY (ARRAY['user'::text, 'assistant'::text, 'system'::text, 'function'::text, 'tool'::text, 'data'::text, 'team_member'::text])),
   read_at timestamp with time zone,
   custom_data jsonb DEFAULT '{}'::jsonb,
+  user_interaction text,
   created_at timestamp with time zone DEFAULT now(),
   updated_at timestamp with time zone DEFAULT now(),
   command_id uuid,

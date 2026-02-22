@@ -327,13 +327,18 @@ export async function updateMessageWithAgentMailEvent(
       }
     }
 
-    // Update the message
+    // Update the message (set user_interaction column when status is complained)
+    const updatePayload: Record<string, unknown> = {
+      custom_data: updatedCustomData,
+      updated_at: new Date().toISOString(),
+    };
+    if (status === 'complained') {
+      updatePayload.user_interaction = 'complained';
+    }
+
     const { error: updateError } = await supabaseAdmin
       .from('messages')
-      .update({
-        custom_data: updatedCustomData,
-        updated_at: new Date().toISOString(),
-      })
+      .update(updatePayload)
       .eq('id', messageId);
 
     if (updateError) {
