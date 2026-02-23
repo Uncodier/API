@@ -3,9 +3,7 @@
  * Read-only tool to list company conversations (support, chat, email, etc.)
  */
 
-function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-}
+import { getConversationsCore } from '@/app/api/agents/customerSupport/conversations/route';
 
 export interface ConversationsToolParams {
   action: 'list';
@@ -13,6 +11,9 @@ export interface ConversationsToolParams {
   visitor_id?: string;
   user_id?: string;
   agent_id?: string;
+  status?: string;
+  channel?: string;
+  custom_data_status?: string;
   limit?: number;
   offset?: number;
 }
@@ -21,7 +22,7 @@ export function conversationsTool(site_id: string, user_id?: string) {
   return {
     name: 'conversations',
     description:
-      'List company conversations. Use action="list" to get conversations with optional filters (lead_id, visitor_id, user_id, agent_id). Use this to get context on support chats, email threads, and other customer interactions.',
+      'List company conversations. Use action="list" with optional filters: lead_id, visitor_id, user_id, agent_id, status (conversation status e.g. active), channel (e.g. whatsapp, email, chat), custom_data_status (value of custom_data.status).',
     parameters: {
       type: 'object',
       properties: {
@@ -34,6 +35,9 @@ export function conversationsTool(site_id: string, user_id?: string) {
         visitor_id: { type: 'string', description: 'Filter by visitor UUID' },
         user_id: { type: 'string', description: 'Filter by user UUID' },
         agent_id: { type: 'string', description: 'Filter by agent UUID' },
+        status: { type: 'string', description: 'Filter by conversation status (e.g. active, closed)' },
+        channel: { type: 'string', description: 'Filter by channel (e.g. whatsapp, email, chat)' },
+        custom_data_status: { type: 'string', description: 'Filter by custom_data.status (JSONB key)' },
         limit: { type: 'number', description: 'Max results (default 10)' },
         offset: { type: 'number', description: 'Pagination offset' }
       },
@@ -46,29 +50,20 @@ export function conversationsTool(site_id: string, user_id?: string) {
         throw new Error(`Invalid action: ${action}`);
       }
 
-      const searchParams = new URLSearchParams();
-      searchParams.set('site_id', site_id);
-      if (params.lead_id) searchParams.set('lead_id', params.lead_id);
-      if (params.visitor_id) searchParams.set('visitor_id', params.visitor_id);
-      const uid = params.user_id ?? user_id;
-      if (uid) searchParams.set('user_id', uid);
-      if (params.agent_id) searchParams.set('agent_id', params.agent_id);
-      if (params.limit != null) searchParams.set('limit', String(params.limit));
-      if (params.offset != null) searchParams.set('offset', String(params.offset));
+      const result = await getConversationsCore({
+        site_id,
+        lead_id: params.lead_id,
+        visitor_id: params.visitor_id,
+        user_id: params.user_id ?? user_id,
+        agent_id: params.agent_id,
+        status: params.status,
+        channel: params.channel,
+        custom_data_status: params.custom_data_status,
+        limit: params.limit,
+        offset: params.offset
+      });
 
-      const res = await fetch(
-        `${getApiBaseUrl()}/api/agents/customerSupport/conversations?${searchParams.toString()}`
-      );
-      const data = await res.json();
-
-      if (!res.ok) {
-        const err = data.error;
-        const message = typeof err === 'object' && err?.message ? err.message : err ?? 'List conversations failed';
-        const code = typeof err === 'object' && err?.code ? err.code : undefined;
-        throw new Error(code ? `${code}: ${message}` : message);
-      }
-
-      return data?.data ?? data;
+      return result.data;
     }
   };
 }

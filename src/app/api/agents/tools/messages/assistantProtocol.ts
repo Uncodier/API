@@ -3,13 +3,15 @@
  * Read-only tool to list messages, optionally filtered by conversation or site-wide.
  */
 
-function getApiBaseUrl(): string {
-  return process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-}
+import { getMessagesCore } from '@/app/api/agents/customerSupport/conversations/messages/route';
 
 export interface MessagesToolParams {
   action: 'list';
   conversation_id?: string;
+  lead_id?: string;
+  role?: string;
+  interaction?: string;
+  custom_data_status?: string;
   limit?: number;
   offset?: number;
 }
@@ -18,7 +20,7 @@ export function messagesTool(site_id: string) {
   return {
     name: 'messages',
     description:
-      'List messages. Use action="list" to get messages. Optionally pass conversation_id to filter by one conversation; when omitted, returns recent messages across the whole site. Each message in the response includes conversation_id when available (optional field per message).',
+      'List messages. Use action="list" with optional filters: conversation_id, lead_id, role (user/assistant/system), interaction (e.g. opened, clicked), custom_data_status (custom_data.status). When conversation_id is omitted, returns recent messages site-wide. Each message includes conversation_id when available.',
     parameters: {
       type: 'object',
       properties: {
@@ -29,8 +31,12 @@ export function messagesTool(site_id: string) {
         },
         conversation_id: {
           type: 'string',
-          description: 'Optional. Filter messages by conversation UUID. If omitted, returns recent messages for the entire site. Response messages still include conversation_id per message when available.'
+          description: 'Optional. Filter by conversation UUID. If omitted, returns recent messages for the entire site.'
         },
+        lead_id: { type: 'string', description: 'Filter by lead UUID (messages linked to this lead)' },
+        role: { type: 'string', description: 'Filter by message role (e.g. user, assistant, system)' },
+        interaction: { type: 'string', description: 'Filter by interaction (e.g. opened, clicked for email tracking)' },
+        custom_data_status: { type: 'string', description: 'Filter by custom_data.status (JSONB key)' },
         limit: { type: 'number', description: 'Max results (default 50)' },
         offset: { type: 'number', description: 'Pagination offset' }
       },
@@ -43,25 +49,18 @@ export function messagesTool(site_id: string) {
         throw new Error(`Invalid action: ${action}`);
       }
 
-      const searchParams = new URLSearchParams();
-      searchParams.set('site_id', site_id);
-      if (params.conversation_id) searchParams.set('conversation_id', params.conversation_id);
-      if (params.limit != null) searchParams.set('limit', String(params.limit));
-      if (params.offset != null) searchParams.set('offset', String(params.offset));
+      const result = await getMessagesCore({
+        site_id,
+        conversation_id: params.conversation_id,
+        lead_id: params.lead_id,
+        role: params.role,
+        interaction: params.interaction,
+        custom_data_status: params.custom_data_status,
+        limit: params.limit,
+        offset: params.offset
+      });
 
-      const res = await fetch(
-        `${getApiBaseUrl()}/api/agents/customerSupport/conversations/messages?${searchParams.toString()}`
-      );
-      const data = await res.json();
-
-      if (!res.ok) {
-        const err = data.error;
-        const message = typeof err === 'object' && err?.message ? err.message : err ?? 'List messages failed';
-        const code = typeof err === 'object' && err?.code ? err.code : undefined;
-        throw new Error(code ? `${code}: ${message}` : message);
-      }
-
-      return data?.data ?? data;
+      return result.data;
     }
   };
 }

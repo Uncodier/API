@@ -1,15 +1,190 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-// Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   return uuidRegex.test(uuid);
 }
 
+export interface GetMessagesParams {
+  site_id: string;
+  conversation_id?: string;
+  /** Filter by messages.lead_id (UUID) */
+  lead_id?: string;
+  /** Filter by messages.role (e.g. user, assistant, system) */
+  role?: string;
+  /** Filter by messages.interaction (e.g. opened, clicked for email tracking) */
+  interaction?: string;
+  /** Filter by custom_data->>'status' (JSONB key inside message custom_data) */
+  custom_data_status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/**
+ * Core logic for listing messages. Callable from route or assistant protocol (no HTTP).
+ */
+export async function getMessagesCore(params: GetMessagesParams): Promise<{
+  success: true;
+  data: { messages: any[]; pagination: { total: number; page: number; limit: number; pages: number } };
+}> {
+  const {
+    site_id: siteId,
+    conversation_id: conversationId,
+    lead_id: leadId,
+    role: roleFilter,
+    interaction: interactionFilter,
+    custom_data_status: customDataStatus,
+    limit = 50,
+    offset = 0
+  } = params;
+
+  if (!siteId) throw new Error('INVALID_REQUEST: site_id is required');
+  if (!isValidUUID(siteId)) throw new Error('INVALID_REQUEST: site_id must be a valid UUID');
+  if (leadId && !isValidUUID(leadId)) throw new Error('INVALID_REQUEST: lead_id must be a valid UUID');
+
+  // Site-wide: no conversation_id
+  if (!conversationId) {
+    let siteQuery = supabaseAdmin
+      .from('messages')
+      .select('*, conversations!inner(site_id)', { count: 'exact' })
+      .eq('conversations.site_id', siteId)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
+    if (leadId) siteQuery = siteQuery.eq('lead_id', leadId);
+    if (roleFilter) siteQuery = siteQuery.eq('role', roleFilter);
+    if (interactionFilter) siteQuery = siteQuery.eq('interaction', interactionFilter);
+    if (customDataStatus) siteQuery = siteQuery.filter('custom_data->>status', 'eq', customDataStatus);
+
+    const { data: siteMessages, error: siteMsgError, count: siteCount } = await siteQuery;
+
+    if (siteMsgError) throw new Error(`DATABASE_ERROR: ${siteMsgError.message}`);
+
+    const messagesOnly = (siteMessages ?? []).map((m: any) => {
+      const { conversations: _c, ...rest } = m;
+      return rest;
+    });
+    const total = siteCount ?? 0;
+    const pages = Math.ceil(total / limit);
+
+    return {
+      success: true,
+      data: {
+        messages: messagesOnly,
+        pagination: { total, page: Math.floor(offset / limit) + 1, limit, pages }
+      }
+    };
+  }
+
+  if (!isValidUUID(conversationId)) throw new Error('INVALID_REQUEST: conversation_id must be a valid UUID');
+
+  const { data: conversation, error: conversationError } = await supabaseAdmin
+    .from('conversations')
+    .select('id')
+    .eq('id', conversationId)
+    .eq('site_id', siteId)
+    .single();
+
+  if (conversationError) throw new Error(`DATABASE_ERROR: ${conversationError.message}`);
+  if (!conversation) throw new Error('NOT_FOUND: Conversation not found or does not belong to the specified site');
+
+  let convMsgQuery = supabaseAdmin
+    .from('messages')
+    .select('*', { count: 'exact' })
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: true })
+    .range(offset, offset + limit - 1);
+  if (leadId) convMsgQuery = convMsgQuery.eq('lead_id', leadId);
+  if (roleFilter) convMsgQuery = convMsgQuery.eq('role', roleFilter);
+  if (interactionFilter) convMsgQuery = convMsgQuery.eq('interaction', interactionFilter);
+  if (customDataStatus) convMsgQuery = convMsgQuery.filter('custom_data->>status', 'eq', customDataStatus);
+
+  const { data: messages, error: messagesError, count } = await convMsgQuery;
+
+  if (messagesError) throw new Error(`DATABASE_ERROR: ${messagesError.message}`);
+
+  let syntheticMessages: any[] = [];
+  try {
+    const { data: tasks, error: tasksError } = await supabaseAdmin
+      .from('tasks')
+      .select('id, title, description, type, status, stage, priority, user_id, site_id, conversation_id, created_at, updated_at, assignee, serial_id, address')
+      .eq('conversation_id', conversationId)
+      .eq('site_id', siteId)
+      .order('created_at', { ascending: true });
+
+    if (!tasksError && tasks?.length) {
+      syntheticMessages.push(
+        ...tasks.map((task: any) => ({
+          id: `task-${task.id}`,
+          conversation_id: conversationId,
+          content: `Task created: ${task.title}${task.description ? ` — ${task.description}` : ''}`,
+          role: 'assistant',
+          created_at: task.created_at,
+          updated_at: task.updated_at,
+          custom_data: { type: 'task', task }
+        }))
+      );
+
+      const taskIds = tasks.map((t: any) => t.id);
+      const { data: comments, error: commentsError } = await supabaseAdmin
+        .from('task_comments')
+        .select('id, task_id, content, created_at, updated_at, is_private, attachments, files')
+        .in('task_id', taskIds)
+        .eq('is_private', false)
+        .order('created_at', { ascending: true });
+
+      if (!commentsError && comments?.length) {
+        const taskCommentMessages = comments
+          .filter((c: any) => !c.is_private)
+          .map((c: any) => {
+            const fileUrls: string[] = [];
+            const filesPayload = c.files;
+            if (Array.isArray(filesPayload)) {
+              for (const f of filesPayload) {
+                if (typeof f === 'string' && /^https?:\/\//i.test(f)) fileUrls.push(f);
+                else if (f && typeof f === 'object' && typeof (f as any).url === 'string') fileUrls.push((f as any).url);
+              }
+            } else if (filesPayload && typeof filesPayload === 'object' && typeof (filesPayload as any).url === 'string') {
+              fileUrls.push((filesPayload as any).url);
+            } else if (typeof filesPayload === 'string' && /^https?:\/\//i.test(filesPayload)) {
+              fileUrls.push(filesPayload);
+            }
+            const contentWithUrls = fileUrls.length > 0 ? `${c.content}\n${fileUrls.join('\n')}` : c.content;
+            const adjustedCreatedAt = new Date(new Date(c.created_at).getTime() - 10 * 1000).toISOString();
+            return {
+              id: `task_comment-${c.id}`,
+              conversation_id: conversationId,
+              content: contentWithUrls,
+              role: 'user',
+              created_at: adjustedCreatedAt,
+              updated_at: c.updated_at,
+              custom_data: { type: 'task_comment', task_id: c.task_id, attachments: c.attachments, files: c.files }
+            };
+          });
+        syntheticMessages.push(...taskCommentMessages);
+      }
+    }
+  } catch (_e) {
+    // continue without synthetic messages
+  }
+
+  const mergedMessages = [...(messages || []), ...syntheticMessages]
+    .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+
+  const total = count ?? 0;
+  const pages = Math.ceil(total / limit);
+
+  return {
+    success: true,
+    data: {
+      messages: mergedMessages,
+      pagination: { total, page: Math.floor(offset / limit) + 1, limit, pages }
+    }
+  };
+}
+
 export async function GET(request: Request) {
   try {
-    // Extract query parameters from the URL
     const url = new URL(request.url);
     const conversationId = url.searchParams.get('conversation_id');
     const siteId = url.searchParams.get('site_id');
@@ -17,9 +192,6 @@ export async function GET(request: Request) {
     const offset = parseInt(url.searchParams.get('offset') || '0');
     const debug = url.searchParams.get('debug') === 'true';
 
-    console.log(`🔍 Buscando mensajes: conversation_id=${conversationId || 'N/A'}, site_id=${siteId || 'N/A'}`);
-
-    // site_id is always required
     if (!siteId) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id is required' } },
@@ -27,250 +199,27 @@ export async function GET(request: Request) {
       );
     }
 
-    if (!isValidUUID(siteId)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'site_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
+    const result = await getMessagesCore({
+      site_id: siteId,
+      conversation_id: conversationId ?? undefined,
+      lead_id: url.searchParams.get('lead_id') ?? undefined,
+      role: url.searchParams.get('role') ?? undefined,
+      interaction: url.searchParams.get('interaction') ?? undefined,
+      custom_data_status: url.searchParams.get('custom_data_status') ?? undefined,
+      limit,
+      offset
+    });
 
-    // When conversation_id is omitted, return site-wide recent messages (no synthetic task messages)
-    if (!conversationId) {
-      const { data: siteMessages, error: siteMsgError, count: siteCount } = await supabaseAdmin
-        .from('messages')
-        .select('*, conversations!inner(site_id)', { count: 'exact' })
-        .eq('conversations.site_id', siteId)
-        .order('created_at', { ascending: false })
-        .range(offset, offset + limit - 1);
-
-      if (siteMsgError) {
-        console.error('Error querying site-wide messages:', siteMsgError);
-        return NextResponse.json(
-          { success: false, error: { code: 'DATABASE_ERROR', message: 'Error querying messages', details: debug ? siteMsgError : undefined } },
-          { status: 500 }
-        );
-      }
-
-      // Strip the joined conversations field; keep all message fields including conversation_id
-      const messagesOnly = (siteMessages ?? []).map((m: any) => {
-        const { conversations: _c, ...rest } = m;
-        return rest; // includes id, conversation_id, content, role, created_at, etc.
-      });
-      const total = siteCount ?? 0;
-      const pages = Math.ceil(total / limit);
-
-      console.log(`✅ Site-wide: ${messagesOnly.length} messages for site ${siteId}`);
-
-      return NextResponse.json({
-        success: true,
-        data: {
-          messages: messagesOnly,
-          pagination: { total, page: Math.floor(offset / limit) + 1, limit, pages }
-        },
-        debug: debug ? { query_params: { siteId }, mode: 'site_wide' } : undefined
-      });
-    }
-
-    // Validate conversation_id when provided
-    if (!isValidUUID(conversationId)) {
-      return NextResponse.json(
-        { success: false, error: { code: 'INVALID_REQUEST', message: 'conversation_id must be a valid UUID' } },
-        { status: 400 }
-      );
-    }
-
-    // First, verify that the conversation exists and belongs to the specified site
-    const { data: conversation, error: conversationError } = await supabaseAdmin
-      .from('conversations')
-      .select('id')
-      .eq('id', conversationId)
-      .eq('site_id', siteId)
-      .single();
-
-    if (conversationError) {
-      console.error('Error al verificar la conversación:', conversationError);
-      return NextResponse.json(
-        { success: false, error: { code: 'DATABASE_ERROR', message: 'Error verifying conversation', details: debug ? conversationError : undefined } },
-        { status: 500 }
-      );
-    }
-
-    if (!conversation) {
-      return NextResponse.json(
-        { success: false, error: { code: 'NOT_FOUND', message: 'Conversation not found or does not belong to the specified site' } },
-        { status: 404 }
-      );
-    }
-
-    // Query the messages
-    const { data: messages, error: messagesError, count } = await supabaseAdmin
-      .from('messages')
-      .select('*', { count: 'exact' })
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: true })
-      .range(offset, offset + limit - 1);
-
-    if (messagesError) {
-      console.error('Error al consultar mensajes:', messagesError);
-      return NextResponse.json(
-        { success: false, error: { code: 'DATABASE_ERROR', message: 'Error querying messages', details: debug ? messagesError : undefined } },
-        { status: 500 }
-      );
-    }
-
-    // Fetch tasks related to this conversation and site
-    let syntheticMessages: any[] = [];
-    try {
-      const { data: tasks, error: tasksError } = await supabaseAdmin
-        .from('tasks')
-        .select(`
-          id,
-          title,
-          description,
-          type,
-          status,
-          stage,
-          priority,
-          user_id,
-          site_id,
-          conversation_id,
-          created_at,
-          updated_at,
-          assignee,
-          serial_id,
-          address
-        `)
-        .eq('conversation_id', conversationId)
-        .eq('site_id', siteId)
-        .order('created_at', { ascending: true });
-
-      if (tasksError) {
-        console.warn('⚠️ Error al consultar tasks (se continuará sin tasks):', tasksError.message);
-      } else if (tasks && tasks.length > 0) {
-        // Build synthetic task messages
-        const taskCreatedMessages = tasks.map((task: any) => ({
-          id: `task-${task.id}`,
-          conversation_id: conversationId,
-          content: `Task created: ${task.title}${task.description ? ` — ${task.description}` : ''}`,
-          role: 'assistant',
-          created_at: task.created_at,
-          updated_at: task.updated_at,
-          custom_data: {
-            type: 'task',
-            task
-          }
-        }));
-
-        syntheticMessages.push(...taskCreatedMessages);
-
-        // Fetch public comments for these tasks
-        const taskIds = tasks.map((t: any) => t.id);
-        if (taskIds.length > 0) {
-          const { data: comments, error: commentsError } = await supabaseAdmin
-            .from('task_comments')
-            .select(`
-              id,
-              task_id,
-              content,
-              created_at,
-              updated_at,
-              is_private,
-              attachments,
-              files
-            `)
-            .in('task_id', taskIds)
-            .eq('is_private', false)
-            .order('created_at', { ascending: true });
-
-          if (commentsError) {
-            console.warn('⚠️ Error al consultar task_comments (se continuará sin comentarios):', commentsError.message);
-          } else if (comments && comments.length > 0) {
-            const taskCommentMessages = comments
-              // Extra safety: never include private comments
-              .filter((c: any) => !c.is_private)
-              .map((c: any) => {
-              // Extract file URLs from the files payload (array of objects, object, or string)
-              const fileUrls: string[] = [];
-              const filesPayload = c.files;
-              if (Array.isArray(filesPayload)) {
-                for (const f of filesPayload) {
-                  if (!f) continue;
-                  if (typeof f === 'string' && /^https?:\/\//i.test(f)) {
-                    fileUrls.push(f);
-                  } else if (typeof f === 'object' && typeof f.url === 'string' && f.url) {
-                    fileUrls.push(f.url);
-                  }
-                }
-              } else if (filesPayload && typeof filesPayload === 'object') {
-                if (typeof filesPayload.url === 'string' && filesPayload.url) {
-                  fileUrls.push(filesPayload.url);
-                }
-              } else if (typeof filesPayload === 'string' && /^https?:\/\//i.test(filesPayload)) {
-                fileUrls.push(filesPayload);
-              }
-
-              const contentWithUrls = fileUrls.length > 0
-                ? `${c.content}\n${fileUrls.join('\n')}`
-                : c.content;
-
-              // Adjust created_at for public (user) comments by subtracting one minute
-              const adjustedCreatedAt = !c.is_private
-                ? new Date(new Date(c.created_at).getTime() - 10 * 1000).toISOString()
-                : c.created_at;
-
-              return {
-                id: `task_comment-${c.id}`,
-                conversation_id: conversationId,
-                content: (!c.is_private && fileUrls.length > 0) ? fileUrls.join('\n') : contentWithUrls,
-                role: c.is_private ? 'team_member' : 'user',
-                created_at: adjustedCreatedAt,
-                updated_at: c.updated_at,
-                custom_data: {
-                  type: 'task_comment',
-                  task_id: c.task_id,
-                  attachments: c.attachments,
-                  files: c.files
-                }
-              };
-              });
-            syntheticMessages.push(...taskCommentMessages);
-          }
-        }
-      }
-    } catch (e: any) {
-      console.warn('⚠️ Error inesperado agregando tasks como mensajes (se continuará sin tasks):', e?.message || e);
-    }
-
-    // Merge and sort messages + synthetic task messages by created_at ascending
-    const mergedMessages = [...(messages || []), ...syntheticMessages]
-      .sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
-
-    // Calculate pagination (based on real messages only to avoid breaking clients)
-    const total = count || 0;
-    const pages = Math.ceil(total / limit);
-
-    console.log(`✅ Se encontraron ${messages.length} mensajes y ${syntheticMessages.length} eventos de tareas para la conversación ${conversationId}`);
-
+    return NextResponse.json({
+      ...result,
+      debug: debug ? { query_params: { conversationId, siteId }, mode: conversationId ? 'conversation' : 'site_wide' } : undefined
+    });
+  } catch (err: any) {
+    const message = err?.message ?? 'An error occurred while processing the request';
+    const code = message.startsWith('INVALID_REQUEST') ? 400 : message.startsWith('NOT_FOUND') ? 404 : message.startsWith('DATABASE_ERROR') ? 500 : 500;
     return NextResponse.json(
-      {
-        success: true,
-        data: {
-          messages: mergedMessages,
-          pagination: {
-            total,
-            page: Math.floor(offset / limit) + 1,
-            limit,
-            pages
-          }
-        },
-        debug: debug ? { query_params: { conversationId, siteId }, synthetic_counts: { tasks: syntheticMessages.filter(m => String(m.id).startsWith('task-')).length, task_comments: syntheticMessages.filter(m => String(m.id).startsWith('task_comment-')).length } } : undefined
-      }
-    );
-  } catch (error) {
-    console.error('Error en endpoint de mensajes de conversación:', error);
-    return NextResponse.json(
-      { success: false, error: { code: 'INTERNAL_SERVER_ERROR', message: 'An error occurred while processing the request' } },
-      { status: 500 }
+      { success: false, error: { code: message.split(':')[0] || 'INTERNAL_SERVER_ERROR', message: message.replace(/^[A-Z_]+:\s*/, '') } },
+      { status: code }
     );
   }
 } 
