@@ -6,10 +6,14 @@ export const EditLinkWithCopy = ({ className, filePath, children }: { className?
   const repoBase = 'https://github.com/Makinari/API/tree/main'
   const editUrl = filePath ? `${repoBase}/${filePath}` : repoBase
 
-  const handleCopy = () => {
+  const handleCopy = async () => {
     if (typeof window !== 'undefined') {
-      navigator.clipboard.writeText(window.location.href)
-      alert('Page URL copied to clipboard!')
+      try {
+        await navigator.clipboard.writeText(window.location.href)
+        alert('Page URL copied to clipboard!')
+      } catch (err) {
+        console.error('Failed to copy: ', err)
+      }
     }
   }
 
