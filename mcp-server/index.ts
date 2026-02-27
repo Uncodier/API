@@ -4,21 +4,28 @@
  * Requires MCP_SITE_ID in env; MCP_USER_ID and MCP_INSTANCE_ID are optional.
  */
 
-import { createMcpServer } from '@/lib/mcp/server';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 const siteId = process.env.MCP_SITE_ID;
 const userId = process.env.MCP_USER_ID;
 const instanceId = process.env.MCP_INSTANCE_ID ?? 'default';
+const apiUrl = process.env.API_URL || 'http://localhost:3000';
+
+// Set the API URL for tools that use it (e.g. ImageGenerationService)
+process.env.NEXT_PUBLIC_API_SERVER_URL = apiUrl;
+process.env.NEXT_PUBLIC_API_URL = apiUrl;
+process.env.NEXT_PUBLIC_APP_URL = apiUrl;
+console.error(`[MCP] Using API URL: ${apiUrl}`);
 
 if (!siteId) {
   console.error('MCP_SITE_ID is required. Set it in .env or the environment.');
   process.exit(1);
 }
 
-const server = createMcpServer(siteId, userId, instanceId);
-
+// Import createMcpServer dynamically to ensure env vars are set before module evaluation
 async function main() {
+  const { createMcpServer } = await import('@/lib/mcp/server');
+  const server = createMcpServer(siteId!, userId, instanceId);
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
