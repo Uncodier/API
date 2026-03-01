@@ -10,7 +10,14 @@ export const metadata = {
   // For more information on metadata API, see: https://nextjs.org/docs/app/building-your-application/optimizing/metadata
 }
 
-const banner = <Banner storageKey="some-key">Makinari Market Fit está disponible 🎉</Banner>
+const banner = (
+  <Banner storageKey="mcp-server-launch">
+    The Makinari API repo now includes an MCP Server — connect your AI models directly.{' '}
+    <a href="https://github.com/Makinari/API" target="_blank" rel="noopener noreferrer">
+      View on GitHub →
+    </a>
+  </Banner>
+)
 const navbar = (
   <Navbar
     logo={<b>Makinari</b>}

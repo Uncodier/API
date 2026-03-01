@@ -19,7 +19,8 @@ html, body {
 .method-chip {
   display: inline-flex;
   align-items: center;
-  padding: 0.0625rem 0.25rem;
+  justify-content: center;
+  padding: 0.2rem 0.3rem 0.2rem;
   border-radius: 0.2rem;
   font-size: 0.6rem;
   font-weight: 600;
@@ -28,6 +29,7 @@ html, body {
   letter-spacing: 0.02em;
   white-space: nowrap;
   flex-shrink: 0;
+  vertical-align: middle;
 }
 
 .method-chip-GET { background-color: #dbeafe; color: #1e40af; }
