@@ -1,0 +1,48 @@
+---
+title: agentMessage
+description: Ejecuta el workflow agentMessageWorkflow en Temporal para procesar mensajes de agente
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# agentMessage
+
+Ejecuta el workflow agentMessageWorkflow en Temporal para procesar mensajes de agente
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/agentMessage</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `conversationId` | `string` | Yes | - |
+| `message` | `string` | Yes | - |
+| `agentId` | `string` | Yes | - |
+| `lead_id` | `string` | Yes | - |
+| `visitor_id` | `string` | Yes | - |
+| `site_id` | `string` | Yes | - |
+| `team_member_id` | `string` | Yes | - |
+| `userId` | `string` | Yes | - |
+| `origin` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/agentMessage" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversationId": "value",
+    "message": "value",
+    "agentId": "value",
+    "lead_id": "value",
+    "visitor_id": "value",
+    "site_id": "value",
+    "team_member_id": "value",
+    "userId": "value",
+    "origin": "value"
+  }'
+```

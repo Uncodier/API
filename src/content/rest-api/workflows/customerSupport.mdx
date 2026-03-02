@@ -1,0 +1,58 @@
+---
+title: customerSupport
+description: Ejecuta el workflow customerSupportWorkflow en Temporal para procesar mensajes de customer support
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# customerSupport
+
+Ejecuta el workflow customerSupportWorkflow en Temporal para procesar mensajes de customer support
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/customerSupport</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `conversationId` | `string` | Yes | - |
+| `userId` | `string` | Yes | - |
+| `message` | `string` | Yes | - |
+| `agentId` | `string` | Yes | - |
+| `site_id` | `string` | Yes | - |
+| `lead_id` | `string` | Yes | - |
+| `visitor_id` | `string` | Yes | - |
+| `name` | `string` | Yes | - |
+| `email` | `string` | Yes | - |
+| `phone` | `string` | Yes | - |
+| `website_chat_origin` | `boolean` | Yes | - |
+| `lead_notification` | `string` | Yes | - |
+| `origin` | `string` | Yes | - |
+| `origin_message_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/customerSupport" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conversationId": "value",
+    "userId": "value",
+    "message": "value",
+    "agentId": "value",
+    "site_id": "value",
+    "lead_id": "value",
+    "visitor_id": "value",
+    "name": "value",
+    "email": "value",
+    "phone": "value",
+    "website_chat_origin": true,
+    "lead_notification": "value",
+    "origin": "value",
+    "origin_message_id": "value"
+  }'
+```

@@ -1,0 +1,32 @@
+---
+title: leadGeneration
+description: Ejecuta el workflow leadGenerationWorkflow en Temporal para generación de leads
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# leadGeneration
+
+Ejecuta el workflow leadGenerationWorkflow en Temporal para generación de leads
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/leadGeneration</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/leadGeneration" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

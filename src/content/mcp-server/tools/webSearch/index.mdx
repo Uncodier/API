@@ -7,46 +7,38 @@ import { MethodChip } from '@/components';
 
 # Web Search <MethodChip method="POST" />
 
-Perform a web search to get real-time information.
+Perform a web search to get real-time information. Powered by Tavily. Returns an AI-generated answer plus individual result snippets.
 
 ## Input Schema
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | query | string | The search query to perform. |
+| search_depth | string | Depth of the search. Enum: basic, advanced. Default: basic. |
+| max_results | number | Max number of results to return (1–20). Default: 5. |
+| include_answer | boolean | Include an AI-generated answer summarizing the results. Default: true. |
+| include_images | boolean | Include image results. Default: false. |
+| include_domains | array | Restrict results to these domains (e.g. ["wikipedia.org"]). |
+| exclude_domains | array | Exclude results from these domains. |
 
 ## REST Endpoint
 
-The REST equivalent accepts multiple queries in a single call, executes them via Tavily, and saves the results to the Data Analyst agent's memories.
-
 ```
-POST /api/agents/dataAnalyst/search
+POST /api/agents/tools/webSearch
 ```
 
 ```http
-POST /api/agents/dataAnalyst/search
+POST /api/agents/tools/webSearch
 Authorization: Bearer YOUR_API_KEY
 Content-Type: application/json
 
 {
-  "site_id": "YOUR_SITE_ID",
-  "search_queries": ["AI trends 2026", "top CRM tools for SaaS"],
-  "search_options": {
-    "search_depth": "basic",
-    "max_results": 10,
-    "include_answer": true
-  }
+  "query": "latest AI models 2026",
+  "search_depth": "basic",
+  "max_results": 5,
+  "include_answer": true
 }
 ```
-
-| Field | Type | Description |
-| :--- | :--- | :--- |
-| site_id | string | Site UUID (required). Used to locate the Data Analyst agent. |
-| search_queries | array | One or more search queries to execute. |
-| search_options.search_depth | string | `basic` or `advanced`. Default: `basic`. |
-| search_options.max_results | number | Max results per query. Default: 10. |
-| search_options.include_answer | boolean | Include a synthesized answer. Default: true. |
-| agent_id | string | Optional. Target a specific agent instead of the site's Data Analyst. |
 
 **Response:**
 
@@ -54,20 +46,14 @@ Content-Type: application/json
 {
   "success": true,
   "data": {
-    "agent_id": "...",
-    "total_queries": 2,
-    "successful_searches": 2,
-    "failed_searches": 0,
-    "search_results": [
+    "answer": "As of 2026, the leading AI models include...",
+    "results": [
       {
-        "query": "AI trends 2026",
-        "success": true,
-        "results_count": 10,
-        "answer": "...",
-        "memory_id": "..."
+        "title": "Top AI Models of 2026",
+        "url": "https://example.com/ai-models",
+        "content": "..."
       }
-    ],
-    "memory_ids": ["...", "..."]
+    ]
   }
 }
 ```

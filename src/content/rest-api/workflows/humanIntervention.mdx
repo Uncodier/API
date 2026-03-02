@@ -1,0 +1,46 @@
+---
+title: humanIntervention
+description: Ejecuta el workflow humanInterventionWorkflow en Temporal
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# humanIntervention
+
+Ejecuta el workflow humanInterventionWorkflow en Temporal
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/humanIntervention</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+| `user_id` | `string` | Yes | - |
+| `intervention_type` | `string` | Yes | - |
+| `entity_id` | `string` | Yes | - |
+| `entity_type` | `string` | Yes | - |
+| `priority` | `'low' | 'medium' | 'high' | 'critical'` | Yes | - |
+| `description` | `string` | Yes | - |
+| `metadata` | `Record<string, any>` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/humanIntervention" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value",
+    "user_id": "value",
+    "intervention_type": "value",
+    "entity_id": "value",
+    "entity_type": "value",
+    "priority": "value",
+    "description": "value",
+    "metadata": {}
+  }'
+```

@@ -1,0 +1,29 @@
+---
+title: webhook
+description: Receives DB change events, finds active subscriptions by site and table, and dispatches a Temporal workflow asynchronously.
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# webhook
+
+Receives DB change events, finds active subscriptions by site and table, and dispatches a Temporal workflow asynchronously.
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/webhook</code>
+</div>
+
+## Body Parameters
+
+None required.
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/webhook" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+  }'
+```

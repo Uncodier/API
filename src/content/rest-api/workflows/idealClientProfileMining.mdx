@@ -1,0 +1,32 @@
+---
+title: idealClientProfileMining
+description: Ejecuta el workflow idealClientProfileMiningWorkflow en Temporal para minería del ICP por sitio
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# idealClientProfileMining
+
+Ejecuta el workflow idealClientProfileMiningWorkflow en Temporal para minería del ICP por sitio
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/idealClientProfileMining</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/idealClientProfileMining" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

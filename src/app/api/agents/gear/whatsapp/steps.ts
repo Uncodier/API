@@ -11,15 +11,66 @@ export async function sendWhatsAppResponse(
   
   console.log(`[GearAgent] Sending response to WhatsApp: ${userPhone}`);
   
-  await WhatsAppSendService.sendMessage({
-    phone_number: userPhone,
-    message: message,
-    site_id: siteId,
-    responseWindowEnabled: true
-  });
+  // Custom Twilio variables for this special Gear Agent
+  const accountSid = process.env.GEAR_TWILIO_ACCOUNT_SID;
+  const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
+  const fromNumber = process.env.GEAR_TWILIO_PHONE_NUMBER;
+  
+  if (accountSid && authToken && fromNumber) {
+    console.log(`[GearAgent] Using custom Twilio credentials from .env for ${userPhone}`);
+    try {
+      const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+      const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+      
+      const formData = new URLSearchParams();
+      // Ensure fromNumber doesn't already have whatsapp: and phone doesn't have it
+      const cleanFrom = fromNumber.replace('whatsapp:', '');
+      const cleanTo = userPhone.replace('whatsapp:', '');
+      
+      formData.append('From', `whatsapp:${cleanFrom}`);
+      formData.append('To', `whatsapp:${cleanTo}`);
+      formData.append('Body', message);
+      
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Basic ${credentials}`,
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: formData.toString()
+      });
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        console.error(`[GearAgent] Twilio API Error:`, errorData);
+        // Let it fall back to standard service or return false
+        return false;
+      }
+      
+      console.log(`[GearAgent] Response sent to WhatsApp successfully via custom Twilio setup`);
+      return true;
+    } catch (error) {
+      console.error(`[GearAgent] Exception sending via custom Twilio setup:`, error);
+      return false;
+    }
+  }
 
-  console.log(`[GearAgent] Response sent to WhatsApp successfully`);
-  return true;
+  // Fallback to standard platform service
+  console.log(`[GearAgent] Using platform WhatsAppSendService`);
+  try {
+    await WhatsAppSendService.sendMessage({
+      phone_number: userPhone,
+      message: message,
+      site_id: siteId,
+      responseWindowEnabled: true
+    });
+
+    console.log(`[GearAgent] Response sent to WhatsApp successfully`);
+    return true;
+  } catch (error) {
+    console.error(`[GearAgent] Failed to send via platform WhatsAppSendService:`, error);
+    return false;
+  }
 }
 
 export async function sendWhatsAppError(
@@ -29,13 +80,12 @@ export async function sendWhatsAppError(
   'use step';
   
   try {
-    await WhatsAppSendService.sendMessage({
-      phone_number: userPhone,
-      message: "I'm sorry, I encountered an error processing your request.",
-      site_id: siteId,
-      responseWindowEnabled: true
-    });
-    return true;
+    // Re-use the send logic to also support custom Twilio for errors
+    return await sendWhatsAppResponse(
+      userPhone, 
+      "I'm sorry, I encountered an error processing your request.", 
+      siteId
+    );
   } catch (sendError) {
     console.error(`[GearAgent] Failed to send error message:`, sendError);
     return false;

@@ -1,0 +1,57 @@
+---
+title: Get Requirements
+description: Retrieve a list of requirements.
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# Get Requirements
+
+<div className="endpoint-block">
+  <MethodChip method="GET" />
+  <code>/api/requirements</code>
+</div>
+
+Retrieves a list of requirements. The results exclude requirements that have a status of `completed` or `validated`.
+
+## Query Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | No | Filter requirements by a specific site ID. |
+| `user_id` | `string` | No | Filter requirements by a specific user ID. |
+| `limit` | `number` | No | The maximum number of requirements to return. Default: `50`, Max: `100`. |
+| `offset` | `number` | No | The number of requirements to skip before returning results. Default: `0`. |
+
+## Example Request
+
+```bash
+curl -X GET "https://api.makinari.com/api/requirements?site_id=123&limit=10" \
+  -H "Authorization: Bearer YOUR_API_KEY"
+```
+
+## Response
+
+Returns a list of requirements along with pagination information.
+
+```json
+{
+  "success": true,
+  "data": {
+    "requirements": [
+      {
+        "id": "req_123",
+        "title": "Example Requirement",
+        "status": "pending"
+      }
+    ],
+    "pagination": {
+      "total": 150,
+      "count": 10,
+      "has_more": true,
+      "limit": 10,
+      "offset": 0
+    }
+  }
+}
+```

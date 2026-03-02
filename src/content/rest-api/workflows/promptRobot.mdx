@@ -1,0 +1,42 @@
+---
+title: promptRobot
+description: Ejecuta el workflow promptRobotWorkflow en Temporal para procesar mensajes de robots automatizados
+---
+
+import { MethodChip } from '../../../components/MethodChip';
+
+# promptRobot
+
+Ejecuta el workflow promptRobotWorkflow en Temporal para procesar mensajes de robots automatizados
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/promptRobot</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `instance_id` | `string` | Yes | - |
+| `message` | `string` | Yes | - |
+| `step_status` | `string` | Yes | - |
+| `site_id` | `string` | Yes | - |
+| `context` | `string` | Yes | - |
+| `activity` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/promptRobot" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "instance_id": "value",
+    "message": "value",
+    "step_status": "value",
+    "site_id": "value",
+    "context": "value",
+    "activity": "value"
+  }'
+```
