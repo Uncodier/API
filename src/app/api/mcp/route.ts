@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
   }
 
   const userId = request.headers.get('x-mcp-user-id') || process.env.MCP_USER_ID;
-  const instanceId = request.headers.get('x-mcp-instance-id') || process.env.MCP_INSTANCE_ID ?? 'default';
+  const instanceId = request.headers.get('x-mcp-instance-id') || (process.env.MCP_INSTANCE_ID ?? 'default');
 
   let parsedBody: unknown;
   try {
