@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { updateRequirement, getRequirementById } from '@/lib/database/requirement-db';
+import { shouldUseRemoteApi, invokeRemoteTool, RemoteToolError } from '@/lib/mcp/remote-client';
 
 const UpdateRequirementSchema = z.object({
   requirement_id: z.string().uuid('Requirement ID must be a valid UUID'),
@@ -19,7 +20,13 @@ const UpdateRequirementSchema = z.object({
  * Core function to update a requirement
  */
 export async function updateRequirementCore(params: any) {
+  if (shouldUseRemoteApi()) {
+    console.log('[Requirements Update] Using Remote API mode');
+    return invokeRemoteTool('/api/agents/tools/requirements/update', params);
+  }
+
   const validated = UpdateRequirementSchema.parse(params);
+
 
   const { requirement_id, site_id, ...updateFields } = validated;
 
@@ -53,6 +60,14 @@ export async function POST(request: NextRequest) {
         details: error.errors,
       }, { status: 400 });
     }
+
+    if (error instanceof RemoteToolError) {
+      return NextResponse.json(error.data || {
+        success: false,
+        error: error.message
+      }, { status: error.status });
+    }
+
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
     const status = errorMessage === 'Requirement not found' ? 404 : (errorMessage === 'No tienes permiso para actualizar este requerimiento' ? 403 : 500);
     return NextResponse.json({

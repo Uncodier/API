@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createRequirement } from '@/lib/database/requirement-db';
+import { shouldUseRemoteApi, invokeRemoteTool, RemoteToolError } from '@/lib/mcp/remote-client';
 
 const CreateRequirementSchema = z.object({
   title: z.string().min(1, 'Title is required'),
@@ -33,6 +34,11 @@ async function resolveUserId(siteId: string, userId?: string): Promise<string> {
  * Core function to create a requirement
  */
 export async function createRequirementCore(params: any) {
+  if (shouldUseRemoteApi()) {
+    console.log('[Requirements Create] Using Remote API mode');
+    return invokeRemoteTool('/api/agents/tools/requirements/create', params);
+  }
+
   const validated = CreateRequirementSchema.parse(params);
   const effectiveUserId = await resolveUserId(validated.site_id, validated.user_id);
 
@@ -68,6 +74,14 @@ export async function POST(request: NextRequest) {
         details: error.errors,
       }, { status: 400 });
     }
+
+    if (error instanceof RemoteToolError) {
+      return NextResponse.json(error.data || {
+        success: false,
+        error: error.message
+      }, { status: error.status });
+    }
+
     const errorMessage = error instanceof Error ? error.message : 'Internal server error';
     return NextResponse.json({
       success: false,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getRequirements } from '@/lib/database/requirement-db';
+import { shouldUseRemoteApi, invokeRemoteTool, RemoteToolError } from '@/lib/mcp/remote-client';
 
 const GetRequirementsSchema = z.object({
   site_id: z.string().uuid('Site ID is required'),
@@ -23,6 +24,13 @@ export type GetRequirementsFilters = z.infer<typeof GetRequirementsSchema>;
  * Core logic for getRequirements - callable from route or assistant protocol
  */
 export async function getRequirementsCore(filters: Record<string, unknown>) {
+  // Support Remote Mode (MCP without DB access)
+  if (shouldUseRemoteApi()) {
+    console.log('[Requirements] Using Remote API mode');
+    // Note: The path here should match the API route path relative to API_URL
+    return invokeRemoteTool('/api/agents/tools/requirements/get', filters);
+  }
+
   const validatedFilters = GetRequirementsSchema.parse(filters);
   const { requirements, total, hasMore } = await getRequirements(validatedFilters);
 
@@ -54,6 +62,14 @@ export async function POST(request: NextRequest) {
         details: error.errors,
       }, { status: 400 });
     }
+
+    if (error instanceof RemoteToolError) {
+      return NextResponse.json(error.data || {
+        success: false,
+        error: error.message
+      }, { status: error.status });
+    }
+
     if (error instanceof Error) {
       return NextResponse.json({
         success: false,
