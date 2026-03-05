@@ -46,6 +46,7 @@ export async function POST(request: NextRequest) {
     const phoneNumber = extractPhoneNumber(webhookData.From);
     const businessPhoneNumber = extractPhoneNumber(webhookData.To);
     const messageContent = webhookData.Body;
+    const messageSid = webhookData.MessageSid;
     const businessAccountId = webhookData.AccountSid || process.env.GEAR_TWILIO_ACCOUNT_SID;
     
     console.log(`📥 Procesando mensaje de Twilio WhatsApp (Gear) de ${phoneNumber}: ${messageContent.substring(0, 50)}...`);
@@ -53,18 +54,44 @@ export async function POST(request: NextRequest) {
     // 1. Find Site ID
     let siteId: string | null = null;
     
+    // El Gear Agent en Makinari opera respondiendo solicitudes para otros sitios (sus clientes)
+    // Cuando entra un mensaje a este webhook, verificamos si el usuario ya nos ha dicho 
+    // a qué sitio quiere interactuar (por ejemplo con un tool 'set_site' o un custom_data previo)
+    
+    // Primero, revisamos si el usuario (basado en su celular) ya tiene un sitio activo seleccionado en Makinari
+    const { data: activeUser } = await supabaseAdmin
+      .from('users')
+      .select('id, custom_data')
+      .contains('custom_data', { whatsapp_phone: phoneNumber })
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    // Si el usuario tiene un "active_target_site_id" en sus custom_data, usamos ese para procesar
+    if (activeUser && activeUser.custom_data?.active_target_site_id) {
+      siteId = activeUser.custom_data.active_target_site_id;
+      console.log(`✅ [Gear] Redirigiendo request al sitio cliente seleccionado por el usuario: ${siteId}`);
+    } 
+    
     // Try to find site by account_sid in settings
-    if (businessAccountId) {
+    if (!siteId && businessAccountId) {
       const { data: siteBySettings } = await supabaseAdmin
         .from('settings')
         .select('site_id')
         .contains('channels', { whatsapp: { account_sid: businessAccountId } })
+        .limit(1)
         .maybeSingle();
         
       if (siteBySettings) {
         siteId = siteBySettings.site_id;
-        console.log(`✅ Encontrado site_id por account_sid: ${siteId}`);
+        console.log(`✅ [Gear] Encontrado site_id por account_sid: ${siteId}`);
       }
+    }
+
+    // Check if there's a specific GEAR_SITE_ID in env variables (Este es el id de MAKINARI por defecto)
+    if (!siteId && process.env.GEAR_SITE_ID) {
+      siteId = process.env.GEAR_SITE_ID;
+      console.log(`✅ [Gear] Usando site_id de Makinari (GEAR_SITE_ID): ${siteId}`);
     }
     
     // Fallback: Find site by name "Makinari"
@@ -78,7 +105,7 @@ export async function POST(request: NextRequest) {
         
       if (siteByName) {
         siteId = siteByName.id;
-        console.log(`⚠️ Usando site_id por nombre "Makinari": ${siteId}`);
+        console.log(`⚠️ [Gear] Usando site_id por nombre "Makinari": ${siteId}`);
       }
     }
     
@@ -90,24 +117,34 @@ export async function POST(request: NextRequest) {
     // 2. Find User ID based on Phone Number
     let userId: string | null = null;
     
-    const { data: visitor } = await supabaseAdmin
-      .from('visitors')
-      .select('id, user_id')
-      .contains('custom_data', { whatsapp_phone: phoneNumber })
+    // El usuario final (cliente del cliente) es el visitor, pero la instancia le pertenece
+    // al dueño del sitio cliente (o al dueño de Makinari).
+    // NOTA: No usamos activeUser.id porque queremos que el asistente
+    // corra en nombre del dueño del sitio, no del visitante.
+    
+    const { data: site } = await supabaseAdmin
+      .from('sites')
+      .select('user_id')
+      .eq('id', siteId)
       .maybeSingle();
       
-    if (visitor && visitor.user_id) {
-      userId = visitor.user_id;
+    if (site) {
+      userId = site.user_id; // Use site owner 
+      console.log(`✅ Usando user_id del dueño del sitio: ${userId}`);
     } else {
-      const { data: site } = await supabaseAdmin
-        .from('sites')
-        .select('user_id')
-        .eq('id', siteId)
-        .single();
-        
-      if (site) {
-        userId = site.user_id; // Use site owner as fallback
-        console.log(`⚠️ Usando user_id del dueño del sitio: ${userId}`);
+      // En caso de que se use un active_target_site_id que ya no existe o que no tenga user_id
+      // usamos el de Makinari/el de entorno por defecto
+      const fallbackSiteId = process.env.GEAR_SITE_ID;
+      if (fallbackSiteId && fallbackSiteId !== siteId) {
+          const { data: fallbackSite } = await supabaseAdmin
+            .from('sites')
+            .select('user_id')
+            .eq('id', fallbackSiteId)
+            .maybeSingle();
+          if (fallbackSite) {
+             userId = fallbackSite.user_id;
+             console.log(`⚠️ Usando user_id de Makinari como fallback: ${userId}`);
+          }
       }
     }
     
@@ -119,26 +156,33 @@ export async function POST(request: NextRequest) {
     // 3. Find/Create Instance
     let instanceId: string | null = null;
     
+    // Necesitamos que cada visitante de un mismo sitio tenga su propia instancia
+    // para que las conversaciones no se mezclen. Por lo tanto, agregamos el phoneNumber
+    // para aislar la instancia.
+    
+    const instanceIdentifier = `Gear Assistant - ${phoneNumber}`;
+    
     const { data: instances } = await supabaseAdmin
       .from('remote_instances')
       .select('id')
       .eq('site_id', siteId)
       .eq('user_id', userId)
+      .eq('name', instanceIdentifier)
       .eq('status', 'running')
       .order('created_at', { ascending: false })
       .limit(1);
       
     if (instances && instances.length > 0) {
       instanceId = instances[0].id;
-      console.log(`✅ Usando instancia existente: ${instanceId}`);
+      console.log(`✅ Usando instancia existente para ${phoneNumber}: ${instanceId}`);
     } else {
-      console.log('🆕 Creando nueva instancia para Gear Agent');
+      console.log(`🆕 Creando nueva instancia de Gear para el teléfono ${phoneNumber}`);
       const { data: newInstance } = await supabaseAdmin
         .from('remote_instances')
         .insert({
           site_id: siteId,
           user_id: userId,
-          name: 'Gear Assistant (WhatsApp)',
+          name: instanceIdentifier,
           instance_type: 'ubuntu',
           status: 'uninstantiated',
           created_by: userId
@@ -163,6 +207,7 @@ export async function POST(request: NextRequest) {
     await start(runGearAgentWorkflow, [{
       instanceId,
       message: messageContent,
+      messageSid,
       siteId,
       userId,
       userPhone: phoneNumber,

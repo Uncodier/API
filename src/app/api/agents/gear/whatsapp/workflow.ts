@@ -1,11 +1,12 @@
 'use workflow';
 
 import { runAssistantWorkflow } from '@/app/api/robots/instance/assistant/workflow';
-import { sendWhatsAppResponse, sendWhatsAppError } from './steps';
+import { sendWhatsAppResponse, sendWhatsAppError, sendWhatsAppTypingIndicator } from './steps';
 
 interface GearAgentWorkflowInput {
   instanceId: string;
   message: string;
+  messageSid?: string;
   siteId: string;
   userId: string;
   userPhone: string;
@@ -17,6 +18,7 @@ interface GearAgentWorkflowInput {
 export async function runGearAgentWorkflow({
   instanceId,
   message,
+  messageSid,
   siteId,
   userId,
   userPhone,
@@ -29,6 +31,11 @@ export async function runGearAgentWorkflow({
   console.log(`[GearAgent] Starting workflow for user ${userId} (${userPhone}) on instance ${instanceId}`);
 
   try {
+    // Si tenemos el messageSid, enviamos el estado de "escribiendo"
+    if (messageSid) {
+      await sendWhatsAppTypingIndicator(messageSid, siteId);
+    }
+    
     // Note: We don't pass gearTools directly as customTools because workflows cannot serialize functions.
     // Instead, we pass 'gear' as the agentType to runAssistantWorkflow.
     
