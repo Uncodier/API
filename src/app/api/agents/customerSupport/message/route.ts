@@ -781,7 +781,7 @@ async function findLeadByInfo(email?: string, phone?: string, name?: string, sit
     if (email && phone) {
       // Si tenemos ambos, email y phone, generar variantes del teléfono para búsqueda más flexible
       const phoneVariants = normalizePhoneForSearch(phone);
-      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
       const allQueries = [`email.eq.${email}`, ...phoneQueries];
       query = query.or(allQueries.join(','));
       console.log(`🔍 Buscando lead con email="${email}" O phone en variantes: ${phoneVariants.join(', ')}`);
@@ -796,7 +796,7 @@ async function findLeadByInfo(email?: string, phone?: string, name?: string, sit
         // Generar variantes del número de teléfono para búsqueda más flexible
         const phoneVariants = normalizePhoneForSearch(phone);
         if (phoneVariants.length > 1) {
-          const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+          const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
           query = query.or(phoneQueries.join(','));
           console.log(`🔍 Buscando lead con phone en variantes: ${phoneVariants.join(', ')}`);
         } else if (phoneVariants.length === 1) {

@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearAgentWorkflow } from '../workflow';
 
-import { normalizePhoneForSearch } from '@/lib/utils/phone-normalizer';
+import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
 // Helper para extraer número
 function extractPhoneNumber(twilioPhoneFormat: string): string {
@@ -45,18 +45,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing required webhook data' }, { status: 400 });
     }
     
-    const phoneNumber = extractPhoneNumber(webhookData.From);
+    const rawPhoneNumber = extractPhoneNumber(webhookData.From);
+    const phoneNumber = normalizePhoneForStorage(rawPhoneNumber) || rawPhoneNumber;
     const businessPhoneNumber = extractPhoneNumber(webhookData.To);
     const messageContent = webhookData.Body;
     const messageSid = webhookData.MessageSid;
     const businessAccountId = webhookData.AccountSid || process.env.GEAR_TWILIO_ACCOUNT_SID;
     
-    console.log(`📥 Procesando mensaje de Twilio WhatsApp (Gear) de ${phoneNumber}: ${messageContent.substring(0, 50)}...`);
+    console.log(`📥 Procesando mensaje de Twilio WhatsApp (Gear) de ${phoneNumber} (raw: ${rawPhoneNumber}): ${messageContent.substring(0, 50)}...`);
     
     // 1. Identificar al usuario basado en el número de teléfono
-    // Intenta encontrar el número en cualquiera de sus formatos
-    const phoneVariants = normalizePhoneForSearch(phoneNumber);
-    const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`).join(',');
+    // Intenta encontrar el número en cualquiera de sus formatos usando el número crudo para mayor alcance
+    const phoneVariants = normalizePhoneForSearch(rawPhoneNumber);
+    // IMPORTANTE: Restauradas las comillas dobles, Supabase/PostgREST falla si un valor contiene espacios y no tiene comillas en un filtro .or()
+    const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`).join(',');
     
     const { data: user } = await supabaseAdmin
       .from('users')
@@ -245,7 +247,7 @@ export async function POST(request: NextRequest) {
       messageSid,
       siteId,
       userId,
-      userPhone: phoneNumber,
+      userPhone: rawPhoneNumber, // Mantenemos el número crudo para que Twilio pueda responder correctamente
       customTools: [],
       useSdkTools: false, // Puedes poner esto dinámico luego basado en si es admin o no.
       systemPrompt: systemPromptOverride

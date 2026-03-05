@@ -45,7 +45,7 @@ export async function findExistingLead(siteId: string, phoneVariants: string[]):
       .select('id')
       .eq('site_id', siteId);
     if (phoneVariants.length > 1) {
-      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
       query = query.or(phoneQueries.join(','));
     } else if (phoneVariants.length === 1) {
       // Usar comillas también aquí para prevenir problemas con el formato
