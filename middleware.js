@@ -20,8 +20,14 @@ import { apiKeyAuth } from './src/middleware/apiKeyAuth';
 export default async function middleware(request) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   
-  // Verificar si es la ruta de WhatsApp webhook (tiene su propia validación de Twilio)
-  const isWhatsAppWebhook = request.nextUrl.pathname === '/api/agents/whatsapp';
+  // Check if it's a WhatsApp webhook route (they have their own Twilio validation)
+  const wpWebhookPaths = [
+    '/api/agents/whatsapp',
+    '/api/agents/gear/whatsapp/webhook',
+    '/api/integrations/whatsapp/webhook'
+  ];
+  
+  const isWhatsAppWebhook = wpWebhookPaths.includes(request.nextUrl.pathname);
   
   // Verificar si es un webhook de AgentMail (tiene su propia validación de Svix)
   const isAgentMailWebhook = request.nextUrl.pathname.startsWith('/api/integrations/agentmail/webhook/');
