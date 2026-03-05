@@ -207,7 +207,8 @@ export async function POST(request: NextRequest) {
       .eq('site_id', siteId)
       .eq('user_id', userId)
       .eq('name', instanceIdentifier)
-      .eq('status', 'running')
+      .neq('status', 'destroyed') // Find existing active instances (running, uninstantiated, etc.)
+      .neq('status', 'deleted')
       .order('created_at', { ascending: false })
       .limit(1);
       
