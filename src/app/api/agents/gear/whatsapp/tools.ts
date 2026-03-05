@@ -138,9 +138,9 @@ export function verifyAccountTool() {
             // This assumes a public table exists that mirrors auth.users
             let userId: string | null = null;
 
-            // Try 'users' table
+            // Try 'profiles' table
             const { data: user, error: userError } = await supabaseAdmin
-                .from('users')
+                .from('profiles')
                 .select('id')
                 .eq('email', args.email)
                 .maybeSingle();

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
-import { runGearAgentWorkflow } from '../workflow';
+import { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow } from '../workflow';
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
@@ -79,30 +79,55 @@ export async function POST(request: NextRequest) {
     if (user) {
       userId = user.id;
       
-      // Obtener todos los sitios pertenecientes a este usuario
+      // Obtener todos los sitios pertenecientes a este usuario (como owner)
       const { data: userSites } = await supabaseAdmin
         .from('sites')
         .select('id, name')
         .eq('user_id', userId);
 
+      // Obtener todos los sitios donde este usuario es miembro
+      const { data: memberSites } = await supabaseAdmin
+        .from('site_members')
+        .select('site_id, sites:site_id(id, name)')
+        .eq('user_id', userId);
+
+      // Combinar y deduplicar sitios
+      const allSites = new Map<string, { id: string, name: string }>();
+      
+      if (userSites) {
+        userSites.forEach(site => allSites.set(site.id, site));
+      }
+      
+      if (memberSites) {
+        memberSites.forEach(member => {
+          // Asegurarnos de que sites existe y tiene los campos esperados
+          const siteData: any = member.sites;
+          if (siteData && siteData.id) {
+            allSites.set(siteData.id, { id: siteData.id, name: siteData.name });
+          }
+        });
+      }
+
+      const availableSites = Array.from(allSites.values());
+
       // Si el usuario ya seleccionó un sitio activo
       if (user.metadata?.active_target_site_id) {
-        // Validamos que el sitio seleccionado aún sea de su propiedad
-        const isOwner = userSites?.some(s => s.id === user.metadata!.active_target_site_id);
-        if (isOwner) {
+        // Validamos que el sitio seleccionado aún sea de su propiedad o sea miembro
+        const hasAccess = availableSites.some(s => s.id === user.metadata!.active_target_site_id);
+        if (hasAccess) {
           siteId = user.metadata.active_target_site_id;
           console.log(`✅ [Gear] Usando sitio activo seleccionado: ${siteId}`);
         }
       } 
       
       // Si no hay sitio activo seleccionado, determinamos basado en sus sitios disponibles
-      if (!siteId && userSites && userSites.length > 0) {
-        if (userSites.length === 1) {
-          siteId = userSites[0].id;
+      if (!siteId && availableSites.length > 0) {
+        if (availableSites.length === 1) {
+          siteId = availableSites[0].id;
           console.log(`✅ [Gear] Usando único sitio del usuario: ${siteId}`);
-        } else if (userSites.length > 1) {
+        } else if (availableSites.length > 1) {
           // El usuario tiene varios sitios, debe elegir uno.
-          siteId = userSites[0].id; 
+          siteId = availableSites[0].id; 
           systemPromptOverride = "You are Makinari's Gear Assistant. The user has multiple projects but hasn't selected an active one. You MUST use the instance_project tool with action='list' to show them their projects and ask which one they want to manage. Do not perform any changes until they select a project.";
           console.log(`⚠️ [Gear] Usuario con múltiples sitios sin seleccionar. Forzando tool para elegir.`);
         }
@@ -117,7 +142,7 @@ export async function POST(request: NextRequest) {
       console.log(`❌ [Gear] Número no registrado: ${phoneNumber}. Solicitando registro o vinculación de cuenta.`);
     }
     
-    // Fallback: Intentar encontrar site_id por account_sid en los ajustes
+    // 2. Fallback: Intentar encontrar site_id por account_sid en los ajustes
     // SOLO si el usuario está registrado, permitimos el fallback de site
     if (userId && !siteId && businessAccountId) {
       const { data: siteBySettings } = await supabaseAdmin
@@ -160,28 +185,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true }); // Twilio siempre espera 200
     }
     
-    // 2. Determinar el User ID para inicializar la instancia
-    // Si el usuario no estaba registrado, usamos el user_id del dueño del sitio fallback (Makinari) 
-    // pero marcamos fuertemente en el systemPrompt que NO le muestre información del owner
-    if (!userId) {
-      const { data: siteOwner } = await supabaseAdmin
-        .from('sites')
-        .select('user_id')
-        .eq('id', siteId)
-        .maybeSingle();
-        
-      if (siteOwner) {
-        userId = siteOwner.user_id;
-        console.log(`⚠️ Usando user_id del dueño del sitio de fallback solo como runner: ${userId}`);
-      }
-    }
-    
-    if (!userId) {
-      console.error('❌ No se pudo encontrar un user_id válido para inicializar la instancia');
-      return NextResponse.json({ success: true });
-    }
-
-    
     // Si tenemos systemPromptOverride y no incluimos esta advertencia, se la agregamos al final para mayor seguridad:
     if (systemPromptOverride && !systemPromptOverride.includes('NOT registered')) {
         systemPromptOverride += `\n\nIMPORTANT SECURITY RULE: You MUST ensure that you ONLY perform actions and fetch data for the site ID explicitly provided to you in the tools. The user is logged in securely.`;
@@ -192,7 +195,22 @@ export async function POST(request: NextRequest) {
     // Añadimos instrucción de formato para WhatsApp
     systemPromptOverride += `\n\nIMPORTANT FORMATTING RULE: You are talking to a user via WhatsApp. You MUST format your responses using WhatsApp formatting: *bold*, _italic_, ~strikethrough~, and \`\`\`code\`\`\`. Avoid markdown headers like # and markdown links like [text](url). Use bullet points like - item.`;
     
-    // 3. Find/Create Instance
+    // 3. Trigger Unregistered Workflow si no hay usuario
+    if (!userId) {
+      console.log(`🚀 Iniciando unregistered GearAgent workflow para ${phoneNumber}...`);
+      await start(runUnregisteredGearAgentWorkflow, [{
+        message: messageContent,
+        messageSid,
+        siteId,
+        userPhone: rawPhoneNumber,
+        businessAccountId,
+        systemPrompt: systemPromptOverride
+      }]);
+      console.log('✅ Unregistered Workflow iniciado');
+      return NextResponse.json({ success: true }, { status: 200 });
+    }
+
+    // 4. Si hay usuario, crear/recuperar instancia y disparar el Workflow normal
     let instanceId: string | null = null;
     
     // Necesitamos que cada visitante de un mismo sitio tenga su propia instancia
@@ -241,12 +259,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true });
     }
     
-    // 4. Trigger Workflow
-    console.log(`🚀 Iniciando workflow GearAgent para ${phoneNumber}...`);
-    
-    // Validar si el agente no registrado está intentando usar el fallback de site_id para leer data
-    // Si no tenemos un userId real, evitamos que tenga acceso a herramientas por seguridad
-    const safeUseSdkTools = userId ? false : false; // Opcional: Podrías deshabilitar las tools si no hay userId, pero el prompt debería frenarlo. Dejar en false que es lo que tenías.
+    // Trigger Workflow normal
+    console.log(`🚀 Iniciando workflow GearAgent normal para ${phoneNumber}...`);
     
     await start(runGearAgentWorkflow, [{
       instanceId,
@@ -256,7 +270,7 @@ export async function POST(request: NextRequest) {
       userId,
       userPhone: rawPhoneNumber, // Mantenemos el número crudo para que Twilio pueda responder correctamente
       customTools: [],
-      useSdkTools: false, // Puedes poner esto dinámico luego basado en si es admin o no.
+      useSdkTools: false, 
       systemPrompt: systemPromptOverride
     }]);
     

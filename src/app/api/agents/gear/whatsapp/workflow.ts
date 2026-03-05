@@ -75,3 +75,58 @@ export async function runGearAgentWorkflow({
     throw error;
   }
 }
+
+export async function runUnregisteredGearAgentWorkflow({
+  message,
+  messageSid,
+  siteId,
+  userPhone,
+  businessAccountId,
+  systemPrompt
+}: {
+  message: string;
+  messageSid?: string;
+  siteId: string;
+  userPhone: string;
+  businessAccountId: string;
+  systemPrompt: string;
+}) {
+  'use workflow';
+  
+  // We need to import the step locally or it's already at top of file? No we'll import it at the top
+  const { processUnregisteredUserStep } = await import('./steps');
+
+  console.log(`[GearAgent] Starting unregistered workflow for ${userPhone}`);
+
+  try {
+    if (messageSid) {
+      await sendWhatsAppTypingIndicator(messageSid, siteId);
+    }
+
+    // Step runs the assistant locally without creating a remote_instance
+    const assistantResponse = await processUnregisteredUserStep(
+      userPhone,
+      message,
+      businessAccountId,
+      messageSid,
+      siteId,
+      systemPrompt
+    );
+
+    if (assistantResponse) {
+      // Send the response back to WhatsApp via step
+      await sendWhatsAppResponse(userPhone, assistantResponse, siteId);
+    } else {
+      console.warn(`[GearAgent] No assistant response generated for unregistered user`);
+    }
+
+    return {
+      success: true,
+      assistant_response: assistantResponse
+    };
+  } catch (error: any) {
+    console.error(`[GearAgent] Unregistered workflow failed:`, error);
+    await sendWhatsAppError(userPhone, siteId);
+    throw error;
+  }
+}
