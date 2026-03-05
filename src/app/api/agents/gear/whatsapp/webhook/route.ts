@@ -3,6 +3,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearAgentWorkflow } from '../workflow';
 
+import { normalizePhoneForSearch } from '@/lib/utils/phone-normalizer';
+
 // Helper para extraer número
 function extractPhoneNumber(twilioPhoneFormat: string): string {
   return twilioPhoneFormat.replace('whatsapp:', '');
@@ -52,21 +54,14 @@ export async function POST(request: NextRequest) {
     console.log(`📥 Procesando mensaje de Twilio WhatsApp (Gear) de ${phoneNumber}: ${messageContent.substring(0, 50)}...`);
     
     // 1. Identificar al usuario basado en el número de teléfono
-    // Primero, revisamos si el usuario está registrado con ese teléfono en la tabla 'users'
-    // Formateamos el número para asegurar que coincida (podría venir con o sin el +, en supabase suele estar con +)
-    const formattedPhone = phoneNumber.startsWith('+') ? phoneNumber : `+${phoneNumber}`;
-    // También buscar la versión sin código de país (asumiendo México si empieza con 52)
-    const localPhone = phoneNumber.startsWith('52') ? phoneNumber.substring(2) : 
-                       (phoneNumber.startsWith('+52') ? phoneNumber.substring(3) : phoneNumber);
-    // Y el caso particular de +521...
-    const mxMobilePhone = phoneNumber.startsWith('521') ? phoneNumber.substring(3) : 
-                          (phoneNumber.startsWith('+521') ? phoneNumber.substring(4) : localPhone);
+    // Intenta encontrar el número en cualquiera de sus formatos
+    const phoneVariants = normalizePhoneForSearch(phoneNumber);
+    const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`).join(',');
     
-    // Intenta encontrar el número en cualquiera de sus formatos comunes en México
     const { data: user } = await supabaseAdmin
       .from('users')
       .select('id, metadata, phone')
-      .or(`phone.eq."${phoneNumber}",phone.eq."${formattedPhone}",phone.eq."${localPhone}",phone.eq."${mxMobilePhone}",phone.eq."+52${mxMobilePhone}"`)
+      .or(phoneQueries)
       .maybeSingle();
 
     let siteId: string | null = null;
@@ -110,10 +105,11 @@ export async function POST(request: NextRequest) {
       }
     } else {
       // Si no está por teléfono directo, podríamos buscar en metadata whatsapp_phone
+      const metadataPhoneQueries = phoneVariants.map(variant => `metadata->>whatsapp_phone.eq."${variant}"`).join(',');
       const { data: profile } = await supabaseAdmin
         .from('profiles')
         .select('id, metadata')
-        .or(`metadata->>whatsapp_phone.eq."${phoneNumber}",metadata->>whatsapp_phone.eq."${formattedPhone}",metadata->>whatsapp_phone.eq."${localPhone}",metadata->>whatsapp_phone.eq."${mxMobilePhone}",metadata->>whatsapp_phone.eq."+52${mxMobilePhone}"`)
+        .or(metadataPhoneQueries)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();

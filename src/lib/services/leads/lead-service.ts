@@ -35,7 +35,7 @@ export async function findLeadByInfo(email?: string, phone?: string, name?: stri
     if (email && phone) {
       // Si tenemos ambos, email y phone, generar variantes del teléfono para búsqueda más flexible
       const phoneVariants = normalizePhoneForSearch(phone);
-      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
       const allQueries = [`email.eq.${email}`, ...phoneQueries];
       query = query.or(allQueries.join(','));
       console.log(`🔍 Buscando lead con email="${email}" O phone en variantes: ${phoneVariants.join(', ')}`);
@@ -50,10 +50,14 @@ export async function findLeadByInfo(email?: string, phone?: string, name?: stri
         // Generar variantes del número de teléfono para búsqueda más flexible
         const phoneVariants = normalizePhoneForSearch(phone);
         if (phoneVariants.length > 1) {
-          const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+          const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
           query = query.or(phoneQueries.join(','));
           console.log(`🔍 Buscando lead con phone en variantes: ${phoneVariants.join(', ')}`);
         } else if (phoneVariants.length === 1) {
+          // En Supabase el eq no siempre funciona bien con caracteres especiales (como + o espacios) 
+          // cuando se combina con or(). En or(), hemos añadido comillas. 
+          // Aquí podemos mantener eq() normal o usar filter() si hay problemas, pero eq() 
+          // directo en Supabase SDK habitualmente escapa bien los valores internamente.
           query = query.eq('phone', phoneVariants[0]);
           console.log(`🔍 Buscando lead con phone="${phoneVariants[0]}"`);
         } else {

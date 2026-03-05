@@ -45,9 +45,14 @@ export async function findExistingLead(siteId: string, phoneVariants: string[]):
       .select('id')
       .eq('site_id', siteId);
     if (phoneVariants.length > 1) {
-      const phoneQueries = phoneVariants.map(variant => `phone.eq.${variant}`);
+      const phoneQueries = phoneVariants.map(variant => `phone.eq."${variant}"`);
       query = query.or(phoneQueries.join(','));
     } else if (phoneVariants.length === 1) {
+      // Usar comillas también aquí para prevenir problemas con el formato
+      // En Supabase el eq no siempre funciona bien con caracteres especiales (como + o espacios) 
+      // cuando se combina con or(). En or(), hemos añadido comillas. 
+      // Aquí podemos mantener eq() normal o usar filter() si hay problemas, pero eq() 
+      // directo en Supabase SDK habitualmente escapa bien los valores internamente.
       query = query.eq('phone', phoneVariants[0]);
     }
     const { data: lead, error } = await query.single();
