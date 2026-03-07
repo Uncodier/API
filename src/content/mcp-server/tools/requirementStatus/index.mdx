@@ -1,35 +1,51 @@
 ---
 title: Requirement Status
-description: Log progress and update statuses on a client requirement.
+description: Log progress, update statuses, or list the status history of a client requirement.
 ---
 
 # Requirement Status Tool
 
-The `requirement_status` tool allows you to log progress and update statuses on a client requirement. Use this tool whenever there's an update, failure, or completion of a task requested by the client. It stores an entry into the `requirement_status` database and optionally updates the parent requirement.
+The `requirement_status` tool allows you to log progress and update statuses on a client requirement, as well as list the status history for a specific requirement. Use this tool whenever there's an update, failure, or completion of a task requested by the client. It stores an entry into the `requirement_status` database and optionally updates the parent requirement.
 
 ## Parameters
 
 | Parameter | Type | Required | Description |
 | :--- | :--- | :---: | :--- |
-| `instance_id` | string | Yes | The ID of the instance processing the requirement. |
-| `asset_id` | string | Yes | The related asset ID. |
-| `requirement_id` | string | Yes | The ID of the requirement being processed. |
-| `status` | string | Yes | The new status (e.g. `in-progress`, `completed`, `failed`). |
+| `action` | string | No | The action to perform (`create` or `list`). Defaults to `create`. |
+| `requirement_id` | string | Yes | The ID of the requirement being processed or queried. |
+| `instance_id` | string | Yes* | The ID of the instance processing the requirement (Optional when `action` is `list`). |
+| `asset_id` | string | Yes* | The related asset ID (Required when `action` is `create`). |
+| `status` | string | Yes* | The new status (e.g. `in-progress`, `completed`, `failed`) (Required when `action` is `create`). |
 | `repo_url` | string | No | The GitHub or repository URL associated with this requirement progress. |
 | `message` | string | No | Any details, descriptions, or error logs about the status. |
 
-## Usage Example
+## Usage Examples
+
+### Creating a Status Update
 
 ```json
 {
   "name": "requirement_status",
   "arguments": {
+    "action": "create",
     "instance_id": "inst_01ABCDEF",
     "asset_id": "asset_01GHIJKL",
     "requirement_id": "req_12345",
     "status": "completed",
     "repo_url": "https://github.com/uncodie/my-project",
     "message": "The login page layout has been successfully implemented and tested."
+  }
+}
+```
+
+### Listing Statuses of a Requirement
+
+```json
+{
+  "name": "requirement_status",
+  "arguments": {
+    "action": "list",
+    "requirement_id": "req_12345"
   }
 }
 ```

@@ -26,6 +26,7 @@ export default {
   conversations: { title: withGet('Conversations') },
   copywriting: { title: withPost('Copywriting') },
   createIcpMining: { title: withPost('Create ICP Mining') },
+  deals: { title: withPost('Deals') },
   generateImage: { title: withPost('Generate Image') },
   generateVideo: { title: withPost('Generate Video') },
   getFinderCategoryIds: { title: withPost('Get Finder Category IDs') },

@@ -35,38 +35,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Find the user by email using profiles table first, then get auth data
-    // This avoids the 50-user limit of listUsers()
-    const { data: profile, error: profileError } = await supabaseAdmin
+    // Find the user by email using profiles table first
+    const { data: profile } = await supabaseAdmin
       .from('profiles')
       .select('id')
       .eq('email', team_member_email)
       .single();
       
-    if (profileError || !profile) {
-      return NextResponse.json(
-        { success: false, error: `Team member with email ${team_member_email} not found` },
-        { status: 404 }
-      );
+    let user_id = profile?.id;
+    let phone = null;
+
+    if (user_id) {
+      const { data: userData } = await supabaseAdmin.auth.admin.getUserById(user_id);
+      if (userData?.user) {
+        phone = userData.user.phone || userData.user.user_metadata?.phone;
+      }
     }
 
-    const { data: userData, error: authError } = await supabaseAdmin.auth.admin.getUserById(profile.id);
-    
-    if (authError || !userData?.user) {
-      throw new Error(`Error fetching user auth data: ${authError?.message || 'User not found'}`);
-    }
-
-    const user = userData.user;
-
-    const phone = user.phone || user.user_metadata?.phone;
     let whatsappSent = false;
     let emailSent = false;
     let notificationSent = false;
 
     // The template should link to the instance_id
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-    const instanceUrl = instance_id 
-      ? `${baseUrl}/sites/${site_id}/instances/${instance_id}`
+    const isUuid = (str?: string) => str && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(str);
+    const validInstanceId = isUuid(instance_id) ? instance_id : undefined;
+
+    const instanceUrl = validInstanceId 
+      ? `${baseUrl}/sites/${site_id}/instances/${validInstanceId}`
       : `${baseUrl}/sites/${site_id}`;
 
     // Send WhatsApp if phone exists
@@ -81,20 +77,22 @@ export async function POST(request: NextRequest) {
       whatsappSent = waResult.success;
     }
 
-    // Always create an in-app notification
-    const notificationResult = await NotificationService.createNotification({
-      user_id: user.id,
-      site_id: site_id,
-      title: title,
-      message: message,
-      type: NotificationType.INFO,
-      priority: NotificationPriority.NORMAL,
-      related_entity_type: instance_id ? 'instance' : undefined,
-      related_entity_id: instance_id
-    });
-    
-    if (notificationResult) {
-      notificationSent = true;
+    // Always create an in-app notification if user exists
+    if (user_id) {
+      const notificationResult = await NotificationService.createNotification({
+        user_id: user_id,
+        site_id: site_id,
+        title: title,
+        message: message,
+        type: NotificationType.INFO,
+        priority: NotificationPriority.NORMAL,
+        related_entity_type: validInstanceId ? 'instance' : undefined,
+        related_entity_id: validInstanceId
+      });
+      
+      if (notificationResult) {
+        notificationSent = true;
+      }
     }
 
     // If no phone or WhatsApp failed, send Email
@@ -129,7 +127,7 @@ export async function POST(request: NextRequest) {
         whatsapp_sent: whatsappSent,
         email_sent: emailSent,
         notification_sent: notificationSent,
-        user_id: user.id,
+        user_id: user_id,
         instance_url: instanceUrl
       }
     });

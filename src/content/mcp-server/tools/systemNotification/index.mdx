@@ -20,7 +20,7 @@ This is especially useful for finding team members, escalating issues, alerting 
 | :--- | :--- | :---: | :--- |
 | `action` | string | Yes | The action to perform: `list` to get team members, or `notify` to send a message. |
 | `team_member_email` | string | Yes* | The email address of the team member to notify. *(Required when action is "notify")* |
-| `instance_id` | string | Yes* | The instance ID related to this notification. *(Required when action is "notify")* |
+| `instance_id` | string | No | The instance ID related to this notification. Highly recommended to link the notification to a specific task context. |
 | `title` | string | Yes* | The title of the notification or message subject. *(Required when action is "notify")* |
 | `message` | string | Yes* | The detailed content of the notification. *(Required when action is "notify")* |
 

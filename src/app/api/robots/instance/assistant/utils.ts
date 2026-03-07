@@ -20,6 +20,7 @@ import { configureEmailTool } from '@/app/api/agents/tools/configureEmail/assist
 import { configureWhatsAppTool } from '@/app/api/agents/tools/configureWhatsApp/assistantProtocol';
 import { salesOrderTool } from '@/app/api/agents/tools/sales-order/assistantProtocol';
 import { salesTool } from '@/app/api/agents/tools/sales/assistantProtocol';
+import { dealsTool } from '@/app/api/agents/tools/deals/assistantProtocol';
 import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
 import { analyzeICPTotalCountTool } from '@/app/api/agents/tools/analyzeICPTotalCount/assistantProtocol';
 import { createIcpMiningTool } from '@/app/api/agents/tools/createIcpMining/assistantProtocol';
@@ -199,6 +200,7 @@ export const getAssistantTools = (
     configureWhatsAppTool(siteId),
     salesOrderTool(siteId),
     salesTool(siteId),
+    dealsTool(siteId),
     schedulingTool(siteId, instanceId),
     getFinderCategoryIdsTool(siteId),
     analyzeICPTotalCountTool(siteId),

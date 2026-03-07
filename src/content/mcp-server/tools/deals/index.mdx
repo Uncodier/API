@@ -1,0 +1,71 @@
+---
+title: Deals
+description: Manage sales deals and opportunities.
+---
+
+# Deals
+
+Manage sales deals and opportunities. Use action="create" to record a new deal. Use action="update" to modify a deal. Use action="list" to search deals. Use action="delete" to remove a deal record.
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | Action to perform on deals. Enum: create, list, update, delete |
+| deal_id | string | Deal UUID (required for update/delete) |
+| site_id | string | Site UUID |
+| name | string | Deal name (required for create) |
+| description | string | Deal description |
+| amount | number | Deal amount |
+| currency | string | Currency code (e.g. USD) |
+| stage | string | Deal stage in the sales pipeline (discovery, proposal, negotiation, closed_won, closed_lost) |
+| status | string | Overall deal status (open, won, lost, abandoned) |
+| qualification_tier | string | Tier of qualification (unqualified, exploratory, startup, smb, enterprise) |
+| qualification_score | number | Score from 0 to 100 |
+| qualification_details | object | JSON object with qualification specifics (e.g. BANT) |
+| sales_id | string | Related Sale/Order UUID if closed |
+| expected_close_date | string | ISO Date string for expected close |
+| lead_ids | array | Array of Lead UUIDs attached to this deal |
+| owner_ids | array | Array of User UUIDs who own this deal |
+| limit | number | Limit results |
+| offset | number | Offset results |
+
+## REST Endpoint
+
+Actions map to sub-routes: `create` → `/create`, `list` → `/get`, `update` → `/update`, `delete` → `/delete`.
+
+```
+POST /api/agents/tools/deals/create
+GET /api/agents/tools/deals/get
+POST /api/agents/tools/deals/update
+POST /api/agents/tools/deals/delete
+```
+
+```http
+POST /api/agents/tools/deals/create
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "name": "Acme Corp Q3 Renewal",
+  "amount": 10000,
+  "currency": "USD",
+  "stage": "proposal",
+  "status": "open"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "deal": { 
+    "id": "...", 
+    "name": "Acme Corp Q3 Renewal", 
+    "amount": 10000, 
+    "stage": "proposal" 
+  }
+}
+```
