@@ -577,7 +577,7 @@ export class OpenAIAgentExecutor {
         // Only include temperature if it's not the default (1)
         // Azure OpenAI rejects non-default temperature values for some models
         // NOTE: o-series models (o1, o3) don't support temperature parameter
-        const isReasoningModel = deploymentName.includes('o1') || deploymentName.includes('o3') || deploymentName.includes('gpt-5.2');
+        const isReasoningModel = deploymentName.includes('o1') || deploymentName.includes('o3') || deploymentName.includes('gpt-5.4');
         
         if (!isReasoningModel && temperature !== 1) {
           completionOptions.temperature = temperature;

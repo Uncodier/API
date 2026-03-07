@@ -85,7 +85,7 @@ export class SupervisorService {
 
     this.connector = new PortkeyConnector(portkeyConfig, {
       modelType: 'openai',
-      modelId: 'gpt-5.2',
+      modelId: 'gpt-5.4',
       maxTokens: 32768,
       temperature: 1, // GPT-5.2 uses default temperature
       reasoningEffort: 'high',
@@ -298,7 +298,7 @@ export class SupervisorService {
         tools: command.tools || [],
         context: userPrompt, // Use formatted prompt as context
         systemPrompt: SUPERVISOR_SYSTEM_PROMPT, // Set supervisor system prompt
-        model: 'gpt-5.2',
+        model: 'gpt-5.4',
         modelType: 'openai',
         reasoningEffort: 'high',
         verbosity: 'medium',
@@ -937,7 +937,7 @@ export class SupervisorService {
       console.log(`[SupervisorService] Calling GPT-5.2 for similarity analysis...`);
       const response = await this.connector.callAgent(messages, {
         modelType: 'openai',
-        modelId: 'gpt-5.2',
+        modelId: 'gpt-5.4',
         maxTokens: 32768,
         responseFormat: 'json',
         reasoningEffort: 'high',

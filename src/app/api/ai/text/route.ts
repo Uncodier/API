@@ -47,19 +47,28 @@ async function generateWithAzure(options: {
   }
 
   const url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
+  const isReasoningModel = deployment && (deployment.includes('gpt-5.4') || deployment.includes('gpt-5.4') || deployment.includes('o1') || deployment.includes('o3') || deployment.includes('gpt-5'));
+
+  const bodyOptions: any = {
+    messages: toAzureMessages(options.messages),
+    temperature: options.temperature,
+    top_p: options.topP,
+    stream: false,
+  };
+
+  if (isReasoningModel) {
+    bodyOptions.max_completion_tokens = options.maxTokens;
+  } else {
+    bodyOptions.max_tokens = options.maxTokens;
+  }
+
   const resp = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'api-key': apiKey,
     },
-    body: JSON.stringify({
-      messages: toAzureMessages(options.messages),
-      temperature: options.temperature,
-      max_tokens: options.maxTokens,
-      top_p: options.topP,
-      stream: false,
-    }),
+    body: JSON.stringify(bodyOptions),
   });
 
   if (!resp.ok) {

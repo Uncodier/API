@@ -310,8 +310,13 @@ export async function callApiWithMessage(
         case 'openai':
           modelOptions = {
             model: requestOptions.openai.model,
-            max_tokens: requestOptions.openai.max_tokens,
           };
+          // Use max_completion_tokens for GPT-5 family
+          if (requestOptions.openai.model && requestOptions.openai.model.startsWith('gpt-5')) {
+            if (requestOptions.openai.max_tokens) (modelOptions as any).max_completion_tokens = requestOptions.openai.max_tokens;
+          } else {
+            if (requestOptions.openai.max_tokens) (modelOptions as any).max_tokens = requestOptions.openai.max_tokens;
+          }
           break;
         case 'gemini':
           modelOptions = {
@@ -527,11 +532,11 @@ function getDefaultModelId(modelType: 'anthropic' | 'openai' | 'gemini'): string
     case 'anthropic':
       return 'claude-3-opus-20240229';
     case 'openai':
-      return 'gpt-5.2';
+      return 'gpt-5.4';
     case 'gemini':
       return 'gemini-pro';
     default:
-      return 'gpt-5.2';
+      return 'gpt-5.4';
   }
 }
 

@@ -200,8 +200,13 @@ export async function processConversation(options: {
     case 'openai':
       modelOptions = {
         model: requestOptions.openai.model,
-        max_tokens: requestOptions.openai.max_tokens,
       };
+      // Use max_completion_tokens for GPT-5 family
+      if (requestOptions.openai.model && requestOptions.openai.model.startsWith('gpt-5')) {
+        if (requestOptions.openai.max_tokens) (modelOptions as any).max_completion_tokens = requestOptions.openai.max_tokens;
+      } else {
+        if (requestOptions.openai.max_tokens) (modelOptions as any).max_tokens = requestOptions.openai.max_tokens;
+      }
       break;
     case 'gemini':
       modelOptions = {

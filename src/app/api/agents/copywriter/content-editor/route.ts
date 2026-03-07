@@ -511,7 +511,7 @@ Original content to edit:
         }
       ],
       // Use GPT-5.2 with automatic fallback to non-streaming if streaming fails
-      model: 'gpt-5.2',
+      model: 'gpt-5.4',
       modelType: 'openai'
     });
     

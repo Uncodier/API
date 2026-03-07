@@ -76,12 +76,12 @@ export class PortkeyConnector {
         
         // Handle gpt-5 models specific parameters - check the final model name
         const finalModelId = modelOptions.model;
-        const isGpt52Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5.2' || finalModelId === 'gpt-5-nano';
+        const isGpt52Family = finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5.4' || finalModelId === 'gpt-5-nano';
         if (hasExplicitMaxTokens) {
           if (isGpt52Family) {
             // Apply upper cap per model family but only when explicitly provided
             let maxCompletionTokens: number = maxTokens as number;
-            if (finalModelId === 'gpt-5.2') {
+            if (finalModelId === 'gpt-5.4') {
               maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
             } else if (finalModelId === 'gpt-5-nano' || finalModelId === 'gpt-5-mini') {
               maxCompletionTokens = Math.min(maxCompletionTokens, 32768);
@@ -119,7 +119,7 @@ export class PortkeyConnector {
       // Set temperature if provided (but skip for gpt-5 models which only support default value of 1)
       if (temperature !== undefined) {
         const finalModelId = modelOptions.model;
-        const isGpt52Model = modelType === 'openai' && (finalModelId === 'gpt-5.2' || finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5-nano');
+        const isGpt52Model = modelType === 'openai' && (finalModelId === 'gpt-5.4' || finalModelId === 'gpt-5-mini' || finalModelId === 'gpt-5-nano');
         if (!isGpt52Model) {
           modelOptions.temperature = temperature;
         } else {
@@ -135,7 +135,7 @@ export class PortkeyConnector {
       // Add reasoning and verbosity for GPT-5.2 family models at the same level as max_completion_tokens
       const finalModelId = modelOptions.model;
       const isGpt52Family = modelType === 'openai' && (
-        finalModelId === 'gpt-5.2' || 
+        finalModelId === 'gpt-5.4' || 
         finalModelId === 'gpt-5-mini' || 
         finalModelId === 'gpt-5-nano'
       );
@@ -436,7 +436,7 @@ export class PortkeyConnector {
                                        apiCallError.code === 'UND_ERR_CONNECT_TIMEOUT';
         
         // Try fallback for streaming errors with GPT-5.2
-        if (isStreamingError && provider === 'openai' && modelOptions.model === 'gpt-5.2') {
+        if (isStreamingError && provider === 'openai' && modelOptions.model === 'gpt-5.4') {
           console.warn(`🔄 [PortkeyConnector] GPT-5.2 streaming failed, trying fallback to GPT-4o...`);
           
           try {
@@ -481,7 +481,7 @@ export class PortkeyConnector {
               modelInfo: {
                 model: 'gpt-4o',
                 provider: provider,
-                fallbackFrom: 'gpt-5.2'
+                fallbackFrom: 'gpt-5.4'
               }
             };
           } catch (fallbackError: any) {

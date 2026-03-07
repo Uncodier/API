@@ -40,7 +40,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Validar payload de Twilio
-    if (!webhookData.From || !webhookData.To || !webhookData.Body) {
+    if (!webhookData.From || !webhookData.To) {
       console.error('❌ Datos incompletos en el webhook de Twilio');
       return NextResponse.json({ success: false, error: 'Missing required webhook data' }, { status: 400 });
     }
@@ -48,9 +48,36 @@ export async function POST(request: NextRequest) {
     const rawPhoneNumber = extractPhoneNumber(webhookData.From);
     const phoneNumber = normalizePhoneForStorage(rawPhoneNumber) || rawPhoneNumber;
     const businessPhoneNumber = extractPhoneNumber(webhookData.To);
-    const messageContent = webhookData.Body;
+    
+    let messageContent = webhookData.Body || '';
     const messageSid = webhookData.MessageSid;
     const businessAccountId = webhookData.AccountSid || process.env.GEAR_TWILIO_ACCOUNT_SID;
+    
+    // Procesar contenido multimedia y adjuntos de Twilio
+    const numMedia = parseInt(webhookData.NumMedia || '0');
+    if (numMedia > 0) {
+      const mediaList = [];
+      for (let i = 0; i < numMedia; i++) {
+        const mediaUrl = webhookData[`MediaUrl${i}`];
+        const mediaType = webhookData[`MediaContentType${i}`];
+        if (mediaUrl) {
+          mediaList.push(`[Archivo adjunto - ${mediaType}]: ${mediaUrl}`);
+        }
+      }
+      if (mediaList.length > 0) {
+        messageContent += (messageContent ? '\n\n' : '') + mediaList.join('\n');
+      }
+    }
+    
+    // Procesar ubicación
+    if (webhookData.Latitude && webhookData.Longitude) {
+      const address = webhookData.Address || 'Ubicación compartida';
+      messageContent += (messageContent ? '\n\n' : '') + `[Ubicación adjunta]: ${address} (Lat: ${webhookData.Latitude}, Lng: ${webhookData.Longitude})`;
+    }
+
+    if (!messageContent.trim()) {
+       messageContent = '[Mensaje vacío o formato no soportado]';
+    }
     
     console.log(`📥 Procesando mensaje de Twilio WhatsApp (Gear) de ${phoneNumber} (raw: ${rawPhoneNumber}): ${messageContent.substring(0, 50)}...`);
     
