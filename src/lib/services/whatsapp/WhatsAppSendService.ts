@@ -504,75 +504,87 @@ export class WhatsAppSendService {
     try {
       console.log('📤 [WhatsAppSendService] Enviando via API de Twilio WhatsApp...');
       
-      // URL de la API de Twilio para enviar mensajes
-      const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+      const chunks = this.chunkMessage(message, 1500);
+      let lastSid: string | undefined = undefined;
       
-      // Crear las credenciales de autenticación básica
-      const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
-      
-      // Preparar el cuerpo de la solicitud como form data
-      const formData = new URLSearchParams();
-      formData.append('From', `whatsapp:${fromNumber}`);
-      formData.append('To', `whatsapp:${phoneNumber}`);
-      formData.append('Body', message);
-      
-      console.log('🔐 [WhatsAppSendService] Datos de envío:', {
-        url: apiUrl,
-        from: `whatsapp:${fromNumber}`,
-        to: `whatsapp:${phoneNumber}`,
-        messageLength: message.length
-      });
-      
-      const response = await fetch(apiUrl, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Basic ${credentials}`,
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-        body: formData.toString()
-      });
-      
-      if (!response.ok) {
-        const errorData = await response.json();
-        const twilioErrorCode = errorData.code;
-        const errorMessage = errorData.message || response.statusText;
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
         
-        console.error('❌ [WhatsAppSendService] Error de API de Twilio:', {
-          status: response.status,
-          twilioErrorCode,
-          errorMessage,
-          fullError: errorData,
-          to: phoneNumber,
-          from: fromNumber
+        // URL de la API de Twilio para enviar mensajes
+        const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
+        
+        // Crear las credenciales de autenticación básica
+        const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        
+        // Preparar el cuerpo de la solicitud como form data
+        const formData = new URLSearchParams();
+        formData.append('From', `whatsapp:${fromNumber}`);
+        formData.append('To', `whatsapp:${phoneNumber}`);
+        formData.append('Body', chunk);
+        
+        console.log(`🔐 [WhatsAppSendService] Datos de envío chunk ${i + 1}/${chunks.length}:`, {
+          url: apiUrl,
+          from: `whatsapp:${fromNumber}`,
+          to: `whatsapp:${phoneNumber}`,
+          messageLength: chunk.length
         });
         
-        // Usar el mismo sistema de manejo de errores que en WhatsAppTemplateService
-        const errorInfo = WhatsAppTemplateService.getTwilioErrorInfo(twilioErrorCode);
+        const response = await fetch(apiUrl, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Basic ${credentials}`,
+            'Content-Type': 'application/x-www-form-urlencoded',
+          },
+          body: formData.toString()
+        });
         
-        console.error(`🚨 [WhatsAppSendService] ERROR ${twilioErrorCode}: ${errorInfo.description}`);
-        console.error(`💡 [WhatsAppSendService] Sugerencia: ${errorInfo.suggestion}`);
+        if (!response.ok) {
+          const errorData = await response.json();
+          const twilioErrorCode = errorData.code;
+          const errorMessage = errorData.message || response.statusText;
+          
+          console.error(`❌ [WhatsAppSendService] Error de API de Twilio en chunk ${i + 1}:`, {
+            status: response.status,
+            twilioErrorCode,
+            errorMessage,
+            fullError: errorData,
+            to: phoneNumber,
+            from: fromNumber
+          });
+          
+          // Usar el mismo sistema de manejo de errores que en WhatsAppTemplateService
+          const errorInfo = WhatsAppTemplateService.getTwilioErrorInfo(twilioErrorCode);
+          
+          console.error(`🚨 [WhatsAppSendService] ERROR ${twilioErrorCode}: ${errorInfo.description}`);
+          console.error(`💡 [WhatsAppSendService] Sugerencia: ${errorInfo.suggestion}`);
+          
+          return { 
+            success: false, 
+            error: `${errorInfo.description}: ${errorMessage}`,
+            errorCode: twilioErrorCode,
+            errorType: errorInfo.type,
+            suggestion: errorInfo.suggestion
+          };
+        }
         
-        return { 
-          success: false, 
-          error: `${errorInfo.description}: ${errorMessage}`,
-          errorCode: twilioErrorCode,
-          errorType: errorInfo.type,
-          suggestion: errorInfo.suggestion
-        };
+        const responseData = await response.json();
+        lastSid = responseData.sid;
+        
+        console.log(`✅ [WhatsAppSendService] Respuesta exitosa de Twilio chunk ${i + 1}:`, {
+          sid: responseData.sid,
+          status: responseData.status,
+          from: responseData.from,
+          to: responseData.to
+        });
+        
+        if (chunks.length > 1 && i < chunks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+        }
       }
-      
-      const responseData = await response.json();
-      
-      console.log('✅ [WhatsAppSendService] Respuesta exitosa de Twilio:', {
-        sid: responseData.sid,
-        status: responseData.status,
-        from: responseData.from,
-        to: responseData.to
-      });
       
       return { 
         success: true, 
-        messageId: responseData.sid 
+        messageId: lastSid 
       };
       
     } catch (error) {
@@ -582,6 +594,60 @@ export class WhatsAppSendService {
         error: `Exception: ${error instanceof Error ? error.message : 'Unknown error'}` 
       };
     }
+  }
+
+  /**
+   * Helper function to chunk large messages into smaller parts
+   */
+  private static chunkMessage(text: string, maxLength = 1500): string[] {
+    if (text.length <= maxLength) return [text];
+    
+    const chunks: string[] = [];
+    let currentChunk = '';
+    
+    const paragraphs = text.split('\n\n');
+    
+    for (const paragraph of paragraphs) {
+      if ((currentChunk ? currentChunk + '\n\n' + paragraph : paragraph).length <= maxLength) {
+        currentChunk = currentChunk ? currentChunk + '\n\n' + paragraph : paragraph;
+      } else {
+        if (currentChunk.length > 0) {
+          chunks.push(currentChunk);
+          currentChunk = '';
+        }
+        
+        if (paragraph.length > maxLength) {
+          const lines = paragraph.split('\n');
+          for (const line of lines) {
+            if ((currentChunk ? currentChunk + '\n' + line : line).length <= maxLength) {
+              currentChunk = currentChunk ? currentChunk + '\n' + line : line;
+            } else {
+              if (currentChunk.length > 0) {
+                chunks.push(currentChunk);
+                currentChunk = '';
+              }
+              if (line.length > maxLength) {
+                let remaining = line;
+                while (remaining.length > 0) {
+                  chunks.push(remaining.substring(0, maxLength));
+                  remaining = remaining.substring(maxLength);
+                }
+              } else {
+                currentChunk = line;
+              }
+            }
+          }
+        } else {
+          currentChunk = paragraph;
+        }
+      }
+    }
+    
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk);
+    }
+    
+    return chunks;
   }
 
   /**
