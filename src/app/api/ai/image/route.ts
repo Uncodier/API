@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { GoogleGenAI } from '@google/genai';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 type Provider = 'azure' | 'gemini' | 'vercel';
@@ -31,7 +32,24 @@ async function convertUrlToBase64(url: string): Promise<{ data: string; mimeType
   try {
     console.log(`[Image API] Converting URL to base64: ${url.substring(0, 100)}...`);
     
+    const headers: Record<string, string> = {};
+    
+    // Add authentication for Twilio Media URLs
+    if (url.includes('api.twilio.com')) {
+      const accountSid = process.env.GEAR_TWILIO_ACCOUNT_SID || process.env.TWILIO_ACCOUNT_SID;
+      const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN || process.env.TWILIO_AUTH_TOKEN;
+      
+      if (accountSid && authToken) {
+        const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
+        headers['Authorization'] = `Basic ${credentials}`;
+        console.log(`[Image API] Added Basic Auth for Twilio URL`);
+      } else {
+        console.warn(`[Image API] Twilio URL detected but no auth credentials found in environment`);
+      }
+    }
+    
     const response = await fetch(url, {
+      headers,
       signal: AbortSignal.timeout(10000), // 10 second timeout
     });
     
@@ -767,39 +785,66 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    if (provider === 'azure') {
-      try {
-        const result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
-        return NextResponse.json(result);
-      } catch (err) {
-        console.warn('[image api] Azure provider failed, trying Vercel fallback...', err);
-        const fallback = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
-        return NextResponse.json({ ...fallback, fallbackFrom: 'azure' });
+    // Validate credits for Image Generation
+    const numImages = Number(n) || 1;
+    const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * numImages;
+    try {
+      const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for image generation' } },
+          { status: 402 }
+        );
       }
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 402 });
     }
 
-    if (provider === 'gemini') {
+        let result: any;
+    if (provider === 'azure') {
       try {
-        const result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
-        return NextResponse.json(result);
+        result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
+      } catch (err) {
+        console.warn('[image api] Azure provider failed, trying Vercel fallback...', err);
+        result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
+        result.fallbackFrom = 'azure';
+      }
+    } else if (provider === 'gemini') {
+      try {
+        result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
       } catch (err) {
         console.warn('[image api] Gemini provider failed, trying Azure fallback...', err);
         try {
-          const fallback = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
-          return NextResponse.json({ ...fallback, fallbackFrom: 'gemini' });
+          result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
+          result.fallbackFrom = 'gemini';
         } catch (fallbackErr: any) {
           console.error('[image api] Azure fallback also failed:', fallbackErr);
           throw new Error(`Both Gemini and Azure providers failed. Gemini: ${err instanceof Error ? err.message : String(err)}. Azure: ${fallbackErr.message || fallbackErr}`);
         }
       }
+    } else if (provider === 'vercel') {
+      result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
+    } else {
+      // Default to Gemini as it's the most capable currently
+      result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
     }
 
-    if (provider === 'vercel') {
-      const result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
-      return NextResponse.json(result);
+    if (result && Array.isArray(result.images) && result.images.length > 0) {
+      try {
+        await CreditService.deductCredits(
+          site_id, 
+          CreditService.PRICING.IMAGE_GENERATION * result.images.length, 
+          'image_generation', 
+          `Image generation (${result.images.length} images)`,
+          { prompt, provider }
+        );
+      } catch (e) {
+        console.error('Failed to deduct credits for image generation:', e);
+      }
     }
 
-    return NextResponse.json({ error: `Unsupported provider: ${provider}` }, { status: 400 });
+    return NextResponse.json(result);
+
   } catch (error: any) {
     console.error('[image api] Error:', error);
     return NextResponse.json(

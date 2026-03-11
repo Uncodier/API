@@ -86,7 +86,7 @@ export class AgentInitializer {
           
           if (processor) {
             // Generar el background
-            const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id, command.id);
+            const agentBackground = await this.agentBackgroundService.generateEnhancedAgentBackground(processor, command.agent_id, command.site_id, command.id);
             
             if (!agentBackground) {
               throw new Error(`No se pudo generar agent_background para ${command.agent_id}`);
@@ -149,8 +149,8 @@ export class AgentInitializer {
       
       if (processor) {
         // Generar el background usando AgentBackgroundService
-        const agentBackground = await this.agentBackgroundService.generateAgentBackground(
-          processor, command.agent_id, command.id
+        const agentBackground = await this.agentBackgroundService.generateEnhancedAgentBackground(
+          processor, command.agent_id, command.site_id, command.id
         );
         
         // Verificar que se generó correctamente

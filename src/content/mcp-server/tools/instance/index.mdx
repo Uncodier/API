@@ -1,0 +1,71 @@
+---
+title: Instance Tool
+description: Manage AI assistant instances (create, read, update).
+---
+
+
+# Instance Tool
+
+Manage AI assistant instances (CRU operations: create, read, update). Use "create" to start a new instance for a specific activity. Use "read" to get details of the current instance or list instances for the site. Use "update" to automatically rename the instance based on context (if it has a generic name or the objective changed) or update other properties.
+
+IMPORTANT: You MUST call this tool with action "update" if the instance has a generic name ("Assistant Session", "New Instance", etc.) or if the conversation objective has changed significantly.
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | The action to perform. Enum: "create", "read", "update". |
+| site_id | string | Site UUID (required for create and read, optional for update). |
+| instance_id | string | Instance UUID (optional, defaults to current instance). |
+| activity | string | Required for create: The main activity or purpose of the new instance. |
+| name | string | Optional for update: Explicitly set a new name for the instance. |
+| context | string | Optional for update: Context about what the user is trying to accomplish for smart renaming. |
+| status | string | Optional for update: Set status. |
+| limit | number | Optional for read: Limit number of results. |
+| offset | number | Optional for read: Offset for pagination. |
+
+## REST Endpoint
+
+```
+POST /api/agents/tools/instance
+```
+
+```http
+POST /api/agents/tools/instance
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "action": "create",
+  "site_id": "YOUR_SITE_ID",
+  "activity": "Marketing Campaign Setup"
+}
+```
+
+**Response (Create):**
+
+```json
+{
+  "success": true,
+  "instance": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "Marketing Campaign Setup",
+    "status": "running"
+  },
+  "authentication": {
+    "success": true
+  }
+}
+```
+
+**Response (Update Rename):**
+
+```json
+{
+  "success": true,
+  "renamed": true,
+  "old_name": "Assistant Session",
+  "new_name": "SaaS Lead Gen Campaign - US",
+  "similarity": 0.2
+}
+```

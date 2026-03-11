@@ -1,3 +1,4 @@
+import { CreditService } from '@/lib/services/billing/CreditService';
 /**
  * Assistant Protocol Wrapper for Generate Video Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -73,6 +74,15 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
     execute: async (args: GenerateVideoToolParams) => {
       try {
         console.log(`[GenerateVideoTool] 🎬 Executing video generation`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for video generation');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'video_generation', 'Video generation', { prompt: args.prompt });
+        }
+
         console.log(`[GenerateVideoTool] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateVideoTool] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateVideoTool] 🤖 Provider: gemini (only supported provider)`);
@@ -179,6 +189,15 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
     execute: async (args) => {
       try {
         console.log(`[GenerateVideoTool-Scrapybara] 🎬 Executing video generation`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for video generation');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'video_generation', 'Video generation', { prompt: args.prompt });
+        }
+
         console.log(`[GenerateVideoTool-Scrapybara] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateVideoTool-Scrapybara] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateVideoTool-Scrapybara] 🤖 Provider: gemini (only supported provider)`);

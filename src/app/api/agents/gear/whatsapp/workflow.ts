@@ -84,7 +84,8 @@ export async function runUnregisteredGearAgentWorkflow({
   userPhone,
   businessAccountId,
   systemPrompt,
-  userId
+  userId,
+  profileName
 }: {
   message: string;
   messageSid?: string;
@@ -93,6 +94,7 @@ export async function runUnregisteredGearAgentWorkflow({
   businessAccountId: string;
   systemPrompt: string;
   userId?: string | null;
+  profileName?: string;
 }) {
   'use workflow';
   
@@ -114,7 +116,8 @@ export async function runUnregisteredGearAgentWorkflow({
       messageSid,
       siteId,
       systemPrompt,
-      userId
+      userId,
+      profileName
     );
 
     if (assistantResponse) {

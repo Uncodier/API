@@ -416,7 +416,8 @@ export async function POST(request: NextRequest) {
 
     // 11. Setup and validate tools
     const ubuntuInstance = remoteInstance as any;
-    let tools = setupTools(ubuntuInstance);
+    const effective_site_id = plan.site_id || instance.site_id;
+    let tools = setupTools(ubuntuInstance, effective_site_id);
     
     // Add generateImage and generateVideo tools to the tools array (Scrapybara-compatible version)
     const generateImageToolInstance = generateImageToolScrapybara(ubuntuInstance, instance.site_id);
@@ -424,7 +425,7 @@ export async function POST(request: NextRequest) {
     tools.push(generateImageToolInstance);
     tools.push(generateVideoToolInstance);
     
-    const toolsValidation = await validateTools(tools, client, instance.provider_instance_id);
+    const toolsValidation = await validateTools(tools, client, instance.provider_instance_id, effective_site_id);
     if (!toolsValidation.valid) {
       return NextResponse.json({ 
         error: 'Failed to establish connection with remote instance tools',

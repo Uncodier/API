@@ -14,6 +14,7 @@ export interface SendWhatsAppParams {
   lead_id?: string;
   site_id: string;
   responseWindowEnabled?: boolean; // If true, assume response window active and skip template
+  media_urls?: string[]; // Array de URLs de medios a adjuntar (imágenes, videos, documentos)
 }
 
 export interface SendWhatsAppResult {
@@ -176,7 +177,8 @@ export class WhatsAppSendService {
           formattedMessage,
           whatsappConfig.phoneNumberId,
           whatsappConfig.accessToken,
-          whatsappConfig.fromNumber
+          whatsappConfig.fromNumber,
+          params.media_urls
         );
         
         // Mapear resultado al formato esperado
@@ -499,7 +501,8 @@ export class WhatsAppSendService {
     message: string,
     accountSid: string,
     authToken: string,
-    fromNumber: string
+    fromNumber: string,
+    mediaUrls?: string[]
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string }> {
     try {
       console.log('📤 [WhatsAppSendService] Enviando via API de Twilio WhatsApp...');
@@ -522,11 +525,21 @@ export class WhatsAppSendService {
         formData.append('To', `whatsapp:${phoneNumber}`);
         formData.append('Body', chunk);
         
+        // Add media URLs if present (only on the first chunk to avoid repeating media)
+        if (i === 0 && mediaUrls && mediaUrls.length > 0) {
+          // Twilio allows up to 10 media URLs per message
+          const urlsToAttach = mediaUrls.slice(0, 10);
+          urlsToAttach.forEach(url => {
+            formData.append('MediaUrl', url);
+          });
+        }
+        
         console.log(`🔐 [WhatsAppSendService] Datos de envío chunk ${i + 1}/${chunks.length}:`, {
           url: apiUrl,
           from: `whatsapp:${fromNumber}`,
           to: `whatsapp:${phoneNumber}`,
-          messageLength: chunk.length
+          messageLength: chunk.length,
+          hasMedia: i === 0 && !!mediaUrls?.length
         });
         
         const response = await fetch(apiUrl, {

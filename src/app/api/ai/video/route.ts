@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
@@ -583,6 +584,20 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: `Unsupported provider: ${provider}` }, { status: 400 });
     }
 
+    // Validate credits for Video Generation
+    try {
+      const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+      const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for video generation' } },
+          { status: 402 }
+        );
+      }
+    } catch (e: any) {
+      return NextResponse.json({ error: e.message }, { status: 402 });
+    }
+
     // Duration will be mapped to valid values (4, 6, 8) in generateWithGemini
     // No need to sanitize here, just pass through
     const result = await generateWithGemini({
@@ -594,6 +609,20 @@ export async function POST(request: NextRequest) {
       quality,
       model,
     });
+
+    if (result && Array.isArray(result.videos) && result.videos.length > 0) {
+      try {
+        await CreditService.deductCredits(
+          site_id, 
+          CreditService.PRICING.VIDEO_GENERATION * result.videos.length, 
+          'video_generation', 
+          `Video generation (${result.videos.length} videos)`,
+          { prompt, provider }
+        );
+      } catch (e) {
+        console.error('Failed to deduct credits for video generation:', e);
+      }
+    }
 
     return NextResponse.json(result);
   } catch (error: any) {

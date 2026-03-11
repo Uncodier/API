@@ -74,7 +74,7 @@ export class AIGatewayService {
       const startTime = Date.now();
       
       // Configure the OpenAI provider with AI Gateway
-      const aiModel = openai(model, {
+      const aiModel = (openai as any)(model, {
         baseURL: this.gatewayUrl,
         apiKey: this.apiKey,
       });
@@ -90,7 +90,7 @@ export class AIGatewayService {
       if (stream) {
         console.log(`[AIGatewayService] Ejecutando en modo streaming`);
         
-        const result = streamText(modelConfig);
+        const result = streamText(modelConfig as any);
         
         const duration = Date.now() - startTime;
         console.log(`[AIGatewayService] Stream iniciado en ${duration}ms`);
@@ -107,7 +107,7 @@ export class AIGatewayService {
       } else {
         console.log(`[AIGatewayService] Ejecutando en modo estándar`);
         
-        const result = await generateText(modelConfig);
+        const result = await generateText(modelConfig as any);
         
         const duration = Date.now() - startTime;
         console.log(`[AIGatewayService] Respuesta recibida en ${duration}ms con ${result.text.length} caracteres`);
@@ -115,9 +115,9 @@ export class AIGatewayService {
         return {
           content: result.text,
           usage: result.usage ? {
-            prompt_tokens: result.usage.promptTokens,
-            completion_tokens: result.usage.completionTokens,
-            total_tokens: result.usage.totalTokens
+            prompt_tokens: (result.usage as any).promptTokens || 0,
+            completion_tokens: (result.usage as any).completionTokens || 0,
+            total_tokens: (result.usage as any).totalTokens || 0
           } : {
             prompt_tokens: 0,
             completion_tokens: 0,

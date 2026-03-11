@@ -1,3 +1,4 @@
+import { CreditService } from '@/lib/services/billing/CreditService';
 /**
  * Assistant Protocol Wrapper for Generate Image Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -74,6 +75,15 @@ export function generateImageTool(site_id: string, instance_id?: string) {
     execute: async (args: GenerateImageToolParams) => {
       try {
         console.log(`[GenerateImageTool] 🎨 Executing image generation`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * (args.n || 1);
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for image generation');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'image_generation', `Image generation (${args.n || 1} images)`, { prompt: args.prompt });
+        }
+
         console.log(`[GenerateImageTool] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateImageTool] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateImageTool] 🤖 Provider: gemini (only supported provider)`);
@@ -180,6 +190,15 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
     execute: async (args) => {
       try {
         console.log(`[GenerateImageTool-Scrapybara] 🎨 Executing image generation`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * (args.n || 1);
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for image generation');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'image_generation', `Image generation (${args.n || 1} images)`, { prompt: args.prompt });
+        }
+
         console.log(`[GenerateImageTool-Scrapybara] 📝 Prompt: ${args.prompt.substring(0, 100)}...`);
         console.log(`[GenerateImageTool-Scrapybara] 🏢 Site ID: ${site_id}`);
         console.log(`[GenerateImageTool-Scrapybara] 🤖 Provider: gemini (only supported provider)`);

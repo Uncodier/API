@@ -4,6 +4,7 @@ import { start } from 'workflow/api';
 import { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow } from '../workflow';
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
+import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
 
 // Helper para extraer número
 function extractPhoneNumber(twilioPhoneFormat: string): string {
@@ -48,6 +49,7 @@ export async function POST(request: NextRequest) {
     const rawPhoneNumber = extractPhoneNumber(webhookData.From);
     const phoneNumber = normalizePhoneForStorage(rawPhoneNumber) || rawPhoneNumber;
     const businessPhoneNumber = extractPhoneNumber(webhookData.To);
+    const profileName = webhookData.ProfileName || '';
     
     let messageContent = webhookData.Body || '';
     const messageSid = webhookData.MessageSid;
@@ -55,6 +57,8 @@ export async function POST(request: NextRequest) {
     
     // Procesar contenido multimedia y adjuntos de Twilio
     const numMedia = parseInt(webhookData.NumMedia || '0');
+    const mediaDownloads: TwilioMediaDownload[] = [];
+    
     if (numMedia > 0) {
       const mediaList = [];
       for (let i = 0; i < numMedia; i++) {
@@ -62,6 +66,10 @@ export async function POST(request: NextRequest) {
         const mediaType = webhookData[`MediaContentType${i}`];
         if (mediaUrl) {
           mediaList.push(`[Archivo adjunto - ${mediaType}]: ${mediaUrl}`);
+          mediaDownloads.push({
+            url: mediaUrl,
+            contentType: mediaType,
+          });
         }
       }
       if (mediaList.length > 0) {
@@ -253,7 +261,8 @@ export async function POST(request: NextRequest) {
         userPhone: rawPhoneNumber,
         businessAccountId,
         systemPrompt: systemPromptOverride,
-        userId: userId // Pasamos el userId por si necesita usar tools de usuario registrado
+        userId: userId, // Pasamos el userId por si necesita usar tools de usuario registrado
+        profileName // Pasamos el profileName por si lo necesita para crear el lead
       }]);
       console.log('✅ Unregistered/Lobby Workflow iniciado');
       return NextResponse.json({ success: true }, { status: 200 });
@@ -364,6 +373,40 @@ export async function POST(request: NextRequest) {
       console.error('❌ No se pudo obtener/crear una instancia');
       return NextResponse.json({ success: true });
     }
+
+    // 4.1 PROCESAR MEDIOS (IMÁGENES, ARCHIVOS) SI LOS HAY
+    // Solo si el usuario está registrado, tiene un sitio y una instancia válida.
+    if (mediaDownloads.length > 0 && userId && siteId && instanceId) {
+      console.log(`📎 Procesando ${mediaDownloads.length} archivos adjuntos de WhatsApp...`);
+      try {
+        const accountSid = businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID;
+        const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
+        
+        if (accountSid && authToken) {
+          const mediaResult = await handleTwilioMediaAndCreateTask({
+            siteId,
+            userId,
+            instanceId,
+            messageText: messageContent,
+            workflowOrigin: 'whatsapp',
+            media: mediaDownloads,
+            twilioAuth: { accountSid, authToken },
+          });
+          
+          if (mediaResult.success) {
+            console.log(`✅ ${mediaDownloads.length} archivos procesados y guardados exitosamente como assets de la instancia`);
+            // Agregar al contenido del mensaje que se ha subido el archivo exitosamente para que la IA lo sepa
+            messageContent += `\n[System Note: User has successfully uploaded ${mediaDownloads.length} media file(s). They have been attached to your instance context.]`;
+          } else {
+            console.warn(`⚠️ Error procesando archivos: ${mediaResult.error}`);
+          }
+        } else {
+          console.warn(`⚠️ Faltan credenciales de Twilio para descargar los archivos de WhatsApp`);
+        }
+      } catch (err) {
+        console.error(`❌ Error inesperado al procesar medios de Twilio:`, err);
+      }
+    }
     
     // 4.5. INSERTAR MENSAJE DEL USUARIO EN instance_logs ANTES DE INICIAR EL WORKFLOW
     // Esto es crucial para que el workflow.ts encuentre el historial y el contexto de qué responder.
@@ -398,8 +441,14 @@ export async function POST(request: NextRequest) {
     
     console.log('✅ Workflow iniciado');
     return NextResponse.json({ success: true }, { status: 200 });
-  } catch (error) {
+  } catch (error: any) {
     console.error('❌ Error al procesar webhook de Twilio WhatsApp (Gear):', error);
+    
+    if (error?.name === 'InsufficientCreditsError' || error?.message?.includes('Insufficient credits')) {
+      console.warn('⚠️ WhatsApp message processing aborted due to insufficient credits');
+      return NextResponse.json({ success: false, error: 'INSUFFICIENT_CREDITS' }, { status: 402 });
+    }
+    
     return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }

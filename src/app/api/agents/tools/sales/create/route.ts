@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
         id: sale_id,
         customer_id,
         product_ids,
-        site_id: finalSiteId,
+        site_id,
         created_at: now,
         updated_at: now,
         ...saleDetails

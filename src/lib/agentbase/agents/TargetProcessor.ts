@@ -164,7 +164,8 @@ export class TargetProcessor extends Base {
         stream: this.defaultOptions.stream || false,
         streamOptions: {
           includeUsage: true
-        }
+        },
+        siteId: command.site_id,
       };
 
       console.log(`[TargetProcessor] Using model: ${modelOptions.modelId}`);
@@ -242,7 +243,7 @@ export class TargetProcessor extends Base {
             if (responseContent.trim().startsWith('[') && responseContent.trim().endsWith(']')) {
               try {
                 results = JSON.parse(responseContent);
-                console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON: ${results.length} elementos`);
+                console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON: ${results?.length || 0} elementos`);
               } catch (e) {
                 // Si falla el parsing de array, intentar extraer JSON embebido que coincida con targets
                 console.log(`[TargetProcessor] Error parsing array JSON, intentando extraer JSON embebido`);
@@ -322,12 +323,13 @@ export class TargetProcessor extends Base {
       if (!results) {
         return {
           status: 'failed',
+          results: null as any, // TypeScript hack
           error: `Could not extract valid JSON from LLM response after ${MAX_PARSE_RETRIES} retries. Last error: ${lastError?.message || 'Unknown error'}`
         };
       }
 
       // Validar los resultados usando el servicio validateResults
-      const validation = validateResults(results, command.targets) as ValidationResult;
+      const validation = validateResults((results as any) || [], command.targets) as ValidationResult;
 
       if (!validation.isValid) {
         console.warn(`[TargetProcessor] Validación de resultados falló: ${validation.error}`);
@@ -342,7 +344,7 @@ export class TargetProcessor extends Base {
       }
 
       // Log detailed results summary
-      console.log(`[TargetProcessor] Results procesados y validados: ${results.length} elementos`);
+      console.log(`[TargetProcessor] Results procesados y validados: ${(results as any)?.length || 0} elementos`);
 
       // Crear una copia independiente de los resultados para el comando
       const resultsCopy = JSON.parse(JSON.stringify(results));

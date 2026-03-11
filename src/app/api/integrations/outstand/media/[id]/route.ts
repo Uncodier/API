@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const params = await context.params;
     const client = getOutstandClient();
     const result = await client.getMedia(params.id);
     return NextResponse.json(result);
@@ -11,8 +12,9 @@ export async function GET(request: Request, { params }: { params: { id: string }
   }
 }
 
-export async function DELETE(request: Request, { params }: { params: { id: string } }) {
+export async function DELETE(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const params = await context.params;
     const client = getOutstandClient();
     const result = await client.deleteMedia(params.id);
     return NextResponse.json(result);

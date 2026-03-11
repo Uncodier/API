@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { logInfo, logError } from '@/lib/utils/api-response-utils';
 
 export async function POST(req: NextRequest) {
@@ -33,6 +34,38 @@ export async function POST(req: NextRequest) {
     }
 
     const body = requestBody as Record<string, unknown>;
+
+    // Extract site_id from body or headers (for backward compatibility, though body is preferred)
+    const site_id = body.site_id as string || req.headers.get('x-site-id');
+    
+    // Validate and deduct credits for Enrichment
+    if (site_id) {
+      try {
+        const requiredCredits = CreditService.PRICING.ENRICHMENT_BASIC;
+        const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+        if (!hasCredits) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for enrichment' } },
+            { status: 402 }
+          );
+        }
+        
+        await CreditService.deductCredits(
+          site_id, 
+          requiredCredits, 
+          'enrichment', 
+          'Personal emails enrichment',
+          { ...body }
+        );
+      } catch (error: any) {
+        return NextResponse.json(
+          { error: error.message },
+          { status: 402 }
+        );
+      }
+    } else {
+      console.warn('⚠️ WARNING: Enrichment called without site_id. Skipping credit deduction.');
+    }
     const hasPersonId = 'person_id' in body && body.person_id !== undefined && body.person_id !== null;
     const hasLinkedInId = 'linkedin_public_identifier' in body && 
       typeof body.linkedin_public_identifier === 'string' && 

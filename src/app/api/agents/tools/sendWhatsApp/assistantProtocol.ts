@@ -13,6 +13,7 @@ export interface SendWhatsAppToolParams {
   conversation_id?: string;
   lead_id?: string;
   responseWindowEnabled?: boolean;
+  media_urls?: string[];
 }
 
 /**
@@ -23,7 +24,7 @@ export function sendWhatsAppTool(siteId: string) {
   return {
     name: 'sendWhatsApp',
     description:
-      'Send a WhatsApp message to a phone number. Required: phone_number (international format e.g. +1234567890), message. Optional: from (sender name), lead_id, conversation_id for tracking. If the response indicates template_required: true (outside 24h reply window), use the whatsappTemplate tool with action create_template then send_template to deliver the message.',
+      'Send a WhatsApp message to a phone number. Required: phone_number (international format e.g. +1234567890), message. Optional: from (sender name), lead_id, conversation_id for tracking, media_urls (array of valid URLs to send images, videos, audio, or PDFs). If the response indicates template_required: true (outside 24h reply window), use the whatsappTemplate tool with action create_template then send_template to deliver the message.',
     parameters: {
       type: 'object',
       properties: {
@@ -36,6 +37,11 @@ export function sendWhatsAppTool(siteId: string) {
         lead_id: { type: 'string', description: 'Lead UUID for tracking' },
         conversation_id: { type: 'string', description: 'Conversation UUID (used for 24h window check)' },
         agent_id: { type: 'string', description: 'Agent UUID for tracking' },
+        media_urls: { 
+          type: 'array', 
+          items: { type: 'string' }, 
+          description: 'Array of valid public URLs linking to media (images, videos, audio, pdfs) to attach to the message (max 10).' 
+        },
         responseWindowEnabled: {
           type: 'boolean',
           description: 'If true, skip template check and send as within 24h window',

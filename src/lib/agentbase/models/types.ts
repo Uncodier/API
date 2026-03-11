@@ -153,6 +153,7 @@ export interface PortkeyModelOptions {
   };
   reasoningEffort?: 'low' | 'medium' | 'high' | 'minimal';
   verbosity?: 'low' | 'medium' | 'high';
+  siteId?: string;
 }
 
 export interface AzureOpenAIOptions {

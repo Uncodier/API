@@ -52,6 +52,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
   agentId?: string | null;
   leadId?: string | null;
   conversationId?: string | null;
+  instanceId?: string | null; // Nuevo parámetro para vincular assets
   messageText?: string;
   workflowOrigin?: 'whatsapp' | 'website_chat';
   media: Array<TwilioMediaDownload>;
@@ -137,6 +138,10 @@ export async function handleTwilioMediaAndCreateTask(params: {
     url: string;
   }> = [];
 
+  // Almacenar también como assets para la instancia
+  let instanceId = params.instanceId; // Necesitamos pasarlo si está disponible
+  const uploadedAssets: Array<any> = [];
+
   for (let idx = 0; idx < media.length; idx++) {
     const item = media[idx];
     const dl = await downloadTwilioMedia(item.url, accountSid, authToken);
@@ -149,13 +154,16 @@ export async function handleTwilioMediaAndCreateTask(params: {
       continue;
     }
     const ext = safeExtFromMime(item.contentType || dl.contentType);
+    // Cambiamos la ruta para que sea genérica en assets si es posible, o usamos la misma,
+    // pero guardando un registro en la tabla assets.
+    const originalFileName = `media_${idx + 1}.${ext}`;
     const objPath = `sites/${siteId}/conversations/${conversationId}/${Date.now()}_${crypto.randomUUID()}.${ext}`;
 
     const { data: up, error: upErr } = await supabaseAdmin
       .storage
       .from(BUCKET)
       .upload(objPath, Buffer.from(dl.buffer), {
-        contentType: dl.contentType || 'application/octet-stream',
+        contentType: item.contentType || dl.contentType || 'application/octet-stream',
         upsert: false,
       });
     if (upErr) {
@@ -171,14 +179,49 @@ export async function handleTwilioMediaAndCreateTask(params: {
         .createSignedUrl(objPath, 60 * 60 * 24 * 7);
       url = signed?.signedUrl || '';
     }
+    
     uploadedFiles.push({
-      name: `media_${idx + 1}.${ext}`,
+      name: originalFileName,
       size: dl.buffer.byteLength,
-      type: dl.contentType || 'application/octet-stream',
+      type: item.contentType || dl.contentType || 'application/octet-stream',
       bucket: BUCKET,
       path: up!.path,
       url,
     });
+    
+    // Crear el registro de asset si se proporcionó instanceId
+    if (instanceId) {
+      const assetRecord = {
+        name: `WhatsApp Attachment ${idx + 1} (${ext})`,
+        file_path: url, // Opcionalmente usar el path real si el bucket es público
+        file_type: item.contentType || dl.contentType || 'application/octet-stream',
+        file_size: dl.buffer.byteLength,
+        site_id: siteId,
+        user_id: userId,
+        instance_id: instanceId,
+        metadata: {
+          source: 'whatsapp_webhook',
+          conversation_id: conversationId,
+          original_url: item.url,
+          storage_path: objPath,
+          bucket: BUCKET
+        },
+        is_public: true
+      };
+      
+      const { data: insertedAsset, error: assetErr } = await supabaseAdmin
+        .from('assets')
+        .insert([assetRecord])
+        .select('id')
+        .single();
+        
+      if (!assetErr && insertedAsset) {
+        log(`Asset created for instance ${instanceId}: ${insertedAsset.id}`);
+        uploadedAssets.push(insertedAsset.id);
+      } else {
+        warn(`Failed to create asset record:`, assetErr);
+      }
+    }
   }
 
   if (!uploadedFiles.length) {
@@ -275,6 +318,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
     files: uploadedFiles,
     workflowId,
     workflowTitle,
+    assetIds: uploadedAssets,
   } as const;
 }
 

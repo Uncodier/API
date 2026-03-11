@@ -172,7 +172,8 @@ export class ToolEvaluator extends Base {
         const modelOptions: any = {
           modelType: parsedModelType,
           modelId: parsedModelId,
-          responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text'
+          responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
+          siteId: command.site_id,
         };
         
         // Set temperature based on model type

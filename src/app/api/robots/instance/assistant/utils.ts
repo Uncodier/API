@@ -1,13 +1,14 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
+import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
+import { getContextMemories } from '@/lib/services/agent-memory-tools-service';
 import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
-import { getContextMemories } from '@/lib/services/agent-memory-tools-service';
 
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
-import { renameInstanceTool } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
+import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
@@ -45,8 +46,6 @@ import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/ass
 import { createProjectTool } from '@/app/api/agents/tools/createProject/assistantProtocol';
 import { systemNotificationTool } from '@/app/api/agents/tools/system_notification/assistantProtocol';
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
-
-import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -188,9 +187,9 @@ export const getAssistantTools = (
     ...customTools,
     generateImageTool(siteId, instanceId),
     generateVideoTool(siteId, instanceId),
-    renameInstanceTool(siteId, instanceId),
+    instanceTool(siteId, instanceId, userId),
     updateSiteSettingsTool(siteId),
-    webSearchTool(),
+    webSearchTool(siteId),
     memoriesTool(siteId, userId ?? '', instanceId),
     tasksTool(siteId, userId),
     requirementsTool(siteId, userId),

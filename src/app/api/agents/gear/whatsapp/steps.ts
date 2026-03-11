@@ -17,7 +17,8 @@ export async function processUnregisteredUserStep(
   waMessageId: string | undefined,
   siteId: string,
   systemPrompt: string,
-  userId?: string | null
+  userId?: string | null,
+  profileName?: string
 ) {
   'use step';
   
@@ -46,6 +47,9 @@ export async function processUnregisteredUserStep(
         .single();
         
       if (siteData) {
+        const fallbackName = `WhatsApp Lead (${phoneNumber.substring(0, 5)}***)`;
+        const leadName = profileName ? `${profileName} (WhatsApp)` : fallbackName;
+        
         const { data: newLead, error: leadError } = await supabaseAdmin
           .from('leads')
           .insert([{
@@ -55,7 +59,7 @@ export async function processUnregisteredUserStep(
             phone: phoneNorm,
             origin: 'whatsapp',
             status: 'new',
-            name: `WhatsApp Lead (${phoneNumber.substring(0, 5)}***)`
+            name: leadName
           }])
           .select('id')
           .single();
@@ -86,11 +90,14 @@ export async function processUnregisteredUserStep(
     if (existingConversation) {
       convId = existingConversation.id;
     } else {
+      const fallbackTitle = `Gear Lead WhatsApp: ${phoneNumber.substring(0, 5)}***`;
+      const title = profileName ? `Gear Lead WhatsApp: ${profileName}` : fallbackTitle;
+      
       const convData: any = {
         lead_id: leadId,
         site_id: siteId,
         status: 'active',
-        title: `Gear Lead WhatsApp: ${phoneNumber.substring(0, 5)}***`,
+        title: title,
         custom_data: { source: 'whatsapp', whatsapp_phone: phoneNumber, business_account_id: businessAccountId }
       };
 
@@ -113,6 +120,7 @@ export async function processUnregisteredUserStep(
       conversation_id: convId,
       content: messageContent,
       role: 'user',
+      status: 'received',
       custom_data: { source: 'whatsapp', whatsapp_message_id: waMessageId, whatsapp_phone: phoneNumber }
     }]);
 
@@ -154,6 +162,7 @@ export async function processUnregisteredUserStep(
         conversation_id: convId,
         content: assistantResponse,
         role: 'assistant',
+        status: 'sent',
         custom_data: { source: 'whatsapp', whatsapp_phone: phoneNumber }
       }]).select().single();
       
@@ -307,7 +316,8 @@ function chunkMessage(text: string, maxLength = 1500): string[] {
 export async function sendWhatsAppResponse(
   userPhone: string,
   message: string,
-  siteId: string
+  siteId: string,
+  mediaUrls?: string[]
 ) {
   'use step';
   
@@ -358,6 +368,14 @@ export async function sendWhatsAppResponse(
         formData.append('To', `whatsapp:${cleanTo}`);
         formData.append('Body', chunk);
         
+        // Add media URLs if present (only on the first chunk)
+        if (i === 0 && mediaUrls && mediaUrls.length > 0) {
+          const urlsToAttach = mediaUrls.slice(0, 10);
+          urlsToAttach.forEach(url => {
+            formData.append('MediaUrl', url);
+          });
+        }
+        
         const response = await fetch(apiUrl, {
           method: 'POST',
           headers: {
@@ -389,7 +407,8 @@ export async function sendWhatsAppResponse(
           phone_number: userPhone,
           message: chunk,
           site_id: siteId,
-          responseWindowEnabled: true
+          responseWindowEnabled: true,
+          media_urls: i === 0 ? mediaUrls : undefined // Add media only to the first chunk
         });
 
         console.log(`[GearAgent] Chunk ${i + 1} sent successfully via platform WhatsAppSendService`);

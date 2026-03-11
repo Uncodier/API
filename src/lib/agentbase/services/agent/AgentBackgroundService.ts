@@ -92,9 +92,9 @@ export class AgentBackgroundService {
           if (siteInfo) {
             console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
             console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
-            console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting disponible: ${siteInfo.copywriting ? 'SÍ' : 'NO'}`);
-            if (siteInfo.copywriting) {
-              console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting elementos: ${siteInfo.copywriting.length}`);
+            console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting disponible: ${(siteInfo as any).copywriting ? 'SÍ' : 'NO'}`);
+            if ((siteInfo as any).copywriting) {
+              console.log(`🔍 [AgentBackgroundService] SiteInfo fresco obtenido - Copywriting elementos: ${(siteInfo as any).copywriting.length}`);
             }
           }
         } else {
@@ -104,7 +104,7 @@ export class AgentBackgroundService {
             console.log(`🔍 [AgentBackgroundService] Usando siteInfo existente como fallback`);
             console.log(`🔍 [AgentBackgroundService] Site disponible: ${siteInfo.site ? 'SÍ' : 'NO'}`);
             console.log(`🔍 [AgentBackgroundService] Settings disponible: ${siteInfo.settings ? 'SÍ' : 'NO'}`);
-            console.log(`🔍 [AgentBackgroundService] Copywriting disponible: ${siteInfo.copywriting ? 'SÍ' : 'NO'}`);
+            console.log(`🔍 [AgentBackgroundService] Copywriting disponible: ${(siteInfo as any).copywriting ? 'SÍ' : 'NO'}`);
           }
         }
         
@@ -123,7 +123,7 @@ export class AgentBackgroundService {
         // quien se encargará de formatearla correctamente
         console.log(`🔍 [AgentBackgroundService] *** LLAMANDO A BackgroundBuilder.buildAgentPrompt ***`);
         console.log(`🔍 [AgentBackgroundService] SiteInfo antes de BackgroundBuilder:`, siteInfo);
-        console.log(`🔍 [AgentBackgroundService] SiteInfo.copywriting:`, siteInfo?.copywriting);
+        console.log(`🔍 [AgentBackgroundService] SiteInfo.copywriting:`, (siteInfo as any)?.copywriting);
         let background = BackgroundBuilder.buildAgentPrompt(
           agentId,
           agentData.name,

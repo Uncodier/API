@@ -81,7 +81,7 @@ export class ComposioTools {
       // Obtener herramientas de Composio
       const composioTools = await this.toolset.getTools({
         apps: options.apps,
-        integrationId: options.integrationId,
+        // integrationId: options.integrationId, // Property 'integrationId' does not exist
         tags: options.tags,
         actions: options.actions,
         useCase: options.useCase,

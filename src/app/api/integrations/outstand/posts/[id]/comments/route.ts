@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 
-export async function POST(request: Request, { params }: { params: { id: string } }) {
+export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const params = await context.params;
     const body = await request.json();
     const client = getOutstandClient();
     const result = await client.publishComment(params.id, body);
@@ -12,8 +13,9 @@ export async function POST(request: Request, { params }: { params: { id: string 
   }
 }
 
-export async function GET(request: Request, { params }: { params: { id: string } }) {
+export async function GET(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const params = await context.params;
     const { searchParams } = new URL(request.url);
     const network = searchParams.get('network') || undefined;
     const username = searchParams.get('username') || undefined;

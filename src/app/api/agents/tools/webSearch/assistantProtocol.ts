@@ -1,3 +1,4 @@
+import { CreditService } from '@/lib/services/billing/CreditService';
 /**
  * Assistant Protocol Wrapper for Web Search Tool
  * Formats the tool for OpenAI/assistant compatibility
@@ -27,7 +28,7 @@ function buildSearchResult(data: { answer?: string; results?: Array<{ content?: 
  * Creates a web search tool for OpenAI/assistant compatibility
  * @returns Tool definition compatible with OpenAI function calling
  */
-export function webSearchTool() {
+export function webSearchTool(site_id?: string) {
   return {
     name: 'webSearch',
     description: 'Perform a web search to get real-time information.',
@@ -44,6 +45,15 @@ export function webSearchTool() {
     execute: async (args: WebSearchToolParams) => {
       try {
         console.log(`[WebSearchTool] 🌐 Executing web search for: ${args.query}`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.TAVILY_SEARCH;
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for web search');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'tavily_search', 'Web search via assistant', { query: args.query });
+        }
+
 
         const searchResult = await searchWithTavily(args.query, {
           search_depth: 'basic',
@@ -75,7 +85,7 @@ export function webSearchTool() {
  * @param instance - The Scrapybara UbuntuInstance
  * @returns Tool definition compatible with Scrapybara SDK
  */
-export function webSearchToolScrapybara(instance: UbuntuInstance) {
+export function webSearchToolScrapybara(instance: UbuntuInstance, site_id?: string) {
   return tool({
     name: 'webSearch',
     description: 'Perform a web search to get real-time information.',
@@ -85,6 +95,15 @@ export function webSearchToolScrapybara(instance: UbuntuInstance) {
     execute: async (args) => {
       try {
         console.log(`[WebSearchTool-Scrapybara] 🌐 Executing web search for: ${args.query}`);
+        if (site_id) {
+          const requiredCredits = CreditService.PRICING.TAVILY_SEARCH;
+          const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for web search');
+          }
+          await CreditService.deductCredits(site_id, requiredCredits, 'tavily_search', 'Web search via assistant', { query: args.query });
+        }
+
 
         const searchResult = await searchWithTavily(args.query, {
           search_depth: 'basic',

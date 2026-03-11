@@ -127,7 +127,7 @@ export class TeamNotificationService {
         }
       }
       
-      const authUsersError = null;
+      const authUsersError: any = null;
       
       if (authUsersError) {
         console.error('Error al obtener usuarios de auth:', authUsersError);

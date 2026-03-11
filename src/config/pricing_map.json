@@ -1,0 +1,76 @@
+{
+  "pricing_map": [
+    {
+      "name": "Enrichment (Work Emails)",
+      "type": "API",
+      "route": "/api/finder/person_contacts_lookup/work_emails",
+      "provider": "Forager",
+      "cost_per_call": 0.1,
+      "unit": "per request"
+    },
+    {
+      "name": "Enrichment (Personal Emails)",
+      "type": "API",
+      "route": "/api/finder/person_contacts_lookup/personal_emails",
+      "provider": "Forager",
+      "cost_per_call": 0.1,
+      "unit": "per request"
+    },
+    {
+      "name": "Enrichment (Details)",
+      "type": "API",
+      "route": "/api/finder/person_contacts_lookup/details",
+      "provider": "Forager",
+      "cost_per_call": 0.1,
+      "unit": "per request"
+    },
+    {
+      "name": "Enrichment (Phone Numbers)",
+      "type": "API",
+      "route": "/api/finder/person_contacts_lookup/phone_numbers",
+      "provider": "Forager",
+      "cost_per_call": 0.25,
+      "unit": "per request"
+    },
+    {
+      "name": "Places Search",
+      "type": "API / Tool",
+      "route": "/api/agents/sales/regionVenues",
+      "provider": "Google Maps",
+      "cost_per_call": 0.1,
+      "unit": "per search"
+    },
+    {
+      "name": "Web Search (Tavily)",
+      "type": "Tool / API",
+      "route": "/api/agents/dataAnalyst/search",
+      "provider": "Tavily",
+      "cost_per_call": 0.1,
+      "unit": "per query"
+    },
+    {
+      "name": "Assistant Engine",
+      "type": "Core Engine",
+      "route": "Internal (executeAssistant / executeAssistantStep)",
+      "provider": "Azure / OpenAI / Gemini / Anthropic (Scrapybara)",
+      "cost_per_call": 1.0,
+      "unit": "per million tokens"
+    },
+    {
+      "name": "Image Generation",
+      "type": "Tool / API",
+      "route": "/api/ai/image",
+      "provider": "Gemini / Azure / Vercel",
+      "cost_per_call": 0.1,
+      "unit": "per image"
+    },
+    {
+      "name": "Video Generation",
+      "type": "Tool / API",
+      "route": "/api/ai/video",
+      "provider": "Gemini / Luma",
+      "cost_per_call": 1.0,
+      "unit": "per video"
+    }
+  ]
+}

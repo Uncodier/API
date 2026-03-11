@@ -3,6 +3,9 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
 import OpenAI from 'openai';
 
+import { createOrResumeInstance } from '@/lib/services/robot-instance/instance-lifecycle';
+import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
+
 // Function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -154,7 +157,7 @@ Name:`;
 
     // Validate that it's not empty or generic
     if (!generatedName || generatedName.length < 3) {
-      console.warn(`[RENAME_INSTANCE] Generated name too short or empty, generating fallback from context`);
+      console.warn(`[INSTANCE_TOOL] Generated name too short or empty, generating fallback from context`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
@@ -164,7 +167,7 @@ Name:`;
     );
     
     if (isStillGeneric) {
-      console.warn(`[RENAME_INSTANCE] Generated name "${generatedName}" is still generic, creating descriptive fallback from context`);
+      console.warn(`[INSTANCE_TOOL] Generated name "${generatedName}" is still generic, creating descriptive fallback from context`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
@@ -173,13 +176,13 @@ Name:`;
       generatedName.toLowerCase().includes(generic.toLowerCase())
     );
     if (finalCheck) {
-      console.error(`[RENAME_INSTANCE] Name "${generatedName}" failed final validation, using context-based name`);
+      console.error(`[INSTANCE_TOOL] Name "${generatedName}" failed final validation, using context-based name`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
     return generatedName;
   } catch (error: any) {
-    console.error('[RENAME_INSTANCE] Error generating name:', error);
+    console.error('[INSTANCE_TOOL] Error generating name:', error);
     // Fallback: extract descriptive name from context
     return extractDescriptiveNameFromContext(context);
   }
@@ -285,250 +288,222 @@ Only respond with valid JSON, nothing else.`;
       similarity: typeof result.similarity === 'number' ? result.similarity : 0,
     };
   } catch (error: any) {
-    console.error('[RENAME_INSTANCE] Error comparing objectives:', error);
+    console.error('[INSTANCE_TOOL] Error comparing objectives:', error);
     // On error, default to not similar (allow rename)
     return { similar: false, similarity: 0 };
   }
 }
 
-/**
- * Core function to rename an instance based on context and objective
- * Can be called directly from tools or from the API route
- */
-export async function renameInstanceCore(instance_id: string, site_id: string, context?: string) {
-  console.log(`[RENAME_INSTANCE] 🏷️ Starting instance rename`);
-  console.log(`[RENAME_INSTANCE] 📝 Instance ID: ${instance_id}`);
-  console.log(`[RENAME_INSTANCE] 🏢 Site ID: ${site_id}`);
 
-  // Validate required parameters
-  if (!instance_id || typeof instance_id !== 'string') {
-    throw new Error('instance_id is required and must be a string');
+export interface InstanceCoreArgs {
+  action: 'create' | 'read' | 'update';
+  site_id?: string;
+  instance_id?: string;
+  user_id?: string;
+  activity?: string;
+  context?: string;
+  name?: string;
+  status?: string;
+  limit?: number;
+  offset?: number;
+}
+
+export async function instanceCore(args: InstanceCoreArgs) {
+  const { action, site_id, instance_id, user_id, activity, context, name, status, limit = 10, offset = 0 } = args;
+
+  if (action === 'create') {
+    if (!site_id || !activity) {
+      throw new Error('site_id and activity are required for create action');
+    }
+    
+    console.log(`[INSTANCE_TOOL] 🚀 Creating instance for site ${site_id} with activity: ${activity}`);
+    
+    const { instanceRecord } = await createOrResumeInstance({
+      siteId: site_id,
+      activity
+    });
+    
+    let authResult: any = { success: false };
+    if (instanceRecord?.provider_instance_id) {
+      try {
+        console.log(`[INSTANCE_TOOL] Attempting auto-authentication for site_id: ${site_id}`);
+        authResult = await autoAuthenticateInstance(instanceRecord.provider_instance_id, site_id);
+      } catch (authErr) {
+        console.warn('[INSTANCE_TOOL] Auto-authentication failed:', authErr);
+      }
+    }
+    
+    return {
+      success: true,
+      instance: instanceRecord,
+      authentication: authResult
+    };
+  }
+  
+  if (action === 'read') {
+    if (!site_id) {
+      throw new Error('site_id is required for read action');
+    }
+    
+    if (instance_id) {
+      const { data, error } = await supabaseAdmin
+        .from('remote_instances')
+        .select('*')
+        .eq('id', instance_id)
+        .eq('site_id', site_id)
+        .single();
+        
+      if (error) throw new Error(`Error fetching instance: ${error.message}`);
+      return { success: true, instance: data };
+    } else {
+      const { data, error } = await supabaseAdmin
+        .from('remote_instances')
+        .select('*')
+        .eq('site_id', site_id)
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+        
+      if (error) throw new Error(`Error listing instances: ${error.message}`);
+      return { success: true, instances: data };
+    }
   }
 
-  if (!site_id || typeof site_id !== 'string') {
-    throw new Error('site_id is required and must be a string');
-  }
+  if (action === 'update') {
+    if (!instance_id || !site_id) {
+      throw new Error('instance_id and site_id are required for update action');
+    }
+    
+    if (!isValidUUID(instance_id) || !isValidUUID(site_id)) {
+      throw new Error('Invalid UUID format');
+    }
+    
+    // Explicit update
+    if (name || status) {
+      const updates: any = {};
+      if (name) updates.name = name;
+      if (status) updates.status = status;
+      updates.updated_at = new Date().toISOString();
+      
+      const { data, error } = await supabaseAdmin
+        .from('remote_instances')
+        .update(updates)
+        .eq('id', instance_id)
+        .eq('site_id', site_id)
+        .select()
+        .single();
+        
+      if (error) throw new Error(`Failed to update instance: ${error.message}`);
+      return { success: true, instance: data };
+    }
+    
+    // Auto-rename logic based on context
+    const { data: instance, error: instanceError } = await supabaseAdmin
+      .from('remote_instances')
+      .select('*')
+      .eq('id', instance_id)
+      .single();
 
-  // Validate UUID formats
-  if (!isValidUUID(instance_id)) {
-    throw new Error('instance_id must be a valid UUID');
-  }
-  if (!isValidUUID(site_id)) {
-    throw new Error('site_id must be a valid UUID');
-  }
+    if (instanceError || !instance) throw new Error('Instance not found');
+    if (instance.site_id !== site_id) throw new Error('Instance does not belong to this site');
 
-  // Get instance
-  const { data: instance, error: instanceError } = await supabaseAdmin
-    .from('remote_instances')
-    .select('*')
-    .eq('id', instance_id)
-    .single();
-
-  if (instanceError || !instance) {
-    throw new Error('Instance not found');
-  }
-
-  if (instance.site_id !== site_id) {
-    throw new Error('La instancia no pertenece a este sitio');
-  }
-
-    console.log(`[RENAME_INSTANCE] ✅ Instance found: ${instance.name}`);
-
-    // Get conversation context - prioritize provided context
     let conversationContext: string;
     if (context && context.trim().length > 0) {
-      // Use provided context directly
       conversationContext = context.trim();
-      console.log(`[RENAME_INSTANCE] 📝 Using provided context: ${conversationContext.substring(0, 100)}...`);
     } else {
-      // Fallback to conversation history
       conversationContext = await getConversationContext(instance_id);
-      console.log(`[RENAME_INSTANCE] 📝 Using conversation history: ${conversationContext.substring(0, 100) || 'None'}...`);
     }
     
     if (!conversationContext || conversationContext.trim().length === 0) {
-      throw new Error('No context available to determine new name. Provide context parameter or ensure instance has conversation history.');
+      throw new Error('No context available to determine new name.');
     }
 
-  // Get stored objective
-  const storedObjective = await getStoredObjective(instance_id);
-  console.log(`[RENAME_INSTANCE] 📋 Stored objective: ${storedObjective || 'None'}`);
+    const storedObjective = await getStoredObjective(instance_id);
+    const comparison = await compareObjectives(storedObjective, conversationContext);
 
-  // Compare objectives
-  const comparison = await compareObjectives(storedObjective, conversationContext);
-  console.log(`[RENAME_INSTANCE] 🔍 Objective similarity: ${comparison.similarity} (similar: ${comparison.similar})`);
+    if (comparison.similar && comparison.similarity >= 0.7) {
+      return {
+        success: true,
+        renamed: false,
+        reason: 'Objective has not changed significantly',
+        current_name: instance.name,
+        similarity: comparison.similarity,
+      };
+    }
 
-  // Only rename if objectives are different (similarity < 0.7)
-  if (comparison.similar && comparison.similarity >= 0.7) {
-    console.log(`[RENAME_INSTANCE] ⏭️ Objectives are similar, keeping current name`);
+    const newName = await generateInstanceName(conversationContext, instance.name);
+
+    const updatedConfiguration = {
+      ...(instance.configuration || {}),
+      objective: conversationContext.substring(0, 500),
+      last_renamed_at: new Date().toISOString(),
+    };
+
+    const { error: updateError } = await supabaseAdmin
+      .from('remote_instances')
+      .update({
+        name: newName,
+        configuration: updatedConfiguration,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', instance_id);
+
+    if (updateError) throw new Error(`Failed to update instance name: ${updateError.message}`);
+
+    await supabaseAdmin.from('instance_logs').insert({
+      log_type: 'system',
+      level: 'info',
+      message: `Instance renamed from "${instance.name}" to "${newName}"`,
+      details: { old_name: instance.name, new_name: newName, similarity: comparison.similarity, reason: 'Objective changed' },
+      instance_id: instance_id,
+      site_id: instance.site_id,
+      user_id: instance.user_id,
+    });
+
     return {
       success: true,
-      renamed: false,
-      reason: 'Objective has not changed significantly',
-      current_name: instance.name,
-      similarity: comparison.similarity,
-    };
-  }
-
-  // Generate new name
-  const newName = await generateInstanceName(conversationContext, instance.name);
-  console.log(`[RENAME_INSTANCE] ✨ Generated new name: ${newName}`);
-
-  // Update instance name and store objective
-  const updatedConfiguration = {
-    ...(instance.configuration || {}),
-    objective: conversationContext.substring(0, 500), // Store first 500 chars as objective
-    last_renamed_at: new Date().toISOString(),
-  };
-
-  const { error: updateError } = await supabaseAdmin
-    .from('remote_instances')
-    .update({
-      name: newName,
-      configuration: updatedConfiguration,
-      updated_at: new Date().toISOString(),
-    })
-    .eq('id', instance_id);
-
-  if (updateError) {
-    console.error(`[RENAME_INSTANCE] ❌ Error updating instance:`, updateError);
-    throw new Error(`Failed to update instance name: ${updateError.message}`);
-  }
-
-  // Log the rename operation
-  await supabaseAdmin.from('instance_logs').insert({
-    log_type: 'system',
-    level: 'info',
-    message: `Instance renamed from "${instance.name}" to "${newName}"`,
-    details: {
+      renamed: true,
       old_name: instance.name,
       new_name: newName,
       similarity: comparison.similarity,
-      reason: 'Objective changed',
-    },
-    instance_id: instance_id,
-    site_id: instance.site_id,
-    user_id: instance.user_id,
-  });
-
-  console.log(`[RENAME_INSTANCE] ✅ Instance renamed successfully`);
-
-  return {
-    success: true,
-    renamed: true,
-    old_name: instance.name,
-    new_name: newName,
-    similarity: comparison.similarity,
-    message: `Instance renamed from "${instance.name}" to "${newName}"`,
-  };
+      message: `Instance renamed from "${instance.name}" to "${newName}"`,
+    };
+  }
+  
+  throw new Error('Invalid action');
 }
 
-/**
- * Endpoint to rename an instance based on context and objective
- * 
- * @param request Request with instance_id and optional context
- * @returns Response with rename result
- */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { instance_id, context } = body;
-
-    const result = await renameInstanceCore(instance_id, context);
-    
-    // Determine status code based on result
-    const status = result.success ? 200 : 400;
-    return NextResponse.json(result, { status });
+    const result = await instanceCore(body);
+    return NextResponse.json(result, { status: 200 });
   } catch (error: any) {
-    console.error('[RENAME_INSTANCE] ❌ Error processing rename request:', error);
-    
-    // Handle specific error types
-    if (error.message.includes('required') || error.message.includes('valid UUID')) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INVALID_REQUEST',
-            message: error.message,
-          },
-        },
-        { status: 400 }
-      );
-    }
-    
-    if (error.message.includes('not found')) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'NOT_FOUND',
-            message: error.message,
-          },
-        },
-        { status: 404 }
-      );
-    }
-    
-    if (error.message.includes('No context')) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: {
-            code: 'INSUFFICIENT_CONTEXT',
-            message: error.message,
-          },
-        },
-        { status: 400 }
-      );
-    }
-    
-    return NextResponse.json(
-      {
-        success: false,
-        error: {
-          code: 'INTERNAL_ERROR',
-          message: 'An error occurred while processing the rename request',
-        },
-        details: error.message,
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, error: error.message }, { status: 400 });
   }
 }
 
-/**
- * GET endpoint for API documentation
- */
 export async function GET() {
   return NextResponse.json({
-    message: 'Instance Rename Tool API',
-    description: 'Automatically rename instances based on user context and objectives',
-    usage: 'Send a POST request with instance_id and optional context',
-    endpoint: '/api/agents/tools/renameInstance',
+    message: 'Instance Tool API',
+    description: 'Create, Read, Update AI assistant instances',
+    usage: 'Send a POST request with action parameter: create, read, or update',
+    endpoint: '/api/agents/tools/instance',
     methods: ['POST', 'GET'],
-    required_fields: ['instance_id'],
-    optional_fields: ['context'],
-    response_format: {
-      success: 'boolean',
-      renamed: 'boolean - whether the name was actually changed',
-      old_name: 'string - previous instance name',
-      new_name: 'string - new instance name (if renamed)',
-      similarity: 'number - similarity score between objectives (0-1)',
-      reason: 'string - reason for rename decision',
-    },
-    behavior: {
-      rename_condition: 'Only renames if objective similarity < 0.7',
-      objective_storage: 'Stored in instance.configuration.objective',
-      context_source: 'Uses provided context or fetches from instance_logs',
-    },
-    examples: {
-      basic: {
-        instance_id: '123e4567-e89b-12d3-a456-426614174000',
+    actions: {
+      create: {
+        required_fields: ['action', 'site_id', 'activity'],
+        response: { success: 'boolean', instance: 'object', authentication: 'object' }
       },
-      with_context: {
-        instance_id: '123e4567-e89b-12d3-a456-426614174000',
-        context: 'User wants to research competitors and analyze market trends',
+      read: {
+        required_fields: ['action', 'site_id'],
+        optional_fields: ['instance_id', 'limit', 'offset'],
+        response: { success: 'boolean', instance: 'object', instances: 'array' }
       },
-    },
+      update: {
+        required_fields: ['action', 'site_id', 'instance_id'],
+        optional_fields: ['name', 'status', 'context'],
+        response: { success: 'boolean', instance: 'object', renamed: 'boolean' }
+      }
+    }
   });
 }

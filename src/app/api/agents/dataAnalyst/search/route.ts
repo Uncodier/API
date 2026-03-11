@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -276,6 +277,31 @@ export async function POST(request: Request) {
       return NextResponse.json(
         { success: false, error: { code: 'INVALID_REQUEST', message: 'search_queries must be a non-empty array' } },
         { status: 400 }
+      );
+    }
+
+    // Validate and deduct credits for Tavily Search
+    try {
+      const requiredCredits = CreditService.PRICING.TAVILY_SEARCH * search_queries.length;
+      const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for web search' } },
+          { status: 402 }
+        );
+      }
+      
+      await CreditService.deductCredits(
+        site_id, 
+        requiredCredits, 
+        'tavily_search', 
+        `Tavily search (${search_queries.length} queries)`,
+        { queries: search_queries.length, agent_id }
+      );
+    } catch (error: any) {
+      return NextResponse.json(
+        { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
+        { status: 402 }
       );
     }
     

@@ -24,7 +24,7 @@ export function requirementStatusTool(site_id: string) {
       status?: string;
       message?: string;
     }) => {
-      const baseUrl = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+      const baseUrl = (process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000').replace(/\/$/, '');
       const action = args.action || 'create';
       
       if (action === 'create') {

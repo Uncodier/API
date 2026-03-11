@@ -36,6 +36,11 @@ import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
  * - unavailable_resources: Lista de recursos no disponibles
  * - team_members: Lista de miembros del equipo con id, nombre y rol
  */
+function isValidUUID(uuid: string): boolean {
+  const regex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+  return regex.test(uuid);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const url = new URL(request.url);
@@ -153,7 +158,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    // ... (rest of the code)
+    const teamMembersData: any[] = Array.isArray(teamData.members) ? teamData.members : [];
 
     // Obtener tareas de tipo "meeting" para la fecha especificada
     const dateStr = format(dateObj, 'yyyy-MM-dd');

@@ -149,13 +149,13 @@ export class StreamingMonitor {
     const stuckThreshold = 5 * 60 * 1000; // 5 minutes
     const stuckStreams: string[] = [];
 
-    for (const [commandId, metrics] of this.activeStreams.entries()) {
+    this.activeStreams.forEach((metrics, commandId) => {
       const elapsed = now - metrics.startTime;
       if (elapsed > stuckThreshold) {
         stuckStreams.push(commandId);
         console.warn(`[StreamingMonitor] Potentially stuck stream detected: ${commandId} (${elapsed}ms elapsed)`);
       }
-    }
+    });
 
     return stuckStreams;
   }

@@ -16,6 +16,7 @@ import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
 import { CommandCache } from './CommandCache';
 import { CommandStore } from './CommandStore';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
+import { CreditService } from '../../../services/billing/CreditService';
 
 // Importar utilidades de Composio
 import { ComposioConfiguration, enrichWithComposioTools, isComposioEnabled } from '../../utils/composioIntegration';
@@ -24,6 +25,37 @@ export class CommandProcessor {
   private commandService: CommandService;
   private processors: Record<string, any>;
   private agentBackgroundService: AgentBackgroundService;
+
+  /**
+   * Helper to deduct credits for token usage
+   */
+  private async deductTokensFromCredits(siteId: string | undefined, inputTokens: number, outputTokens: number, commandId: string, agentId: string | undefined, context: string): Promise<void> {
+    const totalTokens = (inputTokens || 0) + (outputTokens || 0);
+    if (!siteId || totalTokens <= 0) return;
+    
+    try {
+      const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+      if (tokensCost > 0) {
+        await CreditService.deductCredits(
+          siteId,
+          tokensCost,
+          'assistant_tokens',
+          `Agentbase execution - ${context} (${totalTokens} tokens)`,
+          {
+            tokens: totalTokens,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            command_id: commandId,
+            agent_id: agentId || 'unknown'
+          }
+        );
+        console.log(`💰 [CommandProcessor] Deducted ${tokensCost} credits for ${totalTokens} tokens (Site: ${siteId}, Context: ${context})`);
+      }
+    } catch (e: any) {
+      console.error(`❌ [CommandProcessor] Failed to deduct credits for tokens:`, e.message);
+    }
+  }
+
   
   constructor(commandService: CommandService, processors: Record<string, any>) {
     this.commandService = commandService;
@@ -197,7 +229,7 @@ export class CommandProcessor {
       
       try {
         // Generar agent_background usando el servicio dedicado
-        const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id, command.id);
+        const agentBackground = await this.agentBackgroundService.generateEnhancedAgentBackground(processor, command.agent_id, command.site_id, command.id);
         
         // Actualizar el comando con el background generado
         command = {
@@ -349,8 +381,11 @@ export class CommandProcessor {
       }
       
       // Actualizar tokens
-      updatedCommand.input_tokens = (command.input_tokens || 0) + (toolResult.inputTokens || 0);
+            updatedCommand.input_tokens = (command.input_tokens || 0) + (toolResult.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (toolResult.outputTokens || 0);
+      
+      // Deducir créditos por el uso de tokens en herramientas
+      await this.deductTokensFromCredits(command.site_id, toolResult.inputTokens || 0, toolResult.outputTokens || 0, command.id, command.agent_id, 'Tools');
       
       // Guardar tokens y funciones en la base de datos
       try {
@@ -545,8 +580,11 @@ export class CommandProcessor {
       }
       
       // Actualizar tokens
-      updatedCommand.input_tokens = (command.input_tokens || 0) + (targetProcessorResults.inputTokens || 0);
+            updatedCommand.input_tokens = (command.input_tokens || 0) + (targetProcessorResults.inputTokens || 0);
       updatedCommand.output_tokens = (command.output_tokens || 0) + (targetProcessorResults.outputTokens || 0);
+      
+      // Deducir créditos por el uso de tokens en targets
+      await this.deductTokensFromCredits(command.site_id, targetProcessorResults.inputTokens || 0, targetProcessorResults.outputTokens || 0, command.id, command.agent_id, 'Targets');
       
       // SINGLE POINT OF DATABASE UPDATE - Evita condiciones de carrera
       // Actualizar los resultados y estado en base de datos en una sola operación atómica

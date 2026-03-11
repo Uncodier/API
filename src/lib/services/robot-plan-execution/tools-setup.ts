@@ -108,7 +108,7 @@ function createToolWithRetry(originalTool: any, toolName: string, maxRetries: nu
 /**
  * Setup tools for an instance
  */
-export function setupTools(ubuntuInstance: any) {
+export function setupTools(ubuntuInstance: any, siteId?: string) {
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_SETUP] Creating tools for instance`);
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_SETUP] Instance object keys:`, Object.keys(ubuntuInstance).join(', '));
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_SETUP] Instance status: ${(ubuntuInstance as any).status || 'unknown'}`);
@@ -117,7 +117,7 @@ export function setupTools(ubuntuInstance: any) {
     createToolWithRetry(bashTool(ubuntuInstance), 'bash', 2),
     createToolWithRetry(computerTool(ubuntuInstance), 'computer', 2),
     createToolWithRetry(editTool(ubuntuInstance), 'edit', 1),
-    createToolWithRetry(webSearchToolScrapybara(ubuntuInstance), 'webSearch', 2),
+    createToolWithRetry(webSearchToolScrapybara(ubuntuInstance, siteId), 'webSearch', 2),
   ] as any;
   
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Using Scrapybara SDK tools with retry logic:`);
@@ -135,7 +135,8 @@ export function setupTools(ubuntuInstance: any) {
 export async function validateTools(
   tools: any[], 
   client: ScrapybaraClient,
-  provider_instance_id: string
+  provider_instance_id: string,
+  siteId?: string
 ): Promise<{ valid: boolean; tools: any[] }> {
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_TEST] Testing computerTool immediately after creation...`);
   let toolsAreValid = false;
@@ -168,7 +169,7 @@ export async function validateTools(
           
           // Recreate tools with fresh instance
           const freshUbuntuInstance = freshInstance as any;
-          currentTools = setupTools(freshUbuntuInstance);
+          currentTools = setupTools(freshUbuntuInstance, siteId);
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_TEST] Tools recreated with fresh instance`);
         }
       }
@@ -183,7 +184,7 @@ export async function validateTools(
         try {
           const freshInstance = await client.get(provider_instance_id);
           const freshUbuntuInstance = freshInstance as any;
-          currentTools = setupTools(freshUbuntuInstance);
+          currentTools = setupTools(freshUbuntuInstance, siteId);
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_TEST] Tools recreated after error`);
         } catch (reconnectError: any) {
           console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS_TEST] ❌ Failed to reconnect: ${reconnectError.message}`);

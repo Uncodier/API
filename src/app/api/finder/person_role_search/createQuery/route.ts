@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CreditService } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { logError, logInfo } from '@/lib/utils/api-response-utils';
 import crypto from 'crypto';
@@ -30,6 +31,39 @@ export async function POST(req: NextRequest) {
         { error: 'Invalid body. Expected JSON object.' },
         { status: 400 }
       );
+    }
+
+    // Extract site_id from body or headers
+    const bodyObjRaw = requestBody as Record<string, unknown>;
+    const site_id = bodyObjRaw.site_id as string || req.headers.get('x-site-id');
+    
+    // Validate and deduct credits for Role Search Query
+    if (site_id) {
+      try {
+        const requiredCredits = CreditService.PRICING.PERSON_ROLE_SEARCH;
+        const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+        if (!hasCredits) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for role search' } },
+            { status: 402 }
+          );
+        }
+        
+        await CreditService.deductCredits(
+          site_id, 
+          requiredCredits, 
+          'person_role_search_query', 
+          'Person role search query',
+          { ...bodyObjRaw }
+        );
+      } catch (error: any) {
+        return NextResponse.json(
+          { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
+          { status: 402 }
+        );
+      }
+    } else {
+      console.warn('⚠️ WARNING: createQuery called without site_id. Skipping credit deduction.');
     }
 
     // Allow two shapes:

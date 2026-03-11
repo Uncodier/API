@@ -13,14 +13,16 @@ export class ModelOptionsBuilder {
     commandMaxTokens?: number, 
     commandTemperature?: number, 
     commandResponseFormat?: 'json' | 'text',
-    defaultOptions?: Partial<PortkeyModelOptions>
+    defaultOptions?: Partial<PortkeyModelOptions>,
+    siteId?: string
   ): PortkeyModelOptions {
     // Configurar opciones del modelo
     const modelOptions: PortkeyModelOptions = {
       modelType: this.getValidModelType(commandModelType, defaultOptions?.modelType),
       modelId: commandModelId || defaultOptions?.modelId || 'gpt-4o',
       temperature: commandTemperature || defaultOptions?.temperature || 0.2,
-      responseFormat: commandResponseFormat || defaultOptions?.responseFormat || 'json'
+      responseFormat: commandResponseFormat || defaultOptions?.responseFormat || 'json',
+      siteId: siteId || defaultOptions?.siteId
     };
     
     return modelOptions;

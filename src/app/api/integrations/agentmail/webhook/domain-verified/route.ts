@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
       console.log(`✅ [AgentMail] Domain verified event received (no domain data in payload)`);
     }
 
-    let settings: { site_id: string; channels: Record<string, unknown> } | null = null;
+    let settings: any = null;
     let getError: { message: string } | null = null;
 
     if (domainId) {

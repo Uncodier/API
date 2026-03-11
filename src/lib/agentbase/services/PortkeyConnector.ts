@@ -37,7 +37,7 @@ export class PortkeyConnector {
     try {
       // Merge default options with provided options (options override defaults)
       const mergedOptions = { ...this.defaultOptions, ...options };
-      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions, reasoningEffort, verbosity } = mergedOptions;
+      const { modelType, modelId, maxTokens, temperature, topP, responseFormat, stream, streamOptions, reasoningEffort, verbosity, siteId } = mergedOptions;
       
       console.log(`[PortkeyConnector] Debug - defaultOptions.modelId: ${this.defaultOptions.modelId}`);
       console.log(`[PortkeyConnector] Debug - options.modelId: ${options?.modelId}`);
@@ -63,6 +63,11 @@ export class PortkeyConnector {
         headersTimeout: 30 * 1000, // 30 segundos para headers
         connectTimeout: 15 * 1000 // 15 segundos para establecer conexión
       });
+      
+      const customHeaders: Record<string, string> = {};
+      if (siteId) {
+        customHeaders['x-portkey-custom-metadata'] = JSON.stringify({ site_id: siteId });
+      }
       
       // Determine model options based on provider
       const modelOptions: any = {
@@ -224,7 +229,7 @@ export class PortkeyConnector {
                 ...modelOptions,
                 stream: true, // Explicitly ensure streaming is enabled
                 stream_options: { include_usage: true } // Request token usage in stream
-              });
+              }, { headers: customHeaders });
               
               // Check if the response contains an error (even if it's a successful HTTP response)
               if (streamResponse && typeof streamResponse === 'object' && streamResponse.body?.error) {
@@ -298,7 +303,7 @@ export class PortkeyConnector {
                 response = await portkey.chat.completions.create({
                   messages,
                   ...modelOptions
-                });
+                }, { headers: customHeaders });
                 
                 // Check if the response contains an error (even if it's a successful HTTP response)
                 if (response && typeof response === 'object' && response.body?.error) {
@@ -458,7 +463,7 @@ export class PortkeyConnector {
               ...fallbackModelOptions,
               stream: true,
               stream_options: { include_usage: true }
-            });
+            }, { headers: customHeaders });
             
             // Check if the fallback response contains an error
             if (fallbackResponse && typeof fallbackResponse === 'object' && fallbackResponse.body?.error) {
@@ -494,7 +499,7 @@ export class PortkeyConnector {
                 messages,
                 ...modelOptions,
                 stream: false // Disable streaming
-              });
+              }, { headers: customHeaders });
               
               // Check if the non-streaming fallback response contains an error
               if (nonStreamingResponse && typeof nonStreamingResponse === 'object' && nonStreamingResponse.body?.error) {

@@ -7,10 +7,11 @@ import { OpenAIAgentExecutor } from '@/lib/custom-automation/openai-agent-execut
 import { ScrapybaraClient } from 'scrapybara';
 import { anthropic } from 'scrapybara/anthropic';
 import { bashTool, computerTool, editTool } from 'scrapybara/tools';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
-import { renameInstanceToolScrapybara } from '@/app/api/agents/tools/renameInstance/assistantProtocol';
+import { instanceToolScrapybara } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsToolScrapybara } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchToolScrapybara } from '@/app/api/agents/tools/webSearch/assistantProtocol';
 import {
@@ -85,9 +86,9 @@ export async function prepareAssistantTools(
         if (tool?.name === 'generate_video' && site_id) {
           return generateVideoToolScrapybara(ubuntuInstance, site_id);
         }
-        // Check if this is renameInstanceTool (OpenAI format) by name
-        if (tool?.name === 'rename_instance' && site_id) {
-          return renameInstanceToolScrapybara(ubuntuInstance, site_id, instance_id);
+        // Check if this is instanceTool (OpenAI format) by name
+        if (tool?.name === 'instance' && site_id) {
+          return instanceToolScrapybara(ubuntuInstance, site_id, instance_id);
         }
         // Check if this is updateSiteSettingsTool (OpenAI format) by name
         if (tool?.name === 'update_site_settings' && site_id) {
@@ -95,7 +96,7 @@ export async function prepareAssistantTools(
         }
         // Check if this is webSearch (OpenAI format) by name
         if (tool?.name === 'webSearch') {
-          return webSearchToolScrapybara(ubuntuInstance);
+          return webSearchToolScrapybara(ubuntuInstance, site_id);
         }
         // Check if this is memories (unified tool) - use both Scrapybara tools for full compatibility
         if (tool?.name === 'memories' && site_id) {
@@ -141,6 +142,18 @@ export async function executeAssistantStep(
     site_id,
     user_id,
   } = options || {};
+
+  if (site_id) {
+    try {
+      const hasCredits = await CreditService.validateCredits(site_id, 0.001); // minimal requirement to start
+      if (!hasCredits) {
+        throw new InsufficientCreditsError('Insufficient credits for assistant step execution');
+      }
+    } catch (e: any) {
+      console.error('Credit validation failed in step:', e.message);
+      throw e;
+    }
+  }
 
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing assistant step. Provider: ${provider}, Messages: ${messages.length}`);
 
@@ -208,7 +221,7 @@ export async function executeAssistantStep(
           const lastRole = lastMessage?.role;
           const isDone = lastRole === 'assistant' && !hasToolCalls;
           
-          return {
+          const result = {
               text: executionResult.text,
               output: executionResult.output,
               usage: executionResult.usage,
@@ -216,6 +229,34 @@ export async function executeAssistantStep(
               messages: executionResult.messages,
               isDone: isDone
           };
+          
+          // Deduct credits for token usage
+          if (site_id && result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
+            const totalTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0) + 
+                                ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+            
+            const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+            
+            if (tokensCost > 0) {
+              try {
+                await CreditService.deductCredits(
+                  site_id,
+                  tokensCost,
+                  'assistant_tokens',
+                  `Assistant step execution (${totalTokens} tokens)`,
+                  {
+                    tokens: totalTokens,
+                    input_tokens: ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0),
+                    output_tokens: ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0)
+                  }
+                );
+              } catch (e) {
+                console.error('Failed to deduct credits for assistant tokens:', e);
+              }
+            }
+          }
+          
+          return result;
       }
   } catch (error: any) {
       console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing assistant step:`, error);
@@ -240,6 +281,18 @@ export async function executeAssistant(
     site_id,
     user_id,
   } = options || {};
+
+  if (site_id) {
+    try {
+      const hasCredits = await CreditService.validateCredits(site_id, 0.001); // minimal requirement to start
+      if (!hasCredits) {
+        throw new InsufficientCreditsError('Insufficient credits for assistant execution');
+      }
+    } catch (e: any) {
+      console.error('Credit validation failed:', e.message);
+      throw e;
+    }
+  }
 
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing assistant with provider: ${provider}`);
   console.log(`₍ᐢ•(ܫ)•ᐢ₎ Use SDK tools: ${use_sdk_tools}`);
@@ -331,6 +384,34 @@ export async function executeAssistant(
     }
 
     if (instance_id) {
+
+      // Deduct credits for token usage
+      let tokensCost = 0;
+      if (result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
+        const totalTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0) + 
+                            ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+        
+        tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+        
+        if (tokensCost > 0 && site_id) {
+          try {
+            await CreditService.deductCredits(
+              site_id,
+              tokensCost,
+              'assistant_tokens',
+              `Assistant execution (${totalTokens} tokens)`,
+              {
+                tokens: totalTokens,
+                input_tokens: ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0),
+                output_tokens: ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0)
+              }
+            );
+          } catch (e) {
+            console.error('Failed to deduct credits for assistant tokens:', e);
+          }
+        }
+      }
+
       await supabaseAdmin.from('instance_logs').insert({
         log_type: 'execution_summary',
         level: 'info',

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { RegionVenuesService } from '@/services/sales/RegionVenuesService';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 
 // Instancia del servicio de búsqueda de venues regionales
 const regionVenuesService = new RegionVenuesService();
@@ -97,6 +98,31 @@ export async function GET(request: Request) {
       );
     }
     
+    // Validate credits for Places Search
+    try {
+      const requiredCredits = CreditService.PRICING.PLACES_SEARCH;
+      const hasCredits = await CreditService.validateCredits(siteId, requiredCredits);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for places search' } },
+          { status: 402 }
+        );
+      }
+      
+      await CreditService.deductCredits(
+        siteId, 
+        requiredCredits, 
+        'places_search', 
+        `Places search for ${searchTerm} in ${city}`,
+        { searchTerm, city }
+      );
+    } catch (error: any) {
+      return NextResponse.json(
+        { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
+        { status: 402 }
+      );
+    }
+
     // Buscar venues en la región
     console.log('🚀 Starting venue search with Google Maps API...');
     
@@ -277,6 +303,31 @@ export async function POST(request: Request) {
       excludeNames: excludeVenues.names
     });
     
+    // Validate credits for Places Search
+    try {
+      const requiredCredits = CreditService.PRICING.PLACES_SEARCH;
+      const hasCredits = await CreditService.validateCredits(params.siteId, requiredCredits);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for places search' } },
+          { status: 402 }
+        );
+      }
+      
+      await CreditService.deductCredits(
+        params.siteId, 
+        requiredCredits, 
+        'places_search', 
+        `Places search for ${params.searchTerm} in ${params.city}`,
+        { searchTerm: params.searchTerm, city: params.city }
+      );
+    } catch (error: any) {
+      return NextResponse.json(
+        { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
+        { status: 402 }
+      );
+    }
+
     // Buscar venues en la región
     const searchResult = await regionVenuesService.searchRegionVenues({
       siteId: params.siteId,

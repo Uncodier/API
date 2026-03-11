@@ -19,7 +19,7 @@ export class EventHandlerService {
   
   private constructor() {
     this.commandService = new CommandService();
-    this.agentBackgroundService = AgentBackgroundService.getInstance();
+    this.agentBackgroundService = new AgentBackgroundService();
     console.log('🔔 EventHandlerService: Inicializado');
   }
   
@@ -72,7 +72,7 @@ export class EventHandlerService {
           const processor = this.processors[command.agent_id];
           
           // Generar el background completo del agente
-          const agentBackground = await this.agentBackgroundService.generateAgentBackground(processor, command.agent_id, command.id);
+          const agentBackground = await this.agentBackgroundService.generateEnhancedAgentBackground(processor, command.agent_id, command.site_id, command.id);
           console.log(`✅ Background completo generado para el agente ${command.agent_id}`);
           console.log(`✅ Longitud del background: ${agentBackground.length} caracteres`);
           

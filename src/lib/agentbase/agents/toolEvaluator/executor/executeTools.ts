@@ -79,7 +79,7 @@ async function executeComposioAction(functionName: string, args: any): Promise<a
     const result = await toolset.executeAction({
       action: functionName,
       params: args,
-      // entityId: opcional, si se necesita especificar un ID diferente al predeterminado
+      entityId: 'default' // Add required entityId
     });
     
     if (result.successful) {

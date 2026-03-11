@@ -82,6 +82,7 @@ export class AgentConnector extends Base {
         modelId: parsedModelId,
         responseFormat: command.response_format || this.defaultOptions.responseFormat || 'text',
         stream: command.metadata?.stream !== false, // Stream por defecto a menos que se desactive explícitamente
+        siteId: command.site_id,
       };
       
       // Add reasoning_effort and verbosity if present in command

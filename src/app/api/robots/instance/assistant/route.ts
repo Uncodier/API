@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
@@ -34,6 +35,27 @@ export async function POST(request: NextRequest) {
     const rawBody = await request.json();
     console.log('🔍 Raw body received:', JSON.stringify(rawBody, null, 2));
     
+    let parsedBody;
+    try {
+      parsedBody = AssistantSchema.parse(rawBody);
+    } catch (zodError: any) {
+      console.error('Validation Error:', zodError.errors || zodError.message);
+      return NextResponse.json({ success: false, error: 'Invalid request data', details: zodError.errors }, { status: 400 });
+    }
+
+    // Validate credits PRE-FLIGHT before starting any workflow
+    const site_id_for_validation = parsedBody.site_id || (parsedBody.instance_id ? (await supabaseAdmin.from('remote_instances').select('site_id').eq('id', parsedBody.instance_id).single()).data?.site_id : null);
+    
+    if (site_id_for_validation) {
+      const hasCredits = await CreditService.validateCredits(site_id_for_validation, 0.001);
+      if (!hasCredits) {
+        return NextResponse.json(
+          { success: false, error: 'Insufficient credits for assistant execution', code: 'INSUFFICIENT_CREDITS' },
+          { status: 402 }
+        );
+      }
+    }
+
     const {
       instance_id: providedInstanceId,
       message,
@@ -42,7 +64,7 @@ export async function POST(request: NextRequest) {
       tools: customTools,
       use_sdk_tools,
       system_prompt,
-    } = AssistantSchema.parse(rawBody);
+    } = parsedBody;
 
     // CASE 1: No instance_id provided - Create new uninstantiated instance (FAST PATH - No Workflow needed for creation)
     if (!providedInstanceId) {
@@ -202,6 +224,14 @@ export async function POST(request: NextRequest) {
 
   } catch (err: any) {
     console.error('Error in POST /robots/instance/assistant:', err);
+    
+    // Check if it's an insufficient credits error
+    if (err.name === 'InsufficientCreditsError' || err.message?.includes('Insufficient credits')) {
+      return NextResponse.json(
+        { success: false, error: err.message, code: 'INSUFFICIENT_CREDITS' },
+        { status: 402 } // 402 Payment Required
+      );
+    }
     
     return NextResponse.json({
       error: err.message || 'Failed to execute assistant',

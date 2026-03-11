@@ -1,3 +1,4 @@
+import { CreditService } from '@/lib/services/billing/CreditService';
 import { RegionVenuesService } from '@/services/sales/RegionVenuesService';
 
 export interface SearchRegionVenuesParams {
@@ -49,6 +50,15 @@ export const searchRegionVenuesTool = (siteId: string) => {
     execute: async (args: SearchRegionVenuesParams) => {
       try {
         console.log(`[SearchRegionVenuesTool] 🔍 Searching venues: "${args.searchTerm}" in ${args.city}, ${args.region}`);
+        if (siteId) {
+          const requiredCredits = CreditService.PRICING.PLACES_SEARCH;
+          const hasCredits = await CreditService.validateCredits(siteId, requiredCredits);
+          if (!hasCredits) {
+            throw new Error('Insufficient credits for places search');
+          }
+          await CreditService.deductCredits(siteId, requiredCredits, 'places_search', 'Places search via assistant tool', { searchTerm: args.searchTerm });
+        }
+
         
         const service = new RegionVenuesService();
         

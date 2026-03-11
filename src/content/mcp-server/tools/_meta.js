@@ -34,7 +34,7 @@ export default {
   leads: { title: withPost('Leads') },
   memories: { title: withPost('Memories') },
   messages: { title: withGet('Messages') },
-  renameInstance: { title: withPost('Rename Instance') },
+  instance: { title: withPost('Instance') },
   report: { title: withPost('Report') },
   requirements: { title: withPost('Requirements') },
   requirementStatus: { title: withPost('Requirement Status') },

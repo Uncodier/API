@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { CreditService } from '@/lib/services/billing/CreditService';
 import { logInfo } from '@/lib/utils/api-response-utils';
 import { normalizePersonRoleSearchPayload } from '@/lib/finder/normalize-person-role-search-payload';
 
@@ -36,9 +37,46 @@ export async function POST(req: NextRequest) {
       return val;
     };
 
+    // Extract site_id from body or headers
+    const bodyObj = requestBody as Record<string, unknown> | null;
+    const site_id = bodyObj?.site_id as string || req.headers.get('x-site-id');
+    
+    // Validate and deduct credits for Role Search
+    if (site_id) {
+      try {
+        const requiredCredits = CreditService.PRICING.PERSON_ROLE_SEARCH;
+        const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+        if (!hasCredits) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for role search' } },
+            { status: 402 }
+          );
+        }
+        
+        await CreditService.deductCredits(
+          site_id, 
+          requiredCredits, 
+          'person_role_search_totals', 
+          'Person role search totals',
+          { ...bodyObj }
+        );
+      } catch (error: any) {
+        return NextResponse.json(
+          { success: false, error: { code: 'CREDIT_DEDUCTION_FAILED', message: error.message } },
+          { status: 402 }
+        );
+      }
+    } else {
+      console.warn('⚠️ WARNING: person_role_search_totals called without site_id. Skipping credit deduction.');
+    }
+
     let payload: unknown = requestBody;
     if (requestBody && typeof requestBody === 'object') {
       const obj = { ...(requestBody as Record<string, unknown>) };
+      // Remove site_id before sending to upstream Forager API to avoid 400 Bad Request
+      if ('site_id' in obj) {
+        delete obj.site_id;
+      }
       normalizePersonRoleSearchPayload(obj, { normalizePage });
       payload = obj;
     }
