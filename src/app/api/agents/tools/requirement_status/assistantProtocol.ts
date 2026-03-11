@@ -12,6 +12,7 @@ export function requirementStatusTool(site_id: string) {
         asset_id: { type: 'string', description: 'ID of the related asset (required for create)' },
         requirement_id: { type: 'string', description: 'ID of the requirement' },
         repo_url: { type: 'string', description: 'URL of the related repository (optional)' },
+        preview_url: { type: 'string', description: 'Live preview or staging URL of the related asset (optional)' },
         status: { type: 'string', description: 'Progress status (e.g. in-progress, completed, failed) (required for create)' },
         message: { type: 'string', description: 'Message or detail of the progress' }
       },
@@ -23,6 +24,7 @@ export function requirementStatusTool(site_id: string) {
       asset_id?: string;
       requirement_id: string;
       repo_url?: string;
+      preview_url?: string;
       status?: string;
       message?: string;
     }) => {

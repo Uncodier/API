@@ -17,6 +17,7 @@ The `requirement_status` tool allows you to log progress and update statuses on 
 | `asset_id` | string | Yes* | The related asset ID (Required when `action` is `create`). |
 | `status` | string | Yes* | The new status (e.g. `in-progress`, `completed`, `failed`) (Required when `action` is `create`). |
 | `repo_url` | string | No | The GitHub or repository URL associated with this requirement progress. |
+| `preview_url` | string | No | The live preview or staging URL associated with this requirement progress. |
 | `message` | string | No | Any details, descriptions, or error logs about the status. |
 
 ## Usage Examples
@@ -33,6 +34,7 @@ The `requirement_status` tool allows you to log progress and update statuses on 
     "requirement_id": "req_12345",
     "status": "completed",
     "repo_url": "https://github.com/uncodie/my-project",
+    "preview_url": "https://my-project-staging.vercel.app",
     "message": "The login page layout has been successfully implemented and tested."
   }
 }
