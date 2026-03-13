@@ -1,14 +1,14 @@
 import { createRequirementStatusCore, listRequirementStatusCore } from './route';
 
-export function requirementStatusTool(site_id: string) {
+export function requirementStatusTool(site_id: string, default_instance_id?: string) {
   return {
     name: 'requirement_status',
-    description: 'Updates or lists the progress statuses of a client requirement. Use action="create" to save a new status, or action="list" to get the statuses for a given requirement.',
+    description: 'Updates or lists the progress statuses of a client requirement. Use action="create" to save a new status, or action="list" to get the statuses for a given requirement. CRITICAL INSTRUCTION: If a requirement is created or you are asked to administer a requirement in an instance, you MUST add a status using this tool and provide the instance_id to link it to the current instance.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['create', 'list'], description: 'Action to perform. Default is "create"' },
-        instance_id: { type: 'string', description: 'ID of the related instance (optional)' },
+        instance_id: { type: 'string', description: 'ID of the related instance (optional, use current instance_id if available)' },
         asset_id: { type: 'string', description: 'ID of the related asset (required for create)' },
         requirement_id: { type: 'string', description: 'ID of the requirement' },
         repo_url: { type: 'string', description: 'URL of the related repository (optional)' },
@@ -29,6 +29,7 @@ export function requirementStatusTool(site_id: string) {
       message?: string;
     }) => {
       const action = args.action || 'create';
+      const effective_instance_id = args.instance_id || default_instance_id;
       
       try {
         if (action === 'create') {
@@ -38,13 +39,14 @@ export function requirementStatusTool(site_id: string) {
           
           const result = await createRequirementStatusCore({
             ...args,
+            instance_id: effective_instance_id,
             site_id
           });
           return result;
         } else if (action === 'list') {
           const result = await listRequirementStatusCore({
             requirement_id: args.requirement_id,
-            instance_id: args.instance_id
+            instance_id: effective_instance_id
           });
           return result;
         }

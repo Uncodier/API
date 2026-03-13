@@ -224,7 +224,7 @@ export const getAssistantTools = (
     messagesTool(siteId),
     reportTool(siteId, userId ?? ''),
     systemNotificationTool(siteId),
-    requirementStatusTool(siteId),
+    requirementStatusTool(siteId, instanceId),
     instanceLogsTool(siteId, userId ?? '', instanceId),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
