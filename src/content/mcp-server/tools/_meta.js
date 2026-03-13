@@ -33,6 +33,7 @@ export default {
   generateVideo: { title: withPost('Generate Video') },
   getFinderCategoryIds: { title: withPost('Get Finder Category IDs') },
   instancePlan: { title: withPost('Instance Plan') },
+  instanceLogs: { title: withPost('Instance Logs') },
   leads: { title: withPost('Leads') },
   memories: { title: withPost('Memories') },
   messages: { title: withGet('Messages') },

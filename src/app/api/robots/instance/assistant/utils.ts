@@ -46,6 +46,7 @@ import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/ass
 import { createProjectTool } from '@/app/api/agents/tools/createProject/assistantProtocol';
 import { systemNotificationTool } from '@/app/api/agents/tools/system_notification/assistantProtocol';
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
+import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
 import { extractFramesTool } from '@/app/api/agents/tools/extractFrames/assistantProtocol';
 
@@ -224,6 +225,7 @@ export const getAssistantTools = (
     reportTool(siteId, userId ?? ''),
     systemNotificationTool(siteId),
     requirementStatusTool(siteId),
+    instanceLogsTool(siteId, userId ?? '', instanceId),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
     extractFramesTool(siteId),

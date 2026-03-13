@@ -1,0 +1,54 @@
+---
+title: Instance Logs
+description: Log events, system actions, or agent actions, or retrieve the history of logs for a specific instance/site.
+---
+
+# Instance Logs Tool
+
+The `instance_logs` tool enables you to create and list logs associated with an instance. Use this tool whenever you perform significant actions that should be tracked, encounter errors, or need to review the history of actions performed by you or the user within an instance.
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :---: | :--- |
+| `action` | string | No | The action to perform (`create` or `list`). Defaults to `create`. |
+| `instance_id` | string | No | The ID of the instance processing the requirement (defaults to current instance). |
+| `user_id` | string | No | The ID of the user (defaults to current user). |
+| `log_type` | string | Yes* | The type of log (e.g. `system`, `user_action`, `agent_action`) (Required when `action` is `create`). |
+| `level` | string | Yes* | The severity level (`info`, `warn`, `error`) (Required when `action` is `create`). |
+| `message` | string | Yes* | A brief message or description of the event (Required when `action` is `create`). |
+| `details` | object | No | Additional metadata in JSON format. |
+| `limit` | number | No | Maximum number of logs to return when listing (default `50`). |
+| `offset` | number | No | Offset for pagination when listing (default `0`). |
+
+## Usage Examples
+
+### Creating a Log
+
+```json
+{
+  "name": "instance_logs",
+  "arguments": {
+    "action": "create",
+    "log_type": "agent_action",
+    "level": "info",
+    "message": "Successfully analyzed the client requirements.",
+    "details": {
+      "confidence": 0.95,
+      "features": ["auth", "database"]
+    }
+  }
+}
+```
+
+### Listing Logs
+
+```json
+{
+  "name": "instance_logs",
+  "arguments": {
+    "action": "list",
+    "limit": 10
+  }
+}
+```
