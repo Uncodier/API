@@ -3,14 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { v4 as uuidv4 } from 'uuid';
-import ffmpeg from 'fluent-ffmpeg';
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
 import { CreditService } from '@/lib/services/billing/CreditService';
-
-// Set paths to binaries
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
-ffmpeg.setFfprobePath(ffprobeInstaller.path);
 
 export interface ExtractFramesToolParams {
   video_url: string;
@@ -84,6 +77,15 @@ export function extractFramesTool(site_id?: string) {
         }
         
         console.log(`[ExtractFramesTool] Video saved to ${tmpVideoFile}, processing with ffmpeg...`);
+        
+        // Lazy load ffmpeg to avoid initialization errors in serverless environments
+        const ffmpeg = require('fluent-ffmpeg');
+        const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+        const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
+        
+        // Set paths to binaries
+        ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+        ffmpeg.setFfprobePath(ffprobeInstaller.path);
         
         // 2. Run ffmpeg to extract screenshots
         await new Promise<void>((resolve, reject) => {

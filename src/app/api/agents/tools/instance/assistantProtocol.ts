@@ -85,7 +85,7 @@ export function instanceTool(site_id: string, instance_id?: string, user_id?: st
         });
       } catch (error: any) {
         console.error(`[InstanceTool] ❌ Unexpected error:`, error);
-        throw error;
+        return { success: false, error: error.message || 'An unexpected error occurred while managing the instance.' };
       }
     },
   };
@@ -142,7 +142,7 @@ export function instanceToolScrapybara(instance: UbuntuInstance, site_id: string
         });
       } catch (error: any) {
         console.error(`[InstanceTool-Scrapybara] ❌ Unexpected error:`, error);
-        throw error;
+        return { success: false, error: error.message || 'An unexpected error occurred while managing the instance.' };
       }
     },
   });

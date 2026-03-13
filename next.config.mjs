@@ -31,6 +31,10 @@ const nextraConfig = withNextra({
       '/api/**/*': [
         './node_modules/@ffmpeg-installer/**',
         './node_modules/@ffprobe-installer/**'
+      ],
+      '/.well-known/**/*': [
+        './node_modules/@ffmpeg-installer/**',
+        './node_modules/@ffprobe-installer/**'
       ]
     }
   },
