@@ -142,12 +142,12 @@ export async function generateInstanceName(context: string, currentName?: string
     currentName.toLowerCase().includes(generic.toLowerCase())
   );
 
-  const prompt = \`You are generating a descriptive name for an AI assistant instance based on the user's context.
+  const prompt = `You are generating a descriptive name for an AI assistant instance based on the user's context.
 
 USER CONTEXT:
-\${context}
+${context}
 
-\${isGenericName ? \`⚠️ CRITICAL: The current name "\${currentName}" is generic and must be replaced.\\n\` : ''}
+${isGenericName ? `⚠️ CRITICAL: The current name "${currentName}" is generic and must be replaced.\n` : ''}
 
 TASK: Generate a concise, descriptive name (3-8 words) that accurately reflects the purpose described in the context above.
 
@@ -166,7 +166,7 @@ EXAMPLES OF GOOD NAMES:
 
 Based on the context above, generate the name now:
 
-Name:\`;
+Name:`;
 
   try {
     const response = await client.chat.completions.create({
@@ -196,7 +196,7 @@ Name:\`;
 
     // Validate that it's not empty or generic
     if (!generatedName || generatedName.length < 3) {
-      console.warn(\`[INSTANCE_TOOL] Generated name too short or empty, generating fallback from context\`);
+      console.warn(`[INSTANCE_TOOL] Generated name too short or empty, generating fallback from context`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
@@ -206,7 +206,7 @@ Name:\`;
     );
     
     if (isStillGeneric) {
-      console.warn(\`[INSTANCE_TOOL] Generated name "\${generatedName}" is still generic, creating descriptive fallback from context\`);
+      console.warn(`[INSTANCE_TOOL] Generated name "${generatedName}" is still generic, creating descriptive fallback from context`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
@@ -215,7 +215,7 @@ Name:\`;
       generatedName.toLowerCase().includes(generic.toLowerCase())
     );
     if (finalCheck) {
-      console.error(\`[INSTANCE_TOOL] Name "\${generatedName}" failed final validation, using context-based name\`);
+      console.error(`[INSTANCE_TOOL] Name "${generatedName}" failed final validation, using context-based name`);
       generatedName = extractDescriptiveNameFromContext(context);
     }
 
@@ -242,16 +242,16 @@ export async function compareObjectives(
   const client = getOpenAIClient();
   const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
 
-  const prompt = \`Compare these two objectives and determine if they are similar (same or related purpose).
+  const prompt = `Compare these two objectives and determine if they are similar (same or related purpose).
 
-Stored Objective: \${storedObjective}
-New Context: \${newContext}
+Stored Objective: ${storedObjective}
+New Context: ${newContext}
 
 Respond with a JSON object containing:
 - "similar": boolean (true if objectives are similar/related, false if different)
 - "similarity": number (0.0 to 1.0, where 1.0 is identical and 0.0 is completely different)
 
-Only respond with valid JSON, nothing else.\`;
+Only respond with valid JSON, nothing else.`;
 
   try {
     const response = await client.chat.completions.create({
