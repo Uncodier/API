@@ -48,10 +48,10 @@ import { systemNotificationTool } from '@/app/api/agents/tools/system_notificati
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
 import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
-import { extractFramesTool } from '@/app/api/agents/tools/extractFrames/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
+
  */
 export async function fetchMemoriesContext(
   site_id: string,
@@ -142,7 +142,7 @@ export const ICP_CATEGORY_IDS_INSTRUCTION = `
 export function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {
   isScrapybaraInstance: boolean;
   shouldUseSDKTools: boolean;
-  provider: 'scrapybara' | 'azure' | 'openai';
+  provider: 'azure' | 'openai';
   capabilities: {
     hasPCTools: boolean;
     hasBrowserAutomation: boolean;
@@ -151,20 +151,20 @@ export function determineInstanceCapabilities(instance: any, use_sdk_tools: bool
   };
 } {
   const providerEnv = process.env.ROBOT_SDK_PROVIDER;
-  const provider = (providerEnv === 'scrapybara' || providerEnv === 'azure' || providerEnv === 'openai') 
+  const provider = (providerEnv === 'azure' || providerEnv === 'openai') 
     ? providerEnv 
-    : 'scrapybara';
+    : 'azure';
   
-  // Determine if this is a Scrapybara instance
-  const isScrapybaraInstance = provider === 'scrapybara';
-  const shouldUseSDKTools = use_sdk_tools || isScrapybaraInstance;
+  // Scrapybara is disabled
+  const isScrapybaraInstance = false;
+  const shouldUseSDKTools = false;
   
   // Determine capabilities based on instance type and tools
   const capabilities = {
-    hasPCTools: shouldUseSDKTools && instance?.provider_instance_id,
-    hasBrowserAutomation: shouldUseSDKTools && instance?.provider_instance_id,
-    hasFileEditing: shouldUseSDKTools && instance?.provider_instance_id,
-    hasCommandExecution: shouldUseSDKTools && instance?.provider_instance_id,
+    hasPCTools: false,
+    hasBrowserAutomation: false,
+    hasFileEditing: false,
+    hasCommandExecution: false,
   };
   
   return {
@@ -228,7 +228,6 @@ export const getAssistantTools = (
     instanceLogsTool(siteId, userId ?? '', instanceId),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
-    extractFramesTool(siteId),
   ];
 
   if (agentType === 'gear') {

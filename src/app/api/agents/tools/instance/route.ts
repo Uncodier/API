@@ -1,7 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createOrResumeInstance } from '@/lib/services/robot-instance/instance-lifecycle';
-import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 import { 
   getConversationContext, 
   getStoredObjective, 
@@ -38,25 +36,37 @@ export async function instanceCore(args: InstanceCoreArgs) {
     
     console.log(`[INSTANCE_TOOL] 🚀 Creating instance for site ${site_id} with activity: ${activity}`);
     
-    const { instanceRecord } = await createOrResumeInstance({
-      siteId: site_id,
-      activity
-    });
-    
-    let authResult: any = { success: false };
-    if (instanceRecord?.provider_instance_id) {
-      try {
-        console.log(`[INSTANCE_TOOL] Attempting auto-authentication for site_id: ${site_id}`);
-        authResult = await autoAuthenticateInstance(instanceRecord.provider_instance_id, site_id);
-      } catch (authErr) {
-        console.warn('[INSTANCE_TOOL] Auto-authentication failed:', authErr);
-      }
+    const { data: site, error: siteError } = await supabaseAdmin
+      .from('sites')
+      .select('user_id')
+      .eq('id', site_id)
+      .single();
+      
+    if (siteError || !site) {
+      throw new Error('Site not found');
+    }
+
+    const { data: instanceRecord, error: instanceError } = await supabaseAdmin
+      .from('remote_instances')
+      .insert({
+        name: activity,
+        instance_type: 'ubuntu',
+        status: 'running',
+        timeout_hours: 1,
+        site_id: site_id,
+        user_id: site.user_id,
+        created_by: site.user_id,
+      })
+      .select()
+      .single();
+      
+    if (instanceError) {
+      throw new Error(`Error saving instance: ${instanceError.message}`);
     }
     
     return {
       success: true,
-      instance: instanceRecord,
-      authentication: authResult
+      instance: instanceRecord
     };
   }
   
@@ -212,7 +222,7 @@ export async function GET() {
     actions: {
       create: {
         required_fields: ['action', 'site_id', 'activity'],
-        response: { success: 'boolean', instance: 'object', authentication: 'object' }
+        response: { success: 'boolean', instance: 'object' }
       },
       read: {
         required_fields: ['action', 'site_id'],

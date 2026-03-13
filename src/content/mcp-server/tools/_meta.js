@@ -28,7 +28,6 @@ export default {
   copywriting: { title: withPost('Copywriting') },
   createIcpMining: { title: withPost('Create ICP Mining') },
   deals: { title: withPost('Deals') },
-  extractFrames: { title: withPost('Extract Frames') },
   generateImage: { title: withPost('Generate Image') },
   generateVideo: { title: withPost('Generate Video') },
   getFinderCategoryIds: { title: withPost('Get Finder Category IDs') },

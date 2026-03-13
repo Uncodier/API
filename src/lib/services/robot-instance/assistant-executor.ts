@@ -4,21 +4,8 @@
  */
 
 import { OpenAIAgentExecutor } from '@/lib/custom-automation/openai-agent-executor';
-import { ScrapybaraClient } from 'scrapybara';
-import { anthropic } from 'scrapybara/anthropic';
-import { bashTool, computerTool, editTool } from 'scrapybara/tools';
 import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
-import { generateVideoToolScrapybara } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
-import { instanceToolScrapybara } from '@/app/api/agents/tools/instance/assistantProtocol';
-import { updateSiteSettingsToolScrapybara } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
-import { webSearchToolScrapybara } from '@/app/api/agents/tools/webSearch/assistantProtocol';
-import {
-  saveOnMemoryToolScrapybara,
-  getMemoriesToolScrapybara,
-} from '@/app/api/agents/tools/memories/assistantProtocol';
-import { instancePlanTool } from '@/app/api/agents/tools/instance_plan/assistantProtocol';
 import {
   createAssistantOnStepHandler,
   createStreamingLogCallbacks,
@@ -27,7 +14,7 @@ import {
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
-  provider?: 'scrapybara' | 'azure' | 'openai';
+  provider?: 'azure' | 'openai';
   system_prompt?: string;
   custom_tools?: any[];
   instance_id?: string;
@@ -50,81 +37,14 @@ export async function prepareAssistantTools(
   options: AssistantExecutionOptions
 ) {
   const {
-    use_sdk_tools = false,
-    provider = process.env.ROBOT_SDK_PROVIDER || 'azure',
     custom_tools = [],
-    site_id,
-    user_id,
-    instance_id,
   } = options;
 
-  // Case 1: Using Scrapybara SDK with tools (running instance)
-  if (use_sdk_tools && instance?.provider_instance_id && provider === 'scrapybara') {
-      const client = new ScrapybaraClient({
-        apiKey: process.env.SCRAPYBARA_API_KEY || '',
-      });
-
-      const remoteInstance = await client.get(instance.provider_instance_id);
-      
-      // Cast to UbuntuInstance since we expect Ubuntu instances for PC management
-      const ubuntuInstance = remoteInstance as any;
-      
-      // Setup Scrapybara tools using native Scrapybara tools
-      const tools = [
-        bashTool(ubuntuInstance),
-        computerTool(ubuntuInstance),
-        editTool(ubuntuInstance),
-      ];
-
-      // Convert custom tools to Scrapybara format if needed
-      const convertedCustomTools = custom_tools.flatMap((tool) => {
-        // Check if this is generateImageTool (OpenAI format) by name
-        if (tool?.name === 'generate_image' && site_id) {
-          return generateImageToolScrapybara(ubuntuInstance, site_id);
-        }
-        // Check if this is generateVideoTool (OpenAI format) by name
-        if (tool?.name === 'generate_video' && site_id) {
-          return generateVideoToolScrapybara(ubuntuInstance, site_id);
-        }
-        // Check if this is instanceTool (OpenAI format) by name
-        if (tool?.name === 'instance' && site_id) {
-          return instanceToolScrapybara(ubuntuInstance, site_id, instance_id);
-        }
-        // Check if this is updateSiteSettingsTool (OpenAI format) by name
-        if (tool?.name === 'update_site_settings' && site_id) {
-          return updateSiteSettingsToolScrapybara(ubuntuInstance, site_id);
-        }
-        // Check if this is webSearch (OpenAI format) by name
-        if (tool?.name === 'webSearch') {
-          return webSearchToolScrapybara(ubuntuInstance, site_id);
-        }
-        // Check if this is memories (unified tool) - use both Scrapybara tools for full compatibility
-        if (tool?.name === 'memories' && site_id) {
-          return [
-            saveOnMemoryToolScrapybara(ubuntuInstance, site_id, user_id ?? '', instance_id),
-            getMemoriesToolScrapybara(ubuntuInstance, site_id, user_id, instance_id),
-          ];
-        }
-        // Check if this is instance_plan (unified tool) - use the Scrapybara tool
-        if (tool?.name === 'instance_plan' && site_id && instance_id) {
-          return instancePlanTool(site_id, instance_id, user_id);
-        }
-        return tool;
-      });
-
-      return {
-          type: 'scrapybara',
-          client,
-          tools: [...tools, ...convertedCustomTools],
-          ubuntuInstance
-      };
-  } else {
-      // Case 2: OpenAI/Azure
-      return {
-          type: 'openai',
-          tools: custom_tools
-      };
-  }
+  // Case 2: OpenAI/Azure
+  return {
+      type: 'openai',
+      tools: custom_tools
+  };
 }
 
 /**
@@ -136,12 +56,13 @@ export async function executeAssistantStep(
   options: AssistantExecutionOptions
 ): Promise<AssistantExecutionResult & { messages: any[], isDone: boolean }> {
   const {
-    provider = process.env.ROBOT_SDK_PROVIDER || 'azure',
     system_prompt = 'You are a helpful AI assistant.',
     instance_id,
     site_id,
     user_id,
   } = options || {};
+  
+  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'azure';
 
   if (site_id) {
     try {
@@ -160,48 +81,20 @@ export async function executeAssistantStep(
   try {
       const prepared = await prepareAssistantTools(instance, options || {});
 
-      if (prepared.type === 'scrapybara') {
-           const client = (prepared as any).client as ScrapybaraClient;
-           const tools = prepared.tools;
-           if (!client) throw new Error('Scrapybara client not initialized');
-           
-           // Fallback to full execution for Scrapybara for now
-           
-           const lastUserMessage = messages.slice().reverse().find(m => m.role === 'user');
-           const prompt = lastUserMessage?.content || 'Continue';
+      // OpenAI / Azure - We can step!
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ OpenAI/Azure provider - running single iteration`);
+      
+      const executor = new OpenAIAgentExecutor();
+      
+      const streamingCallbacks = instance_id && site_id
+          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
+          : undefined;
+      
+      const thinkingStreamCallbacks = instance_id && site_id
+        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
+        : undefined;
 
-           const executionResult = await client.act({
-              model: anthropic(),
-              tools: tools,
-              system: system_prompt,
-              prompt: typeof prompt === 'string' ? prompt : 'User sent an image or complex content', 
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
-            });
-
-            return {
-                text: executionResult.text || '',
-                output: executionResult.output || null,
-                usage: executionResult.usage || {},
-                steps: executionResult.steps || [],
-                messages: [], 
-                isDone: true
-            };
-
-      } else {
-          // OpenAI / Azure - We can step!
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ OpenAI/Azure provider - running single iteration`);
-          
-          const executor = new OpenAIAgentExecutor();
-          
-          const streamingCallbacks = instance_id && site_id
-              ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
-              : undefined;
-          
-          const thinkingStreamCallbacks = instance_id && site_id
-            ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
-            : undefined;
-
-          const executionResult = await executor.act({
+      const executionResult = await executor.act({
               tools: prepared.tools,
               system: system_prompt,
               messages: messages, // Pass current history
@@ -257,7 +150,6 @@ export async function executeAssistantStep(
           }
           
           return result;
-      }
   } catch (error: any) {
       console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error executing assistant step:`, error);
       throw error;
@@ -274,13 +166,14 @@ export async function executeAssistant(
 ): Promise<AssistantExecutionResult> {
   const {
     use_sdk_tools = false,
-    provider = process.env.ROBOT_SDK_PROVIDER || 'azure',
     system_prompt = 'You are a helpful AI assistant. Provide clear and concise responses.',
     custom_tools = [],
     instance_id,
     site_id,
     user_id,
   } = options || {};
+  
+  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'azure';
 
   if (site_id) {
     try {
@@ -310,49 +203,19 @@ export async function executeAssistant(
     
     const prepared = await prepareAssistantTools(instance, options || {});
 
-    if (prepared.type === 'scrapybara') {
-      const client = (prepared as any).client as ScrapybaraClient;
-      const tools = prepared.tools;
-      if (!client) throw new Error('Scrapybara client not initialized');
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using Scrapybara SDK with full tools`);
-      
-      let executionResult;
-      try {
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ Executing Scrapybara client.act() with ${tools.length} tools`);
-        executionResult = await client.act({
-          model: anthropic(),
-          tools: tools,
-          system: system_prompt,
-          prompt: prompt,
-          onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
-        });
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ ✅ Scrapybara client.act() completed successfully`);
-      } catch (actError: any) {
-         // ... error handling
-         console.error(`₍ᐢ•(ܫ)•ᐢ₎ ❌ Error in Scrapybara client.act():`, actError);
-         throw new Error(`Scrapybara execution failed: ${actError.message || 'Unknown error'}`);
-      }
-      
-      result = {
-        text: executionResult.text || '',
-        output: executionResult.output || null,
-        usage: executionResult.usage || {},
-        steps: executionResult.steps || [],
-      };
-    } else {
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using OpenAI/Azure assistant without Scrapybara tools`);
-      
-      const executor = new OpenAIAgentExecutor();
-      const streamingCallbacks =
-        instance_id && site_id
-          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
-          : undefined;
-      const thinkingStreamCallbacks =
-        instance_id && site_id
-          ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
-          : undefined;
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using OpenAI/Azure assistant without Scrapybara tools`);
+    
+    const executor = new OpenAIAgentExecutor();
+    const streamingCallbacks =
+      instance_id && site_id
+        ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
+        : undefined;
+    const thinkingStreamCallbacks =
+      instance_id && site_id
+        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
+        : undefined;
 
-      const executionResult = await executor.act({
+    const executionResult = await executor.act({
         tools: prepared.tools, // Use tools from prepared
         system: system_prompt,
         prompt: prompt,
@@ -375,13 +238,12 @@ export async function executeAssistant(
         }
       }
 
-      result = {
-        text: responseText,
-        output: executionResult.output || null,
-        usage: executionResult.usage || {},
-        steps: executionResult.steps || [],
-      };
-    }
+    result = {
+      text: responseText,
+      output: executionResult.output || null,
+      usage: executionResult.usage || {},
+      steps: executionResult.steps || [],
+    };
 
     if (instance_id) {
 
