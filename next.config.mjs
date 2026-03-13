@@ -47,7 +47,10 @@ const nextraConfig = withNextra({
     'thread-stream',
     'imapflow',
     'pino',
-    'composio-core'
+    'composio-core',
+    '@ffmpeg-installer/ffmpeg',
+    '@ffprobe-installer/ffprobe',
+    'fluent-ffmpeg'
   ],
   
   // Configuración adicional para CSS Modules
