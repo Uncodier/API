@@ -79,9 +79,12 @@ export function extractFramesTool(site_id?: string) {
         console.log(`[ExtractFramesTool] Video saved to ${tmpVideoFile}, processing with ffmpeg...`);
         
         // Lazy load ffmpeg to avoid initialization errors in serverless environments
-        const ffmpeg = require('fluent-ffmpeg');
-        const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-        const ffprobeInstaller = require('@ffprobe-installer/ffprobe');
+        // We use eval('require') to prevent Webpack from hoisting the require to the top level,
+        // which causes the whole workflow route to crash at startup if the binary is missing.
+        const req = eval('require');
+        const ffmpeg = req('fluent-ffmpeg');
+        const ffmpegInstaller = req('@ffmpeg-installer/ffmpeg');
+        const ffprobeInstaller = req('@ffprobe-installer/ffprobe');
         
         // Set paths to binaries
         ffmpeg.setFfmpegPath(ffmpegInstaller.path);
