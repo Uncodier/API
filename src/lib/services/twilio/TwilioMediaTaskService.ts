@@ -77,55 +77,60 @@ export async function handleTwilioMediaAndCreateTask(params: {
 
   if (!media.length) return { success: false, error: 'No media to process' } as const;
 
-  // 1) Resolve conversation
+  // Si viene de gear, no necesitamos crear conversación ni tarea
+  const isGear = workflowOrigin === 'whatsapp' && params.instanceId;
+
+  // 1) Resolve conversation (solo si no es gear)
   let conversationId = initialConversationId || null;
   let leadId = initialLeadId || null;
 
-  if (!isValidUUID(conversationId)) {
-    const sinceIso = new Date(Date.now() - CONVERSATION_REUSE_WINDOW_MIN * 60 * 1000).toISOString();
-    let existing: { id: string; user_id: string | null } | null = null;
+  if (!isGear) {
+    if (!isValidUUID(conversationId)) {
+      const sinceIso = new Date(Date.now() - CONVERSATION_REUSE_WINDOW_MIN * 60 * 1000).toISOString();
+      let existing: { id: string; user_id: string | null } | null = null;
 
-    if (leadId) {
-      const { data } = await supabaseAdmin
-        .from('conversations')
-        .select('id, user_id, last_message_at, status')
-        .eq('site_id', siteId)
-        .eq('lead_id', leadId)
-        .eq('status', 'active')
-        .order('last_message_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (data && (data.last_message_at ? data.last_message_at >= sinceIso : true)) {
-        existing = { id: data.id, user_id: data.user_id };
+      if (leadId) {
+        const { data } = await supabaseAdmin
+          .from('conversations')
+          .select('id, user_id, last_message_at, status')
+          .eq('site_id', siteId)
+          .eq('lead_id', leadId)
+          .eq('status', 'active')
+          .order('last_message_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (data && (data.last_message_at ? data.last_message_at >= sinceIso : true)) {
+          existing = { id: data.id, user_id: data.user_id };
+        }
+      }
+
+      if (existing) {
+        conversationId = existing.id;
+      } else {
+        const insertConv: any = {
+          site_id: siteId,
+          status: 'active',
+          title: (messageText || 'WhatsApp media message').substring(0, 100),
+          custom_data: { source: 'whatsapp', channel: 'whatsapp' },
+        };
+        if (leadId) insertConv.lead_id = leadId;
+        if (agentId && isValidUUID(agentId)) insertConv.agent_id = agentId;
+
+        const { data: newConv, error: convErr } = await supabaseAdmin
+          .from('conversations')
+          .insert([insertConv])
+          .select('id, user_id')
+          .single();
+        if (convErr) {
+          return { success: false, error: `Failed to create conversation: ${convErr.message}` } as const;
+        }
+        conversationId = newConv.id;
       }
     }
 
-    if (existing) {
-      conversationId = existing.id;
-    } else {
-      const insertConv: any = {
-        site_id: siteId,
-        status: 'active',
-        title: (messageText || 'WhatsApp media message').substring(0, 100),
-        custom_data: { source: 'whatsapp', channel: 'whatsapp' },
-      };
-      if (leadId) insertConv.lead_id = leadId;
-      if (agentId && isValidUUID(agentId)) insertConv.agent_id = agentId;
-
-      const { data: newConv, error: convErr } = await supabaseAdmin
-        .from('conversations')
-        .insert([insertConv])
-        .select('id, user_id')
-        .single();
-      if (convErr) {
-        return { success: false, error: `Failed to create conversation: ${convErr.message}` } as const;
-      }
-      conversationId = newConv.id;
+    if (!isValidUUID(conversationId)) {
+      return { success: false, error: 'conversation_id could not be resolved or created' } as const;
     }
-  }
-
-  if (!isValidUUID(conversationId)) {
-    return { success: false, error: 'conversation_id could not be resolved or created' } as const;
   }
 
   // 2) Upload media to storage
@@ -157,7 +162,11 @@ export async function handleTwilioMediaAndCreateTask(params: {
     // Cambiamos la ruta para que sea genérica en assets si es posible, o usamos la misma,
     // pero guardando un registro en la tabla assets.
     const originalFileName = `media_${idx + 1}.${ext}`;
-    const objPath = `sites/${siteId}/conversations/${conversationId}/${Date.now()}_${crypto.randomUUID()}.${ext}`;
+    
+    // Si es gear, guardamos en una ruta de instancia, si no, en la de conversación
+    const objPath = isGear && instanceId
+      ? `sites/${siteId}/instances/${instanceId}/${Date.now()}_${crypto.randomUUID()}.${ext}`
+      : `sites/${siteId}/conversations/${conversationId}/${Date.now()}_${crypto.randomUUID()}.${ext}`;
 
     const { data: up, error: upErr } = await supabaseAdmin
       .storage
@@ -226,6 +235,15 @@ export async function handleTwilioMediaAndCreateTask(params: {
 
   if (!uploadedFiles.length) {
     return { success: false, error: 'No media could be uploaded' } as const;
+  }
+
+  // Si es gear, retornamos aquí, ya que no necesitamos tareas ni workflows de customer support
+  if (isGear) {
+    return {
+      success: true,
+      files: uploadedFiles,
+      assetIds: uploadedAssets,
+    } as const;
   }
 
   // 3) Find existing task or create new
