@@ -1,0 +1,114 @@
+# Instance Management
+
+## Endpoints
+
+### List Instances
+`GET /api/instances`
+
+Retrieves a list of remote instances, optionally filtered by site or status.
+
+**Query Parameters:**
+- `site_id` (string, UUID, optional): Filter by site ID.
+- `status` (string, optional): Filter by instance status (e.g., 'running', 'stopped').
+- `limit` (number, optional): Number of results to return (default: 50).
+- `offset` (number, optional): Number of results to skip (default: 0).
+
+### Create Instance
+`POST /api/instances`
+
+Creates a new remote instance record.
+
+**Request Body:**
+- `site_id` (string, UUID, required): The ID of the site.
+- `user_id` (string, UUID, required): The ID of the user creating the instance.
+- `name` (string, required): Name for the instance.
+- `instance_type` (string, optional): Instance type (ubuntu, browser, windows. default: browser).
+- `status` (string, optional): Instance status.
+- `agent_id` (string, UUID, optional): The ID of the agent assigned to this instance.
+- `configuration` (object, optional): Configuration settings.
+- `environment_variables` (object, optional): Environment variables.
+
+### Get Instance
+`GET /api/instances/[id]`
+
+Retrieves the details of a specific remote instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance to retrieve.
+
+### Update Instance
+`PUT /api/instances/[id]`
+
+Updates the details of a specific remote instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance to update.
+
+**Request Body:**
+- Any of the instance fields to update (e.g., `status`, `name`, `configuration`).
+
+### Delete Instance
+`DELETE /api/instances/[id]`
+
+Deletes a specific remote instance from the database.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance to delete.
+
+### Get Instance Logs
+`GET /api/instances/[id]/logs`
+
+Retrieves logs associated with a specific remote instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance.
+
+**Query Parameters:**
+- `log_type` (string, optional): Filter by log type (e.g., 'error', 'system', 'agent_action').
+- `level` (string, optional): Filter by log level (e.g., 'info', 'warn', 'error').
+- `limit` (number, optional): Number of results to return (default: 50).
+- `offset` (number, optional): Number of results to skip (default: 0).
+
+### Create Instance Log
+`POST /api/instances/[id]/logs`
+
+Creates a new log entry for a specific instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance.
+
+**Request Body:**
+- `log_type` (string, required): The type of the log.
+- `level` (string, optional): The log level.
+- `message` (string, required): The log message.
+- `details` (object, optional): Additional JSON details.
+
+### Get Instance Plans
+`GET /api/instances/[id]/plans`
+
+Retrieves plans associated with a specific remote instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance.
+
+**Query Parameters:**
+- `status` (string, optional): Filter by plan status (e.g., 'pending', 'in_progress', 'completed').
+- `plan_type` (string, optional): Filter by plan type (e.g., 'objective', 'task').
+- `limit` (number, optional): Number of results to return (default: 50).
+- `offset` (number, optional): Number of results to skip (default: 0).
+
+### Create Instance Plan
+`POST /api/instances/[id]/plans`
+
+Creates a new plan entry for a specific instance.
+
+**Path Parameters:**
+- `id` (string, UUID, required): The ID of the instance.
+
+**Request Body:**
+- `title` (string, required): Plan title.
+- `description` (string, optional): Plan description.
+- `plan_type` (string, required): Type of plan.
+- `status` (string, optional): Plan status.
+- `priority` (number, optional): Priority.
+- `instructions` (string, optional): Detailed instructions.
