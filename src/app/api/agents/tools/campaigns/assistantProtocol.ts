@@ -18,8 +18,8 @@ export interface CampaignsToolParams {
   status?: string;
   type?: string;
   priority?: string;
-  budget?: any;
-  revenue?: any;
+  budget?: string;
+  revenue?: string;
   due_date?: string;
   command_id?: string;
   
@@ -49,8 +49,8 @@ export function campaignsTool(site_id: string, user_id?: string) {
         status: { type: 'string', description: 'Status (e.g. pending, active, completed)' },
         type: { type: 'string', description: 'Campaign type (e.g. email, social, ad)' },
         priority: { type: 'string', description: 'Priority (e.g. low, medium, high)' },
-        budget: { type: 'object', description: 'Budget details' },
-        revenue: { type: 'object', description: 'Revenue details' },
+        budget: { type: 'string', description: 'Budget details (JSON string)' },
+        revenue: { type: 'string', description: 'Revenue details (JSON string)' },
         due_date: { type: 'string', description: 'Due date (ISO string)' },
         
         // List filters
@@ -67,6 +67,8 @@ export function campaignsTool(site_id: string, user_id?: string) {
       if (action === 'create') {
         const body = {
           ...params,
+          budget: params.budget && typeof params.budget === 'string' ? JSON.parse(params.budget) : params.budget,
+          revenue: params.revenue && typeof params.revenue === 'string' ? JSON.parse(params.revenue) : params.revenue,
           site_id,
           user_id,
         };
@@ -84,6 +86,8 @@ export function campaignsTool(site_id: string, user_id?: string) {
         }
         const body = {
           ...params,
+          budget: params.budget && typeof params.budget === 'string' ? JSON.parse(params.budget) : params.budget,
+          revenue: params.revenue && typeof params.revenue === 'string' ? JSON.parse(params.revenue) : params.revenue,
           site_id,
         };
         const data = await fetchApiTool('/api/agents/tools/campaigns/update', body, 'Update campaign failed');
