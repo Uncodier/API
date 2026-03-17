@@ -17,7 +17,9 @@ export async function fetchApiTool(endpoint: string, body: any, errorMessage: st
     try {
       data = text ? JSON.parse(text) : {};
     } catch (err) {
-      // Provide a snippet of the response text to help debug HTML error pages
+      if (!res.ok) {
+        throw new Error(`Error ${res.status}: ${res.statusText}. Could not parse JSON response.`);
+      }
       throw new Error(`Invalid JSON response from ${endpoint} (Status: ${res.status}): ${text.slice(0, 150)}...`);
     }
 
@@ -46,6 +48,9 @@ export async function fetchApiToolGet(endpoint: string, errorMessage: string) {
     try {
       data = text ? JSON.parse(text) : {};
     } catch (err) {
+      if (!res.ok) {
+        throw new Error(`Error ${res.status}: ${res.statusText}. Could not parse JSON response.`);
+      }
       throw new Error(`Invalid JSON response from ${endpoint} (Status: ${res.status}): ${text.slice(0, 150)}...`);
     }
 

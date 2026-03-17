@@ -19,10 +19,10 @@ export interface ContentToolParams {
   status?: string;
   segment_id?: string;
   text?: string;
-  tags?: string[];
+  tags?: string;
   instructions?: string;
   campaign_id?: string;
-  metadata?: Record<string, unknown>;
+  metadata?: string;
 
   // List params
   site_id?: string;
@@ -60,13 +60,12 @@ export function contentTool(site_id: string, user_id?: string) {
         segment_id: { type: 'string', description: 'Segment UUID' },
         text: { type: 'string', description: 'Body content / main text' },
         tags: { 
-          type: 'array', 
-          items: { type: 'string' }, 
-          description: 'Tags for categorization' 
+          type: 'string', 
+          description: 'Tags for categorization (comma-separated string)' 
         },
         instructions: { type: 'string', description: 'Instructions for AI content generation or editing' },
         campaign_id: { type: 'string', description: 'Campaign UUID' },
-        metadata: { type: 'object', description: 'Additional metadata (json object)' },
+        metadata: { type: 'string', description: 'Additional metadata (json string)' },
         
         // List specific filters
         site_id: { type: 'string', description: 'Filter by site UUID' },
@@ -83,6 +82,8 @@ export function contentTool(site_id: string, user_id?: string) {
       if (action === 'create') {
         const body = {
           ...params,
+          tags: params.tags ? (typeof params.tags === 'string' ? params.tags.split(',').map(t => t.trim()) : params.tags) : undefined,
+          metadata: params.metadata ? (typeof params.metadata === 'string' ? JSON.parse(params.metadata) : params.metadata) : undefined,
           site_id,
           user_id,
         };
@@ -101,6 +102,8 @@ export function contentTool(site_id: string, user_id?: string) {
         }
         const body = {
           ...params,
+          tags: params.tags ? (typeof params.tags === 'string' ? params.tags.split(',').map(t => t.trim()) : params.tags) : undefined,
+          metadata: params.metadata ? (typeof params.metadata === 'string' ? JSON.parse(params.metadata) : params.metadata) : undefined,
           site_id,
         };
         const data = await fetchApiTool('/api/agents/tools/content/update', body, 'Update content failed');
