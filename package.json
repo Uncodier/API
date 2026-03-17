@@ -66,6 +66,7 @@
     "nextra": "4.6.1",
     "nextra-theme-docs": "4.6.1",
     "node-fetch": "^2.7.0",
+    "node-ical": "0.25.6",
     "nodemailer": "7.0.13",
     "openai": "^4.0.0",
     "portkey-ai": "^1.7.2",

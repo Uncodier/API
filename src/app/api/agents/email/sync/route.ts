@@ -1039,6 +1039,22 @@ async function addSentMessageToConversation(
         .eq('id', conversationId);
     }
     
+    // Process calendar attachments if any
+    if (email.attachments && email.attachments.length > 0) {
+      try {
+        const { CalendarAttachmentService } = await import('@/lib/services/calendar/CalendarAttachmentService');
+        await CalendarAttachmentService.processAttachments(
+          email.attachments,
+          siteId,
+          undefined, // userId will be resolved inside the service
+          leadId,
+          conversationId
+        );
+      } catch (attachmentError) {
+        console.error(`[EMAIL_SYNC] ❌ Error processing calendar attachments (sent):`, attachmentError);
+      }
+    }
+    
     console.log(`[EMAIL_SYNC] ✅ Nuevo mensaje enviado creado exitosamente: ${message.id} (role: ${messageRole}, ${messageContent.length} caracteres)`);
     return message.id;
   } catch (error) {
@@ -1583,6 +1599,22 @@ async function addReceivedMessageToConversation(
       })
       .eq('id', conversationId);
     
+    // Process calendar attachments if any
+    if (email.attachments && email.attachments.length > 0) {
+      try {
+        const { CalendarAttachmentService } = await import('@/lib/services/calendar/CalendarAttachmentService');
+        await CalendarAttachmentService.processAttachments(
+          email.attachments,
+          siteId,
+          undefined, // userId will be resolved inside the service
+          leadId,
+          conversationId
+        );
+      } catch (attachmentError) {
+        console.error(`[EMAIL_SYNC] ❌ Error processing calendar attachments (received):`, attachmentError);
+      }
+    }
+
     console.log(`[EMAIL_SYNC] ✅ Mensaje recibido del hilo creado exitosamente: ${message.id} (${messageContent.length} caracteres)`);
     return message.id;
   } catch (error) {

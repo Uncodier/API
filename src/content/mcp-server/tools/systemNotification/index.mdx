@@ -8,9 +8,9 @@ description: Send notifications to team members.
 The `system_notification` tool allows you to list team members or send notifications to them. The tool supports two actions:
 
 1. **list**: Retrieves all team members for the site, helping you determine who to notify and providing their email addresses.
-2. **notify**: Sends a notification to a specific team member. The tool will automatically use the best channel available based on the member's profile:
-   - **WhatsApp**: If the team member has a registered phone number, they will receive a WhatsApp message via the Gear channel.
-   - **In-app and Email**: If no phone number is present, the system defaults to sending an in-app system notification alongside an email.
+2. **notify**: Sends a notification to a specific team member. You can specify the channels to use (e.g., `["whatsapp", "email", "in_app"]`) and a custom `phone_number`. If no explicit channels are provided, the tool will automatically use the best channel available based on the member's profile:
+   - **WhatsApp**: If the team member has a registered phone number. *Note*: WhatsApp messages are subject to the 24-hour response window. If the user hasn't replied recently, free-form messages may fail and you might need an approved template (via `whatsappTemplate`).
+   - **In-app and Email**: The system defaults to sending an in-app system notification alongside an email if WhatsApp cannot be used.
 
 This is especially useful for finding team members, escalating issues, alerting agents of required interventions, or notifying owners of requirement updates.
 
@@ -23,6 +23,8 @@ This is especially useful for finding team members, escalating issues, alerting 
 | `instance_id` | string | No | The instance ID related to this notification. Highly recommended to link the notification to a specific task context. |
 | `title` | string | Yes* | The title of the notification or message subject. *(Required when action is "notify")* |
 | `message` | string | Yes* | The detailed content of the notification. *(Required when action is "notify")* |
+| `channels` | array of strings | No | Optional list of channels to notify through: `["email", "whatsapp", "in_app"]`. |
+| `phone_number` | string | No | Optional phone number to use for WhatsApp notifications, overriding the profile phone. |
 
 ## Usage Examples
 

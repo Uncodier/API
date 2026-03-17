@@ -20,8 +20,10 @@ export async function notifySystemNotificationCore(params: {
   instance_id?: string;
   message: string;
   title: string;
+  channels?: string[];
+  phone_number?: string;
 }) {
-  const { site_id, team_member_email, instance_id, message, title } = params;
+  const { site_id, team_member_email, instance_id, message, title, channels, phone_number } = params;
 
   if (!site_id || !team_member_email || !message || !title) {
     throw new Error('site_id, team_member_email, message, and title are required for sending notifications');
@@ -35,9 +37,9 @@ export async function notifySystemNotificationCore(params: {
     .single();
     
   let user_id = profile?.id;
-  let phone = null;
+  let phone = phone_number || null;
 
-  if (user_id) {
+  if (!phone && user_id) {
     const { data: userData } = await supabaseAdmin.auth.admin.getUserById(user_id);
     if (userData?.user) {
       phone = userData.user.phone || userData.user.user_metadata?.phone;
@@ -47,6 +49,20 @@ export async function notifySystemNotificationCore(params: {
   let whatsappSent = false;
   let emailSent = false;
   let notificationSent = false;
+  let templateRequired = false;
+
+  // Defensively parse channels into an array
+  let channelsList: string[] = [];
+  if (Array.isArray(channels)) {
+    channelsList = channels;
+  } else if (typeof channels === 'string') {
+    channelsList = [channels];
+  }
+
+  // Determine which channels to use
+  const useExplicitChannels = channelsList.length > 0;
+  const tryWhatsapp = useExplicitChannels ? channelsList.includes('whatsapp') : true;
+  const tryInApp = useExplicitChannels ? channelsList.includes('in_app') : true;
 
   // The template should link to the instance_id
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
@@ -57,8 +73,8 @@ export async function notifySystemNotificationCore(params: {
     ? `${baseUrl}/sites/${site_id}/instances/${validInstanceId}`
     : `${baseUrl}/sites/${site_id}`;
 
-  // Send WhatsApp if phone exists
-  if (phone) {
+  // Send WhatsApp if phone exists and channel is requested or default
+  if (tryWhatsapp && phone) {
     const waMessage = `*${title}*\n\n${message}\n\nVer más detalles: ${instanceUrl}`;
     const waResult = await WhatsAppSendService.sendMessage({
       phone_number: phone,
@@ -67,10 +83,13 @@ export async function notifySystemNotificationCore(params: {
       site_id
     });
     whatsappSent = waResult.success;
+    if (waResult.template_required) {
+      templateRequired = true;
+    }
   }
 
-  // Always create an in-app notification if user exists
-  if (user_id) {
+  // Always create an in-app notification if user exists and channel is requested or default
+  if (tryInApp && user_id) {
     const notificationResult = await NotificationService.createNotification({
       user_id: user_id,
       site_id: site_id,
@@ -87,8 +106,16 @@ export async function notifySystemNotificationCore(params: {
     }
   }
 
-  // If no phone or WhatsApp failed, send Email
-  if (!whatsappSent) {
+  // Determine if email should be sent
+  let tryEmail = false;
+  if (useExplicitChannels) {
+    tryEmail = channelsList.includes('email');
+  } else {
+    // Default fallback logic: send email if WhatsApp wasn't sent
+    tryEmail = !whatsappSent;
+  }
+
+  if (tryEmail) {
     const htmlContent = `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
         <h2 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">${EmailSendService.escapeHtml(title)}</h2>
@@ -133,6 +160,7 @@ export async function notifySystemNotificationCore(params: {
 
   return {
     whatsapp_sent: whatsappSent,
+    template_required: templateRequired,
     email_sent: emailSent,
     notification_sent: notificationSent,
     user_id: user_id,
@@ -143,7 +171,7 @@ export async function notifySystemNotificationCore(params: {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, site_id, team_member_email, instance_id, message, title } = body;
+    const { action, site_id, team_member_email, instance_id, message, title, channels, phone_number } = body;
 
     // Handle "list" action
     if (action === 'list') {
@@ -160,7 +188,9 @@ export async function POST(request: NextRequest) {
       team_member_email,
       instance_id,
       message,
-      title
+      title,
+      channels,
+      phone_number
     });
 
     return NextResponse.json({

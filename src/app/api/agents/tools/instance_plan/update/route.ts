@@ -77,7 +77,7 @@ export async function updateInstancePlanCore(params: any) {
     
     const completedSteps = updatedSteps.filter((step: any) => step.status === 'completed').length;
     updateData.steps_completed = completedSteps;
-    updateData.progress_percentage = updatedSteps.length > 0 ? (completedSteps / updatedSteps.length) * 100 : 0;
+    updateData.progress_percentage = updatedSteps.length > 0 ? Math.round((completedSteps / updatedSteps.length) * 100) : 0;
   }
 
   const { data: updatedPlan, error } = await supabaseAdmin

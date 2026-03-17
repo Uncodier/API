@@ -259,11 +259,39 @@ export async function POST(request: NextRequest) {
           }
         );
 
+        let finalLeadId = leadId;
+        let finalConversationId = conversationId;
+
         if (workflowResult.success) {
           console.log(`✅ [AgentMail] customerSupportWorkflow triggered successfully: ${workflowResult.workflowId}`);
+          
+          // If the workflow created a lead or conversation, it might be in the result data
+          if (workflowResult.data?.lead_id) {
+            finalLeadId = workflowResult.data.lead_id;
+          }
+          if (workflowResult.data?.conversation_id) {
+            finalConversationId = workflowResult.data.conversation_id;
+          }
         } else {
           console.error(`❌ [AgentMail] Error triggering customerSupportWorkflow:`, workflowResult.error);
         }
+
+        // Process calendar attachments if any
+        if (message.attachments && message.attachments.length > 0 && siteId && userId) {
+          try {
+            const { CalendarAttachmentService } = await import('@/lib/services/calendar/CalendarAttachmentService');
+            await CalendarAttachmentService.processAttachments(
+              message.attachments,
+              siteId,
+              userId,
+              finalLeadId,
+              finalConversationId
+            );
+          } catch (attachmentError) {
+            console.error(`❌ [AgentMail] Error processing attachments:`, attachmentError);
+          }
+        }
+
       } catch (error: any) {
         // Log error but don't fail the webhook
         console.error(`❌ [AgentMail] Error in customerSupportWorkflow trigger:`, error);
