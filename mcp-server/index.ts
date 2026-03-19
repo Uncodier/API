@@ -28,6 +28,13 @@ async function main() {
   const { createMcpServer } = await import('@/lib/mcp/server');
   const server = createMcpServer(siteId!, userId, instanceId);
   const transport = new StdioServerTransport();
+
+  // Force the process to exit when the client disconnects
+  transport.onclose = () => {
+    console.error('[MCP] Transport closed. Shutting down process.');
+    process.exit(0);
+  };
+
   await server.connect(transport);
 }
 
