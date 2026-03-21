@@ -21,6 +21,10 @@ Manage instance plans. IMPORTANT: Instance plans are strict execution paths for 
 | title | string | Plan title |
 | description | string | Plan description |
 | plan_type | string | Type of plan. Must be one of: objective, task. Default: objective. Enum: objective, task |
+| instructions | string | Overall instructions for the plan |
+| expected_output | string | Overall expected output of the plan |
+| success_criteria | array | Criteria for successful completion |
+| validation_rules | array | Rules for validating the plan execution |
 | status | string | Plan status. For create, use "pending" or leave empty for default. Enum: pending, in_progress, completed, failed, cancelled, paused |
 | steps | array | Array of plan steps with detailed properties. |
 | site_id | string | Site UUID |

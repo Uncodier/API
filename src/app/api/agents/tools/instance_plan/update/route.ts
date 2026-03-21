@@ -9,6 +9,10 @@ const UpdateInstancePlanSchema = z.object({
   title: z.string().optional(),
   description: z.string().optional(),
   plan_type: z.enum(['objective', 'task']).optional(),
+  instructions: z.string().optional(),
+  expected_output: z.string().optional(),
+  success_criteria: z.array(z.any()).optional(),
+  validation_rules: z.array(z.any()).optional(),
   status: z.enum(['pending', 'completed', 'failed', 'cancelled', 'paused', 'in_progress']).optional(),
   steps: z.array(z.object({
     id: z.string().optional(),

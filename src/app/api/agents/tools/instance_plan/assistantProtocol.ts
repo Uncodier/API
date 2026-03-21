@@ -17,6 +17,10 @@ export interface InstancePlanToolParams {
   title?: string;
   description?: string;
   plan_type?: 'objective' | 'task';
+  instructions?: string;
+  expected_output?: string;
+  success_criteria?: any[];
+  validation_rules?: any[];
   status?: 'pending' | 'in_progress' | 'completed' | 'failed' | 'cancelled' | 'paused';
   steps?: any[];
   site_id?: string;
@@ -54,6 +58,10 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
         title: { type: 'string', description: 'Plan title' },
         description: { type: 'string', description: 'Plan description' },
         plan_type: { type: 'string', enum: ['objective', 'task'], description: 'Type of plan. Must be one of: objective, task. Default: objective' },
+        instructions: { type: 'string', description: 'Overall instructions for the plan' },
+        expected_output: { type: 'string', description: 'Overall expected output of the plan' },
+        success_criteria: { type: 'array', items: { type: 'object' }, description: 'Criteria for successful completion' },
+        validation_rules: { type: 'array', items: { type: 'object' }, description: 'Rules for validating the plan execution' },
         status: { 
           type: 'string', 
           enum: ['pending', 'in_progress', 'completed', 'failed', 'cancelled', 'paused'],
