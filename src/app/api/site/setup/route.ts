@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -74,6 +75,40 @@ export async function POST(request: NextRequest) {
     console.log(`🏗️ Iniciando setup del sitio: ${site_id}`);
     console.log(`👤 Usuario: ${user_id || 'N/A'}`);
     console.log(`🔧 Tipo de setup: ${setup_type || 'basic'}`);
+    
+    // Crear registro de billing inicial con 30 créditos
+    try {
+      // Verificar si ya existe un registro de billing para este sitio
+      const { data: existingBilling } = await supabaseAdmin
+        .from('billing')
+        .select('id')
+        .eq('site_id', site_id)
+        .maybeSingle();
+        
+      if (!existingBilling) {
+        console.log(`💳 Creando registro de billing inicial para el sitio: ${site_id} con 30 créditos`);
+        const { error: billingError } = await supabaseAdmin
+          .from('billing')
+          .insert({
+            site_id,
+            plan: 'free',
+            credits_available: 30,
+            credits_used: 0,
+            status: 'active'
+          });
+          
+        if (billingError) {
+          console.error(`❌ Error al crear registro de billing para el sitio ${site_id}:`, billingError);
+        } else {
+          console.log(`✅ Registro de billing creado exitosamente`);
+        }
+      } else {
+        console.log(`ℹ️ El sitio ${site_id} ya tiene un registro de billing`);
+      }
+    } catch (billingErr) {
+      console.error(`❌ Excepción al intentar crear billing:`, billingErr);
+      // Continuamos con el setup aunque falle la creación de billing
+    }
     
     // Preparar argumentos para el workflow
     const workflowArgs: SiteSetupWorkflowArgs = {
