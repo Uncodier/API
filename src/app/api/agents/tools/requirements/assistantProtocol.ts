@@ -23,6 +23,7 @@ export interface RequirementsToolParams {
   cron?: string;
   cycle?: string;
   campaign_id?: string;
+  metadata?: Record<string, unknown> | string;
 
   // List params
   site_id?: string;
@@ -60,6 +61,7 @@ export function requirementsTool(site_id: string, user_id?: string) {
         cron: { type: 'string', description: 'Text to manage how often it should repeat' },
         cycle: { type: 'string', description: 'Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value)' },
         campaign_id: { type: 'string', description: 'Campaign UUID to link requirement' },
+        metadata: { type: 'object', description: 'Additional metadata (json object)' },
         
         // List specific filters
         site_id: { type: 'string', description: 'Filter by site UUID' },
@@ -83,6 +85,15 @@ export function requirementsTool(site_id: string, user_id?: string) {
       // Default user_id if not provided but available in closure
       if (!params.user_id && user_id) {
         params.user_id = user_id;
+      }
+
+      // Parse metadata if it is a string
+      if (params.metadata && typeof params.metadata === 'string') {
+        try {
+          params.metadata = JSON.parse(params.metadata);
+        } catch (e) {
+          throw new Error('Invalid metadata format. Must be a valid JSON string or object.');
+        }
       }
 
       if (action === 'create') {

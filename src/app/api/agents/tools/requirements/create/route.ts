@@ -17,6 +17,7 @@ const CreateRequirementSchema = z.object({
   site_id: z.string().uuid('Valid site_id required'),
   user_id: z.string().uuid('Valid user_id required').optional(),
   campaign_id: z.string().uuid().optional(),
+  metadata: z.record(z.unknown()).optional(),
 });
 
 async function resolveUserId(siteId: string, userId?: string): Promise<string> {
@@ -57,6 +58,7 @@ export async function createRequirementCore(params: any) {
     campaign_id: validated.campaign_id,
     cron: validated.cron,
     cycle: validated.cycle,
+    metadata: validated.metadata,
   });
 
   return {
