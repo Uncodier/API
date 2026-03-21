@@ -11,8 +11,9 @@ export async function createRequirementStatusCore(params: {
   source_code?: string;
   status?: string;
   message?: string;
+  cycle?: string;
 }) {
-  const { site_id, instance_id, asset_id, requirement_id, repo_url, preview_url, source_code, status, message } = params;
+  const { site_id, instance_id, asset_id, requirement_id, repo_url, preview_url, source_code, status, message, cycle } = params;
 
   if (!site_id || !requirement_id || !status) {
     throw new Error('site_id, requirement_id, and status are required');
@@ -37,6 +38,7 @@ export async function createRequirementStatusCore(params: {
         source_code: source_code || null,
         status,
         message: message || null,
+        cycle: cycle || null,
         created_at: new Date().toISOString(),
       }
     ])

@@ -14,6 +14,7 @@ const UpdateRequirementSchema = z.object({
   completion_status: z.enum(['pending', 'completed', 'rejected']).optional(),
   type: z.string().optional(),
   budget: z.number().optional(),
+  cron: z.string().optional(),
 });
 
 /**

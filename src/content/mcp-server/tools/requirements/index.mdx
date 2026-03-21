@@ -22,6 +22,7 @@ Manage requirements. Use action="create" to create a new requirement (requires t
 | completion_status | string | Completion status of the requirement. Valid values: pending, completed, rejected. Enum: pending, completed, rejected |
 | type | string | Type of requirement (e.g., content, design, task, develop, analytics, etc.). Default: task |
 | budget | number | Budget amount (numeric) |
+| cron | string | Text to manage how often it should repeat |
 | campaign_id | string | Campaign UUID to link requirement |
 | site_id | string | Filter by site UUID |
 | user_id | string | Filter by user UUID |
@@ -51,7 +52,8 @@ Content-Type: application/json
   "title": "Build lead scoring model",
   "priority": "high",
   "status": "backlog",
-  "type": "develop"
+  "type": "develop",
+  "cron": "every monday"
 }
 ```
 
@@ -60,6 +62,6 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "requirement": { "id": "...", "title": "Build lead scoring model" }
+  "requirement": { "id": "...", "title": "Build lead scoring model", "cron": "every monday" }
 }
 ```

@@ -29,6 +29,7 @@ export interface DbRequirement {
   instructions: string | null;
   command_id: string | null;
   type: string;
+  cron: string | null;
 }
 
 export interface RequirementFilters {
@@ -60,6 +61,7 @@ export interface CreateRequirementParams {
   user_id: string;
   campaign_id?: string;
   command_id?: string;
+  cron?: string;
 }
 
 export interface UpdateRequirementParams {
@@ -71,6 +73,7 @@ export interface UpdateRequirementParams {
   completion_status?: string;
   type?: string;
   budget?: number;
+  cron?: string;
 }
 
 export interface DbRequirementStatus {
@@ -84,6 +87,7 @@ export interface DbRequirementStatus {
   source_code: string | null;
   status: string;
   message: string | null;
+  cycle: string | null;
   created_at: string;
 }
 
@@ -185,6 +189,7 @@ export async function createRequirement(params: CreateRequirementParams): Promis
     site_id: params.site_id,
     user_id: params.user_id,
     command_id: params.command_id ?? null,
+    cron: params.cron ?? null,
   };
 
   const { data, error } = await supabaseAdmin
@@ -221,6 +226,7 @@ export async function updateRequirement(
   if (params.completion_status !== undefined) updateData.completion_status = params.completion_status;
   if (params.type !== undefined) updateData.type = params.type;
   if (params.budget !== undefined) updateData.budget = params.budget;
+  if (params.cron !== undefined) updateData.cron = params.cron;
 
   const { data, error } = await supabaseAdmin
     .from('requirements')

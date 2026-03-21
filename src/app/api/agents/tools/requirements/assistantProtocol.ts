@@ -20,6 +20,7 @@ export interface RequirementsToolParams {
   completion_status?: 'pending' | 'completed' | 'rejected';
   type?: string;
   budget?: number;
+  cron?: string;
   campaign_id?: string;
 
   // List params
@@ -55,6 +56,7 @@ export function requirementsTool(site_id: string, user_id?: string) {
         completion_status: { type: 'string', enum: ['pending', 'completed', 'rejected'], description: 'Completion status of the requirement. Valid values: pending, completed, rejected.' },
         type: { type: 'string', description: 'Type of requirement (e.g., content, design, task, develop, analytics, etc.). Default: task' },
         budget: { type: 'number', description: 'Budget amount (numeric)' },
+        cron: { type: 'string', description: 'Text to manage how often it should repeat' },
         campaign_id: { type: 'string', description: 'Campaign UUID to link requirement' },
         
         // List specific filters
