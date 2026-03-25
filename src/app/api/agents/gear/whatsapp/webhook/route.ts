@@ -115,16 +115,23 @@ export async function POST(request: NextRequest) {
                 const portkeyApiKey = process.env.PORTKEY_API_KEY;
                 const baseURL = 'https://api.portkey.ai/v1';
                 const directApiKey = process.env.OPENAI_API_KEY;
+                const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
                 
                 const file = await OpenAI.toFile(Buffer.from(buffer), 'audio.ogg', { type: media.contentType });
                 let success = false;
                 
                 if (portkeyApiKey) {
-                  const portkey = new Portkey({
+                  const portkeyOptions: any = {
                      apiKey: portkeyApiKey,
                      baseURL: baseURL,
                      provider: 'openai',
-                  });
+                  };
+                  
+                  if (virtualKey) {
+                    portkeyOptions.virtualKey = virtualKey;
+                  }
+
+                  const portkey = new Portkey(portkeyOptions);
                   
                   try {
                     const transcription = await portkey.audio.transcriptions.create({

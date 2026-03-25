@@ -222,6 +222,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
         const portkeyApiKey = process.env.PORTKEY_API_KEY;
         const baseURL = 'https://api.portkey.ai/v1'; // Default Portkey URL
         const directApiKey = process.env.OPENAI_API_KEY;
+        const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
         
         // Crear un file object a partir del buffer para OpenAI
         // Whisper soporta mp3, mp4, mpeg, mpga, m4a, wav, y webm (y ogg si se especifica)
@@ -233,11 +234,17 @@ export async function handleTwilioMediaAndCreateTask(params: {
         let success = false;
         
         if (portkeyApiKey) {
-           const portkey = new Portkey({
+           const portkeyOptions: any = {
              apiKey: portkeyApiKey,
              baseURL: baseURL,
              provider: 'openai',
-           });
+           };
+           
+           if (virtualKey) {
+             portkeyOptions.virtualKey = virtualKey;
+           }
+
+           const portkey = new Portkey(portkeyOptions);
            
            try {
               const transcription = await portkey.audio.transcriptions.create({

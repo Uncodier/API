@@ -91,24 +91,16 @@ export function audioToTextTool(site_id?: string) {
           }
         }
 
-        // Fallback to OpenAI via Portkey
+        // Fallback to OpenAI Direct or Portkey
         if (!success) {
           try {
-            console.log(`[AudioToTextTool] Attempting transcription via Portkey OpenAI Whisper...`);
-            
             // Require Portkey dynamically to avoid unused imports
             const { Portkey } = require('portkey-ai');
             
-            const apiKey = process.env.PORTKEY_API_KEY;
+            const directApiKey = process.env.OPENAI_API_KEY;
+            const portkeyApiKey = process.env.PORTKEY_API_KEY;
             const baseURL = 'https://api.portkey.ai/v1'; // Default Portkey URL
-            
-            if (!apiKey) throw new Error('No PORTKEY_API_KEY configured');
-
-            const portkey = new Portkey({
-              apiKey,
-              baseURL,
-              provider: 'openai',
-            });
+            const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
             
             // Necesitamos asegurarnos de que la extensión sea válida para Whisper.
             // Whisper soporta: mp3, mp4, mpeg, mpga, m4a, wav, webm, ogg
@@ -122,19 +114,57 @@ export function audioToTextTool(site_id?: string) {
 
             const file = await OpenAI.toFile(buffer, `audio.${fileExt}`, { type: contentType });
             
-            try {
-              const transcription = await portkey.audio.transcriptions.create({
-                file: file,
-                model: 'whisper-1',
-              });
-              transcriptionText = transcription.text;
-              success = true;
-              console.log(`[AudioToTextTool] Portkey OpenAI Whisper transcription successful.`);
-            } catch (err: any) {
-               throw err;
+            // 1. Direct OpenAI First (como en assistant)
+            if (directApiKey && !success) {
+               try {
+                  console.log(`[AudioToTextTool] Attempting direct transcription via OpenAI Whisper...`);
+                  const directOpenai = new OpenAI({ apiKey: directApiKey });
+                  const transcription = await directOpenai.audio.transcriptions.create({
+                    file: file,
+                    model: 'whisper-1',
+                  });
+                  if (transcription && transcription.text) {
+                     transcriptionText = transcription.text;
+                     success = true;
+                     console.log(`[AudioToTextTool] Direct OpenAI Whisper transcription successful.`);
+                  }
+               } catch (directErr: any) {
+                  console.warn(`[AudioToTextTool] Direct OpenAI failed: ${directErr.message}`);
+                  lastError = directErr;
+               }
+            }
+            
+            // 2. Fallback to Portkey
+            if (!success && portkeyApiKey) {
+               console.log(`[AudioToTextTool] Attempting transcription via Portkey OpenAI Whisper...`);
+               const portkeyOptions: any = {
+                 apiKey: portkeyApiKey,
+                 baseURL,
+                 provider: 'openai',
+               };
+               
+               if (virtualKey) {
+                 portkeyOptions.virtualKey = virtualKey;
+               }
+
+               const portkey = new Portkey(portkeyOptions);
+               try {
+                 const transcription = await portkey.audio.transcriptions.create({
+                   file: file,
+                   model: 'whisper-1',
+                 });
+                 if (transcription && transcription.text) {
+                    transcriptionText = transcription.text;
+                    success = true;
+                    console.log(`[AudioToTextTool] Portkey OpenAI Whisper transcription successful.`);
+                 }
+               } catch (portkeyErr: any) {
+                  console.warn(`[AudioToTextTool] Portkey OpenAI failed: ${portkeyErr.message}`);
+                  lastError = portkeyErr;
+               }
             }
           } catch (err: any) {
-            console.warn(`[AudioToTextTool] Portkey OpenAI failed: ${err.message}`);
+            console.warn(`[AudioToTextTool] OpenAI/Portkey error: ${err.message}`);
             lastError = err;
           }
         }
