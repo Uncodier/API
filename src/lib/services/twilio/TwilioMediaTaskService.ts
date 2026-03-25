@@ -219,9 +219,9 @@ export async function handleTwilioMediaAndCreateTask(params: {
         // Use Portkey integration instead of Vercel AI Gateway directly
         const { Portkey } = require('portkey-ai');
         
+        const directApiKey = process.env.OPENAI_API_KEY;
         const portkeyApiKey = process.env.PORTKEY_API_KEY;
         const baseURL = 'https://api.portkey.ai/v1'; // Default Portkey URL
-        const directApiKey = process.env.OPENAI_API_KEY;
         const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
         
         // Crear un file object a partir del buffer para OpenAI
@@ -233,7 +233,26 @@ export async function handleTwilioMediaAndCreateTask(params: {
         
         let success = false;
         
-        if (portkeyApiKey) {
+        // 1. Intentar con OpenAI Directo primero (como en assistant)
+        if (directApiKey && !success) {
+           try {
+               const directOpenai = new OpenAI({ apiKey: directApiKey });
+               const directTranscription = await directOpenai.audio.transcriptions.create({
+                 file: file,
+                 model: 'whisper-1',
+               });
+               if (directTranscription && directTranscription.text) {
+                  transcriptionText = directTranscription.text;
+                  success = true;
+                  log(`Direct Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
+               }
+           } catch (directErr: any) {
+               warn(`Direct OpenAI transcription failed: ${directErr.message}`);
+           }
+        }
+        
+        // 2. Fallback a Portkey
+        if (!success && portkeyApiKey) {
            const portkeyOptions: any = {
              apiKey: portkeyApiKey,
              baseURL: baseURL,
@@ -245,7 +264,6 @@ export async function handleTwilioMediaAndCreateTask(params: {
            }
 
            const portkey = new Portkey(portkeyOptions);
-           
            try {
               const transcription = await portkey.audio.transcriptions.create({
                 file: file,
@@ -258,23 +276,8 @@ export async function handleTwilioMediaAndCreateTask(params: {
                  log(`Portkey Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
               }
            } catch (portkeyErr: any) {
-              warn(`Portkey transcription failed: ${portkeyErr.message}, retrying direct OpenAI...`);
+              warn(`Portkey transcription failed: ${portkeyErr.message}`);
            }
-        }
-        
-        // Fallback a OpenAI Directo si Portkey falla o no está configurado
-        if (!success && directApiKey) {
-           const directOpenai = new OpenAI({ apiKey: directApiKey });
-           const directTranscription = await directOpenai.audio.transcriptions.create({
-             file: file,
-             model: 'whisper-1',
-           });
-           if (directTranscription && directTranscription.text) {
-              transcriptionText = directTranscription.text;
-              log(`Direct Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
-           }
-        } else if (!success) {
-           warn(`No API keys available for transcription`);
         }
       } catch (transcriptionErr: any) {
         warn(`Transcription failed: ${transcriptionErr.message}`);

@@ -112,15 +112,34 @@ export async function POST(request: NextRequest) {
                 const OpenAI = (await import('openai')).default;
                 const { Portkey } = require('portkey-ai');
                 
+                const directApiKey = process.env.OPENAI_API_KEY;
                 const portkeyApiKey = process.env.PORTKEY_API_KEY;
                 const baseURL = 'https://api.portkey.ai/v1';
-                const directApiKey = process.env.OPENAI_API_KEY;
                 const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
                 
                 const file = await OpenAI.toFile(Buffer.from(buffer), 'audio.ogg', { type: media.contentType });
                 let success = false;
                 
-                if (portkeyApiKey) {
+                // 1. Intentar con OpenAI Directo primero
+                if (directApiKey && !success) {
+                   try {
+                     const directOpenai = new OpenAI({ apiKey: directApiKey });
+                     const directTranscription = await directOpenai.audio.transcriptions.create({
+                       file: file,
+                       model: 'whisper-1',
+                     });
+                     if (directTranscription && directTranscription.text) {
+                        console.log(`✅ Transcripción directa exitosa: "${directTranscription.text.substring(0, 50)}..."`);
+                        messageContent += `\n\n[Mensaje de voz transcrito]: "${directTranscription.text}"`;
+                        success = true;
+                     }
+                   } catch (directErr: any) {
+                     console.warn(`⚠️ Error al transcribir audio en OpenAI directo: ${directErr.message}`);
+                   }
+                }
+                
+                // 2. Fallback a Portkey
+                if (!success && portkeyApiKey) {
                   const portkeyOptions: any = {
                      apiKey: portkeyApiKey,
                      baseURL: baseURL,
@@ -145,27 +164,8 @@ export async function POST(request: NextRequest) {
                        success = true;
                     }
                   } catch (portkeyErr: any) {
-                     console.warn(`⚠️ Error en Portkey audio/transcriptions: ${portkeyErr.message}. Intentando directo a OpenAI...`);
+                     console.warn(`⚠️ Error en Portkey audio/transcriptions: ${portkeyErr.message}`);
                   }
-                }
-                
-                // Fallback a OpenAI directo
-                if (!success && directApiKey) {
-                  const directOpenai = new OpenAI({ apiKey: directApiKey });
-                  try {
-                     const directTranscription = await directOpenai.audio.transcriptions.create({
-                       file: file,
-                       model: 'whisper-1',
-                     });
-                     if (directTranscription && directTranscription.text) {
-                        console.log(`✅ Transcripción directa exitosa: "${directTranscription.text.substring(0, 50)}..."`);
-                        messageContent += `\n\n[Mensaje de voz transcrito]: "${directTranscription.text}"`;
-                     }
-                  } catch (directErr: any) {
-                     console.warn(`⚠️ Error al transcribir audio en OpenAI directo: ${directErr.message}`);
-                  }
-                } else if (!success) {
-                  console.warn(`⚠️ No API keys available for transcription`);
                 }
               } else {
                 console.warn(`⚠️ Failed to download Twilio audio for transcription: ${resp.status}`);
