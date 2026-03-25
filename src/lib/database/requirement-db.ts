@@ -74,6 +74,8 @@ export interface UpdateRequirementParams {
   type?: string;
   budget?: number;
   cron?: string;
+  cycle?: string;
+  metadata?: any;
 }
 
 export interface DbRequirementStatus {
@@ -228,6 +230,7 @@ export async function updateRequirement(
   if (params.budget !== undefined) updateData.budget = params.budget;
   if (params.cron !== undefined) updateData.cron = params.cron;
   if (params.cycle !== undefined) updateData.cycle = params.cycle;
+  if (params.metadata !== undefined) updateData.metadata = params.metadata;
 
   const { data, error } = await supabaseAdmin
     .from('requirements')
