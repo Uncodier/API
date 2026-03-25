@@ -83,6 +83,64 @@ export async function POST(request: NextRequest) {
       messageContent += (messageContent ? '\n\n' : '') + `[Ubicación adjunta]: ${address} (Lat: ${webhookData.Latitude}, Lng: ${webhookData.Longitude})`;
     }
 
+    // ------------------------------------------------------------------------------------
+    // PROCESAR TRANSCRIPCIÓN DE AUDIOS (Para que el agente entienda mensajes de voz)
+    // ------------------------------------------------------------------------------------
+    if (mediaDownloads.length > 0) {
+      const accountSid = businessAccountId || process.env.GEAR_TWILIO_ACCOUNT_SID;
+      const authToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
+      
+      if (accountSid && authToken) {
+        for (let i = 0; i < mediaDownloads.length; i++) {
+          const media = mediaDownloads[i];
+          if (media.contentType && media.contentType.toLowerCase().startsWith('audio/')) {
+            try {
+              console.log(`🎙️ Transcribiendo audio adjunto: ${media.url}`);
+              const headers = new Headers();
+              headers.set('Authorization', `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`);
+              
+              // Usar manual redirect para evitar pasar el token de Twilio al bucket S3 (donde redirecciona Twilio)
+              let resp = await fetch(media.url, { headers, redirect: 'manual' });
+              
+              if (resp.status >= 300 && resp.status < 400 && resp.headers.has('location')) {
+                 const redirectUrl = resp.headers.get('location')!;
+                 resp = await fetch(redirectUrl);
+              }
+              
+              if (resp.ok) {
+                const buffer = await resp.arrayBuffer();
+                const OpenAI = (await import('openai')).default;
+                const baseURL = process.env.VERCEL_AI_GATEWAY_OPENAI || (process.env.VERCEL_AI_GATEWAY ? `${process.env.VERCEL_AI_GATEWAY}/openai` : undefined);
+                const apiKey = process.env.VERCEL_AI_GATEWAY_API_KEY || process.env.OPENAI_API_KEY;
+                
+                if (apiKey) {
+                  const openai = new OpenAI({ apiKey, baseURL });
+                  const file = await OpenAI.toFile(Buffer.from(buffer), 'audio.ogg', { type: media.contentType });
+                  
+                  const transcription = await openai.audio.transcriptions.create({
+                    file: file,
+                    model: 'whisper-1',
+                  });
+                  
+                  if (transcription && transcription.text) {
+                     console.log(`✅ Transcripción exitosa: "${transcription.text.substring(0, 50)}..."`);
+                     messageContent += `\n\n[Mensaje de voz transcrito]: "${transcription.text}"`;
+                  }
+                } else {
+                  console.warn(`⚠️ No OpenAI API key available for transcription`);
+                }
+              } else {
+                console.warn(`⚠️ Failed to download Twilio audio for transcription: ${resp.status}`);
+              }
+            } catch (err: any) {
+              console.warn(`⚠️ Error al transcribir audio en el webhook:`, err.message);
+            }
+          }
+        }
+      }
+    }
+    // ------------------------------------------------------------------------------------
+
     if (!messageContent.trim()) {
        messageContent = '[Mensaje vacío o formato no soportado]';
     }

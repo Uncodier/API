@@ -39,8 +39,8 @@ export async function processUnregisteredUserEmailStep(
         .single();
         
       if (siteData) {
-        const fallbackName = `Email Lead (${userEmail.split('@')[0]})`;
-        const leadName = profileName ? `${profileName} (Email)` : fallbackName;
+        const fallbackName = `Lead: ${userEmail.split('@')[0]}`;
+        const leadName = profileName ? profileName : fallbackName;
         
         const { data: newLead, error: leadError } = await supabaseAdmin
           .from('leads')
@@ -81,8 +81,8 @@ export async function processUnregisteredUserEmailStep(
     if (existingConversation) {
       convId = existingConversation.id;
     } else {
-      const fallbackTitle = `Gear Lead Email: ${userEmail.split('@')[0]}`;
-      const title = profileName ? `Gear Lead Email: ${profileName}` : fallbackTitle;
+      const fallbackTitle = `Email: ${userEmail.split('@')[0]}`;
+      const title = profileName ? `Email: ${profileName}` : fallbackTitle;
       
       const convData: any = {
         lead_id: leadId,

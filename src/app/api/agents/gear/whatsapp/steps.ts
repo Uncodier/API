@@ -47,8 +47,8 @@ export async function processUnregisteredUserStep(
         .single();
         
       if (siteData) {
-        const fallbackName = `WhatsApp Lead (${phoneNumber.substring(0, 5)}***)`;
-        const leadName = profileName ? `${profileName} (WhatsApp)` : fallbackName;
+        const fallbackName = `Lead: ${phoneNumber.substring(0, 5)}***`;
+        const leadName = profileName ? profileName : fallbackName;
         
         const { data: newLead, error: leadError } = await supabaseAdmin
           .from('leads')
@@ -83,6 +83,7 @@ export async function processUnregisteredUserStep(
       .select('id')
       .eq('lead_id', leadId)
       .eq('status', 'active')
+      .eq('channel', 'whatsapp')
       .order('created_at', { ascending: false })
       .limit(1)
       .maybeSingle();
@@ -90,15 +91,16 @@ export async function processUnregisteredUserStep(
     if (existingConversation) {
       convId = existingConversation.id;
     } else {
-      const fallbackTitle = `Gear Lead WhatsApp: ${phoneNumber.substring(0, 5)}***`;
-      const title = profileName ? `Gear Lead WhatsApp: ${profileName}` : fallbackTitle;
+      const fallbackTitle = `WhatsApp: ${phoneNumber.substring(0, 5)}***`;
+      const title = profileName ? `WhatsApp: ${profileName}` : fallbackTitle;
       
       const convData: any = {
         lead_id: leadId,
         site_id: siteId,
         status: 'active',
         title: title,
-        custom_data: { source: 'whatsapp', whatsapp_phone: phoneNumber, business_account_id: businessAccountId }
+        channel: 'whatsapp',
+        custom_data: { source: 'whatsapp', channel: 'whatsapp', whatsapp_phone: phoneNumber, business_account_id: businessAccountId }
       };
 
       const { data: newConversation, error: convError } = await supabaseAdmin
@@ -116,20 +118,21 @@ export async function processUnregisteredUserStep(
     }
     
     // Save the user message (sin visitor_id)
-    const { error: msgError } = await supabaseAdmin.from('messages').insert([{
+    const { error: msgError, data: msgData } = await supabaseAdmin.from('messages').insert([{
       conversation_id: convId,
       content: messageContent,
       role: 'user',
-      status: 'received',
-      custom_data: { source: 'whatsapp', whatsapp_message_id: waMessageId, whatsapp_phone: phoneNumber }
-    }]);
+      custom_data: { source: 'whatsapp', status: 'received', whatsapp_message_id: waMessageId, whatsapp_phone: phoneNumber },
+      lead_id: leadId
+    }]).select().single();
 
     if (msgError) console.error('❌ Error saving user message:', msgError);
+    if (!msgError) console.log('✅ User message saved:', msgData.id);
 
     // Fetch conversation history for context
     const { data: pastMessages } = await supabaseAdmin
       .from('messages')
-      .select('content, role')
+      .select('id, content, role')
       .eq('conversation_id', convId)
       .order('created_at', { ascending: true })
       .limit(20);
@@ -138,6 +141,15 @@ export async function processUnregisteredUserStep(
       role: msg.role === 'user' ? 'user' : 'assistant',
       content: msg.content
     }));
+    
+    // Check if the current message is in pastMessages
+    const hasCurrentMessage = pastMessages?.some(m => m.id === msgData?.id);
+    if (!hasCurrentMessage && msgData) {
+      messages.push({
+        role: 'user',
+        content: messageContent
+      });
+    }
 
     // 2. Run the assistant using OpenAIAgentExecutor
     const customTools = [createAccountTool(), verifyAccountTool()];
@@ -162,11 +174,12 @@ export async function processUnregisteredUserStep(
         conversation_id: convId,
         content: assistantResponse,
         role: 'assistant',
-        status: 'sent',
-        custom_data: { source: 'whatsapp', whatsapp_phone: phoneNumber }
+        custom_data: { source: 'whatsapp', status: 'sent', whatsapp_phone: phoneNumber },
+        lead_id: leadId
       }]).select().single();
       
       if (saveError) console.error('❌ Error saving assistant response:', saveError);
+      if (!saveError && savedMsg) console.log('✅ Assistant message saved:', savedMsg.id);
     }
 
     return assistantResponse;

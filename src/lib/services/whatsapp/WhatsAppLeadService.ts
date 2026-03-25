@@ -150,7 +150,7 @@ export class WhatsAppLeadService {
         leadData.name = senderName.trim();
       } else {
         // Usar nombre por defecto basado en el número
-        leadData.name = `Usuario WhatsApp ${phoneNumber.substring(-4)}`;
+        leadData.name = `Lead ${phoneNumber.substring(-4)}`;
       }
       
       // Agregar site_id y user_id si están disponibles

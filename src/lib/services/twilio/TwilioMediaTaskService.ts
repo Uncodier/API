@@ -39,8 +39,22 @@ export type TwilioMediaDownload = {
 async function downloadTwilioMedia(url: string, accountSid: string, authToken: string): Promise<{ buffer: ArrayBuffer; contentType?: string } | null> {
   const headers = new Headers();
   headers.set('Authorization', `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`);
-  const resp = await fetch(url, { headers });
-  if (!resp.ok) return null;
+  
+  // Usamos redirect: 'manual' para evitar que se envíe el header de Authorization al bucket S3 al que Twilio redirige
+  let resp = await fetch(url, { headers, redirect: 'manual' });
+  
+  // Si Twilio redirige (307 Temporary Redirect)
+  if (resp.status >= 300 && resp.status < 400 && resp.headers.has('location')) {
+    const redirectUrl = resp.headers.get('location')!;
+    // Descargamos de S3 *sin* el header de Authorization
+    resp = await fetch(redirectUrl);
+  }
+  
+  if (!resp.ok) {
+    console.warn(`Twilio media download failed: ${resp.status} ${resp.statusText} for URL: ${url}`);
+    return null;
+  }
+  
   const buffer = await resp.arrayBuffer();
   const contentType = resp.headers.get('content-type') || undefined;
   return { buffer, contentType };
@@ -189,6 +203,50 @@ export async function handleTwilioMediaAndCreateTask(params: {
       url = signed?.signedUrl || '';
     }
     
+    // ----------------------------------------------------------------------
+    // TRANSCRIPCIÓN DE AUDIO AUTOMÁTICA
+    // ----------------------------------------------------------------------
+    let transcriptionText = '';
+    const isAudio = (item.contentType || dl.contentType || '').toLowerCase().startsWith('audio/');
+    
+    if (isAudio) {
+      try {
+        log(`Audio detected, attempting transcription for ${url}...`);
+        
+        // Importación dinámica para no afectar otras partes si no se usa
+        const OpenAI = (await import('openai')).default;
+        
+        const baseURL = process.env.VERCEL_AI_GATEWAY_OPENAI || (process.env.VERCEL_AI_GATEWAY ? `${process.env.VERCEL_AI_GATEWAY}/openai` : undefined);
+        const apiKey = process.env.VERCEL_AI_GATEWAY_API_KEY || process.env.OPENAI_API_KEY;
+        
+        if (apiKey) {
+          const openai = new OpenAI({ apiKey, baseURL });
+          
+          // Crear un file object a partir del buffer para OpenAI
+          // Whisper soporta mp3, mp4, mpeg, mpga, m4a, wav, y webm (y ogg si se especifica)
+          const fileContentType = item.contentType || dl.contentType || 'audio/ogg';
+          const fileName = `audio.${ext}`;
+          
+          const file = await OpenAI.toFile(Buffer.from(dl.buffer), fileName, { type: fileContentType });
+          
+          const transcription = await openai.audio.transcriptions.create({
+            file: file,
+            model: 'whisper-1',
+          });
+          
+          if (transcription && transcription.text) {
+            transcriptionText = transcription.text;
+            log(`Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
+          }
+        } else {
+          warn(`No OpenAI API key for transcription`);
+        }
+      } catch (transcriptionErr: any) {
+        warn(`Transcription failed: ${transcriptionErr.message}`);
+      }
+    }
+    // ----------------------------------------------------------------------
+
     uploadedFiles.push({
       name: originalFileName,
       size: dl.buffer.byteLength,
@@ -196,7 +254,9 @@ export async function handleTwilioMediaAndCreateTask(params: {
       bucket: BUCKET,
       path: up!.path,
       url,
-    });
+      transcription: transcriptionText || undefined // Añadimos la transcripción si existe
+    } as any);
+
     
     // Crear el registro de asset si se proporcionó instanceId
     if (instanceId) {

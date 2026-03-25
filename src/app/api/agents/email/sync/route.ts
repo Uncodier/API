@@ -346,7 +346,7 @@ async function createLeadFromSentEmail(toEmail: string, siteId: string, emailSub
     
     // Extraer nombre del contacto usando método mejorado
     const extractedName = emailObject ? extractContactName(emailObject, toEmail) : null;
-    const leadName = extractedName || `Contact from Email`;
+    const leadName = extractedName || `Contact`;
     
     const leadData = {
       email: toEmail,
