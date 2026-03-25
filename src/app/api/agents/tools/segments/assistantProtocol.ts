@@ -44,7 +44,7 @@ export function segmentsTool(site_id: string, user_id?: string) {
           description: 'Action to perform on segments.'
         },
         segment_id: { type: 'string', description: 'Segment UUID (required for update)' },
-        name: { type: 'string', description: 'Segment name' },
+        name: { type: 'string', description: 'Segment name (required for create)' },
         description: { type: 'string', description: 'Description' },
         audience: { type: 'string', description: 'Target audience category (e.g. professional, tech)' },
         size: { type: 'number', description: 'Estimated audience size' },

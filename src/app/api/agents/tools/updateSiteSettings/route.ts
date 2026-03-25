@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
-export interface UpdateSiteSettingsParams {
+export interface SiteSettingsParams {
+  action: 'get' | 'update';
   about?: string;
   company_size?: string;
   industry?: string;
@@ -29,91 +30,121 @@ export interface UpdateSiteSettingsParams {
 }
 
 /**
- * Core function to update site settings
- * @param site_id - The ID of the site to update settings for
- * @param params - The settings parameters to update
+ * Core function to manage site settings (get or update)
+ * @param site_id - The ID of the site
+ * @param params - The settings parameters (must include action)
  * @returns Result object with success status and details
  */
-export async function updateSiteSettingsCore(site_id: string, params: UpdateSiteSettingsParams) {
+export async function siteSettingsCore(site_id: string, params: SiteSettingsParams) {
   try {
-    console.log(`[UpdateSiteSettings] 🔧 Updating settings for site: ${site_id}`);
-    
-    // Filter out undefined values
-    const updates: any = {};
-    Object.keys(params).forEach(key => {
-      if ((params as any)[key] !== undefined) {
-        updates[key] = (params as any)[key];
-      }
-    });
+    const { action, ...updatesParams } = params;
 
-    if (Object.keys(updates).length === 0) {
+    if (action === 'get') {
+      console.log(`[SiteSettings] 🔍 Getting settings for site: ${site_id}`);
+      
+      const { data: settings, error: fetchError } = await supabaseAdmin
+        .from('settings')
+        .select('*')
+        .eq('site_id', site_id)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error(`[SiteSettings] ❌ Error fetching settings:`, fetchError);
+        throw new Error(`Failed to fetch settings: ${fetchError.message}`);
+      }
+
       return {
-        success: false,
-        message: 'No settings provided to update',
-        updated: false
+        success: true,
+        data: settings || {},
+        message: settings ? 'Settings retrieved successfully' : 'No settings found'
       };
     }
 
-    // Check if settings record exists first
-    const { data: existingSettings, error: fetchError } = await supabaseAdmin
-      .from('settings')
-      .select('id')
-      .eq('site_id', site_id)
-      .single();
-
-    if (fetchError && fetchError.code !== 'PGRST116') {
-      console.error(`[UpdateSiteSettings] ❌ Error fetching existing settings:`, fetchError);
-      throw new Error(`Failed to fetch existing settings: ${fetchError.message}`);
-    }
-
-    let result;
-    
-    if (!existingSettings) {
-      // Create new settings record if it doesn't exist
-      console.log(`[UpdateSiteSettings] 🆕 Creating new settings record for site: ${site_id}`);
-      const { data, error } = await supabaseAdmin
-        .from('settings')
-        .insert({
-          site_id,
-          ...updates
-        })
-        .select()
-        .single();
-        
-      if (error) {
-        console.error(`[UpdateSiteSettings] ❌ Error creating settings:`, error);
-        throw new Error(`Failed to create settings: ${error.message}`);
-      }
-      result = data;
-    } else {
-      // Update existing settings record
-      console.log(`[UpdateSiteSettings] 📝 Updating existing settings record: ${existingSettings.id}`);
+    if (action === 'update') {
+      console.log(`[SiteSettings] 🔧 Updating settings for site: ${site_id}`);
       
-      const { data, error } = await supabaseAdmin
-        .from('settings')
-        .update(updates)
-        .eq('site_id', site_id)
-        .select()
-        .single();
-        
-      if (error) {
-        console.error(`[UpdateSiteSettings] ❌ Error updating settings:`, error);
-        throw new Error(`Failed to update settings: ${error.message}`);
+      // Filter out undefined values
+      const updates: any = {};
+      Object.keys(updatesParams).forEach(key => {
+        if ((updatesParams as any)[key] !== undefined) {
+          updates[key] = (updatesParams as any)[key];
+        }
+      });
+
+      if (Object.keys(updates).length === 0) {
+        return {
+          success: false,
+          message: 'No settings provided to update',
+          updated: false
+        };
       }
-      result = data;
+
+      // Check if settings record exists first
+      const { data: existingSettings, error: fetchError } = await supabaseAdmin
+        .from('settings')
+        .select('id')
+        .eq('site_id', site_id)
+        .single();
+
+      if (fetchError && fetchError.code !== 'PGRST116') {
+        console.error(`[SiteSettings] ❌ Error fetching existing settings:`, fetchError);
+        throw new Error(`Failed to fetch existing settings: ${fetchError.message}`);
+      }
+
+      let result;
+      
+      if (!existingSettings) {
+        // Create new settings record if it doesn't exist
+        console.log(`[SiteSettings] 🆕 Creating new settings record for site: ${site_id}`);
+        const { data, error } = await supabaseAdmin
+          .from('settings')
+          .insert({
+            site_id,
+            ...updates
+          })
+          .select()
+          .single();
+          
+        if (error) {
+          console.error(`[SiteSettings] ❌ Error creating settings:`, error);
+          throw new Error(`Failed to create settings: ${error.message}`);
+        }
+        result = data;
+      } else {
+        // Update existing settings record
+        console.log(`[SiteSettings] 📝 Updating existing settings record: ${existingSettings.id}`);
+        
+        const { data, error } = await supabaseAdmin
+          .from('settings')
+          .update(updates)
+          .eq('site_id', site_id)
+          .select()
+          .single();
+          
+        if (error) {
+          console.error(`[SiteSettings] ❌ Error updating settings:`, error);
+          throw new Error(`Failed to update settings: ${error.message}`);
+        }
+        result = data;
+      }
+
+      console.log(`[SiteSettings] ✅ Settings updated successfully`);
+      
+      return {
+        success: true,
+        updated: true,
+        message: 'Settings updated successfully',
+        updated_fields: Object.keys(updates)
+      };
     }
 
-    console.log(`[UpdateSiteSettings] ✅ Settings updated successfully`);
-    
     return {
-      success: true,
-      updated: true,
-      message: 'Settings updated successfully',
-      updated_fields: Object.keys(updates)
+      success: false,
+      message: 'Invalid action provided. Must be "get" or "update"'
     };
     
   } catch (error: any) {
-    console.error(`[UpdateSiteSettings] ❌ Unexpected error:`, error);
+    console.error(`[SiteSettings] ❌ Unexpected error:`, error);
     return {
       success: false,
       updated: false,
@@ -124,7 +155,7 @@ export async function updateSiteSettingsCore(site_id: string, params: UpdateSite
 }
 
 /**
- * POST endpoint to update site settings
+ * POST endpoint to manage site settings
  */
 export async function POST(request: NextRequest) {
   try {
@@ -138,12 +169,12 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const result = await updateSiteSettingsCore(site_id, params);
+    const result = await siteSettingsCore(site_id, params);
     
     const status = result.success ? 200 : 400;
     return NextResponse.json(result, { status });
   } catch (error: any) {
-    console.error('[UpdateSiteSettings] ❌ Error processing request:', error);
+    console.error('[SiteSettings] ❌ Error processing request:', error);
     return NextResponse.json(
       {
         success: false,

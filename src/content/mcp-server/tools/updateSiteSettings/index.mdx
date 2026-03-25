@@ -1,17 +1,18 @@
 ---
-title: Update Site Settings
-description: Update the site business settings, context, and copywriting guidelines.
+title: Site Settings
+description: Get or update the site business settings, context, and copywriting guidelines.
 ---
 
 
-# Update Site Settings
+# Site Settings
 
-Update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use this tool when you need to update the company profile, brand voice, target audience, products, or other business configuration. Provide only the fields you want to update.
+Get or update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use "get" action to retrieve current settings, and "update" action to modify them. Provide only the fields you want to update when using the "update" action.
 
 ## Input Schema
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
+| action | string | **REQUIRED**. The action to perform: "get" to retrieve settings, "update" to modify them. |
 | about | string | A comprehensive description of the company, its mission, and what it does. This serves as the primary context for the AI. |
 | company_size | string | The size of the company (e.g., "1-10", "11-50", "Enterprise"). |
 | industry | string | The primary industry the company operates in. |
@@ -43,7 +44,7 @@ Update the site business settings, context (about, industry, etc.), and copywrit
 POST /api/agents/tools/updateSiteSettings
 ```
 
-The `site_id` field is required when calling via REST. Provide only the fields you want to update — all fields are optional.
+The `site_id` and `action` fields are required when calling via REST. Provide only the fields you want to update — all other fields are optional.
 
 ```http
 POST /api/agents/tools/updateSiteSettings
@@ -52,9 +53,21 @@ Content-Type: application/json
 
 {
   "site_id": "YOUR_SITE_ID",
+  "action": "update",
   "about": "Acme Corp builds AI-powered sales tools for B2B companies.",
   "industry": "Software & Technology",
   "company_size": "11-50"
+}
+```
+
+```http
+POST /api/agents/tools/updateSiteSettings
+Authorization: Bearer YOUR_API_KEY
+Content-Type: application/json
+
+{
+  "site_id": "YOUR_SITE_ID",
+  "action": "get"
 }
 ```
 

@@ -6,9 +6,10 @@
 import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
-import { updateSiteSettingsCore } from './route';
+import { siteSettingsCore } from './route';
 
-export interface UpdateSiteSettingsToolParams {
+export interface SiteSettingsToolParams {
+  action: 'get' | 'update';
   about?: string;
   company_size?: string;
   industry?: string;
@@ -36,17 +37,22 @@ export interface UpdateSiteSettingsToolParams {
 }
 
 /**
- * Creates an updateSiteSettings tool for OpenAI/assistant compatibility
+ * Creates an site_settings tool for OpenAI/assistant compatibility
  * @param site_id - The site ID associated with the settings
  * @returns Tool definition compatible with OpenAI function calling
  */
 export function updateSiteSettingsTool(site_id: string) {
   return {
-    name: 'update_site_settings',
-    description: 'Update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use this tool when you need to update the company profile, brand voice, target audience, products, or other business configuration. Provide only the fields you want to update.',
+    name: 'site_settings',
+    description: 'Get or Update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use "get" action to retrieve current settings, and "update" action to modify them. Provide only the fields you want to update when using the "update" action.',
     parameters: {
       type: 'object',
       properties: {
+        action: {
+          type: 'string',
+          enum: ['get', 'update'],
+          description: 'The action to perform: "get" to retrieve settings, "update" to modify them.',
+        },
         about: {
           type: 'string',
           description: 'A comprehensive description of the company, its mission, and what it does. This serves as the primary context for the AI.',
@@ -155,14 +161,14 @@ export function updateSiteSettingsTool(site_id: string) {
           items: { type: 'object' }
         },
       },
-      required: [],
+      required: ['action'],
     },
-    execute: async (args: UpdateSiteSettingsToolParams) => {
+    execute: async (args: SiteSettingsToolParams) => {
       try {
-        console.log(`[UpdateSiteSettingsTool] 🔧 Executing settings update for site: ${site_id}`);
-        return await updateSiteSettingsCore(site_id, args);
+        console.log(`[SiteSettingsTool] 🔧 Executing settings ${args.action} for site: ${site_id}`);
+        return await siteSettingsCore(site_id, args);
       } catch (error: any) {
-        console.error(`[UpdateSiteSettingsTool] ❌ Error executing tool:`, error);
+        console.error(`[SiteSettingsTool] ❌ Error executing tool:`, error);
         throw error;
       }
     },
@@ -170,16 +176,17 @@ export function updateSiteSettingsTool(site_id: string) {
 }
 
 /**
- * Creates an updateSiteSettings tool for Scrapybara SDK compatibility
+ * Creates an site_settings tool for Scrapybara SDK compatibility
  * @param instance - The Scrapybara UbuntuInstance
  * @param site_id - The site ID associated with the settings
  * @returns Tool definition compatible with Scrapybara SDK
  */
 export function updateSiteSettingsToolScrapybara(instance: UbuntuInstance, site_id: string) {
   return tool({
-    name: 'update_site_settings',
-    description: 'Update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use this tool when you need to update the company profile, brand voice, target audience, products, or other business configuration. Provide only the fields you want to update.',
+    name: 'site_settings',
+    description: 'Get or Update the site business settings, context (about, industry, etc.), and copywriting guidelines (branding, voice, tone). Use "get" action to retrieve current settings, and "update" action to modify them. Provide only the fields you want to update when using the "update" action.',
     parameters: z.object({
+      action: z.enum(['get', 'update']).describe('The action to perform: "get" to retrieve settings, "update" to modify them.'),
       about: z.string().optional().describe('A comprehensive description of the company, its mission, and what it does. This serves as the primary context for the AI.'),
       company_size: z.string().optional().describe('The size of the company (e.g., "1-10", "11-50", "Enterprise").'),
       industry: z.string().optional().describe('The primary industry the company operates in.'),
@@ -207,11 +214,11 @@ export function updateSiteSettingsToolScrapybara(instance: UbuntuInstance, site_
     }),
     execute: async (args) => {
       try {
-        console.log(`[UpdateSiteSettingsTool-Scrapybara] 🔧 Executing settings update for site: ${site_id}`);
-        // Map args to UpdateSiteSettingsToolParams structure if needed
-        return await updateSiteSettingsCore(site_id, args as UpdateSiteSettingsToolParams);
+        console.log(`[SiteSettingsTool-Scrapybara] 🔧 Executing settings ${args.action} for site: ${site_id}`);
+        // Map args to SiteSettingsToolParams structure if needed
+        return await siteSettingsCore(site_id, args as SiteSettingsToolParams);
       } catch (error: any) {
-        console.error(`[UpdateSiteSettingsTool-Scrapybara] ❌ Error executing tool:`, error);
+        console.error(`[SiteSettingsTool-Scrapybara] ❌ Error executing tool:`, error);
         throw error;
       }
     },
