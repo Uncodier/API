@@ -29,6 +29,10 @@ export interface RequirementsToolParams {
   site_id?: string;
   user_id?: string;
   search?: string;
+  created_at_from?: string;
+  created_at_to?: string;
+  updated_at_from?: string;
+  updated_at_to?: string;
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
   limit?: number;
@@ -67,6 +71,10 @@ export function requirementsTool(site_id: string, user_id?: string) {
         site_id: { type: 'string', description: 'Filter by site UUID' },
         user_id: { type: 'string', description: 'Filter by user UUID' },
         search: { type: 'string', description: 'Text search in title/description' },
+        created_at_from: { type: 'string', description: 'Filter requirements created on or after this date (ISO 8601 format)' },
+        created_at_to: { type: 'string', description: 'Filter requirements created on or before this date (ISO 8601 format)' },
+        updated_at_from: { type: 'string', description: 'Filter requirements updated on or after this date (ISO 8601 format)' },
+        updated_at_to: { type: 'string', description: 'Filter requirements updated on or before this date (ISO 8601 format)' },
         sort_by: { type: 'string', description: 'Field to sort by' },
         sort_order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort order' },
         limit: { type: 'number', description: 'Max results (default 50)' },

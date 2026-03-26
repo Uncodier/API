@@ -47,6 +47,10 @@ export interface RequirementFilters {
   offset?: number;
   excluded_statuses?: string[];
   excluded_completion_statuses?: string[];
+  created_at_from?: string;
+  created_at_to?: string;
+  updated_at_from?: string;
+  updated_at_to?: string;
 }
 
 export interface CreateRequirementParams {
@@ -117,6 +121,11 @@ export async function getRequirements(filters: RequirementFilters): Promise<{
   if (filters.status) query = query.eq('status', filters.status);
   if (filters.completion_status) query = query.eq('completion_status', filters.completion_status);
   if (filters.priority) query = query.eq('priority', filters.priority);
+
+  if (filters.created_at_from) query = query.gte('created_at', filters.created_at_from);
+  if (filters.created_at_to) query = query.lte('created_at', filters.created_at_to);
+  if (filters.updated_at_from) query = query.gte('updated_at', filters.updated_at_from);
+  if (filters.updated_at_to) query = query.lte('updated_at', filters.updated_at_to);
 
   if (filters.excluded_statuses && filters.excluded_statuses.length > 0) {
     const values = `(${filters.excluded_statuses.map(s => `"${s}"`).join(',')})`;
