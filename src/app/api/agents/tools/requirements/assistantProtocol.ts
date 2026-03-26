@@ -33,6 +33,8 @@ export interface RequirementsToolParams {
   created_at_to?: string;
   updated_at_from?: string;
   updated_at_to?: string;
+  excluded_statuses?: string[];
+  excluded_completion_statuses?: string[];
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
   limit?: number;
@@ -75,6 +77,8 @@ export function requirementsTool(site_id: string, user_id?: string) {
         created_at_to: { type: 'string', description: 'Filter requirements created on or before this date (ISO 8601 format)' },
         updated_at_from: { type: 'string', description: 'Filter requirements updated on or after this date (ISO 8601 format)' },
         updated_at_to: { type: 'string', description: 'Filter requirements updated on or before this date (ISO 8601 format)' },
+        excluded_statuses: { type: 'array', items: { type: 'string' }, description: 'Exclude requirements with these statuses' },
+        excluded_completion_statuses: { type: 'array', items: { type: 'string' }, description: 'Exclude requirements with these completion statuses' },
         sort_by: { type: 'string', description: 'Field to sort by' },
         sort_order: { type: 'string', enum: ['asc', 'desc'], description: 'Sort order' },
         limit: { type: 'number', description: 'Max results (default 50)' },

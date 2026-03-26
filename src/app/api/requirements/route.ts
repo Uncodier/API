@@ -11,6 +11,8 @@ const GetRequirementsSchema = z.object({
   created_at_to: z.string().optional(),
   updated_at_from: z.string().optional(),
   updated_at_to: z.string().optional(),
+  excluded_statuses: z.string().optional().transform(val => val ? val.split(',') : undefined),
+  excluded_completion_statuses: z.string().optional().transform(val => val ? val.split(',') : undefined),
   limit: z.coerce.number().int().min(1).max(100).optional().default(50),
   offset: z.coerce.number().int().min(0).optional().default(0),
 });
@@ -27,19 +29,15 @@ export async function GET(request: NextRequest) {
       created_at_to: searchParams.get('created_at_to') || undefined,
       updated_at_from: searchParams.get('updated_at_from') || undefined,
       updated_at_to: searchParams.get('updated_at_to') || undefined,
+      excluded_statuses: searchParams.get('excluded_statuses') || undefined,
+      excluded_completion_statuses: searchParams.get('excluded_completion_statuses') || undefined,
       limit: searchParams.get('limit') ? parseInt(searchParams.get('limit')!) : undefined,
       offset: searchParams.get('offset') ? parseInt(searchParams.get('offset')!) : undefined,
     };
 
     const validatedFilters = GetRequirementsSchema.parse(filters);
 
-    // Fetch requirements that are NOT completed AND NOT validated
-    // Interpret "no completados o validados" as excluding both completed and validated status
-    const { requirements, total, hasMore } = await getRequirements({
-      ...validatedFilters,
-      excluded_statuses: ['validated'],
-      excluded_completion_statuses: ['completed'],
-    });
+    const { requirements, total, hasMore } = await getRequirements(validatedFilters);
 
     return NextResponse.json({
       success: true,

@@ -12,7 +12,7 @@ import { MethodChip } from '../../../components/MethodChip';
   <code>/api/requirements</code>
 </div>
 
-Retrieves a list of requirements. The results exclude requirements that have a status of `completed` or `validated`.
+Retrieves a list of requirements. You can filter by various fields including status, creation date, and more.
 
 ## Query Parameters
 
@@ -22,6 +22,8 @@ Retrieves a list of requirements. The results exclude requirements that have a s
 | `user_id` | `string` | No | Filter requirements by a specific user ID. |
 | `status` | `string` | No | Filter requirements by a specific status (e.g., `in-progress`, `backlog`). |
 | `completion_status` | `string` | No | Filter requirements by a specific completion status (e.g., `pending`, `completed`). |
+| `excluded_statuses` | `string` | No | Comma-separated list of statuses to exclude (e.g., `validated`). |
+| `excluded_completion_statuses` | `string` | No | Comma-separated list of completion statuses to exclude (e.g., `completed`). |
 | `created_at_from` | `string` | No | Filter requirements created on or after this date (ISO 8601 format). |
 | `created_at_to` | `string` | No | Filter requirements created on or before this date (ISO 8601 format). |
 | `updated_at_from` | `string` | No | Filter requirements updated on or after this date (ISO 8601 format). |

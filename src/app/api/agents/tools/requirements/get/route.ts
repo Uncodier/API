@@ -16,6 +16,8 @@ const GetRequirementsSchema = z.object({
   created_at_to: z.string().optional(),
   updated_at_from: z.string().optional(),
   updated_at_to: z.string().optional(),
+  excluded_statuses: z.array(z.string()).optional(),
+  excluded_completion_statuses: z.array(z.string()).optional(),
   sort_by: z.enum(['created_at', 'updated_at', 'title', 'priority', 'status']).optional().default('created_at'),
   sort_order: z.enum(['asc', 'desc']).optional().default('desc'),
   limit: z.number().int().min(1).max(500).optional().default(50),
