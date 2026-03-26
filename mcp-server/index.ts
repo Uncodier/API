@@ -35,6 +35,12 @@ async function main() {
     process.exit(0);
   };
 
+  // Forzar el cierre cuando el cliente (mcporter) se desconecta o cierra el pipe
+  process.stdin.on('close', () => {
+    console.error('[MCP] Client disconnected (stdin closed). Shutting down...');
+    process.exit(0);
+  });
+
   await server.connect(transport);
 }
 
