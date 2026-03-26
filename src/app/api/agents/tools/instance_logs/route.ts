@@ -10,43 +10,51 @@ export async function createInstanceLogCore(params: {
   level: string;
   message: string;
   details?: Record<string, any>;
+  tokens_used?: Record<string, any>;
 }) {
-  const { site_id, instance_id, user_id, log_type, level, message, details } = params;
+  const { site_id, instance_id, user_id, log_type, level, message, details, tokens_used } = params;
 
   if (!site_id || !log_type || !level || !message) {
     throw new Error('site_id, log_type, level, and message are required');
   }
 
-  // Deduct credits if token usage is provided
-  if (details?.usage && (details.usage.promptTokens || details.usage.input_tokens || details.usage.prompt_tokens)) {
-    const inputTokens = details.usage.promptTokens || details.usage.input_tokens || details.usage.prompt_tokens || 0;
-    const outputTokens = details.usage.completionTokens || details.usage.output_tokens || details.usage.completion_tokens || 0;
-    const totalTokens = inputTokens + outputTokens;
+  // Deduct credits if token usage is provided (either in tokens_used or details.usage)
+  let inputTokens = 0;
+  let outputTokens = 0;
+  
+  if (tokens_used) {
+    inputTokens = tokens_used.promptTokens || tokens_used.input_tokens || tokens_used.prompt_tokens || 0;
+    outputTokens = tokens_used.completionTokens || tokens_used.output_tokens || tokens_used.completion_tokens || 0;
+  } else if (details?.usage) {
+    inputTokens = details.usage.promptTokens || details.usage.input_tokens || details.usage.prompt_tokens || 0;
+    outputTokens = details.usage.completionTokens || details.usage.output_tokens || details.usage.completion_tokens || 0;
+  }
 
-    if (totalTokens > 0) {
-      const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
-      
-      if (tokensCost > 0) {
-        try {
-          await CreditService.deductCredits(
-            site_id,
-            tokensCost,
-            'assistant_tokens',
-            `Assistant execution (${totalTokens} tokens)`,
-            {
-              tokens: totalTokens,
-              input_tokens: inputTokens,
-              output_tokens: outputTokens,
-              instance_id: instance_id || 'unknown',
-              log_type
-            }
-          );
-        } catch (e) {
-          console.error('Failed to deduct credits for instance_log tokens:', e);
-          // If the error is insufficient credits, we might want to fail the log or just record it
-          // Based on assistant-executor.ts, it logs the error but continues, or throws if before execution.
-          // Since this is logging an already executed action, we shouldn't throw to avoid losing the log.
-        }
+  const totalTokens = inputTokens + outputTokens;
+
+  if (totalTokens > 0) {
+    const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+    
+    if (tokensCost > 0) {
+      try {
+        await CreditService.deductCredits(
+          site_id,
+          tokensCost,
+          'assistant_tokens',
+          `Assistant execution (${totalTokens} tokens)`,
+          {
+            tokens: totalTokens,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            instance_id: instance_id || 'unknown',
+            log_type
+          }
+        );
+      } catch (e) {
+        console.error('Failed to deduct credits for instance_log tokens:', e);
+        // If the error is insufficient credits, we might want to fail the log or just record it
+        // Based on assistant-executor.ts, it logs the error but continues, or throws if before execution.
+        // Since this is logging an already executed action, we shouldn't throw to avoid losing the log.
       }
     }
   }
@@ -62,6 +70,11 @@ export async function createInstanceLogCore(params: {
         level,
         message,
         details: details || null,
+        tokens_used: tokens_used || (details?.usage ? {
+          promptTokens: inputTokens,
+          completionTokens: outputTokens,
+          totalTokens: totalTokens
+        } : null),
         created_at: new Date().toISOString(),
       }
     ])
