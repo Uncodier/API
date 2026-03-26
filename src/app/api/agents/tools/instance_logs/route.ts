@@ -33,6 +33,7 @@ export async function createInstanceLogCore(params: {
   const totalTokens = inputTokens + outputTokens;
 
   if (totalTokens > 0) {
+    // Correct pricing: 1 credit per 1 million tokens
     const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
     
     if (tokensCost > 0) {
