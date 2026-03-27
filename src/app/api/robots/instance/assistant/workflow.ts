@@ -85,10 +85,27 @@ export async function runAssistantWorkflow(
 
   // Initialize messages with user prompt
   // Note: System prompt is handled separately in context
+  let userContent: any = context.initialMessage;
+  
+  // If we have image assets, format as multimodal message
+  if (context.imageAssets && context.imageAssets.length > 0) {
+    userContent = [
+      { type: 'text', text: context.initialMessage }
+    ];
+    
+    context.imageAssets.forEach((img: any) => {
+      userContent.push({
+        type: 'image_url',
+        image_url: { url: img.url }
+      });
+    });
+    console.log(`[Workflow] Attached ${context.imageAssets.length} image assets to user message`);
+  }
+
   let messages = [
     {
       role: 'user',
-      content: context.initialMessage
+      content: userContent
     }
   ];
 

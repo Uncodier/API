@@ -20,23 +20,22 @@ export class InstanceAssetsService {
   /**
    * Main public method to append assets context to system prompt
    */
-  public static async appendAssetsToSystemPrompt(
-    systemPrompt: string, 
+  public static async getAssetsContext(
     instance_id: string
-  ): Promise<string> {
+  ): Promise<{ text: string; images: { url: string; fileType: string }[] }> {
     try {
       console.log(`📁 [InstanceAssetsService] Fetching assets for instance: ${instance_id}`);
       
       if (!instance_id) {
         console.log(`⚠️ [InstanceAssetsService] No instance_id provided, skipping assets`);
-        return systemPrompt;
+        return { text: '', images: [] };
       }
 
       const assets = await this.fetchInstanceAssets(instance_id);
       
       if (!assets || assets.length === 0) {
         console.log(`📁 [InstanceAssetsService] No assets found for instance: ${instance_id}`);
-        return systemPrompt;
+        return { text: '', images: [] };
       }
 
       console.log(`📁 [InstanceAssetsService] Found ${assets.length} assets for instance: ${instance_id}`);
@@ -44,23 +43,25 @@ export class InstanceAssetsService {
       const processedAssets = await this.processAssets(assets);
       const assetsContext = this.buildAssetsContext(processedAssets);
       
+      const images = processedAssets
+        .filter(asset => asset.base64Image)
+        .map(asset => ({
+          url: asset.base64Image!,
+          fileType: asset.file_type
+        }));
+
       if (!assetsContext.trim()) {
         console.log(`📁 [InstanceAssetsService] No valid asset content generated`);
-        return systemPrompt;
+        return { text: '', images };
       }
 
-      const combinedPrompt = [
-        systemPrompt,
-        assetsContext
-      ].filter(Boolean).join('\n\n');
-
-      console.log(`✅ [InstanceAssetsService] Assets context appended (${assetsContext.length} characters)`);
-      return combinedPrompt;
+      console.log(`✅ [InstanceAssetsService] Assets context appended (${assetsContext.length} characters, ${images.length} images)`);
+      return { text: assetsContext, images };
 
     } catch (error) {
       console.error(`❌ [InstanceAssetsService] Error processing assets:`, error);
-      // Return original system prompt on error to avoid breaking the assistant
-      return systemPrompt;
+      // Return empty on error to avoid breaking the assistant
+      return { text: '', images: [] };
     }
   }
 

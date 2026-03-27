@@ -25,6 +25,7 @@ export interface AssistantContext {
     user_id: string;
   };
   initialMessage: string;
+  imageAssets: { url: string; fileType: string }[];
 }
 
 // Step 1: Prepare context (fetch data, build prompts)
@@ -167,7 +168,9 @@ export async function prepareAssistantContext(
   // We do NOT pass these instantiated tools in the return value to avoid serialization issues
   const toolsWithImageGeneration = getAssistantTools(siteId, userId, instanceId, customTools, agentType, userPhone);
   
-  const assetsContext = await InstanceAssetsService.appendAssetsToSystemPrompt('', instanceId);
+  const assetsData = await InstanceAssetsService.getAssetsContext(instanceId);
+  const assetsContext = assetsData.text;
+  const imageAssets = assetsData.images;
 
   // Instance renaming logic prompt
   const instanceName = instance.name || '';
@@ -237,7 +240,8 @@ PLAN vs STEPS:
       instance_id: instanceId,
       site_id: siteId,
       user_id: userId,
-    }
+    },
+    imageAssets
   };
 }
 

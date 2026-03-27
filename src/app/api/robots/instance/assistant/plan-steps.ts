@@ -95,10 +95,26 @@ Expected Output: ${step.expected_output}
     systemPrompt: context.systemPrompt + stepContextPrompt
   };
 
+  let userContent: any = `Execute step ${step.order}: ${step.title}. ${step.instructions}`;
+  
+  // If we have image assets, format as multimodal message for the plan step too
+  if (context.imageAssets && context.imageAssets.length > 0) {
+    userContent = [
+      { type: 'text', text: `Execute step ${step.order}: ${step.title}. ${step.instructions}` }
+    ];
+    
+    context.imageAssets.forEach((img: any) => {
+      userContent.push({
+        type: 'image_url',
+        image_url: { url: img.url }
+      });
+    });
+  }
+
   const messages = [
     {
       role: 'user',
-      content: `Execute step ${step.order}: ${step.title}. ${step.instructions}`
+      content: userContent
     }
   ];
 

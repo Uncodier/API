@@ -946,7 +946,8 @@ export class BackgroundBuilder {
 1. Respond helpfully to user requests.
 2. Use your capabilities effectively.
 3. Be concise and clear in your responses.
-4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.`;
+4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.
+5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.`;
   }
   
   /**
@@ -1217,7 +1218,8 @@ Your capabilities include: ${Array.isArray(fallbackCapabilities) ? fallbackCapab
 1. Respond helpfully to user requests.
 2. Use your capabilities effectively.
 3. Be concise and clear in your responses.
-4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.`;
+4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.
+5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.`;
     
     console.log(`⚠️ [BackgroundBuilder] Background de emergencia generado (${emergencyBackground.length} caracteres)`);
     return emergencyBackground;

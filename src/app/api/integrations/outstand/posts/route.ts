@@ -8,6 +8,7 @@ export async function POST(request: Request) {
     const result = await client.createPost(body);
     return NextResponse.json(result);
   } catch (error: any) {
+    console.error('[Outstand API Error]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
@@ -24,6 +25,7 @@ export async function GET(request: Request) {
     const result = await client.listPosts(params);
     return NextResponse.json(result);
   } catch (error: any) {
+    console.error('[Outstand API Error]', error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
