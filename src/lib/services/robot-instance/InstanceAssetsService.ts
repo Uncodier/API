@@ -217,6 +217,18 @@ export class InstanceAssetsService {
     try {
       console.log(`🖼️ [InstanceAssetsService] Processing image file: ${asset.name}`);
       
+      // If we have a direct URL, use it directly (OpenAI handles URLs perfectly and it saves bandwidth/memory)
+      const url = asset.file_path || asset.public_url || asset.url;
+      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+        console.log(`✅ [InstanceAssetsService] Using direct URL for image: ${url}`);
+        return {
+          id: asset.id,
+          name: asset.name,
+          file_type: asset.file_type,
+          base64Image: url // We store the URL here, the property name is kept for backward compatibility
+        };
+      }
+      
       const content = await AgentService.getAgentFileContent(asset.file_path || asset.id);
       
       if (!content) {
@@ -229,10 +241,11 @@ export class InstanceAssetsService {
         };
       }
 
-      // Convert to base64 if not already
+      // Convert to base64 if not already (for local or DB stored files)
       let base64Image = content;
-      if (!content.startsWith('data:image/')) {
+      if (!content.startsWith('data:image/') && !content.startsWith('http')) {
         const mimeType = this.getMimeType(asset.file_type);
+        // Note: this assumes content is actually base64 string, not corrupted binary
         base64Image = `data:${mimeType};base64,${content}`;
       }
 
@@ -312,8 +325,8 @@ export class InstanceAssetsService {
       } else if (asset.content) {
         context += `- Content:\n\`\`\`\n${asset.content}\n\`\`\`\n`;
       } else if (asset.base64Image) {
-        context += `- Content: [Image data available - ${asset.file_type}]\n`;
-        context += `- Note: This image can be processed by vision models\n`;
+        context += `- Content: [Image data available directly in your context - ${asset.file_type}]\n`;
+        context += `- Note: You ALREADY have native vision capabilities. This image is attached directly to your message history. You can see, analyze, and describe it directly without needing any external tools.\n`;
       } else if (asset.metadata) {
         context += `- Metadata: ${JSON.stringify(asset.metadata, null, 2)}\n`;
       }

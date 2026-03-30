@@ -49,6 +49,9 @@ import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status
 import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
 import { audioToTextTool } from '@/app/api/agents/tools/audioToText/assistantProtocol';
 import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantProtocol';
+import { socialMediaAccountsTool } from '@/app/api/agents/tools/socialMediaAccounts/assistantProtocol';
+import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublish/assistantProtocol';
+import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -230,6 +233,9 @@ export const getAssistantTools = (
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
     createSecretTool(siteId),
+    socialMediaAccountsTool(siteId),
+    socialMediaPublishTool(siteId),
+    socialMediaPostsTool(siteId),
   ];
 
   if (agentType === 'gear') {

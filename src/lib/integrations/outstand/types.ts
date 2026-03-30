@@ -44,6 +44,7 @@ export interface CreatePostParams {
   instagram?: any;
   youtube?: any;
   tiktok?: any;
+  tenant_id?: string; // Optional tenant ID from payload
 }
 
 export interface ListPostsParams {

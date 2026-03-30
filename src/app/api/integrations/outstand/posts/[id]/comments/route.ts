@@ -3,10 +3,12 @@ import { getOutstandClient } from '@/lib/integrations/outstand/client';
 
 export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
   try {
+    const { searchParams } = new URL(request.url);
+    const tenantId = searchParams.get('tenant_id');
     const params = await context.params;
     const body = await request.json();
     const client = getOutstandClient();
-    const result = await client.publishComment(params.id, body);
+    const result = await client.publishComment(params.id, body, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
@@ -17,11 +19,12 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   try {
     const params = await context.params;
     const { searchParams } = new URL(request.url);
+    const tenantId = searchParams.get('tenant_id');
     const network = searchParams.get('network') || undefined;
     const username = searchParams.get('username') || undefined;
 
     const client = getOutstandClient();
-    const result = await client.getComments(params.id, { network, username });
+    const result = await client.getComments(params.id, { network, username }, tenantId || undefined);
     return NextResponse.json(result);
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });

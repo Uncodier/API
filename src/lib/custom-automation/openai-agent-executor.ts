@@ -45,9 +45,9 @@ function filterImages(messages: any[], imagesToKeep: number): void {
         const contentPart = msg.content[j];
         
         if (contentPart.type === 'image_url' && contentPart.image_url) {
-          // Validate base64 format before keeping
+          // Validate base64 or URL format before keeping
           const imageUrl = contentPart.image_url.url;
-          if (imageUrl && imageUrl.startsWith('data:image/')) {
+          if (imageUrl && (imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
             if (imagesKept < imagesToKeep) {
               imagesKept++;
             } else {

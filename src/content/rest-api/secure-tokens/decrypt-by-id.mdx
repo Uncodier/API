@@ -1,0 +1,100 @@
+# Decrypt Token by ID
+
+Endpoint to retrieve and decrypt a specific secure token by its unique identifier (`id`). This endpoint is intended for server-to-server operations and requires API key authentication.
+
+## Request
+
+**Endpoint:** `POST /api/secure-tokens/{id}/decrypt`
+
+**Headers:**
+- `Content-Type: application/json`
+- `x-api-key: your_api_key_here` (or `Authorization: Bearer your_api_key_here`)
+
+**Path Parameters:**
+- `id` (string, UUID, required): The unique identifier of the secure token to decrypt.
+
+**Request Body:**
+```json
+{
+  "site_id": "string (UUID, required) - The site ID associated with the token"
+}
+```
+
+## Response
+
+### Success Response (200 OK)
+
+If the token is found, belongs to the specified `site_id`, and decrypts successfully, the endpoint returns the decrypted token value. If the original value was stored as JSON, it will be parsed and returned as an object.
+
+```json
+{
+  "success": true,
+  "data": {
+    "tokenValue": "decrypted_secret_or_object_here",
+    "decrypted": true,
+    "raw": "raw_decrypted_string" // Included if tokenValue is parsed JSON
+  }
+}
+```
+
+### Error Responses
+
+**400 Bad Request**
+Returned if `id` or `site_id` is missing or invalid.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "INVALID_REQUEST",
+    "message": "site_id is required"
+  }
+}
+```
+
+**401 Unauthorized**
+Returned if no API key is provided or it is invalid.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "API key is required for server-to-server requests"
+  }
+}
+```
+
+**403 Forbidden**
+Returned if the provided API key belongs to a different `site_id` than the one requested.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "UNAUTHORIZED",
+    "message": "API key does not have access to this site"
+  }
+}
+```
+
+**404 Not Found**
+Returned if the token with the specified ID and `site_id` does not exist in the database.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "NOT_FOUND",
+    "message": "Token not found"
+  }
+}
+```
+
+**500 Internal Server Error**
+Returned if the decryption fails or there is a database error.
+```json
+{
+  "success": false,
+  "error": {
+    "code": "DECRYPTION_ERROR",
+    "message": "Failed to decrypt token. The token may be in an unsupported format or encrypted with a different key."
+  }
+}
+```
