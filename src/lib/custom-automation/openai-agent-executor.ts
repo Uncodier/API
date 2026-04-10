@@ -583,11 +583,11 @@ export class OpenAIAgentExecutor {
           completionOptions.temperature = temperature;
         }
         
-        // Add reasoning_effort and verbosity for o-series models (GPT-5.2 family: o1, o3, etc.)
+        // Add reasoning_effort for o-series models (GPT-5.2 family: o1, o3, etc.)
         if (isReasoningModel) {
           completionOptions.reasoning_effort = reasoningEffort; // Options: low, medium, high
-          completionOptions.verbosity = verbosity; // Options: low, medium, high
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort}, verbosity=${verbosity} for o-series model: ${deploymentName}`);
+          // Note: OpenAI does not support a 'verbosity' parameter. Passing it causes HTTP 500 on Azure OpenAI.
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort} for o-series model: ${deploymentName}`);
         }
 
         // Add response format for structured output if schema is provided

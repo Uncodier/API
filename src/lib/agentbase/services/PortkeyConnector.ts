@@ -152,10 +152,11 @@ export class PortkeyConnector {
           };
           console.log(`[PortkeyConnector] Using reasoning.effort=${reasoningEffort} for GPT-5.2 model: ${finalModelId}`);
         }
-        if (verbosity !== undefined) {
-          modelOptions.verbosity = verbosity;
-          console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5.2 model: ${finalModelId}`);
-        }
+        // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors on some providers.
+        // if (verbosity !== undefined) {
+        //   modelOptions.verbosity = verbosity;
+        //   console.log(`[PortkeyConnector] Using verbosity=${verbosity} for GPT-5.2 model: ${finalModelId}`);
+        // }
       }
       
       // Set streaming options if enabled

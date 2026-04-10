@@ -85,13 +85,14 @@ export class AgentConnector extends Base {
         siteId: command.site_id,
       };
       
-      // Add reasoning_effort and verbosity if present in command
+      // Add reasoning_effort if present in command
       if (command.reasoning_effort) {
         modelOptions.reasoningEffort = command.reasoning_effort;
       }
-      if (command.metadata?.verbosity) {
-        modelOptions.verbosity = command.metadata.verbosity;
-      }
+      // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors.
+      // if (command.metadata?.verbosity) {
+      //   modelOptions.verbosity = command.metadata.verbosity;
+      // }
       
       // Only set temperature if explicitly provided in command
       if (command.temperature !== undefined) {
