@@ -16,7 +16,8 @@ export function requirementStatusTool(site_id: string, default_instance_id?: str
         source_code: { type: 'string', description: 'URL to a zip file containing the source code related to the requirement objective or preview (optional)' },
         status: { type: 'string', description: 'Progress status (e.g. in-progress, completed, failed) (required for create)' },
         message: { type: 'string', description: 'Message or detail of the progress' },
-        cycle: { type: 'string', description: 'Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value)' }
+        cycle: { type: 'string', description: 'Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value)' },
+        endpoint_url: { type: 'string', description: 'Automation endpoint for manual calling of the task, or automation' }
       },
       required: ['requirement_id']
     },
@@ -31,6 +32,7 @@ export function requirementStatusTool(site_id: string, default_instance_id?: str
       status?: string;
       message?: string;
       cycle?: string;
+      endpoint_url?: string;
     }) => {
       const action = args.action || 'create';
       let effective_instance_id = args.instance_id || default_instance_id;

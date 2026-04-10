@@ -1,0 +1,34 @@
+---
+title: deepResearch
+description: Ejecuta el workflow deepResearchWorkflow en Temporal para investigación profunda
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# deepResearch
+
+Ejecuta el workflow deepResearchWorkflow en Temporal para investigación profunda
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/deepResearch</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+| `research_topic` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/deepResearch" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value",
+    "research_topic": "value"
+  }'
+```

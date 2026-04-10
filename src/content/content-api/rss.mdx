@@ -1,0 +1,52 @@
+---
+title: RSS Feed
+description: Get site content in RSS format.
+---
+
+import { MethodChip } from '@/components/MethodChip'
+
+# RSS Feed API
+
+The RSS Feed API provides your Makinari site's published content in a standard XML format, making it easy for users to subscribe using RSS readers or for syndicating your content to other platforms.
+
+## Endpoints
+
+### Get RSS Feed <MethodChip method="GET" />
+
+Retrieves an XML formatted RSS feed of published blog posts for a specific site. The site is identified either by the `url` query parameter or by automatically detecting the request's `Origin` or `Referer` headers.
+
+```http
+GET /api/public/rss
+```
+
+**Authentication Requirements:**
+- **From a registered domain (Browser):** No API key required. The domain must be correctly configured in your Makinari site settings.
+- **From a server/machine (No Origin):** Requires an API Key sent as a Bearer token in the `Authorization` header.
+
+**Parameters:**
+
+- `url` (optional): The URL or domain of your site (e.g., `example.com` or `https://example.com`). If not provided, the API will try to infer it from the request headers.
+
+**Response:**
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>My Blog Site</title>
+    <link>https://example.com</link>
+    <description>Latest content from My Blog Site</description>
+    <item>
+      <title>Welcome to our new blog</title>
+      <link>https://example.com/blog/welcome-to-our-new-blog</link>
+      <description>An introduction to our content</description>
+      <pubDate>Mon, 20 May 2024 10:00:00 GMT</pubDate>
+      <guid>987fcdeb-51a2-43d7-9012-3456789abcdef</guid>
+    </item>
+  </channel>
+</rss>
+```
+
+## CORS Support
+
+This endpoint supports full CORS, allowing cross-origin requests from any domain, making it easy to integrate into aggregators or external applications.

@@ -1,0 +1,32 @@
+---
+title: buildCampaigns
+description: Ejecuta el workflow buildCampaignsWorkflow en Temporal
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# buildCampaigns
+
+Ejecuta el workflow buildCampaignsWorkflow en Temporal
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/buildCampaigns</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/buildCampaigns" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

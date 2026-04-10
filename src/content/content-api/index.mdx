@@ -1,0 +1,22 @@
+---
+title: Content API Overview
+description: Access public site content for your integrated applications.
+---
+
+# Content API
+
+The Content API allows external systems and websites to fetch public content from your Makinari site. This is useful for building headless frontends, public directories, generating RSS feeds, or integrating your content into other platforms.
+
+## Endpoints
+
+The API is divided into specific content types:
+
+- **[Blog Posts](/content-api/blog-posts)**: Fetch published articles and posts.
+- **[RSS Feed](/content-api/rss)**: Retrieve content formatted for RSS readers and syndication.
+
+## Authentication and Access
+
+Access to the Content API depends on how the request is made:
+
+1. **Client-side Requests (Browsers)**: When called from a web browser (with an `Origin` header), the request will succeed without an API key **only if** the origin matches the domain registered for the site in your Makinari account.
+2. **Server-side Requests (Machine-to-Machine)**: When called from a server or external system (without an `Origin` header), the request **requires** a valid API key passed via the `Authorization` header, just like any other REST API endpoint.

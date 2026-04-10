@@ -1,0 +1,32 @@
+---
+title: dailyStandUp
+description: Ejecuta el workflow completo de daily standup del CMO que analiza system, sales, support, growth y genera un resumen ejecutivo
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# dailyStandUp
+
+Ejecuta el workflow completo de daily standup del CMO que analiza system, sales, support, growth y genera un resumen ejecutivo
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/dailyStandUp</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/dailyStandUp" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

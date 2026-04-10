@@ -94,6 +94,7 @@ export interface DbRequirementStatus {
   status: string;
   message: string | null;
   cycle: string | null;
+  endpoint_url: string | null;
   created_at: string;
 }
 

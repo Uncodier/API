@@ -32,6 +32,9 @@ export default async function middleware(request) {
   // Verificar si es un webhook de AgentMail (tiene su propia validación de Svix)
   const isAgentMailWebhook = request.nextUrl.pathname.startsWith('/api/integrations/agentmail/webhook/');
   
+  // Verificar si es una ruta pública explícita
+  const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
+  
   // Obtener el origen
   const origin = request.headers.get('origin');
   
@@ -65,6 +68,48 @@ export default async function middleware(request) {
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-AgentMail-Webhook', 'true');
     return response;
+  }
+  
+  // Para rutas públicas explícitas (/api/public/*), aplicar lógica específica
+  if (isPublicRoute) {
+    console.log('[Middleware] Public route detected - validating access');
+    
+    // Si viene de un navegador, verificar si el origen está permitido
+    if (origin) {
+      const isOriginAllowedCheck = await isOriginAllowed(origin);
+      if (isOriginAllowedCheck || isDevMode) {
+        console.log('[Middleware] Public route accessed from allowed origin');
+        const response = NextResponse.next();
+        response.headers.set('X-Middleware-Executed', 'true');
+        response.headers.set('X-Public-Route', 'true');
+        
+        response.headers.set('Access-Control-Allow-Origin', origin);
+        response.headers.set('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        response.headers.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        return response;
+      } else {
+        console.log('[Middleware] Public route accessed from UNALLOWED origin');
+        return new NextResponse(null, {
+          status: 403,
+          statusText: 'Forbidden - Origin not allowed for public API'
+        });
+      }
+    } 
+    // Si no hay origen (M2M) o si es origin no permitido, debe tener API key
+    else {
+      console.log('[Middleware] Public route accessed without origin (M2M) - checking API key');
+      const apiKeyResponse = await apiKeyAuth(request);
+      if (apiKeyResponse.status && apiKeyResponse.status !== 200) {
+        console.log('[Middleware] Public route API key validation failed');
+        return apiKeyResponse;
+      }
+      
+      console.log('[Middleware] Public route API key validation passed');
+      const response = NextResponse.next();
+      response.headers.set('X-Middleware-Executed', 'true');
+      response.headers.set('X-Public-Route-Authenticated', 'true');
+      return response;
+    }
   }
   
   // Verificar si el origen está permitido

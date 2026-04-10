@@ -1,0 +1,32 @@
+---
+title: buildSegmentsICP
+description: Ejecuta el workflow buildSegmentsICPWorkflow en Temporal para análisis ICP de segmentos
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# buildSegmentsICP
+
+Ejecuta el workflow buildSegmentsICPWorkflow en Temporal para análisis ICP de segmentos
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/buildSegmentsICP</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/buildSegmentsICP" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

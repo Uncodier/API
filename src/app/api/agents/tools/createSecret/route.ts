@@ -55,7 +55,7 @@ export async function createSecretCore(site_id: string, params: CreateSecretPara
          return {
            success: false,
            message: `Failed to create secret: ${directError.message}`,
-           error: directError
+           error: directError.message || String(directError)
          };
       }
       
@@ -68,10 +68,22 @@ export async function createSecretCore(site_id: string, params: CreateSecretPara
     }
 
     console.log(`[CreateSecret] ✅ Secret created successfully via RPC`);
+    
+    // Normalize data shape to match direct insert
+    // Supabase RPC typically returns the UUID string for insert_secret
+    const secretId = typeof data === 'string' ? data : data?.id;
+    
+    const normalizedData = {
+      id: secretId || null,
+      name: params.name,
+      description: params.description || `Created for site ${site_id}`,
+      created_at: data?.created_at || new Date().toISOString()
+    };
+
     return {
       success: true,
       message: 'Secret created successfully',
-      data
+      data: normalizedData
     };
     
   } catch (error: any) {
@@ -79,7 +91,7 @@ export async function createSecretCore(site_id: string, params: CreateSecretPara
     return {
       success: false,
       message: error.message || 'An unexpected error occurred',
-      error: error
+      error: error.message || String(error)
     };
   }
 }

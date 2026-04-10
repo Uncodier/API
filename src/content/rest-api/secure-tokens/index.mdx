@@ -1,4 +1,3 @@
-import { RequestExample, ResponseExample } from '../../../components/CodeExamples';
 import { MethodChip } from '../../../components/MethodChip';
 
 # Secure Tokens API
@@ -11,14 +10,11 @@ These endpoints are designed for server-to-server communication and require an A
 
 All Secure Tokens API endpoints require API Key authentication using the `x-api-key` header.
 
-<RequestExample
-  method="POST"
-  url="https://api.uncodie.com/api/secure-tokens/{id}/decrypt"
-  headers={{
-    "Content-Type": "application/json",
-    "x-api-key": "your_api_key_here"
-  }}
-  body={{
+```bash
+curl -X POST "https://api.uncodie.com/api/secure-tokens/{id}/decrypt" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: your_api_key_here" \
+  -d '{
     "site_id": "123e4567-e89b-12d3-a456-426614174000"
-  }}
-/>
+  }'
+```

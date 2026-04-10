@@ -31,7 +31,10 @@ export function createSecretTool(site_id: string) {
     execute: async (args: CreateSecretParams) => {
       const result = await createSecretCore(site_id, args);
       if (!result.success && result.error) {
-        throw new Error(result.error);
+        const errorMsg = typeof result.error === 'string' 
+          ? result.error 
+          : (result.error as any).message || String(result.error);
+        throw new Error(errorMsg);
       }
       return result;
     },

@@ -1,5 +1,5 @@
 import React from 'react';
-import { MethodChip } from '@/components';
+import { MethodChip } from '../../../components/MethodChip';
 
 const withPost = (label) => (
   <span className="sidebar-title-wrapper">

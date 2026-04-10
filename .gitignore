@@ -52,3 +52,8 @@ public/_pagefind/
 node_modules\ *
 node_modules[\ ]*
 .npm-cache
+
+# Dev tools and scripts
+fix_imports.js
+generate_endpoints.js
+test_db.ts

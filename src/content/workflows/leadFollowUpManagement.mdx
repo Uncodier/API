@@ -1,0 +1,32 @@
+---
+title: leadFollowUpManagement
+description: Ejecuta el workflow dailyProspectionWorkflow en Temporal para gestión de seguimiento de leads y prospección diaria
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# leadFollowUpManagement
+
+Ejecuta el workflow dailyProspectionWorkflow en Temporal para gestión de seguimiento de leads y prospección diaria
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/leadFollowUpManagement</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/leadFollowUpManagement" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value"
+  }'
+```

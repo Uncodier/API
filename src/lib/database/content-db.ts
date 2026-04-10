@@ -47,6 +47,7 @@ export interface DbContent {
   metadata: Record<string, unknown> | null;
   command_id: string | null;
   instructions: string | null;
+  assets?: (Record<string, any> & { position?: number; is_primary?: boolean })[];
 }
 
 export interface ContentFilters {
@@ -127,9 +128,51 @@ export async function getContents(filters: ContentFilters): Promise<{
     throw new Error(`Error getting content: ${error.message}`);
   }
 
+  const contents = (data ?? []) as DbContent[];
+
+  // Fetch associated assets for each content item
+  if (contents.length > 0) {
+    const contentIds = contents.map(c => c.id);
+    const { data: contentAssets, error: assetsError } = await supabaseAdmin
+      .from('content_assets')
+      .select('content_id, position, is_primary, assets(*)')
+      .in('content_id', contentIds);
+
+    if (!assetsError && contentAssets) {
+      // Group assets by content_id
+      const assetsByContentId = contentAssets.reduce((acc, curr) => {
+        if (!acc[curr.content_id]) {
+          acc[curr.content_id] = [];
+        }
+        
+        // Formatear el asset para incluir la info de la relación
+        const formattedAsset = {
+          ...curr.assets,
+          position: curr.position,
+          is_primary: curr.is_primary
+        };
+        
+        acc[curr.content_id].push(formattedAsset);
+        return acc;
+      }, {} as Record<string, any[]>);
+
+      // Attach assets to contents and sort by position
+      contents.forEach(content => {
+        const assets = assetsByContentId[content.id] || [];
+        // Ordenar por primary primero, luego por posición
+        assets.sort((a, b) => {
+          if (a.is_primary && !b.is_primary) return -1;
+          if (!a.is_primary && b.is_primary) return 1;
+          return (a.position || 0) - (b.position || 0);
+        });
+        content.assets = assets;
+      });
+    }
+  }
+
   const total = count ?? (data?.length ?? 0);
   return {
-    contents: (data ?? []) as DbContent[],
+    contents,
     total,
     hasMore: total > offset + (data?.length ?? 0),
   };

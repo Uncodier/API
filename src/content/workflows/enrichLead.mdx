@@ -1,0 +1,40 @@
+---
+title: enrichLead
+description: Ejecuta el workflow enrichLeadWorkflow en Temporal para enriquecimiento de leads
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# enrichLead
+
+Ejecuta el workflow enrichLeadWorkflow en Temporal para enriquecimiento de leads
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/enrichLead</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `linkedin_profile` | `string` | Yes | - |
+| `person_id` | `string` | Yes | - |
+| `site_id` | `string` | Yes | - |
+| `userId` | `string` | Yes | - |
+| `company_name` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/enrichLead" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "linkedin_profile": "value",
+    "person_id": "value",
+    "site_id": "value",
+    "userId": "value",
+    "company_name": "value"
+  }'
+```

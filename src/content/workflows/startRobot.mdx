@@ -1,0 +1,42 @@
+---
+title: startRobot
+description: Ejecuta el workflow startRobotWorkflow en Temporal para inicializar robots automatizados
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# startRobot
+
+Ejecuta el workflow startRobotWorkflow en Temporal para inicializar robots automatizados
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/startRobot</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+| `activity` | `string` | Yes | - |
+| `user_id` | `string` | Yes | - |
+| `instance_id` | `string` | Yes | - |
+| `message` | `string` | Yes | - |
+| `context` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/startRobot" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value",
+    "activity": "value",
+    "user_id": "value",
+    "instance_id": "value",
+    "message": "value",
+    "context": "value"
+  }'
+```

@@ -23,6 +23,14 @@ export default {
     title: "MCP Server",
     type: "page"
   },
+  "workflows": {
+    title: "Workflows",
+    type: "page"
+  },
+  "content-api": {
+    title: "Content API",
+    type: "page"
+  },
   "open-source": {
     title: "Open Source",
     type: "page",

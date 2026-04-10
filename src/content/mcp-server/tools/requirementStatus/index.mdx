@@ -21,6 +21,7 @@ The `requirement_status` tool allows you to log progress and update statuses on 
 | `source_code` | string | No | URL to a zip file containing the source code related to the requirement objective or preview. |
 | `message` | string | No | Any details, descriptions, or error logs about the status. |
 | `cycle` | string | No | Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value). |
+| `endpoint_url` | string | No | Automation endpoint for manual calling of the task, or automation. |
 
 ## Usage Examples
 
@@ -39,7 +40,8 @@ The `requirement_status` tool allows you to log progress and update statuses on 
     "preview_url": "https://my-project-staging.vercel.app",
     "source_code": "https://storage.googleapis.com/my-bucket/source-code-preview.zip",
     "message": "The login page layout has been successfully implemented and tested.",
-    "cycle": "Sprint 4"
+    "cycle": "Sprint 4",
+    "endpoint_url": "https://api.uncodie.com/hooks/automation/req_12345"
   }
 }
 ```

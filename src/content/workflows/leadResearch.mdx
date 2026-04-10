@@ -1,0 +1,34 @@
+---
+title: leadResearch
+description: Ejecuta el workflow leadResearchWorkflow en Temporal para investigación de leads
+---
+
+import { MethodChip } from '../../components/MethodChip';
+
+# leadResearch
+
+Ejecuta el workflow leadResearchWorkflow en Temporal para investigación de leads
+
+<div className="endpoint-block">
+  <MethodChip method="POST" />
+  <code>/api/workflow/leadResearch</code>
+</div>
+
+## Body Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `site_id` | `string` | Yes | - |
+| `lead_id` | `string` | Yes | - |
+
+## Example Request
+
+```bash
+curl -X POST "https://api.makinari.com/api/workflow/leadResearch" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "site_id": "value",
+    "lead_id": "value"
+  }'
+```

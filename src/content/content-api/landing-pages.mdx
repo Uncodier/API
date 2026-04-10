@@ -1,0 +1,67 @@
+---
+title: Landing Pages
+description: Access public landing pages for your integrated applications.
+---
+
+import { MethodChip } from '@/components/MethodChip'
+
+# Landing Pages API
+
+The Landing Pages API allows external systems to fetch public landing pages content from your Makinari site.
+
+## Endpoints
+
+### Get Public Landing Pages <MethodChip method="GET" />
+
+Retrieves all published landing pages for a specific site. The site is identified either by the `url` query parameter or by automatically detecting the request's `Origin` or `Referer` headers.
+
+```http
+GET /api/public/landing-pages?limit=100
+```
+
+**Authentication Requirements:**
+- **From a registered domain (Browser):** No API key required. The domain must be correctly configured in your Makinari site settings.
+- **From a server/machine (No Origin):** Requires an API Key sent as a Bearer token in the `Authorization` header.
+
+**Parameters:**
+
+- `url` (optional): The URL or domain of your site (e.g., `example.com` or `https://example.com`). If not provided, the API will try to infer it from the request headers.
+- `search` (optional): Query string to search within title, description, or text content.
+- `limit` (optional): Maximum number of posts to return (default: 100).
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "site": {
+    "id": "123e4567-e89b-12d3-a456-426614174000",
+    "name": "My Blog Site",
+    "url": "https://example.com"
+  },
+  "data": [
+    {
+      "id": "987fcdeb-51a2-43d7-9012-3456789abcdef",
+      "title": "Welcome to our new blog",
+      "description": "An introduction to our content",
+      "type": "landing_page",
+      "status": "published",
+      "text": "Full content of the blog post...",
+      "tags": ["announcement", "welcome"],
+      "published_at": "2024-05-20T10:00:00Z",
+      "created_at": "2024-05-18T14:30:00Z",
+      "assets": [
+        {
+          "id": "3deb1ee4-264f-4891-b697-5bfa6586c4e9",
+          "name": "hero-image",
+          "file_path": "https://storage.url/assets/image.jpg",
+          "file_type": "image/jpeg",
+          "position": 0,
+          "is_primary": true
+        }
+      ]
+    }
+  ],
+  "total": 1
+}
+```
