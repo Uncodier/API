@@ -111,8 +111,7 @@ export async function processUnregisteredUserEmailStep(
       conversation_id: convId,
       content: messageContent,
       role: 'user',
-      status: 'received',
-      custom_data: { source: 'email', email_message_id: messageId, email: userEmail }
+      custom_data: { source: 'email', email_message_id: messageId, email: userEmail, status: 'received' }
     }]);
 
     if (msgError) console.error('❌ Error saving user message:', msgError);
@@ -151,8 +150,7 @@ export async function processUnregisteredUserEmailStep(
         conversation_id: convId,
         content: assistantResponse,
         role: 'assistant',
-        status: 'sent',
-        custom_data: { source: 'email', email: userEmail }
+        custom_data: { source: 'email', email: userEmail, status: 'sent' }
       }]).select().single();
       
       if (saveError) console.error('❌ Error saving assistant response:', saveError);
