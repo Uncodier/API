@@ -41,7 +41,7 @@ export async function runAssistantWorkflow(
   // Step 1.5: Check for active instance plan
   const activePlan = await getActiveInstancePlan(instanceId, siteId);
   
-  if (activePlan) {
+  if (activePlan && !context.hasLinkedRequirement) {
     console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
     
     // Filter steps that need execution
@@ -81,6 +81,8 @@ export async function runAssistantWorkflow(
         // Fallback to normal chat if plan is done? or just return?
         // Let's fallback to normal chat, maybe the user wants to discuss the plan.
     }
+  } else if (activePlan && context.hasLinkedRequirement) {
+    console.log(`[Workflow] Active plan found but skipping auto-execution because there is a requirement_status linked.`);
   }
 
   // Initialize messages with user prompt

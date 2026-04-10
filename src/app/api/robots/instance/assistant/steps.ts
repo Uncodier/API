@@ -26,6 +26,7 @@ export interface AssistantContext {
   };
   initialMessage: string;
   imageAssets: { url: string; fileType: string }[];
+  hasLinkedRequirement: boolean;
 }
 
 // Step 1: Prepare context (fetch data, build prompts)
@@ -160,6 +161,8 @@ export async function prepareAssistantContext(
     requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
   }
 
+  const hasLinkedRequirement = requirementStatuses && requirementStatuses.length > 0;
+
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
@@ -187,12 +190,17 @@ export async function prepareAssistantContext(
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
-    systemPrompt?.toLowerCase().trim() === 'plan'
+    systemPrompt?.toLowerCase().trim() === 'plan' && !hasLinkedRequirement
       ? `\n\n📋 PLAN MODE: Your system prompt is set to "plan". You MUST always use the instance_plan tool: create or list the execution plan (action "create" or "list") as appropriate, then execute steps with action "execute_step" when carrying out the plan. Do not skip using instance_plan when the user asks for planning or task execution.
 
 PLAN vs STEPS:
 - If the user's request describes a DIFFERENT plan (new objective, new scope, or different approach than the previous plan): use action "create" to create a NEW plan. Do not reuse or update the old plan.
 - If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.`
+      : '';
+
+  const activePlanInstruction = 
+    systemPrompt?.toLowerCase().trim() === 'plan' && hasLinkedRequirement
+      ? `\n\n⚠️ IMPORTANT PLAN CONTEXT: There is an active plan in progress, but it is assigned to another agent. You can monitor or update its status using the \`requirement_status\` and \`requirements\` tools, but do NOT execute the plan steps directly.`
       : '';
 
   const whatsappInstruction = `
@@ -211,6 +219,7 @@ PLAN vs STEPS:
     toolsContext,
     systemPrompt || '',
     planModeInstruction,
+    activePlanInstruction,
     whatsappInstruction,
     memoriesContext,
     historyContext,
@@ -241,7 +250,8 @@ PLAN vs STEPS:
       site_id: siteId,
       user_id: userId,
     },
-    imageAssets
+    imageAssets,
+    hasLinkedRequirement
   };
 }
 
