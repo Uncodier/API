@@ -90,36 +90,57 @@ export async function GET(request: NextRequest) {
 
       siteInfo = sites[0];
     } else if (siteUrl) {
-      let hostname = siteUrl;
-      try {
-        if (!siteUrl.startsWith('http')) {
-          hostname = new URL(`https://${siteUrl}`).hostname;
-        } else {
-          hostname = new URL(siteUrl).hostname;
+      const hostnamesToTry = new Set<string>();
+
+      const addHostnameVariants = (urlStr: string | null) => {
+        if (!urlStr) return;
+        try {
+          const hn = !urlStr.startsWith('http') ? new URL(`https://${urlStr}`).hostname : new URL(urlStr).hostname;
+          if (hn && hn !== 'localhost') {
+            hostnamesToTry.add(hn);
+            const parts = hn.split('.');
+            if (parts.length > 2) {
+              // Extract root domain to match against www. or base domains
+              hostnamesToTry.add(parts.slice(-2).join('.'));
+            }
+          }
+        } catch (e) {
+          // Ignore
         }
-      } catch (e) {
-        // Fallback to the raw string if URL parsing fails
-        console.error('[API:public:videos] Error parsing URL:', e);
+      };
+
+      addHostnameVariants(siteUrl);
+      addHostnameVariants(request.headers.get('origin'));
+      addHostnameVariants(request.headers.get('referer'));
+
+      const hostnamesArray = Array.from(hostnamesToTry);
+      console.log('[${apiName}] Resolving site context for URLs:', hostnamesArray);
+
+      let sites: any[] | null = [];
+      let siteError = null;
+
+      if (hostnamesArray.length > 0) {
+        const orFilter = hostnamesArray.map(h => `url.ilike.%${h}%`).join(',');
+        
+        const result = await supabaseAdmin
+          .from('sites')
+          .select('id, url, name')
+          .or(orFilter)
+          .limit(1);
+          
+        sites = result.data;
+        siteError = result.error;
       }
 
-      console.log('[API:public:videos] Resolving site context for URL:', { siteUrl, hostname });
-
-      // Search for the site in the database
-      const { data: sites, error: siteError } = await supabaseAdmin
-        .from('sites')
-        .select('id, url, name')
-        .ilike('url', `%${hostname}%`)
-        .limit(1);
-
-      console.log('[API:public:videos] Supabase search result for site:', { sites, siteError, hostnameSearched: `%${hostname}%` });
+      console.log('[${apiName}] Supabase search result for site:', { sites, siteError, hostnamesSearched: hostnamesArray });
 
       if (siteError) {
-        console.error('[API:public:videos] Error querying site by URL:', siteError);
+        console.error('[${apiName}] Error querying site by URL:', siteError);
         return NextResponse.json({ error: 'Error validating site URL' }, { status: 500 });
       }
 
       if (!sites || sites.length === 0) {
-        console.warn('[API:public:videos] Site not found for the provided URL:', { siteUrl, hostname });
+        console.warn('[${apiName}] Site not found for the provided URL:', { siteUrl, hostnamesSearched: hostnamesArray });
         return NextResponse.json({ error: 'Site not found for the provided URL' }, { status: 404 });
       }
 

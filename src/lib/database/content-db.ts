@@ -47,7 +47,10 @@ export interface DbContent {
   metadata: Record<string, unknown> | null;
   command_id: string | null;
   instructions: string | null;
-  assets?: (Record<string, any> & { position?: number; is_primary?: boolean })[];
+}
+
+export interface DbContentWithAssets extends DbContent {
+  assets: (Record<string, any> & { position?: number; is_primary?: boolean })[];
 }
 
 export interface ContentFilters {
@@ -95,7 +98,7 @@ export interface UpdateContentParams {
 }
 
 export async function getContents(filters: ContentFilters): Promise<{
-  contents: DbContent[];
+  contents: DbContentWithAssets[];
   total: number;
   hasMore: boolean;
 }> {
@@ -128,7 +131,12 @@ export async function getContents(filters: ContentFilters): Promise<{
     throw new Error(`Error getting content: ${error.message}`);
   }
 
-  const contents = (data ?? []) as DbContent[];
+  const contents = (data ?? []) as DbContentWithAssets[];
+
+  // Initialize assets array for all contents
+  contents.forEach(content => {
+    content.assets = [];
+  });
 
   // Fetch associated assets for each content item
   if (contents.length > 0) {
