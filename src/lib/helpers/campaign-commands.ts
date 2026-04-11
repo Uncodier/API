@@ -163,10 +163,11 @@ OBJECTIVE: Transform strategic campaign plans into concrete, actionable requirem
 
 REQUIREMENTS CREATION GUIDELINES:
 - Break down each campaign into specific, measurable tasks
-- Define clear deliverables and acceptance criteria
+- All requirements MUST be created specifically to be executed autonomously by an AI agent
+- Define clear deliverables and acceptance criteria for an AI
 - Estimate effort and resource requirements
 - Set realistic timelines and dependencies
-- Include detailed instructions for execution
+- Include detailed instructions for execution, including CLEAR INSTRUCTIONS on whether the requirement will be done as an "external deliverable" or "using Makinari tools"
 - Consider technical and creative requirements
 - Plan for testing, optimization, and measurement
 - Account for approval workflows and stakeholder review
@@ -217,8 +218,9 @@ ${campaignsContext}`;
             requirements: [{
               title: "Requirement title",
               description: "Requirement description",
-              instructions: "Detailed instructions to complete the requirement",
+              instructions: "Detailed instructions to complete the requirement. MUST specify if it will be executed as an 'external deliverable' or 'using Makinari tools'.",
               priority: "Requirement priority (low, medium, high)",
+              type: "Requirement type (content, design, research, follow_up, task, develop, analytics, testing, approval, coordination, payment)",
               budget: 100
             }]
           }))

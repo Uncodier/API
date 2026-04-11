@@ -16,7 +16,7 @@ Manage requirements. Use action="create" to create a new requirement (requires t
 | requirement_id | string | Requirement UUID (required for update) |
 | title | string | Requirement title (required for create) |
 | description | string | Detailed description |
-| instructions | string | Implementation instructions |
+| instructions | string | Implementation instructions. MUST specify if it will be executed as an 'external deliverable' or 'using Makinari tools', and should be formatted for AI execution. |
 | priority | string | Priority of the requirement. Valid values: high, medium, low. Default: medium. Enum: high, medium, low |
 | status | string | Status of the requirement. Valid values: backlog, validated, in-progress, on-review, done, canceled. Default: backlog. Enum: backlog, validated, in-progress, on-review, done, canceled |
 | completion_status | string | Completion status of the requirement. Valid values: pending, completed, rejected. Enum: pending, completed, rejected |
