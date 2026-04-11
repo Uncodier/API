@@ -305,9 +305,16 @@ export class OpenAIAgentExecutor {
     const opts = {
       ...completionOptions,
       stream: true,
-      stream_options: { include_usage: true }, // Required to get usage (incl. reasoning_tokens) in final chunk
+      // Temporarily disable include_usage for stream_options as Azure OpenAI may have issues with it
+      // stream_options: { include_usage: true }, // Required to get usage (incl. reasoning_tokens) in final chunk
     };
-    const stream = await this.client.chat.completions.create(opts);
+    const stream = await this.client.chat.completions.create(opts as any).catch(err => {
+      console.error(`❌ [AZURE OPENAI STREAM INIT ERROR]`, err.message);
+      if (err.status) console.error(`   Status: ${err.status}`);
+      if (err.headers) console.error(`   Headers:`, JSON.stringify(err.headers, null, 2));
+      if (err.error) console.error(`   Error object:`, JSON.stringify(err.error, null, 2));
+      throw err;
+    });
 
     let content = '';
     let reasoningContent = '';
@@ -320,7 +327,7 @@ export class OpenAIAgentExecutor {
     let lastEmitTime = 0;
     let lastThinkingEmitTime = 0;
 
-    for await (const chunk of stream as AsyncIterable<any>) {
+    for await (const chunk of stream as unknown as AsyncIterable<any>) {
       // Usage can arrive in a final chunk with choices: [] - must process BEFORE any continue
       if (chunk.usage) {
         usage = chunk.usage;
@@ -585,9 +592,16 @@ export class OpenAIAgentExecutor {
         
         // Add reasoning_effort for o-series models (GPT-5.2 family: o1, o3, etc.)
         if (isReasoningModel) {
-          completionOptions.reasoning_effort = reasoningEffort; // Options: low, medium, high
-          // Note: OpenAI does not support a 'verbosity' parameter. Passing it causes HTTP 500 on Azure OpenAI.
-          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort} for o-series model: ${deploymentName}`);
+          // NOTE: Many Azure OpenAI deployments (like o1-mini or older o1-preview) do NOT support reasoning_effort yet
+          // and will return an HTTP 500. Only o3-mini and o1 support it currently.
+          // We will ONLY pass it if it's explicitly o3-mini or o1 (not o1-mini).
+          // For safety with custom deployment names like gpt-5.4, we skip it by default unless it's strictly 'o3-mini' or 'o1'.
+          if (deploymentName === 'o3-mini' || deploymentName === 'o1') {
+            completionOptions.reasoning_effort = reasoningEffort; // Options: low, medium, high
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort} for model: ${deploymentName}`);
+          } else {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Skipping reasoning_effort for model: ${deploymentName} to avoid Azure HTTP 500`);
+          }
         }
 
         // Add response format for structured output if schema is provided
@@ -605,29 +619,64 @@ export class OpenAIAgentExecutor {
         }
 
         // Debug: Log messages before API call to identify base64 issues
-        console.log(`🔍 [DEBUG] Messages being sent to OpenAI:`, JSON.stringify(messages, null, 2).substring(0, 2000));
+        console.log(`🔍 [DEBUG] First 2000 chars of messages:`, JSON.stringify(messages, null, 2).substring(0, 2000));
         
         const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
         const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
         
+        // Debug API Payload Options specifically when stream_options.include_usage might be sent
+        // for Azure deployments where include_usage might cause 500
+        const optsForLog = { ...completionOptions, stream: useStreamingPath, stream_options: useStreamingPath ? undefined : undefined, messages: `[${messages.length} messages omitted]` };
+        console.log(`🔍 [DEBUG] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
+        
         let response: { message: any; usage?: any; finish_reason?: string };
         
         if (useStreamingPath) {
-          // Streaming path: iterate over chunks, accumulate message, call onStreamChunk
-          const streamCallbacks: Parameters<typeof this.runStreamingCompletion>[1] = {
-            onStreamStart: onStreamStart!,
-            onStreamChunk: onStreamChunk!,
-            onReasoningTokensUsed: onReasoningTokensUsed,
-          };
-          if (useThinkingStream) {
-            streamCallbacks.onThinkingStreamStart = onThinkingStreamStart!;
-            streamCallbacks.onThinkingStreamChunk = onThinkingStreamChunk!;
+          // Fallback mechanism for streaming errors (like 500)
+          try {
+            // Streaming path: iterate over chunks, accumulate message, call onStreamChunk
+            const streamCallbacks: Parameters<typeof this.runStreamingCompletion>[1] = {
+              onStreamStart: onStreamStart!,
+              onStreamChunk: onStreamChunk!,
+              onReasoningTokensUsed: onReasoningTokensUsed,
+            };
+            if (useThinkingStream) {
+              streamCallbacks.onThinkingStreamStart = onThinkingStreamStart!;
+              streamCallbacks.onThinkingStreamChunk = onThinkingStreamChunk!;
+            }
+            response = await this.runStreamingCompletion(
+              completionOptions,
+              streamCallbacks,
+              totalUsage
+            );
+          } catch (streamError: any) {
+            console.error(`❌ [STREAM_ERROR] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
+            
+            // Log fallback attempt
+            console.log(`⏱️ [TIMING] Calling Azure OpenAI API with NON-streaming fallback...`);
+            const fallbackOptions = { ...completionOptions };
+            delete fallbackOptions.stream;
+            delete fallbackOptions.stream_options;
+            
+            const azureStartTime = Date.now();
+            const completion = await this.client.chat.completions.create(fallbackOptions);
+            const azureEndTime = Date.now();
+            const azureDuration = azureEndTime - azureStartTime;
+            console.log(`⏱️ [TIMING] Azure OpenAI fallback response received in ${azureDuration}ms (${(azureDuration/1000).toFixed(1)}s)`);
+            
+            const choice = completion.choices[0];
+            response = {
+              message: choice.message,
+              usage: completion.usage,
+              finish_reason: choice.finish_reason ?? undefined,
+            } as any;
+            
+            // We need to manually call the onStream callbacks since we got the whole response at once
+            if (choice.message.content) {
+              const streamingLogId = await onStreamStart!();
+              await onStreamChunk!(streamingLogId, choice.message.content);
+            }
           }
-          response = await this.runStreamingCompletion(
-            completionOptions,
-            streamCallbacks,
-            totalUsage
-          );
         } else {
           // Non-streaming path (original behavior)
           console.log(`⏱️ [TIMING] Calling Azure OpenAI API...`);

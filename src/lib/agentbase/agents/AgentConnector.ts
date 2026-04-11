@@ -86,8 +86,13 @@ export class AgentConnector extends Base {
       };
       
       // Add reasoning_effort if present in command
+      // Skip for custom Azure deployment names that may return 500, unless strictly 'o3-mini' or 'o1'
       if (command.reasoning_effort) {
-        modelOptions.reasoningEffort = command.reasoning_effort;
+        if (parsedModelId === 'o3-mini' || parsedModelId === 'o1' || parsedModelId.startsWith('o1-') || parsedModelId.startsWith('o3-')) {
+          modelOptions.reasoningEffort = command.reasoning_effort;
+        } else {
+          console.log(`[AgentConnector:${this.id}] Skipping reasoning_effort for model: ${parsedModelId} to avoid HTTP 500`);
+        }
       }
       // Note: OpenAI does not support a 'verbosity' parameter. Passing it may cause errors.
       // if (command.metadata?.verbosity) {
