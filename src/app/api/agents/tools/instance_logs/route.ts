@@ -2,17 +2,91 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CreditService } from '@/lib/services/billing/CreditService';
 
-export async function createInstanceLogCore(params: {
+function parseJsonIfString<T>(value: T | string | undefined): T | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string') return value as T;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return undefined;
+  }
+}
+
+export type CreateInstanceLogParams = {
   site_id: string;
   instance_id?: string;
   user_id?: string;
   log_type: string;
   level: string;
   message: string;
-  details?: Record<string, any>;
+  details?: Record<string, any> | string;
   tokens_used?: Record<string, any>;
-}) {
-  const { site_id, instance_id, user_id, log_type, level, message, details, tokens_used } = params;
+  tool_name?: string | null;
+  tool_call_id?: string | null;
+  tool_args?: Record<string, any> | string | null;
+  tool_result?: Record<string, any> | string | null;
+  step_id?: string | null;
+  parent_log_id?: string | null;
+  agent_id?: string | null;
+  command_id?: string | null;
+  is_error?: boolean | null;
+  duration_ms?: number | null;
+  screenshot_base64?: string | null;
+  artifacts?: unknown[] | null;
+};
+
+export async function createInstanceLogCore(params: CreateInstanceLogParams) {
+  const {
+    site_id,
+    instance_id,
+    user_id,
+    log_type,
+    level,
+    message,
+    details: rawDetails,
+    tokens_used,
+    tool_name,
+    tool_call_id,
+    tool_args: rawToolArgs,
+    tool_result: rawToolResult,
+    step_id,
+    parent_log_id,
+    agent_id,
+    command_id,
+    is_error,
+    duration_ms,
+    screenshot_base64,
+    artifacts: rawArtifacts,
+  } = params;
+
+  const details =
+    rawDetails === undefined || rawDetails === null
+      ? rawDetails
+      : typeof rawDetails === 'string'
+        ? parseJsonIfString<Record<string, any>>(rawDetails) ?? null
+        : rawDetails;
+
+  const normalizeJsonObject = (
+    raw: Record<string, any> | string | null | undefined
+  ): Record<string, any> | null | undefined => {
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    if (typeof raw === 'string') return parseJsonIfString<Record<string, any>>(raw) ?? null;
+    return raw;
+  };
+
+  const normalizeArtifacts = (
+    raw: unknown[] | string | null | undefined
+  ): unknown[] | null | undefined => {
+    if (raw === undefined) return undefined;
+    if (raw === null) return null;
+    if (typeof raw === 'string') return parseJsonIfString<unknown[]>(raw) ?? null;
+    return Array.isArray(raw) ? raw : null;
+  };
+
+  const tool_args = normalizeJsonObject(rawToolArgs as any);
+  const tool_result = normalizeJsonObject(rawToolResult as any);
+  const artifacts = normalizeArtifacts(rawArtifacts as any);
 
   if (!site_id || !log_type || !level || !message) {
     throw new Error('site_id, log_type, level, and message are required');
@@ -60,25 +134,45 @@ export async function createInstanceLogCore(params: {
     }
   }
 
+  const insertRow: Record<string, unknown> = {
+    site_id,
+    instance_id: instance_id || null,
+    user_id: user_id || null,
+    log_type,
+    level,
+    message,
+    details: details ?? null,
+    tokens_used: tokens_used || (details && typeof details === 'object' && details.usage ? {
+      promptTokens: inputTokens,
+      completionTokens: outputTokens,
+      totalTokens: totalTokens
+    } : null),
+    created_at: new Date().toISOString(),
+  };
+
+  const optionalColumns: Record<string, unknown> = {
+    tool_name,
+    tool_call_id,
+    tool_args,
+    tool_result,
+    step_id,
+    parent_log_id,
+    agent_id,
+    command_id,
+    is_error,
+    duration_ms,
+    screenshot_base64,
+    artifacts,
+  };
+  for (const [key, value] of Object.entries(optionalColumns)) {
+    if (value !== undefined) {
+      insertRow[key] = value;
+    }
+  }
+
   const { data, error } = await supabaseAdmin
     .from('instance_logs')
-    .insert([
-      {
-        site_id,
-        instance_id: instance_id || null,
-        user_id: user_id || null,
-        log_type,
-        level,
-        message,
-        details: details || null,
-        tokens_used: tokens_used || (details?.usage ? {
-          promptTokens: inputTokens,
-          completionTokens: outputTokens,
-          totalTokens: totalTokens
-        } : null),
-        created_at: new Date().toISOString(),
-      }
-    ])
+    .insert([insertRow as any])
     .select()
     .single();
 
