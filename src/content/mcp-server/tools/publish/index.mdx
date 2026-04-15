@@ -1,0 +1,69 @@
+---
+title: Publish
+description: Consolidated tool to create content, publish to social media, and send to an audience.
+---
+
+# Publish
+
+The `publish` tool is a consolidated tool that allows the agent to perform multiple publishing actions in a single tool call. It can:
+
+1. **Create or Update Content:** Save content to the database with a `published` status, including metadata like assets and URLs.
+2. **Publish to Social Media:** Publish the content to specified social media accounts via Outstand.
+3. **Send to Audience:** Send the content as a bulk message to an audience via WhatsApp or Email.
+
+## Usage
+
+You must provide at least one valid source of content: `text`, `assets` (media IDs), or `urls`.
+
+You must also provide parameters for at least one action:
+- To save content, provide `title` and `type` (for new content) or `content_id` (to update).
+- To publish to social media, provide the `social_accounts` array.
+- To send to an audience, provide `audience_id` and `channel`.
+
+### Parameters
+
+- `text` (string, optional): Main text content.
+- `assets` (array of strings, optional): Array of media asset IDs.
+- `urls` (array of strings, optional): Array of URLs to include.
+
+#### Content DB Parameters
+- `content_id` (string, optional): ID of existing content to update.
+- `title` (string, required for create): Title of the content.
+- `type` (string, required for create): Type of content (e.g., `social_post`, `blog_post`).
+
+#### Social Media Parameters
+- `social_accounts` (array of strings, optional): Social account identifiers to publish to (e.g., `["linkedin", "twitter"]`).
+- `scheduledAt` (string, optional): ISO 8601 date to schedule the social post.
+
+#### Audience Parameters
+- `audience_id` (string, optional): Audience UUID to send to.
+- `channel` (string, optional): Channel for audience send (`"whatsapp"` or `"email"`).
+- `subject` (string, required if channel is email): Subject for email audience send.
+- `from` (string, optional): Sender display name for audience.
+
+## Returns
+
+The tool returns an object with a `success` boolean and details for each attempted action:
+
+```json
+{
+  "success": true,
+  "actions_attempted": ["content", "social", "audience"],
+  "content": {
+    "success": true,
+    "id": "content-uuid"
+  },
+  "social": {
+    "success": true,
+    "result": { ... }
+  },
+  "audience": {
+    "success": true,
+    "total_sent": 100,
+    "total_failed": 0,
+    ...
+  }
+}
+```
+
+If an action fails, its specific object will have `success: false` and an `error` message, and the overall `success` flag may be set to `false` indicating a partial or complete failure.

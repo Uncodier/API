@@ -45,6 +45,7 @@ export interface LeadFilters {
   campaign_id?: string;
   assignee_id?: string;
   search?: string;
+  origin?: string;
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
   limit?: number;
@@ -96,6 +97,7 @@ export async function getLeads(filters: LeadFilters): Promise<{
   if (filters.segment_id) query = query.eq('segment_id', filters.segment_id);
   if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
   if (filters.assignee_id) query = query.eq('assignee_id', filters.assignee_id);
+  if (filters.origin) query = query.eq('origin', filters.origin);
 
   if (filters.search) {
     query = query.or(`name.ilike.%${filters.search}%,email.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);

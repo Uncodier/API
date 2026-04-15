@@ -33,6 +33,7 @@ export interface AudienceToolParams {
   assignee_id?: string;
   search?: string;
   origin?: string;
+  limit?: number;
   page_size?: number;
 
   // get / delete
@@ -61,7 +62,9 @@ async function collectLeadIds(
   let offset = 0;
   let total = 0;
 
-  while (leadIds.length < MAX_LEADS) {
+  const maxLimit = params.limit ? Math.min(params.limit, MAX_LEADS) : MAX_LEADS;
+
+  while (leadIds.length < maxLimit) {
     const filters: LeadFilters = {
       site_id: siteId,
       user_id: userId,
@@ -70,17 +73,17 @@ async function collectLeadIds(
       campaign_id: params.campaign_id,
       assignee_id: params.assignee_id,
       search: params.search,
-      limit: COLLECT_BATCH,
+      limit: Math.min(COLLECT_BATCH, maxLimit - leadIds.length),
       offset,
       sort_by: 'created_at',
       sort_order: 'desc',
     };
 
     const result = await getLeads(filters);
-    total = result.total;
+    total = result.total; // Note: total returned by getLeads is the total matching ignoring limit/offset
 
     for (const lead of result.leads) {
-      if (leadIds.length >= MAX_LEADS) break;
+      if (leadIds.length >= maxLimit) break;
       leadIds.push(lead.id);
     }
 
@@ -107,6 +110,19 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
 
       const pageSize = args.page_size ?? DEFAULT_PAGE_SIZE;
 
+      let sqlQuery = `SELECT * FROM leads WHERE site_id = '${siteId}' AND user_id = '${userId}'`;
+      if (args.status) sqlQuery += ` AND status = '${args.status}'`;
+      if (args.segment_id) sqlQuery += ` AND segment_id = '${args.segment_id}'`;
+      if (args.campaign_id) sqlQuery += ` AND campaign_id = '${args.campaign_id}'`;
+      if (args.assignee_id) sqlQuery += ` AND assignee_id = '${args.assignee_id}'`;
+      if (args.origin) sqlQuery += ` AND origin = '${args.origin}'`;
+      if (args.search) {
+        const safeSearch = args.search.replace(/'/g, "''");
+        sqlQuery += ` AND (name ILIKE '%${safeSearch}%' OR email ILIKE '%${safeSearch}%' OR notes ILIKE '%${safeSearch}%')`;
+      }
+      sqlQuery += ` ORDER BY created_at DESC`;
+      if (args.limit) sqlQuery += ` LIMIT ${args.limit}`;
+
       const audience = await createAudience({
         name: args.name,
         description: args.description,
@@ -120,6 +136,8 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           assignee_id: args.assignee_id,
           search: args.search,
           origin: args.origin,
+          limit: args.limit,
+          sql: sqlQuery,
         },
         page_size: pageSize,
       });
@@ -149,6 +167,9 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           status: 'ready',
         });
 
+        const { leads: firstPageLeads } = await getAudiencePage(audience.id, 1);
+        const exampleLeads = firstPageLeads.slice(0, 5);
+
         return {
           success: true,
           audience_id: audience.id,
@@ -159,6 +180,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           total_pages: totalPages,
           page_size: pageSize,
           status: 'ready',
+          example_leads: exampleLeads,
         };
       } catch (err: any) {
         await updateAudience(audience.id, { status: 'error' });
@@ -232,8 +254,8 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
 
 Actions:
 • create — query leads by filters and store the result as a named audience.
-  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search, origin, page_size (default 50).
-  Returns audience_id, total_count, total_pages.
+  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search, origin, limit (e.g. 10 to only add 10 leads), page_size (default 50).
+  Returns audience_id, total_count, total_pages, and example_leads (up to 5 leads).
 • list — list all audiences for this site.
 • get — retrieve a specific page of leads from an audience.
   Required: audience_id. Optional: page (1-based, default 1).
@@ -243,7 +265,7 @@ Actions:
 Usage tips:
 - Create an audience once, then use "get" to iterate pages as context.
 - Pass the audience_id to the sendBulkMessages tool to send messages to all leads.
-- Maximum ${MAX_LEADS} leads per audience. Use filters to narrow down if needed.
+- Maximum ${MAX_LEADS} leads per audience. Use limit or filters to narrow down if needed.
 - Audiences persist across conversation turns.`,
     parameters: {
       type: 'object',
@@ -261,6 +283,7 @@ Usage tips:
         assignee_id: { type: 'string', description: 'Filter leads by assignee UUID.' },
         search: { type: 'string', description: 'Text search in name, email, notes.' },
         origin: { type: 'string', description: 'Filter leads by origin.' },
+        limit: { type: 'number', description: 'Maximum number of total leads to add to the audience.' },
         page_size: { type: 'number', description: 'Leads per page (default 50, max 100).' },
         audience_id: { type: 'string', description: 'Audience UUID (required for get/delete).' },
         page: { type: 'number', description: 'Page number, 1-based (for get action).' },

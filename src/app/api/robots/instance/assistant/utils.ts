@@ -8,6 +8,7 @@ import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/D
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
 import { generateVideoTool } from '@/app/api/agents/tools/generateVideo/assistantProtocol';
+import { generateAudioTool } from '@/app/api/agents/tools/generateAudio/assistantProtocol';
 import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
@@ -54,6 +55,7 @@ import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublis
 import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/assistantProtocol';
 import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
 import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
+import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -196,6 +198,7 @@ export const getAssistantTools = (
     ...customTools,
     generateImageTool(siteId, instanceId),
     generateVideoTool(siteId, instanceId),
+    generateAudioTool(siteId, instanceId),
     instanceTool(siteId, instanceId, userId),
     updateSiteSettingsTool(siteId),
     webSearchTool(siteId),
@@ -240,6 +243,7 @@ export const getAssistantTools = (
     socialMediaPostsTool(siteId),
     audienceTool(siteId, userId ?? '', instanceId),
     sendBulkMessagesTool(siteId),
+    publishTool(siteId, userId ?? '', instanceId),
   ];
 
   if (agentType === 'gear') {

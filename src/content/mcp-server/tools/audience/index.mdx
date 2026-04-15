@@ -41,6 +41,7 @@ Remove an audience and all its lead references.
 | assignee_id | string | No | Filter leads by assignee UUID. |
 | search | string | No | Text search in lead name, email, notes. |
 | origin | string | No | Filter leads by origin. |
+| limit | number | No | Maximum number of total leads to add to the audience. |
 | page_size | number | No | Leads per page (default 50, max 100). |
 | audience_id | string | get/delete | Audience UUID. |
 | page | number | No | Page number, 1-based (for `get` action, default 1). |
@@ -74,7 +75,10 @@ Available as the `audience` tool via the MCP JSON-RPC endpoint.
   "total_count": 150,
   "total_pages": 3,
   "page_size": 50,
-  "status": "ready"
+  "status": "ready",
+  "example_leads": [
+    { "id": "...", "name": "...", "email": "..." }
+  ]
 }
 ```
 

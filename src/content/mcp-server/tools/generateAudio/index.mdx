@@ -1,0 +1,60 @@
+# `generateAudio` Tool
+
+The `generateAudio` tool allows AI assistants to generate audio from text (Text-to-Speech) using AI providers. Currently, it fully supports the `gemini` provider (default) and `vercel` provider (which interfaces with OpenAI's TTS).
+
+## Use Cases
+
+- Converting text responses or generated stories into playable audio files.
+- Narrating content for multimedia creation.
+- Creating voice messages or podcast-style content within the conversation.
+
+## Parameters
+
+The tool accepts the following parameters:
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `text` | string | Yes | The text to convert to speech. |
+| `provider` | string | No | AI provider to use for generation. `gemini` is the default and recommended. |
+| `voice` | string | No | The voice to use. For Gemini: `Aoede`, `Charon`, `Fenrir`, `Kore`, `Puck`. For Vercel: `alloy`, `echo`, etc. |
+| `format` | string | No | The audio format. Defaults to `wav` for Gemini, and `mp3` for Vercel. |
+| `model` | string | No | The TTS model to use. E.g., `gpt-4o-mini-tts` or `tts-1`. |
+
+## Behavior
+
+1. **Credit Check**: Validates and deducts the required credits for audio generation (similar to image generation pricing).
+2. **Audio Generation**: Calls the `/api/ai/audio` endpoint with the provided parameters.
+3. **Storage**: The generated audio is automatically uploaded to the site's storage assets.
+4. **Instance Asset**: If an `instance_id` is provided in the context, the audio is also linked to the instance assets.
+5. **Response**: Returns the public URL of the generated audio along with metadata (mimeType, format, etc.).
+
+## Example Usage
+
+### Basic TTS
+
+```json
+{
+  "text": "Hello world! This is an AI generated voice.",
+  "provider": "gemini",
+  "voice": "Puck"
+}
+```
+
+### Response
+
+The tool returns an object containing the status and the URL to the generated audio file:
+
+```json
+{
+  "success": true,
+  "provider": "gemini",
+  "audio_url": "https://YOUR_STORAGE_URL/site_id/generated_audio_12345.wav",
+  "mimeType": "audio/wav",
+  "metadata": {
+    "format": "wav",
+    "voice": "Puck",
+    "generated_at": "2024-05-15T12:00:00.000Z"
+  },
+  "message": "Successfully generated audio using gemini. Audio is saved and ready to use. URL: https://..."
+}
+```
