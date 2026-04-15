@@ -9,8 +9,82 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   createAssistantOnStepHandler,
   createStreamingLogCallbacks,
-  createThinkingStreamLogCallbacks
+  createThinkingStreamLogCallbacks,
+  createNodeStreamingCallbacks,
+  fetchNodeContexts,
+  batchCreateResponseNodes,
+  updateNodeResult,
+  failNode,
 } from './assistant-logging';
+import { buildNodeResult, buildInitialNodeResult } from './node-result-collector';
+
+/**
+ * Extract text from a node based on what the context type asks for.
+ * 'result' -> node.result.text
+ * 'prompt' -> node.prompt.text or node.prompt
+ * anything else -> try result first, fallback to prompt
+ */
+function extractNodeText(node: any, type: string): string {
+  if (type === 'prompt') {
+    if (!node.prompt) return '';
+    if (typeof node.prompt === 'string') {
+      try { return JSON.parse(node.prompt).text || node.prompt; } catch { return node.prompt; }
+    }
+    return node.prompt?.text || JSON.stringify(node.prompt);
+  }
+
+  // 'result' or any other type -> extract from result
+  const res = node.result;
+  if (!res) return '';
+  if (typeof res === 'string') {
+    try { return JSON.parse(res).text || res; } catch { return res; }
+  }
+  if (res.text) return res.text;
+  const str = JSON.stringify(res);
+  return str === '{}' ? '' : str;
+}
+
+/**
+ * Extract image URLs from a node's result.outputs so they can be
+ * injected as multimodal image_url parts in the next node's context.
+ */
+function extractNodeImageUrls(node: any): string[] {
+  const res = node?.result;
+  if (!res) return [];
+
+  const parsed = typeof res === 'string'
+    ? (() => { try { return JSON.parse(res); } catch { return null; } })()
+    : res;
+
+  if (!parsed?.outputs || !Array.isArray(parsed.outputs)) return [];
+
+  return parsed.outputs
+    .filter((o: any) => o.type === 'image' && o.data?.url)
+    .map((o: any) => o.data.url as string);
+}
+
+/**
+ * Build the message content for a context entry.
+ * Returns a multimodal array when images are present, plain string otherwise.
+ */
+function buildContextContent(
+  text: string,
+  imageUrls: string[],
+  label: string,
+): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
+  if (imageUrls.length === 0) {
+    return `[Context from node ${label}]: ${text}`;
+  }
+
+  const parts: any[] = [];
+  if (text) {
+    parts.push({ type: 'text', text: `[Context from node ${label}]: ${text}` });
+  }
+  for (const url of imageUrls) {
+    parts.push({ type: 'image_url', image_url: { url } });
+  }
+  return parts;
+}
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
@@ -20,6 +94,8 @@ export interface AssistantExecutionOptions {
   instance_id?: string;
   site_id?: string;
   user_id?: string;
+  instance_node_id?: string;
+  expected_results_amount?: number;
 }
 
 export interface AssistantExecutionResult {
@@ -94,25 +170,176 @@ export async function executeAssistantStep(
         ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
         : undefined;
 
-      const executionResult = await executor.act({
+      // Instance Node handling
+      const instance_node_id = options.instance_node_id;
+      const expectedResults = options.expected_results_amount || 1;
+      let promptNode: any = null;
+      let contextEntries: Awaited<ReturnType<typeof fetchNodeContexts>> = [];
+
+      if (instance_node_id) {
+        const { data } = await supabaseAdmin
+          .from('instance_nodes')
+          .select('*')
+          .eq('id', instance_node_id)
+          .single();
+        promptNode = data;
+
+        if (promptNode) {
+          contextEntries = await fetchNodeContexts(instance_node_id);
+
+          // Prepend context nodes as messages (with multimodal image support)
+          if (contextEntries.length > 0) {
+            const contextMessages: any[] = [];
+            for (const entry of contextEntries) {
+              const text = extractNodeText(entry.node, entry.type);
+              const imageUrls = extractNodeImageUrls(entry.node);
+
+              if (text || imageUrls.length > 0) {
+                contextMessages.push({
+                  role: 'user',
+                  content: buildContextContent(text, imageUrls, entry.type),
+                });
+              }
+            }
+            if (contextMessages.length > 0) {
+              console.log(`[Node Executor] Injecting ${contextMessages.length} context messages from linked nodes`);
+              messages = [...contextMessages, ...messages];
+            }
+          }
+        }
+      }
+
+      const contextRefs = contextEntries.map(e => ({
+        context_node_id: e.context_node_id,
+        type: e.type,
+      }));
+
+      // When running in node mode, allow enough iterations for the LLM to
+      // call tools, see results, and produce a final text — all in one shot.
+      const nodeMaxIterations = instance_node_id ? 5 : 1;
+
+      // --- MULTI-OUTPUT: N > 1 -> fan-out parallel LLM calls ---
+      if (promptNode && expectedResults > 1) {
+        console.log(`[Node Executor] Multi-output: creating ${expectedResults} response nodes`);
+
+        const responseNodeIds = await batchCreateResponseNodes(
+          instance_node_id!, promptNode, expectedResults, contextRefs
+        );
+
+        // Run N independent LLM calls in parallel
+        const initialOutputs = buildInitialNodeResult(promptNode).outputs;
+        const parallelExecutor = new OpenAIAgentExecutor();
+        const parallelPromises = responseNodeIds.map(async (nodeId: string, index: number) => {
+          let accumulatedText = '';
+          let lastUpdate = Date.now();
+          const THROTTLE_MS = 500;
+
+          try {
+            const result = await parallelExecutor.act({
               tools: prepared.tools,
               system: system_prompt,
-              messages: messages, // Pass current history
+              messages: [...messages],
               onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
-              stream: !!streamingCallbacks,
-              onStreamStart: streamingCallbacks?.onStreamStart,
-              onStreamChunk: streamingCallbacks?.onStreamChunk,
-              onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
-              onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
-              onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
-              maxIterations: 1, // FORCE SINGLE STEP
-          });
+              stream: true,
+              onStreamStart: async () => {
+                return `node-stream-${nodeId}`;
+              },
+              onStreamChunk: async (_logId: string, text: string) => {
+                accumulatedText = text;
+                const now = Date.now();
+                if (now - lastUpdate > THROTTLE_MS) {
+                  const chunkResult: any = { text: accumulatedText, status: 'streaming' };
+                  if (initialOutputs) chunkResult.outputs = initialOutputs;
+                  await updateNodeResult(nodeId, chunkResult);
+                  lastUpdate = now;
+                }
+              },
+              maxIterations: nodeMaxIterations,
+            });
+
+            const nodeResult = buildNodeResult(result.text || accumulatedText, 'done', result.steps);
+            await updateNodeResult(nodeId, nodeResult);
+            console.log(`[Node Executor] Response node ${index + 1}/${expectedResults} completed: ${nodeId}, outputs: ${nodeResult.outputs?.length || 0}`);
+            return result;
+          } catch (err: any) {
+            await failNode(nodeId, err.message || 'Unknown error');
+            console.error(`[Node Executor] Response node ${index + 1}/${expectedResults} failed: ${nodeId}`, err);
+            return null;
+          }
+        });
+
+        const results = await Promise.all(parallelPromises);
+        const firstValid = results.find(r => r !== null);
+
+        // Also run the primary instance_log streaming for the first result
+        if (streamingCallbacks && firstValid) {
+          const logId = await streamingCallbacks.onStreamStart();
+          await streamingCallbacks.onStreamChunk(logId, firstValid.text || '');
+        }
+
+        // Return the first valid result to maintain compatibility
+        var executionResult: any = firstValid || { text: '', output: null, usage: {}, steps: [], messages, isDone: true };
+
+      // --- SINGLE OUTPUT: N = 1 -> original behavior ---
+      } else {
+        let nodeCallbacks: Awaited<ReturnType<typeof createNodeStreamingCallbacks>> | undefined;
+        let nodeResponseId: string | null = null;
+
+        if (promptNode) {
+          nodeCallbacks = createNodeStreamingCallbacks(instance_node_id!, promptNode, contextRefs);
+        }
+
+        // Wrap streaming callbacks to also update instance_nodes
+        const wrappedOnStreamStart = streamingCallbacks ? async () => {
+          const logId = await streamingCallbacks.onStreamStart();
+          if (nodeCallbacks) {
+            try { nodeResponseId = await nodeCallbacks.onNodeStreamStart(); } catch (e) { console.error('[Node Executor] onNodeStreamStart error:', e); }
+          }
+          return logId;
+        } : undefined;
+
+        const wrappedOnStreamChunk = streamingCallbacks ? async (logId: string, accumulatedText: string) => {
+          await streamingCallbacks.onStreamChunk(logId, accumulatedText);
+          if (nodeCallbacks && nodeResponseId) {
+            try { await nodeCallbacks.onNodeStreamChunk(nodeResponseId, accumulatedText); } catch (e) { /* throttle errors */ }
+          }
+        } : undefined;
+
+        var executionResult = await executor.act({
+                tools: prepared.tools,
+                system: system_prompt,
+                messages: messages,
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
+                stream: !!streamingCallbacks,
+                onStreamStart: wrappedOnStreamStart,
+                onStreamChunk: wrappedOnStreamChunk,
+                onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,
+                onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
+                onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
+                maxIterations: nodeMaxIterations,
+            });
+
+        // Finalize node — pack text + tool outputs into unified result
+        if (nodeCallbacks && nodeResponseId) {
+          try {
+            const nodeResult = buildNodeResult(executionResult.text || '', 'done', executionResult.steps);
+            await nodeCallbacks.onNodeStreamEnd(nodeResponseId, nodeResult);
+          } catch (e) {
+            console.error('[Node Executor] onNodeStreamEnd error:', e);
+          }
+        }
+      }
           
           const lastMessage = executionResult.messages[executionResult.messages.length - 1];
           const hasToolCalls = lastMessage?.tool_calls && lastMessage.tool_calls.length > 0;
           
           const lastRole = lastMessage?.role;
-          const isDone = lastRole === 'assistant' && !hasToolCalls;
+          // Node executions are self-contained (higher maxIterations allows tool
+          // completion). Force isDone so the workflow doesn't loop and create
+          // duplicate response nodes.
+          const isDone = instance_node_id
+            ? true
+            : (lastRole === 'assistant' && !hasToolCalls);
           
           const result = {
               text: executionResult.text,

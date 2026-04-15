@@ -296,6 +296,38 @@ const SCHEMA: TableSchema[] = [
     ],
   },
   {
+    table_name: 'audiences',
+    description: 'Stored lead audiences built by the assistant for bulk messaging or analysis',
+    columns: [
+      { column_name: 'id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'name', data_type: 'text', is_nullable: false },
+      { column_name: 'description', data_type: 'text', is_nullable: true },
+      { column_name: 'filters', data_type: 'jsonb', is_nullable: true, notes: 'Query params used to build the audience' },
+      { column_name: 'total_count', data_type: 'integer', is_nullable: false },
+      { column_name: 'page_size', data_type: 'integer', is_nullable: false },
+      { column_name: 'status', data_type: 'text', is_nullable: false, notes: 'building | ready | error' },
+      { column_name: 'instance_id', data_type: 'uuid', is_nullable: true },
+      { column_name: 'site_id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'user_id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'created_at', data_type: 'timestamptz', is_nullable: false },
+      { column_name: 'updated_at', data_type: 'timestamptz', is_nullable: false },
+    ],
+  },
+  {
+    table_name: 'audience_leads',
+    description: 'Individual lead references within an audience, with send tracking',
+    columns: [
+      { column_name: 'id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'audience_id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'lead_id', data_type: 'uuid', is_nullable: false },
+      { column_name: 'page_number', data_type: 'integer', is_nullable: false },
+      { column_name: 'send_status', data_type: 'text', is_nullable: false, notes: 'pending | sent | failed | skipped' },
+      { column_name: 'sent_at', data_type: 'timestamptz', is_nullable: true },
+      { column_name: 'error', data_type: 'text', is_nullable: true },
+      { column_name: 'created_at', data_type: 'timestamptz', is_nullable: false },
+    ],
+  },
+  {
     table_name: 'visitors',
     description: 'Anonymous or identified website visitors tracked per site',
     columns: [

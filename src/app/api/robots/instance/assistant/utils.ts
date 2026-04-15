@@ -52,6 +52,8 @@ import { createSecretTool } from '@/app/api/agents/tools/createSecret/assistantP
 import { socialMediaAccountsTool } from '@/app/api/agents/tools/socialMediaAccounts/assistantProtocol';
 import { socialMediaPublishTool } from '@/app/api/agents/tools/socialMediaPublish/assistantProtocol';
 import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/assistantProtocol';
+import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
+import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -236,6 +238,8 @@ export const getAssistantTools = (
     socialMediaAccountsTool(siteId),
     socialMediaPublishTool(siteId),
     socialMediaPostsTool(siteId),
+    audienceTool(siteId, userId ?? '', instanceId),
+    sendBulkMessagesTool(siteId),
   ];
 
   if (agentType === 'gear') {

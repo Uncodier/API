@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { type NodeResult, buildInitialNodeResult } from './node-result-collector';
 
 /**
  * Create onStep callback handler for assistant execution
@@ -194,6 +195,233 @@ export function createStreamingLogCallbacks(
       }
     },
   };
+}
+
+export interface NodeContextRef {
+  context_node_id: string;
+  type: string; // 'result' | 'prompt' | 'summary' | custom
+}
+
+/**
+ * Create streaming callbacks for instance_nodes (graph/workflow responses).
+ * Creates a new response node as child of the prompt node,
+ * then streams the LLM result into it.
+ * Optionally links context nodes via instance_node_contexts.
+ */
+export function createNodeStreamingCallbacks(
+  promptNodeId: string,
+  promptNode: any,
+  contextRefs?: NodeContextRef[]
+): {
+  onNodeStreamStart: () => Promise<string>;
+  onNodeStreamChunk: (nodeId: string, accumulatedText: string) => Promise<void>;
+  onNodeStreamEnd: (nodeId: string, result: NodeResult) => Promise<void>;
+  onNodeStreamError: (nodeId: string | null, errorMessage: string) => Promise<void>;
+} {
+  const initialResult = buildInitialNodeResult(promptNode);
+
+  return {
+    onNodeStreamStart: async () => {
+      const { data, error } = await supabaseAdmin
+        .from('instance_nodes')
+        .insert({
+          instance_id: promptNode.instance_id,
+          parent_node_id: promptNodeId,
+          parent_instance_log_id: promptNode.parent_instance_log_id,
+          type: 'response',
+          prompt: promptNode.prompt,
+          settings: promptNode.settings || {},
+          status: 'running',
+          result: initialResult,
+          site_id: promptNode.site_id,
+          user_id: promptNode.user_id,
+        })
+        .select('id')
+        .single();
+      if (error) {
+        console.error('[Node Executor] Error creating response node:', error);
+        throw new Error(`Failed to create response node: ${error.message}`);
+      }
+
+      const responseNodeId = data.id;
+      console.log(`[Node Executor] Created response node ${responseNodeId} for prompt node ${promptNodeId}`);
+
+      // Insert context relations (instance_node_contexts)
+      if (contextRefs && contextRefs.length > 0) {
+        const rows = contextRefs.map(ref => ({
+          target_node_id: responseNodeId,
+          context_node_id: ref.context_node_id,
+          type: ref.type,
+          site_id: promptNode.site_id,
+          user_id: promptNode.user_id,
+        }));
+        const { error: ctxError } = await supabaseAdmin
+          .from('instance_node_contexts')
+          .insert(rows);
+        if (ctxError) {
+          console.error('[Node Executor] Error inserting context refs:', ctxError);
+        } else {
+          console.log(`[Node Executor] Linked ${rows.length} context nodes to response ${responseNodeId}`);
+        }
+      }
+
+      return responseNodeId;
+    },
+    onNodeStreamChunk: async (nodeId: string, accumulatedText: string) => {
+      const chunkResult: NodeResult = { text: accumulatedText, status: 'streaming' };
+      if (initialResult.outputs) chunkResult.outputs = initialResult.outputs;
+      const { error } = await supabaseAdmin
+        .from('instance_nodes')
+        .update({ result: chunkResult, updated_at: new Date().toISOString() })
+        .eq('id', nodeId);
+      if (error) console.error('[Node Executor] Stream chunk update error:', error);
+    },
+    onNodeStreamEnd: async (nodeId: string, result: NodeResult) => {
+      const { error } = await supabaseAdmin
+        .from('instance_nodes')
+        .update({
+          status: 'completed',
+          result,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', nodeId);
+      if (error) console.error('[Node Executor] Final update error:', error);
+      else console.log(`[Node Executor] Completed response node ${nodeId}, text: ${result.text?.length || 0}, outputs: ${result.outputs?.length || 0}`);
+    },
+    onNodeStreamError: async (nodeId: string | null, errorMessage: string) => {
+      if (!nodeId) return;
+      await supabaseAdmin
+        .from('instance_nodes')
+        .update({
+          status: 'failed',
+          result: { error: errorMessage },
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', nodeId);
+      console.error(`[Node Executor] Node ${nodeId} failed: ${errorMessage}`);
+    },
+  };
+}
+
+/**
+ * Fetch context nodes for a given target node from instance_node_contexts.
+ * Returns the referenced nodes with their type, ordered by creation.
+ */
+export async function fetchNodeContexts(targetNodeId: string): Promise<{
+  context_node_id: string;
+  type: string;
+  node: any;
+}[]> {
+  const { data: refs, error } = await supabaseAdmin
+    .from('instance_node_contexts')
+    .select('context_node_id, type')
+    .eq('target_node_id', targetNodeId)
+    .order('created_at', { ascending: true });
+
+  if (error || !refs || refs.length === 0) return [];
+
+  const nodeIds = refs.map(r => r.context_node_id);
+  const { data: nodes } = await supabaseAdmin
+    .from('instance_nodes')
+    .select('*')
+    .in('id', nodeIds);
+
+  if (!nodes) return [];
+
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
+  return refs
+    .filter(r => nodeMap.has(r.context_node_id))
+    .map(r => ({
+      context_node_id: r.context_node_id,
+      type: r.type,
+      node: nodeMap.get(r.context_node_id),
+    }));
+}
+
+/**
+ * Batch-create N response nodes as children of a prompt node.
+ * Returns array of created node IDs. Optionally links context refs to each.
+ */
+export async function batchCreateResponseNodes(
+  promptNodeId: string,
+  promptNode: any,
+  count: number,
+  contextRefs?: NodeContextRef[]
+): Promise<string[]> {
+  const initialResult = buildInitialNodeResult(promptNode);
+  const rows = Array.from({ length: count }, (_, i) => ({
+    instance_id: promptNode.instance_id,
+    parent_node_id: promptNodeId,
+    parent_instance_log_id: promptNode.parent_instance_log_id,
+    type: 'response',
+    prompt: promptNode.prompt,
+    settings: { ...promptNode.settings, result_index: i },
+    status: 'running',
+    result: initialResult,
+    site_id: promptNode.site_id,
+    user_id: promptNode.user_id,
+  }));
+
+  const { data, error } = await supabaseAdmin
+    .from('instance_nodes')
+    .insert(rows)
+    .select('id');
+
+  if (error || !data) {
+    console.error('[Node Executor] Error batch-creating response nodes:', error);
+    throw new Error(`Failed to batch-create response nodes: ${error?.message}`);
+  }
+
+  const nodeIds = data.map((d: any) => d.id);
+  console.log(`[Node Executor] Batch-created ${nodeIds.length} response nodes for prompt ${promptNodeId}`);
+
+  // Link context refs to each response node
+  if (contextRefs && contextRefs.length > 0) {
+    const ctxRows = nodeIds.flatMap((nodeId: string) =>
+      contextRefs.map(ref => ({
+        target_node_id: nodeId,
+        context_node_id: ref.context_node_id,
+        type: ref.type,
+        site_id: promptNode.site_id,
+        user_id: promptNode.user_id,
+      }))
+    );
+    const { error: ctxError } = await supabaseAdmin
+      .from('instance_node_contexts')
+      .insert(ctxRows);
+    if (ctxError) console.error('[Node Executor] Error inserting batch context refs:', ctxError);
+  }
+
+  return nodeIds;
+}
+
+/**
+ * Update a single response node during streaming.
+ */
+export async function updateNodeResult(nodeId: string, result: NodeResult) {
+  const { error } = await supabaseAdmin
+    .from('instance_nodes')
+    .update({
+      result,
+      status: result.status === 'done' ? 'completed' : 'running',
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', nodeId);
+  if (error) console.error(`[Node Executor] Update error for node ${nodeId}:`, error);
+}
+
+/**
+ * Mark a response node as failed.
+ */
+export async function failNode(nodeId: string, errorMessage: string) {
+  await supabaseAdmin
+    .from('instance_nodes')
+    .update({
+      status: 'failed',
+      result: { error: errorMessage },
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', nodeId);
 }
 
 /**

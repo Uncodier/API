@@ -13,7 +13,9 @@ export async function runAssistantWorkflow(
   useSdkTools: boolean,
   systemPrompt?: string,
   agentType?: string,
-  userPhone?: string
+  userPhone?: string,
+  instanceNodeId?: string,
+  expectedResultsAmount?: number
 ) {
   'use workflow';
   
@@ -27,7 +29,9 @@ export async function runAssistantWorkflow(
     useSdkTools,
     systemPrompt,
     agentType,
-    userPhone
+    userPhone,
+    instanceNodeId,
+    expectedResultsAmount
   );
 
   let isDone = false;

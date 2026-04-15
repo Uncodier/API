@@ -1,0 +1,115 @@
+---
+title: Audience
+description: Build and manage reusable lead audiences for bulk messaging or analysis.
+---
+
+
+# Audience
+
+Build and manage reusable lead audiences. Query leads by filters, store the result as a named audience, then retrieve pages of leads or pass the audience to `sendBulkMessages` for bulk delivery.
+
+Audiences persist across conversation turns and can hold up to 5,000 leads. Each audience is split into pages (default 50 leads per page) for efficient paginated access.
+
+## Actions
+
+### `create`
+
+Query leads matching the provided filters and store the result as a named audience.
+
+### `list`
+
+List all audiences for the current site.
+
+### `get`
+
+Retrieve a specific page of leads from an audience. Returns full lead data with a `has_more` flag for pagination.
+
+### `delete`
+
+Remove an audience and all its lead references.
+
+## Input Schema
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| action | string | Yes | Action to perform. Enum: `create`, `list`, `get`, `delete` |
+| name | string | create | Audience name. |
+| description | string | No | Optional description. |
+| status | string | No | Filter leads by status (`new`, `contacted`, `qualified`, `converted`, `lost`). |
+| segment_id | string | No | Filter leads by segment UUID. |
+| campaign_id | string | No | Filter leads by campaign UUID. |
+| assignee_id | string | No | Filter leads by assignee UUID. |
+| search | string | No | Text search in lead name, email, notes. |
+| origin | string | No | Filter leads by origin. |
+| page_size | number | No | Leads per page (default 50, max 100). |
+| audience_id | string | get/delete | Audience UUID. |
+| page | number | No | Page number, 1-based (for `get` action, default 1). |
+
+## MCP Usage
+
+Available as the `audience` tool via the MCP JSON-RPC endpoint.
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "audience",
+    "arguments": {
+      "action": "create",
+      "name": "Qualified leads Q2",
+      "status": "qualified",
+      "segment_id": "SEGMENT_UUID"
+    }
+  }
+}
+```
+
+**Create response:**
+
+```json
+{
+  "success": true,
+  "audience_id": "...",
+  "name": "Qualified leads Q2",
+  "total_count": 150,
+  "total_pages": 3,
+  "page_size": 50,
+  "status": "ready"
+}
+```
+
+**Get page:**
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "audience",
+    "arguments": {
+      "action": "get",
+      "audience_id": "AUDIENCE_UUID",
+      "page": 2
+    }
+  }
+}
+```
+
+**Get response:**
+
+```json
+{
+  "success": true,
+  "audience_id": "...",
+  "leads": [ { "id": "...", "name": "...", "email": "...", "phone": "..." } ],
+  "page": 2,
+  "total_pages": 3,
+  "total_count": 150,
+  "has_more": true
+}
+```
+
+## Combining with sendBulkMessages
+
+1. Create an audience with filters.
+2. Optionally review the leads with `get` (page by page).
+3. Pass the `audience_id` to [`sendBulkMessages`](/mcp-server/tools/sendBulkMessages) to deliver messages to every lead.

@@ -38,7 +38,7 @@ function buildSchemaSummary(): Record<string, string[]> {
 const SCHEMA_SUMMARY = buildSchemaSummary();
 
 // Tables that do NOT have a direct site_id column
-const NO_DIRECT_SITE_ID = new Set(['messages', 'agent_memories']);
+const NO_DIRECT_SITE_ID = new Set(['messages', 'agent_memories', 'audience_leads']);
 
 export function reportTool(site_id: string, user_id: string) {
   const execute = async (args: ReportToolParams) => {
@@ -103,6 +103,7 @@ ${schemaBlock}
 Tables WITHOUT a direct site_id (scoped automatically via join — do NOT filter by site_id on these):
 • messages — scoped via conversations.site_id
 • agent_memories — scoped via agents.site_id
+• audience_leads — scoped via audiences.site_id
 
 Rules:
 - Never add a site_id filter — it is applied automatically.
@@ -122,7 +123,7 @@ Rules:
           enum: [
             'leads', 'conversations', 'messages', 'tasks', 'campaigns',
             'segments', 'content', 'requirements', 'agents', 'commands',
-            'visitors', 'agent_memories', 'sites',
+            'visitors', 'agent_memories', 'sites', 'audiences', 'audience_leads',
           ],
           description: 'Table to query.',
         },

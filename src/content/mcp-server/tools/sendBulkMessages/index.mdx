@@ -1,0 +1,93 @@
+---
+title: Send Bulk Messages
+description: Send a message to all leads in an audience via WhatsApp or email.
+---
+
+
+# Send Bulk Messages
+
+Send a message to every lead in a stored audience via WhatsApp or email. The tool iterates through all pages of the audience, sends the message to each lead, and tracks individual delivery status.
+
+Leads missing the required contact field (phone for WhatsApp, email for email) are automatically skipped. Already-sent leads are not re-sent, so the tool is safe to retry.
+
+## Input Schema
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| audience_id | string | Yes | Audience UUID to send messages to. |
+| channel | string | Yes | Delivery channel. Enum: `whatsapp`, `email` |
+| message | string | Yes | Message text (plain text or HTML for email). |
+| subject | string | email | Email subject (required when channel is `email`). |
+| from | string | No | Sender display name. |
+
+## MCP Usage
+
+Available as the `sendBulkMessages` tool via the MCP JSON-RPC endpoint.
+
+**WhatsApp example:**
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "sendBulkMessages",
+    "arguments": {
+      "audience_id": "AUDIENCE_UUID",
+      "channel": "whatsapp",
+      "message": "Hi! We have a special offer for you this week."
+    }
+  }
+}
+```
+
+**Email example:**
+
+```json
+{
+  "method": "tools/call",
+  "params": {
+    "name": "sendBulkMessages",
+    "arguments": {
+      "audience_id": "AUDIENCE_UUID",
+      "channel": "email",
+      "subject": "Special Offer This Week",
+      "message": "<h1>Hello!</h1><p>We have a special offer for you.</p>",
+      "from": "Marketing Team"
+    }
+  }
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "audience_id": "...",
+  "channel": "whatsapp",
+  "total_sent": 120,
+  "total_failed": 5,
+  "total_skipped": 25,
+  "total_remaining": 0,
+  "total_in_audience": 150
+}
+```
+
+## Workflow
+
+1. First create an audience using the [`audience`](/mcp-server/tools/audience) tool.
+2. Optionally review the audience leads with `audience` `get` action.
+3. Call `sendBulkMessages` with the `audience_id` and desired channel.
+4. Check the response summary for delivery results.
+5. If some messages failed, you can re-run the tool — only `pending` leads will be retried.
+
+## Status Tracking
+
+Each lead in the audience has a `send_status`:
+
+| Status | Meaning |
+| :--- | :--- |
+| `pending` | Not yet attempted |
+| `sent` | Message delivered successfully |
+| `failed` | Send attempt failed (error stored) |
+| `skipped` | Lead missing required contact field |

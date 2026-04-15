@@ -3,17 +3,18 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 // Tables the agent is allowed to query
 const ALLOWED_TABLES = [
-  'agents', 'agent_memories', 'campaigns', 'commands', 'content',
-  'conversations', 'leads', 'messages', 'requirements', 'segments',
-  'sites', 'tasks', 'visitors',
+  'agents', 'agent_memories', 'audiences', 'audience_leads', 'campaigns',
+  'commands', 'content', 'conversations', 'leads', 'messages',
+  'requirements', 'segments', 'sites', 'tasks', 'visitors',
 ] as const;
 
 type AllowedTable = typeof ALLOWED_TABLES[number];
 
 // Tables that don't have a direct site_id column and how to scope them
 const SITE_SCOPE: Record<string, { via: 'join'; join: string; filter: string } | { via: 'direct' }> = {
-  messages:      { via: 'join', join: 'conversations!inner(site_id)', filter: 'conversations.site_id' },
-  agent_memories: { via: 'join', join: 'agents!inner(site_id)', filter: 'agents.site_id' },
+  messages:       { via: 'join', join: 'conversations!inner(site_id)', filter: 'conversations.site_id' },
+  agent_memories: { via: 'join', join: 'agents!inner(site_id)',        filter: 'agents.site_id' },
+  audience_leads: { via: 'join', join: 'audiences!inner(site_id)',     filter: 'audiences.site_id' },
 };
 
 export interface FilterCondition {

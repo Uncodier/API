@@ -22,6 +22,8 @@ export const maxDuration = 800; // 13 min (Pro + Fluid Compute); falls back to 3
 
 const AssistantSchema = z.object({
   instance_id: z.string().uuid('instance_id must be valid UUID').optional(),
+  instance_node_id: z.string().uuid().optional(),
+  expected_results_amount: z.number().int().min(1).max(20).optional().default(1),
   message: z.string().min(1, 'message is required'),
   site_id: z.string().min(1, 'site_id is required when creating new instance').optional(),
   user_id: z.string().uuid().optional(),
@@ -58,6 +60,8 @@ export async function POST(request: NextRequest) {
 
     const {
       instance_id: providedInstanceId,
+      instance_node_id: providedNodeId,
+      expected_results_amount: expectedResults,
       message,
       site_id: providedSiteId,
       user_id: providedUserId,
@@ -140,7 +144,11 @@ export async function POST(request: NextRequest) {
         userId,
         customTools,
         use_sdk_tools,
-        system_prompt
+        system_prompt,
+        undefined,
+        undefined,
+        providedNodeId,
+        expectedResults
       ]);
 
       // Return the run information. The frontend might need to poll or we stream.
@@ -208,7 +216,11 @@ export async function POST(request: NextRequest) {
         user_id,
         customTools,
         use_sdk_tools,
-        system_prompt
+        system_prompt,
+        undefined,
+        undefined,
+        providedNodeId,
+        expectedResults
     ]);
 
     // Return stream response compatible with Vercel Workflow result streaming

@@ -27,6 +27,8 @@ export interface AssistantContext {
   initialMessage: string;
   imageAssets: { url: string; fileType: string }[];
   hasLinkedRequirement: boolean;
+  instanceNodeId?: string;
+  expectedResultsAmount: number;
 }
 
 // Step 1: Prepare context (fetch data, build prompts)
@@ -39,7 +41,9 @@ export async function prepareAssistantContext(
   useSdkTools: boolean,
   systemPrompt?: string,
   agentType?: string,
-  userPhone?: string
+  userPhone?: string,
+  instanceNodeId?: string,
+  expectedResultsAmount?: number
 ): Promise<AssistantContext> {
   'use step';
   
@@ -251,7 +255,9 @@ PLAN vs STEPS:
       user_id: userId,
     },
     imageAssets,
-    hasLinkedRequirement
+    hasLinkedRequirement,
+    instanceNodeId,
+    expectedResultsAmount: expectedResultsAmount || 1,
   };
 }
 
@@ -277,6 +283,8 @@ export async function processAssistantTurn(
     ...context.executionOptions,
     system_prompt: context.systemPrompt,
     custom_tools: fullTools,
+    instance_node_id: context.instanceNodeId,
+    expected_results_amount: context.expectedResultsAmount,
   };
 
   // Execute one step
