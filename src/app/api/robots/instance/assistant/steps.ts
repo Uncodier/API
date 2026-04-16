@@ -19,7 +19,7 @@ export interface AssistantContext {
   userPhone?: string;
   executionOptions: {
     use_sdk_tools: boolean;
-    provider: 'scrapybara' | 'azure' | 'openai';
+    provider: 'azure' | 'openai';
     instance_id: string;
     site_id: string;
     user_id: string;
@@ -165,7 +165,7 @@ export async function prepareAssistantContext(
     requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
   }
 
-  const hasLinkedRequirement = requirementStatuses && requirementStatuses.length > 0;
+  const hasLinkedRequirement = !!(requirementStatuses && requirementStatuses.length > 0);
 
   // Generate prompts
   const agentBackground = await generateAgentBackground(siteId);
@@ -216,6 +216,13 @@ PLAN vs STEPS:
 - If create_template returns template_required: false, the conversation is within 24h—use sendWhatsApp instead; do not use send_template.
 - Always use international phone format (country code + number, e.g. +1..., +34..., +52...).`;
 
+  const generationInstruction = `
+🎙️ MULTIMEDIA GENERATION:
+- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
+- When generating IMAGES, you MUST use the \`generate_image\` tool.
+- When generating VIDEO, you MUST use the \`generate_video\` tool.
+- CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
+
   const combinedSystemPrompt = [
     agentBackground,
     instanceContext,
@@ -225,6 +232,7 @@ PLAN vs STEPS:
     planModeInstruction,
     activePlanInstruction,
     whatsappInstruction,
+    generationInstruction,
     memoriesContext,
     historyContext,
     requirementStatusContext,
@@ -249,7 +257,7 @@ PLAN vs STEPS:
     initialMessage: message,
     executionOptions: {
       use_sdk_tools: shouldUseSDKTools && !useAssistantOnly,
-      provider: finalProvider as any,
+      provider: finalProvider,
       instance_id: instanceId,
       site_id: siteId,
       user_id: userId,

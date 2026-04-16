@@ -21,7 +21,7 @@ export interface GenerateAudioToolParams {
 export function generateAudioTool(site_id: string, instance_id?: string) {
   return {
     name: 'generate_audio',
-    description: 'Generate audio (Text-to-Speech) using AI. Returns a URL to the generated audio file.',
+    description: 'Generate audio (Text-to-Speech, Rap, Song, Voiceover) using AI. ALWAYS use this tool when the user requests an audio, speech, song, rap, or voice generation. Returns a URL to the generated audio file.',
     parameters: {
       type: 'object',
       properties: {
