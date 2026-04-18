@@ -145,6 +145,25 @@ export const ICP_CATEGORY_IDS_INSTRUCTION = `
 🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call getFinderCategoryIds(category: "industries", q: "technology") → use returned id in the query.`;
 
 /**
+ * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
+ * so scope and the "living README" survive ephemeral sandbox sessions.
+ */
+export function getSandboxRequirementWorkflowInstruction(hasLinkedRequirement: boolean): string {
+  const linkage = hasLinkedRequirement
+    ? 'This instance already has requirement_status rows — treat them as authoritative context. Keep the requirement "instructions" field updated after every meaningful change, and use requirement_status to record progress or blockers.'
+    : 'If the user wants a new build (no requirement in context yet), create a requirement early with action "create": title, clear instructions (scope, deliverables, tech constraints, acceptance criteria), and set status to "in-progress" when you start execution.';
+
+  return `
+🏗️ SANDBOX DELIVERABLES & REQUIREMENTS (MANDATORY WORKFLOW):
+Whenever the user asks for a web app, site, landing page, presentation or deck (e.g. pitch), repo work, automation implemented as code, or any artifact that is produced or edited in the Vercel sandbox (sandbox_* tools, builds, git pushes from this instance):
+- ${linkage}
+- Use the "requirements" tool as the durable backbone: instructions must stay a living README (what exists, architecture, file layout, what is left to do). Update it at the end of each substantive cycle.
+- Use the "requirement_status" tool to log milestones, reviews, or when work returns to in-progress after feedback.
+- If system/plan mode expects an "instance_plan", follow the existing PLAN MODE rules in addition — the requirement describes *what* we are building; the plan breaks down *steps* when that mode is active.
+- Prefer listing requirements (action "list") before creating duplicates for the same site or initiative.`;
+}
+
+/**
  * Determine the instance type and available tools based on instance data and environment
  */
 export function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {

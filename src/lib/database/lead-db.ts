@@ -45,6 +45,8 @@ export interface LeadFilters {
   campaign_id?: string;
   assignee_id?: string;
   search?: string;
+  /** When false, search only matches name and email. When true or omitted, notes are included (omitted preserves legacy behavior for callers that do not set this flag). */
+  search_include_notes?: boolean;
   origin?: string;
   sort_by?: string;
   sort_order?: 'asc' | 'desc';
@@ -100,7 +102,11 @@ export async function getLeads(filters: LeadFilters): Promise<{
   if (filters.origin) query = query.eq('origin', filters.origin);
 
   if (filters.search) {
-    query = query.or(`name.ilike.%${filters.search}%,email.ilike.%${filters.search}%,notes.ilike.%${filters.search}%`);
+    const term = filters.search;
+    const includeNotes = filters.search_include_notes !== false;
+    query = includeNotes
+      ? query.or(`name.ilike.%${term}%,email.ilike.%${term}%,notes.ilike.%${term}%`)
+      : query.or(`name.ilike.%${term}%,email.ilike.%${term}%`);
   }
 
   const sortBy = filters.sort_by || 'created_at';

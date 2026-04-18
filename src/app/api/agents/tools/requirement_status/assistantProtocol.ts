@@ -3,13 +3,19 @@ import { createRequirementStatusCore, listRequirementStatusCore } from './route'
 export function requirementStatusTool(site_id: string, default_instance_id?: string) {
   return {
     name: 'requirement_status',
-    description: 'Updates or lists the progress statuses of a client requirement. Use action="create" to save a new status, or action="list" to get the statuses for a given requirement. CRITICAL INSTRUCTION: If a requirement is created or you are asked to administer a requirement in an instance, you MUST add a status using this tool and provide the instance_id to link it to the current instance.',
+    description:
+      'Updates or lists the progress statuses of a client requirement. Use action="create" to save a new status, or action="list" to get the statuses for a given requirement. CRITICAL INSTRUCTION: If a requirement is created or you are asked to administer a requirement in an instance, you MUST add a status using this tool and provide the instance_id to link it to the current instance. ' +
+      'ASSET_ID RULE: asset_id must be the UUID of an existing row in the assets table when you link this status to a concrete asset. It is NOT the same as requirement_id—never copy requirement_id into asset_id; that causes a database foreign-key error. If no asset applies or you only have the requirement id, omit asset_id entirely.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: ['create', 'list'], description: 'Action to perform. Default is "create"' },
         instance_id: { type: 'string', description: 'ID of the related instance (optional, use current instance_id if available)' },
-        asset_id: { type: 'string', description: 'ID of the related asset (required for create)' },
+        asset_id: {
+          type: 'string',
+          description:
+            'Optional. UUID of a related asset that already exists in the assets table. Do not set this to requirement_id—they are different entities. Omit when there is no asset or you do not have a valid assets.id from context.',
+        },
         requirement_id: { type: 'string', description: 'ID of the requirement' },
         repo_url: { type: 'string', description: 'URL of the related repository (optional)' },
         preview_url: { type: 'string', description: 'Live preview or staging URL of the related asset (optional)' },

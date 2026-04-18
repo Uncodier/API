@@ -45,7 +45,7 @@ export function requirementsTool(site_id: string, user_id?: string) {
   return {
     name: 'requirements',
     description:
-      'Manage requirements. Use action="create" to create a new requirement (requires title). Use action="update" to update an existing requirement (requires requirement_id). Use action="list" to get requirements with filters. IMPORTANT: If you create a requirement or are asked to administer one in an instance, you MUST also use the requirement_status tool to add a status and link it to the instance using the instance_id. When creating a requirement, it MUST be created specifically for an AI to execute it, and the instructions MUST specify if it will be done as an "external deliverable" or "using Makinari tools".',
+      'Manage requirements. Use action="create" to create a new requirement (requires title). Use action="update" to update an existing requirement (requires requirement_id). Use action="list" to get requirements with filters. CRITICAL: requirement.instructions is the LIVING README of the project — it persists across ephemeral sandbox sessions. You MUST update instructions (action="update") at the end of every cycle with: what you found, what you built, architecture decisions, current status, and next steps. This is how future cycles know where you left off. When creating a requirement, instructions MUST specify if it will be done as an "external deliverable" or "using Makinari tools".',
     parameters: {
       type: 'object',
       properties: {
@@ -58,7 +58,7 @@ export function requirementsTool(site_id: string, user_id?: string) {
         requirement_id: { type: 'string', description: 'Requirement UUID (required for update)' },
         title: { type: 'string', description: 'Requirement title (required for create)' },
         description: { type: 'string', description: 'Detailed description' },
-        instructions: { type: 'string', description: 'Implementation instructions. MUST specify if it will be executed as an \'external deliverable\' or \'using Makinari tools\', and should be formatted for AI execution.' },
+        instructions: { type: 'string', description: 'The LIVING README of the project. On update, include: project overview, tech stack, architecture, folder structure, implementation status per feature, known issues, and next steps. This field persists across sandbox sessions and is the primary context for future cycles.' },
         priority: { type: 'string', enum: ['high', 'medium', 'low'], description: 'Priority of the requirement. Valid values: high, medium, low. Default: medium' },
         status: { type: 'string', enum: ['backlog', 'validated', 'in-progress', 'on-review', 'done', 'canceled'], description: 'Status of the requirement. Valid values: backlog, validated, in-progress, on-review, done, canceled. Default: backlog' },
         completion_status: { type: 'string', enum: ['pending', 'completed', 'rejected'], description: 'Completion status of the requirement. Valid values: pending, completed, rejected.' },

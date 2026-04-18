@@ -21,6 +21,8 @@ export interface PublishToolParams {
   // Audience Params
   audience_id?: string;
   channel?: 'whatsapp' | 'email';
+  /** When channel is email: `mail` (default) queues via conversations; `newsletter` sends immediately with open/click tracking and no conversations. */
+  audience_email_mode?: 'mail' | 'newsletter';
   subject?: string;
   from?: string;
 }
@@ -38,6 +40,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       scheduledAt,
       audience_id,
       channel,
+      audience_email_mode,
       subject,
       from,
     } = args;
@@ -64,6 +67,12 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     if (willSendAudience) {
       if (channel === 'email' && !subject) {
         return { success: false, error: 'Subject is required for email audience sending.' };
+      }
+      if (audience_email_mode === 'newsletter' && channel !== 'email') {
+        return {
+          success: false,
+          error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
+        };
       }
     }
 
@@ -159,6 +168,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           message: publishText, // We send the combined text + urls
           ...(subject ? { subject } : {}),
           ...(from ? { from } : {}),
+          ...(audience_email_mode ? { audience_email_mode } : {}),
         });
 
         results.audience = audienceResult;
@@ -184,6 +194,8 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
 If sending email to audience, 'subject' is required.
 
+For email audience sends, optional 'audience_email_mode': 'mail' (default) queues one conversation + approved message per lead for background delivery; 'newsletter' sends immediately with open/click tracking (same as sendEmail) and does not create conversations. Only valid when channel is 'email'.
+
 The tool will return an object detailing the success/failure of each attempted action.`,
     parameters: {
       type: 'object',
@@ -205,6 +217,11 @@ The tool will return an object detailing the success/failure of each attempted a
         // Audience
         audience_id: { type: 'string', description: 'Audience UUID to send to.' },
         channel: { type: 'string', enum: ['whatsapp', 'email'], description: 'Channel for audience send.' },
+        audience_email_mode: {
+          type: 'string',
+          enum: ['mail', 'newsletter'],
+          description: 'Email audience only: mail (default) queues via conversations; newsletter sends immediately with tracking, no conversations.',
+        },
         subject: { type: 'string', description: 'Subject for email audience send.' },
         from: { type: 'string', description: 'Sender display name for audience.' }
       }

@@ -12,6 +12,7 @@ import {
   getAudiencePageForSending,
   updateAudienceLeadStatus,
 } from '@/lib/database/audience-db';
+import { sendEmailCore } from '../sendEmail/route';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -58,6 +59,8 @@ export interface SendBulkMessagesToolParams {
   message: string;
   subject?: string;
   from?: string;
+  /** Email only: `mail` (default) queues via conversations; `newsletter` sends immediately with tracking, no conversations. */
+  audience_email_mode?: 'mail' | 'newsletter';
 }
 
 // ---------------------------------------------------------------------------
@@ -67,6 +70,7 @@ export interface SendBulkMessagesToolParams {
 export function sendBulkMessagesTool(siteId: string) {
   const execute = async (args: SendBulkMessagesToolParams) => {
     const { audience_id, channel, message, subject, from } = args;
+    const audience_email_mode = args.audience_email_mode ?? 'mail';
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
     if (!channel) return { success: false, error: 'Missing required field: channel' };
@@ -74,12 +78,90 @@ export function sendBulkMessagesTool(siteId: string) {
     if (channel === 'email' && !subject) {
       return { success: false, error: 'Missing required field for email: subject' };
     }
+    if (audience_email_mode === 'newsletter' && channel !== 'email') {
+      return {
+        success: false,
+        error: 'audience_email_mode "newsletter" is only valid when channel is "email".',
+      };
+    }
 
     const audience = await getAudienceById(audience_id);
     if (!audience) return { success: false, error: 'Audience not found' };
     if (audience.site_id !== siteId) return { success: false, error: 'Audience does not belong to this site' };
     if (audience.status !== 'ready') {
       return { success: false, error: `Audience is not ready (status: ${audience.status})` };
+    }
+
+    // Immediate send with open/click tracking (sendEmail pipeline); no conversation rows.
+    if (channel === 'email' && audience_email_mode === 'newsletter') {
+      const agent = await findActiveSalesAgent(siteId);
+      const agentId = agent?.agentId ?? undefined;
+
+      const totalPages = Math.ceil(audience.total_count / audience.page_size);
+      let totalSent = 0;
+      let totalFailed = 0;
+      let totalSkipped = 0;
+
+      for (let page = 1; page <= totalPages; page++) {
+        const { leads } = await getAudiencePageForSending(audience_id, page);
+        if (leads.length === 0) continue;
+
+        for (const lead of leads) {
+          const leadId = lead.id as string;
+
+          try {
+            if (!lead.email) {
+              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
+              totalSkipped++;
+              continue;
+            }
+
+            const result = await sendEmailCore({
+              site_id: siteId,
+              email: lead.email,
+              subject: subject!,
+              message,
+              from,
+              lead_id: leadId,
+              agent_id: agentId,
+            });
+
+            const ok = result.success && result.status !== 'skipped';
+
+            if (ok) {
+              await updateAudienceLeadStatus(audience_id, leadId, 'sent');
+              totalSent++;
+            } else {
+              const errMsg = result.error?.message
+                ?? (result.status === 'skipped' ? 'Email send skipped' : 'Email send failed');
+              await updateAudienceLeadStatus(audience_id, leadId, 'failed', errMsg);
+              totalFailed++;
+            }
+          } catch (err: any) {
+            await updateAudienceLeadStatus(
+              audience_id,
+              leadId,
+              'failed',
+              err?.message ?? 'Unexpected error',
+            );
+            totalFailed++;
+          }
+        }
+      }
+
+      const totalRemaining = audience.total_count - totalSent - totalFailed - totalSkipped;
+
+      return {
+        success: true,
+        audience_id,
+        channel,
+        audience_email_mode: 'newsletter' as const,
+        total_sent: totalSent,
+        total_failed: totalFailed,
+        total_skipped: totalSkipped,
+        total_remaining: totalRemaining,
+        total_in_audience: audience.total_count,
+      };
     }
 
     const totalPages = Math.ceil(audience.total_count / audience.page_size);
@@ -202,16 +284,19 @@ export function sendBulkMessagesTool(siteId: string) {
 Required: audience_id, channel ("whatsapp" or "email"), message.
 For email: subject is also required.
 Optional: from (sender display name).
+For email only: audience_email_mode — "mail" (default) or "newsletter".
 
 The tool iterates through every lead in the audience:
 - WhatsApp: requires lead.phone (international format). Leads without phone are skipped.
 - Email: requires lead.email. Leads without email are skipped.
 
-Instead of sending messages synchronously, this tool queues them by creating a conversation and message with an 'approved' status for each lead. The background workflow handles actual delivery and tracking.
+Email delivery modes:
+- mail (default): queues one conversation plus an approved message per lead; a background workflow delivers and tracks. total_sent counts queued handoffs.
+- newsletter: sends immediately via the same pipeline as sendEmail (open/click tracking); does not create conversation rows. Large audiences may hit server timeouts — prefer smaller batches if needed.
 
 Each lead's send_status is tracked (sent, failed, skipped) so the tool can be re-run safely — already processed leads are not re-queued.
 
-Returns a summary: total_sent (queued), total_failed, total_skipped, total_remaining.
+Returns a summary: total_sent, total_failed, total_skipped, total_remaining.
 
 IMPORTANT:
 - First create an audience using the "audience" tool, then pass its audience_id here.
@@ -229,6 +314,11 @@ IMPORTANT:
         message: { type: 'string', description: 'Message text (plain text or HTML for email).' },
         subject: { type: 'string', description: 'Email subject (required when channel is "email").' },
         from: { type: 'string', description: 'Sender display name (optional).' },
+        audience_email_mode: {
+          type: 'string',
+          enum: ['mail', 'newsletter'],
+          description: 'Email only. mail (default): queue via conversations. newsletter: send immediately with tracking, no conversations.',
+        },
       },
       required: ['audience_id', 'channel', 'message'],
     },

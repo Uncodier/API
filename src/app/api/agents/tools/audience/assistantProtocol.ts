@@ -32,6 +32,8 @@ export interface AudienceToolParams {
   campaign_id?: string;
   assignee_id?: string;
   search?: string;
+  /** Only pass true when the user explicitly asks to search inside lead notes. */
+  search_include_notes?: boolean;
   origin?: string;
   limit?: number;
   page_size?: number;
@@ -73,6 +75,7 @@ async function collectLeadIds(
       campaign_id: params.campaign_id,
       assignee_id: params.assignee_id,
       search: params.search,
+      search_include_notes: params.search_include_notes === true,
       limit: Math.min(COLLECT_BATCH, maxLimit - leadIds.length),
       offset,
       sort_by: 'created_at',
@@ -118,7 +121,11 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
       if (args.origin) sqlQuery += ` AND origin = '${args.origin}'`;
       if (args.search) {
         const safeSearch = args.search.replace(/'/g, "''");
-        sqlQuery += ` AND (name ILIKE '%${safeSearch}%' OR email ILIKE '%${safeSearch}%' OR notes ILIKE '%${safeSearch}%')`;
+        if (args.search_include_notes === true) {
+          sqlQuery += ` AND (name ILIKE '%${safeSearch}%' OR email ILIKE '%${safeSearch}%' OR notes ILIKE '%${safeSearch}%')`;
+        } else {
+          sqlQuery += ` AND (name ILIKE '%${safeSearch}%' OR email ILIKE '%${safeSearch}%')`;
+        }
       }
       sqlQuery += ` ORDER BY created_at DESC`;
       if (args.limit) sqlQuery += ` LIMIT ${args.limit}`;
@@ -135,6 +142,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           campaign_id: args.campaign_id,
           assignee_id: args.assignee_id,
           search: args.search,
+          search_include_notes: args.search_include_notes === true,
           origin: args.origin,
           limit: args.limit,
           sql: sqlQuery,
@@ -254,7 +262,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
 
 Actions:
 • create — query leads by filters and store the result as a named audience.
-  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search, origin, limit (e.g. 10 to only add 10 leads), page_size (default 50).
+  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search (name and email only unless search_include_notes is true), origin, limit (e.g. 10 to only add 10 leads), page_size (default 50).
   Returns audience_id, total_count, total_pages, and example_leads (up to 5 leads).
 • list — list all audiences for this site.
 • get — retrieve a specific page of leads from an audience.
@@ -281,7 +289,16 @@ Usage tips:
         segment_id: { type: 'string', description: 'Filter leads by segment UUID.' },
         campaign_id: { type: 'string', description: 'Filter leads by campaign UUID.' },
         assignee_id: { type: 'string', description: 'Filter leads by assignee UUID.' },
-        search: { type: 'string', description: 'Text search in name, email, notes.' },
+        search: {
+          type: 'string',
+          description:
+            'Text search in lead name and email. Do not set search_include_notes unless the user explicitly asks to search lead notes.',
+        },
+        search_include_notes: {
+          type: 'boolean',
+          description:
+            'Set true only when the user explicitly requests searching inside lead notes. Default behavior excludes notes.',
+        },
         origin: { type: 'string', description: 'Filter leads by origin.' },
         limit: { type: 'number', description: 'Maximum number of total leads to add to the audience.' },
         page_size: { type: 'number', description: 'Leads per page (default 50, max 100).' },

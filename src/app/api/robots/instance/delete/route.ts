@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { deleteRemoteInstanceChildren } from '@/lib/services/robot-instance/delete-remote-instance-children';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/delete
 // Stop instance in Scrapybara and delete the instance record from database
 // ------------------------------------------------------------------------------------
 
-export const maxDuration = 60; // 1 minute
+export const maxDuration = 120; // batched cleanup of logs/assets can take longer than a single DB statement
 
 const DeleteInstanceSchema = z.object({
   instance_id: z.string().uuid('instance_id must be a valid UUID'),
@@ -79,16 +80,14 @@ export async function POST(request: NextRequest) {
         .in('status', ['in_progress', 'paused']);
     }
 
-    // 4) Delete related instance_plans records --------------------------------------
-    const { error: deletePlansError } = await supabaseAdmin
-      .from('instance_plans')
-      .delete()
-      .eq('instance_id', instance_id);
-
-    if (deletePlansError) {
-      console.error('Error deleting instance plans:', deletePlansError);
-      // Continue with instance deletion even if plans deletion fails
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ ⚠️ Failed to delete plans, but continuing with instance deletion`);
+    // 4) Remove dependent rows (logs, nodes, assets, plans, etc.) so the parent delete stays under DB timeouts
+    const childCleanup = await deleteRemoteInstanceChildren(instance_id);
+    if (!childCleanup.ok) {
+      console.error('Error cleaning up instance dependents:', childCleanup.error);
+      return NextResponse.json(
+        { error: childCleanup.error ?? 'Failed to remove instance-related data' },
+        { status: 500 },
+      );
     }
 
     // 5) Delete instance record from DB ---------------------------------------------

@@ -31,6 +31,8 @@ const CreateInstancePlanSchema = z.object({
     retry_count: z.number().int().optional(),
     error_message: z.string().optional().nullable(),
     artifacts: z.array(z.any()).optional().nullable(),
+    role: z.string().optional(),
+    skill: z.string().optional(),
   })).optional(),
 });
 
@@ -90,17 +92,19 @@ export async function createInstancePlanCore(params: any) {
       id: `step_${index + 1}`,
       title: step.title,
       description: step.description || step.title,
-      order: index + 1,
+      order: step.order ?? index + 1,
       status: step.status || 'pending',
       type: step.type || 'task',
       instructions: step.instructions || step.description || step.title,
-      expected_output: '',
+      expected_output: step.expected_output || '',
       actual_output: null,
       started_at: null,
       completed_at: null,
       retry_count: 0,
       error_message: null,
-      artifacts: []
+      artifacts: [],
+      role: step.role || null,
+      skill: step.skill || null,
     }));
   }
 

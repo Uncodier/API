@@ -30,6 +30,13 @@ const UpdateInstancePlanSchema = z.object({
     retry_count: z.number().int().optional(),
     error_message: z.string().optional().nullable(),
     artifacts: z.array(z.any()).optional().nullable(),
+    /** Set when sandbox_push_checkpoint was invoked during cron executor runs */
+    checkpoint_tool_invoked_at: z.string().optional().nullable(),
+    checkpoint_tool_calls: z.number().int().optional(),
+    vercel_preview_url: z.string().optional().nullable(),
+    vercel_deploy_state: z.string().optional().nullable(),
+    vercel_deploy_checked_at: z.string().optional().nullable(),
+    vercel_deploy_detail: z.string().optional().nullable(),
   })).optional(),
   progress_percentage: z.number().min(0).max(100).optional(),
 });

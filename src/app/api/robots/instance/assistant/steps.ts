@@ -8,7 +8,8 @@ import {
   generateAgentBackground,
   getAssistantTools,
   determineInstanceCapabilities,
-  ICP_CATEGORY_IDS_INSTRUCTION
+  ICP_CATEGORY_IDS_INSTRUCTION,
+  getSandboxRequirementWorkflowInstruction,
 } from './utils';
 
 export interface AssistantContext {
@@ -236,6 +237,7 @@ PLAN vs STEPS:
     memoriesContext,
     historyContext,
     requirementStatusContext,
+    getSandboxRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
     renameInstruction,

@@ -23,6 +23,11 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
+import {
+  ensureAzureSafeDataImageUrl,
+  isAzureInvalidImageError,
+  sanitizeMessagesForAzureVisionImages,
+} from './azure-vision-message-sanitize';
 
 /**
  * Helper function to filter base64 images in messages, keeping only the latest ones up to specified limit.
@@ -562,6 +567,13 @@ export class OpenAIAgentExecutor {
         if (imagesBefore > imagesAfter) {
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [IMAGE_FILTER] Cleaned ${imagesBefore - imagesAfter} old image(s), kept ${imagesAfter} most recent`);
         }
+
+        const visionStripped = sanitizeMessagesForAzureVisionImages(messages);
+        if (visionStripped > 0) {
+          console.warn(
+            `₍ᐢ•(ܫ)•ᐢ₎ [AZURE_VISION] Removed ${visionStripped} unsupported or invalid image part(s) before API call`
+          );
+        }
         
         // Prepare completion options
         const completionOptions: any = {
@@ -652,6 +664,13 @@ export class OpenAIAgentExecutor {
           } catch (streamError: any) {
             console.error(`❌ [STREAM_ERROR] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
             
+            if (isAzureInvalidImageError(streamError)) {
+              sanitizeMessagesForAzureVisionImages(messages);
+              console.warn(
+                `₍ᐢ•(ܫ)•ᐢ₎ [AZURE_VISION] Re-sanitized messages after invalid image on stream; using non-streaming fallback`
+              );
+            }
+
             // Log fallback attempt
             console.log(`⏱️ [TIMING] Calling Azure OpenAI API with NON-streaming fallback...`);
             const fallbackOptions = { ...completionOptions };
@@ -659,7 +678,17 @@ export class OpenAIAgentExecutor {
             delete fallbackOptions.stream_options;
             
             const azureStartTime = Date.now();
-            const completion = await this.client.chat.completions.create(fallbackOptions);
+            let completion;
+            try {
+              completion = await this.client.chat.completions.create(fallbackOptions);
+            } catch (fallbackErr: any) {
+              if (isAzureInvalidImageError(fallbackErr)) {
+                sanitizeMessagesForAzureVisionImages(messages);
+                completion = await this.client.chat.completions.create(fallbackOptions);
+              } else {
+                throw fallbackErr;
+              }
+            }
             const azureEndTime = Date.now();
             const azureDuration = azureEndTime - azureStartTime;
             console.log(`⏱️ [TIMING] Azure OpenAI fallback response received in ${azureDuration}ms (${(azureDuration/1000).toFixed(1)}s)`);
@@ -681,7 +710,17 @@ export class OpenAIAgentExecutor {
           // Non-streaming path (original behavior)
           console.log(`⏱️ [TIMING] Calling Azure OpenAI API...`);
           const azureStartTime = Date.now();
-          const completion = await this.client.chat.completions.create(completionOptions);
+          let completion;
+          try {
+            completion = await this.client.chat.completions.create(completionOptions);
+          } catch (apiErr: any) {
+            if (isAzureInvalidImageError(apiErr)) {
+              sanitizeMessagesForAzureVisionImages(messages);
+              completion = await this.client.chat.completions.create(completionOptions);
+            } else {
+              throw apiErr;
+            }
+          }
           const azureEndTime = Date.now();
           const azureDuration = azureEndTime - azureStartTime;
           console.log(`⏱️ [TIMING] Azure OpenAI response received in ${azureDuration}ms (${(azureDuration/1000).toFixed(1)}s)`);
@@ -909,8 +948,16 @@ export class OpenAIAgentExecutor {
               // Store full result in toolResults for onStep callback
               // CRITICAL: Extract base64 images from result
               // OpenAI does NOT allow images in 'tool' messages, only in 'user' messages
-              const { cleanedResult, base64Image } = this.extractBase64Image(result);
-              
+              const { cleanedResult, base64Image: extractedImage } = this.extractBase64Image(result);
+              let base64Image: string | null = extractedImage
+                ? ensureAzureSafeDataImageUrl(extractedImage)
+                : null;
+              if (extractedImage && !base64Image) {
+                console.warn(
+                  `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_IMAGE] ${toolCall.toolName} returned image bytes not usable for Azure vision (dropped from history)`
+                );
+              }
+
               if (base64Image) {
                 console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_IMAGE] ${toolCall.toolName} returned base64 image (${base64Image.length} chars)`);
                 

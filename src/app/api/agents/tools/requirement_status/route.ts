@@ -20,12 +20,26 @@ export async function createRequirementStatusCore(params: {
     throw new Error('site_id, requirement_id, and status are required');
   }
 
-  // Ensure asset_id and instance_id are valid UUIDs if provided, otherwise default to null to avoid database errors
+  // Deliverable gate: done only with repo_url, preview or endpoint, and source archive URL.
+  const hasRepo = !!repo_url;
+  const hasEndpoint = !!(preview_url || endpoint_url);
+  const hasSourceArchive = !!(source_code?.trim());
+  let effectiveStatus = status;
+  if ((status === 'done' || status === 'completed') && !(hasRepo && hasEndpoint && hasSourceArchive)) {
+    const missing = [];
+    if (!hasRepo) missing.push('repo_url');
+    if (!hasEndpoint) missing.push('preview_url/endpoint_url');
+    if (!hasSourceArchive) missing.push('source_code');
+    console.warn(
+      `[RequirementStatus] Downgrading "${status}" → "in-progress" for req ${requirement_id} — missing: ${missing.join(', ')}`,
+    );
+    effectiveStatus = 'in-progress';
+  }
+
   const isUuid = (str: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
   const validAssetId = asset_id && isUuid(asset_id) ? asset_id : null;
   const validInstanceId = instance_id && isUuid(instance_id) ? instance_id : null;
 
-  // Insert into requirement_progress table (or requirement_status)
   const { data, error } = await supabaseAdmin
     .from('requirement_status')
     .insert([
@@ -37,7 +51,7 @@ export async function createRequirementStatusCore(params: {
         repo_url: repo_url || null,
         preview_url: preview_url || null,
         source_code: source_code || null,
-        status,
+        status: effectiveStatus,
         message: message || null,
         cycle: cycle || null,
         endpoint_url: endpoint_url || null,
@@ -51,15 +65,12 @@ export async function createRequirementStatusCore(params: {
     throw new Error(`Error inserting requirement status: ${error.message}`);
   }
 
-  // Optional: update the general status of the requirement in the requirements table
-  if (status === 'completed' || status === 'done' || status === 'in-progress') {
-    const mappedStatus = status === 'in-progress' ? 'in-progress' : (status === 'completed' || status === 'done' ? 'done' : undefined);
-    if (mappedStatus) {
-      await supabaseAdmin
-        .from('requirements')
-        .update({ status: mappedStatus, updated_at: new Date().toISOString() })
-        .eq('id', requirement_id);
-    }
+  if (effectiveStatus === 'completed' || effectiveStatus === 'done' || effectiveStatus === 'in-progress') {
+    const mappedStatus = effectiveStatus === 'in-progress' ? 'in-progress' : 'done';
+    await supabaseAdmin
+      .from('requirements')
+      .update({ status: mappedStatus, updated_at: new Date().toISOString() })
+      .eq('id', requirement_id);
   }
 
   return { success: true, data };

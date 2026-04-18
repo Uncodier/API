@@ -9,5 +9,15 @@
     "src/app/api/ai/video/route.ts": { "maxDuration": 300 },
     "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 }
   },
-  "regions": ["iad1"]
+  "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/requirements-apps",
+      "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/requirements-automations",
+      "schedule": "* * * * *"
+    }
+  ]
 }

@@ -47,7 +47,8 @@ const nextraConfig = withNextra({
     'thread-stream',
     'imapflow',
     'pino',
-    'composio-core'
+    'composio-core',
+    '@vercel/sandbox'
   ],
   
   // Configuración adicional para CSS Modules

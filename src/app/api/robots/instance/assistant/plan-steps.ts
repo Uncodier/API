@@ -1,9 +1,23 @@
-'use step';
-
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { AssistantContext, processAssistantTurn } from './steps';
+import { SkillsService } from '@/lib/services/skills-service';
+import { getStepCheckpointPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
+import { SandboxService } from '@/lib/services/sandbox-service';
+
+const ROLE_TO_SKILL: Record<string, string> = {
+  'template_selection': 'makinari-obj-template-selection',
+  'frontend': 'makinari-rol-frontend',
+  'backend': 'makinari-rol-backend',
+  'devops': 'makinari-rol-devops',
+  'content': 'makinari-rol-content',
+  'orchestrator': 'makinari-rol-orchestrator',
+  'investigate': 'makinari-fase-investigacion',
+  'plan': 'makinari-fase-planeacion',
+  'validate': 'makinari-fase-validacion',
+  'report': 'makinari-fase-reporteado',
+};
 
 /**
  * Fetch the active instance plan for the given instance and site.
@@ -14,7 +28,6 @@ export async function getActiveInstancePlan(
   siteId: string
 ) {
   'use step';
-  
   try {
     const result = await getInstancePlansCore({
       instance_id: instanceId,
@@ -57,7 +70,6 @@ export async function executePlanStep(
   step: any
 ) {
   'use step';
-
   console.log(`[PlanSteps] Executing step ${step.order}: ${step.title}`);
 
   // 1. Update step status to in_progress
@@ -72,27 +84,58 @@ export async function executePlanStep(
     }]
   });
 
-  // 2. Prepare context for this step
-  // We modify the system prompt to focus on this step
-  const stepContextPrompt = `
-\n\n📋 CURRENT PLAN EXECUTION:
-You are currently executing a plan: "${plan.title}".
-Description: ${plan.description}
+  // 2. Load skill content for this step (if declared)
+  let skillContext = '';
+  const skillName = step.skill || (step.role && ROLE_TO_SKILL[step.role]);
+  if (skillName) {
+    const matched = SkillsService.getSkillBySlugOrName(skillName);
+    if (matched) {
+      console.log(`[PlanSteps] Injecting skill "${skillName}" for step ${step.order}`);
+      skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
+    } else {
+      console.warn(`[PlanSteps] Skill "${skillName}" not found, continuing without it`);
+    }
+  }
 
-👉 CURRENT STEP (Step ${step.order}):
+  // 3. Build a dedicated system prompt for this sub-agent step
+  const { instance_id, site_id } = context.executionOptions;
+  const requirementId = context.instance?.requirement_id || '';
+
+  const stepSystemPrompt = `You are an EXECUTOR agent running inside a Vercel Sandbox.
+Your job is to complete ONE specific step by writing code, running commands, and making real changes.
+Working directory: ${SandboxService.WORK_DIR}
+
+CONTEXT:
+- instance_id: ${instance_id}
+- site_id: ${site_id}
+${requirementId ? `- requirement_id: ${requirementId}` : ''}
+
+PLAN: "${plan.title}"
+${plan.description ? `Description: ${plan.description}` : ''}
+
+CURRENT STEP (Step ${step.order}):
 Title: ${step.title}
+Role: ${step.role || 'general'}
 Instructions: ${step.instructions}
-Expected Output: ${step.expected_output}
+Expected Output: ${step.expected_output || 'Complete the step successfully.'}
+${skillContext ? `\nIMPORTANT — You MUST follow the skill instructions below. They define your procedures, validations, and deliverables for this role. Do NOT skip any step in the skill.\n${skillContext}` : ''}
+${getStepCheckpointPromptFragment(requirementId, instance_id)}
 
-⚠️ INSTRUCTIONS FOR THIS STEP:
-- Focus ONLY on completing this specific step.
-- Use available tools if necessary.
-- Provide the output of this step clearly.
+RULES:
+- Focus ONLY on completing this specific step. Do not plan — EXECUTE.
+- Next.js App Router in this repo: pages only under src/app/ (e.g. src/app/prd/page.tsx). Never create a root folder named "app/" or "app/src/app/" — the GitHub repo may be called "apps" but that is not a path to mirror in the filesystem.
+- Never use a top-level app/ folder for routes (e.g. app/src/app/prd breaks Vercel).
+- Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
+- Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST call sandbox_push_checkpoint before stopping when you changed files (title_hint = step title; see CHECKPOINTS in prompt). Use sandbox_restore_checkpoint only if you need to rewind locally.
+- After implementing, validate your work (run build, run tests if applicable).
+- When reporting status, use requirement_id="${requirementId}" and instance_id="${instance_id}".
+- The preview URL comes from the GitHub Deployments API post-push. Do NOT construct or guess it.
+- Be efficient — the sandbox has a limited lifetime.
 `;
 
   const modifiedContext = {
     ...context,
-    systemPrompt: context.systemPrompt + stepContextPrompt
+    systemPrompt: stepSystemPrompt,
   };
 
   let userContent: any = `Execute step ${step.order}: ${step.title}. ${step.instructions}`;
