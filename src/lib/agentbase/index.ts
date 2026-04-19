@@ -2,7 +2,6 @@
  * Agentbase - API central para la biblioteca de agentes
  */
 import { CommandFactory } from './services/command/CommandFactory';
-import ProcessorInitializer from './services/processor/ProcessorInitializer';
 import ProcessorConfigurationService from './services/processor/ProcessorConfigurationService';
 import CommandProcessor from './services/command/CommandProcessor';
 
@@ -15,11 +14,8 @@ export {
 // Re-exportar los principales componentes para mantener compatibilidad
 export { CommandFactory };
 
-// Exportar SOLO ProcessorInitializer como interfaz única
-export { ProcessorInitializer };
-
-// Exportar ProcessorInitializer como exportación por defecto 
-export default ProcessorInitializer;
+// Direct re-exports (avoid default-import-then-reexport; webpack can leave binding undefined with some externals order)
+export { ProcessorInitializer, default } from './services/processor/ProcessorInitializer';
 
 // Services
 export { CommandService } from './services/command/CommandService';

@@ -28,10 +28,15 @@ const nextraConfig = withNextra({
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
     }
   },
-  // Do NOT list openai/zod in serverExternalPackages — it breaks webpack analysis of openai-agent-executor ("module has no exports") and breaks agentbase exports during static generation.
-  // Instead, force-include these deps in the serverless trace for the workflow step route (Vercel MODULE_NOT_FOUND for externals in chunk 2567.js).
+  // Workflow step chunk uses require('openai'|'zod'|...). Match keys to Next's normalized route (see collect-build-traces: normalizeAppPath(entryName)).
+  // With src/app, entry is like src/app/.../route → route /src/app/.well-known/workflow/v1/step (not /.well-known/...).
   outputFileTracingIncludes: {
-    '/.well-known/workflow/v1/step': [
+    '/src/app/.well-known/workflow/v1/step': [
+      './node_modules/openai/**/*',
+      './node_modules/zod/**/*',
+      './node_modules/zod-to-json-schema/**/*',
+    ],
+    '/app/.well-known/workflow/v1/step': [
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',
       './node_modules/zod-to-json-schema/**/*',
