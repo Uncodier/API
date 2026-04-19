@@ -49,8 +49,9 @@ const nextraConfig = withNextra({
     'pino',
     'composio-core',
     '@vercel/sandbox',
-    // Workflow step bundles import openai-agent-executor → `openai`; must be resolvable at runtime on Vercel.
+    // Workflow `/.well-known/workflow/v1/step` bundle: externals must exist in the serverless trace on Vercel.
     'openai',
+    'zod',
   ],
   
   // Configuración adicional para CSS Modules
