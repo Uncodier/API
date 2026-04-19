@@ -28,15 +28,15 @@ const nextraConfig = withNextra({
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
     }
   },
-  // Workflow step chunk uses require('openai'|'zod'|...). Match keys to Next's normalized route (see collect-build-traces: normalizeAppPath(entryName)).
-  // With src/app, entry is like src/app/.../route → route /src/app/.well-known/workflow/v1/step (not /.well-known/...).
+  // NOTE: do NOT list openai/zod in serverExternalPackages. agentbase imports zod via BackgroundBuilder; with these
+  // externalized, page-data collection in Next 16 leaves named bindings (e.g. ProcessorInitializer) undefined for
+  // routes whose import chain reaches that module — build fails with "Cannot read properties of undefined (reading 'getInstance')".
+  //
+  // Vercel was missing these in /.well-known/workflow/v1/step .nft.json (chunk 2567.js -> require('openai'|'zod'|...)).
+  // Force-include the packages in the trace for that route. picomatch is invoked with `contains: true` so the glob
+  // just needs to be contained in the normalized route string ("/app/.well-known/workflow/v1/step" in Next 16).
   outputFileTracingIncludes: {
-    '/src/app/.well-known/workflow/v1/step': [
-      './node_modules/openai/**/*',
-      './node_modules/zod/**/*',
-      './node_modules/zod-to-json-schema/**/*',
-    ],
-    '/app/.well-known/workflow/v1/step': [
+    '**/.well-known/workflow/v1/step': [
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',
       './node_modules/zod-to-json-schema/**/*',
