@@ -19,6 +19,16 @@ Leads missing the required contact field (phone for WhatsApp, email for email) a
 | message | string | Yes | Message text (plain text or HTML for email). |
 | subject | string | email | Email subject (required when channel is `email`). |
 | from | string | No | Sender display name. |
+| audience_email_mode | string | No | Email only: `mail` (default) or `newsletter` (immediate send, open/click tracking, no HTML signature). |
+| content_id | string | No | Optional content UUID. Reads `metadata.placeholders.when_unresolved` unless `placeholder_policy` is set. |
+| placeholder_policy | string | No | `strip_tokens` (default) or `skip_recipient` for unknown `{{...}}` tokens. |
+
+## Merge fields / placeholders
+
+Use **double braces only**: `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. The engine normalizes common aliases (e.g. `{{lead.full_name}}`, `{{lead.correo}}`). Do not use `[Name]` or `{name}`.
+
+- **mail** mode: subject and body are personalized per lead before queuing.
+- **newsletter** mode: same personalization; emails are sent without the usual agent HTML signature.
 
 ## MCP Usage
 

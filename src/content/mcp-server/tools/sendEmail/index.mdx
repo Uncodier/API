@@ -6,19 +6,22 @@ description: Send an email to a recipient.
 
 # Send Email
 
-Send an email to a recipient. Required: email (recipient), subject, message. Optional: from (sender name), lead_id, conversation_id for tracking.
+Send an email to a recipient. Required: email (recipient), subject, message. Optional: from, lead_id, conversation_id, agent_id, placeholder_policy.
+
+Merge fields (with `lead_id`): `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. Use double braces only; aliases like `{{lead.correo}}` are normalized. Unknown tokens: `strip_tokens` (default) removes them; `skip_recipient` aborts the send if unresolved tokens remain.
 
 ## Input Schema
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | email | string | Recipient email address |
-| subject | string | Email subject |
+| subject | string | Email subject (may include merge fields if lead_id is set) |
 | message | string | Email body (HTML or plain text) |
 | from | string | Sender display name |
-| lead_id | string | Lead UUID for tracking |
+| lead_id | string | Lead UUID for tracking and merge fields |
 | conversation_id | string | Conversation UUID for tracking |
 | agent_id | string | Agent UUID for tracking |
+| placeholder_policy | string | `strip_tokens` or `skip_recipient` when using merge fields |
 
 ## REST Endpoint
 

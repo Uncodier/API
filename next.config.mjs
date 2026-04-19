@@ -48,7 +48,9 @@ const nextraConfig = withNextra({
     'imapflow',
     'pino',
     'composio-core',
-    '@vercel/sandbox'
+    '@vercel/sandbox',
+    // Workflow step bundles import openai-agent-executor → `openai`; must be resolvable at runtime on Vercel.
+    'openai',
   ],
   
   // Configuración adicional para CSS Modules

@@ -6,7 +6,7 @@ description: Build and manage reusable lead audiences for bulk messaging or anal
 
 # Audience
 
-Build and manage reusable lead audiences. Query leads by filters, store the result as a named audience, then retrieve pages of leads or pass the audience to `sendBulkMessages` for bulk delivery.
+Build and manage reusable lead audiences. Query leads by filters, store the result as a named audience, then retrieve pages of leads or pass the audience to `sendBulkMessages` for bulk delivery (use `{{lead.*}}` merge tokens in message/subject as in [sendBulkMessages](/mcp-server/tools/sendBulkMessages)).
 
 Audiences persist across conversation turns and can hold up to 5,000 leads. Each audience is split into pages (default 50 leads per page) for efficient paginated access.
 

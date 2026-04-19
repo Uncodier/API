@@ -66,7 +66,11 @@ export function contentTool(site_id: string, user_id?: string) {
         },
         instructions: { type: 'string', description: 'Instructions for AI content generation or editing' },
         campaign_id: { type: 'string', description: 'Campaign UUID' },
-        metadata: { type: 'string', description: 'Additional metadata (json string)' },
+        metadata: {
+          type: 'string',
+          description:
+            'JSON string for extra fields. For audience merge templates, include placeholders policy, e.g. {"placeholders":{"when_unresolved":"strip_tokens"}} or skip_recipient (skip lead if unknown {{...}} remain). Canonical merge tokens: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}}.',
+        },
         
         // List specific filters
         site_id: { type: 'string', description: 'Filter by site UUID' },

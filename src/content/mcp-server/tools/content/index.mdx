@@ -23,12 +23,16 @@ Manage content. Use action="create" to create new content (requires title, type)
 | tags | array | Tags for categorization |
 | instructions | string | Instructions for AI content generation or editing |
 | campaign_id | string | Campaign UUID |
-| metadata | object | Additional metadata (json object) |
+| metadata | object | JSON object. For bulk templates, you may set `placeholders.when_unresolved` to `strip_tokens` or `skip_recipient` (see [sendBulkMessages](/mcp-server/tools/sendBulkMessages)). |
 | site_id | string | Filter by site UUID |
 | user_id | string | Filter by user UUID |
 | search | string | Text search in title, description, text |
 | limit | number | Max results (default 50) |
 | offset | number | Pagination offset |
+
+## Merge fields in stored content
+
+When `text` is used for audience sends, prefer canonical tokens: `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. Policy: `metadata.placeholders.when_unresolved`.
 
 ## REST Endpoint
 

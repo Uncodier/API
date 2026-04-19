@@ -25,6 +25,8 @@ export interface PublishToolParams {
   audience_email_mode?: 'mail' | 'newsletter';
   subject?: string;
   from?: string;
+  /** Stored as content.metadata.placeholders.when_unresolved for merge-field policy. */
+  placeholders_when_unresolved?: 'strip_tokens' | 'skip_recipient';
 }
 
 export function publishTool(siteId: string, userId?: string, instanceId?: string) {
@@ -43,6 +45,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
       audience_email_mode,
       subject,
       from,
+      placeholders_when_unresolved,
     } = args;
 
     // Validation 1: Must have at least some content
@@ -80,9 +83,17 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
     let finalContentId = content_id;
     
     // Prepare metadata
-    const metadata: any = {};
+    const metadata: Record<string, unknown> = {};
     if (assets && assets.length > 0) metadata.assets = assets;
     if (urls && urls.length > 0) metadata.urls = urls;
+    if (placeholders_when_unresolved) {
+      metadata.placeholders = {
+        ...(typeof metadata.placeholders === 'object' && metadata.placeholders !== null
+          ? (metadata.placeholders as object)
+          : {}),
+        when_unresolved: placeholders_when_unresolved,
+      };
+    }
 
     // --- 1. Content DB (Save/Update) ---
     if (willSaveContent || willUpdateContent) {
@@ -169,6 +180,7 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
           ...(subject ? { subject } : {}),
           ...(from ? { from } : {}),
           ...(audience_email_mode ? { audience_email_mode } : {}),
+          ...(finalContentId ? { content_id: finalContentId } : {}),
         });
 
         results.audience = audienceResult;
@@ -194,7 +206,9 @@ export function publishTool(siteId: string, userId?: string, instanceId?: string
 You MUST provide at least valid 'text', 'assets' (array of media IDs), or 'urls'.
 If sending email to audience, 'subject' is required.
 
-For email audience sends, optional 'audience_email_mode': 'mail' (default) queues one conversation + approved message per lead for background delivery; 'newsletter' sends immediately with open/click tracking (same as sendEmail) and does not create conversations. Only valid when channel is 'email'.
+For email audience sends, optional 'audience_email_mode': 'mail' (default) queues one conversation + approved message per lead for background delivery; 'newsletter' sends immediately with open/click tracking (same as sendEmail), **without** appending an email signature, and does not create conversations. Only valid when channel is 'email'.
+
+Optional 'placeholders_when_unresolved' (with create/update content in the same call) stores metadata.placeholders.when_unresolved on the content row: strip_tokens (default behavior) removes unknown {{...}} tokens per lead; skip_recipient skips that lead. Use double-brace merge tokens only: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}}. When content is saved in the same publish call, its id is passed to the audience send so that policy applies.
 
 The tool will return an object detailing the success/failure of each attempted action.`,
     parameters: {
@@ -223,7 +237,13 @@ The tool will return an object detailing the success/failure of each attempted a
           description: 'Email audience only: mail (default) queues via conversations; newsletter sends immediately with tracking, no conversations.',
         },
         subject: { type: 'string', description: 'Subject for email audience send.' },
-        from: { type: 'string', description: 'Sender display name for audience.' }
+        from: { type: 'string', description: 'Sender display name for audience.' },
+        placeholders_when_unresolved: {
+          type: 'string',
+          enum: ['strip_tokens', 'skip_recipient'],
+          description:
+            'When creating/updating content for the same publish call: store merge policy for unknown {{...}} tokens in content.metadata.placeholders.when_unresolved.',
+        },
       }
     },
     execute

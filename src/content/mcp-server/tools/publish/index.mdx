@@ -40,6 +40,12 @@ You must also provide parameters for at least one action:
 - `channel` (string, optional): Channel for audience send (`"whatsapp"` or `"email"`).
 - `subject` (string, required if channel is email): Subject for email audience send.
 - `from` (string, optional): Sender display name for audience.
+- `audience_email_mode` (string, optional): For email only — `mail` (default, queue via conversations) or `newsletter` (immediate send with tracking, **no** HTML signature).
+- `placeholders_when_unresolved` (string, optional): When creating/updating content in the same call: `strip_tokens` or `skip_recipient`, stored in `content.metadata.placeholders.when_unresolved` for merge-field policy on the audience send.
+
+### Merge fields
+
+Use `{{lead.*}}` and `{{site.name}}` in `text` / email subject as documented on [sendBulkMessages](/mcp-server/tools/sendBulkMessages). When content is saved in the same publish call, its id is passed to the bulk sender so placeholder policy applies.
 
 ## Returns
 

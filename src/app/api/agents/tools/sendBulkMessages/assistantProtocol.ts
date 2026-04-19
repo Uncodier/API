@@ -12,6 +12,14 @@ import {
   getAudiencePageForSending,
   updateAudienceLeadStatus,
 } from '@/lib/database/audience-db';
+import { getContentById } from '@/lib/database/content-db';
+import type { DbLead } from '@/lib/database/lead-db';
+import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
+import {
+  fetchSiteNameForMerge,
+  personalizeMergeSubjectAndMessage,
+  placeholderPolicyToMergePolicy,
+} from '@/lib/messaging/lead-merge-fields';
 import { sendEmailCore } from '../sendEmail/route';
 
 // Función para validar UUIDs
@@ -61,6 +69,27 @@ export interface SendBulkMessagesToolParams {
   from?: string;
   /** Email only: `mail` (default) queues via conversations; `newsletter` sends immediately with tracking, no conversations. */
   audience_email_mode?: 'mail' | 'newsletter';
+  /** Optional content row whose metadata.placeholders.when_unresolved controls unknown {{...}} tokens. */
+  content_id?: string;
+  /** Override policy when content_id is absent or has no placeholders config. Default: strip_tokens. */
+  placeholder_policy?: ContentPlaceholderPolicy;
+}
+
+async function resolvePlaceholderPolicy(
+  contentId: string | undefined,
+  override: ContentPlaceholderPolicy | undefined,
+): Promise<ContentPlaceholderPolicy> {
+  if (override) return override;
+  if (!contentId) return 'strip_tokens';
+  const row = await getContentById(contentId);
+  const w = row?.metadata && typeof row.metadata === 'object'
+    ? (row.metadata as Record<string, unknown>).placeholders
+    : undefined;
+  if (w && typeof w === 'object' && w !== null && 'when_unresolved' in w) {
+    const v = (w as { when_unresolved?: string }).when_unresolved;
+    if (v === 'skip_recipient' || v === 'strip_tokens') return v;
+  }
+  return 'strip_tokens';
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +98,7 @@ export interface SendBulkMessagesToolParams {
 
 export function sendBulkMessagesTool(siteId: string) {
   const execute = async (args: SendBulkMessagesToolParams) => {
-    const { audience_id, channel, message, subject, from } = args;
+    const { audience_id, channel, message, subject, from, content_id: contentIdArg, placeholder_policy } = args;
     const audience_email_mode = args.audience_email_mode ?? 'mail';
 
     if (!audience_id) return { success: false, error: 'Missing required field: audience_id' };
@@ -91,6 +120,8 @@ export function sendBulkMessagesTool(siteId: string) {
     if (audience.status !== 'ready') {
       return { success: false, error: `Audience is not ready (status: ${audience.status})` };
     }
+
+    const placeholderPolicyResolved = await resolvePlaceholderPolicy(contentIdArg, placeholder_policy);
 
     // Immediate send with open/click tracking (sendEmail pipeline); no conversation rows.
     if (channel === 'email' && audience_email_mode === 'newsletter') {
@@ -124,6 +155,8 @@ export function sendBulkMessagesTool(siteId: string) {
               from,
               lead_id: leadId,
               agent_id: agentId,
+              omit_signature: true,
+              placeholder_policy: placeholderPolicyResolved,
             });
 
             const ok = result.success && result.status !== 'skipped';
@@ -134,8 +167,15 @@ export function sendBulkMessagesTool(siteId: string) {
             } else {
               const errMsg = result.error?.message
                 ?? (result.status === 'skipped' ? 'Email send skipped' : 'Email send failed');
-              await updateAudienceLeadStatus(audience_id, leadId, 'failed', errMsg);
-              totalFailed++;
+              const isUnresolved = result.error?.code === 'PLACEHOLDERS_UNRESOLVED';
+              await updateAudienceLeadStatus(
+                audience_id,
+                leadId,
+                isUnresolved ? 'skipped' : 'failed',
+                errMsg,
+              );
+              if (isUnresolved) totalSkipped++;
+              else totalFailed++;
             }
           } catch (err: any) {
             await updateAudienceLeadStatus(
@@ -163,6 +203,9 @@ export function sendBulkMessagesTool(siteId: string) {
         total_in_audience: audience.total_count,
       };
     }
+
+    const mergePolicy = placeholderPolicyToMergePolicy(placeholderPolicyResolved);
+    const siteName = await fetchSiteNameForMerge(siteId);
 
     const totalPages = Math.ceil(audience.total_count / audience.page_size);
     let totalSent = 0;
@@ -198,11 +241,32 @@ export function sendBulkMessagesTool(siteId: string) {
             }
           }
 
+          const leadRow = lead as DbLead;
+          const merged = personalizeMergeSubjectAndMessage(
+            subject,
+            message,
+            leadRow,
+            siteName,
+            mergePolicy,
+          );
+          if (merged.aborted) {
+            await updateAudienceLeadStatus(
+              audience_id,
+              leadId,
+              'skipped',
+              `Unresolved merge fields: ${merged.unresolved.join(', ')}`,
+            );
+            totalSkipped++;
+            continue;
+          }
+          const perLeadMessage = merged.message;
+          const perLeadSubject = merged.subject ?? subject;
+
           // 1. Crear Conversación
           const conversationData: any = {
             site_id: siteId,
             lead_id: leadId,
-            title: subject || `Bulk Message: ${channel}`,
+            title: perLeadSubject || subject || `Bulk Message: ${channel}`,
             channel: channel,
             custom_data: {
               source: 'sendBulkMessages',
@@ -228,14 +292,14 @@ export function sendBulkMessagesTool(siteId: string) {
           // 2. Crear Mensaje con estado 'approved'
           const messageData: any = {
             conversation_id: conversation.id,
-            content: message,
+            content: perLeadMessage,
             role: 'assistant',
             lead_id: leadId,
             custom_data: {
               status: 'approved',
               channel: channel,
               audience_id: audience_id,
-              subject: subject // Guardar el subject en custom_data si es email
+              subject: perLeadSubject,
             }
           };
 
@@ -283,7 +347,10 @@ export function sendBulkMessagesTool(siteId: string) {
 
 Required: audience_id, channel ("whatsapp" or "email"), message.
 For email: subject is also required.
-Optional: from (sender display name).
+Optional: from, content_id (content UUID whose metadata.placeholders.when_unresolved controls unknown merge tokens), placeholder_policy (override), audience_email_mode.
+
+Merge fields — use only double braces: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}}, {{site.name}}. Common aliases (e.g. {{lead.correo}}, {{lead.full_name}}) are normalized. Other syntaxes ([Name], {name}) are not supported.
+
 For email only: audience_email_mode — "mail" (default) or "newsletter".
 
 The tool iterates through every lead in the audience:
@@ -291,8 +358,8 @@ The tool iterates through every lead in the audience:
 - Email: requires lead.email. Leads without email are skipped.
 
 Email delivery modes:
-- mail (default): queues one conversation plus an approved message per lead; a background workflow delivers and tracks. total_sent counts queued handoffs.
-- newsletter: sends immediately via the same pipeline as sendEmail (open/click tracking); does not create conversation rows. Large audiences may hit server timeouts — prefer smaller batches if needed.
+- mail (default): queues one conversation plus an approved message per lead (body/subject personalized per lead); a background workflow delivers and tracks. total_sent counts queued handoffs.
+- newsletter: sends immediately via sendEmail (open/click tracking), **no** HTML signature appended, no conversation rows. Large audiences may hit server timeouts — prefer smaller batches if needed.
 
 Each lead's send_status is tracked (sent, failed, skipped) so the tool can be re-run safely — already processed leads are not re-queued.
 
@@ -318,6 +385,17 @@ IMPORTANT:
           type: 'string',
           enum: ['mail', 'newsletter'],
           description: 'Email only. mail (default): queue via conversations. newsletter: send immediately with tracking, no conversations.',
+        },
+        content_id: {
+          type: 'string',
+          description:
+            'Optional content UUID. When set, metadata.placeholders.when_unresolved (strip_tokens | skip_recipient) controls unknown {{...}} tokens unless placeholder_policy overrides.',
+        },
+        placeholder_policy: {
+          type: 'string',
+          enum: ['strip_tokens', 'skip_recipient'],
+          description:
+            'Override for unresolved merge tokens. strip_tokens: remove unknown tokens. skip_recipient: skip that lead when unknown tokens remain.',
         },
       },
       required: ['audience_id', 'channel', 'message'],

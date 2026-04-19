@@ -272,7 +272,7 @@ Actions:
 
 Usage tips:
 - Create an audience once, then use "get" to iterate pages as context.
-- Pass the audience_id to the sendBulkMessages tool to send messages to all leads.
+- Pass the audience_id to the sendBulkMessages tool to send messages to all leads (use {{lead.*}} merge tokens in the message/subject as documented on sendBulkMessages).
 - Maximum ${MAX_LEADS} leads per audience. Use limit or filters to narrow down if needed.
 - Audiences persist across conversation turns.`,
     parameters: {

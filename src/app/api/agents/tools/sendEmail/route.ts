@@ -1,5 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getLeadById } from '@/lib/database/lead-db';
+import {
+  type ContentPlaceholderPolicy,
+  fetchSiteNameForMerge,
+  personalizeMergeSubjectAndMessage,
+  placeholderPolicyToMergePolicy,
+} from '@/lib/messaging/lead-merge-fields';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { EmailSignatureService } from '@/lib/services/email/EmailSignatureService';
 import { SyncedObjectsService } from '@/lib/services/synced-objects/SyncedObjectsService';
@@ -14,6 +21,10 @@ export interface SendEmailCoreParams {
   conversation_id?: string;
   lead_id?: string;
   site_id: string;
+  /** When true (e.g. newsletter sends), do not append agent/site HTML signature. */
+  omit_signature?: boolean;
+  /** When lead_id is set, policy for unknown {{...}} tokens. Defaults to strip_tokens. */
+  placeholder_policy?: ContentPlaceholderPolicy;
 }
 
 export interface SendEmailCoreResult {
@@ -30,7 +41,18 @@ export interface SendEmailCoreResult {
  * Avoids fetch round-trip when assistant runs server-side.
  */
 export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEmailCoreResult> {
-  const { email, from, subject, message, agent_id, conversation_id, lead_id, site_id } = params;
+  const {
+    email,
+    from,
+    subject,
+    message,
+    agent_id,
+    conversation_id,
+    lead_id,
+    site_id,
+    omit_signature = false,
+    placeholder_policy,
+  } = params;
 
   if (!email || !subject || !message || !site_id) {
     return {
@@ -44,6 +66,34 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
       success: false,
       error: { code: 'INVALID_REQUEST', message: 'Invalid recipient email format' },
     };
+  }
+
+  let effectiveSubject = subject;
+  let effectiveMessage = message;
+
+  if (lead_id) {
+    const lead = await getLeadById(lead_id);
+    if (!lead) {
+      return {
+        success: false,
+        error: { code: 'LEAD_NOT_FOUND', message: 'Lead not found for merge fields' },
+      };
+    }
+    const siteName = await fetchSiteNameForMerge(site_id);
+    const mergePol = placeholderPolicyToMergePolicy(placeholder_policy);
+    const merged = personalizeMergeSubjectAndMessage(subject, message, lead, siteName, mergePol);
+    if (merged.aborted) {
+      return {
+        success: false,
+        status: 'skipped',
+        error: {
+          code: 'PLACEHOLDERS_UNRESOLVED',
+          message: `Unresolved merge fields: ${merged.unresolved.join(', ')}`,
+        },
+      };
+    }
+    effectiveSubject = merged.subject ?? subject;
+    effectiveMessage = merged.message;
   }
 
   const { data: siteSettings, error: settingsError } = await supabaseAdmin
@@ -68,9 +118,9 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     const { data: newMessage } = await supabaseAdmin
       .from('messages')
       .insert([{
-        conversation_id, lead_id, agent_id, content: message, role: 'assistant',
+        conversation_id, lead_id, agent_id, content: effectiveMessage, role: 'assistant',
         custom_data: {
-          subject,
+          subject: effectiveSubject,
           recipient: email,
           sender: configuredEmail || 'pending',
           source: 'email_tool',
@@ -89,12 +139,22 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
 
     if (username && domain) {
       try {
-        const signature = await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
+        const signature = omit_signature
+          ? { formatted: '' as string }
+          : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
 
         const result = await AgentMailSendService.sendViaAgentMail({
-          email, subject, message, agent_id, conversation_id, lead_id, site_id,
-          username, domain, senderEmail: `${username}@${domain}`,
-          signatureHtml: signature.formatted,
+          email,
+          subject: effectiveSubject,
+          message: effectiveMessage,
+          agent_id,
+          conversation_id,
+          lead_id,
+          site_id,
+          username,
+          domain,
+          senderEmail: `${username}@${domain}`,
+          signatureHtml: omit_signature ? undefined : signature.formatted,
           trackingId,
         });
 
@@ -118,7 +178,9 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     };
   }
 
-  const signature = await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
+  const signature = omit_signature
+    ? { formatted: '' as string }
+    : await EmailSignatureService.generateAgentSignature(site_id, from).catch(() => ({ formatted: '' }));
 
   if (trackingId) {
     try {
@@ -126,7 +188,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
         .from('messages')
         .update({
           custom_data: {
-            subject,
+            subject: effectiveSubject,
             recipient: email,
             sender: configuredEmail,
             source: 'smtp_tool',
@@ -139,8 +201,16 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
   }
 
   const emailParams: any = {
-    email, from: from || '', fromEmail: configuredEmail, subject, message,
-    signatureHtml: signature.formatted, agent_id, conversation_id, lead_id, site_id,
+    email,
+    from: from || '',
+    fromEmail: configuredEmail,
+    subject: effectiveSubject,
+    message: effectiveMessage,
+    signatureHtml: omit_signature ? undefined : signature.formatted,
+    agent_id,
+    conversation_id,
+    lead_id,
+    site_id,
     trackingId,
   };
 
