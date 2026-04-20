@@ -241,7 +241,7 @@ export class SandboxService {
    */
   static async syncTrackedBranchToRemoteTip(sandbox: Sandbox, branch: string): Promise<void> {
     const cwd = SandboxService.WORK_DIR;
-    const fetchRes = await SandboxService.runCommandInSandbox(sandbox, 'git', ['fetch', 'origin'], [], cwd);
+    const fetchRes = await SandboxService.runCommandInSandbox(sandbox, 'git', ['fetch', 'origin'], cwd);
     if (fetchRes.exitCode !== 0) {
       console.warn('[Sandbox] fetch origin before reset failed — continuing with checkout state');
       return;
@@ -250,7 +250,6 @@ export class SandboxService {
       sandbox,
       'git',
       ['reset', '--hard', `origin/${branch}`],
-      [],
       cwd,
     );
     if (resetRes.exitCode !== 0) {

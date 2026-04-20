@@ -7,7 +7,13 @@
     "src/app/api/agents/email/deliveryStatus/route.ts": { "maxDuration": 300 },
     "src/app/api/ai/image/route.ts": { "maxDuration": 60 },
     "src/app/api/ai/video/route.ts": { "maxDuration": 300 },
-    "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 }
+    "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 },
+    "src/app/.well-known/workflow/v1/step/route.js": {
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@vercel/sandbox,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai}/**"
+    },
+    "src/app/.well-known/workflow/v1/flow/route.js": {
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@vercel/sandbox,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai}/**"
+    }
   },
   "regions": ["iad1"],
   "crons": [

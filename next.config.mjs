@@ -28,15 +28,23 @@ const nextraConfig = withNextra({
       allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
     }
   },
-  // Force Vercel's file tracer to ship openai/zod/zod-to-json-schema with the generated workflow step route.
-  // Without this, chunk `2567.js` inside `/.well-known/workflow/v1/step/route.js` calls `require('zod')` at runtime
-  // and Lambda throws `MODULE_NOT_FOUND` because NFT doesn't follow the transitive graph all the way.
-  // picomatch runs with `contains: true`, so this glob matches the normalized route "/app/.well-known/workflow/v1/step".
+  // Force Vercel's file tracer to ship openai/zod/zod-to-json-schema (and companion deps) with any route that
+  // might transitively need them. We use a broad `**` glob because Vercel's build pipeline sometimes externalizes
+  // zod/openai at runtime in chunks (observed as `Cannot find module 'zod'` from `chunks/*.js` under
+  // `/.well-known/workflow/v1/step`) even when webpack bundles them locally. Including these modules via NFT
+  // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
   outputFileTracingIncludes: {
     '**/.well-known/workflow/v1/step': [
       './node_modules/openai/**/*',
       './node_modules/zod/**/*',
       './node_modules/zod-to-json-schema/**/*',
+      './node_modules/@vercel/sandbox/**/*',
+    ],
+    '**/.well-known/workflow/v1/flow': [
+      './node_modules/openai/**/*',
+      './node_modules/zod/**/*',
+      './node_modules/zod-to-json-schema/**/*',
+      './node_modules/@vercel/sandbox/**/*',
     ],
   },
   typescript: {
