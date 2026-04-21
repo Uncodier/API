@@ -31,7 +31,11 @@ export default async function middleware(request) {
   
   // Verificar si es un webhook de AgentMail (tiene su propia validación de Svix)
   const isAgentMailWebhook = request.nextUrl.pathname.startsWith('/api/integrations/agentmail/webhook/');
-  
+
+  // Outstand webhooks: HMAC signature validated in route (OUTSTAND_WEBHOOK_SECRET)
+  const isOutstandWebhook =
+    request.nextUrl.pathname === '/api/integrations/outstand/webhooks';
+
   // Verificar si es una ruta pública explícita
   const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
   
@@ -45,6 +49,7 @@ export default async function middleware(request) {
     isDevMode,
     isWhatsAppWebhook,
     isAgentMailWebhook,
+    isOutstandWebhook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
       'authorization': request.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
@@ -69,7 +74,16 @@ export default async function middleware(request) {
     response.headers.set('X-AgentMail-Webhook', 'true');
     return response;
   }
-  
+
+  // Para Outstand webhooks, permitir sin API key (firma HMAC en la ruta)
+  if (isOutstandWebhook) {
+    console.log('[Middleware] Outstand webhook detected - skipping origin/API validation');
+    const response = NextResponse.next();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Outstand-Webhook', 'true');
+    return response;
+  }
+
   // Para rutas públicas explícitas (/api/public/*), aplicar lógica específica
   if (isPublicRoute) {
     console.log('[Middleware] Public route detected - validating access');
