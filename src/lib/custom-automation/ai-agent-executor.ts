@@ -206,6 +206,101 @@ export type AzureOpenAIConfig = AIAgentExecutorConfig;
 const GEMINI_DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
 const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
 
+/**
+ * Produce a rich diagnostic line for a failed chat.completions.create call.
+ * OpenAI SDK APIError messages like "400 status code (no body)" give us
+ * virtually nothing useful on their own; this helper pulls out the request id,
+ * provider headers, base URL, model, message count and rough payload size so
+ * we can actually troubleshoot provider-side rejections (bad model id,
+ * context-window overflow, invalid tool schema, etc.).
+ */
+function logChatCompletionFailure(
+  err: unknown,
+  ctx: {
+    provider: AIProvider | string;
+    stage: 'stream' | 'fallback' | 'non-stream';
+    baseURL?: string;
+    modelName?: string;
+    messages?: unknown[];
+    toolCount?: number;
+  },
+): void {
+  const e = err as {
+    status?: number;
+    message?: string;
+    code?: string;
+    type?: string;
+    param?: string;
+    request_id?: string;
+    headers?: Record<string, string> | Headers;
+    error?: unknown;
+    response?: { status?: number; headers?: unknown; data?: unknown };
+    cause?: unknown;
+  } | undefined;
+
+  const headersObj: Record<string, string> = {};
+  const rawHeaders = e?.headers;
+  try {
+    if (rawHeaders && typeof (rawHeaders as Headers).forEach === 'function') {
+      (rawHeaders as Headers).forEach((value: string, key: string) => {
+        if (
+          key.startsWith('x-') ||
+          key === 'content-type' ||
+          key === 'content-length' ||
+          key === 'server'
+        ) {
+          headersObj[key] = value;
+        }
+      });
+    } else if (rawHeaders && typeof rawHeaders === 'object') {
+      for (const [k, v] of Object.entries(rawHeaders as Record<string, string>)) {
+        if (
+          k.startsWith('x-') ||
+          k.toLowerCase() === 'content-type' ||
+          k.toLowerCase() === 'content-length' ||
+          k.toLowerCase() === 'server'
+        ) {
+          headersObj[k] = String(v);
+        }
+      }
+    }
+  } catch {
+    /* ignore header introspection errors */
+  }
+
+  let approxPayloadChars: number | undefined;
+  if (Array.isArray(ctx.messages)) {
+    try {
+      approxPayloadChars = JSON.stringify(ctx.messages).length;
+    } catch {
+      approxPayloadChars = undefined;
+    }
+  }
+
+  const payload = {
+    provider: ctx.provider,
+    stage: ctx.stage,
+    baseURL: ctx.baseURL,
+    model: ctx.modelName,
+    messageCount: Array.isArray(ctx.messages) ? ctx.messages.length : undefined,
+    approxPayloadChars,
+    toolCount: ctx.toolCount,
+    status: e?.status,
+    code: e?.code,
+    type: e?.type,
+    param: e?.param,
+    request_id: e?.request_id,
+    headers: Object.keys(headersObj).length > 0 ? headersObj : undefined,
+    errorMessage: e?.message,
+    errorBody: e?.error,
+  };
+
+  console.error(
+    `❌ [LLM_ERROR][${ctx.provider}][${ctx.stage}] chat.completions.create failed:`,
+    JSON.stringify(payload, null, 2),
+  );
+}
+
 const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
   gemini: 'gemini-3.1-pro-preview',
   azure: 'gpt-4o',
@@ -697,6 +792,14 @@ export class AIAgentExecutor {
             );
           } catch (streamError: any) {
             console.error(`❌ [STREAM_ERROR][${provider}] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
+            logChatCompletionFailure(streamError, {
+              provider,
+              stage: 'stream',
+              baseURL: (this.client as any)?.baseURL,
+              modelName,
+              messages,
+              toolCount: openaiTools.length,
+            });
 
             if (provider === 'azure' && isAzureInvalidImageError(streamError)) {
               sanitizeMessagesForAzureVisionImages(messages);
@@ -719,6 +822,14 @@ export class AIAgentExecutor {
                 sanitizeMessagesForAzureVisionImages(messages);
                 completion = await this.client.chat.completions.create(fallbackOptions);
               } else {
+                logChatCompletionFailure(fallbackErr, {
+                  provider,
+                  stage: 'fallback',
+                  baseURL: (this.client as any)?.baseURL,
+                  modelName,
+                  messages,
+                  toolCount: openaiTools.length,
+                });
                 throw fallbackErr;
               }
             }
@@ -749,6 +860,14 @@ export class AIAgentExecutor {
               sanitizeMessagesForAzureVisionImages(messages);
               completion = await this.client.chat.completions.create(completionOptions);
             } else {
+              logChatCompletionFailure(apiErr, {
+                provider,
+                stage: 'non-stream',
+                baseURL: (this.client as any)?.baseURL,
+                modelName,
+                messages,
+                toolCount: openaiTools.length,
+              });
               throw apiErr;
             }
           }
