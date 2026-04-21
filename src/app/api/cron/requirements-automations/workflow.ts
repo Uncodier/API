@@ -187,17 +187,22 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
   const effectiveBranch = pushResult?.branch || branchName;
   const didPush = !!pushResult?.pushed;
 
-  // Step 6: Preview + source code
-  const gitOrg = process.env.GIT_ORG || 'makinary';
-  const autoRepo = process.env.GIT_AUTOMATIONS_REPO || 'automations';
+  // Step 6: Preview + source code — resolve the automation repo from the
+  // requirement's persisted git binding (metadata.git) with env fallback.
+  const { resolveGitBindingForRequirement } = await import('../shared/cron-commit-helpers');
+  const binding = await resolveGitBindingForRequirement(reqId, 'automation');
+  const gitOrg = binding.org;
+  const autoRepo = binding.repo;
   const previewUrl = await getPreviewUrlStep(gitOrg, autoRepo, effectiveBranch);
   const sourceCodeUrl = await checkSourceCodeStep(reqId);
 
-  // Step 7: HTTP validation
+  // Step 7: HTTP validation — also checks repo_url / branch consistency vs
+  // the requirement's metadata.git (advisory unless REQUIREMENT_GIT_STRICT=true).
   const repoUrl = `https://github.com/${gitOrg}/${autoRepo}/tree/${effectiveBranch}`;
   const { repoOk, previewOk } = await validateDeliverablesStep({
     repoUrl,
     previewUrl: previewUrl || undefined,
+    requirementId: reqId,
     audit: cronAudit,
   });
 

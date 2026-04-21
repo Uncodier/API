@@ -7,6 +7,16 @@ import {
 } from '@/lib/services/cron-audit-log';
 import { getGitHubBranchPreviewUrl, type PreviewUrlGitRepoKind } from '@/lib/services/sandbox-preview-url';
 import { assertPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
+import {
+  buildRequirementBranchName,
+  branchBelongsToRequirement,
+  extractRequirementIdFromBranch,
+} from '@/lib/services/requirement-branch';
+import {
+  getRequirementGitBinding,
+  resolveDefaultGitBinding,
+  type GitBinding,
+} from '@/lib/services/requirement-git-binding';
 
 export interface SandboxResult {
   sandbox: Sandbox;
@@ -46,25 +56,30 @@ export class SandboxService {
   }
 
   /**
-   * Build a branch name following the convention: feature/{shortId}-{slug}
-   * e.g. feature/21c35450-wework-clone
+   * Canonical branch name for a requirement: `feature/req-<uuid>[--<slug>]`.
+   * The slug is cosmetic. The UUID is what identifies the requirement and is
+   * always extractable with `extractRequirementIdFromBranch`.
+   *
+   * Back-compat: the legacy `feature/<8hex>-<slug>` format is still recognised
+   * by `getKnownBranches` when reading history, but NEW branches are always
+   * emitted in the canonical shape above.
    */
   static buildBranchName(requirementId: string, title: string): string {
-    const shortId = requirementId.substring(0, 8);
-    const slug = title
-      .toLowerCase()
-      .replace(/[^a-z0-9\s-]/g, '')
-      .trim()
-      .replace(/\s+/g, '-')
-      .substring(0, 40)
-      .replace(/-+$/, '');
-    const safeSlug = slug || 'work';
-    return `feature/${shortId}-${safeSlug}`;
+    return buildRequirementBranchName(requirementId, title);
+  }
+
+  /**
+   * Returns the requirement UUID encoded in a branch name (new format only).
+   */
+  static extractRequirementIdFromBranch(branch: string | null | undefined): string | null {
+    return extractRequirementIdFromBranch(branch);
   }
 
   /**
    * Fetch known branches for a requirement from requirement_status.repo_url history.
-   * Returns unique branch names ordered by most recent first.
+   * Returns unique branch names ordered by most recent first. Filters to branches
+   * that belong to the requirement (either canonical UUID or legacy 8-char match)
+   * so stray rows cannot leak unrelated branch names.
    */
   static async getKnownBranches(requirementId: string): Promise<string[]> {
     const { data } = await supabaseAdmin
@@ -80,10 +95,10 @@ export class SandboxService {
     const seen = new Set<string>();
     for (const row of data) {
       const branch = SandboxService.extractBranchFromRepoUrl(row.repo_url);
-      if (branch && !seen.has(branch)) {
-        seen.add(branch);
-        branches.push(branch);
-      }
+      if (!branch || seen.has(branch)) continue;
+      if (!branchBelongsToRequirement(branch, requirementId)) continue;
+      seen.add(branch);
+      branches.push(branch);
     }
     return branches;
   }
@@ -92,29 +107,43 @@ export class SandboxService {
    * Creates a Vercel Sandbox, clones the central repo, and checks out the
    * correct branch for the requirement.
    *
+   * Repo resolution order:
+   * 1. `gitBinding` argument (explicit, wins everything).
+   * 2. Requirement's `metadata.git` from the database.
+   * 3. Env fallback keyed by `instanceType` (applications vs automation).
+   *
    * Branch resolution order:
    * 1. Branches from requirement_status.repo_url history (most recent first)
-   * 2. Fallback: `feature/{shortId}` created from main
+   *    that belong to this requirement (canonical or legacy shape).
+   * 2. Fallback: canonical `feature/req-<uuid>[--<slug>]` created from main.
    */
   static async createRequirementSandbox(
     requirementId: string,
-    instanceType: string, // Use instanceType to determine repo
+    instanceType: string, // Use instanceType to determine repo when no binding is given
     title: string = '',
     audit?: CronAuditContext,
+    gitBinding?: GitBinding,
   ): Promise<SandboxResult> {
     const auditCtx: CronAuditContext | undefined = audit?.siteId
       ? { ...audit, requirementId: audit.requirementId ?? requirementId }
       : undefined;
 
     const githubToken = process.env.GITHUB_TOKEN;
-    const gitOrg = process.env.GIT_ORG || 'makinary';
-    const repoName = instanceType === 'automation'
-      ? process.env.GIT_AUTOMATIONS_REPO
-      : process.env.GIT_APPLICATIONS_REPO;
+    if (!githubToken) {
+      throw new Error('GITHUB_TOKEN environment variable is required.');
+    }
 
-    if (!githubToken || !gitOrg || !repoName) {
+    const binding =
+      gitBinding ??
+      (await getRequirementGitBinding(requirementId, instanceType).catch(() =>
+        resolveDefaultGitBinding(instanceType),
+      ));
+
+    const gitOrg = binding.org;
+    const repoName = binding.repo;
+    if (!gitOrg || !repoName) {
       throw new Error(
-        'GITHUB_TOKEN, GIT_ORG, and GIT_APPLICATIONS_REPO/GIT_AUTOMATIONS_REPO environment variables are required.',
+        'Git binding is incomplete: requirements.metadata.git (or env GIT_ORG + GIT_APPLICATIONS_REPO/GIT_AUTOMATIONS_REPO) must be set.',
       );
     }
 
@@ -209,8 +238,9 @@ export class SandboxService {
       console.log(`[Sandbox] Branch ${branch} not found on remote, trying next...`);
     }
 
-    // No known branch — create one with the naming convention
-    const newBranch = SandboxService.buildBranchName(requirementId, title || requirementId);
+    // No known branch — create one with the canonical naming convention.
+    // The UUID travels inside the branch, so `title` is only a cosmetic slug.
+    const newBranch = SandboxService.buildBranchName(requirementId, title);
     console.log(`[Sandbox] No existing branch found, creating: ${newBranch}`);
 
     const createRes = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-b', newBranch], workDir);

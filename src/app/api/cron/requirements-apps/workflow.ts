@@ -170,19 +170,24 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const effectiveBranch = pushResult?.branch || branchName;
   const didPush = !!pushResult?.pushed;
 
-  // Step 6: Get preview URL
-  const owner = process.env.GIT_ORG || 'makinary';
-  const repoName = process.env.GIT_APPLICATIONS_REPO || 'apps';
+  // Step 6: Get preview URL using the requirement's persisted git binding
+  // (metadata.git) so we query the same repo that the sandbox pushed to.
+  const { resolveGitBindingForRequirement } = await import('../shared/cron-commit-helpers');
+  const binding = await resolveGitBindingForRequirement(reqId, 'applications');
+  const owner = binding.org;
+  const repoName = binding.repo;
   const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch);
 
   // Step 7: Check source code
   const sourceCodeUrl = await checkSourceCodeStep(reqId);
 
-  // Step 8: HTTP validation
+  // Step 8: HTTP validation — also checks repo_url / branch consistency vs
+  // the requirement's metadata.git (advisory unless REQUIREMENT_GIT_STRICT=true).
   const repoUrl = `https://github.com/${owner}/${repoName}/tree/${effectiveBranch}`;
   const { repoOk, previewOk } = await validateDeliverablesStep({
     repoUrl,
     previewUrl: previewUrl || undefined,
+    requirementId: reqId,
     audit: cronAudit,
   });
 

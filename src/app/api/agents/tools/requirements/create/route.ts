@@ -3,6 +3,15 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createRequirement } from '@/lib/database/requirement-db';
 import { shouldUseRemoteApi, invokeRemoteTool, RemoteToolError } from '@/lib/mcp/remote-client';
+import {
+  normalizeGitBindingInput,
+  resolveDefaultGitBinding,
+  type GitBinding,
+} from '@/lib/services/requirement-git-binding';
+import {
+  PartialRequirementMetadataSchema,
+  verifyGitBindingReachable,
+} from '../git-binding-schema';
 
 const CreateRequirementSchema = z.object({
   title: z.string().min(1, 'Title is required'),
@@ -17,7 +26,7 @@ const CreateRequirementSchema = z.object({
   site_id: z.string().uuid('Valid site_id required'),
   user_id: z.string().uuid('Valid user_id required').optional(),
   campaign_id: z.string().uuid().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: PartialRequirementMetadataSchema.optional(),
 });
 
 async function resolveUserId(siteId: string, userId?: string): Promise<string> {
@@ -45,6 +54,23 @@ export async function createRequirementCore(params: any) {
   const validated = CreateRequirementSchema.parse(params);
   const effectiveUserId = await resolveUserId(validated.site_id, validated.user_id);
 
+  // Auto-seed metadata.git when the caller did not provide a full binding,
+  // so every new requirement has an explicit repo target that the sync
+  // pipeline can validate without re-reading env vars.
+  const incomingMetadata = (validated.metadata ?? {}) as Record<string, unknown>;
+  const incomingGit = (incomingMetadata.git ?? {}) as Partial<GitBinding>;
+  const defaultBinding = resolveDefaultGitBinding(validated.type);
+  const seededBinding =
+    normalizeGitBindingInput(incomingGit, defaultBinding) ?? defaultBinding;
+  const reachErr = await verifyGitBindingReachable(seededBinding);
+  if (reachErr && process.env.REQUIREMENT_GIT_STRICT === 'true') {
+    throw new Error(`metadata.git not reachable: ${reachErr}`);
+  }
+  const seededMetadata: Record<string, unknown> = {
+    ...incomingMetadata,
+    git: seededBinding,
+  };
+
   const requirement = await createRequirement({
     title: validated.title,
     description: validated.description,
@@ -58,7 +84,7 @@ export async function createRequirementCore(params: any) {
     campaign_id: validated.campaign_id,
     cron: validated.cron,
     cycle: validated.cycle,
-    metadata: validated.metadata,
+    metadata: seededMetadata,
   });
 
   return {

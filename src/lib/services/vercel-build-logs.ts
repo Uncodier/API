@@ -41,6 +41,29 @@ function eventsQueryString(): string {
 
 type VercelDeploymentRow = { uid?: string; inspectorUrl?: string; url?: string | null };
 
+/** Best-effort lookup of a deployment by uid to recover inspectorUrl for logging. */
+async function fetchDeploymentMetaByUid(
+  uid: string,
+  token: string,
+): Promise<{ inspectorUrl?: string } | null> {
+  const qs = new URLSearchParams();
+  const teamId = process.env.VERCEL_TEAM_ID?.trim();
+  if (teamId) qs.set('teamId', teamId);
+  const url = `${VERCEL_API}/v13/deployments/${encodeURIComponent(uid)}${qs.toString() ? `?${qs.toString()}` : ''}`;
+  try {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      console.warn(`[VercelLogs] meta HTTP ${res.status} for ${uid.slice(0, 8)}…`);
+      return null;
+    }
+    const data = (await res.json()) as { inspectorUrl?: string };
+    return { inspectorUrl: data.inspectorUrl };
+  } catch (e: unknown) {
+    console.warn('[VercelLogs] meta fetch failed:', e instanceof Error ? e.message : e);
+    return null;
+  }
+}
+
 async function findDeploymentUidForSha(
   sha: string,
   projectId: string,
@@ -165,8 +188,37 @@ export async function fetchVercelBuildLogForSha(
 }
 
 /**
+ * Like fetchVercelBuildLogForSha but uses an explicit deployment uid (e.g. parsed from
+ * the GitHub deployment status). This path does NOT need VERCEL_PROJECT_ID, so it works
+ * even when the project id env var is missing or points to a different Vercel project.
+ */
+export async function fetchVercelBuildLogForDeploymentUid(
+  deploymentUid: string,
+): Promise<VercelBuildLogResult | null> {
+  const token = getVercelToken();
+  if (!token || !deploymentUid) {
+    return null;
+  }
+
+  const meta = await fetchDeploymentMetaByUid(deploymentUid, token);
+  const full = await fetchVercelBuildLogText(deploymentUid, token);
+  const excerpt = full.length > MAX_EXCERPT ? `…(truncated)\n${full.slice(-MAX_EXCERPT)}` : full;
+
+  return {
+    excerpt: excerpt || '(no stdout/stderr lines in deployment events)',
+    deploymentUid,
+    inspectorUrl: meta?.inspectorUrl,
+  };
+}
+
+/**
  * Fetches Vercel build log for the commit and persists to instance_logs (when audit.siteId is set).
  * Returns excerpt text for appending to gate errors (or null if skipped / unavailable).
+ *
+ * Resolution order:
+ * 1. If `deploymentUid` is provided (e.g. parsed from the GitHub deployment status),
+ *    fetch logs directly — no VERCEL_PROJECT_ID needed.
+ * 2. Otherwise fall back to listing deployments by SHA + projectId.
  */
 export async function fetchAndLogVercelBuildLog(
   audit: CronAuditContext | undefined,
@@ -176,9 +228,14 @@ export async function fetchAndLogVercelBuildLog(
     stepOrder: number;
     gitRepoKind: GitRepoKind;
     outcome: 'success' | 'failure' | 'timeout';
+    /** Optional dpl_* uid (preferred when known — avoids project_id mismatch). */
+    deploymentUid?: string | null;
   },
 ): Promise<string | null> {
-  const result = await fetchVercelBuildLogForSha(input.sha, input.gitRepoKind);
+  const result = input.deploymentUid
+    ? await fetchVercelBuildLogForDeploymentUid(input.deploymentUid)
+    : await fetchVercelBuildLogForSha(input.sha, input.gitRepoKind);
+
   if (!result) {
     return null;
   }
@@ -193,8 +250,10 @@ export async function fetchAndLogVercelBuildLog(
       deployment_uid: result.deploymentUid,
       inspector_url: result.inspectorUrl ?? null,
       outcome: input.outcome,
-      log_excerpt: result.excerpt.slice(0, 12_000),
+      // Keep the TAIL of the excerpt: real errors are at the end of build logs.
+      log_excerpt: result.excerpt.slice(-12_000),
       source: 'vercel_api',
+      lookup: input.deploymentUid ? 'deployment_uid' : 'sha',
     },
   });
 

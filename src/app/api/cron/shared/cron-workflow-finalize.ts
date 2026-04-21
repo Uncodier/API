@@ -11,19 +11,64 @@ import {
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
+import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
+import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
+
+const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
+
+/**
+ * Checks that a repo_url + branch pair matches the requirement's persisted
+ * git binding AND encodes the requirement UUID in the branch name.
+ * Returns a short reason when the pair is inconsistent, or `null` when OK.
+ * Always advisory — the caller decides whether to block or just log.
+ */
+async function checkRepoUrlConsistency(
+  requirementId: string,
+  repoUrl: string | undefined,
+): Promise<string | null> {
+  if (!repoUrl || !requirementId) return null;
+  const parsed = parseGithubTreeUrl(repoUrl);
+  if (!parsed) return 'repo_url is not a github tree URL';
+
+  const binding = await getRequirementGitBinding(requirementId).catch(() => null);
+  if (binding) {
+    if (binding.org.toLowerCase() !== parsed.org.toLowerCase()) {
+      return `repo_url org "${parsed.org}" does not match requirement.metadata.git.org "${binding.org}"`;
+    }
+    if (binding.repo.toLowerCase() !== parsed.repo.toLowerCase()) {
+      return `repo_url repo "${parsed.repo}" does not match requirement.metadata.git.repo "${binding.repo}"`;
+    }
+  }
+  if (!branchBelongsToRequirement(parsed.branch, requirementId)) {
+    return `branch "${parsed.branch}" does not encode requirement ${requirementId}`;
+  }
+  return null;
+}
 
 // ─── Step: Validate deliverables (HTTP checks) ──────────────────────
 
 export async function validateDeliverablesStep(params: {
   repoUrl?: string;
   previewUrl?: string;
+  requirementId?: string;
   audit?: CronAuditContext;
-}): Promise<{ repoOk: boolean; previewOk: boolean; previewStatus?: number }> {
+}): Promise<{ repoOk: boolean; previewOk: boolean; previewStatus?: number; consistencyError?: string }> {
   'use step';
-  const { repoUrl, previewUrl, audit } = params;
+  const { repoUrl, previewUrl, requirementId, audit } = params;
   let repoOk = false;
   let previewOk = false;
   let previewStatus: number | undefined;
+  let consistencyError: string | undefined;
+
+  if (repoUrl && requirementId) {
+    const mismatch = await checkRepoUrlConsistency(requirementId, repoUrl);
+    if (mismatch) {
+      consistencyError = mismatch;
+      console.warn(
+        `[Validation] repo_url inconsistency for req ${requirementId}: ${mismatch}${REQUIREMENT_GIT_STRICT() ? ' (STRICT — will block done)' : ' (advisory)'}`,
+      );
+    }
+  }
 
   if (repoUrl) {
     try {
@@ -47,6 +92,10 @@ export async function validateDeliverablesStep(params: {
     }
   }
 
+  if (consistencyError && REQUIREMENT_GIT_STRICT()) {
+    repoOk = false;
+  }
+
   if (previewUrl) {
     try {
       const res = await fetch(previewUrl, { redirect: 'follow' });
@@ -60,12 +109,20 @@ export async function validateDeliverablesStep(params: {
 
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.DELIVERABLES_VALIDATE,
-    level: repoOk && previewOk ? 'info' : 'warn',
-    message: `Deliverables check: repo=${repoOk} preview=${previewOk}${previewStatus != null ? ` (HTTP ${previewStatus})` : ''}`,
-    details: { repoUrl: repoUrl ?? null, previewUrl: previewUrl ?? null, repoOk, previewOk, previewStatus },
+    level: repoOk && previewOk && !consistencyError ? 'info' : 'warn',
+    message: `Deliverables check: repo=${repoOk} preview=${previewOk}${previewStatus != null ? ` (HTTP ${previewStatus})` : ''}${consistencyError ? ` | consistency_error=${consistencyError}` : ''}`,
+    details: {
+      repoUrl: repoUrl ?? null,
+      previewUrl: previewUrl ?? null,
+      repoOk,
+      previewOk,
+      previewStatus,
+      consistencyError: consistencyError ?? null,
+      strict: REQUIREMENT_GIT_STRICT(),
+    },
   });
 
-  return { repoOk, previewOk, previewStatus };
+  return { repoOk, previewOk, previewStatus, consistencyError };
 }
 
 async function checkPreviewHttpOk(previewUrl: string): Promise<boolean> {

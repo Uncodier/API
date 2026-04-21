@@ -66,7 +66,7 @@ export async function logInstancePreviewUrlRecorded(params: {
 
   const short = previewUrl.length > 120 ? `${previewUrl.slice(0, 120)}…` : previewUrl;
   try {
-    await supabaseAdmin.from('instance_logs').insert({
+    const { error } = await supabaseAdmin.from('instance_logs').insert({
       log_type: 'system',
       level: 'info',
       message: `Preview URL recorded for requirement ${requirementId}: ${short}`,
@@ -82,6 +82,13 @@ export async function logInstancePreviewUrlRecorded(params: {
         context,
       },
     });
+    if (error) {
+      console.warn(
+        '[instance_logs] preview_url insert error:',
+        error.message,
+        (error as { details?: string }).details ?? '',
+      );
+    }
   } catch (e: unknown) {
     console.warn(
       '[instance_logs] preview_url log failed:',
@@ -114,13 +121,31 @@ export async function logCronInfrastructureEvent(
     details.instance_id_missing = true;
   }
 
-  await supabaseAdmin.from('instance_logs').insert({
-    log_type: 'infrastructure',
-    level,
-    message: payload.message,
-    instance_id: ctx.instanceId ?? null,
-    site_id: ctx.siteId,
-    user_id: ctx.userId ?? null,
-    details,
-  });
+  try {
+    const { error } = await supabaseAdmin.from('instance_logs').insert({
+      log_type: 'infrastructure',
+      level,
+      message: payload.message,
+      instance_id: ctx.instanceId ?? null,
+      site_id: ctx.siteId,
+      user_id: ctx.userId ?? null,
+      details,
+    });
+    // The Supabase JS client does NOT throw on DB errors (e.g. CHECK / FK violations);
+    // it returns { error }. Without this, infra logs (and any future log_type that the
+    // schema doesn't allow yet) get dropped invisibly. Surface the failure so the next
+    // missing-log debug session is one grep away.
+    if (error) {
+      console.warn(
+        `[instance_logs] infrastructure log dropped (${payload.event}):`,
+        error.message,
+        (error as { details?: string }).details ?? '',
+      );
+    }
+  } catch (e: unknown) {
+    console.warn(
+      `[instance_logs] infrastructure log threw (${payload.event}):`,
+      e instanceof Error ? e.message : e,
+    );
+  }
 }

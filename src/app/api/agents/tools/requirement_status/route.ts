@@ -1,5 +1,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
+import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
+
+/**
+ * Checks that repo_url belongs to the requirement (org/repo match
+ * metadata.git and branch encodes the requirement UUID). Returns a short
+ * reason when inconsistent, `null` when OK or when no repo_url was provided.
+ */
+async function checkRepoUrlMatchesRequirement(
+  requirementId: string,
+  repoUrl: string | undefined,
+): Promise<string | null> {
+  if (!repoUrl) return null;
+  const parsed = parseGithubTreeUrl(repoUrl);
+  if (!parsed) return 'repo_url is not a github tree URL';
+  const binding = await getRequirementGitBinding(requirementId).catch(() => null);
+  if (binding) {
+    if (binding.org.toLowerCase() !== parsed.org.toLowerCase()) {
+      return `repo_url org "${parsed.org}" does not match metadata.git.org "${binding.org}"`;
+    }
+    if (binding.repo.toLowerCase() !== parsed.repo.toLowerCase()) {
+      return `repo_url repo "${parsed.repo}" does not match metadata.git.repo "${binding.repo}"`;
+    }
+  }
+  if (!branchBelongsToRequirement(parsed.branch, requirementId)) {
+    return `branch "${parsed.branch}" does not encode requirement ${requirementId}`;
+  }
+  return null;
+}
 
 export async function createRequirementStatusCore(params: {
   site_id: string;
@@ -25,11 +54,23 @@ export async function createRequirementStatusCore(params: {
   const hasEndpoint = !!(preview_url || endpoint_url);
   const hasSourceArchive = !!(source_code?.trim());
   let effectiveStatus = status;
-  if ((status === 'done' || status === 'completed') && !(hasRepo && hasEndpoint && hasSourceArchive)) {
-    const missing = [];
-    if (!hasRepo) missing.push('repo_url');
-    if (!hasEndpoint) missing.push('preview_url/endpoint_url');
-    if (!hasSourceArchive) missing.push('source_code');
+  const missing: string[] = [];
+  if (!hasRepo) missing.push('repo_url');
+  if (!hasEndpoint) missing.push('preview_url/endpoint_url');
+  if (!hasSourceArchive) missing.push('source_code');
+
+  // Consistency gate: repo_url must match requirement.metadata.git + branch
+  // must encode the requirement UUID. Advisory unless REQUIREMENT_GIT_STRICT=true.
+  const strict = process.env.REQUIREMENT_GIT_STRICT === 'true';
+  const consistencyErr = await checkRepoUrlMatchesRequirement(requirement_id, repo_url);
+  if (consistencyErr) {
+    console.warn(
+      `[RequirementStatus] repo_url inconsistency for req ${requirement_id}: ${consistencyErr}${strict ? ' (STRICT — downgrade)' : ' (advisory)'}`,
+    );
+    if (strict) missing.push(`git_consistency: ${consistencyErr}`);
+  }
+
+  if ((status === 'done' || status === 'completed') && missing.length > 0) {
     console.warn(
       `[RequirementStatus] Downgrading "${status}" → "in-progress" for req ${requirement_id} — missing: ${missing.join(', ')}`,
     );

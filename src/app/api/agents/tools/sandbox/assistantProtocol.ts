@@ -6,9 +6,10 @@ import {
   commitWorkspaceToOrigin,
   syncLatestRequirementStatusWithPreview,
   patchLatestRequirementStatusColumns,
-  repoNameForGitRepoKind,
+  resolveGitBindingForRequirement,
   type GitRepoKind,
 } from '@/app/api/cron/shared/cron-commit-helpers';
+import { gitBindingBranchTreeUrl } from '@/lib/services/requirement-git-binding';
 import { sandboxRestoreCheckpointTool } from '@/app/api/agents/tools/sandbox/sandbox-checkpoint-restore';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
@@ -265,12 +266,11 @@ export function sandboxPushCheckpointTool(
             : '';
         const sourceArchive = await uploadSandboxSourceArchiveToRepository(sandbox, requirementId);
 
-        const gitOrg = process.env.GIT_ORG || 'makinary';
         const rk = toolsCtx?.git_repo_kind ?? 'applications';
-        const appsRepoName = repoNameForGitRepoKind(rk);
+        const binding = await resolveGitBindingForRequirement(requirementId, rk);
         const fallbackRepoUrl =
           result.branch != null && String(result.branch).trim() !== ''
-            ? `https://github.com/${gitOrg}/${appsRepoName}/tree/${encodeURIComponent(result.branch)}`
+            ? gitBindingBranchTreeUrl(binding, String(result.branch))
             : undefined;
 
         const cols: Partial<Record<'repo_url' | 'preview_url' | 'source_code', string>> = {};

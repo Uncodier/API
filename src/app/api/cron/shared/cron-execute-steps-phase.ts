@@ -175,13 +175,32 @@ export async function executeStepsPhaseStep(params: {
       .eq('id', planId);
   }
 
-  const connected = await connectOrRecreateRequirementSandbox({
-    sandboxId: effectiveSandboxId,
-    requirementId: reqId,
-    instanceType,
-    title,
-    audit: haltAudit,
-  });
+  let connected: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;
+  try {
+    connected = await connectOrRecreateRequirementSandbox({
+      sandboxId: effectiveSandboxId,
+      requirementId: reqId,
+      instanceType,
+      title,
+      audit: haltAudit,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[CronStep] Initial sandbox connect failed: ${msg}`);
+    await logCronInfrastructureEvent(haltAudit, {
+      event: CronInfraEvent.STEP_STATUS,
+      level: 'error',
+      message: `executeStepsPhaseStep: sandbox connect failed — ${msg.slice(0, 400)}`,
+      details: { plan_id: planId, error: msg.slice(0, 2000) },
+    }).catch(() => {});
+    return {
+      executed: 0,
+      smokeError: msg,
+      anyStepFailed: true,
+      lastTouchedStepId: null,
+      effectiveSandboxId,
+    };
+  }
   let sandbox = connected.sandbox;
   effectiveSandboxId = connected.sandboxId;
 
@@ -216,13 +235,27 @@ export async function executeStepsPhaseStep(params: {
       break outer;
     }
 
-    const reconnect = await connectOrRecreateRequirementSandbox({
-      sandboxId: effectiveSandboxId,
-      requirementId: reqId,
-      instanceType,
-      title,
-      audit: haltAudit,
-    });
+    let reconnect: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;
+    try {
+      reconnect = await connectOrRecreateRequirementSandbox({
+        sandboxId: effectiveSandboxId,
+        requirementId: reqId,
+        instanceType,
+        title,
+        audit: haltAudit,
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[CronStep] Sandbox reconnect failed between steps: ${msg}`);
+      await logCronInfrastructureEvent(haltAudit, {
+        event: CronInfraEvent.STEP_STATUS,
+        level: 'error',
+        message: `executeStepsPhaseStep: sandbox reconnect failed — ${msg.slice(0, 400)}`,
+        details: { plan_id: planId, error: msg.slice(0, 2000) },
+      }).catch(() => {});
+      anyStepFailed = true;
+      break outer;
+    }
     sandbox = reconnect.sandbox;
     effectiveSandboxId = reconnect.sandboxId;
 
@@ -328,13 +361,27 @@ export async function executeStepsPhaseStep(params: {
             requirementTitle: title,
           });
           effectiveSandboxId = orchOut.effectiveSandboxId;
-          const afterOrch = await connectOrRecreateRequirementSandbox({
-            sandboxId: effectiveSandboxId,
-            requirementId: reqId,
-            instanceType,
-            title,
-            audit: haltAudit,
-          });
+          let afterOrch: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;
+          try {
+            afterOrch = await connectOrRecreateRequirementSandbox({
+              sandboxId: effectiveSandboxId,
+              requirementId: reqId,
+              instanceType,
+              title,
+              audit: haltAudit,
+            });
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[CronStep] Sandbox reconnect after orchestrator failed: ${msg}`);
+            await logCronInfrastructureEvent(audit, {
+              event: CronInfraEvent.STEP_STATUS,
+              level: 'error',
+              message: `executeStepsPhaseStep: post-adaptation reconnect failed — ${msg.slice(0, 400)}`,
+              details: { plan_id: planId, error: msg.slice(0, 2000) },
+            }).catch(() => {});
+            anyStepFailed = true;
+            break outer;
+          }
           sandbox = afterOrch.sandbox;
           effectiveSandboxId = afterOrch.sandboxId;
           await logCronInfrastructureEvent(audit, {
@@ -403,7 +450,13 @@ export async function executeStepsPhaseStep(params: {
       userId: user_id,
       requirementId: reqId,
     };
-    smokeError = await runSmokeTest(sandbox);
+    try {
+      smokeError = await runSmokeTest(sandbox);
+    } catch (smokeErr: unknown) {
+      const msg = smokeErr instanceof Error ? smokeErr.message : String(smokeErr);
+      smokeError = `Smoke test error: ${msg}`;
+      console.error(`[CronStep] Smoke test threw: ${msg}`);
+    }
     if (smokeError) {
       console.error(`[CronStep] Smoke test failed: ${smokeError}`);
       await logCronInfrastructureEvent(smokeAudit, {
@@ -433,3 +486,6 @@ export async function executeStepsPhaseStep(params: {
       : {}),
   };
 }
+
+/** Phase runs sandbox + LLM work; allow more than Workflow default (3) retries for cold VM / API flakes. */
+(executeStepsPhaseStep as typeof executeStepsPhaseStep & { maxRetries?: number }).maxRetries = 10;

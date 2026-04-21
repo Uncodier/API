@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { updateRequirement, getRequirementById } from '@/lib/database/requirement-db';
 import { shouldUseRemoteApi, invokeRemoteTool, RemoteToolError } from '@/lib/mcp/remote-client';
+import {
+  parseGitBindingFromMetadata,
+  normalizeGitBindingInput,
+  type GitBinding,
+} from '@/lib/services/requirement-git-binding';
+import {
+  PartialRequirementMetadataSchema,
+  verifyGitBindingReachable,
+} from '../git-binding-schema';
 
 const UpdateRequirementSchema = z.object({
   requirement_id: z.string().uuid('Requirement ID must be a valid UUID'),
@@ -16,7 +25,7 @@ const UpdateRequirementSchema = z.object({
   budget: z.number().optional(),
   cron: z.string().optional(),
   cycle: z.string().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: PartialRequirementMetadataSchema.optional(),
 });
 
 /**
@@ -40,6 +49,24 @@ export async function updateRequirementCore(params: any) {
 
   if (existing.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este requerimiento');
+  }
+
+  // If metadata.git is present, merge against the existing binding so callers
+  // can submit partial updates (e.g. only `repo`) without wiping the rest.
+  if (updateFields.metadata && (updateFields.metadata as Record<string, unknown>).git) {
+    const incomingGit = (updateFields.metadata as Record<string, unknown>).git as Partial<GitBinding>;
+    const currentBinding = parseGitBindingFromMetadata(existing.metadata);
+    const merged = normalizeGitBindingInput(incomingGit, currentBinding ?? {});
+    if (!merged) {
+      throw new Error(
+        'metadata.git is incomplete: provide kind, org, repo, default_branch or omit the field entirely.',
+      );
+    }
+    const reachErr = await verifyGitBindingReachable(merged);
+    if (reachErr && process.env.REQUIREMENT_GIT_STRICT === 'true') {
+      throw new Error(`metadata.git not reachable: ${reachErr}`);
+    }
+    (updateFields.metadata as Record<string, unknown>).git = merged;
   }
 
   const requirement = await updateRequirement(requirement_id, updateFields);

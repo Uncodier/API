@@ -9,10 +9,11 @@ import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   commitWorkspaceToOrigin,
-  repoNameForGitRepoKind,
+  resolveGitBindingForRequirement,
   syncLatestRequirementStatusWithPreview,
   type GitRepoKind,
 } from './cron-commit-helpers';
+import { buildRequirementBranchName } from '@/lib/services/requirement-branch';
 import {
   fetchGitHubBranchTipSha,
   pollGitHubDeploymentForSha,
@@ -67,12 +68,23 @@ async function persistOrVerifyOrigin(
   }
 }
 
+/** Tail size for sandbox `npm run build` output (combined stdout+stderr) sent to the agent on retry. */
+const SANDBOX_BUILD_OUTPUT_MAX = 6000;
+
 export async function validateBuildForStep(sandbox: Sandbox): Promise<string | null> {
   const wd = SandboxService.WORK_DIR;
-  const buildRes = await sandbox.runCommand('sh', ['-c', `cd ${wd} && npm run build`]);
+  // Merge stdout+stderr so the agent sees Next.js compile errors (most go to stdout)
+  // alongside any stderr noise. Keep the TAIL — Next.js prints the actionable error last.
+  const buildRes = await sandbox.runCommand('sh', ['-c', `cd ${wd} && npm run build 2>&1`]);
   if (buildRes.exitCode !== 0) {
-    const stderr = await buildRes.stderr();
-    return `Build failed: ${stderr.substring(0, 500)}`;
+    const stdout = await buildRes.stdout().catch(() => '');
+    const stderr = await buildRes.stderr().catch(() => '');
+    const combined = (stdout || '') + (stderr ? `\n${stderr}` : '');
+    const tail =
+      combined.length > SANDBOX_BUILD_OUTPUT_MAX
+        ? `…(truncated ${combined.length - SANDBOX_BUILD_OUTPUT_MAX} earlier chars)\n${combined.slice(-SANDBOX_BUILD_OUTPUT_MAX)}`
+        : combined;
+    return `Build failed (npm run build, exit ${buildRes.exitCode}):\n${tail}`;
   }
   return null;
 }
@@ -187,7 +199,10 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       message: `Step ${stepOrder}: starting push recovery (max ${MAX_PUSH_RECOVERY_TURNS} agent turns)`,
       details: { stepOrder, maxTurns: MAX_PUSH_RECOVERY_TURNS },
     });
-    const expectedBranch = SandboxService.buildBranchName(requirementId, planTitle);
+    // The expected branch for recovery is derived solely from the requirement
+    // UUID; the title becomes an optional cosmetic suffix. This matches what
+    // createRequirementSandbox will emit when creating a fresh branch.
+    const expectedBranch = buildRequirementBranchName(requirementId, planTitle);
     const recoverySystem = stepPrompt + buildPushRecoveryAppend(requirementId, expectedBranch);
     const recoveryUser = {
       role: 'user' as const,
@@ -251,8 +266,9 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     };
   }
 
-  const gitOrg = process.env.GIT_ORG || 'makinary';
-  const repoName = repoNameForGitRepoKind(gitRepoKind);
+  const binding = await resolveGitBindingForRequirement(requirementId, gitRepoKind);
+  const gitOrg = binding.org;
+  const repoName = binding.repo;
   const sha = await fetchGitHubBranchTipSha(gitOrg, repoName, branch);
   if (!sha) {
     const errSha = `Deploy gate: could not resolve GitHub SHA for branch ${branch}`;
@@ -281,14 +297,20 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       stepOrder,
       gitRepoKind,
       outcome: vercelLogOutcome,
+      // Prefer the dpl_* parsed from the GitHub deployment status — this avoids the
+      // SHA→deployment lookup that silently returns null when VERCEL_PROJECT_ID
+      // is missing or points to a different Vercel project than the one that built.
+      deploymentUid: poll.vercelDeploymentId ?? null,
     });
   } catch (e: unknown) {
     console.warn('[StepGitGate] Vercel build log fetch failed:', e instanceof Error ? e.message : e);
   }
 
+  // Keep the TAIL of the excerpt: build errors are at the END of the log. The previous
+  // slice(0, N) was dropping exactly the lines the agent needs to fix the issue.
   const appendVercelLogToAgentError = (msg: string) =>
     vercelBuildExcerpt?.trim()
-      ? `${msg}\n\n--- Vercel build log (API excerpt) ---\n${vercelBuildExcerpt.slice(0, VERCEL_LOG_AGENT_MAX)}`
+      ? `${msg}\n\n--- Vercel build log (API excerpt, tail) ---\n${vercelBuildExcerpt.slice(-VERCEL_LOG_AGENT_MAX)}`
       : msg;
 
   if (poll.state === 'success' && poll.previewUrl) {

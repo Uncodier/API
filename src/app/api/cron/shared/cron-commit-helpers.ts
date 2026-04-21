@@ -10,6 +10,15 @@ import {
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
+import {
+  getRequirementGitBinding,
+  resolveDefaultGitBinding,
+  gitBindingBranchTreeUrl,
+  instanceTypeFromGitKind,
+  type GitBinding,
+  type GitBindingKind,
+} from '@/lib/services/requirement-git-binding';
+import { branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -57,10 +66,32 @@ export async function resolveSiteIdForRequirementStatus(params: {
 
 export type GitRepoKind = 'applications' | 'automation';
 
+/**
+ * @deprecated Prefer `resolveGitBindingForRequirement` so org/repo/default_branch
+ * come from `requirements.metadata.git` (source of truth), not env vars. Kept
+ * for back-compat with older call sites during rollout.
+ */
 export function repoNameForGitRepoKind(gitRepoKind: GitRepoKind = 'applications'): string {
   return gitRepoKind === 'automation'
     ? process.env.GIT_AUTOMATIONS_REPO || 'automations'
     : process.env.GIT_APPLICATIONS_REPO || 'apps';
+}
+
+/**
+ * Resolves the full git binding (org/repo/default_branch) for a requirement,
+ * preferring persisted metadata over env fallback. Never throws — falls back
+ * to env resolution when the requirement can't be read.
+ */
+export async function resolveGitBindingForRequirement(
+  requirementId: string,
+  gitRepoKind: GitRepoKind = 'applications',
+): Promise<GitBinding> {
+  const instanceType = instanceTypeFromGitKind(gitRepoKind as GitBindingKind);
+  try {
+    return await getRequirementGitBinding(requirementId, instanceType);
+  } catch {
+    return resolveDefaultGitBinding(instanceType);
+  }
 }
 
 /**
@@ -74,6 +105,8 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   siteId?: string;
   instanceId?: string;
   gitRepoKind?: GitRepoKind;
+  /** Explicit binding (skips DB read). When absent, resolves from requirement metadata + env fallback. */
+  gitBinding?: GitBinding;
   /**
    * When set with `use_resolved_preview_only`, skips getPreviewUrl and uses this value for preview_url
    * (omit column update when null).
@@ -93,20 +126,31 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     siteId,
     instanceId,
     gitRepoKind = 'applications',
+    gitBinding,
     preview_url_resolved,
     use_resolved_preview_only,
     persist = true,
   } = params;
-  const gitOrg = process.env.GIT_ORG || 'makinary';
-  const repoName = repoNameForGitRepoKind(gitRepoKind);
-  const repo_url = `https://github.com/${gitOrg}/${repoName}/tree/${encodeURIComponent(branch)}`;
+  const binding = gitBinding ?? (await resolveGitBindingForRequirement(requirementId, gitRepoKind));
+  const repo_url = gitBindingBranchTreeUrl(binding, branch);
 
+  // Soft consistency check: the branch being synced should encode this
+  // requirement's UUID (or match the legacy short-id). Logged only — actual
+  // enforcement happens at `validateDeliverablesStep` / `createFinalStatusStep`
+  // behind the REQUIREMENT_GIT_STRICT flag.
+  if (branch && !branchBelongsToRequirement(branch, requirementId)) {
+    console.warn(
+      `[RequirementStatusSync] Branch "${branch}" does not encode requirement "${requirementId}" (non-canonical). Sync will still write repo_url but validation may reject this pair.`,
+    );
+  }
+
+  const kindForPreview: GitRepoKind = binding.kind === 'automation' ? 'automation' : 'applications';
   let preview_url: string | null = null;
   if (use_resolved_preview_only) {
     preview_url = preview_url_resolved ?? null;
-  } else if (branch && branch !== 'main' && branch !== 'master') {
+  } else if (branch && branch !== binding.default_branch && branch !== 'main' && branch !== 'master') {
     try {
-      preview_url = await SandboxService.getPreviewUrl(gitOrg, repoName, branch, 20, 5000, gitRepoKind);
+      preview_url = await SandboxService.getPreviewUrl(binding.org, binding.repo, branch, 20, 5000, kindForPreview);
     } catch (e: unknown) {
       console.warn('[RequirementStatusSync] getPreviewUrl failed:', e instanceof Error ? e.message : e);
     }

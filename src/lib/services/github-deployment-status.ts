@@ -9,7 +9,32 @@ export type GitHubDeployPollResult = {
   state: GitHubDeployPollState;
   previewUrl: string | null;
   detail?: string;
+  /**
+   * Vercel deployment id (dpl_*) parsed from the GitHub deployment status (description
+   * or target_url). When present, callers can fetch build logs directly via the Vercel
+   * REST API without needing VERCEL_PROJECT_ID — which is the reliable path because
+   * GitHub already proved the deployment exists.
+   */
+  vercelDeploymentId?: string | null;
 };
+
+const VERCEL_DPL_REGEX = /\bdpl_[A-Za-z0-9]+/;
+
+/**
+ * Best-effort parse of a Vercel deployment id from a GitHub deployment status.
+ * Vercel's GitHub integration writes the dpl_* into both `description` (CLI hint) and
+ * `target_url` (vercel.com inspector link), so we check both.
+ */
+export function extractVercelDeploymentId(status: {
+  description?: string | null;
+  target_url?: string | null;
+}): string | null {
+  const fromDescription = status.description ? status.description.match(VERCEL_DPL_REGEX) : null;
+  if (fromDescription?.[0]) return fromDescription[0];
+  const fromTarget = status.target_url ? status.target_url.match(VERCEL_DPL_REGEX) : null;
+  if (fromTarget?.[0]) return fromTarget[0];
+  return null;
+}
 
 function authHeaders(): HeadersInit {
   const githubToken = process.env.GITHUB_TOKEN;
@@ -56,6 +81,7 @@ type GhDeploymentStatus = {
   state?: string;
   environment_url?: string | null;
   description?: string | null;
+  target_url?: string | null;
 };
 
 /** GitHub usually returns newest-first; sort by id desc to pick the latest status reliably. */
@@ -131,11 +157,16 @@ export async function pollGitHubDeploymentForSha(
             state: st === 'failure' ? 'failure' : 'error',
             previewUrl: newest?.environment_url || null,
             detail: newest?.description || `deployment status: ${newest?.state}`,
+            vercelDeploymentId: newest ? extractVercelDeploymentId(newest) : null,
           };
         }
         if (latest === 'ok' && newest?.environment_url) {
           console.log(`[DeployPoll] Success: ${newest.environment_url}`);
-          return { state: 'success', previewUrl: newest.environment_url };
+          return {
+            state: 'success',
+            previewUrl: newest.environment_url,
+            vercelDeploymentId: extractVercelDeploymentId(newest),
+          };
         }
       }
     } catch (err: unknown) {

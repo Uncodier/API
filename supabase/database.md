@@ -657,6 +657,7 @@ CREATE TABLE public.requirements (
   instructions text,
   command_id uuid,
   type USER-DEFINED DEFAULT 'task'::requirement_type,
+  metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
   CONSTRAINT requirements_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_requirements FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT requirements_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),

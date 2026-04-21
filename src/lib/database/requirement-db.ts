@@ -30,6 +30,11 @@ export interface DbRequirement {
   command_id: string | null;
   type: string;
   cron: string | null;
+  /**
+   * JSONB bag for auxiliary bindings (git, preview provider, campaign hooks).
+   * Defaults to `{}` in DB. See `requirement-git-binding.ts` for the `git` key shape.
+   */
+  metadata: Record<string, unknown>;
 }
 
 export interface RequirementFilters {
@@ -66,6 +71,8 @@ export interface CreateRequirementParams {
   campaign_id?: string;
   command_id?: string;
   cron?: string;
+  cycle?: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface UpdateRequirementParams {
@@ -79,7 +86,12 @@ export interface UpdateRequirementParams {
   budget?: number;
   cron?: string;
   cycle?: string;
-  metadata?: any;
+  /**
+   * When provided, merges shallowly onto the existing row's metadata. Nested
+   * objects (e.g. `metadata.git`) are merged one level deep so partial updates
+   * don't wipe unrelated fields.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 export interface DbRequirementStatus {
@@ -189,7 +201,7 @@ export async function getRequirementById(id: string): Promise<DbRequirement | nu
 }
 
 export async function createRequirement(params: CreateRequirementParams): Promise<DbRequirement> {
-  const insertData = {
+  const insertData: Record<string, unknown> = {
     title: params.title,
     description: params.description ?? null,
     instructions: params.instructions ?? null,
@@ -203,6 +215,9 @@ export async function createRequirement(params: CreateRequirementParams): Promis
     command_id: params.command_id ?? null,
     cron: params.cron ?? null,
   };
+  if (params.metadata && typeof params.metadata === 'object') {
+    insertData.metadata = params.metadata;
+  }
 
   const { data, error } = await supabaseAdmin
     .from('requirements')
@@ -225,6 +240,32 @@ export async function createRequirement(params: CreateRequirementParams): Promis
   return requirement;
 }
 
+/**
+ * Shallow-merges two plain objects one level deep. Top-level keys in `incoming`
+ * replace those in `base`, but if both sides have an object for the same key
+ * (e.g. `metadata.git`), their children are merged (incoming wins on conflict).
+ * Used to avoid wiping unrelated `metadata.*` subtrees on partial updates.
+ */
+export function mergeMetadataShallow(
+  base: Record<string, unknown> | null | undefined,
+  incoming: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...(base ?? {}) };
+  if (!incoming) return out;
+  for (const [key, value] of Object.entries(incoming)) {
+    const existing = out[key];
+    if (
+      value && typeof value === 'object' && !Array.isArray(value) &&
+      existing && typeof existing === 'object' && !Array.isArray(existing)
+    ) {
+      out[key] = { ...(existing as Record<string, unknown>), ...(value as Record<string, unknown>) };
+    } else {
+      out[key] = value;
+    }
+  }
+  return out;
+}
+
 export async function updateRequirement(
   id: string,
   params: UpdateRequirementParams
@@ -240,7 +281,16 @@ export async function updateRequirement(
   if (params.budget !== undefined) updateData.budget = params.budget;
   if (params.cron !== undefined) updateData.cron = params.cron;
   if (params.cycle !== undefined) updateData.cycle = params.cycle;
-  if (params.metadata !== undefined) updateData.metadata = params.metadata;
+
+  if (params.metadata !== undefined && params.metadata !== null) {
+    const { data: current } = await supabaseAdmin
+      .from('requirements')
+      .select('metadata')
+      .eq('id', id)
+      .maybeSingle();
+    const base = (current?.metadata as Record<string, unknown> | null | undefined) ?? {};
+    updateData.metadata = mergeMetadataShallow(base, params.metadata);
+  }
 
   const { data, error } = await supabaseAdmin
     .from('requirements')
