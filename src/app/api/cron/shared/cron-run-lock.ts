@@ -18,11 +18,17 @@
  *  - TTL is the safety net: if a workflow crashes before release, the next
  *    tick after expiry can still pick the requirement up.
  *
+ * This file is a 'use step' module: the exported async functions are
+ * durable workflow steps when called from inside a `'use workflow'` body
+ * (Supabase uses `fetch`, which is not available inside workflow VMs — the
+ * directive hoists these calls into the Next.js runtime).
+ *
  * Columns and indexes come from
  * `src/scripts/add_requirements_cron_run_lock.sql`; run that migration before
  * relying on these helpers (they degrade gracefully when the columns are
  * missing, logging a warning and allowing the workflow to proceed).
  */
+'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
@@ -53,6 +59,7 @@ export async function acquireRunLock(
   requirementId: string,
   opts?: { ttlMs?: number; runId?: string },
 ): Promise<AcquiredCronLock | null> {
+  'use step';
   const ttlMs = opts?.ttlMs ?? CRON_RUN_LOCK_TTL_MS;
   const runId = opts?.runId ?? makeRunId();
   const nowIso = new Date().toISOString();
@@ -89,6 +96,7 @@ export async function acquireRunLock(
  * Safe to call multiple times; never throws.
  */
 export async function releaseRunLock(requirementId: string, runId: string): Promise<void> {
+  'use step';
   try {
     const { error } = await supabaseAdmin
       .from('requirements')
@@ -118,6 +126,7 @@ export async function extendRunLock(
   runId: string,
   ttlMs: number = CRON_RUN_LOCK_TTL_MS,
 ): Promise<void> {
+  'use step';
   try {
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     await supabaseAdmin
