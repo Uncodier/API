@@ -16,11 +16,11 @@ import {
   getPreviewUrlStep,
   checkSourceCodeStep,
   stopSandboxStep,
+  releaseRunLockStep,
 } from '../shared/cron-steps';
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
-import { releaseRunLock } from '../shared/cron-run-lock';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAppsWorkflowInput {
@@ -216,9 +216,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } finally {
-    if (cronLockRunId) {
-      await releaseRunLock(reqId, cronLockRunId);
-    }
+    await releaseRunLockStep(reqId, cronLockRunId);
   }
 }
 

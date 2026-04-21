@@ -17,6 +17,7 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
+import { releaseRunLock as _releaseRunLockImpl } from './cron-run-lock';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { validateBuildForStep } from './step-git-gate';
 import {
@@ -390,4 +391,19 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
       details: { sandboxId },
     });
   }
+}
+
+// ─── Step: Release cron run lock ────────────────────────────────────
+//
+// Thin step wrapper over `releaseRunLock` (from cron-run-lock.ts) so the
+// workflow's finally block can call it without hitting the workflow VM's
+// `fetch` restriction. Safe to call even when `runId` is absent (no-op).
+
+export async function releaseRunLockStep(
+  requirementId: string,
+  runId: string | undefined,
+): Promise<void> {
+  'use step';
+  if (!runId) return;
+  await _releaseRunLockImpl(requirementId, runId);
 }
