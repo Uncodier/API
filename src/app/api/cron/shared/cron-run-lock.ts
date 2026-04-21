@@ -24,8 +24,21 @@
  * missing, logging a warning and allowing the workflow to proceed).
  */
 
-import { randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+
+/**
+ * UUID generator that works inside the Vercel Workflow bundle (no `require`
+ * available) AND in regular Node. Uses Web Crypto via `globalThis.crypto`
+ * when present; falls back to a non-cryptographic id good enough to identify
+ * lock ownership.
+ */
+function makeRunId(): string {
+  const g = globalThis as { crypto?: { randomUUID?: () => string } };
+  if (g.crypto?.randomUUID) {
+    return `cron-${g.crypto.randomUUID()}`;
+  }
+  return `cron-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
 
 /** Default TTL for a cron workflow lock (15 minutes — longer than any expected run). */
 export const CRON_RUN_LOCK_TTL_MS = 15 * 60 * 1000;
@@ -41,7 +54,7 @@ export async function acquireRunLock(
   opts?: { ttlMs?: number; runId?: string },
 ): Promise<AcquiredCronLock | null> {
   const ttlMs = opts?.ttlMs ?? CRON_RUN_LOCK_TTL_MS;
-  const runId = opts?.runId ?? `cron-${randomUUID()}`;
+  const runId = opts?.runId ?? makeRunId();
   const nowIso = new Date().toISOString();
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
 
