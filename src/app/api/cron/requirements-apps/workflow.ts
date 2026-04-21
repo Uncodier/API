@@ -20,6 +20,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
+import { releaseRunLock } from '../shared/cron-run-lock';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAppsWorkflowInput {
@@ -32,12 +33,14 @@ export interface CronAppsWorkflowInput {
   instanceId: string;
   previousWorkContext: string;
   instance_type: string;
+  /** Advisory lock id acquired by the cron route; used to release on workflow end. */
+  cronLockRunId?: string;
 }
 
 export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   'use workflow';
 
-  const { reqId, title, instructions, type, site_id, user_id, instanceId, previousWorkContext } = input;
+  const { reqId, title, instructions, type, site_id, user_id, instanceId, previousWorkContext, cronLockRunId } = input;
   console.log(`[CronAppsWorkflow] Starting for req ${reqId}: ${title}`);
 
   const cronAudit: CronAuditContext = {
@@ -47,6 +50,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     requirementId: reqId,
   };
 
+  try {
   // Step 1: Create sandbox → returns serializable info
   const created = await createSandboxStep(reqId, type, title, cronAudit);
   let sandboxId = created.sandboxId;
@@ -211,6 +215,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   await stopSandboxStep(sandboxId, cronAudit);
 
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
+  } finally {
+    if (cronLockRunId) {
+      await releaseRunLock(reqId, cronLockRunId);
+    }
+  }
 }
 
 // ─── Helper: build orchestrator prompt (pure string, no external deps) ───

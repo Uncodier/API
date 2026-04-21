@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
 import cronParser from 'cron-parser';
+import { acquireRunLock } from '../shared/cron-run-lock';
 
 export const maxDuration = 300;
 
@@ -49,7 +50,21 @@ export async function GET(req: Request) {
 
     const requirement = dueRequirements[0];
     const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
-    console.log(`[Cron Auto] Processing automation ${reqId}: ${title}`);
+
+    // Per-requirement advisory lock (see cron-run-lock.ts). Cron-automations
+    // fires every minute; many automation workflows take longer than that,
+    // so without this lock overlapping runs race on the same feature branch.
+    const runLock = await acquireRunLock(reqId);
+    if (!runLock) {
+      console.log(`[Cron Auto] Skipping ${reqId} — another workflow is already running (lock held)`);
+      return NextResponse.json({
+        message: `Requirement ${reqId} is locked by another workflow; skipping tick.`,
+        reqId,
+        skipped: true,
+      });
+    }
+
+    console.log(`[Cron Auto] Processing automation ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
     // Find or create remote_instance
     let instanceId: string | undefined;
@@ -130,6 +145,7 @@ export async function GET(req: Request) {
     console.log(`[Cron Auto] Starting workflow for req ${reqId}, instance ${instanceId}`);
     const workflowRun = await start(runCronAutoWorkflow, [{
       reqId, title, instructions, type, site_id, user_id, instanceId, previousWorkContext,
+      cronLockRunId: runLock.runId,
     }]);
 
     return new Response(workflowRun.readable, {

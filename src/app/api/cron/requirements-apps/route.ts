@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
+import { acquireRunLock } from '../shared/cron-run-lock';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
@@ -49,7 +50,20 @@ export async function GET(req: Request) {
     const requirement = requirements[0];
     const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
 
-    console.log(`[Cron Apps] Processing requirement ${reqId}: ${title}`);
+    // Per-requirement advisory lock: prevents two overlapping ticks from
+    // launching parallel workflows on the same requirement. Without this we
+    // hit `! [rejected] non-fast-forward` on push and clobber sandbox files.
+    const runLock = await acquireRunLock(reqId);
+    if (!runLock) {
+      console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
+      return NextResponse.json({
+        message: `Requirement ${reqId} is locked by another workflow; skipping tick.`,
+        reqId,
+        skipped: true,
+      });
+    }
+
+    console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
     if (requirement.status === 'backlog') {
       await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
@@ -156,6 +170,7 @@ export async function GET(req: Request) {
       instanceId,
       previousWorkContext,
       instance_type: type,
+      cronLockRunId: runLock.runId,
     }]);
 
     return new Response(workflowRun.readable, {
