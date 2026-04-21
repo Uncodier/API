@@ -8,9 +8,10 @@ import { Sandbox } from '@vercel/sandbox';
 import { SkillsService } from '@/lib/services/skills-service';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
+import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
-import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT } from './step-git-prompts';
+import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT } from './step-git-prompts';
 import { runBuildAndOriginGate } from './step-git-gate';
 import type { GitRepoKind } from './cron-commit-helpers';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -215,9 +216,20 @@ RULES:
 - Focus ONLY on this step. Do not plan — EXECUTE.
 - Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST use sandbox_push_checkpoint before finishing the step when you changed the repo (see CHECKPOINTS below). Use sandbox_restore_checkpoint (action=list | restore) only if you need to rewind locally.
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
+
+${TOOL_LOOKUP_HINT}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
-  const fullTools = getAssistantTools(site_id, user_id, instance_id, context.customTools);
+  // Route tools through `tool_lookup` so the LLM only sees the always-on
+  // minimal surface (sandbox_*, instance_plan, requirement_status,
+  // requirements, skill_lookup, tool_lookup). Every other tool — media,
+  // messaging, CRM, social, content, infra, research — is discoverable via
+  // `tool_lookup({ action: "list" })` and invocable via `tool_lookup({ action:
+  // "call", name, args })`. Drastically shrinks the schema payload sent to
+  // Gemini/GPT on every turn without removing any capability.
+  const fullTools = routeTools(
+    getAssistantTools(site_id, user_id, instance_id, context.customTools),
+  );
   const initialUser = {
     role: 'user' as const,
     content: `Execute step ${step.order}: ${step.title}. ${step.instructions}`,

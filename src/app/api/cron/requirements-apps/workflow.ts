@@ -4,6 +4,7 @@ import {
   ORCHESTRATOR_SKILL_LOOKUP_HINT,
   ORCHESTRATOR_STEP_ORIGIN_RULE,
   SANDBOX_REPO_ROOT_INVARIANT,
+  TOOL_LOOKUP_HINT,
 } from '../shared/step-git-prompts';
 import {
   createSandboxStep,
@@ -289,6 +290,7 @@ ENVIRONMENT:
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
 - Use requirement_status to report progress. ALWAYS use requirement_id="${p.reqId}".
 - Use instance_plan to create execution plans. ALWAYS use instance_id="${p.instanceId}".
+- ${TOOL_LOOKUP_HINT}
 - Each step should have a "role" (template_selection, frontend, backend, devops, content, qa, …) or explicit "skill" for injection.
 - NEVER run git commit or git push as orchestrator — executors follow platform rules; the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}

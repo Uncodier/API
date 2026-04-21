@@ -11,6 +11,22 @@ export const ORCHESTRATOR_STEP_ORIGIN_RULE =
 export const ORCHESTRATOR_SKILL_LOOKUP_HINT =
   'SKILLS: Use the skill_lookup tool early — action=search with keywords from the requirement title, instructions, and domain; action=list to browse. Align plan steps (roles, deliverables) with relevant playbooks before delegating.';
 
+/**
+ * Shared hint about `tool_lookup` for orchestrator + executor prompts.
+ *
+ * Only the always-on tools (sandbox_*, skill_lookup, instance_plan,
+ * requirement_status, requirements, tool_lookup itself) are loaded into the
+ * model's schema window. Everything else (media, messaging, CRM, social,
+ * content, infra, research) is discoverable and invocable via `tool_lookup`.
+ */
+export const TOOL_LOOKUP_HINT = [
+  'TOOLS (beyond sandbox_*, instance_plan, requirement_status, requirements, skill_lookup):',
+  '- Use `tool_lookup({ action: "list" })` to see every routed tool grouped by category (media, messaging, crm, social, content, infra, research).',
+  '- Use `tool_lookup({ action: "describe", name: "<tool>" })` to get the exact parameters schema + expected_use for a specific tool before calling it.',
+  '- Use `tool_lookup({ action: "call", name: "<tool>", args: { ... } })` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
+  '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.',
+].join('\n');
+
 /** Enforced in code: git + clone root must stay at /vercel/sandbox (never move .git or the repo under app/). */
 export const SANDBOX_REPO_ROOT_INVARIANT = [
   'SANDBOX GIT ROOT (mandatory): The Git clone and package.json live at WORKSPACE ROOT /vercel/sandbox — never under /vercel/sandbox/app.',

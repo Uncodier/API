@@ -6,78 +6,39 @@
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
-import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
-import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
-import { instancePlanTool } from '@/app/api/agents/tools/instance_plan/assistantProtocol';
-import { instanceLogsTool } from '@/app/api/agents/tools/instance_logs/assistantProtocol';
-import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
-import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
-import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
-import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
-import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
-import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
-import { conversationsTool } from '@/app/api/agents/tools/conversations/assistantProtocol';
-import { messagesTool } from '@/app/api/agents/tools/messages/assistantProtocol';
-import { reportTool } from '@/app/api/agents/tools/report/assistantProtocol';
+import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
+import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 /**
- * Minimal tool set for the cron orchestrator.
+ * Tool set for the cron orchestrator — routed through `tool_lookup`.
  *
- * Rationale: the full `getAssistantTools()` exposes 40+ marketing/messaging tools
- * (email, whatsapp, social, leads, audiences, campaigns, content, etc.). With
- * Gemini that catalogue distracts the planner — in practice it loops exploring
- * the sandbox with `sandbox_run_command` / `sandbox_list_files` and never
- * reaches `instance_plan create`, leaving the requirement stuck in-progress
- * and making the cron pick it up again forever.
+ * Rationale: the full `getAssistantTools()` exposes 40+ marketing/messaging
+ * tools. With Gemini that catalogue distracts the planner — in practice it
+ * loops exploring the sandbox with `sandbox_run_command` / `sandbox_list_files`
+ * and never reaches `instance_plan create`, leaving the requirement stuck
+ * in-progress and making the cron pick it up again forever.
  *
- * The orchestrator PLANS + DELEGATES; it does not write code, generate media,
- * or send messages. The tool set below gives it everything it needs to
- * INFORM a good plan + CREATE and TRACK that plan, without distracting it
- * with action tools that belong to executor sub-agents.
+ * Solution (MCP-style routing, mirrors `skill_lookup`): expose only the
+ * "always-on" minimal surface and put every other tool behind a single
+ * `tool_lookup` router. The model discovers tools via
+ *   tool_lookup({ action: "list" })  →  ({ action: "describe", name })
+ *   → ({ action: "call", name, args }).
  *
- * Included (grouped by purpose):
- *  - Sandbox & skills:
- *      skill_lookup          loads any makinari-* skill (orchestrator /
- *                            planning-phase / role / objective)
- *      sandbox_run_command   targeted shell inspection inside the repo
- *      sandbox_read_file     read source/config/docs
- *      sandbox_list_files    browse structure
- *      sandbox_write_file    (available but orchestrator should delegate)
- *      sandbox_push/restore_checkpoint
- *      + QA sandbox tools
- *  - Plan & status (THE core orchestrator surface):
- *      instance_plan         list → create → update plan steps
- *      requirement_status    report in-progress / blocked / done
- *      requirements          read + update requirement.instructions (brain)
- *      instance_logs         audit trail
- *      memories              recall prior plan patterns for the same site
- *  - Context (read-only / info-gathering for planning):
- *      instance              instance metadata (capabilities, config)
- *      instance_project      project-level metadata
- *      content               existing site content / pages / sections
- *      tasks                 cross-reference task list
- *      conversations         recent user threads (feature requests / bugs)
- *      messages              individual messages within threads
- *      report                historical reports for this site/instance
- *  - External research:
- *      webSearch             look up external references (competitor UX, APIs)
+ * Always-on (visible schemas):
+ *   - Sandbox + skills: skill_lookup, sandbox_run_command, sandbox_read_file,
+ *     sandbox_list_files, sandbox_write_file, sandbox_push/restore_checkpoint,
+ *     plus any tool whose name starts with "sandbox_" or "qa_".
+ *   - Plan + status contract: instance_plan, requirement_status, requirements.
+ *   - The router itself: tool_lookup.
  *
- * NOT exposed (on purpose — these belong to executor sub-agents that run
- * plan steps; exposing them to the orchestrator caused Gemini to loop on
- * "doing" instead of "planning"):
- *   generate_image/video/audio, audioToText, urlToMarkdown/Sitemap,
- *   sendEmail/WhatsApp/BulkMessages, whatsappTemplate, sales/deals/leads/
- *   salesOrder, audience, segments, campaigns, copywriting, icp*,
- *   getFinderCategoryIds, searchRegionVenues, socialMedia*, publish,
- *   scheduling, workflows, webhooks, assets, systemNotification,
- *   updateSiteSettings, createProject, createSecret, createAccount/verify.
+ * Behind `tool_lookup` (schema NOT loaded until requested):
+ *   media, messaging, CRM/growth, social, content, infra, research — every
+ *   other tool from getAssistantTools().
  *
- * Each plan step executor still receives the FULL `getAssistantTools()`
- * catalog via `inline-step-executor.ts` (used by `cron-execute-steps-phase`),
- * so every capability above is preserved — just invoked by the right
- * role/skill at execution time (e.g. role=content can call generate_image,
- * role=devops can call createSecret, etc.).
+ * Each plan step executor still receives a full catalog (also routed, via
+ * `inline-step-executor.ts`), so every capability is preserved at execution
+ * time — the router just avoids flooding the context window.
  */
 function getCronOrchestratorTools(
   sandboxTools: any[],
@@ -85,28 +46,11 @@ function getCronOrchestratorTools(
   instanceId: string,
   userId: string,
 ): any[] {
-  return [
-    ...sandboxTools,
-
-    // Plan & status — core orchestrator surface
-    instancePlanTool(siteId, instanceId, userId),
-    requirementStatusTool(siteId, instanceId),
-    requirementsTool(siteId, userId),
-    instanceLogsTool(siteId, userId, instanceId),
-    memoriesTool(siteId, userId, instanceId),
-
-    // Context (read-only / info-gathering for better planning)
-    instanceTool(siteId, instanceId, userId),
-    instanceProjectTool(userId),
-    contentTool(siteId, userId),
-    tasksTool(siteId, userId),
-    conversationsTool(siteId, userId),
-    messagesTool(siteId),
-    reportTool(siteId, userId),
-
-    // External research
-    webSearchTool(siteId),
-  ];
+  // getAssistantTools already prepends customTools, so passing sandboxTools
+  // here makes sure skill_lookup + sandbox_* stay in the always-on bucket
+  // after partitioning.
+  const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+  return routeTools(allTools);
 }
 
 export async function runOrchestratorStep(params: {
@@ -155,8 +99,9 @@ export async function runOrchestratorStep(params: {
   });
 
   const fullTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);
+  const routedCount = fullTools.find((t: any) => t?.name === 'tool_lookup') ? 1 : 0;
   console.log(
-    `[CronStep] Orchestrator tools: ${fullTools.length} (sandbox=${sandboxTools.length}, +requirements/instance_plan/…)`,
+    `[CronStep] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tool_lookup=${routedCount}). Routed tools are discoverable via tool_lookup.`,
   );
 
   // Gemini tends to explore the sandbox first; 15 turns isn't enough once you

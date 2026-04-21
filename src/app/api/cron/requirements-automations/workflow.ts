@@ -4,6 +4,7 @@ import {
   ORCHESTRATOR_SKILL_LOOKUP_HINT,
   ORCHESTRATOR_STEP_ORIGIN_RULE,
   SANDBOX_REPO_ROOT_INVARIANT,
+  TOOL_LOOKUP_HINT,
 } from '../shared/step-git-prompts';
 import {
   createSandboxStep,
@@ -85,7 +86,8 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 - Use instance_plan to create steps (each with role, title, instructions, expected_output, order).
 - Automations MUST support ?mode=test and ?mode=prod.
 - NEVER run git commit or git push as orchestrator — the workflow checkpoints to origin after each plan step.
-- ${ORCHESTRATOR_STEP_ORIGIN_RULE}`;
+- ${ORCHESTRATOR_STEP_ORIGIN_RULE}
+- ${TOOL_LOOKUP_HINT}`;
 
   // Step 2: Check for active plan
   const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);
