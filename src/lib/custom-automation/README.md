@@ -1,6 +1,56 @@
-# Custom Automation with Azure OpenAI and Scrapybara
+# Custom Automation (AIAgentExecutor + Scrapybara/Sandbox)
 
-This module provides a custom implementation for managing Scrapybara instances using Azure OpenAI's API directly, replacing Scrapybara's built-in `act()` method with your own Azure OpenAI deployment.
+This module provides a provider-agnostic agent executor (`AIAgentExecutor`) plus
+optional Scrapybara integration. It replaces Scrapybara's built-in `act()` with
+a locally-controlled loop that talks to **Gemini** (default), **Azure OpenAI**,
+or **OpenAI** through a single OpenAI-compatible client.
+
+> The class was previously named `OpenAIAgentExecutor`. That name is still
+> exported as a deprecated alias — prefer `AIAgentExecutor` in new code.
+
+## Provider selection
+
+| Env var | Default | Notes |
+|---|---|---|
+| `AI_PROVIDER` | `gemini` | `gemini` \| `azure` \| `openai` |
+| `AI_MODEL` | provider default | Global default model id |
+| `AI_CODE_MODEL` | `gemini-3.1-pro-preview-customtools` | Model used by the sandbox code assistant (cron + orchestrator) |
+| `GEMINI_API_KEY` | — | Required when provider is `gemini` |
+| `GEMINI_OPENAI_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` | OpenAI-compatible Gemini endpoint |
+| `OPENAI_API_KEY` | — | Required when provider is `openai` |
+| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for OpenAI-compatible gateways |
+| `MICROSOFT_AZURE_OPENAI_API_KEY` | — | Required when provider is `azure` |
+| `MICROSOFT_AZURE_OPENAI_ENDPOINT` | — | e.g. `https://my-resource.openai.azure.com` |
+| `MICROSOFT_AZURE_OPENAI_DEPLOYMENT` | `gpt-4o` | Azure deployment name |
+| `MICROSOFT_AZURE_OPENAI_API_VERSION` | `2024-08-01-preview` | Azure `api-version` |
+
+Default model per provider (if `AI_MODEL` is not set):
+
+- `gemini` → `gemini-3.1-pro-preview`
+- `azure` → `gpt-4o` (or `MICROSOFT_AZURE_OPENAI_DEPLOYMENT` if present)
+- `openai` → `gpt-4o`
+
+### Examples
+
+```ts
+import { AIAgentExecutor } from '@/lib/custom-automation';
+
+// Uses AI_PROVIDER / AI_MODEL from env (defaults to Gemini).
+const executor = new AIAgentExecutor();
+
+// Force Azure for a specific callsite.
+const azure = new AIAgentExecutor({ provider: 'azure' });
+
+// Force OpenAI with a custom model.
+const gpt = new AIAgentExecutor({ provider: 'openai', model: 'gpt-4.1' });
+
+// Per-call override is also supported via act({ model }).
+```
+
+## Legacy Azure-first documentation
+
+The rest of this file documents the original Azure/Scrapybara setup. It still
+applies when you select `provider: 'azure'`.
 
 ## Overview
 
@@ -15,8 +65,8 @@ Instead of using Scrapybara's SDK with their `anthropic()` model wrapper, you ca
 
 The implementation consists of three main components:
 
-### 1. OpenAIAgentExecutor (`openai-agent-executor.ts`)
-Replaces Scrapybara's `client.act()` method with a custom implementation using Azure OpenAI's Chat Completions API.
+### 1. AIAgentExecutor (`ai-agent-executor.ts`)
+Replaces Scrapybara's `client.act()` method with a provider-agnostic implementation that talks to Gemini (default), Azure OpenAI, or OpenAI through a single OpenAI-compatible Chat Completions client. The legacy `openai-agent-executor.ts` now re-exports `AIAgentExecutor` as `OpenAIAgentExecutor`.
 
 **Features:**
 - Full Azure OpenAI function calling support

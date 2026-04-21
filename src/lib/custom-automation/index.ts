@@ -1,26 +1,31 @@
 /**
  * Custom Automation Library
- * 
- * OpenAI-based implementation for Scrapybara instance management
- * 
- * @example
- * ```typescript
- * import { OpenAIAgentExecutor, ScrapybaraInstanceManager, createScrapybaraTools } from '@/lib/custom-automation';
- * 
- * const manager = new ScrapybaraInstanceManager();
- * const instance = await manager.startUbuntu();
- * const executor = new OpenAIAgentExecutor();
- * 
+ *
+ * Provider-agnostic agent executor + optional Scrapybara integration.
+ *
+ * @example Gemini (default)
+ * ```ts
+ * import { AIAgentExecutor } from '@/lib/custom-automation';
+ *
+ * const executor = new AIAgentExecutor(); // reads AI_PROVIDER/AI_MODEL/GEMINI_API_KEY
  * const result = await executor.act({
- *   model: 'gpt-4o',
- *   tools: createScrapybaraTools(instance),
+ *   tools: myTools,
  *   prompt: 'Your task here',
  * });
  * ```
+ *
+ * @example Azure OpenAI
+ * ```ts
+ * const executor = new AIAgentExecutor({ provider: 'azure' });
+ * ```
  */
 
-// Core exports
-export { OpenAIAgentExecutor } from './openai-agent-executor';
+export {
+  AIAgentExecutor,
+  // Legacy alias - prefer AIAgentExecutor in new code.
+  OpenAIAgentExecutor,
+} from './ai-agent-executor';
+
 export { ScrapybaraInstanceManager } from './scrapybara-instance-manager';
 export {
   createScrapybaraTools,
@@ -30,7 +35,6 @@ export {
   ScrapybaraInstanceClient,
 } from './scrapybara-tools';
 
-// Type exports
 export type {
   Tool,
   ToolCall,
@@ -39,7 +43,11 @@ export type {
   Message,
   ActOptions,
   ActResponse,
-} from './openai-agent-executor';
+  AIAgentExecutorConfig,
+  AIProvider,
+  // Legacy alias
+  AzureOpenAIConfig,
+} from './ai-agent-executor';
 
 export type {
   InstanceOptions,
@@ -51,4 +59,3 @@ export type {
 export type {
   ScrapybaraInstance,
 } from './scrapybara-tools';
-

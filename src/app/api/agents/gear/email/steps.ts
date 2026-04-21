@@ -1,7 +1,7 @@
 'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { OpenAIAgentExecutor } from '@/lib/custom-automation/openai-agent-executor';
+import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 import { createAccountTool, verifyAccountTool } from '../whatsapp/tools';
 import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
 import { AgentMailSendService } from '@/lib/services/email/AgentMailSendService';
@@ -129,12 +129,12 @@ export async function processUnregisteredUserEmailStep(
       content: msg.content
     }));
 
-    // 2. Run the assistant using OpenAIAgentExecutor
+    // 2. Run the assistant using AIAgentExecutor
     const customTools = [createAccountTool(), verifyAccountTool()];
     if (userId) {
       customTools.push(instanceProjectTool(userId, userEmail));
     }
-    const executor = new OpenAIAgentExecutor();
+    const executor = new AIAgentExecutor();
     
     const executionResult = await executor.act({
       tools: customTools,

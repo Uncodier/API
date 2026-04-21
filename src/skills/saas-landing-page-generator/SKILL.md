@@ -1,63 +1,63 @@
 ---
 name: saas-landing-page-generator
-description: Generate modern SaaS product landing pages with multiple styles, outputting deployable HTML/CSS/React code.
+description: Generate modern SaaS product landing pages with multiple design styles, outputting deployable HTML/CSS/React code. Use when the requirement is a SaaS marketing site (dashboard tools, AI products, B2B platforms, mobile apps, developer tooling).
 types: ['develop', 'content', 'design', 'marketing_campaign']
 ---
 
 # SaaS Landing Page Generator
 
-生成专业的 SaaS 产品 Landing Page，一键生成可直接部署的代码。
+Generate professional SaaS product landing pages with ready-to-deploy code via the `saas-landing-page` script.
 
-## 功能
+## Features
 
-- 🎨 多种设计风格
-- 📱 完全响应式
-- ⚡ 性能优化
-- 🧩 组件化代码
-- 🎯 SEO 友好
-- 📦 直接可部署
+- Multiple design styles selectable by template.
+- Fully responsive layouts.
+- Performance-minded output (minimal JS, optimized assets).
+- Componentized code.
+- SEO-friendly defaults.
+- Directly deployable output.
 
-## 模板风格
+## Template Styles
 
-| 风格 | 适用产品 |
-|------|---------|
-| `modern` | SaaS、Dashboard、AI 工具 |
-| `minimal` | 简约工具、Chrome 插件 |
-| `b2b` | 企业服务、API 产品 |
-| `mobile-app` | iOS/Android 应用 |
-| `developer` | 开发者工具、SDK |
+| Template | Best for |
+| --- | --- |
+| `modern` | SaaS dashboards, AI tools |
+| `minimal` | Simple tools, browser extensions |
+| `b2b` | Enterprise services, API products |
+| `mobile-app` | iOS / Android apps |
+| `developer` | Developer tools, SDKs |
 
-## 使用方法
+## Usage
 
-### 生成 Landing Page
+### Generate a landing page
 
 ```bash
-# 基本用法
-saas-landing-page "产品名称" "一句话描述"
+# Basic
+saas-landing-page "<Product name>" "<One-line description>"
 
-# 指定风格
+# With a specific template
 saas-landing-page "AI Writer" "AI-powered writing assistant" --template modern
 
-# 指定技术栈
-saas-landing-page "产品" "描述" --stack react --style tailwind
+# With a specific tech stack
+saas-landing-page "<Product>" "<Description>" --stack react --style tailwind
 ```
 
-### 选项
+### Options
 
-| 选项 | 说明 |
-|------|------|
-| `--template, -t` | 模板风格 |
-| `--stack, -s` | 技术栈 (html, react, vue, nextjs) |
-| `--style, -st` | 样式 (tailwind, bootstrap, plain) |
-| `--output, -o` | 输出目录 |
-| `--color, -c` | 主色调 |
+| Option | Meaning |
+| --- | --- |
+| `--template, -t` | Template style (from the table above). |
+| `--stack, -s` | Tech stack: `html`, `react`, `vue`, `nextjs`. |
+| `--style, -st` | Styling system: `tailwind`, `bootstrap`, `plain`. |
+| `--output, -o` | Output directory. |
+| `--color, -c` | Primary brand color. |
 
-## 输出结构
+## Output Structure
 
 ```
 my-saas-landing/
-├── index.html          # 或 App.js (React)
-├── styles.css         # 或 Tailwind 配置
+├── index.html           # or App.js (React)
+├── styles.css           # or Tailwind config
 ├── components/
 │   ├── Hero.jsx
 │   ├── Features.jsx
@@ -66,80 +66,76 @@ my-saas-landing/
 │   ├── CTA.jsx
 │   └── Footer.jsx
 ├── assets/
-└── package.json        # 如果是 React/Next.js
+└── package.json          # when the stack is React/Next.js
 ```
 
-## 示例
+## Examples
 
-### AI 产品
+### AI product
 
 ```bash
-saas-landing-page "CodeGenius" "AI-powered code generator for developers" --template modern --stack nextjs --color purple
+saas-landing-page "CodeGenius" "AI-powered code generator for developers" \
+  --template modern --stack nextjs --color purple
 ```
 
-### B2B 产品
+### B2B product
 
 ```bash
-saas-landing-page "TeamSync" "Enterprise team collaboration platform" --template b2b --stack react --color blue
+saas-landing-page "TeamSync" "Enterprise team collaboration platform" \
+  --template b2b --stack react --color blue
 ```
 
-### 开发者工具
+### Developer tool
 
 ```bash
-saas-landing-page "APIDoc" "Auto-generate API documentation" --template developer --stack nextjs
+saas-landing-page "APIDoc" "Auto-generate API documentation" \
+  --template developer --stack nextjs
 ```
 
-## 包含的组件
+## Included Components
 
-- ✅ Hero Section (带 CTA)
-- ✅ Features Grid
-- ✅ How It Works
-- ✅ Pricing Tables
-- ✅ Testimonials
-- ✅ Logo Cloud
-- ✅ FAQ Section
-- ✅ CTA Banner
-- ✅ Footer
-- ✅ Mobile Menu
-- ✅ Loading Animation
+- Hero section with primary CTA
+- Features grid
+- How It Works
+- Pricing tables
+- Testimonials
+- Logo cloud
+- FAQ section
+- CTA banner
+- Footer
+- Mobile menu
+- Loading animations
 
-## SEO 优化
+## SEO Defaults
 
-生成的页面包含：
-- Meta 标签
-- Open Graph 标签
-- 结构化数据
-- Semantic HTML
-- 优化的图片占位符
-- Sitemap 模板
+Generated pages include:
+- Meta tags (title, description, canonical).
+- Open Graph + Twitter Card tags.
+- Structured data (JSON-LD).
+- Semantic HTML.
+- Optimized image placeholders.
+- Sitemap template.
 
-## 变现思路
+## Supported Stacks
 
-1. **模板市场** - 在 Gumroad/ThemeForest 销售
-2. **定制服务** - 为客户定制 Landing Page
-3. **SaaS 模板** - 构建一个 Landing Page 模板库网站
-4. **Fiverr 服务** - 低价快速生成
-
-## 安装
-
-```bash
-# 无需依赖
-```
-
-## 技术栈支持
-
-- Plain HTML/CSS
+- Plain HTML / CSS
 - React + CSS Modules
 - React + Tailwind CSS
 - Next.js + Tailwind
 - Vue 3 + Tailwind
 
-## 示例输出
+## Tools
 
-生成的页面包含专业的设计：
+| Tool | When to use |
+| --- | --- |
+| `sandbox_run_command` | Invoke the `saas-landing-page` script with the chosen template / stack / style flags. |
+| `sandbox_write_file` | Persist generated components into the target app directory (e.g. `src/app/` for Next.js). |
+| `sandbox_read_file` | Read existing design tokens / Tailwind config to align the generated palette. |
+| `sandbox_list_files` | Confirm the output structure landed where the app expects it. |
+| `requirements` | Read product name, one-line description, brand colors, stack preference from the requirement. |
+| `requirement_status` | Publish the preview URL and usage instructions for the client. |
 
-- 现代化的 UI
-- 渐变和动画
-- 响应式布局
-- 交互式组件
-- 优化的加载速度
+## Artifacts
+
+- **Produces**: generated landing page folder (components, styles, assets) in the repo, plus any generated `package.json` when the stack is React/Next.js.
+- **Consumes**: `requirement.instructions` sections 3 (Goals), 5 (Technical Guidelines — brand and stack), and the product description declared in section 1 (Overview).

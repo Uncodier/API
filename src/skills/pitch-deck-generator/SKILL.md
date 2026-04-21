@@ -234,3 +234,19 @@ ToolWeb.in - 200+ security APIs, CISSP & CISM, platforms: Pay-per-run, API Gatew
 
 - **Kong Route:** https://api.mkkpro.com/creative/pitch-deck-generator
 - **API Docs:** https://api.mkkpro.com:8076/docs
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `sandbox_run_command` | Call the `POST /api/pitchdeck/generate` endpoint via curl with the `startupData` payload. |
+| `sandbox_write_file` | Persist the generated outline as `pitch-deck.md` / inject it into a slide Vitrina's `data.json`. |
+| `sandbox_read_file` | Read brand tokens (colors, fonts) from the repo to align design recommendations. |
+| `requirements` | Pull `companyName`, `industry`, `problemStatement`, `solution`, `traction`, `fundingAsk`, `teamInfo` from the requirement. |
+| `memories` | Recall prior pitch drafts or investor feedback for the same company. |
+| `content` | Store the outline in the content tool if the client wants it outside the Vitrina. |
+
+## Artifacts
+
+- **Produces**: pitch deck outline JSON, optional Markdown summary, slide data injected into a slide-viewer Vitrina.
+- **Consumes**: `requirement.instructions` section 1 (Overview — company), section 2 (Baseline — traction and team), any brand context via `memories`.

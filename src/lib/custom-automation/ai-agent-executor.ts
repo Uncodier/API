@@ -1,0 +1,1262 @@
+/**
+ * AI Agent Executor
+ *
+ * Provider-agnostic agent executor that reuses the OpenAI chat completions
+ * protocol (with tool calling) but can target Gemini (default), Azure OpenAI
+ * or OpenAI via the same client.
+ *
+ * Provider selection order:
+ *   1. `config.provider` (constructor arg)
+ *   2. `process.env.AI_PROVIDER`
+ *   3. `'gemini'` (default)
+ *
+ * For Gemini we use Google's OpenAI-compatible endpoint
+ * (`https://generativelanguage.googleapis.com/v1beta/openai/`) so tool calling
+ * and streaming keep working unchanged.
+ *
+ * CRITICAL: OpenAI/Azure Image Handling Pattern
+ * =============================================
+ * OpenAI/Azure does NOT allow images in 'tool' role messages.
+ * Images can ONLY appear in 'user' role messages.
+ *
+ * Solution implemented:
+ * 1. Extract base64 images from tool results
+ * 2. Add 'tool' message with text result (no image)
+ * 3. Immediately add 'user' message with the image
+ *
+ * This replicates how Scrapybara's backend handles OpenAI models and also
+ * works for Gemini through the OpenAI compatibility layer.
+ *
+ * @see https://ai.google.dev/gemini-api/docs/openai
+ * @see https://learn.microsoft.com/azure/ai-services/openai/
+ * @see https://platform.openai.com/docs/guides/vision
+ */
+
+import OpenAI from 'openai';
+import { z } from 'zod';
+import { zodToJsonSchema } from 'zod-to-json-schema';
+import {
+  ensureAzureSafeDataImageUrl,
+  isAzureInvalidImageError,
+  sanitizeMessagesForAzureVisionImages,
+} from './azure-vision-message-sanitize';
+
+/**
+ * Helper function to filter base64 images in messages, keeping only the latest ones up to specified limit.
+ * This prevents the context window from growing infinitely with accumulated screenshots.
+ * Based on Scrapybara's implementation pattern.
+ *
+ * @param messages - List of messages to filter (modifies in place)
+ * @param imagesToKeep - Maximum number of images to keep
+ */
+function filterImages(messages: any[], imagesToKeep: number): void {
+  let imagesKept = 0;
+
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+
+    if (msg.role === 'user' && Array.isArray(msg.content)) {
+      for (let j = msg.content.length - 1; j >= 0; j--) {
+        const contentPart = msg.content[j];
+
+        if (contentPart.type === 'image_url' && contentPart.image_url) {
+          const imageUrl = contentPart.image_url.url;
+          if (imageUrl && (imageUrl.startsWith('data:image/') || imageUrl.startsWith('http://') || imageUrl.startsWith('https://'))) {
+            if (imagesKept < imagesToKeep) {
+              imagesKept++;
+            } else {
+              msg.content.splice(j, 1);
+            }
+          } else {
+            console.log(`🧹 [IMAGE_FILTER] Removing invalid image URL: ${imageUrl?.substring(0, 100)}...`);
+            msg.content.splice(j, 1);
+          }
+        }
+      }
+
+      if (msg.content.length === 0) {
+        messages.splice(i, 1);
+      } else if (msg.content.length === 1 && msg.content[0].type === 'text' &&
+                 msg.content[0].text.includes('Here are the')) {
+        messages.splice(i, 1);
+      }
+    }
+
+    if (msg.role === 'tool' && typeof msg.content === 'string') {
+      if (msg.content.includes('base64') || msg.content.length > 50000) {
+        console.log(`🧹 [IMAGE_FILTER] Cleaning base64 data from tool message`);
+        msg.content = msg.content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
+      }
+
+      if (msg.content.includes('generateImage') || msg.content.includes('image_urls') || msg.content.includes('provider')) {
+        console.log(`🧹 [IMAGE_FILTER] Cleaning generateImage tool message content`);
+        msg.content = msg.content.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
+      }
+    }
+  }
+}
+
+// Types
+export interface ToolCall {
+  toolCallId: string;
+  toolName: string;
+  args: Record<string, any>;
+}
+
+export interface ToolResult {
+  toolCallId: string;
+  toolName: string;
+  result: any;
+  isError: boolean;
+  base64Image?: string | null;
+  cleanedResult?: any;
+}
+
+export interface Step {
+  text: string;
+  toolCalls?: ToolCall[];
+  toolResults?: ToolResult[];
+  output?: any;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+
+export interface Message {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  content?: string;
+  tool_calls?: Array<{
+    id: string;
+    type: 'function';
+    function: {
+      name: string;
+      arguments: string;
+    };
+  }>;
+  tool_call_id?: string;
+  name?: string;
+}
+
+export interface Tool {
+  name: string;
+  description?: string;
+  parameters?: Record<string, any> | z.ZodType<any>;
+  execute: (args: any) => Promise<any>;
+}
+
+export interface ActOptions {
+  model?: string;
+  tools: Tool[];
+  system?: string;
+  prompt?: string;
+  messages?: Message[];
+  schema?: z.ZodType<any>;
+  onStep?: (step: Step, meta?: { streamingLogId?: string }) => Promise<void> | void;
+  maxIterations?: number;
+  temperature?: number;
+  reasoningEffort?: 'low' | 'medium' | 'high';
+  verbosity?: 'low' | 'medium' | 'high';
+  stream?: boolean;
+  onStreamStart?: () => Promise<string>;
+  onStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  onThinkingStreamStart?: () => Promise<string>;
+  onThinkingStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
+  onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
+}
+
+export interface ActResponse {
+  messages: Message[];
+  steps: Step[];
+  text: string;
+  output?: any;
+  usage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+  };
+}
+
+export type AIProvider = 'gemini' | 'azure' | 'openai';
+
+export interface AIAgentExecutorConfig {
+  /** Provider to use. Defaults to process.env.AI_PROVIDER ?? 'gemini'. */
+  provider?: AIProvider;
+  /** Model id. Defaults to process.env.AI_MODEL or a provider-specific default. */
+  model?: string;
+  /** Provider API key. Falls back to provider-specific env var. */
+  apiKey?: string;
+  /** Base URL override. Useful for self-hosted OpenAI-compatible gateways. */
+  baseURL?: string;
+  /** Azure-only: resource endpoint, e.g. https://my-resource.openai.azure.com */
+  endpoint?: string;
+  /** Azure-only: deployment name (becomes part of the baseURL path). */
+  deployment?: string;
+  /** Azure-only: api-version query string. */
+  apiVersion?: string;
+}
+
+/**
+ * Legacy alias kept for backwards compatibility. New code should prefer
+ * `AIAgentExecutorConfig`.
+ */
+export type AzureOpenAIConfig = AIAgentExecutorConfig;
+
+const GEMINI_DEFAULT_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/openai/';
+const OPENAI_DEFAULT_BASE_URL = 'https://api.openai.com/v1';
+
+const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
+  gemini: 'gemini-3.1-pro-preview',
+  azure: 'gpt-4o',
+  openai: 'gpt-4o',
+};
+
+export class AIAgentExecutor {
+  private client: OpenAI;
+  private model: string;
+  private provider: AIProvider;
+
+  constructor(config?: AIAgentExecutorConfig | string) {
+    // Back-compat: string arg is treated as an API key for the selected provider.
+    if (typeof config === 'string') {
+      config = { apiKey: config };
+    }
+
+    const provider = this.resolveProvider(config?.provider);
+    this.provider = provider;
+
+    if (provider === 'azure') {
+      const apiKey = config?.apiKey || process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
+      const endpoint = config?.endpoint || process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
+      const deployment = config?.deployment || process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || DEFAULT_MODEL_BY_PROVIDER.azure;
+      const apiVersion = config?.apiVersion || process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
+
+      if (!endpoint) {
+        throw new Error('Azure OpenAI endpoint is required. Set MICROSOFT_AZURE_OPENAI_ENDPOINT environment variable.');
+      }
+      if (!apiKey) {
+        throw new Error('Azure OpenAI API key is required. Set MICROSOFT_AZURE_OPENAI_API_KEY environment variable.');
+      }
+
+      this.client = new OpenAI({
+        apiKey,
+        baseURL: `${endpoint}/openai/deployments/${deployment}`,
+        defaultQuery: { 'api-version': apiVersion },
+        defaultHeaders: { 'api-key': apiKey },
+      });
+
+      // For Azure the model in the body is informational (deployment is in baseURL).
+      this.model = config?.model || process.env.AI_MODEL || deployment;
+    } else if (provider === 'openai') {
+      const apiKey = config?.apiKey || process.env.OPENAI_API_KEY;
+      const baseURL = config?.baseURL || process.env.OPENAI_BASE_URL || OPENAI_DEFAULT_BASE_URL;
+
+      if (!apiKey) {
+        throw new Error('OpenAI API key is required. Set OPENAI_API_KEY environment variable.');
+      }
+
+      this.client = new OpenAI({ apiKey, baseURL });
+      this.model = config?.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER.openai;
+    } else {
+      // Gemini via OpenAI-compatible endpoint (default).
+      const apiKey = config?.apiKey || process.env.GEMINI_API_KEY;
+      const baseURL = config?.baseURL || process.env.GEMINI_OPENAI_BASE_URL || GEMINI_DEFAULT_BASE_URL;
+
+      if (!apiKey) {
+        throw new Error('Gemini API key is required. Set GEMINI_API_KEY environment variable.');
+      }
+
+      this.client = new OpenAI({ apiKey, baseURL });
+      this.model = config?.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER.gemini;
+    }
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [AI EXECUTOR] provider=${this.provider} model=${this.model}`);
+  }
+
+  private resolveProvider(explicit?: AIProvider): AIProvider {
+    const raw = (explicit || process.env.AI_PROVIDER || 'gemini').toLowerCase();
+    if (raw === 'azure' || raw === 'openai' || raw === 'gemini') {
+      return raw;
+    }
+    console.warn(`₍ᐢ•(ܫ)•ᐢ₎ [AI EXECUTOR] Unknown AI_PROVIDER="${raw}", falling back to 'gemini'`);
+    return 'gemini';
+  }
+
+  /** Expose the resolved provider (useful for callers that log/route). */
+  getProvider(): AIProvider {
+    return this.provider;
+  }
+
+  /** Expose the resolved default model. */
+  getModel(): string {
+    return this.model;
+  }
+
+  /**
+   * Extract and strip base64 images from tool results
+   * Images will be sent separately as user messages (OpenAI requirement)
+   */
+  private extractBase64Image(result: any): { cleanedResult: any; base64Image: string | null } {
+    let base64Image: string | null = null;
+
+    if (typeof result === 'object' && result !== null && result.provider && result.image_urls) {
+      console.log(`🧹 [IMAGE_FILTER] Processing generateImage tool result`);
+      return {
+        cleanedResult: result,
+        base64Image: null
+      };
+    }
+
+    if (typeof result === 'string') {
+      if (result.includes('base64') || result.length > 10000) {
+        const imageData = result.startsWith('data:image') ? result : `data:image/png;base64,${result}`;
+        return {
+          cleanedResult: 'Screenshot captured successfully.',
+          base64Image: imageData
+        };
+      }
+      return { cleanedResult: result, base64Image: null };
+    }
+
+    if (typeof result === 'object' && result !== null) {
+      const cleaned: any = Array.isArray(result) ? [] : {};
+
+      for (const [key, value] of Object.entries(result)) {
+        if (key === 'base64_image' || key === 'base64Image' || key === 'screenshot' || key === 'image') {
+          if (typeof value === 'string' && value.length > 1000) {
+            base64Image = value.startsWith('data:image') ? value : `data:image/png;base64,${value}`;
+            cleaned[key] = '[Image captured - will be shown separately]';
+          } else {
+            cleaned[key] = value;
+          }
+        } else if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('/9j/') || value.length > 10000)) {
+          base64Image = value.startsWith('data:image') ? value : `data:image/png;base64,${value}`;
+          cleaned[key] = '[Image captured - will be shown separately]';
+        } else if (typeof value === 'object' && value !== null) {
+          const nested = this.extractBase64Image(value);
+          cleaned[key] = nested.cleanedResult;
+          if (nested.base64Image && !base64Image) {
+            base64Image = nested.base64Image;
+          }
+        } else {
+          cleaned[key] = value;
+        }
+      }
+
+      return { cleanedResult: cleaned, base64Image };
+    }
+
+    return { cleanedResult: result, base64Image: null };
+  }
+
+  /**
+   * Run streaming completion: iterate over chunks, accumulate message, call onStreamChunk.
+   * Supports reasoning/thinking via delta.reasoning_content or delta.reasoning (o-series, etc).
+   * Throttles DB updates to ~80ms to avoid excessive instance_log writes.
+   */
+  private async runStreamingCompletion(
+    completionOptions: Record<string, any>,
+    callbacks: {
+      onStreamStart: () => Promise<string>;
+      onStreamChunk: (logId: string, text: string) => Promise<void>;
+      onThinkingStreamStart?: () => Promise<string>;
+      onThinkingStreamChunk?: (logId: string, text: string) => Promise<void>;
+      onReasoningTokensUsed?: (count: number) => Promise<void>;
+    },
+    totalUsage: { promptTokens: number; completionTokens: number; totalTokens: number }
+  ): Promise<{
+    message: any;
+    usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
+    finish_reason?: string;
+    streamingLogId?: string;
+  }> {
+    const opts = {
+      ...completionOptions,
+      stream: true,
+    };
+    const stream = await this.client.chat.completions.create(opts as any).catch(err => {
+      console.error(`❌ [AI STREAM INIT ERROR][${this.provider}]`, err.message);
+      if (err.status) console.error(`   Status: ${err.status}`);
+      if (err.headers) console.error(`   Headers:`, JSON.stringify(err.headers, null, 2));
+      if (err.error) console.error(`   Error object:`, JSON.stringify(err.error, null, 2));
+      throw err;
+    });
+
+    let content = '';
+    let reasoningContent = '';
+    const toolCallsAccum: Record<number, { id?: string; type: 'function'; function: { name?: string; arguments?: string } }> = {};
+    let finishReason: string | undefined;
+    let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
+    let streamingLogId: string | undefined;
+    let thinkingLogId: string | undefined;
+    const STREAM_THROTTLE_MS = 80;
+    let lastEmitTime = 0;
+    let lastThinkingEmitTime = 0;
+
+    for await (const chunk of stream as unknown as AsyncIterable<any>) {
+      if (chunk.usage) {
+        usage = chunk.usage;
+        totalUsage.promptTokens += chunk.usage.prompt_tokens || 0;
+        totalUsage.completionTokens += chunk.usage.completion_tokens || 0;
+        totalUsage.totalTokens += chunk.usage.total_tokens || 0;
+      }
+
+      const choice = chunk.choices?.[0];
+      if (!choice) continue;
+
+      if (choice.finish_reason) {
+        finishReason = choice.finish_reason;
+      }
+
+      const delta = choice.delta || {};
+
+      const reasoningDelta = typeof delta.reasoning_content === 'string' ? delta.reasoning_content : (typeof delta.reasoning === 'string' ? delta.reasoning : '');
+      if (reasoningDelta && callbacks.onThinkingStreamStart && callbacks.onThinkingStreamChunk) {
+        reasoningContent += reasoningDelta;
+        if (!thinkingLogId) {
+          thinkingLogId = await callbacks.onThinkingStreamStart();
+        }
+        const now = Date.now();
+        if (now - lastThinkingEmitTime >= STREAM_THROTTLE_MS && thinkingLogId) {
+          lastThinkingEmitTime = now;
+          await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+        }
+      }
+
+      if (typeof delta.content === 'string' && delta.content) {
+        content += delta.content;
+        if (!streamingLogId) {
+          streamingLogId = await callbacks.onStreamStart();
+        }
+        const now = Date.now();
+        if (now - lastEmitTime >= STREAM_THROTTLE_MS && streamingLogId) {
+          lastEmitTime = now;
+          await callbacks.onStreamChunk(streamingLogId, content);
+        }
+      }
+
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!toolCallsAccum[idx]) {
+            toolCallsAccum[idx] = { type: 'function', function: {} };
+          }
+          if (tc.id) toolCallsAccum[idx].id = tc.id;
+          if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
+          if (tc.function?.arguments) {
+            toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
+          }
+        }
+      }
+    }
+
+    if (streamingLogId && content) {
+      await callbacks.onStreamChunk(streamingLogId, content);
+    }
+    if (thinkingLogId && reasoningContent && callbacks.onThinkingStreamChunk) {
+      await callbacks.onThinkingStreamChunk(thinkingLogId, reasoningContent);
+    }
+
+    if (!thinkingLogId && callbacks.onReasoningTokensUsed && usage) {
+      const u = usage as any;
+      const reasoningTokens =
+        u?.completion_tokens_details?.reasoning_tokens ??
+        u?.output_tokens_details?.reasoning_tokens ??
+        u?.reasoning_tokens ??
+        0;
+      if (reasoningTokens > 0) {
+        await callbacks.onReasoningTokensUsed(reasoningTokens);
+      }
+    }
+
+    const toolCallsArray = Object.keys(toolCallsAccum)
+      .map((k) => Number(k))
+      .sort((a, b) => a - b)
+      .map((idx) => toolCallsAccum[idx])
+      .filter((tc) => tc.id && tc.function?.name);
+
+    const message: any = {
+      role: 'assistant',
+      content: content || null,
+    };
+    if (toolCallsArray.length > 0) {
+      message.tool_calls = toolCallsArray.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
+      }));
+    }
+
+    return { message, usage, finish_reason: finishReason, streamingLogId };
+  }
+
+  /**
+   * Main execution method that mimics Scrapybara's act() functionality
+   */
+  async act(options: ActOptions): Promise<ActResponse> {
+    const {
+      model,
+      tools,
+      system,
+      prompt,
+      messages: initialMessages,
+      schema,
+      onStep,
+      maxIterations = 50,
+      temperature = 1,
+      reasoningEffort = 'low',
+      verbosity = 'low',
+      stream: useStreaming = false,
+      onStreamStart,
+      onStreamChunk,
+      onThinkingStreamStart,
+      onThinkingStreamChunk,
+      onReasoningTokensUsed,
+    } = options;
+
+    const modelName = model || this.model;
+    const provider = this.provider;
+    // Azure/OpenAI reasoning-tuned models accept extra params (reasoning_effort,
+    // verbosity, no temperature override). Gemini does NOT — skip all that.
+    const supportsReasoningParams = provider === 'azure' || provider === 'openai';
+    const isReasoningModel = supportsReasoningParams && (
+      modelName.includes('o1') || modelName.includes('o3') || modelName.includes('gpt-5.4')
+    );
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Initializing with ${tools.length} tool(s):`);
+    tools.forEach((tool, index) => {
+      console.log(`  ${index + 1}. ${tool.name} - ${tool.description || 'No description'}`);
+      if (tool.parameters) {
+        const isZodSchema = typeof tool.parameters === 'object' && '_def' in tool.parameters;
+        console.log(`     Parameters: ${isZodSchema ? 'Zod Schema' : 'JSON Schema'}`);
+      }
+    });
+
+    const messages: Message[] = [];
+
+    if (system) {
+      messages.push({ role: 'system', content: system });
+    }
+
+    if (initialMessages) {
+      messages.push(...initialMessages);
+    } else if (prompt) {
+      messages.push({ role: 'user', content: prompt });
+    }
+
+    const openaiTools = tools.map(tool => {
+      let parameters: Record<string, any>;
+
+      if (tool.parameters && typeof tool.parameters === 'object' && '_def' in tool.parameters) {
+        parameters = zodToJsonSchema(tool.parameters as z.ZodType<any>, {
+          target: 'openApi3',
+          $refStrategy: 'none',
+        }) as Record<string, any>;
+      } else {
+        parameters = tool.parameters as Record<string, any> || { type: 'object', properties: {} };
+      }
+
+      return {
+        type: 'function' as const,
+        function: {
+          name: tool.name,
+          description: tool.description || `Tool: ${tool.name}`,
+          parameters,
+        },
+      };
+    });
+
+    const steps: Step[] = [];
+    let totalUsage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
+    let iterations = 0;
+    let finalText = '';
+    let finalOutput: any = undefined;
+
+    let lastScreenshotHash: string | null = null;
+    let consecutiveIdenticalScreenshots = 0;
+
+    const MAX_SCREENSHOT_HISTORY = 5;
+    const screenshotHistory: string[] = [];
+
+    const MAX_ITERATIONS_WITHOUT_OUTPUT = 30;
+    let iterationsWithoutOutput = 0;
+
+    while (iterations < maxIterations) {
+      iterations++;
+
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Iteration ${iterations}/${maxIterations}`);
+
+      if (schema && iterationsWithoutOutput > MAX_ITERATIONS_WITHOUT_OUTPUT) {
+        console.error(`⚠️ [EXECUTOR] Safety limit reached: ${iterationsWithoutOutput} iterations without structured output. Stopping.`);
+        break;
+      }
+
+      try {
+        const iterationStartTime = Date.now();
+        console.log(`\n⏱️ ========== ITERATION ${iterations} TIMING BREAKDOWN ==========`);
+
+        const imagesBefore = messages.filter((m: any) =>
+          m.role === 'user' && Array.isArray(m.content) &&
+          m.content.some((c: any) => c.type === 'image_url')
+        ).length;
+
+        filterImages(messages, MAX_SCREENSHOT_HISTORY);
+
+        const imagesAfter = messages.filter((m: any) =>
+          m.role === 'user' && Array.isArray(m.content) &&
+          m.content.some((c: any) => c.type === 'image_url')
+        ).length;
+
+        if (imagesBefore > imagesAfter) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [IMAGE_FILTER] Cleaned ${imagesBefore - imagesAfter} old image(s), kept ${imagesAfter} most recent`);
+        }
+
+        // Azure vision sanitization only applies to Azure. Other providers (Gemini, OpenAI)
+        // accept the same data URLs that Azure rejects.
+        if (provider === 'azure') {
+          const visionStripped = sanitizeMessagesForAzureVisionImages(messages);
+          if (visionStripped > 0) {
+            console.warn(
+              `₍ᐢ•(ܫ)•ᐢ₎ [AZURE_VISION] Removed ${visionStripped} unsupported or invalid image part(s) before API call`
+            );
+          }
+        }
+
+        const completionOptions: any = {
+          model: modelName,
+          messages,
+        };
+
+        // After enough iterations with a schema, drop tools to force JSON output.
+        const shouldForceJson = schema && iterations > 15;
+
+        if (!shouldForceJson) {
+          completionOptions.tools = openaiTools;
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Including tools in API call`);
+        } else {
+          console.log(`⚠️ [EXECUTOR] Forcing JSON output - removing tools (iteration ${iterations})`);
+        }
+
+        // Temperature: Azure reasoning models reject non-default values; Gemini accepts it.
+        if (!isReasoningModel && temperature !== 1) {
+          completionOptions.temperature = temperature;
+        }
+
+        // reasoning_effort / verbosity only for Azure/OpenAI o-series style deployments.
+        if (isReasoningModel) {
+          if (modelName === 'o3-mini' || modelName === 'o1') {
+            completionOptions.reasoning_effort = reasoningEffort;
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Using reasoning_effort=${reasoningEffort} for model: ${modelName}`);
+          } else {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Skipping reasoning_effort for model: ${modelName}`);
+          }
+        }
+
+        if (schema) {
+          const jsonSchema = this.zodToJsonSchema(schema);
+          completionOptions.response_format = {
+            type: 'json_schema',
+            json_schema: {
+              name: 'response',
+              schema: jsonSchema,
+              strict: true,
+            },
+          };
+        }
+
+        console.log(`🔍 [DEBUG] First 2000 chars of messages:`, JSON.stringify(messages, null, 2).substring(0, 2000));
+
+        const useStreamingPath = useStreaming && onStreamStart && onStreamChunk && !schema;
+        const useThinkingStream = useStreamingPath && onThinkingStreamStart && onThinkingStreamChunk;
+
+        const optsForLog = { ...completionOptions, stream: useStreamingPath, stream_options: undefined, messages: `[${messages.length} messages omitted]` };
+        console.log(`🔍 [DEBUG][${provider}] API Payload Options:`, JSON.stringify(optsForLog, null, 2));
+
+        let response: { message: any; usage?: any; finish_reason?: string };
+
+        if (useStreamingPath) {
+          try {
+            const streamCallbacks: Parameters<typeof this.runStreamingCompletion>[1] = {
+              onStreamStart: onStreamStart!,
+              onStreamChunk: onStreamChunk!,
+              onReasoningTokensUsed: onReasoningTokensUsed,
+            };
+            if (useThinkingStream) {
+              streamCallbacks.onThinkingStreamStart = onThinkingStreamStart!;
+              streamCallbacks.onThinkingStreamChunk = onThinkingStreamChunk!;
+            }
+            response = await this.runStreamingCompletion(
+              completionOptions,
+              streamCallbacks,
+              totalUsage
+            );
+          } catch (streamError: any) {
+            console.error(`❌ [STREAM_ERROR][${provider}] Streaming failed (${streamError.status || streamError.message}), falling back to non-streaming...`);
+
+            if (provider === 'azure' && isAzureInvalidImageError(streamError)) {
+              sanitizeMessagesForAzureVisionImages(messages);
+              console.warn(
+                `₍ᐢ•(ܫ)•ᐢ₎ [AZURE_VISION] Re-sanitized messages after invalid image on stream; using non-streaming fallback`
+              );
+            }
+
+            console.log(`⏱️ [TIMING] Calling ${provider.toUpperCase()} API with NON-streaming fallback...`);
+            const fallbackOptions = { ...completionOptions };
+            delete fallbackOptions.stream;
+            delete fallbackOptions.stream_options;
+
+            const apiStartTime = Date.now();
+            let completion;
+            try {
+              completion = await this.client.chat.completions.create(fallbackOptions);
+            } catch (fallbackErr: any) {
+              if (provider === 'azure' && isAzureInvalidImageError(fallbackErr)) {
+                sanitizeMessagesForAzureVisionImages(messages);
+                completion = await this.client.chat.completions.create(fallbackOptions);
+              } else {
+                throw fallbackErr;
+              }
+            }
+            const apiEndTime = Date.now();
+            const apiDuration = apiEndTime - apiStartTime;
+            console.log(`⏱️ [TIMING][${provider}] Fallback response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
+
+            const choice = completion.choices[0];
+            response = {
+              message: choice.message,
+              usage: completion.usage,
+              finish_reason: choice.finish_reason ?? undefined,
+            } as any;
+
+            if (choice.message.content) {
+              const streamingLogId = await onStreamStart!();
+              await onStreamChunk!(streamingLogId, choice.message.content);
+            }
+          }
+        } else {
+          console.log(`⏱️ [TIMING] Calling ${provider.toUpperCase()} API...`);
+          const apiStartTime = Date.now();
+          let completion;
+          try {
+            completion = await this.client.chat.completions.create(completionOptions);
+          } catch (apiErr: any) {
+            if (provider === 'azure' && isAzureInvalidImageError(apiErr)) {
+              sanitizeMessagesForAzureVisionImages(messages);
+              completion = await this.client.chat.completions.create(completionOptions);
+            } else {
+              throw apiErr;
+            }
+          }
+          const apiEndTime = Date.now();
+          const apiDuration = apiEndTime - apiStartTime;
+          console.log(`⏱️ [TIMING][${provider}] Response received in ${apiDuration}ms (${(apiDuration/1000).toFixed(1)}s)`);
+
+          const choice = completion.choices[0];
+          response = {
+            message: choice.message,
+            usage: completion.usage,
+            finish_reason: choice.finish_reason ?? undefined,
+          } as any;
+        }
+
+        const message = response.message;
+
+        if (response.usage) {
+          totalUsage.promptTokens += response.usage.prompt_tokens;
+          totalUsage.completionTokens += response.usage.completion_tokens;
+          totalUsage.totalTokens += response.usage.total_tokens;
+        }
+
+        messages.push(message as Message);
+
+        const step: Step = {
+          text: message.content || '',
+          usage: {
+            promptTokens: response.usage?.prompt_tokens || 0,
+            completionTokens: response.usage?.completion_tokens || 0,
+            totalTokens: response.usage?.total_tokens || 0,
+          },
+        };
+
+        finalText = message.content || '';
+
+        if (schema && message.content) {
+          try {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCHEMA] Attempting to parse structured output...`);
+            const parsed = JSON.parse(message.content);
+            const validated = schema.parse(parsed);
+            step.output = validated;
+            finalOutput = validated;
+            iterationsWithoutOutput = 0;
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCHEMA] ✅ Structured output validated:`, validated);
+          } catch (error) {
+            iterationsWithoutOutput++;
+            console.log(`⚠️ [SCHEMA] Iterations without output: ${iterationsWithoutOutput}/${MAX_ITERATIONS_WITHOUT_OUTPUT}`);
+            console.error('❌ [SCHEMA] Failed to parse structured output:', error);
+            console.error('❌ [SCHEMA] Message content:', message.content?.substring(0, 200));
+          }
+        } else {
+          if (schema && !message.content) {
+            iterationsWithoutOutput++;
+            console.log(`⚠️ [SCHEMA] Schema provided but no message content received (${iterationsWithoutOutput}/${MAX_ITERATIONS_WITHOUT_OUTPUT})`);
+          } else if (schema) {
+            iterationsWithoutOutput++;
+          }
+        }
+
+        if (message.tool_calls && message.tool_calls.length > 0) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Received ${message.tool_calls.length} tool_call(s) from ${provider}`);
+
+          let toolCalls: ToolCall[] = [];
+
+          try {
+            toolCalls = message.tool_calls.map((tc: any) => {
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] Parsing tool call: ${tc.id} - ${tc.function.name}`);
+              return {
+                toolCallId: tc.id,
+                toolName: tc.function.name,
+                args: JSON.parse(tc.function.arguments),
+              };
+            });
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ Successfully parsed ${toolCalls.length} tool call(s)`);
+          } catch (parseError: any) {
+            console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ Error parsing tool calls:`, parseError);
+
+            for (const tc of message.tool_calls) {
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.id,
+                name: tc.function.name,
+                content: `Error parsing tool call arguments: ${parseError.message}`,
+              });
+            }
+
+            continue;
+          }
+
+          step.toolCalls = toolCalls;
+
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Executing ${toolCalls.length} tool call(s):`);
+          toolCalls.forEach((tc, idx) => {
+            console.log(`  ${idx + 1}. ${tc.toolName} (${tc.toolCallId}) - Args:`, JSON.stringify(tc.args).substring(0, 100));
+          });
+
+          const toolResults: ToolResult[] = [];
+          const allToolsStartTime = Date.now();
+
+          // Collect images first, then attach them as a single user message AFTER all tool messages.
+          const collectedImages: string[] = [];
+
+          for (const toolCall of toolCalls) {
+            const toolStartTime = Date.now();
+            console.log(`⏱️ [TOOL_START] ${toolCall.toolName} (${toolCall.toolCallId}) - Starting execution...`);
+            const tool = tools.find(t => t.name === toolCall.toolName);
+
+            if (!tool) {
+              const errorMsg = `Error: Tool ${toolCall.toolName} not found`;
+              console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_ERROR] Tool not found: ${toolCall.toolName} (${toolCall.toolCallId})`);
+
+              toolResults.push({
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                result: errorMsg,
+                isError: true,
+              });
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.toolCallId,
+                name: toolCall.toolName,
+                content: errorMsg,
+              });
+
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
+
+              continue;
+            }
+
+            try {
+              let result: any;
+
+              // Execute wait actions locally instead of round-trip to Scrapybara.
+              if (toolCall.toolName === 'computer' && toolCall.args.action === 'wait') {
+                const duration = toolCall.args.duration || 1000;
+                console.log(`⚡ [WAIT_LOCAL] Executing wait locally for ${duration}ms instead of calling Scrapybara`);
+
+                await new Promise(resolve => setTimeout(resolve, duration));
+
+                result = `Waited for ${duration}ms`;
+                console.log(`⚡ [WAIT_LOCAL] Local wait completed`);
+              } else {
+                const isScrapybaraTool = ['computer', 'bash', 'edit'].includes(toolCall.toolName);
+
+                if (isScrapybaraTool) {
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Calling ${toolCall.toolName}.execute() with Scrapybara SDK...`);
+                } else {
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ [LOCAL] Executing ${toolCall.toolName}.execute() locally...`);
+                }
+
+                result = await tool.execute(toolCall.args);
+
+                if (result === undefined || result === null) {
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.warn(`⚠️ ${logPrefix} ${toolCall.toolName} returned ${result === undefined ? 'undefined' : 'null'}`);
+                } else if (typeof result === 'object') {
+                  const keys = Object.keys(result);
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ ${logPrefix} Result is object with keys: [${keys.join(', ')}]`);
+
+                  if (isScrapybaraTool) {
+                    if (result.error && result.error.length > 0) {
+                      console.error(`⚠️ [SCRAPYBARA] Error field contains: "${result.error}"`);
+                    }
+
+                    if (result.output && result.output.length > 0) {
+                      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] Output: "${result.output.substring(0, 200)}"`);
+                    }
+
+                    if (result.failed || result.success === false) {
+                      console.error(`⚠️ [SCRAPYBARA] Result indicates failure:`, result.failed || 'success=false');
+                    }
+
+                    if (toolCall.args.action !== 'take_screenshot' &&
+                        (!result.output || result.output === '') &&
+                        (!result.error || result.error === '')) {
+                      console.warn(`⚠️ [SCRAPYBARA] ${toolCall.args.action} returned empty output and error - action may not have executed`);
+                      console.warn(`⚠️ [SCRAPYBARA] This usually indicates the browser window lost focus or X11 display has input issues`);
+                      console.warn(`⚠️ [SCRAPYBARA] Full result keys:`, Object.keys(result).join(', '));
+                    }
+
+                    if (result.system) {
+                      console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCRAPYBARA] System info:`, JSON.stringify(result.system));
+
+                      if (typeof result.system === 'object') {
+                        if (result.system.error || result.system.message || result.system.status) {
+                          console.error(`🚨 [SCRAPYBARA_SYSTEM] System field indicates issue:`, result.system);
+                        }
+                      }
+                    }
+                  }
+                } else {
+                  const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
+                  console.log(`₍ᐢ•(ܫ)•ᐢ₎ ${logPrefix} Result type: ${typeof result}, length: ${String(result).length}`);
+                }
+              }
+
+              const toolEndTime = Date.now();
+              const toolDuration = toolEndTime - toolStartTime;
+              console.log(`⏱️ [TOOL_END] ${toolCall.toolName} completed in ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s)`);
+
+              const { cleanedResult, base64Image: extractedImage } = this.extractBase64Image(result);
+              // Azure-specific data URL coercion; skip for other providers since it
+              // can drop otherwise-valid PNG/JPEG payloads.
+              let base64Image: string | null;
+              if (provider === 'azure') {
+                base64Image = extractedImage ? ensureAzureSafeDataImageUrl(extractedImage) : null;
+                if (extractedImage && !base64Image) {
+                  console.warn(
+                    `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_IMAGE] ${toolCall.toolName} returned image bytes not usable for Azure vision (dropped from history)`
+                  );
+                }
+              } else {
+                base64Image = extractedImage;
+              }
+
+              if (base64Image) {
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_IMAGE] ${toolCall.toolName} returned base64 image (${base64Image.length} chars)`);
+
+                const screenshotHash = base64Image.substring(0, 100);
+                if (lastScreenshotHash === screenshotHash) {
+                  consecutiveIdenticalScreenshots++;
+                  console.warn(`⚠️ [SCREENSHOT_DUPLICATE] Screenshot #${consecutiveIdenticalScreenshots + 1} is identical to previous one - browser may not be responding to actions`);
+
+                  if (consecutiveIdenticalScreenshots >= 3) {
+                    console.error(`🚨 [SCREENSHOT_DUPLICATE] ${consecutiveIdenticalScreenshots + 1} consecutive identical screenshots detected!`);
+                    console.error(`🚨 [SCREENSHOT_DUPLICATE] Browser is likely NOT responding to computer tool actions`);
+                    console.error(`🚨 [SCREENSHOT_DUPLICATE] Recent actions: ${toolCalls.map(tc => `${tc.toolName}(${tc.args.action})`).join(', ')}`);
+                  }
+                } else {
+                  if (consecutiveIdenticalScreenshots > 0) {
+                    console.log(`✅ [SCREENSHOT_CHANGED] Screenshot changed after ${consecutiveIdenticalScreenshots + 1} identical ones`);
+                  }
+                  consecutiveIdenticalScreenshots = 0;
+                  lastScreenshotHash = screenshotHash;
+                }
+
+                collectedImages.push(base64Image);
+
+                screenshotHistory.push(base64Image);
+                if (screenshotHistory.length > MAX_SCREENSHOT_HISTORY) {
+                  screenshotHistory.shift();
+                }
+              } else {
+                console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_NO_IMAGE] ${toolCall.toolName} - no image in result`);
+              }
+
+              toolResults.push({
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                result,
+                base64Image: base64Image,
+                cleanedResult: cleanedResult,
+                isError: false,
+              });
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.toolCallId,
+                name: toolCall.toolName,
+                content: typeof cleanedResult === 'string' ? cleanedResult : JSON.stringify(cleanedResult),
+              });
+
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added tool message for ${toolCall.toolCallId}`);
+
+            } catch (error: any) {
+              const toolEndTime = Date.now();
+              const toolDuration = toolEndTime - toolStartTime;
+              const errorMessage = error.message || String(error);
+              console.error(`⏱️ [TOOL_ERROR] ${toolCall.toolName} (${toolCall.toolCallId}) failed after ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s) - ${errorMessage.substring(0, 100)}`);
+
+              toolResults.push({
+                toolCallId: toolCall.toolCallId,
+                toolName: toolCall.toolName,
+                result: errorMessage,
+                isError: true,
+              });
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: toolCall.toolCallId,
+                name: toolCall.toolName,
+                content: `Error: ${errorMessage}`,
+              });
+
+              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added error tool message for ${toolCall.toolCallId}`);
+            }
+          }
+
+          const allToolsEndTime = Date.now();
+          const allToolsDuration = allToolsEndTime - allToolsStartTime;
+          console.log(`⏱️ [TOOLS_TOTAL] All ${toolCalls.length} tool(s) executed in ${allToolsDuration}ms (${(allToolsDuration/1000).toFixed(1)}s)`);
+
+          // Safety: guarantee every tool_call has a matching tool message.
+          const toolMessageIds = new Set(
+            messages
+              .filter((m: any) => m.role === 'tool')
+              .map((m: any) => m.tool_call_id)
+          );
+
+          const missingToolCallIds = toolCalls.filter(tc => !toolMessageIds.has(tc.toolCallId));
+
+          if (missingToolCallIds.length > 0) {
+            console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ CRITICAL: ${missingToolCallIds.length} tool_call_id(s) missing tool messages!`);
+            missingToolCallIds.forEach(tc => {
+              console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ Missing: ${tc.toolCallId} (${tc.toolName})`);
+
+              messages.push({
+                role: 'tool',
+                tool_call_id: tc.toolCallId,
+                name: tc.toolName,
+                content: `Error: Tool execution failed unexpectedly. No response recorded.`,
+              });
+            });
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ Added emergency tool messages for missing tool_call_ids`);
+          } else {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ All ${toolCalls.length} tool_call_ids have corresponding tool messages`);
+          }
+
+          const shouldIncludeScreenshots = iterations <= 3 || iterations % 3 === 0;
+
+          const screenshotsToSend = screenshotHistory.length > 0 ? screenshotHistory : collectedImages;
+
+          if (screenshotsToSend.length > 0 && shouldIncludeScreenshots) {
+            const isHistorical = screenshotsToSend === screenshotHistory;
+            const historyNote = isHistorical ? ` (including ${screenshotHistory.length} from history for context)` : '';
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCREENSHOTS] Adding ${screenshotsToSend.length} screenshot(s)${historyNote} as single user message in iteration ${iterations}`);
+
+            const imageContent: any[] = [
+              {
+                type: 'text',
+                text: screenshotsToSend.length === 1
+                  ? 'Here is the visual result from the previous action:'
+                  : `Here are the last ${screenshotsToSend.length} screenshots showing the progression of actions (most recent last):`
+              }
+            ];
+
+            screenshotsToSend.forEach((image, idx) => {
+              imageContent.push({
+                type: 'image_url',
+                image_url: {
+                  url: image,
+                  detail: 'low'
+                }
+              });
+            });
+
+            messages.push({
+              role: 'user',
+              content: imageContent
+            } as any);
+
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCREENSHOTS] ✅ Added user message with ${screenshotsToSend.length} image(s)`);
+          } else if (screenshotsToSend.length > 0) {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [SCREENSHOTS_SKIP] Skipping ${screenshotsToSend.length} screenshot(s) in iteration ${iterations} to reduce content filter risk`);
+          }
+
+          step.toolResults = toolResults;
+
+          if (schema && toolResults.length > 0 && iterations >= 8 && iterations % 2 === 0) {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [REMINDER] Adding gentle reminder to request structured output (iteration ${iterations})`);
+            messages.push({
+              role: 'user',
+              content: `⚠️ REMINDER: When you complete the current step objective, provide your response in JSON format with event, step, and assistant_message fields.`
+            });
+          }
+        }
+
+        steps.push(step);
+
+        if (onStep) {
+          const streamingLogId = (response as any).streamingLogId;
+          await onStep(step, streamingLogId ? { streamingLogId } : undefined);
+        }
+
+        const shouldStop = (response as any).finish_reason === 'stop' ||
+                          (schema && finalOutput !== undefined) ||
+                          !message.tool_calls;
+
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${response.finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${!!message.tool_calls})`);
+
+        const iterationEndTime = Date.now();
+        const iterationDuration = iterationEndTime - iterationStartTime;
+        console.log(`⏱️ [ITERATION_TOTAL] Iteration ${iterations} completed in ${iterationDuration}ms (${(iterationDuration/1000).toFixed(1)}s)`);
+        console.log(`⏱️ ========== END ITERATION ${iterations} ==========\n`);
+
+        if (shouldStop) {
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Breaking loop after ${iterations} iterations`);
+          break;
+        }
+
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Continuing to next iteration...`);
+
+      } catch (error: any) {
+        console.error('Error in agent execution:', error);
+
+        // Azure-specific content filter; other providers surface their own error shapes.
+        if (error.code === 'content_filter' || error.message?.includes('content management policy')) {
+          console.error(`❌ [CONTENT_FILTER][${provider}] Provider blocked the response due to content policy`);
+          console.error('❌ [CONTENT_FILTER] This may be a false positive. Consider:');
+          console.error('   1. Adjusting content filter settings in the provider console');
+          console.error('   2. Reviewing recent screenshots for sensitive content');
+          console.error('   3. Modifying the system prompt');
+
+          return {
+            messages,
+            steps,
+            text: 'Content filter triggered - execution stopped',
+            output: schema ? {
+              event: 'step_failed',
+              step: iterations,
+              assistant_message: `${provider} content filter triggered. The response was blocked due to content policy. This may be a false positive.`
+            } : undefined,
+            usage: totalUsage,
+          };
+        }
+
+        if (error.message && error.message.includes('tool_call_id')) {
+          console.error('⚠️ Tool call mismatch detected. Messages state:', JSON.stringify(messages.slice(-5), null, 2));
+        }
+
+        throw error;
+      }
+    }
+
+    return {
+      messages,
+      steps,
+      text: finalText,
+      output: finalOutput,
+      usage: totalUsage,
+    };
+  }
+
+  /**
+   * Convert Zod schema to JSON Schema for structured outputs.
+   */
+  private zodToJsonSchema(schema: z.ZodType<any>): Record<string, any> {
+    const convert = (s: any): any => {
+      if (s instanceof z.ZodObject) {
+        const shape = s.shape;
+        const properties: Record<string, any> = {};
+        const required: string[] = [];
+
+        for (const [key, value] of Object.entries(shape)) {
+          properties[key] = convert(value);
+          if (!(value as any).isOptional()) {
+            required.push(key);
+          }
+        }
+
+        return {
+          type: 'object',
+          properties,
+          required,
+          additionalProperties: false,
+        };
+      }
+
+      if (s instanceof z.ZodString) {
+        return { type: 'string' };
+      }
+
+      if (s instanceof z.ZodNumber) {
+        return { type: 'number' };
+      }
+
+      if (s instanceof z.ZodBoolean) {
+        return { type: 'boolean' };
+      }
+
+      if (s instanceof z.ZodArray) {
+        return {
+          type: 'array',
+          items: convert(s.element),
+        };
+      }
+
+      if (s instanceof z.ZodEnum) {
+        return {
+          type: 'string',
+          enum: s.options,
+        };
+      }
+
+      if (s instanceof z.ZodOptional) {
+        return convert(s.unwrap());
+      }
+
+      if (s instanceof z.ZodNullable) {
+        const inner = convert(s.unwrap());
+        return {
+          ...inner,
+          nullable: true,
+        };
+      }
+
+      return { type: 'string' };
+    };
+
+    return convert(schema);
+  }
+}
+
+/**
+ * Legacy alias. Prefer {@link AIAgentExecutor} in new code.
+ * Kept as a class alias (not a `const`) so `new OpenAIAgentExecutor()` keeps working.
+ */
+export { AIAgentExecutor as OpenAIAgentExecutor };

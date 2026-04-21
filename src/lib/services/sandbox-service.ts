@@ -250,11 +250,52 @@ export class SandboxService {
       console.log(`[Sandbox] Branch ${branch} not found on remote, trying next...`);
     }
 
-    // No known branch — create one with the canonical naming convention.
-    // The UUID travels inside the branch, so `title` is only a cosmetic slug.
+    // No known branch in DB — but the canonical name may already exist on origin
+    // (previous run pushed without persisting repo_url, manual edit on GitHub,
+    // or a concurrent run that just created it). Always consult `origin` by name
+    // before branching off main; otherwise we'd push a divergent history and hit
+    // a non-fast-forward rejection.
     const newBranch = SandboxService.buildBranchName(requirementId, title);
-    console.log(`[Sandbox] No existing branch found, creating: ${newBranch}`);
+    const remoteExists = await SandboxService.remoteBranchExists(sandbox, newBranch, workDir);
 
+    if (remoteExists) {
+      console.log(`[Sandbox] No branch in DB history but ${newBranch} exists on origin — tracking remote to avoid divergence`);
+      const trackRes = await SandboxService.runWithCwd(
+        sandbox,
+        'git',
+        ['checkout', '--track', `origin/${newBranch}`],
+        workDir,
+      );
+      if (trackRes.exitCode !== 0) {
+        const fallback = await SandboxService.runWithCwd(
+          sandbox,
+          'git',
+          ['checkout', '-b', newBranch, `origin/${newBranch}`],
+          workDir,
+        );
+        if (fallback.exitCode !== 0) {
+          throw new Error(`Failed to checkout existing origin/${newBranch}: ${await fallback.stderr()}`);
+        }
+      }
+      await SandboxService.syncTrackedBranchToRemoteTip(sandbox, newBranch);
+      await SandboxService.runWithCwd(sandbox, 'npm', ['install'], workDir);
+      await assertPlatformGitLayout(sandbox);
+      await logCronInfrastructureEvent(auditCtx, {
+        event: CronInfraEvent.GIT_WORKSPACE_READY,
+        message: `Git workspace ready (recovered branch ${newBranch} from origin)`,
+        details: {
+          requirementId,
+          branchName: newBranch,
+          isNewBranch: false,
+          workDir,
+          repo: `${gitOrg}/${repoName}`,
+          git: 'source_git_recover_remote_branch_npm_install',
+        },
+      });
+      return { sandbox, branchName: newBranch, workDir, isNewBranch: false, instanceType };
+    }
+
+    console.log(`[Sandbox] No existing branch found, creating: ${newBranch}`);
     const createRes = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-b', newBranch], workDir);
     if (createRes.exitCode !== 0) {
       throw new Error(`Failed to create branch ${newBranch}: ${await createRes.stderr()}`);
@@ -275,6 +316,13 @@ export class SandboxService {
       },
     });
     return { sandbox, branchName: newBranch, workDir, isNewBranch: true, instanceType };
+  }
+
+  /** True when `origin/<branch>` exists on the remote (uses `ls-remote --heads`). */
+  static async remoteBranchExists(sandbox: Sandbox, branch: string, cwd: string = SandboxService.WORK_DIR): Promise<boolean> {
+    const ls = await SandboxService.runWithCwd(sandbox, 'git', ['ls-remote', '--heads', 'origin', branch], cwd);
+    if (ls.exitCode !== 0) return false;
+    return (await ls.stdout()).trim().length > 0;
   }
 
   /**
@@ -477,14 +525,63 @@ export class SandboxService {
     }
 
     console.log(`[Sandbox] ${aheadCount} commit(s) ahead of remote on ${branch}, pushing...`);
-    const pushRes = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
-    if (pushRes.exitCode !== 0) {
-      const stderr = await pushRes.stderr();
-      throw new Error(`Failed to push branch ${branch}: ${stderr}`);
+    const pushed = await SandboxService.pushWithRebaseRetry(sandbox, branch, cwd);
+    if (!pushed.ok) {
+      throw new Error(`Failed to push branch ${branch}: ${pushed.stderr}`);
     }
 
-    console.log(`[Sandbox] Successfully pushed ${aheadCount} commit(s) to ${branch}`);
-    return { branch, pushed: true, commitCount: aheadCount };
+    const finalAhead = pushed.rebased
+      ? await SandboxService.countCommitsAheadOfRemote(sandbox, branch, cwd)
+      : aheadCount;
+    console.log(`[Sandbox] Successfully pushed ${aheadCount} commit(s) to ${branch}${pushed.rebased ? ' (after rebase on origin)' : ''}`);
+    return { branch, pushed: true, commitCount: pushed.rebased ? Math.max(finalAhead, 0) : aheadCount };
+  }
+
+  /**
+   * Pushes and, on non-fast-forward rejection, tries `fetch + rebase + push` once.
+   * Covers the common race where another sandbox (or out-of-band GitHub edit)
+   * advanced `origin/<branch>` while this run was working.
+   * Returns `{ ok: true, rebased }` on success; `{ ok: false, stderr }` otherwise.
+   */
+  private static async pushWithRebaseRetry(
+    sandbox: Sandbox,
+    branch: string,
+    cwd: string,
+  ): Promise<{ ok: true; rebased: boolean } | { ok: false; stderr: string }> {
+    const first = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
+    if (first.exitCode === 0) {
+      return { ok: true, rebased: false };
+    }
+
+    const firstStderr = await first.stderr();
+    const isNonFastForward = /\[rejected\]|non-fast-forward|fetch first|stale info/i.test(firstStderr);
+    if (!isNonFastForward) {
+      return { ok: false, stderr: firstStderr };
+    }
+
+    console.warn(`[Sandbox] push rejected (non-fast-forward) on ${branch} — fetching + rebasing onto origin and retrying once`);
+
+    const fetchRes = await SandboxService.runWithCwd(sandbox, 'git', ['fetch', 'origin', branch], cwd);
+    if (fetchRes.exitCode !== 0) {
+      return { ok: false, stderr: `Initial push rejected and fetch origin ${branch} failed: ${await fetchRes.stderr()}\n---\n${firstStderr}` };
+    }
+
+    const rebaseRes = await SandboxService.runWithCwd(sandbox, 'git', ['rebase', `origin/${branch}`], cwd);
+    if (rebaseRes.exitCode !== 0) {
+      const rebaseErr = await rebaseRes.stderr();
+      await SandboxService.runWithCwd(sandbox, 'git', ['rebase', '--abort'], cwd);
+      return {
+        ok: false,
+        stderr: `Push rejected and automatic rebase on origin/${branch} produced conflicts — manual resolution required: ${rebaseErr}\n---\n${firstStderr}`,
+      };
+    }
+
+    const retry = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
+    if (retry.exitCode === 0) {
+      return { ok: true, rebased: true };
+    }
+    const retryStderr = await retry.stderr();
+    return { ok: false, stderr: `Push still rejected after rebase on origin/${branch}: ${retryStderr}\n---\nInitial rejection: ${firstStderr}` };
   }
 
   /**

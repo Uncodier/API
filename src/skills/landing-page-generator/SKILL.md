@@ -325,3 +325,20 @@ landing-page-generator/scripts/generate_landing.py \
 ---
 
 **Build pages. Convert visitors. Scale revenue.**
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `sandbox_run_command` | Execute `scripts/generate_landing.py`, `scripts/optimize_copy.py`, `scripts/ab_test_variations.py`. |
+| `sandbox_write_file` | Persist generated landing pages under the appropriate app route or static folder. |
+| `sandbox_read_file` | Read existing page templates when producing variations to stay consistent with brand tokens. |
+| `sandbox_list_files` | Discover where landing pages live in the repo (differs per Vitrina / generic app). |
+| `requirements` | Read the offer, audience, pricing, guarantees, and tone declared in the requirement. |
+| `content` | When copy must also be stored in the Makinari content store (e.g. sales page as ebook). |
+| `requirement_status` | Publish the preview URL to the client. |
+
+## Artifacts
+
+- **Produces**: generated HTML/React landing pages (or MDX components), A/B variation bundles, copy optimization diffs.
+- **Consumes**: `requirement.instructions` sections 3 (Goals), 5 (Technical Guidelines — brand, responsive, SEO), and any pricing / guarantee / offer data declared in section 2 (Baseline).

@@ -209,3 +209,19 @@ npx skills add inference-sh/skills@ai-image-generation
 ```
 
 Browse all apps: `infsh app list`
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `sandbox_run_command` | Invoke the `infsh` CLI (`infsh app run infsh/html-to-image`, `infsh app run infsh/python-executor`, `infsh app run falai/flux-dev-lora`) and run chart-generation scripts. |
+| `sandbox_write_file` | Persist generated slide images (PNG/JPEG) into the repo's slide-viewer Vitrina assets folder. |
+| `sandbox_read_file` | Read brand tokens (colors, fonts) and existing slide data before generating assets. |
+| `sandbox_list_files` | Confirm where the slide Vitrina expects asset files. |
+| `requirements` | Pull slide narrative, metrics, team information, and brand palette from the requirement. |
+| `content` | Store the deck narrative (slide titles + talking points) as content if the client wants a text companion. |
+
+## Artifacts
+
+- **Produces**: slide background images (1920x1080 PNG), chart images (traction, TAM/SAM/SOM, competitive map), team avatars. Slide metadata injected into a slide-viewer Vitrina's `data.json`.
+- **Consumes**: `requirement.instructions` section 1 (company name + tagline), section 3 (Goals — pitch scope), section 5 (brand tokens), traction / metrics from section 2 (Baseline).

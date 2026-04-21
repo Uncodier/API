@@ -3,7 +3,7 @@
  * Unified execution for OpenAI/Azure assistant without Scrapybara tools
  */
 
-import { OpenAIAgentExecutor } from '@/lib/custom-automation/openai-agent-executor';
+import { AIAgentExecutor, type AIProvider } from '@/lib/custom-automation/ai-agent-executor';
 import { CreditService, InsufficientCreditsError } from '@/lib/services/billing/CreditService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
@@ -88,6 +88,10 @@ function buildContextContent(
 
 export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
+  /**
+   * Label used for credits/logging (NOT the underlying LLM provider).
+   * Kept as 'azure' | 'openai' for backwards-compatibility.
+   */
   provider?: 'azure' | 'openai';
   system_prompt?: string;
   custom_tools?: any[];
@@ -96,6 +100,14 @@ export interface AssistantExecutionOptions {
   user_id?: string;
   instance_node_id?: string;
   expected_results_amount?: number;
+  /**
+   * Override the LLM provider for this execution. Falls back to env AI_PROVIDER (default 'gemini').
+   */
+  ai_provider?: AIProvider;
+  /**
+   * Override the LLM model id for this execution. Falls back to env AI_MODEL / provider default.
+   */
+  ai_model?: string;
 }
 
 export interface AssistantExecutionResult {
@@ -157,10 +169,13 @@ export async function executeAssistantStep(
   try {
       const prepared = await prepareAssistantTools(instance, options || {});
 
-      // OpenAI / Azure - We can step!
-      console.log(`₍ᐢ•(ܫ)•ᐢ₎ OpenAI/Azure provider - running single iteration`);
-      
-      const executor = new OpenAIAgentExecutor();
+      // OpenAI / Azure / Gemini - We can step!
+      console.log(`₍ᐢ•(ܫ)•ᐢ₎ AI provider - running single iteration`);
+
+      const executor = new AIAgentExecutor({
+        provider: options.ai_provider,
+        model: options.ai_model,
+      });
       
       const streamingCallbacks = instance_id && site_id
           ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
@@ -228,7 +243,10 @@ export async function executeAssistantStep(
 
         // Run N independent LLM calls in parallel
         const initialOutputs = buildInitialNodeResult(promptNode).outputs;
-        const parallelExecutor = new OpenAIAgentExecutor();
+        const parallelExecutor = new AIAgentExecutor({
+          provider: options.ai_provider,
+          model: options.ai_model,
+        });
         const parallelPromises = responseNodeIds.map(async (nodeId: string, index: number) => {
           let accumulatedText = '';
           let lastUpdate = Date.now();
@@ -430,9 +448,12 @@ export async function executeAssistant(
     
     const prepared = await prepareAssistantTools(instance, options || {});
 
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using OpenAI/Azure assistant without Scrapybara tools`);
-    
-    const executor = new OpenAIAgentExecutor();
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using AI assistant without Scrapybara tools`);
+
+    const executor = new AIAgentExecutor({
+      provider: options.ai_provider,
+      model: options.ai_model,
+    });
     const streamingCallbacks =
       instance_id && site_id
         ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)

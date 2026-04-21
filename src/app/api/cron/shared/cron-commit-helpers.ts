@@ -471,14 +471,43 @@ fi`,
   };
   } catch (e: any) {
     const errMsg = e?.message || String(e);
+    const failureKind = classifyGitPushFailure(errMsg);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.COMMIT_PUSH,
       level: 'error',
-      message: `Git commit/push failed: ${errMsg.slice(0, 300)}`,
-      details: { headShort, error: errMsg.slice(0, 800) },
+      message: `Git commit/push failed${failureKind ? ` (${failureKind})` : ''}: ${errMsg.slice(0, 600)}`,
+      details: { headShort, error: errMsg.slice(0, 4000), failureKind },
     });
     throw e;
   }
+}
+
+/**
+ * Classifies a git push failure from stderr so audit entries are searchable.
+ * Returns null when the cause is unknown.
+ */
+function classifyGitPushFailure(stderr: string): string | null {
+  if (!stderr) return null;
+  const s = stderr.toLowerCase();
+  if (s.includes('[rejected]') || s.includes('non-fast-forward') || s.includes('fetch first')) {
+    return 'non_fast_forward';
+  }
+  if (s.includes('protected branch') || s.includes('gh013') || s.includes('push declined')) {
+    return 'protected_branch';
+  }
+  if (s.includes('authentication failed') || s.includes('invalid credentials') || s.includes('403') || s.includes('permission')) {
+    return 'auth';
+  }
+  if (s.includes('pre-receive hook') || s.includes('hook declined')) {
+    return 'server_hook';
+  }
+  if (s.includes('conflict') && s.includes('rebase')) {
+    return 'rebase_conflict';
+  }
+  if (s.includes('could not resolve host') || s.includes('network')) {
+    return 'network';
+  }
+  return null;
 }
 
 export type PlanStepCheckpointKind = 'success' | 'failed_validation' | 'failed_execution';

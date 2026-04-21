@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { OpenAIAgentExecutor } from '@/lib/custom-automation';
+import { AIAgentExecutor } from '@/lib/custom-automation';
 import { anthropic } from 'scrapybara/anthropic';
 import { autoAuthenticateInstance } from '@/lib/helpers/automation-auth';
 import { generateImageToolScrapybara } from '@/app/api/agents/tools/generateImage/assistantProtocol';
@@ -480,7 +480,7 @@ export async function POST(request: NextRequest) {
           )
         });
       } else {
-        const executor = new OpenAIAgentExecutor();
+        const executor = new AIAgentExecutor();
         executionResult = await executor.act({
           tools: validatedTools,
           schema: AgentResponseSchema,

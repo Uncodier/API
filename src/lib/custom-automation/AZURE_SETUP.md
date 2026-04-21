@@ -2,6 +2,11 @@
 
 This guide helps you configure Azure OpenAI for use with the custom automation library.
 
+> Azure is no longer the default provider. Set `AI_PROVIDER=azure` (or pass
+> `{ provider: 'azure' }` to the `AIAgentExecutor` constructor) to enable the
+> Azure path described here. The default provider is now `gemini` — see the
+> main `README.md` for the env matrix.
+
 ## Prerequisites
 
 1. An Azure subscription

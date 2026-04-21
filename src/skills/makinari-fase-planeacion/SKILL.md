@@ -1,56 +1,128 @@
 ---
 name: makinari-fase-planeacion
-description: Planning phase. Define execution steps, assign roles/skills, and create the instance_plan before development begins.
-types: ['develop', 'automation', 'content', 'design', 'task', 'integration']
+description: Planning phase. Translates a ready requirement and investigation output into an `instance_plan` with typed steps, each bound to a skill, ordered to clear the automated gate.
+types: ['develop', 'automation', 'content', 'design', 'task', 'integration', 'planning']
 ---
 
 # SKILL: makinari-fase-planeacion
 
 ## Objective
-"Map the path before walking." Define the logical steps of execution to prevent hallucinations, missing context, and wasted effort.
+
+"Map the path before walking." Turn the requirement contract and investigation findings into a concrete `instance_plan`. A good plan (a) covers every Acceptance Criterion, (b) binds each step to the correct skill, (c) orders steps so the automated gate passes, and (d) never duplicates an existing active plan.
 
 ## Execution Rules
 
-### 1. Use Platform Tools
-- Read context from the investigation phase output.
-- Use the `requirements` tool to read the full requirement details.
-- Use the `instance_plan` tool with `action="list"` to check for existing plans before creating a new one.
+### 1. Read the inputs before planning
+- `requirements action="read"` — load the full `instructions`. Confirm the Definition of Ready (section 10) checks.
+- Read the `## Investigation` section (or `INVESTIGATION.md`) left by `makinari-fase-investigacion`.
+- `instance_plan action="list"` — do NOT create a new plan if an active one exists. Continue its pending steps instead.
 
-### 2. Create Structured Plans
-Use the `instance_plan` tool with `action="create"` and assign a `skill` to each step:
+### 2. Plan rubric — "is this a good plan?"
+Before calling `instance_plan action="create"`, verify:
+
+- [ ] If the requirement targets the applications repo, **step 1 selects the base** via `makinari-obj-template-selection` (unless `instructions` already declares `BASE: ...` from a prior cycle).
+- [ ] Investigation is either already done (step exists and is completed) OR is step 2.
+- [ ] Every Acceptance Criterion maps to at least one step's `instructions`.
+- [ ] Development steps (`makinari-rol-frontend` / `makinari-rol-backend` / `makinari-rol-content`) are followed by **one QA step** using `makinari-rol-qa`.
+- [ ] Validation (`makinari-fase-validacion`) runs before reporting.
+- [ ] Reporting (`makinari-fase-reporteado`) is the final step.
+- [ ] Each step names either `skill` (preferred) or `role`. Never leave both empty.
+- [ ] `instructions` on each step is concrete (specific files, specific endpoints, specific assertions) — no "implement the feature".
+
+### 3. Plan templates by requirement type
+
+**Develop (frontend-led feature)**
 
 ```json
 {
   "action": "create",
-  "title": "Plan: <requirement_title>",
+  "title": "Implement: <requirement_title>",
   "steps": [
-    {
-      "id": "step_1", "order": 1,
-      "title": "Development",
-      "skill": "makinari-rol-frontend",
-      "instructions": "Detailed instructions for the developer..."
-    },
-    {
-      "id": "step_2", "order": 2,
-      "title": "Validation",
-      "skill": "makinari-fase-validacion",
-      "instructions": "Run build, verify no errors..."
-    },
-    {
-      "id": "step_3", "order": 3,
-      "title": "Report",
-      "skill": "makinari-fase-reporteado",
-      "instructions": "Create requirement_status with results..."
-    }
+    { "id": "step_base", "order": 1, "title": "Project base", "skill": "makinari-obj-template-selection", "instructions": "Pick Vitrina vs generic app per req section 8; git checkout; append BASE: <branch> to instructions." },
+    { "id": "step_invest", "order": 2, "title": "Investigation", "skill": "makinari-fase-investigacion", "instructions": "Produce Investigation section per output contract." },
+    { "id": "step_fe", "order": 3, "title": "Frontend", "skill": "makinari-rol-frontend", "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers." },
+    { "id": "step_qa", "order": 4, "title": "QA", "skill": "makinari-rol-qa", "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json." },
+    { "id": "step_val", "order": 5, "title": "Validation", "skill": "makinari-fase-validacion", "instructions": "npm run build, verify preview, write test_results.json." },
+    { "id": "step_report", "order": 6, "title": "Report", "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with preview URL." }
   ]
 }
 ```
 
-### 3. Hand-off Safety
-- **Developer steps:** Must include instructions to build/test locally before completion.
-- **DevOps steps:** Must verify the commit SHA exists on GitHub before deploying.
-- **Orchestrator validation:** After all steps, verify the preview URL is live.
+**Automation (backend webhook + runner UI)**
 
-### 4. Update Requirement Instructions
-- As you refine the plan, update the requirement's `instructions` field via `requirements action="update"`. This keeps the "brain" in sync with the latest plan.
-- Optionally write a `REQUIREMENT.md` snapshot to the repo using `sandbox_write_file`.
+```json
+{
+  "action": "create",
+  "title": "Automation: <title>",
+  "steps": [
+    { "id": "step_base", "order": 1, "skill": "makinari-obj-template-selection", "instructions": "Select automation runner Vitrina branch." },
+    { "id": "step_invest", "order": 2, "skill": "makinari-fase-investigacion", "instructions": "Confirm endpoint shape + env vars per req section 6.1 and 6.3." },
+    { "id": "step_be", "order": 3, "skill": "makinari-rol-backend", "instructions": "Implement endpoint with ?mode=test and ?mode=prod per req section 6.1." },
+    { "id": "step_obj", "order": 4, "skill": "makinari-obj-automatizacion", "instructions": "Inject runner UI via Vitrina data.json." },
+    { "id": "step_qa", "order": 5, "skill": "makinari-rol-qa", "instructions": "Scenario exercises mode=test from the runner UI and asserts response shape." },
+    { "id": "step_val", "order": 6, "skill": "makinari-fase-validacion", "instructions": "curl mode=test, write test_results.json." },
+    { "id": "step_devops", "order": 7, "skill": "makinari-rol-devops", "instructions": "Verify SHA on GitHub, extend test_results.json with commit_sha and preview_url_verified." },
+    { "id": "step_report", "order": 8, "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with endpoint_url and preview_url." }
+  ]
+}
+```
+
+**Content (article / blog / copy)**
+
+```json
+{
+  "action": "create",
+  "title": "Content: <title>",
+  "steps": [
+    { "id": "step_invest", "order": 1, "skill": "makinari-fase-investigacion", "instructions": "Pull brand tone from memories + site settings." },
+    { "id": "step_content", "order": 2, "skill": "makinari-rol-content", "instructions": "Author final content per req section 5 and brand guidelines." },
+    { "id": "step_val", "order": 3, "skill": "makinari-fase-validacion", "instructions": "Verify tone, no placeholders, structural rules met." },
+    { "id": "step_report", "order": 4, "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status linking to the delivered content." }
+  ]
+}
+```
+
+**Task (one-off script + Markdown Vitrina)**
+
+```json
+{
+  "action": "create",
+  "title": "Task: <title>",
+  "steps": [
+    { "id": "step_base", "order": 1, "skill": "makinari-obj-template-selection", "instructions": "Select text/Markdown Vitrina branch." },
+    { "id": "step_task", "order": 2, "skill": "makinari-obj-tarea", "instructions": "Write the script, execute it, format output as Markdown and inject into data.json." },
+    { "id": "step_val", "order": 3, "skill": "makinari-fase-validacion", "instructions": "Verify preview URL loads and shows the report." },
+    { "id": "step_report", "order": 4, "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with Vitrina URL + execution metrics." }
+  ]
+}
+```
+
+### 4. Hand-off safety
+- **Developer steps** must tell the worker to run the build / test command before completion.
+- **DevOps step** must verify the commit SHA on GitHub before declaring success.
+- **QA step** must reference the test-id contract from requirement section 6.4.
+
+### 5. Sync the requirement brain
+As the plan is refined, update `requirement.instructions` via `requirements action="update"` so the "Execution Plan" checklist (section 9) mirrors the live plan. Optionally mirror the plan as `REQUIREMENT.md` via `sandbox_write_file`.
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `requirements` | Read the requirement; append the plan summary to the Execution Plan section. |
+| `instance_plan` | `action="list"` to dedupe; `action="create"` to submit the plan. |
+| `sandbox_read_file` | Confirm investigation artifacts before planning. |
+| `sandbox_write_file` | Optional: snapshot `REQUIREMENT.md`. |
+| `memories` | Recall prior plan patterns for the same site when useful. |
+
+## Artifacts
+
+- **Produces**: an `instance_plan` record (DB) with ordered steps, each binding to a `skill` (preferred) or `role`. Optionally updates `requirement.instructions` section 9.
+- **Consumes**: `requirement.instructions` (sections 6, 7, 8, 10), Investigation output, existing plans via `instance_plan action="list"`.
+
+## Anti-patterns
+
+- Creating a plan while an active one exists. Always `list` first.
+- Vague `instructions` like "implement the feature". Always name files, endpoints, or acceptance criteria.
+- Skipping QA when the requirement ships UI.
+- Adding steps for skills that don't exist. Confirm via `skill_lookup` if unsure.

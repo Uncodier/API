@@ -1,14 +1,29 @@
-# 🎉 Implementación Completa: Azure OpenAI + Scrapybara
+# Implementación: AIAgentExecutor (Gemini / Azure / OpenAI) + Scrapybara
 
-Has completado exitosamente la ingeniería inversa del cliente de Scrapybara para gestionar instancias con tu propia librería de Azure OpenAI.
+Ingeniería inversa del cliente de Scrapybara para gestionar instancias con un
+executor propio. Ahora es multi-proveedor: **Gemini** por defecto (vía el
+endpoint OpenAI-compatible de Google), con Azure y OpenAI como opt-in.
 
-## 📦 Archivos Creados
+> La clase se llama `AIAgentExecutor` (antes `OpenAIAgentExecutor`, que sigue
+> disponible como alias para no romper imports existentes).
+
+## Proveedor por defecto
+
+- `AI_PROVIDER=gemini`
+- `AI_MODEL=gemini-3.1-pro-preview`
+- `AI_CODE_MODEL=gemini-3.1-pro-preview-customtools` (usado por el sandbox)
+
+Consulta el `README.md` de esta carpeta para la tabla completa de variables
+de entorno.
+
+## Archivos
 
 ### Core Implementation
-1. **`openai-agent-executor.ts`** - Executor principal usando Azure OpenAI
-2. **`scrapybara-tools.ts`** - Tools (bash, computer, edit) con API directa
-3. **`scrapybara-instance-manager.ts`** - Manager para lifecycle de instancias
-4. **`index.ts`** - Exports centralizados
+1. **`ai-agent-executor.ts`** - Executor principal (multi-proveedor)
+2. **`openai-agent-executor.ts`** - Shim de retrocompatibilidad (re-export)
+3. **`scrapybara-tools.ts`** - Tools (bash, computer, edit) con API directa
+4. **`scrapybara-instance-manager.ts`** - Manager para lifecycle de instancias
+5. **`index.ts`** - Exports centralizados
 
 ### Documentation
 5. **`README.md`** - Documentación completa de uso
@@ -22,11 +37,24 @@ Has completado exitosamente la ingeniería inversa del cliente de Scrapybara par
 ### 1. Configurar Variables de Entorno
 
 ```bash
-# Microsoft Azure OpenAI (Direct Robot Execution - separate from Portkey)
+# Selección global de proveedor (default: gemini)
+AI_PROVIDER=gemini
+AI_MODEL=gemini-3.1-pro-preview
+AI_CODE_MODEL=gemini-3.1-pro-preview-customtools
+
+# Gemini (default) - endpoint OpenAI-compatible de Google
+GEMINI_API_KEY=your_gemini_api_key
+# GEMINI_OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta/openai/ (opcional)
+
+# Azure OpenAI (opt-in si AI_PROVIDER=azure)
 MICROSOFT_AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
 MICROSOFT_AZURE_OPENAI_API_KEY=your_api_key
 MICROSOFT_AZURE_OPENAI_DEPLOYMENT=gpt-4o
 MICROSOFT_AZURE_OPENAI_API_VERSION=2024-08-01-preview
+
+# OpenAI directo (opt-in si AI_PROVIDER=openai)
+# OPENAI_API_KEY=your_openai_api_key
+# OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Scrapybara
 SCRAPYBARA_API_KEY=your_scrapybara_key

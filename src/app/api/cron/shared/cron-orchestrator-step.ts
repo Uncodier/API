@@ -76,6 +76,8 @@ export async function runOrchestratorStep(params: {
         user_id,
         system_prompt: orchestratorPrompt,
         custom_tools: fullTools,
+        // Orchestrator drives the sandbox code assistant; mirror the code-model override.
+        ai_model: process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools',
       },
     );
     messages = result.messages;

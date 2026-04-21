@@ -100,3 +100,19 @@ The blog should look professional and focus on readability:
 - Contrast ratio must be at least 4.5:1 for standard text.
 - Use `aria-label` on navigation links.
 - Ensure the user can navigate back to the blog index easily.
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `sandbox_write_file` | Write blog route files (`src/app/blog/**`), layout components, metadata exports, and JSON-LD scripts. |
+| `sandbox_read_file` | Inspect existing Next.js config, MDX loaders, and design tokens before adding the blog routes. |
+| `sandbox_run_command` | Run `npm install` for MDX / typography deps, `npm run build` to validate the generated routes. |
+| `sandbox_list_files` | Locate the public content source (RSS feed, CMS export) in the repo when mounting the blog index. |
+| `requirements` | Read the declared source of truth for posts (API / RSS / static content). |
+| `content` | When posts must also be persisted in the Makinari content store, use `type="blog_post"`. |
+
+## Artifacts
+
+- **Produces**: new route files under `src/app/blog/**`, metadata exports (`generateMetadata`), JSON-LD scripts, shared typography components.
+- **Consumes**: `requirement.instructions` sections 3 (Goals), 5 (Technical Guidelines — typography / brand), 6.4 (testids when the blog has interactive elements). Upstream public content source declared in section 2 (Baseline).

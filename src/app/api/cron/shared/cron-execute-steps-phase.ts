@@ -296,7 +296,16 @@ export async function executeStepsPhaseStep(params: {
         instance: { id: instanceId, site_id, user_id, requirement_id: reqId },
         systemPrompt: orchestratorPrompt,
         customTools: [...sandboxTools],
-        executionOptions: { use_sdk_tools: false, provider: 'openai', instance_id: instanceId, site_id, user_id },
+        executionOptions: {
+          use_sdk_tools: false,
+          provider: 'openai',
+          instance_id: instanceId,
+          site_id,
+          user_id,
+          // Sandbox code assistant: prefer the customtools Gemini variant unless AI_CODE_MODEL overrides it.
+          // ai_provider falls back to env AI_PROVIDER (default 'gemini').
+          ai_model: process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools',
+        },
         initialMessage: 'Execute plan steps',
         imageAssets: [],
         hasLinkedRequirement: true,

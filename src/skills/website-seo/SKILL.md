@@ -279,3 +279,20 @@ Format: Issue | Impact (High/Medium/Low) | Recommended fix
 This skill works seamlessly with **[ContentAI Suite](https://contentai-suite.vercel.app)** — a free multi-agent marketing platform that generates professional content for any business in minutes.
 
 → **Try it free:** https://contentai-suite.vercel.app
+
+## Tools
+
+| Tool | When to use |
+| --- | --- |
+| `sandbox_read_file` | Inspect existing page templates, `layout.tsx`, metadata helpers, and `robots.txt` / sitemap config. |
+| `sandbox_write_file` | Apply title / meta / schema / internal-link changes directly into the page or metadata files. |
+| `sandbox_run_command` | Run `npm run build` to confirm no regressions; run Lighthouse / PageSpeed probes when available. |
+| `sandbox_list_files` | Map the route tree before proposing sitemap or canonical changes. |
+| `requirements` | Read target keywords, priority pages, audience, and locale from the requirement. |
+| `content` | If SEO-optimized copy must also be stored as articles / blog posts, use the content tool with the right `type`. |
+| `memories` | Pull past audits and known issues for this site. |
+
+## Artifacts
+
+- **Produces**: updated metadata (`title`, `description`, canonical, OG / Twitter tags), JSON-LD schema scripts, internal-link edits, `robots.txt` / `sitemap.xml` updates, SEO audit report (Markdown).
+- **Consumes**: `requirement.instructions` sections 3 (Goals — target keywords), 5 (Technical Guidelines — brand tone, locale), memories with prior audits, current page source via `sandbox_read_file`.
