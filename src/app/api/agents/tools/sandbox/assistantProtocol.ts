@@ -13,6 +13,7 @@ import { gitBindingBranchTreeUrl } from '@/lib/services/requirement-git-binding'
 import { sandboxRestoreCheckpointTool } from '@/app/api/agents/tools/sandbox/sandbox-checkpoint-restore';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
+import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
@@ -390,5 +391,6 @@ export function getSandboxTools(
     sandboxListFilesTool(sandbox),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx?.instance_id),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
+    ...getQaSandboxTools(sandbox),
   ];
 }

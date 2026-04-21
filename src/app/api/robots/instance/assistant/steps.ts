@@ -212,9 +212,10 @@ PLAN vs STEPS:
 📱 WHATSAPP TOOLS (sendWhatsApp and whatsappTemplate):
 - To send a WhatsApp message: use sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id, lead_id for tracking, and media_urls (array of strings) if you want to attach images, videos, audio, or PDFs.
 - If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next:
-  1) Call whatsappTemplate with action "create_template", same phone_number and message (and conversation_id if available). If the result includes template_id, then
-  2) Call whatsappTemplate with action "send_template", template_id from step 1, phone_number, and original_message (the same message text).
+  1) Call whatsappTemplate with action "create_template", same phone_number and message (and conversation_id if available). The message MAY contain merge tokens (e.g. {{lead.name}}, {{site.name}}); they will be rewritten to numeric placeholders ({{1}}, {{2}}, ...) automatically and returned as \`placeholder_map\`. If the result includes template_id, then
+  2) Call whatsappTemplate with action "send_template", template_id from step 1, phone_number, and original_message. When \`has_variables\` is true (i.e. \`placeholder_map\` is non-empty), you MUST also pass either \`lead_id\` (preferred — variables are resolved automatically from the lead row + site name) or \`variables\` as a map like { "1": "Jane", "2": "Acme" }. Do NOT call send_template without variables when placeholder_map is non-empty.
 - If create_template returns template_required: false, the conversation is within 24h—use sendWhatsApp instead; do not use send_template.
+- For bulk/campaign sends, prefer \`publish\` (with audience_id + channel "whatsapp") or \`sendBulkMessages\`: they create a SINGLE template for the campaign and queue per-lead variables automatically. Do NOT create a new template per recipient.
 - Always use international phone format (country code + number, e.g. +1..., +34..., +52...).`;
 
   const generationInstruction = `

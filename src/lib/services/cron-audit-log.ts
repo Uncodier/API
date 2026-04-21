@@ -33,6 +33,22 @@ export const CronInfraEvent = {
   VERCEL_BUILD_LOG: 'cron_infra_vercel_build_log',
   GATE_PUSH_RECOVERY: 'cron_infra_gate_push_recovery',
   SMOKE_TEST: 'cron_infra_smoke_test',
+  /** Per-step server startup + page probe: starts next start, curls pages, captures stdout/stderr. */
+  RUNTIME_PROBE: 'cron_infra_runtime_probe',
+  /** Per-step API route probe: hits src/app/api/** routes with sampled payloads. */
+  API_PROBE: 'cron_infra_api_probe',
+  /** Per-step browser console + pageerror capture during visual probe. */
+  CONSOLE_PROBE: 'cron_infra_console_probe',
+  /** E2E scenario run outcome (pass/fail + artifacts). */
+  SCENARIO_RUN: 'cron_infra_scenario_run',
+  /** Per-step visual probe: screenshots + network trace at declared viewports. */
+  VISUAL_PROBE: 'cron_infra_visual_probe',
+  /** Vision-model critique verdict (pass/defects) over step screenshots. */
+  VISUAL_CRITIC_VERDICT: 'cron_infra_visual_critic_verdict',
+  /** Aggregated QA verdict combining runtime/api/console/scenarios/visual signals. */
+  QA_VERDICT: 'cron_infra_qa_verdict',
+  /** Step closed as completed but flagged for human review (visual budget exhausted with minor defects). */
+  NEEDS_HUMAN_REVIEW: 'cron_infra_needs_human_review',
   PLAN_RECONCILE: 'cron_infra_plan_reconcile',
   POST_FINALLY_BUILD: 'cron_infra_post_finally_build',
   DELIVERABLES_VALIDATE: 'cron_infra_deliverables_validate',

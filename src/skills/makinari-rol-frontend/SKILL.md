@@ -37,6 +37,21 @@ Develop UI components, pages, and features using Next.js inside the Vercel Sandb
 - No hydration mismatches or "window is not defined" errors.
 - Verify the code actually solves the original requirement.
 
+### 4b. Visual & Runtime Quality Gate (mandatory)
+After the build passes, an automated gate probes your step in the sandbox. A clean build is NOT enough — you will be blocked unless:
+- Every changed/added route renders without server errors or 4xx/5xx (runtime probe).
+- The browser console shows no errors, no uncaught exceptions, no failed network requests on the rendered pages.
+- Screenshots at **1280×800** and **375×812** render a full page (not a blank shell, not a crashed SPA).
+- A vision-model critic reviews each screenshot against a UI rubric (layout hierarchy, spacing consistency, contrast, empty-state handling, primary CTA above the fold, typography, accessibility). **Critical** or **high** severity defects block the gate.
+
+Because of this, when you build UI you MUST:
+- Provide real content (not lorem ipsum placeholders) and realistic empty states.
+- Design a clear visual hierarchy: one obvious primary CTA above the fold at 1280 width.
+- Maintain legible contrast and readable typography (≥16px body, ≥1.4 line-height).
+- Ensure the mobile viewport (375×812) has no horizontal scroll and no overlapping elements.
+- Wire real event handlers and loading/error states — a button that does nothing is a defect, not a feature.
+- Prefer semantic HTML (`<header>`, `<main>`, `<section>`, `<button>`) and add `data-testid` attributes on primary CTAs, forms, and success/error states so QA scenarios can target them stably.
+
 ### 5. Git and Delivery
 - The system auto-commits and pushes after you finish. You do NOT need to run git commands manually.
 - The permanent preview URL is extracted from the GitHub Deployments API after push. Do NOT guess URLs.

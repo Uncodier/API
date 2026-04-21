@@ -208,7 +208,9 @@ If sending email to audience, 'subject' is required.
 
 For email audience sends, optional 'audience_email_mode': 'mail' (default) queues one conversation + approved message per lead for background delivery; 'newsletter' sends immediately with open/click tracking (same as sendEmail), **without** appending an email signature, and does not create conversations. Only valid when channel is 'email'.
 
-Optional 'placeholders_when_unresolved' (with create/update content in the same call) stores metadata.placeholders.when_unresolved on the content row: strip_tokens (default behavior) removes unknown {{...}} tokens per lead; skip_recipient skips that lead. Use double-brace merge tokens only: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}}. When content is saved in the same publish call, its id is passed to the audience send so that policy applies.
+For WhatsApp audience sends, a SINGLE Twilio Content Template is created (or reused) for the whole campaign: merge tokens in the body become numeric placeholders ({{1}}, {{2}}, ...) and each lead is queued with its own ContentVariables. You do NOT need a separate template per recipient — per-lead personalization happens at delivery time via variables.
+
+Optional 'placeholders_when_unresolved' (with create/update content in the same call) stores metadata.placeholders.when_unresolved on the content row: strip_tokens (default behavior) removes unknown {{...}} tokens per lead; skip_recipient skips that lead. Use double-brace merge tokens only: {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<path>}}, {{site.name}}. When content is saved in the same publish call, its id is passed to the audience send so that policy applies. For WhatsApp this policy controls the ContentVariables fallback when a lead is missing a merge value.
 
 The tool will return an object detailing the success/failure of each attempted action.`,
     parameters: {

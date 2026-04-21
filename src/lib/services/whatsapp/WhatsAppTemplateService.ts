@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { extractMergeTokens } from '@/lib/messaging/lead-merge-fields';
 
 export interface WhatsAppTemplateResult {
   success: boolean;
@@ -10,6 +11,21 @@ export interface WhatsAppTemplateResult {
     code: string;
     message: string;
   };
+}
+
+export interface CreateTemplateResult {
+  success: boolean;
+  templateSid?: string;
+  templatedBody?: string;
+  placeholderMap?: string[];
+  error?: string;
+}
+
+export interface FindExistingTemplateResult {
+  templateSid?: string;
+  templateName?: string;
+  templatedBody?: string;
+  placeholderMap?: string[];
 }
 
 export interface WhatsAppConversationWindow {
@@ -74,23 +90,27 @@ export class WhatsAppTemplateService {
   }
   
   /**
-   * Crea un Twilio Content Template automáticamente para WhatsApp
+   * Crea un Twilio Content Template automáticamente para WhatsApp.
+   *
+   * The incoming `message` may contain merge tokens ({{lead.name}}, {{site.name}}, ...).
+   * They are rewritten to Twilio numeric placeholders ({{1}}, {{2}}, ...) before the
+   * template is submitted. The canonical token map is persisted alongside the template
+   * so callers can later resolve per-lead ContentVariables.
    */
   static async createTemplate(
     message: string,
     accountSid: string,
     authToken: string,
     siteId: string
-  ): Promise<{ success: boolean; templateSid?: string; error?: string }> {
+  ): Promise<CreateTemplateResult> {
     try {
       console.log(`📝 [WhatsAppTemplateService] Creando Content Template de Twilio para site: ${siteId}`);
       
-      // Generar nombre único para el template
       const timestamp = Date.now();
       const templateName = `auto_template_${siteId.substring(0, 8)}_${timestamp}`;
       
-      // Preparar el contenido del template
-      const templateContent = this.prepareTemplateContent(message);
+      const { templated, tokens } = extractMergeTokens(message);
+      const templateContent = this.prepareTemplateContent(templated);
       
       console.log(`🏗️ [WhatsAppTemplateService] Content Template preparado:`, {
         name: templateName,
@@ -219,12 +239,16 @@ export class WhatsAppTemplateService {
         content: templateContent,
         originalMessage: message,
         siteId: siteId,
-        accountSid: accountSid
+        accountSid: accountSid,
+        templatedBody: templateContent,
+        placeholderMap: tokens,
       });
       
       return {
         success: true,
-        templateSid: templateData.sid
+        templateSid: templateData.sid,
+        templatedBody: templateContent,
+        placeholderMap: tokens,
       };
       
     } catch (error) {
@@ -257,7 +281,11 @@ export class WhatsAppTemplateService {
   }
   
   /**
-   * Envía un mensaje usando un Twilio Content Template
+   * Envía un mensaje usando un Twilio Content Template.
+   *
+   * When the template uses numeric placeholders ({{1}}, {{2}}, ...), callers must
+   * supply `contentVariables` as a `{ "1": "value", "2": "value" }` map; the values
+   * are forwarded to Twilio as `ContentVariables` (JSON-encoded).
    */
   static async sendMessageWithTemplate(
     phoneNumber: string,
@@ -266,7 +294,8 @@ export class WhatsAppTemplateService {
     authToken: string,
     fromNumber: string,
     originalMessage: string,
-    messagingServiceSidOverride?: string
+    messagingServiceSidOverride?: string,
+    contentVariables?: Record<string, string>
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string }> {
     try {
       console.log(`📤 [WhatsAppTemplateService] Enviando mensaje con Content Template: ${templateSid}`);
@@ -296,9 +325,16 @@ export class WhatsAppTemplateService {
       
       formData.append('To', `whatsapp:${phoneNumber}`);
       formData.append('ContentSid', templateSid); // Usar el Content Template
-      
-      // Los Content Templates no requieren variables adicionales para texto simple
-      // El contenido ya está definido en el template
+
+      // If the template has numeric placeholders ({{1}}, {{2}}...), Twilio requires
+      // a `ContentVariables` JSON map. Omit the field for plain-text templates.
+      if (contentVariables && Object.keys(contentVariables).length > 0) {
+        formData.append('ContentVariables', JSON.stringify(contentVariables));
+        console.log(`🧩 [WhatsAppTemplateService] ContentVariables:`, {
+          keys: Object.keys(contentVariables),
+          count: Object.keys(contentVariables).length,
+        });
+      }
       
       // CRÍTICO: Verificar estado del template antes de enviar
       console.log('🔍 [WhatsAppTemplateService] Verificando estado final del template antes de envío...');
@@ -449,17 +485,25 @@ export class WhatsAppTemplateService {
   }
   
   /**
-   * Busca un template existente para un mensaje similar
+   * Busca un template existente para un mensaje similar.
+   *
+   * Matching strategy (in order of precedence):
+   *  1) Exact match on `templated_body` (the body with numeric placeholders).
+   *     This guarantees deduplication across per-lead sends of the same campaign,
+   *     since per-lead variance is captured in ContentVariables, not in the body.
+   *  2) Fallback to word-overlap similarity on the templated body.
    */
   static async findExistingTemplate(
     message: string,
     siteId: string,
     accountSid: string
-  ): Promise<{ templateSid?: string; templateName?: string }> {
+  ): Promise<FindExistingTemplateResult> {
     try {
       console.log(`🔍 [WhatsAppTemplateService] Buscando template existente para site: ${siteId}`);
       
-      // Primero buscar en nuestra base de datos
+      const { templated } = extractMergeTokens(message);
+      const preparedTemplated = this.prepareTemplateContent(templated);
+      
       const { data: templates, error } = await supabaseAdmin
         .from('whatsapp_templates')
         .select('*')
@@ -478,27 +522,36 @@ export class WhatsAppTemplateService {
         return {};
       }
       
-      // Buscar template con contenido similar (simplificado)
-      const similarTemplate = templates.find(template => {
-        const similarity = this.calculateSimilarity(message, template.original_message || '');
-        return similarity > 0.8; // 80% de similitud
+      const exactMatch = templates.find(t =>
+        typeof t.templated_body === 'string' && t.templated_body === preparedTemplated,
+      );
+      
+      const similarTemplate = exactMatch ?? templates.find(template => {
+        const candidate = (template.templated_body as string | undefined) ?? template.content ?? template.original_message ?? '';
+        const similarity = this.calculateSimilarity(preparedTemplated, candidate);
+        return similarity > 0.8;
       });
       
       if (similarTemplate) {
-        console.log(`♻️ [WhatsAppTemplateService] Template similar encontrado:`, {
+        const placeholderMap = Array.isArray(similarTemplate.placeholder_map)
+          ? (similarTemplate.placeholder_map as string[])
+          : undefined;
+        console.log(`♻️ [WhatsAppTemplateService] Template reutilizable encontrado:`, {
           templateSid: similarTemplate.template_sid,
           templateName: similarTemplate.template_name,
-          similarity: this.calculateSimilarity(message, similarTemplate.original_message || '')
+          exact: !!exactMatch,
+          hasPlaceholderMap: !!placeholderMap,
         });
         
-        // Incrementar contador de uso
         this.incrementTemplateUsage(similarTemplate.template_sid).catch((error: any) => {
           console.warn('⚠️ [WhatsAppTemplateService] Error incrementando uso de template:', error);
         });
         
         return {
           templateSid: similarTemplate.template_sid,
-          templateName: similarTemplate.template_name
+          templateName: similarTemplate.template_name,
+          templatedBody: (similarTemplate.templated_body as string | undefined) ?? undefined,
+          placeholderMap,
         };
       }
       
@@ -563,6 +616,8 @@ export class WhatsAppTemplateService {
     originalMessage: string;
     siteId: string;
     accountSid: string;
+    templatedBody?: string;
+    placeholderMap?: string[];
   }): Promise<void> {
     try {
       const { error } = await supabaseAdmin
@@ -575,7 +630,9 @@ export class WhatsAppTemplateService {
           site_id: templateData.siteId,
           account_sid: templateData.accountSid,
           created_at: new Date().toISOString(),
-          status: 'active'
+          status: 'active',
+          templated_body: templateData.templatedBody ?? null,
+          placeholder_map: templateData.placeholderMap ?? null,
         }]);
       
       if (error) {

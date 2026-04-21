@@ -37,6 +37,15 @@ export class SandboxService {
   /** Cloned repository root inside the microVM (SDK `source.git` checks out here). */
   static readonly WORK_DIR = '/vercel/sandbox';
 
+  /**
+   * Port exposed at sandbox creation so host-side puppeteer can reach
+   * `next start` via `sandbox.domain(VISUAL_PROBE_PORT)` for per-step visual +
+   * client-signal probes. Also used by the runtime probe; sandboxes created
+   * before this change will not have the port mapping and will fail visual
+   * probes (rebuild to recover).
+   */
+  static readonly VISUAL_PROBE_PORT = 3000;
+
   private static readonly SANDBOX_CREATE_TIMEOUT_MS = 15 * 60 * 1000;
   /** Extends VM lifetime right after create, before fetch/npm install. */
   private static readonly EXTEND_AFTER_CREATE_MS = 10 * 60 * 1000;
@@ -157,6 +166,9 @@ export class SandboxService {
       sandbox = await Sandbox.create({
         runtime: 'node24',
         timeout: SandboxService.SANDBOX_CREATE_TIMEOUT_MS,
+        // Declare the visual probe port so sandbox.domain(VISUAL_PROBE_PORT)
+        // returns a public tunnel URL usable by host-side puppeteer.
+        ports: [SandboxService.VISUAL_PROBE_PORT],
         source: {
           type: 'git',
           url: repoUrlPlain,

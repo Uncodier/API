@@ -15,6 +15,12 @@ import { runBuildAndOriginGate } from './step-git-gate';
 import type { GitRepoKind } from './cron-commit-helpers';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import {
+  deriveCategoriesFailed,
+  deriveRetryBucket,
+  formatIterationSignals,
+  type StepIterationSignals,
+} from './step-iteration-signals';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -23,6 +29,7 @@ const ROLE_TO_SKILL: Record<string, string> = {
   'devops': 'makinari-rol-devops',
   'content': 'makinari-rol-content',
   'orchestrator': 'makinari-rol-orchestrator',
+  'qa': 'makinari-rol-qa',
   'investigate': 'makinari-fase-investigacion',
   'plan': 'makinari-fase-planeacion',
   'validate': 'makinari-fase-validacion',
@@ -42,6 +49,7 @@ function inferRoleFromStep(step: any): string | null {
     return 'template_selection';
   }
   if (/deploy|ci\/cd|build|push|docker|nginx|vercel|infra|devops|smoke.?test/.test(text)) return 'devops';
+  if (/\bqa\b|quality\s*assurance|e2e|end.?to.?end|test\s*author|scenario/.test(text)) return 'qa';
   if (/css|ui|ux|component|page|layout|style|tailwind|react|html|responsive|frontend/.test(text)) return 'frontend';
   if (/api|endpoint|database|migration|server|auth|backend|supabase/.test(text)) return 'backend';
   if (/readme|copy|blog|seo|content|text|docs/.test(text)) return 'content';
@@ -50,19 +58,28 @@ function inferRoleFromStep(step: any): string | null {
   return 'frontend'; // default for app requirements
 }
 
-/** First run + 5 reintentos con contexto de error del gate */
-const MAX_GATE_ATTEMPTS = 6;
+/**
+ * Retry budgets are split so subjective polish (visual) can't consume retries
+ * reserved for hard failures. Categories are derived from signal state.
+ */
+const MAX_BUILD_RETRIES = 6;
+const MAX_RUNTIME_RETRIES = 4;
+const MAX_VISUAL_RETRIES = 3;
 
-function buildGateRetryUserMessage(currentAttempt: number, maxAttempts: number, err: string): string {
-  const remaining = maxAttempts - currentAttempt + 1;
+type RetryBucket = 'build' | 'runtime' | 'visual';
+
+function budgetFor(bucket: RetryBucket): number {
+  if (bucket === 'build') return MAX_BUILD_RETRIES;
+  if (bucket === 'runtime') return MAX_RUNTIME_RETRIES;
+  return MAX_VISUAL_RETRIES;
+}
+
+function buildGateRetryUserMessage(signals: StepIterationSignals): string {
   const wd = SandboxService.WORK_DIR;
   return [
-    `VALIDATION FAILED — you are starting attempt ${currentAttempt} of ${maxAttempts} (${remaining} round(s) left including this one).`,
-    'Automated gate output (npm run build / git push / Vercel deploy via GitHub):',
-    '---',
-    err.slice(0, 8000),
-    '---',
-    `Fix the root cause under ${wd} (e.g. restore package.json, npm install, fix build). Run npm run build until it passes, then sandbox_push_checkpoint before stopping.`,
+    formatIterationSignals(signals),
+    '',
+    `(sandbox work_dir: ${wd}) After fixing, call sandbox_push_checkpoint once the build + runtime are clean.`,
   ].join('\n');
 }
 
@@ -211,38 +228,46 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   const MAX_TURNS = 10;
 
   try {
+    const used: Record<RetryBucket, number> = { build: 0, runtime: 0, visual: 0 };
+    let lastSignals: StepIterationSignals | null = null;
     let lastGateError: string | null = null;
+    let totalAttempts = 0;
+    const HARD_CAP_ATTEMPTS = MAX_BUILD_RETRIES + MAX_RUNTIME_RETRIES + MAX_VISUAL_RETRIES;
 
-    for (let gateAttempt = 1; gateAttempt <= MAX_GATE_ATTEMPTS; gateAttempt++) {
-      if (lastGateError) {
+    while (totalAttempts < HARD_CAP_ATTEMPTS) {
+      totalAttempts++;
+      if (lastSignals) {
         currentMessages = [
           ...currentMessages,
-          { role: 'user', content: buildGateRetryUserMessage(gateAttempt, MAX_GATE_ATTEMPTS, lastGateError) },
+          { role: 'user', content: buildGateRetryUserMessage(lastSignals) },
         ];
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.STEP_STATUS,
           level: 'warn',
-          message: `Plan step ${step.order} gate retry ${gateAttempt}/${MAX_GATE_ATTEMPTS} (error context sent to model)`,
+          message: `Plan step ${step.order} gate retry ${totalAttempts} bucket=${lastSignals.bucket || 'n/a'} (error context sent to model)`,
           details: {
             plan_id: plan.id,
             step_id: step.id,
             step_order: step.order,
             phase: 'gate_retry',
-            error_excerpt: lastGateError.slice(0, 500),
+            bucket: lastSignals.bucket,
+            categories_failed: lastSignals.categories_failed,
+            error_excerpt: (lastGateError || '').slice(0, 500),
+            used_budgets: { ...used },
           },
         });
       }
 
       const systemPromptThisRound =
-        gateAttempt > 1
-          ? `${stepPrompt}\n\n*** GATE RETRY ${gateAttempt}/${MAX_GATE_ATTEMPTS} ***\nA previous attempt failed automated validation. Read the latest user message for the exact error output and fix it before stopping.`
+        totalAttempts > 1
+          ? `${stepPrompt}\n\n*** GATE RETRY ${totalAttempts} (bucket=${lastSignals?.bucket || 'unknown'}) ***\nA previous attempt failed automated validation. Read the latest user message for the exact error output and fix it before stopping.`
           : stepPrompt;
 
       let isDone = false;
       let turns = 0;
       while (!isDone && turns < MAX_TURNS) {
         turns++;
-        console.log(`[CronStep] Step ${step.order} gateAttempt ${gateAttempt}/${MAX_GATE_ATTEMPTS} turn ${turns}`);
+        console.log(`[CronStep] Step ${step.order} attempt ${totalAttempts} turn ${turns}`);
         lastResult = await executeAssistantStep(currentMessages, context.instance, {
           ...context.executionOptions,
           system_prompt: systemPromptThisRound,
@@ -259,6 +284,12 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         requirementId,
         stepOrder: step.order,
         stepPrompt: systemPromptThisRound,
+        stepContext: {
+          title: step.title,
+          instructions: step.instructions,
+          expected_output: step.expected_output,
+          brand_context: (plan as any)?.brand_context,
+        },
         currentMessages,
         context,
         fullTools,
@@ -271,7 +302,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         lastResult = gate.lastResult;
         const checkedAt = new Date().toISOString();
         const vd = gate.vercelDeploy;
-        console.log(`[CronStep] Build + origin + deploy OK after step ${step.order} (gate attempt ${gateAttempt})`);
+        console.log(`[CronStep] Build + runtime + origin + deploy OK after step ${step.order} (attempt ${totalAttempts})`);
         await updateInstancePlanCore({
           plan_id: plan.id,
           instance_id,
@@ -291,53 +322,86 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         });
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.STEP_STATUS,
-          message: `Plan step ${step.order} completed (${step.title || step.id}) after ${gateAttempt} gate attempt(s)`,
+          message: `Plan step ${step.order} completed (${step.title || step.id}) after ${totalAttempts} attempt(s)`,
           details: {
             plan_id: plan.id,
             step_id: step.id,
             step_order: step.order,
             status: 'completed',
-            gate_attempts_used: gateAttempt,
+            attempts_used: totalAttempts,
+            budgets_used: used,
           },
         });
         return { ok: true };
       }
 
       lastGateError = gate.error || 'Step completion gate failed';
-      console.error(`[CronStep] Step ${step.order} gate failed (attempt ${gateAttempt}/${MAX_GATE_ATTEMPTS}): ${lastGateError}`);
-
-      if (gateAttempt < MAX_GATE_ATTEMPTS) {
-        continue;
-      }
-
-      await updateInstancePlanCore({
-        plan_id: plan.id,
-        instance_id,
-        site_id,
-        steps: [
-          {
-            id: step.id,
-            status: 'failed',
-            error_message: lastGateError,
-            completed_at: new Date().toISOString(),
-          },
-        ],
-      });
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.STEP_STATUS,
-        level: 'error',
-        message: `Plan step ${step.order} failed gate after ${MAX_GATE_ATTEMPTS} attempts: ${lastGateError.slice(0, 400)}`,
-        details: {
-          plan_id: plan.id,
-          step_id: step.id,
-          step_order: step.order,
-          status: 'failed',
-          phase: 'gate',
-          gate_attempts: MAX_GATE_ATTEMPTS,
+      const categories = deriveCategoriesFailed(gate.signals);
+      const bucket = deriveRetryBucket(categories);
+      used[bucket]++;
+      const nextSignals: StepIterationSignals = {
+        attempt: totalAttempts,
+        max_attempts: HARD_CAP_ATTEMPTS,
+        bucket,
+        step: {
+          order: step.order,
+          title: step.title,
+          expected_output: step.expected_output,
         },
-      });
-      return { ok: false, gateError: lastGateError };
+        build: gate.signals.build,
+        runtime: gate.signals.runtime,
+        api: gate.signals.api,
+        console: gate.signals.console,
+        visual: gate.signals.visual,
+        scenarios: gate.signals.scenarios,
+        origin: gate.signals.origin,
+        deploy: gate.signals.deploy,
+        categories_failed: categories,
+        top_level_error: lastGateError,
+      };
+      lastSignals = nextSignals;
+      console.error(
+        `[CronStep] Step ${step.order} gate failed (attempt ${totalAttempts}, bucket=${bucket}, budgets_used=${JSON.stringify(used)}): ${lastGateError.slice(0, 200)}`,
+      );
+
+      const bucketLimit = budgetFor(bucket);
+      const bucketExhausted = used[bucket] > bucketLimit;
+
+      if (bucketExhausted) {
+        const reason = `bucket "${bucket}" exhausted after ${used[bucket] - 1}/${bucketLimit} retries`;
+        await updateInstancePlanCore({
+          plan_id: plan.id,
+          instance_id,
+          site_id,
+          steps: [
+            {
+              id: step.id,
+              status: 'failed',
+              error_message: `${reason}: ${lastGateError}`,
+              completed_at: new Date().toISOString(),
+            },
+          ],
+        });
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.STEP_STATUS,
+          level: 'error',
+          message: `Plan step ${step.order} failed gate (${reason}): ${lastGateError.slice(0, 300)}`,
+          details: {
+            plan_id: plan.id,
+            step_id: step.id,
+            step_order: step.order,
+            status: 'failed',
+            phase: 'gate',
+            bucket,
+            bucket_limit: bucketLimit,
+            budgets_used: used,
+            categories_failed: categories,
+          },
+        });
+        return { ok: false, gateError: lastGateError };
+      }
     }
+
     return { ok: false, gateError: 'Step gate exhausted without result' };
   } catch (error: any) {
     console.error(`[CronStep] Step ${step.order} execution error: ${error.message}`);

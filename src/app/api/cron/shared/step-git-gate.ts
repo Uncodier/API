@@ -26,6 +26,16 @@ import {
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
 import { fetchAndLogVercelBuildLog } from '@/lib/services/vercel-build-logs';
+import { runRuntimeAndVisualProbes } from './step-gate-probes';
+import type {
+  ApiSignal,
+  BuildSignal,
+  ConsoleSignal,
+  DeploySignal,
+  RuntimeSignal,
+  ScenarioSignal,
+  VisualSignal,
+} from './step-iteration-signals';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
 
@@ -95,6 +105,13 @@ export type OriginGateParams = {
   requirementId: string;
   stepOrder: number;
   stepPrompt: string;
+  /** Plan step context used to ground visual-critic + iteration signals. */
+  stepContext?: {
+    title?: string;
+    instructions?: string;
+    expected_output?: string;
+    brand_context?: string;
+  };
   currentMessages: any[];
   context: AssistantContext;
   fullTools: any[];
@@ -116,11 +133,23 @@ export type VercelDeployGateInfo = {
   buildLogExcerpt?: string | null;
 };
 
+export type GateSignals = {
+  build?: BuildSignal;
+  runtime?: RuntimeSignal;
+  api?: ApiSignal;
+  console?: ConsoleSignal;
+  visual?: VisualSignal;
+  scenarios?: ScenarioSignal;
+  origin?: { ok: boolean; branch?: string; error?: string };
+  deploy?: DeploySignal;
+};
+
 export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   ok: boolean;
   lastResult: any;
   error?: string;
   vercelDeploy?: VercelDeployGateInfo;
+  signals: GateSignals;
 }> {
   const {
     sandbox,
@@ -128,6 +157,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     requirementId,
     stepOrder,
     stepPrompt,
+    stepContext,
     currentMessages,
     context,
     fullTools,
@@ -137,39 +167,64 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   } = params;
 
   let lastResult = initialLastResult;
+  const signals: GateSignals = {};
 
   const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitRepoKind);
   if (vercelLayoutErr) {
     const msg = `Vercel/npm layout: ${vercelLayoutErr}`;
+    signals.build = { ok: false, layout_error: vercelLayoutErr };
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
       level: 'error',
       message: `Step ${stepOrder} gate: ${msg.slice(0, 500)}`,
       details: { stepOrder, error: msg.slice(0, 1200) },
     });
-    return { ok: false, lastResult, error: msg };
+    return { ok: false, lastResult, error: msg, signals };
   }
 
   const buildError = await validateBuildForStep(sandbox);
   if (buildError) {
+    signals.build = { ok: false, error_tail: buildError };
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
       level: 'error',
       message: `Step ${stepOrder} gate: npm run build failed`,
       details: { stepOrder, error: buildError.slice(0, 1200) },
     });
-    return { ok: false, lastResult, error: buildError };
+    return { ok: false, lastResult, error: buildError, signals };
   }
 
+  signals.build = { ok: true };
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.GATE_BUILD,
     message: `Step ${stepOrder} gate: npm run build passed`,
     details: { stepOrder },
   });
 
+  // Runtime probe: starts `next start` inside the sandbox, hits changed pages
+  // + API routes, captures server stdout/stderr. When there are pages + we're
+  // on an apps-style repo, leave the server alive so the visual probe can
+  // reuse it before we kill it.
+  const runtimeOutcome = await runRuntimeAndVisualProbes({
+    sandbox,
+    stepOrder,
+    requirementId,
+    gitRepoKind,
+    audit,
+    stepContext,
+  });
+  if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
+  if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
+  if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
+  if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
+  if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
+  if (!runtimeOutcome.ok) {
+    return { ok: false, lastResult, error: runtimeOutcome.error, signals };
+  }
+
   if (!requirementId) {
     console.warn(`[StepGitGate] No requirement_id — skipping origin verification for step ${stepOrder}`);
-    return { ok: true, lastResult };
+    return { ok: true, lastResult, signals };
   }
 
   let persist = await persistOrVerifyOrigin(
@@ -233,6 +288,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
 
   if (!persist.ok) {
     const errFinal = `Origin push not verified after recovery: ${persist.error || 'branch not synced'}`;
+    signals.origin = { ok: false, error: persist.error };
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_ORIGIN,
       level: 'error',
@@ -243,9 +299,11 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       ok: false,
       lastResult,
       error: errFinal,
+      signals,
     };
   }
 
+  signals.origin = { ok: true, branch: persist.branch };
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.GATE_ORIGIN,
     message: `Step ${stepOrder} gate: origin verified (branch ${persist.branch})`,
@@ -259,10 +317,13 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       message: `Step ${stepOrder} gate: deploy check skipped (default branch)`,
       details: { stepOrder, branch },
     });
+    const deploy: DeploySignal = { previewUrl: null, deployState: 'skipped_default_branch', detail: branch };
+    signals.deploy = deploy;
     return {
       ok: true,
       lastResult,
       vercelDeploy: { previewUrl: null, deployState: 'skipped_default_branch', detail: branch },
+      signals,
     };
   }
 
@@ -278,7 +339,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       message: `Step ${stepOrder} gate: ${errSha}`,
       details: { stepOrder, branch },
     });
-    return { ok: false, lastResult, error: errSha };
+    return { ok: false, lastResult, error: errSha, signals };
   }
 
   const poll = await pollGitHubDeploymentForSha(gitOrg, repoName, sha, {
@@ -339,6 +400,11 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         console.warn('[StepGitGate] preview sync after deploy gate:', e instanceof Error ? e.message : e);
       }
     }
+    signals.deploy = {
+      previewUrl: poll.previewUrl,
+      deployState: 'success',
+      buildLogExcerpt: vercelBuildExcerpt,
+    };
     return {
       ok: true,
       lastResult,
@@ -347,6 +413,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         deployState: 'success',
         buildLogExcerpt: vercelBuildExcerpt,
       },
+      signals,
     };
   }
 
@@ -360,6 +427,12 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       message: `Step ${stepOrder} gate: ${err.slice(0, 500)}`,
       details: { stepOrder, branch, sha: sha.slice(0, 12), state: poll.state },
     });
+    signals.deploy = {
+      previewUrl: poll.previewUrl,
+      deployState: poll.state,
+      detail: poll.detail,
+      buildLogExcerpt: vercelBuildExcerpt,
+    };
     return {
       ok: false,
       lastResult,
@@ -370,6 +443,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         detail: poll.detail,
         buildLogExcerpt: vercelBuildExcerpt,
       },
+      signals,
     };
   }
 
@@ -382,6 +456,12 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     message: `Step ${stepOrder} gate: ${errTimeout.slice(0, 500)}`,
     details: { stepOrder, branch, sha: sha.slice(0, 12), state: poll.state },
   });
+  signals.deploy = {
+    previewUrl: null,
+    deployState: poll.state,
+    detail: poll.detail,
+    buildLogExcerpt: vercelBuildExcerpt,
+  };
   return {
     ok: false,
     lastResult,
@@ -392,5 +472,6 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       detail: poll.detail,
       buildLogExcerpt: vercelBuildExcerpt,
     },
+    signals,
   };
 }

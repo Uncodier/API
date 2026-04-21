@@ -27,8 +27,9 @@ Leads missing the required contact field (phone for WhatsApp, email for email) a
 
 Use **double braces only**: `{{lead.name}}`, `{{lead.first_name}}`, `{{lead.email}}`, `{{lead.phone}}`, `{{lead.position}}`, `{{lead.company}}`, `{{lead.notes}}`, `{{lead.metadata.<path>}}`, `{{site.name}}`. The engine normalizes common aliases (e.g. `{{lead.full_name}}`, `{{lead.correo}}`). Do not use `[Name]` or `{name}`.
 
-- **mail** mode: subject and body are personalized per lead before queuing.
-- **newsletter** mode: same personalization; emails are sent without the usual agent HTML signature.
+- **mail** mode (email): subject and body are personalized per lead before queuing.
+- **newsletter** mode (email): same personalization; emails are sent without the usual agent HTML signature.
+- **WhatsApp**: the tool creates (or reuses) a **single** Twilio Content Template per campaign whose body carries numeric placeholders (`{{1}}`, `{{2}}`, ...) mapped from your merge tokens. Each lead is queued with its own `ContentVariables`, so one approved template serves the whole audience — you do NOT need one template per recipient. The response includes `template_sid`, `template_status`, and `placeholder_map`.
 
 ## MCP Usage
 
@@ -75,6 +76,9 @@ Available as the `sendBulkMessages` tool via the MCP JSON-RPC endpoint.
   "success": true,
   "audience_id": "...",
   "channel": "whatsapp",
+  "template_sid": "HX...",
+  "template_status": "pending",
+  "placeholder_map": ["lead.first_name", "site.name"],
   "total_sent": 120,
   "total_failed": 5,
   "total_skipped": 25,
@@ -82,6 +86,8 @@ Available as the `sendBulkMessages` tool via the MCP JSON-RPC endpoint.
   "total_in_audience": 150
 }
 ```
+
+For the WhatsApp path, `template_sid` is the single Twilio Content Template used for the campaign, `placeholder_map` lists the canonical merge tokens in the order they map to `{{1}}`, `{{2}}`, ..., and `template_status` is either `approved` (template reused) or `pending` (freshly created — the delivery worker re-checks before sending).
 
 ## Workflow
 

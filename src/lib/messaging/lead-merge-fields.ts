@@ -190,6 +190,97 @@ export function personalizeMergeSubjectAndMessage(
   };
 }
 
+/**
+ * Extracts merge tokens from a text and rewrites them to Twilio numbered placeholders
+ * ({{1}}, {{2}}, ...). Same canonical token reuses the same index (deduplicated).
+ *
+ * Returned `tokens` is an ordered array of canonical paths where index i corresponds
+ * to placeholder {{i+1}} in the `templated` string.
+ */
+export function extractMergeTokens(text: string): { templated: string; tokens: string[] } {
+  if (!text) return { templated: text, tokens: [] };
+  const tokens: string[] = [];
+  const seen = new Map<string, number>();
+
+  const templated = text.replace(TOKEN_PATTERN, (_full, inner: string) => {
+    const path = normalizeInnerPath(String(inner));
+    const canonical = LEAD_ALIAS_TO_CANONICAL[path] ?? path;
+    let index = seen.get(canonical);
+    if (index === undefined) {
+      tokens.push(canonical);
+      index = tokens.length;
+      seen.set(canonical, index);
+    }
+    return `{{${index}}}`;
+  });
+
+  return { templated, tokens };
+}
+
+/**
+ * Resolves a single canonical merge token for a given lead.
+ * Returns undefined when the token is unknown (caller applies policy).
+ */
+function resolveCanonicalToken(
+  canonical: string,
+  lead: DbLead,
+  siteName: string | undefined,
+): string | undefined {
+  if (canonical.startsWith('lead.metadata.')) {
+    const sub = canonical.slice('lead.metadata.'.length);
+    return readLeadMetadataPath(lead, sub);
+  }
+  const map = buildMergeMapFromLead(lead, siteName);
+  if (Object.prototype.hasOwnProperty.call(map, canonical)) {
+    return map[canonical] ?? '';
+  }
+  return undefined;
+}
+
+export interface BuildContentVariablesResult {
+  variables: Record<string, string>;
+  aborted: boolean;
+  unresolved: string[];
+}
+
+/**
+ * Builds the Twilio `ContentVariables` map for a lead, given the ordered list of
+ * canonical tokens that a template expects (same order as placeholders {{1}}..{{N}}).
+ *
+ * Applies the standard merge policy for unresolved tokens:
+ *   - 'strip_unresolved'  -> replaces the value with an empty string.
+ *   - 'abort_if_unresolved' -> returns aborted=true and the list of unresolved tokens.
+ */
+export function buildContentVariablesForLead(
+  tokens: string[],
+  lead: DbLead,
+  siteName: string | undefined,
+  policy: MergePolicy,
+): BuildContentVariablesResult {
+  const variables: Record<string, string> = {};
+  const unresolved: string[] = [];
+
+  tokens.forEach((canonical, i) => {
+    const placeholderKey = String(i + 1);
+    const value = resolveCanonicalToken(canonical, lead, siteName);
+    if (value === undefined || value === '') {
+      // Unknown canonical path, or known path with empty value.
+      if (value === undefined) {
+        unresolved.push(`{{${canonical}}}`);
+      }
+      variables[placeholderKey] = '';
+    } else {
+      variables[placeholderKey] = value;
+    }
+  });
+
+  if (policy === 'abort_if_unresolved' && unresolved.length > 0) {
+    return { variables, aborted: true, unresolved };
+  }
+
+  return { variables, aborted: false, unresolved };
+}
+
 /** Site display name for {{site.name}} — one query per send / batch page. */
 export async function fetchSiteNameForMerge(siteId: string): Promise<string | undefined> {
   const { data, error } = await supabaseAdmin.from('sites').select('name').eq('id', siteId).maybeSingle();

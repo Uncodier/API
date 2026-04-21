@@ -1250,6 +1250,8 @@ CREATE TABLE public.whatsapp_templates (
   updated_at timestamp with time zone DEFAULT now(),
   last_used timestamp with time zone,
   usage_count integer DEFAULT 0,
+  templated_body text,
+  placeholder_map jsonb,
   CONSTRAINT whatsapp_templates_pkey PRIMARY KEY (id),
   CONSTRAINT whatsapp_templates_unique_sid UNIQUE (template_sid),
   CONSTRAINT whatsapp_templates_unique_name_site UNIQUE (template_name, site_id),

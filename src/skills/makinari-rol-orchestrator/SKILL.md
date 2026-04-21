@@ -29,7 +29,7 @@ Reuse the existing `instance_id`. NEVER create a new instance for a task already
 - Create structured plans using the `instance_plan` tool with `action="create"`.
 - Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills / roles:
   - **Bootstrap:** `makinari-obj-template-selection` (role `template_selection`) — **always plan this as step `order: 1` for new work** in the applications repo: choose Vitrina branch vs generic app baseline before other steps.
-  - **Roles:** `makinari-rol-frontend`, `makinari-rol-backend`, `makinari-rol-devops`, `makinari-rol-content`
+  - **Roles:** `makinari-rol-frontend`, `makinari-rol-backend`, `makinari-rol-devops`, `makinari-rol-content`, `makinari-rol-qa`
   - **Objectives:** `makinari-obj-vitrinas` (after base is selected), `makinari-obj-automatizacion` when relevant
   - **Phases:** `makinari-fase-investigacion`, `makinari-fase-planeacion`, `makinari-fase-validacion`, `makinari-fase-reporteado`
 - Steps are executed **sequentially** by the system. Each step runs with its assigned skill injected into the context.
@@ -90,12 +90,18 @@ For a typical **applications** requirement, create a plan whose **first** step s
     },
     {
       "id": "step_4", "order": 4,
+      "title": "QA — author scenarios and verify runtime/visual",
+      "skill": "makinari-rol-qa",
+      "instructions": "Read the requirement, derive 2–5 critical user journeys, author declarative JSON scenarios under .qa/scenarios/, triage any runtime/console/visual-critic defects from the per-step gate and fix or document them. Write test_results.json."
+    },
+    {
+      "id": "step_5", "order": 5,
       "title": "Validation",
       "skill": "makinari-fase-validacion",
       "instructions": "Run npm run build, verify no errors, run tests if available."
     },
     {
-      "id": "step_5", "order": 5,
+      "id": "step_6", "order": 6,
       "title": "Report",
       "skill": "makinari-fase-reporteado",
       "instructions": "Create requirement_status with final results. The system handles commit, push, and preview URL."

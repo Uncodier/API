@@ -254,7 +254,7 @@ ENVIRONMENT:
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
 - Use requirement_status to report progress. ALWAYS use requirement_id="${p.reqId}".
 - Use instance_plan to create execution plans. ALWAYS use instance_id="${p.instanceId}".
-- Each step should have a "role" (template_selection, frontend, backend, devops, content, …) or explicit "skill" for injection.
+- Each step should have a "role" (template_selection, frontend, backend, devops, content, qa, …) or explicit "skill" for injection.
 - NEVER run git commit or git push as orchestrator — executors follow platform rules; the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
 
@@ -270,5 +270,10 @@ CRITICAL PLANNING RULES:
 - Steps that create pages MUST write to src/app/<route>/page.tsx — NOT to app/<route>/page.tsx and NOT to app/src/app/... (that nested tree breaks builds).
 - Steps that create components MUST write to src/components/ — NOT to components/ or app/components/.
 - NEVER instruct a step to run "npx create-next-app" or "npm init".
-- DO NOT write files yourself — delegate to plan steps.`;
+- DO NOT write files yourself — delegate to plan steps.
+
+QUALITY GATE & QA RULES (mandatory):
+- Every plan that produces UI MUST include a QA step (role \`qa\`, skill \`makinari-rol-qa\`) **after** the last development step and **before** the final validation/report. Its job is to author declarative E2E scenarios under \`.qa/scenarios/*.json\`, triage runtime/visual/critic signals, and write \`test_results.json\`.
+- The per-step gate already runs build + runtime probe + visual probe + visual critic + E2E scenarios automatically. Development step instructions must acknowledge that "builds clean" is NOT enough — pages must render without console errors, look correct at 1280×800 and 375×812, and satisfy the visual-critic rubric (hierarchy, contrast, empty states, primary CTA above the fold).
+- Development step instructions MUST include concrete, user-visible acceptance criteria (what the user should see and be able to do), not just "build the feature". This is what the QA step will translate into scenarios.`;
 }

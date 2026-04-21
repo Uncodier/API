@@ -47,6 +47,8 @@ You must also provide parameters for at least one action:
 
 Use `{{lead.*}}` and `{{site.name}}` in `text` / email subject as documented on [sendBulkMessages](/mcp-server/tools/sendBulkMessages). When content is saved in the same publish call, its id is passed to the bulk sender so placeholder policy applies.
 
+For WhatsApp audience sends, a **single** Twilio Content Template is created (or reused) for the whole campaign; merge tokens become numeric placeholders and each lead is queued with its own `ContentVariables`. The same `{{lead.*}}` / `{{site.name}}` tokens that work for newsletter work here — you do not need one template per recipient.
+
 ## Returns
 
 The tool returns an object with a `success` boolean and details for each attempted action:

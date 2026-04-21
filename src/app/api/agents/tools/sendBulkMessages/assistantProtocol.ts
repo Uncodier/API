@@ -16,11 +16,15 @@ import { getContentById } from '@/lib/database/content-db';
 import type { DbLead } from '@/lib/database/lead-db';
 import type { ContentPlaceholderPolicy } from '@/lib/messaging/lead-merge-fields';
 import {
+  buildContentVariablesForLead,
+  extractMergeTokens,
   fetchSiteNameForMerge,
   personalizeMergeSubjectAndMessage,
   placeholderPolicyToMergePolicy,
 } from '@/lib/messaging/lead-merge-fields';
 import { sendEmailCore } from '../sendEmail/route';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -218,6 +222,175 @@ export function sendBulkMessagesTool(siteId: string) {
     const agentId = agent?.agentId || null;
     const userId = agent?.userId || null;
 
+    // -------------------------------------------------------------------------
+    // WhatsApp path: create/reuse ONE template with numeric placeholders and
+    // queue per-lead ContentVariables. The template body is kept abstract
+    // (e.g. "Hi {{1}}, ..."); personalization happens via Twilio variables at
+    // delivery time, so a single approved template serves the whole campaign.
+    // -------------------------------------------------------------------------
+    if (channel === 'whatsapp') {
+      const { templated: abstractBody, tokens: campaignTokens } = extractMergeTokens(message);
+
+      let templateSid: string | undefined;
+      let placeholderMap: string[] = campaignTokens;
+      let templateStatus: 'approved' | 'pending' = 'approved';
+
+      try {
+        const config = await WhatsAppSendService.getWhatsAppConfig(siteId);
+        const existing = await WhatsAppTemplateService.findExistingTemplate(
+          message,
+          siteId,
+          config.phoneNumberId,
+        );
+        if (existing?.templateSid) {
+          templateSid = existing.templateSid;
+          placeholderMap = existing.placeholderMap ?? campaignTokens;
+        } else {
+          const created = await WhatsAppTemplateService.createTemplate(
+            message,
+            config.phoneNumberId,
+            config.accessToken,
+            siteId,
+          );
+          if (!created.success || !created.templateSid) {
+            return {
+              success: false,
+              error: `Failed to create WhatsApp template: ${created.error ?? 'unknown error'}`,
+            };
+          }
+          templateSid = created.templateSid;
+          placeholderMap = created.placeholderMap ?? campaignTokens;
+          // A freshly created template may still be pending WhatsApp approval;
+          // delivery worker should re-check before sending.
+          templateStatus = 'pending';
+        }
+      } catch (err: any) {
+        return {
+          success: false,
+          error: `Failed to prepare WhatsApp template: ${err?.message ?? 'unknown error'}`,
+        };
+      }
+
+      for (let page = 1; page <= totalPages; page++) {
+        const { leads } = await getAudiencePageForSending(audience_id, page);
+        if (leads.length === 0) continue;
+
+        for (const lead of leads) {
+          const leadId = lead.id as string;
+
+          try {
+            if (!lead.phone) {
+              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No phone number');
+              totalSkipped++;
+              continue;
+            }
+
+            const leadRow = lead as DbLead;
+            const built = buildContentVariablesForLead(placeholderMap, leadRow, siteName, mergePolicy);
+            if (built.aborted) {
+              await updateAudienceLeadStatus(
+                audience_id,
+                leadId,
+                'skipped',
+                `Unresolved merge fields: ${built.unresolved.join(', ')}`,
+              );
+              totalSkipped++;
+              continue;
+            }
+
+            const conversationData: any = {
+              site_id: siteId,
+              lead_id: leadId,
+              title: subject || `Bulk Message: whatsapp`,
+              channel: 'whatsapp',
+              custom_data: {
+                source: 'sendBulkMessages',
+                audience_id,
+              },
+            };
+            if (userId) conversationData.user_id = userId;
+            if (agentId) conversationData.agent_id = agentId;
+
+            const { data: conversation, error: convError } = await supabaseAdmin
+              .from('conversations')
+              .insert([conversationData])
+              .select()
+              .single();
+
+            if (convError || !conversation) {
+              await updateAudienceLeadStatus(
+                audience_id,
+                leadId,
+                'failed',
+                convError?.message || 'Failed to create conversation',
+              );
+              totalFailed++;
+              continue;
+            }
+
+            const messageData: any = {
+              conversation_id: conversation.id,
+              // Store the abstract body (with {{1}}, {{2}}, ...) so the delivery worker
+              // can reconstruct/log the final text deterministically from ContentVariables.
+              content: abstractBody,
+              role: 'assistant',
+              lead_id: leadId,
+              custom_data: {
+                status: 'approved',
+                channel: 'whatsapp',
+                audience_id,
+                template_sid: templateSid,
+                template_status: templateStatus,
+                templated_body: abstractBody,
+                placeholder_map: placeholderMap,
+                content_variables: built.variables,
+              },
+            };
+            if (agentId) messageData.agent_id = agentId;
+
+            const { error: msgError } = await supabaseAdmin
+              .from('messages')
+              .insert([messageData]);
+
+            if (msgError) {
+              await updateAudienceLeadStatus(audience_id, leadId, 'failed', msgError.message);
+              totalFailed++;
+            } else {
+              await updateAudienceLeadStatus(audience_id, leadId, 'sent');
+              totalSent++;
+            }
+          } catch (err: any) {
+            await updateAudienceLeadStatus(
+              audience_id,
+              leadId,
+              'failed',
+              err?.message ?? 'Unexpected error',
+            );
+            totalFailed++;
+          }
+        }
+      }
+
+      const totalRemaining = audience.total_count - totalSent - totalFailed - totalSkipped;
+      return {
+        success: true,
+        audience_id,
+        channel,
+        template_sid: templateSid,
+        template_status: templateStatus,
+        placeholder_map: placeholderMap,
+        total_sent: totalSent,
+        total_failed: totalFailed,
+        total_skipped: totalSkipped,
+        total_remaining: totalRemaining,
+        total_in_audience: audience.total_count,
+      };
+    }
+
+    // -------------------------------------------------------------------------
+    // Email `mail` mode (default): pre-merge body/subject per lead and queue
+    // an approved message row for the background email delivery worker.
+    // -------------------------------------------------------------------------
     for (let page = 1; page <= totalPages; page++) {
       const { leads } = await getAudiencePageForSending(audience_id, page);
       if (leads.length === 0) continue;
@@ -226,19 +399,10 @@ export function sendBulkMessagesTool(siteId: string) {
         const leadId = lead.id as string;
 
         try {
-          // Validar existencia de datos de contacto
-          if (channel === 'whatsapp') {
-            if (!lead.phone) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No phone number');
-              totalSkipped++;
-              continue;
-            }
-          } else if (channel === 'email') {
-            if (!lead.email) {
-              await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
-              totalSkipped++;
-              continue;
-            }
+          if (!lead.email) {
+            await updateAudienceLeadStatus(audience_id, leadId, 'skipped', 'No email address');
+            totalSkipped++;
+            continue;
           }
 
           const leadRow = lead as DbLead;
@@ -266,8 +430,8 @@ export function sendBulkMessagesTool(siteId: string) {
           const conversationData: any = {
             site_id: siteId,
             lead_id: leadId,
-            title: perLeadSubject || subject || `Bulk Message: ${channel}`,
-            channel: channel,
+            title: perLeadSubject || subject || `Bulk Message: email`,
+            channel: 'email',
             custom_data: {
               source: 'sendBulkMessages',
               audience_id: audience_id
@@ -297,7 +461,7 @@ export function sendBulkMessagesTool(siteId: string) {
             lead_id: leadId,
             custom_data: {
               status: 'approved',
-              channel: channel,
+              channel: 'email',
               audience_id: audience_id,
               subject: perLeadSubject,
             }
@@ -356,6 +520,11 @@ For email only: audience_email_mode — "mail" (default) or "newsletter".
 The tool iterates through every lead in the audience:
 - WhatsApp: requires lead.phone (international format). Leads without phone are skipped.
 - Email: requires lead.email. Leads without email are skipped.
+
+WhatsApp delivery:
+- Creates (or reuses) ONE Twilio Content Template per campaign whose body uses numeric placeholders ({{1}}, {{2}}, ...). Merge tokens in the message are mapped to those placeholders.
+- For each lead, queues one conversation + approved message row that stores template_sid and the per-lead content_variables map; a background worker delivers via ContentVariables so a single approved template serves the whole audience.
+- Returns template_sid, template_status, and placeholder_map alongside the counters.
 
 Email delivery modes:
 - mail (default): queues one conversation plus an approved message per lead (body/subject personalized per lead); a background workflow delivers and tracks. total_sent counts queued handoffs.
