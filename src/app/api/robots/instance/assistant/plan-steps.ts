@@ -13,6 +13,7 @@ const ROLE_TO_SKILL: Record<string, string> = {
   'devops': 'makinari-rol-devops',
   'content': 'makinari-rol-content',
   'orchestrator': 'makinari-rol-orchestrator',
+  'qa': 'makinari-rol-qa',
   'investigate': 'makinari-fase-investigacion',
   'plan': 'makinari-fase-planeacion',
   'validate': 'makinari-fase-validacion',

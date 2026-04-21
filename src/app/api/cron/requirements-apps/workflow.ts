@@ -97,6 +97,34 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       requirementTitle: title,
     });
     sandboxId = orch.effectiveSandboxId;
+
+    // Safety net: if the orchestrator finished without creating a plan AND no
+    // active plan exists yet, the cron would otherwise commit empty and flip
+    // the requirement back to in-progress forever. Record an explicit blocker
+    // so the next cycle sees a clear reason and operators can intervene.
+    if (!orch.createdPlan) {
+      const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      if (!postOrchPlan) {
+        console.warn(
+          `[CronAppsWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+        );
+        try {
+          const { createRequirementStatusCore } = await import(
+            '@/app/api/agents/tools/requirement_status/route'
+          );
+          await createRequirementStatusCore({
+            site_id,
+            instance_id: instanceId,
+            requirement_id: reqId,
+            status: 'blocked',
+            message:
+              'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
+          });
+        } catch (err) {
+          console.error('[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker:', err);
+        }
+      }
+    }
   } else {
     console.log(`[CronAppsWorkflow] SKIP ORCHESTRATOR — plan "${existingPlan!.title}" has ${actionableSteps.length} actionable step(s)`);
   }
@@ -265,12 +293,15 @@ ENVIRONMENT:
 - NEVER run git commit or git push as orchestrator — executors follow platform rules; the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
 
-WORKFLOW:
-1. Read instructions for full context.
-2. Investigate using sandbox_list_files (path=".") and sandbox_read_file.
-3. Plan: Create an instance_plan with steps (title, instructions, expected_output, role, order).
-4. Update instructions with findings and decisions.
-5. Report status.
+WORKFLOW (follow IN ORDER — do not skip steps, do not loop on exploration):
+1. FIRST tool call: \`instance_plan\` with \`action="list"\`, instance_id="${p.instanceId}" — to confirm no plan already exists. If a plan is already active, stop; the system will execute it.
+2. Load the orchestrator skill with \`skill_lookup\` (slug \`makinari-rol-orchestrator\`) and, if useful, \`makinari-fase-planeacion\`.
+3. Targeted investigation ONLY if you still need context — up to ~3 sandbox_* calls (e.g. \`sandbox_read_file\` on requirement.instructions-derived files, a \`sandbox_list_files\` at \`src/app\`). Do NOT keep exploring after that.
+4. Create the plan: \`instance_plan\` with \`action="create"\`, instance_id="${p.instanceId}". Each step MUST set \`skill\` (preferred, e.g. \`makinari-obj-template-selection\`, \`makinari-rol-frontend\`, \`makinari-rol-qa\`) — \`role\` is only a fallback. \`title\` and \`instructions\` are required.
+5. Update requirement.instructions with findings/decisions via the \`requirements\` tool.
+6. Report progress with \`requirement_status\` (status="in-progress" once the plan is in place).
+
+HARD RULE: Your turn is NOT done until \`instance_plan action="create"\` has succeeded (or you confirmed an existing active plan via \`action="list"\`). Never end with a plain text message if no plan exists.
 
 CRITICAL PLANNING RULES:
 - For every **new** instance_plan on this workflow, **step order 1** MUST be **project base selection**: role \`template_selection\`, skill \`makinari-obj-template-selection\` — the executor decides Vitrina (one of the six documented feature branches) vs **generic app** (main / core-infrastructure / branch named in instructions), then checks out Git accordingly. Skip this only if requirement.instructions already contains an explicit \`BASE: …\` line from a previous cycle.

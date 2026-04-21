@@ -115,6 +115,33 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
       requirementTitle: title,
     });
     sandboxId = orch.effectiveSandboxId;
+
+    // Safety net: same reasoning as requirements-apps — if the orchestrator
+    // produced no plan and no plan exists, flag the requirement as blocked so
+    // the next cycle has a clear signal instead of silently looping.
+    if (!orch.createdPlan) {
+      const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      if (!postOrchPlan) {
+        console.warn(
+          `[CronAutoWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+        );
+        try {
+          const { createRequirementStatusCore } = await import(
+            '@/app/api/agents/tools/requirement_status/route'
+          );
+          await createRequirementStatusCore({
+            site_id,
+            instance_id: instanceId,
+            requirement_id: reqId,
+            status: 'blocked',
+            message:
+              'Orchestrator finished without producing an instance_plan (automation workflow). Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate if this repeats.',
+          });
+        } catch (err) {
+          console.error('[CronAutoWorkflow] Failed to record orchestrator-no-plan blocker:', err);
+        }
+      }
+    }
   } else {
     console.log(`[CronAutoWorkflow] SKIP ORCHESTRATOR — ${actionableSteps.length} actionable step(s)`);
   }
