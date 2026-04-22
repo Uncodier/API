@@ -808,10 +808,20 @@ export class AIAgentExecutor {
         // before every call so retries and the streaming/non-streaming
         // fallback paths share a clean history.
         if (provider === 'gemini') {
-          const { assistantContentCoerced, toolNameStripped } = sanitizeMessagesForGemini(messages);
-          if (assistantContentCoerced > 0 || toolNameStripped > 0) {
+          const {
+            assistantContentCoerced,
+            toolNameStripped,
+            assistantExtrasStripped,
+            toolCallExtrasStripped,
+          } = sanitizeMessagesForGemini(messages);
+          if (
+            assistantContentCoerced > 0 ||
+            toolNameStripped > 0 ||
+            assistantExtrasStripped > 0 ||
+            toolCallExtrasStripped > 0
+          ) {
             console.warn(
-              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] Coerced ${assistantContentCoerced} assistant content(s) to "" and stripped ${toolNameStripped} tool name field(s)`,
+              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] Coerced ${assistantContentCoerced} assistant content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s)`,
             );
           }
         }
