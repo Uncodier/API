@@ -40,6 +40,7 @@ import {
   isAzureInvalidImageError,
   sanitizeMessagesForAzureVisionImages,
 } from './azure-vision-message-sanitize';
+import { sanitizeMessagesForGemini } from './gemini-message-sanitize';
 
 /**
  * Helper function to filter base64 images in messages, keeping only the latest ones up to specified limit.
@@ -799,6 +800,20 @@ export class AIAgentExecutor {
 
         if (imagesBefore > imagesAfter) {
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [IMAGE_FILTER] Cleaned ${imagesBefore - imagesAfter} old image(s), kept ${imagesAfter} most recent`);
+        }
+
+        // Gemini's OpenAI-compat layer 400s (no body) when assistant turns
+        // carry `content: null` together with `tool_calls`, or when tool
+        // messages still include the deprecated `name` field. Normalize both
+        // before every call so retries and the streaming/non-streaming
+        // fallback paths share a clean history.
+        if (provider === 'gemini') {
+          const { assistantContentCoerced, toolNameStripped } = sanitizeMessagesForGemini(messages);
+          if (assistantContentCoerced > 0 || toolNameStripped > 0) {
+            console.warn(
+              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] Coerced ${assistantContentCoerced} assistant content(s) to "" and stripped ${toolNameStripped} tool name field(s)`,
+            );
+          }
         }
 
         // Azure vision sanitization only applies to Azure. Other providers (Gemini, OpenAI)
