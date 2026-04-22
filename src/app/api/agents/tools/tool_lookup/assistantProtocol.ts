@@ -170,10 +170,17 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
           type: 'string',
           description: 'Tool name (required for "describe" and "call").',
         },
+        // NOTE: Typed as a JSON-encoded string instead of `type: "object"`.
+        // Reason: Gemini's OpenAI-compat function declarations reject objects
+        // without explicit `properties` and reject `additionalProperties: true`,
+        // which is incompatible with a generic "pass anything" router argument.
+        // Other MCP-style routers solve this the same way. We JSON.parse it in
+        // `execute()` (with a fallback to a raw object for OpenAI/Azure callers
+        // that may still pass an inline object).
         args: {
-          type: 'object',
-          description: 'Arguments object to pass to the underlying tool (required for "call"). Use "describe" first if unsure of the schema.',
-          additionalProperties: true,
+          type: 'string',
+          description:
+            'JSON-encoded object with the arguments to pass to the underlying tool (required for "call"). Example: "{\\"prompt\\":\\"hello\\"}". Use "describe" first if unsure of the schema.',
         },
         category: {
           type: 'string',
@@ -184,6 +191,28 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
     },
     execute: async (args: { action: 'list' | 'describe' | 'call'; name?: string; args?: any; category?: string }) => {
       const { action } = args;
+
+      // `args.args` is declared as a JSON-encoded string (see schema note).
+      // Accept both string (Gemini-friendly) and object (OpenAI/Azure direct
+      // callers) so we don't break the existing surface.
+      const parseCallArgs = (raw: any): { ok: true; value: any } | { ok: false; error: string } => {
+        if (raw === undefined || raw === null) return { ok: true, value: {} };
+        if (typeof raw === 'object') return { ok: true, value: raw };
+        if (typeof raw !== 'string') {
+          return { ok: false, error: `"args" must be a JSON-encoded object string, got ${typeof raw}.` };
+        }
+        const trimmed = raw.trim();
+        if (!trimmed) return { ok: true, value: {} };
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { ok: false, error: '"args" must decode to a JSON object (not array/null/primitive).' };
+          }
+          return { ok: true, value: parsed };
+        } catch (e: any) {
+          return { ok: false, error: `"args" is not valid JSON: ${e?.message || String(e)}` };
+        }
+      };
 
       if (action === 'list') {
         const filtered = args.category
@@ -233,7 +262,17 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
             error: `Tool "${args.name}" is not routed through tool_lookup. Call action="list" to see available tools.`,
           };
         }
-        const callArgs = args.args ?? {};
+        const parsed = parseCallArgs(args.args);
+        if (!parsed.ok) {
+          return {
+            success: false,
+            name: tool.name,
+            error: parsed.error,
+            parameters: tool.parameters,
+            hint: 'Re-send "args" as a JSON-encoded string of an object matching the parameters schema above.',
+          };
+        }
+        const callArgs = parsed.value;
         try {
           const result = await tool.execute(callArgs);
           return {

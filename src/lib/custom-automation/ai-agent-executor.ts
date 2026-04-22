@@ -307,6 +307,81 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
   openai: 'gpt-4o',
 };
 
+/**
+ * Extract the first balanced JSON value (object or array) from a string.
+ * Handles the Gemini failure mode where two tool-call argument payloads get
+ * concatenated into the same string (e.g. `{"a":1}{"b":2}`), returning the
+ * first one so we can at least execute one tool instead of throwing.
+ */
+function extractFirstJsonValue(raw: string): string | null {
+  if (!raw) return null;
+  const trimmed = raw.trimStart();
+  if (!trimmed) return null;
+  const open = trimmed[0];
+  if (open !== '{' && open !== '[') return null;
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let inStr = false;
+  let escape = false;
+  for (let i = 0; i < trimmed.length; i++) {
+    const ch = trimmed[i];
+    if (inStr) {
+      if (escape) { escape = false; continue; }
+      if (ch === '\\') { escape = true; continue; }
+      if (ch === '"') { inStr = false; }
+      continue;
+    }
+    if (ch === '"') { inStr = true; continue; }
+    if (ch === open) depth++;
+    else if (ch === close) {
+      depth--;
+      if (depth === 0) return trimmed.slice(0, i + 1);
+    }
+  }
+  return null;
+}
+
+/**
+ * Lenient parse for the `arguments` field of a streamed tool_call.
+ *
+ * Strict JSON.parse first; if that fails, try to recover the first balanced
+ * JSON value (covers the `{...}{...}` concat case from Gemini's streaming).
+ *
+ * Always returns a sanitized JSON string so the caller can mutate the
+ * assistant message in history and avoid 400s on the next provider call.
+ */
+function safeParseToolArgs(raw: string | undefined | null): {
+  ok: boolean;
+  value: any;
+  sanitized: string;
+  error?: string;
+} {
+  if (raw === undefined || raw === null || String(raw).trim() === '') {
+    return { ok: true, value: {}, sanitized: '{}' };
+  }
+  const text = String(raw);
+  try {
+    const value = JSON.parse(text);
+    return { ok: true, value, sanitized: text };
+  } catch (err) {
+    const repaired = extractFirstJsonValue(text);
+    if (repaired) {
+      try {
+        const value = JSON.parse(repaired);
+        return { ok: true, value, sanitized: repaired };
+      } catch {
+        /* fall through */
+      }
+    }
+    return {
+      ok: false,
+      value: {},
+      sanitized: '{}',
+      error: (err as Error).message,
+    };
+  }
+}
+
 export class AIAgentExecutor {
   private client: OpenAI;
   private model: string;
@@ -480,7 +555,8 @@ export class AIAgentExecutor {
 
     let content = '';
     let reasoningContent = '';
-    const toolCallsAccum: Record<number, { id?: string; type: 'function'; function: { name?: string; arguments?: string } }> = {};
+    const toolCallsAccum: Record<string | number, { id?: string; type: 'function'; function: { name?: string; arguments?: string }; insertedAt: number }> = {};
+    let insertionCounter = 0;
     let finishReason: string | undefined;
     let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
     let streamingLogId: string | undefined;
@@ -533,9 +609,25 @@ export class AIAgentExecutor {
 
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) {
-          const idx = tc.index ?? 0;
+          // Gemini's OpenAI-compat layer often omits `index` on tool_call deltas.
+          // Falling back to `?? 0` collapses unrelated tool calls into the same
+          // slot and concatenates their `arguments` strings (e.g. `{...}{...}`),
+          // which then explodes in JSON.parse downstream.
+          // Use `tc.id` to disambiguate when available; only fall back to 0
+          // when there is truly nothing else.
+          let idx: number | string;
+          if (typeof tc.index === 'number') {
+            idx = tc.index;
+          } else if (tc.id) {
+            idx = `id:${tc.id}`;
+          } else {
+            // Reuse last seen slot if we have one with a name but no closing
+            // (continuation chunk); otherwise start a new one.
+            const keys = Object.keys(toolCallsAccum);
+            idx = keys.length > 0 ? keys[keys.length - 1] : 0;
+          }
           if (!toolCallsAccum[idx]) {
-            toolCallsAccum[idx] = { type: 'function', function: {} };
+            toolCallsAccum[idx] = { type: 'function', function: {}, insertedAt: insertionCounter++ };
           }
           if (tc.id) toolCallsAccum[idx].id = tc.id;
           if (tc.function?.name) toolCallsAccum[idx].function!.name = tc.function.name;
@@ -565,10 +657,8 @@ export class AIAgentExecutor {
       }
     }
 
-    const toolCallsArray = Object.keys(toolCallsAccum)
-      .map((k) => Number(k))
-      .sort((a, b) => a - b)
-      .map((idx) => toolCallsAccum[idx])
+    const toolCallsArray = Object.values(toolCallsAccum)
+      .sort((a, b) => a.insertedAt - b.insertedAt)
       .filter((tc) => tc.id && tc.function?.name);
 
     const message: any = {
@@ -931,32 +1021,69 @@ export class AIAgentExecutor {
         if (message.tool_calls && message.tool_calls.length > 0) {
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] Received ${message.tool_calls.length} tool_call(s) from ${provider}`);
 
-          let toolCalls: ToolCall[] = [];
+          // Parse each tool call with a lenient parser. Track which ones could
+          // not be recovered so we can answer them with an error tool message
+          // (and keep history valid for the next provider call).
+          const toolCalls: ToolCall[] = [];
+          const unparseable: Array<{ id: string; name: string; error: string }> = [];
 
-          try {
-            toolCalls = message.tool_calls.map((tc: any) => {
-              console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] Parsing tool call: ${tc.id} - ${tc.function.name}`);
-              return {
+          for (const tc of message.tool_calls) {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] Parsing tool call: ${tc.id} - ${tc.function.name}`);
+            const parsed = safeParseToolArgs(tc.function.arguments);
+
+            // CRITICAL: Mutate the assistant message in-place so the value
+            // stored in `messages` is always valid JSON. Otherwise providers
+            // like Gemini reject the next chat.completions.create with a 400
+            // (no body) because the prior assistant.tool_calls.arguments is
+            // not parseable JSON.
+            if (tc.function.arguments !== parsed.sanitized) {
+              tc.function.arguments = parsed.sanitized;
+            }
+
+            if (parsed.ok) {
+              toolCalls.push({
                 toolCallId: tc.id,
                 toolName: tc.function.name,
-                args: JSON.parse(tc.function.arguments),
-              };
-            });
-            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ Successfully parsed ${toolCalls.length} tool call(s)`);
-          } catch (parseError: any) {
-            console.error(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ❌ Error parsing tool calls:`, parseError);
+                args: parsed.value,
+              });
+            } else {
+              console.error(
+                `₍ᐢ•(ܫ)•ᐢ₎ [TOOL_PARSE] ❌ Unrecoverable arguments for ${tc.function.name} (${tc.id}): ${parsed.error}`
+              );
+              unparseable.push({
+                id: tc.id,
+                name: tc.function.name,
+                error: parsed.error || 'invalid JSON',
+              });
+            }
+          }
 
-            for (const tc of message.tool_calls) {
+          if (unparseable.length > 0) {
+            // Reply to the unparseable calls with an error tool message so the
+            // model can self-correct on the next iteration. The assistant
+            // message already has its arguments sanitized to "{}" above.
+            for (const bad of unparseable) {
               messages.push({
                 role: 'tool',
-                tool_call_id: tc.id,
-                name: tc.function.name,
-                content: `Error parsing tool call arguments: ${parseError.message}`,
+                tool_call_id: bad.id,
+                name: bad.name,
+                content: `Error parsing tool call arguments: ${bad.error}. The arguments string was not valid JSON. Re-issue the tool call with a single, well-formed JSON object.`,
               });
             }
 
-            continue;
+            // If NONE of the tool calls were parseable, skip executor work and
+            // let the next iteration retry. Otherwise, proceed to execute the
+            // ones that did parse — the unparseable ones already have their
+            // tool message above.
+            if (toolCalls.length === 0) {
+              console.warn(
+                `₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] All ${unparseable.length} tool call(s) had invalid arguments; continuing to next iteration after sanitizing history.`
+              );
+              continue;
+            }
           }
+
+          console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOLS] ✅ Successfully parsed ${toolCalls.length} tool call(s)${unparseable.length > 0 ? ` (${unparseable.length} unparseable, answered with error)` : ''}`);
 
           step.toolCalls = toolCalls;
 

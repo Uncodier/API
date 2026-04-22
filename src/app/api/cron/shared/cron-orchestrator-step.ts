@@ -116,23 +116,55 @@ export async function runOrchestratorStep(params: {
   let nudged = false;
   let createdPlan = false;
 
+  const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
+
   while (!isDone && turns < MAX_TURNS) {
     turns++;
-    result = await executeAssistantStep(
-      messages,
-      { id: instanceId, site_id, user_id, requirement_id: reqId },
-      {
-        use_sdk_tools: false,
-        provider: 'openai',
-        instance_id: instanceId,
-        site_id,
-        user_id,
-        system_prompt: orchestratorPrompt,
-        custom_tools: fullTools,
-        // Orchestrator drives the sandbox code assistant; mirror the code-model override.
-        ai_model: process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools',
-      },
-    );
+    try {
+      result = await executeAssistantStep(
+        messages,
+        { id: instanceId, site_id, user_id, requirement_id: reqId },
+        {
+          use_sdk_tools: false,
+          provider: 'openai',
+          instance_id: instanceId,
+          site_id,
+          user_id,
+          system_prompt: orchestratorPrompt,
+          custom_tools: fullTools,
+          // Orchestrator drives the sandbox code assistant; mirror the code-model override.
+          ai_model: orchestratorModel,
+        },
+      );
+    } catch (rawErr: any) {
+      // Re-throw a *plain* Error with a serializable message so Vercel Workflow
+      // can record it inline. Otherwise the OpenAI SDK's APIError gets stored
+      // as a RemoteRef and the workflow's `run_failed` event validator rejects
+      // it with `run.error: expected object, received undefined`, leaving the
+      // run in a half-broken state with no useful diagnostic.
+      const status = rawErr?.status ?? rawErr?.response?.status;
+      const body = rawErr?.error || rawErr?.response?.data;
+      const summary = [
+        `[CronStep] Orchestrator failed at turn ${turns}`,
+        `provider=openai-compat`,
+        `model=${orchestratorModel}`,
+        `tools=${fullTools.length}`,
+        `messages=${messages.length}`,
+        status !== undefined ? `status=${status}` : null,
+        rawErr?.code ? `code=${rawErr.code}` : null,
+        rawErr?.request_id ? `request_id=${rawErr.request_id}` : null,
+        rawErr?.message ? `message=${rawErr.message}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      console.error(summary, body ? { body } : '');
+      const flat = new Error(summary);
+      (flat as any).cause = rawErr?.message || String(rawErr);
+      (flat as any).status = status;
+      (flat as any).provider = 'openai-compat';
+      (flat as any).model = orchestratorModel;
+      throw flat;
+    }
     messages = result.messages;
     isDone = result.isDone;
 
