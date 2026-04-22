@@ -43,6 +43,25 @@ import {
 import { sanitizeMessagesForGemini } from './gemini-message-sanitize';
 
 /**
+ * Detects whether a string looks like a raw base64 encoded raster image (PNG, JPEG, GIF, WEBP)
+ * by checking the leading magic bytes in base64 form. Purely length-based heuristics cause
+ * large file contents from tools like `sandbox_read_file` to be misclassified as screenshots,
+ * corrupting the conversation (`[Image captured...]` placeholder) and producing Azure vision
+ * errors (`invalid_image_format` / `dropped from history`).
+ */
+function isLikelyBase64ImagePayload(value: string): boolean {
+  if (!value || value.length < 64) return false;
+  const head = value.slice(0, 24);
+  if (!/^[A-Za-z0-9+/=_-]+$/.test(head)) return false;
+  return (
+    head.startsWith('/9j/') ||        // JPEG (FFD8FF)
+    head.startsWith('iVBORw0KGgo') || // PNG  (89 50 4E 47 0D 0A 1A 0A)
+    head.startsWith('R0lGOD') ||      // GIF87a / GIF89a
+    head.startsWith('UklGR')          // RIFF / WEBP
+  );
+}
+
+/**
  * Helper function to filter base64 images in messages, keeping only the latest ones up to specified limit.
  * This prevents the context window from growing infinitely with accumulated screenshots.
  * Based on Scrapybara's implementation pattern.
@@ -543,7 +562,7 @@ export class AIAgentExecutor {
     }
 
     if (typeof result === 'string') {
-      if (result.includes('base64') || result.length > 10000) {
+      if (result.startsWith('data:image') || isLikelyBase64ImagePayload(result)) {
         const imageData = result.startsWith('data:image') ? result : `data:image/png;base64,${result}`;
         return {
           cleanedResult: 'Screenshot captured successfully.',
@@ -558,13 +577,19 @@ export class AIAgentExecutor {
 
       for (const [key, value] of Object.entries(result)) {
         if (key === 'base64_image' || key === 'base64Image' || key === 'screenshot' || key === 'image') {
-          if (typeof value === 'string' && value.length > 1000) {
+          if (
+            typeof value === 'string' &&
+            (value.startsWith('data:image') || isLikelyBase64ImagePayload(value))
+          ) {
             base64Image = value.startsWith('data:image') ? value : `data:image/png;base64,${value}`;
             cleaned[key] = '[Image captured - will be shown separately]';
           } else {
             cleaned[key] = value;
           }
-        } else if (typeof value === 'string' && (value.startsWith('data:image') || value.startsWith('/9j/') || value.length > 10000)) {
+        } else if (
+          typeof value === 'string' &&
+          (value.startsWith('data:image') || isLikelyBase64ImagePayload(value))
+        ) {
           base64Image = value.startsWith('data:image') ? value : `data:image/png;base64,${value}`;
           cleaned[key] = '[Image captured - will be shown separately]';
         } else if (typeof value === 'object' && value !== null) {
