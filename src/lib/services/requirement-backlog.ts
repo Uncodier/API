@@ -4,7 +4,6 @@
  * come from the flow registry (`requirement-flows.ts`).
  */
 
-import { randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
   classifyRequirementType,
@@ -62,10 +61,30 @@ function computeRatio(items: BacklogItem[]): number {
   return Math.round((done / items.length) * 1000) / 1000;
 }
 
+// Web Crypto UUID generator. Avoids importing the Node `crypto` module so this
+// file can be safely bundled inside workflow functions (useworkflow.dev), which
+// reject Node.js modules. `globalThis.crypto.randomUUID` is available in Node
+// 19+ and in worker runtimes; we fall back to an RFC4122 v4 polyfill for
+// environments where it's missing.
+function generateUUID(): string {
+  const g: any = (globalThis as any);
+  if (g?.crypto?.randomUUID) return g.crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (g?.crypto?.getRandomValues) {
+    g.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kind: BacklogItemKind; phase_id: string; acceptance: string[] }): BacklogItem {
   const now = new Date().toISOString();
   return {
-    id: partial.id || randomUUID(),
+    id: partial.id || generateUUID(),
     title: partial.title.trim(),
     kind: partial.kind,
     phase_id: partial.phase_id,
