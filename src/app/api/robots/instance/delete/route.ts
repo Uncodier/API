@@ -8,7 +8,8 @@ import { deleteRemoteInstanceChildren } from '@/lib/services/robot-instance/dele
 // Stop instance in Scrapybara and delete the instance record from database
 // ------------------------------------------------------------------------------------
 
-export const maxDuration = 120; // batched cleanup of logs/assets can take longer than a single DB statement
+/** Batched cleanup (especially instance_logs) can run many minutes on large instances */
+export const maxDuration = 600;
 
 const DeleteInstanceSchema = z.object({
   instance_id: z.string().uuid('instance_id must be a valid UUID'),
@@ -61,6 +62,8 @@ export async function POST(request: NextRequest) {
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Instance is uninstantiated or has no provider_instance_id, skipping Scrapybara stop`);
     }
 
+    console.log('[instance/delete] marking plans / cleaning dependents…', { instance_id });
+
     // 3) Mark in-progress/paused plans as failed before deletion -------------------
     const { data: affectedPlans } = await supabaseAdmin
       .from('instance_plans')
@@ -90,15 +93,43 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    console.log('[instance/delete] dependents removed, deleting remote_instances row…', { instance_id });
+
     // 5) Delete instance record from DB ---------------------------------------------
-    const { error: deleteError } = await supabaseAdmin
+    // PostgREST returns no error when zero rows match — must verify a row was removed.
+    const { data: deletedRows, error: deleteError } = await supabaseAdmin
       .from('remote_instances')
       .delete()
-      .eq('id', instance_id);
+      .eq('id', instance_id)
+      .select('id');
 
     if (deleteError) {
       console.error('Error deleting instance from database:', deleteError);
       return NextResponse.json({ error: 'Failed to delete instance from database' }, { status: 500 });
+    }
+
+    if (!deletedRows?.length) {
+      const { data: stillThere } = await supabaseAdmin
+        .from('remote_instances')
+        .select('id')
+        .eq('id', instance_id)
+        .maybeSingle();
+
+      if (stillThere) {
+        console.error('Instance delete no-op: row still present after DELETE', { instance_id });
+        return NextResponse.json(
+          {
+            error:
+              'Could not remove the instance row (delete matched no rows but record still exists). Check DB triggers, RLS, or conflicting writes.',
+          },
+          { status: 500 },
+        );
+      }
+
+      return NextResponse.json(
+        { instance_id, message: 'Instance was already deleted', idempotent: true },
+        { status: 200 },
+      );
     }
 
     return NextResponse.json(
