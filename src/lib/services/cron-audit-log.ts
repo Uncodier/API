@@ -60,6 +60,18 @@ export const CronInfraEvent = {
   PLAN_EXECUTION_HALTED: 'cron_infra_plan_execution_halted',
   /** requirement_status.preview_url persisted (checkpoint patch, sync, or gate) */
   PREVIEW_URL_RECORDED: 'cron_infra_preview_url_recorded',
+  /** Vercel webhook: deployment.created received (build queued) */
+  VERCEL_WEBHOOK_DEPLOYMENT_CREATED: 'cron_infra_vercel_webhook_deployment_created',
+  /** Vercel webhook: deployment.building / in-progress build */
+  VERCEL_WEBHOOK_DEPLOYMENT_BUILDING: 'cron_infra_vercel_webhook_deployment_building',
+  /** Vercel webhook: deployment.ready / deployment.succeeded (preview URL live) */
+  VERCEL_WEBHOOK_DEPLOYMENT_READY: 'cron_infra_vercel_webhook_deployment_ready',
+  /** Vercel webhook: deployment.error (build or runtime failure reported by Vercel) */
+  VERCEL_WEBHOOK_DEPLOYMENT_ERROR: 'cron_infra_vercel_webhook_deployment_error',
+  /** Vercel webhook: deployment.canceled */
+  VERCEL_WEBHOOK_DEPLOYMENT_CANCELED: 'cron_infra_vercel_webhook_deployment_canceled',
+  /** Vercel webhook: deployment.promoted (e.g. to production) */
+  VERCEL_WEBHOOK_DEPLOYMENT_PROMOTED: 'cron_infra_vercel_webhook_deployment_promoted',
 } as const;
 
 /**
