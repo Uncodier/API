@@ -9,6 +9,7 @@ import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtoco
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { inlineExecutePlanStep, runSmokeTest } from './inline-step-executor';
+import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { checkpointPlanIteration } from './cron-commit-helpers';
 import { runOrchestratorStep } from './cron-orchestrator-step';
 import {
@@ -338,7 +339,7 @@ export async function executeStepsPhaseStep(params: {
           { id: planId, steps: workingPlanSteps, title },
           workingStep,
           sandbox,
-          { gitRepoKind: git_repo_kind },
+          { gitRepoKind: git_repo_kind, flow: classifyRequirementType(requirementType) },
         );
 
         if (stepResult.ok) {

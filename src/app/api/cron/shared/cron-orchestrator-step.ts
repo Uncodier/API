@@ -8,6 +8,7 @@ import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-ex
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
 import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
+import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 /**
@@ -40,6 +41,28 @@ import type { CronAuditContext } from '@/lib/services/cron-audit-log';
  * `inline-step-executor.ts`), so every capability is preserved at execution
  * time — the router just avoids flooding the context window.
  */
+function collectToolCallSnapshots(messages: any[]): AssistantToolCallSnapshot[] {
+  const out: AssistantToolCallSnapshot[] = [];
+  for (const m of messages) {
+    const toolCalls = (m as any)?.tool_calls;
+    if (!Array.isArray(toolCalls)) continue;
+    for (const tc of toolCalls) {
+      const name = tc?.function?.name;
+      if (typeof name !== 'string') continue;
+      let command: string | undefined;
+      if (name === 'sandbox_run_command') {
+        try {
+          const args = JSON.parse(tc.function.arguments || '{}');
+          if (typeof args?.command === 'string') command = args.command;
+          else if (Array.isArray(args?.args)) command = [args?.cmd, ...args.args].filter(Boolean).join(' ');
+        } catch { /* ignore */ }
+      }
+      out.push({ name, command });
+    }
+  }
+  return out;
+}
+
 function getCronOrchestratorTools(
   sandboxTools: any[],
   siteId: string,
@@ -172,6 +195,21 @@ export async function runOrchestratorStep(params: {
     messages = result.messages;
     isDone = result.isDone;
 
+    // Loop detector: planning loop. Inject STOP feedback and freeze the
+    // remaining budget so the same drift does not consume more turns.
+    const callSnapshots = collectToolCallSnapshots(messages);
+    const planningVerdict = detectPlanningLoop(callSnapshots);
+    if (planningVerdict.triggered && !isDone) {
+      console.warn(
+        `[CronStep] ${planningVerdict.reason} → injecting STOP feedback and freezing remaining turns.`,
+      );
+      messages = [
+        ...messages,
+        { role: 'user', content: planningVerdict.feedback ?? 'STOP planning loop.' },
+      ];
+      isDone = true;
+    }
+
     // Track whether the orchestrator ever invoked `instance_plan action="create"`.
     // We detect it from assistant tool_calls rather than results so we don't
     // depend on the executor's internal shape.
@@ -204,13 +242,14 @@ export async function runOrchestratorStep(params: {
         {
           role: 'user',
           content: [
-            'REMINDER (system): Your deliverable is an `instance_plan` for this requirement, not more exploration.',
+            'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
             'Stop running additional sandbox_* commands unless you are blocked.',
             'IMMEDIATE NEXT ACTIONS:',
-            '  1. If you have not already: call `instance_plan` with `action="list"` and the provided instance_id to avoid duplicates.',
-            '  2. If no active plan exists, call `instance_plan` with `action="create"` NOW. Each step MUST set `skill` (preferred, e.g. `makinari-rol-frontend`, `makinari-rol-qa`, `makinari-obj-template-selection`) OR `role` as a fallback. `title` and `instructions` are required.',
-            '  3. After creating the plan, call `requirement_status` with `status="in-progress"` so the workflow can proceed.',
-            'Do not stop with an assistant text message until the plan is created.',
+            '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items first.',
+            '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
+            '  3. Call `instance_plan` with `action="create"`. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
+            '  4. Call `requirement_status` with `status="in-progress"`.',
+            'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
           ].join('\n'),
         },
       ];

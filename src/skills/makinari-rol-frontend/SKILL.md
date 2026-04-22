@@ -89,6 +89,29 @@ Copy/paste this and verify every box before marking the step completed:
 - The system auto-commits and pushes. Do NOT run `git commit` or `git push` manually.
 - The permanent preview URL is extracted from the GitHub Deployments API after push. Do NOT guess URLs like `https://<project>-git-<branch>-<team>.vercel.app`.
 
+### 9. Component kit contract (Phase 6)
+
+The app/site gate runs `uses_component_kit` over the diff. It rejects raw
+`<button>`, `<input>`, `<select>`, `<textarea>`, `<dialog>` and
+`<form>` *whenever* an equivalent `@/components/ui/*` is present in the
+repo. Required pattern:
+
+```tsx
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+// ...
+<Button variant="outline" onClick={...}>Save</Button>
+```
+
+If `@/components/ui/<name>` does NOT exist, run `npx shadcn add <name>`
+(or copy from a sibling app baseline) BEFORE writing the page. Do not
+inline raw HTML primitives "for now" — the gate will catch it.
+
+Allowed exceptions (no rejection): semantic landmarks (`<header>`,
+`<main>`, `<section>`, `<footer>`, `<nav>`), `<a>` for external links,
+and `<img>` only when wrapping a `next/image` is impossible. Document the
+exception in `progress.md`.
+
 ### 8. Plan reporting
 - Use `instance_plan` with `action="execute_step"`:
   - `step_status="completed"` + `step_output` summarizing routes changed and test-ids added.

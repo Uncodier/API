@@ -12,10 +12,22 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration', 'pl
 
 ## Execution Rules
 
-### 1. Read the inputs before planning
-- `requirements action="read"` — load the full `instructions`. Confirm the Definition of Ready (section 10) checks.
-- Read the `## Investigation` section (or `INVESTIGATION.md`) left by `makinari-fase-investigacion`.
-- `instance_plan action="list"` — do NOT create a new plan if an active one exists. Continue its pending steps instead.
+### 0. Read the backlog first (WIP=1)
+`requirement_backlog action="list"` is the **first** tool call. The plan you
+build this cycle MAY ONLY work on **one pending item** (WIP=1) from the
+**current phase**. If the backlog shows another item already `in_progress`,
+resume it instead of creating a new plan step. Plans that touch `done` items
+or items from future phases are rejected by the coordinator.
+
+### 1. Read the remaining inputs
+- `requirements action="read"` — load the immutable spec (`requirement.spec.md`
+  in the repo, or the `instructions` field in DB). Do NOT rewrite the spec.
+- Read `progress.md` and the last entries of `DECISIONS.md` for assumptions
+  already accepted.
+- Read the `## Investigation` section (or `INVESTIGATION.md`) left by
+  `makinari-fase-investigacion`.
+- `instance_plan action="list"` — do NOT create a new plan if an active one
+  exists. Continue its pending steps instead.
 
 ### 2. Plan rubric — "is this a good plan?"
 Before calling `instance_plan action="create"`, verify:

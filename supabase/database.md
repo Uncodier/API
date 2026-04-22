@@ -663,6 +663,26 @@ CREATE TABLE public.requirements (
   CONSTRAINT requirements_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT requirements_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
 );
+
+-- Harness engineering (Phase 1-9) — runtime state persisted in `metadata jsonb`.
+--
+-- metadata.backlog: {
+--   schema_version: 1,
+--   items: [{
+--     id, title, kind, phase_id, acceptance[], touches[], status, attempts,
+--     assumptions[], scope_level: 'full'|'mvp'|'minimal', depends_on[],
+--     evidence: { build, tests, runtime, scenarios, judge_verdict, ... },
+--     created_at, updated_at
+--   }],
+--   current_phase_id, completion_ratio, cycles_spent_total
+-- }
+-- metadata.auth_provider: 'supabase' | 'auth0' (Phase 2c — per-tenant auth).
+-- metadata.platform_key_id: uuid of the test-only Platform API key (Phase 2b).
+--
+-- requirement_status.status extended with 'needs_review' by
+-- src/scripts/alter_requirement_status_needs_review.sql (Phase 9) — emitted by
+-- the self-heal policy when an item exhausts its attempts without Judge approval.
+
 CREATE TABLE public.sale_orders (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
   sale_id uuid NOT NULL,

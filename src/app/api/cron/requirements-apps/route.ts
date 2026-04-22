@@ -33,11 +33,15 @@ export async function GET(req: Request) {
 
   try {
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    // Flow-agnostic: the cron picks any requirement kind (app/site/doc/slides/
+    // contract/automation/task/makinari). The orchestrator resolves the flow
+    // from `requirement.type` via `requirement-flow-engine.ts` and drives the
+    // correct phases/gates. Legacy `requirements-automations` cron remains for
+    // back-compat and will be deprecated separately.
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
       .in('status', ['backlog', 'in-progress'])
-      .neq('type', 'automation')
       .or(`created_at.gte.${oneMonthAgo},updated_at.gte.${oneMonthAgo}`)
       .order('updated_at', { ascending: false })
       .limit(1);

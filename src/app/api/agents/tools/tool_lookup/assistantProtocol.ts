@@ -341,6 +341,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   // plan + requirement surface — the contract between agents and the workflow
   'instance_plan',
   'requirement_status',
+  'requirement_backlog',
   'requirements',
 ]);
 

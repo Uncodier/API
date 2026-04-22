@@ -74,9 +74,71 @@ Pick Generic when the requirement is full product development, not a packaged Vi
 - **Produces**: `BASE: ...` bullet appended to `requirement.instructions`, working tree aligned to the chosen branch.
 - **Consumes**: `requirement.instructions` section 8 (Base Hint) and overall type. No repo mutations beyond `git checkout`.
 
+## Standard library per requirement kind (Phase 6)
+
+| Kind                | Standard library                                                                 | Bootstrap when missing |
+| ------------------- | -------------------------------------------------------------------------------- | ---------------------- |
+| `app` / `site`      | ShadCN + Tailwind + Radix + lucide-react (`@radix-ui/*`, `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react`) | `npx shadcn init` (use existing `components.json` if present); copy `@/components/ui/{button,input,select,dialog,form,table}` |
+| `doc` / `contract`  | MDX + remark (`@mdx-js/loader`, `@mdx-js/mdx`, `remark-parse`, `unified`)        | Already present in this repo's deps for the docs site; for generated apps, install `@mdx-js/loader` + `remark-parse` |
+| `presentation`      | reveal.js (or spectacle — pick one and document in `requirement.spec.md`)        | `npx --yes reveal-md@latest` smoke test; `npm i reveal.js` for a custom build |
+| `automation` / `task` | No UI kit. Produce artefacts under `artifacts/` / `reports/` / `outputs/` and a `run.sh` entrypoint | `mkdir -p artifacts && touch run.sh && chmod +x run.sh` |
+
+The matching gate (in `src/app/api/cron/shared/gates/`) probes the required
+deliverables for each kind. Skip the standard library and the gate fails
+immediately — there is no "raw HTML" fallback for apps.
+
+## Uncodie Platform default (capability gateway)
+
+Before provisioning any third-party service (Stripe, Resend, Twilio, Auth0,
+ajeno Supabase, etc.), check whether the capability is already covered by the
+Uncodie Platform SDK. The SDK lives under `src/lib/uncodie/` in the generated
+app and consumes `/api/platform/*` from the main Uncodie API using a
+test-only bearer key baked into `UNCODIE_API_KEY` + `UNCODIE_API_BASE`.
+
+Currently exposed: `email.send` (test-only), `leads.read|write`,
+`notifications.create`, `tracking.event.write`, `agents.invoke` and
+`db.migrate`. The SDK template lives at
+`src/templates/uncodie-sdk/*.ts` in the Uncodie API repo — copy that tree
+into `src/lib/uncodie/` inside the generated app when the base branch does
+not already ship it.
+
+If a capability is genuinely missing, do NOT work around it with a raw
+third-party SDK; instead add a backlog item `kind='integration'` via
+`requirement_backlog action='upsert'` so the Producer can extend the
+platform properly.
+
+## Apps Supabase helpers (DB + Auth per tenant)
+
+When the requirement ships an app/site that stores data or authenticates
+users, copy the two Supabase helpers into the generated app:
+
+```ts
+// src/lib/supabase.ts (browser + server components)
+export const db = createClient(
+  process.env.NEXT_PUBLIC_APPS_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY!,
+  { db: { schema: process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA! } }
+);
+
+// src/lib/supabase-server.ts (route handlers, uses tenant JWT)
+export const dbServer = createClient(
+  process.env.NEXT_PUBLIC_APPS_SUPABASE_URL!,
+  process.env.APPS_TENANT_JWT!,
+  { db: { schema: process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA! } }
+);
+```
+
+The sandbox injects `APPS_SUPABASE_*` / `NEXT_PUBLIC_APPS_*` envs at runtime.
+Apply schema changes only through `/api/platform/db/migrations` (scope
+`db.migrate`) — never hit Supabase directly with the service key from inside
+the generated app.
+
 ## Anti-patterns
 
 - Skipping this step and building on the default branch by accident.
 - Mixing Vitrina templates with generic SaaS in the same requirement without an explicit client decision.
 - Creating `app/` or `apps/` at repo root. Routes live in `src/app/` only.
 - Forgetting to append `BASE: ...` — downstream steps lose the decision trail.
+- Installing `resend`, `twilio`, `stripe`, `@supabase/supabase-js` (with
+  foreign URL), or `auth0` packages. The Uncodie Platform SDK + Apps Supabase
+  cover the happy path; third parties require Producer approval.

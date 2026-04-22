@@ -12,8 +12,9 @@ import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT } from './step-git-prompts';
-import { runBuildAndOriginGate } from './step-git-gate';
+import { runGateForFlow } from './gates';
 import type { GitRepoKind } from './cron-commit-helpers';
+import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
@@ -22,6 +23,8 @@ import {
   formatIterationSignals,
   type StepIterationSignals,
 } from './step-iteration-signals';
+import { runArchetypePostGate, extractBacklogItemId } from './step-archetype-postgate';
+import { detectActionLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -36,6 +39,28 @@ const ROLE_TO_SKILL: Record<string, string> = {
   'validate': 'makinari-fase-validacion',
   'report': 'makinari-fase-reporteado',
 };
+
+function collectStepToolCallSnapshots(messages: any[]): AssistantToolCallSnapshot[] {
+  const out: AssistantToolCallSnapshot[] = [];
+  for (const m of messages) {
+    const toolCalls = (m as any)?.tool_calls;
+    if (!Array.isArray(toolCalls)) continue;
+    for (const tc of toolCalls) {
+      const name = tc?.function?.name;
+      if (typeof name !== 'string') continue;
+      let command: string | undefined;
+      if (name === 'sandbox_run_command') {
+        try {
+          const args = JSON.parse(tc.function.arguments || '{}');
+          if (typeof args?.command === 'string') command = args.command;
+          else if (Array.isArray(args?.args)) command = [args?.cmd, ...args.args].filter(Boolean).join(' ');
+        } catch { /* ignore */ }
+      }
+      out.push({ name, command });
+    }
+  }
+  return out;
+}
 
 /**
  * Infer the role from step title/instructions when the orchestrator didn't set one.
@@ -133,7 +158,7 @@ export async function inlineExecutePlanStep(
   plan: any,
   step: any,
   sandbox: Sandbox,
-  execOpts?: { gitRepoKind?: GitRepoKind },
+  execOpts?: { gitRepoKind?: GitRepoKind; flow?: RequirementKind },
 ): Promise<InlineExecutePlanStepResult> {
   const { instance_id, site_id, user_id } = context.executionOptions;
   const requirementId = context.instance?.requirement_id || '';
@@ -249,6 +274,22 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
     while (totalAttempts < HARD_CAP_ATTEMPTS) {
       totalAttempts++;
       if (lastSignals) {
+        const recentCalls = collectStepToolCallSnapshots(currentMessages).slice(-12);
+        const action = detectActionLoop(recentCalls);
+        if (action.triggered) {
+          console.warn(
+            `[CronStep] Step ${step.order} action loop detected (${action.reason}). Skipping retry → falling back to gate failure for self-heal.`,
+          );
+          await logCronInfrastructureEvent(audit, {
+            event: CronInfraEvent.STEP_STATUS,
+            level: 'warn',
+            message: `Action loop on step ${step.order}: ${action.reason}`,
+            details: { step_id: step.id, metrics: action.metrics },
+          });
+          return { ok: false, gateError: action.reason ?? 'Action loop detected' };
+        }
+      }
+      if (lastSignals) {
         currentMessages = [
           ...currentMessages,
           { role: 'user', content: buildGateRetryUserMessage(lastSignals) },
@@ -290,31 +331,55 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       }
 
       const planTitle = plan.title || step.title || 'plan';
-      const gate = await runBuildAndOriginGate({
+      const flow: RequirementKind = execOpts?.flow ?? 'app';
+      const gate = await runGateForFlow({
         sandbox,
-        planTitle,
+        workDir: SandboxService.WORK_DIR,
         requirementId,
-        stepOrder: step.order,
-        stepPrompt: systemPromptThisRound,
-        stepContext: {
-          title: step.title,
-          instructions: step.instructions,
-          expected_output: step.expected_output,
-          brand_context: (plan as any)?.brand_context,
-        },
-        currentMessages,
-        context,
-        fullTools,
-        lastResult,
+        flow,
         audit,
-        gitRepoKind: execOpts?.gitRepoKind,
+        appContext: {
+          planTitle,
+          stepOrder: step.order,
+          stepPrompt: systemPromptThisRound,
+          stepContext: {
+            title: step.title,
+            instructions: step.instructions,
+            expected_output: step.expected_output,
+            brand_context: (plan as any)?.brand_context,
+          },
+          currentMessages,
+          assistantContext: context,
+          fullTools,
+          lastResult,
+          gitRepoKind: execOpts?.gitRepoKind,
+        },
       });
 
+      // Back-compat shape for the rest of the loop: the app/site gate
+      // populates `richSignals` + `vercelDeploy` + `lastResult`; light gates
+      // only populate `signals[]`. Fall back to empty objects so downstream
+      // code that reads `gate.signals.*` keeps working.
+      const rich = gate.richSignals ?? {};
       if (gate.ok) {
-        lastResult = gate.lastResult;
+        lastResult = gate.lastResult ?? lastResult;
         const checkedAt = new Date().toISOString();
         const vd = gate.vercelDeploy;
-        console.log(`[CronStep] Build + runtime + origin + deploy OK after step ${step.order} (attempt ${totalAttempts})`);
+        console.log(`[CronStep] Gate OK for flow "${flow}" after step ${step.order} (attempt ${totalAttempts})`);
+
+        const backlogItemId = extractBacklogItemId(step);
+        if (backlogItemId) {
+          await runArchetypePostGate({
+            sandbox,
+            requirementId,
+            backlogItemId,
+            stepId: step.id,
+            signals: rich,
+            capturedAt: checkedAt,
+            audit,
+          });
+        }
+
         await updateInstancePlanCore({
           plan_id: plan.id,
           instance_id,
@@ -348,7 +413,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       }
 
       lastGateError = gate.error || 'Step completion gate failed';
-      const categories = deriveCategoriesFailed(gate.signals);
+      const categories = deriveCategoriesFailed(rich);
       const bucket = deriveRetryBucket(categories);
       used[bucket]++;
       const nextSignals: StepIterationSignals = {
@@ -360,14 +425,14 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
           title: step.title,
           expected_output: step.expected_output,
         },
-        build: gate.signals.build,
-        runtime: gate.signals.runtime,
-        api: gate.signals.api,
-        console: gate.signals.console,
-        visual: gate.signals.visual,
-        scenarios: gate.signals.scenarios,
-        origin: gate.signals.origin,
-        deploy: gate.signals.deploy,
+        build: rich.build,
+        runtime: rich.runtime,
+        api: rich.api,
+        console: rich.console,
+        visual: rich.visual,
+        scenarios: rich.scenarios,
+        origin: rich.origin,
+        deploy: rich.deploy,
         categories_failed: categories,
         top_level_error: lastGateError,
       };

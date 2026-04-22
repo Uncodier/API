@@ -12,6 +12,10 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration']
 
 This skill is the **source of truth** for the `test_results.json` shape. `makinari-rol-devops`, `makinari-test-agent`, and the automated gate all read the same shape defined here.
 
+## Status: Consumer-only (deprecated as Judge)
+
+Starting with the harness refactor, `makinari-fase-validacion` is a **Consumer** skill: it produces `test_results.json` and pushes evidence (build / runtime / scenarios) to the runner. It **no longer decides** if a backlog item is `done`. That decision belongs to `makinari-rol-judge` (and per-flow `makinari-rol-judge-app/-doc/-slides/-contract/-backend/-task`). Do not write `status: 'done'` from this skill; only write to evidence.
+
 ## Execution Rules
 
 ### 1. Validate the frontend (develop / apps)

@@ -1,0 +1,190 @@
+/**
+ * Seed `requirements.metadata.backlog` for legacy in-progress requirements
+ * that predate the Flow + Backlog refactor (Phase 2).
+ *
+ * Idempotent:
+ *   - Skips requirements that already carry `metadata.backlog` with items.
+ *   - Parses `## 9. Execution Plan` checkbox list from `requirements.instructions`
+ *     (preferred) and converts each `- [ ] foo` / `- [x] foo` line into a
+ *     `BacklogItem`.
+ *   - Heuristic fallback: derive items from lines matching patterns like
+ *     "Build <X>", "Implement <X>", "Create <X>".
+ *
+ * Usage:
+ *   $ pnpm tsx src/scripts/seed_backlog_from_instructions.ts
+ *
+ * Flags:
+ *   --dry-run      Print what would change without persisting.
+ *   --limit N      Process at most N requirements (useful for canary).
+ *   --req <id>     Seed a single requirement by id.
+ */
+
+import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { classifyRequirementType, getFlow } from '@/lib/services/requirement-flows';
+import { upsertBacklogItem } from '@/lib/services/requirement-backlog';
+import type { BacklogItemKind } from '@/lib/services/requirement-backlog-types';
+
+interface Args {
+  dryRun: boolean;
+  limit?: number;
+  reqId?: string;
+}
+
+function parseArgs(argv: string[]): Args {
+  const args: Args = { dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--dry-run') args.dryRun = true;
+    else if (a === '--limit') args.limit = Number(argv[++i] || '0') || undefined;
+    else if (a === '--req') args.reqId = argv[++i];
+  }
+  return args;
+}
+
+interface RawItem {
+  title: string;
+  done: boolean;
+}
+
+function parseExecutionPlan(instructions: string): RawItem[] {
+  const plan = extractSection(instructions, /^##\s+9\.\s*Execution\s*Plan/mi);
+  if (!plan) return [];
+  const items: RawItem[] = [];
+  for (const raw of plan.split('\n')) {
+    const m = raw.match(/^\s*-\s+\[( |x|X)\]\s+(.+?)\s*$/);
+    if (!m) continue;
+    const done = m[1].toLowerCase() === 'x';
+    const title = m[2].trim();
+    if (title) items.push({ title, done });
+  }
+  return items;
+}
+
+function extractSection(markdown: string, headingRe: RegExp): string | null {
+  const lines = markdown.split('\n');
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (headingRe.test(lines[i])) { start = i; break; }
+  }
+  if (start < 0) return null;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^##\s+/.test(lines[i])) { end = i; break; }
+  }
+  return lines.slice(start + 1, end).join('\n');
+}
+
+function heuristicItems(instructions: string): RawItem[] {
+  const items: RawItem[] = [];
+  const seen = new Set<string>();
+  for (const line of instructions.split('\n')) {
+    const m = line.match(/^\s*(?:-|\d+\.)\s+(?:Build|Implement|Create|Add|Design)\s+(.{5,120})\.?$/i);
+    if (!m) continue;
+    const title = m[1].trim();
+    const key = title.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push({ title, done: false });
+  }
+  return items.slice(0, 10);
+}
+
+function inferKind(title: string, flowKinds: BacklogItemKind[]): BacklogItemKind {
+  const t = title.toLowerCase();
+  if (flowKinds.includes('page') && /page|route|screen/.test(t)) return 'page';
+  if (flowKinds.includes('component') && /component|card|button|modal/.test(t)) return 'component';
+  if (flowKinds.includes('crud') && /(crud|create|edit|delete|update).*(record|row|entity)/.test(t)) return 'crud';
+  if (flowKinds.includes('api') && /api|endpoint|route\.ts/.test(t)) return 'api';
+  if (flowKinds.includes('auth') && /auth|login|sign[- ]?in|signup/.test(t)) return 'auth';
+  if (flowKinds.includes('integration') && /integr|webhook|email|sms|whats|payment/.test(t)) return 'integration';
+  if (flowKinds.includes('section') && /section|chapter|page/.test(t)) return 'section';
+  if (flowKinds.includes('slide') && /slide|deck/.test(t)) return 'slide';
+  if (flowKinds.includes('clause') && /clause/.test(t)) return 'clause';
+  return flowKinds[0];
+}
+
+async function seedOne(reqId: string, dryRun: boolean): Promise<boolean> {
+  const { data: req } = await supabaseAdmin
+    .from('requirements')
+    .select('id, type, instructions, metadata, status')
+    .eq('id', reqId)
+    .maybeSingle();
+  if (!req) {
+    console.warn(`[seed] requirement ${reqId} not found`);
+    return false;
+  }
+  const meta = (req.metadata as Record<string, any> | null) ?? null;
+  if (meta?.backlog?.items && Array.isArray(meta.backlog.items) && meta.backlog.items.length > 0) {
+    console.log(`[seed] skip ${reqId} — backlog already present (${meta.backlog.items.length} items)`);
+    return false;
+  }
+  const kind = classifyRequirementType(req.type);
+  const flow = getFlow(kind);
+  const phaseId = flow.phases[0]?.id ?? 'default';
+  const flowKinds = flow.backlog_kinds;
+
+  const instructions = typeof req.instructions === 'string' ? req.instructions : '';
+  let raw = parseExecutionPlan(instructions);
+  let source: 'execution_plan' | 'heuristic' = 'execution_plan';
+  if (raw.length === 0) {
+    raw = heuristicItems(instructions);
+    source = 'heuristic';
+  }
+  if (raw.length === 0) {
+    console.warn(`[seed] ${reqId} — no items derivable (source=${source})`);
+    return false;
+  }
+
+  console.log(`[seed] ${reqId} kind=${kind} source=${source} items=${raw.length}${dryRun ? ' (dry-run)' : ''}`);
+  if (dryRun) {
+    for (const r of raw.slice(0, 5)) console.log(`    - ${r.done ? '[x]' : '[ ]'} ${r.title}`);
+    if (raw.length > 5) console.log(`    ... ${raw.length - 5} more`);
+    return true;
+  }
+
+  for (const r of raw) {
+    await upsertBacklogItem({
+      requirementId: reqId,
+      item: {
+        title: r.title,
+        kind: inferKind(r.title, flowKinds),
+        phase_id: phaseId,
+        acceptance: [`Delivers "${r.title}" as described in the instructions`],
+        scope_level: 'full',
+        status: r.done ? 'done' : 'pending',
+      },
+    });
+  }
+  return true;
+}
+
+async function main() {
+  const args = parseArgs(process.argv.slice(2));
+  if (args.reqId) {
+    await seedOne(args.reqId, args.dryRun);
+    return;
+  }
+  const { data: list } = await supabaseAdmin
+    .from('requirements')
+    .select('id')
+    .in('status', ['in-progress', 'backlog', 'pending'])
+    .order('updated_at', { ascending: false })
+    .limit(args.limit ?? 500);
+  const ids = (list ?? []).map((r) => r.id as string);
+  console.log(`[seed] scanning ${ids.length} requirement(s)`);
+  let seeded = 0;
+  for (const id of ids) {
+    try {
+      const ok = await seedOne(id, args.dryRun);
+      if (ok) seeded++;
+    } catch (e: unknown) {
+      console.error(`[seed] ${id} failed: ${e instanceof Error ? e.message : e}`);
+    }
+  }
+  console.log(`[seed] done — seeded ${seeded}/${ids.length}`);
+}
+
+main().catch((e: unknown) => {
+  console.error(e);
+  process.exit(1);
+});

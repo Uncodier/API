@@ -38,6 +38,8 @@ import type {
 } from './step-iteration-signals';
 
 export { MAX_PUSH_RECOVERY_TURNS } from './step-git-prompts';
+export { runGateForFlow } from './gates';
+export type { FlowGateInput, FlowGateResult, FlowGateSignal } from './gates';
 
 const VERCEL_LOG_AGENT_MAX = 6000;
 

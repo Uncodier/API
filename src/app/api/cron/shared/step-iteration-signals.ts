@@ -114,6 +114,45 @@ export type DeploySignal = {
   buildLogExcerpt?: string | null;
 };
 
+/**
+ * Evidence captured at the end of a Consumer turn, BEFORE the Critic runs.
+ * Cross-references three independent sources so that free-text claims by the
+ * agent cannot pass the Judge without matching tool-call traces:
+ *   - tool_calls: list of commands the agent actually ran in this turn.
+ *   - gate signals: typed build / runtime / scenario outcomes.
+ *   - commit: SHA + files changed in the turn (git diff).
+ */
+export type EvidenceSignal = {
+  schema_version: 1;
+  item_id?: string;
+  captured_at: string;
+  tool_calls: Array<{
+    name: string;
+    ok: boolean;
+    /** Tail of stdout/stderr or response body for matchers. */
+    output_tail?: string;
+  }>;
+  build?: BuildSignal;
+  runtime?: RuntimeSignal;
+  scenarios?: ScenarioSignal;
+  commit?: { sha?: string; files: string[] };
+};
+
+/**
+ * Coverage signal for the Producer / Coordinator: which backlog items were
+ * targeted, completed or regressed in this turn, and whether the requirement
+ * advanced a phase. Used by `loop-detectors` to decide if the cycle made
+ * meaningful progress (anti admin-loop guard).
+ */
+export type FeatureCoverageSignal = {
+  items_targeted: string[];
+  items_completed: string[];
+  items_regressed: string[];
+  phase_advanced: boolean;
+  /** Optional snapshot of `backlog.completion_ratio` after the turn. */
+  completion_ratio?: number;
+};
+
 export type StepIterationSignals = {
   attempt: number;
   max_attempts: number;

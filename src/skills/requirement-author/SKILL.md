@@ -208,6 +208,50 @@ Vitrina PDF — branch `feature/16ccdd2c-6636-4b38-a4fc-89ea2c9fe0cc`. Client wa
 - [x] Base Hint picked.
 ```
 
+## 12. Backlog canonical (source of truth for progress)
+
+Starting with the harness refactor, `## 9. Execution Plan` is a **read-only
+render** of `feature_list.json` / `requirements.metadata.backlog`. You do NOT
+track completion inside the requirement spec. Instead:
+
+- When the spec is created, emit a matching set of `BacklogItem`s via the
+  `requirement_backlog action="upsert"` tool. One item per deliverable, with
+  `title`, `kind`, `phase_id`, `acceptance[]` and optional `touches[]`.
+- The phase id must match the flow registry (`app`: base/investigate/build/qa/
+  validate/report; `doc`: outline/draft/review/report; etc.).
+- Keep acceptance observable — the Judge checks them 1:1 against
+  `evidence/<item_id>.json`. Free-text acceptance is rejected.
+- Section 9 of the spec is regenerated from the backlog; do not edit it by
+  hand. The spec itself is an **immutable contract** — only `## Revisions`
+  accepts new entries, and only when contract fields (6.x, 7) change.
+
+## 12b. Uncodie Platform default (no third-party SDKs by default)
+
+When the requirement needs email, WhatsApp, leads/CRM, notifications, agents,
+analytics or in-app billing, **assume the Uncodie Platform SDK
+(`/api/platform/*`)** unless the client explicitly asks for a third party.
+
+- Section 6.3 (External services) lists `uncodie-platform` plus the scopes the
+  generated app will use (e.g. `email.send.test-only`, `leads.read`,
+  `notifications.create`, `tracking.event.write`).
+- Section 7 (Acceptance) accepts platform calls as evidence (HTTP 2xx + audit
+  log entry) — the Critic does NOT require a real provider account.
+- If a capability is missing, file a backlog item `kind='integration'` so the
+  Producer extends the platform instead of forcing a one-off third-party
+  integration into the generated app.
+
+## 13. Auth provider (apps / sites only)
+
+When the requirement ships an app or site, set
+`requirements.metadata.auth_provider`:
+
+- `supabase` (default) — native Supabase Auth scoped to the tenant's schema.
+  The sandbox injects `APPS_TENANT_JWT` and a `custom_access_token_hook` adds
+  `tenant_id` to every issued JWT.
+- `auth0` — only when the requirement explicitly asks for SSO corporativo or
+  reuse of Uncodie users. Skill `makinari-obj-apps-supabase` documents the
+  Auth0 adapter.
+
 ## Anti-patterns
 
 - Writing a requirement without test-ids when a UI ships. QA will have to guess.
