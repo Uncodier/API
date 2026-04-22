@@ -154,18 +154,12 @@ fi`,
 
   if (removed.length > 0) {
     console.log(`[Cleanup] Removed ${removed.length} nested project(s): ${removed.join(', ')}`);
-  } else {
-    console.log('[Cleanup] No nested project directories found');
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.NESTED_DIRS_CLEANUP,
+      message: `Removed nested/misplaced dirs: ${removed.join(', ')}`,
+      details: { sandboxId: effectiveSandboxId, removed },
+    });
   }
-
-  await logCronInfrastructureEvent(audit, {
-    event: CronInfraEvent.NESTED_DIRS_CLEANUP,
-    message:
-      removed.length > 0
-        ? `Removed nested/misplaced dirs: ${removed.join(', ')}`
-        : 'No nested project directories removed',
-    details: { sandboxId: effectiveSandboxId, removed },
-  });
 
   return { removed, effectiveSandboxId };
 }
