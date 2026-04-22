@@ -137,15 +137,22 @@ export async function runOrchestratorStep(params: {
         },
       );
     } catch (rawErr: any) {
-      // Re-throw a *plain* Error with a serializable message so Vercel Workflow
-      // can record it inline. Otherwise the OpenAI SDK's APIError gets stored
-      // as a RemoteRef and the workflow's `run_failed` event validator rejects
-      // it with `run.error: expected object, received undefined`, leaving the
-      // run in a half-broken state with no useful diagnostic.
+      // Re-throw a *plain* Error with a serializable, TRUNCATED message so
+      // Vercel Workflow can record it inline on the `run_failed` event.
+      // Previously we attached `cause`, `status`, `provider`, `model` as extra
+      // properties — when the payload grew past the inline limit, the workflow
+      // runtime stored the whole error as a `RemoteRef` in S3, and the
+      // `run_failed` Zod schema then rejected it with
+      // `run.error: expected object, received undefined`, leaving the run in a
+      // half-broken state with no usable diagnostic.
+      //
+      // Log everything we know (status, body, request_id…) here so operators
+      // still have context, but only re-throw the compact summary.
       const status = rawErr?.status ?? rawErr?.response?.status;
       const body = rawErr?.error || rawErr?.response?.data;
+      const rawMsg = typeof rawErr?.message === 'string' ? rawErr.message : String(rawErr);
       const summary = [
-        `[CronStep] Orchestrator failed at turn ${turns}`,
+        `Orchestrator failed at turn ${turns}`,
         `provider=openai-compat`,
         `model=${orchestratorModel}`,
         `tools=${fullTools.length}`,
@@ -153,16 +160,13 @@ export async function runOrchestratorStep(params: {
         status !== undefined ? `status=${status}` : null,
         rawErr?.code ? `code=${rawErr.code}` : null,
         rawErr?.request_id ? `request_id=${rawErr.request_id}` : null,
-        rawErr?.message ? `message=${rawErr.message}` : null,
+        rawMsg ? `message=${rawMsg.slice(0, 512)}` : null,
       ]
         .filter(Boolean)
         .join(' | ');
-      console.error(summary, body ? { body } : '');
-      const flat = new Error(summary);
-      (flat as any).cause = rawErr?.message || String(rawErr);
-      (flat as any).status = status;
-      (flat as any).provider = 'openai-compat';
-      (flat as any).model = orchestratorModel;
+      console.error(`[CronStep] ${summary}`, body ? { body } : '');
+      // Hard cap at 2KB so Vercel Workflow never has to spill this to S3.
+      const flat = new Error(summary.length > 2048 ? summary.slice(0, 2048) + '…' : summary);
       throw flat;
     }
     messages = result.messages;

@@ -224,6 +224,7 @@ function logChatCompletionFailure(
     modelName?: string;
     messages?: unknown[];
     toolCount?: number;
+    tools?: unknown[];
   },
 ): void {
   const e = err as {
@@ -278,6 +279,66 @@ function logChatCompletionFailure(
     }
   }
 
+  // When the provider returns 400 with an empty body (Gemini's
+  // openai-compat layer does this often) the only way to diagnose the
+  // rejection is to inspect what we sent. Attach a compact preview of the
+  // last few messages and the tool names so operators can spot the offender
+  // (e.g. tool with unresolved parameters, malformed image, null content).
+  const isEmptyBody400 =
+    e?.status === 400 &&
+    (!e?.error || (typeof e?.message === 'string' && /no body|400 status code \(no body\)/i.test(e.message)));
+
+  const TRUNCATE = (s: string, n = 600): string => (s.length > n ? s.slice(0, n) + '…' : s);
+  const previewMessage = (m: any) => {
+    if (!m || typeof m !== 'object') return { role: '?', content: String(m) };
+    const out: Record<string, unknown> = { role: m.role };
+    if (m.name) out.name = String(m.name).slice(0, 64);
+    if (m.tool_call_id) out.tool_call_id = String(m.tool_call_id).slice(0, 64);
+    if (Array.isArray(m.tool_calls)) {
+      out.tool_calls = m.tool_calls.map((tc: any) => ({
+        id: tc?.id,
+        name: tc?.function?.name,
+        argsPreview: typeof tc?.function?.arguments === 'string' ? TRUNCATE(tc.function.arguments, 200) : tc?.function?.arguments,
+      }));
+    }
+    if (typeof m.content === 'string') {
+      out.content = TRUNCATE(m.content, 800);
+    } else if (Array.isArray(m.content)) {
+      out.content = m.content.map((p: any) => {
+        if (!p || typeof p !== 'object') return p;
+        if (p.type === 'text') return { type: 'text', text: TRUNCATE(String(p.text ?? ''), 400) };
+        if (p.type === 'image_url') {
+          const url = typeof p.image_url === 'string' ? p.image_url : p.image_url?.url;
+          return {
+            type: 'image_url',
+            urlPreview: typeof url === 'string' ? url.slice(0, 64) + (url.length > 64 ? '…' : '') : typeof url,
+            urlBytes: typeof url === 'string' ? url.length : null,
+          };
+        }
+        return { type: p.type };
+      });
+    } else if (m.content === null || m.content === undefined) {
+      out.content = m.content;
+    } else {
+      out.content = `[${typeof m.content}]`;
+    }
+    return out;
+  };
+
+  let messagesPreview: unknown[] | undefined;
+  if (isEmptyBody400 && Array.isArray(ctx.messages)) {
+    const tail = ctx.messages.slice(-4);
+    messagesPreview = tail.map(previewMessage);
+  }
+
+  let toolNames: string[] | undefined;
+  if (isEmptyBody400 && Array.isArray(ctx.tools)) {
+    toolNames = ctx.tools
+      .map((t: any) => t?.function?.name || t?.name)
+      .filter((x: unknown): x is string => typeof x === 'string')
+      .slice(0, 30);
+  }
+
   const payload = {
     provider: ctx.provider,
     stage: ctx.stage,
@@ -294,6 +355,8 @@ function logChatCompletionFailure(
     headers: Object.keys(headersObj).length > 0 ? headersObj : undefined,
     errorMessage: e?.message,
     errorBody: e?.error,
+    ...(messagesPreview ? { messagesPreview } : {}),
+    ...(toolNames ? { toolNames } : {}),
   };
 
   console.error(
@@ -810,18 +873,22 @@ export class AIAgentExecutor {
         if (provider === 'gemini') {
           const {
             assistantContentCoerced,
+            toolContentCoerced,
             toolNameStripped,
             assistantExtrasStripped,
             toolCallExtrasStripped,
+            imagePartsStripped,
           } = sanitizeMessagesForGemini(messages);
           if (
             assistantContentCoerced > 0 ||
+            toolContentCoerced > 0 ||
             toolNameStripped > 0 ||
             assistantExtrasStripped > 0 ||
-            toolCallExtrasStripped > 0
+            toolCallExtrasStripped > 0 ||
+            imagePartsStripped > 0
           ) {
             console.warn(
-              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] Coerced ${assistantContentCoerced} assistant content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s)`,
+              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] coerced ${assistantContentCoerced} assistant content(s) + ${toolContentCoerced} tool content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s), ${imagePartsStripped} malformed image part(s)`,
             );
           }
         }
@@ -914,6 +981,7 @@ export class AIAgentExecutor {
               modelName,
               messages,
               toolCount: openaiTools.length,
+              tools: openaiTools,
             });
 
             if (provider === 'azure' && isAzureInvalidImageError(streamError)) {
@@ -944,6 +1012,7 @@ export class AIAgentExecutor {
                   modelName,
                   messages,
                   toolCount: openaiTools.length,
+                  tools: openaiTools,
                 });
                 throw fallbackErr;
               }
@@ -982,6 +1051,7 @@ export class AIAgentExecutor {
                 modelName,
                 messages,
                 toolCount: openaiTools.length,
+                tools: openaiTools,
               });
               throw apiErr;
             }

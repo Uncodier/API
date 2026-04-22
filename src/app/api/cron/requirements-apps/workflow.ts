@@ -10,6 +10,7 @@ import {
   createSandboxStep,
   cleanupNestedProjectsStep,
   getActiveInstancePlanStep,
+  checkRecentPlansGuardStep,
   reconcilePlanStep,
   commitAndPushStep,
   postFinallyBuildStep,
@@ -77,7 +78,47 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     ? (existingPlan.steps as any[]).filter((s: any) =>
         s.status === 'pending' || s.status === 'in_progress' || (s.status === 'failed' && (s.retry_count ?? 0) < 2))
     : [];
-  const skipOrchestrator = existingPlan && actionableSteps.length > 0;
+  const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
+
+  // Step 2b: If no active plan, decide whether re-planning is safe.
+  // When the orchestrator has already produced one (or several) plans in the
+  // recent past for this instance and the requirement is still in-progress,
+  // a new plan would just duplicate work and feed the re-plan loop we saw
+  // after switching to Gemini. Block or skip instead.
+  let recentPlansGuard: Awaited<ReturnType<typeof checkRecentPlansGuardStep>> = {
+    recentCount: 0,
+    latestCompletedAtMs: null,
+    shouldSkipOrchestrator: false,
+    shouldBlockRequirement: false,
+  };
+  if (!hasActivePlan) {
+    recentPlansGuard = await checkRecentPlansGuardStep({ instanceId, siteId: site_id });
+    if (recentPlansGuard.reason) {
+      console.log(`[CronAppsWorkflow] Recent-plans guard: ${recentPlansGuard.reason}`);
+    }
+  }
+
+  if (recentPlansGuard.shouldBlockRequirement) {
+    try {
+      const { createRequirementStatusCore } = await import(
+        '@/app/api/agents/tools/requirement_status/route'
+      );
+      await createRequirementStatusCore({
+        site_id,
+        instance_id: instanceId,
+        requirement_id: reqId,
+        status: 'blocked',
+        message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
+      });
+    } catch (err) {
+      console.error('[CronAppsWorkflow] Failed to record re-plan-loop blocker:', err);
+    }
+    // Release the lock and exit without touching the sandbox further.
+    await stopSandboxStep(sandboxId, cronAudit);
+    return { reqId, branch: branchName, previewUrl: null, status: 'blocked' as const };
+  }
+
+  const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
 
   // Step 3: Run orchestrator (if no pending plan)
   if (!skipOrchestrator) {
@@ -126,8 +167,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
       }
     }
-  } else {
+  } else if (hasActivePlan) {
     console.log(`[CronAppsWorkflow] SKIP ORCHESTRATOR — plan "${existingPlan!.title}" has ${actionableSteps.length} actionable step(s)`);
+  } else {
+    console.log(
+      `[CronAppsWorkflow] SKIP ORCHESTRATOR — recent plan activity for instance ${instanceId}; not re-planning this cycle.`,
+    );
   }
 
   // Step 4: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)

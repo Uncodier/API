@@ -177,6 +177,103 @@ export async function getActiveInstancePlanStep(instanceId: string, siteId: stri
   return _getActiveInstancePlan(instanceId, siteId);
 }
 
+// ─── Step: Recent plans guard (stops orchestrator re-plan loop) ──────
+
+export interface RecentPlansGuardResult {
+  recentCount: number;
+  latestCompletedAtMs: number | null;
+  shouldSkipOrchestrator: boolean;
+  shouldBlockRequirement: boolean;
+  reason?: string;
+}
+
+/**
+ * Inspect recently completed/failed plans for an instance and decide whether
+ * the orchestrator should re-plan this cycle.
+ *
+ * The orchestrator was looping forever because every cycle: (a) no active
+ * plan existed (previous one was already `completed`), (b) the orchestrator
+ * ran again and produced a fresh duplicate plan. When Gemini also returned
+ * 400s mid-plan-creation, the loop kept spawning plans while the requirement
+ * stayed `in-progress`. This guard short-circuits that.
+ *
+ * Heuristic:
+ *   - If ≥ `blockAfter` completed/failed plans were created in the last
+ *     `windowMinutes` minutes for the same instance, flag the requirement as
+ *     BLOCKED so operators can intervene.
+ *   - Otherwise, if at least one plan was completed/failed in the last
+ *     `skipAfterMinutes` minutes, skip the orchestrator for this cycle and
+ *     let the finalize flow run against whatever was produced.
+ */
+export async function checkRecentPlansGuardStep(params: {
+  instanceId: string;
+  siteId: string;
+  windowMinutes?: number;
+  skipAfterMinutes?: number;
+  blockAfter?: number;
+}): Promise<RecentPlansGuardResult> {
+  'use step';
+  const {
+    instanceId,
+    siteId,
+    windowMinutes = 120,
+    skipAfterMinutes = 20,
+    blockAfter = 3,
+  } = params;
+  const windowStart = new Date(Date.now() - windowMinutes * 60_000).toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from('instance_plans')
+    .select('id, status, created_at, completed_at')
+    .eq('instance_id', instanceId)
+    .eq('site_id', siteId)
+    .in('status', ['completed', 'failed'])
+    .gte('created_at', windowStart)
+    .order('created_at', { ascending: false })
+    .limit(10);
+
+  if (error) {
+    console.warn('[CronStep] checkRecentPlansGuardStep query failed:', error.message);
+    return {
+      recentCount: 0,
+      latestCompletedAtMs: null,
+      shouldSkipOrchestrator: false,
+      shouldBlockRequirement: false,
+    };
+  }
+
+  const rows = (data ?? []) as Array<{ status: string; created_at: string; completed_at: string | null }>;
+  const recentCount = rows.length;
+  const latest = rows[0];
+  const latestCompletedAtMs = latest?.completed_at
+    ? Date.parse(latest.completed_at)
+    : latest?.created_at
+    ? Date.parse(latest.created_at)
+    : null;
+
+  const minutesSinceLatest =
+    latestCompletedAtMs !== null ? (Date.now() - latestCompletedAtMs) / 60_000 : Infinity;
+
+  const shouldBlockRequirement = recentCount >= blockAfter;
+  const shouldSkipOrchestrator =
+    shouldBlockRequirement || (recentCount >= 1 && minutesSinceLatest < skipAfterMinutes);
+
+  let reason: string | undefined;
+  if (shouldBlockRequirement) {
+    reason = `${recentCount} plan(s) already completed/failed in the last ${windowMinutes} min for this instance — looks like a re-plan loop.`;
+  } else if (shouldSkipOrchestrator) {
+    reason = `Last plan finished ${minutesSinceLatest.toFixed(1)} min ago (<${skipAfterMinutes} min). Skip orchestrator and let the cycle finalize instead of duplicating plans.`;
+  }
+
+  return {
+    recentCount,
+    latestCompletedAtMs,
+    shouldSkipOrchestrator,
+    shouldBlockRequirement,
+    reason,
+  };
+}
+
 // ─── Step: Reconcile plan status ─────────────────────────────────────
 
 export async function reconcilePlanStep(planId: string): Promise<string> {

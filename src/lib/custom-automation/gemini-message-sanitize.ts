@@ -3,7 +3,8 @@
  * endpoint.
  *
  * Gemini's `v1beta/openai/` layer is stricter than OpenAI proper and 400s
- * (with no body) on patterns that show up *after* the first tool turn:
+ * (often with no response body) on patterns that show up *after* the first
+ * tool turn:
  *
  *   1. Assistant message with `tool_calls` whose `content` is `null` or
  *      `undefined`. Gemini wants an empty string instead.
@@ -18,6 +19,11 @@
  *      these fields stick around and explode on iteration 2.
  *   4. Extra fields inside `tool_calls[]` entries (anything beyond
  *      `id`/`type`/`function: { name, arguments }`).
+ *   5. Tool-role messages with `content: null/undefined` or with a non-string
+ *      object/array. Gemini returns
+ *      `"Invalid value for 'content': expected a string, got null."`
+ *   6. Multimodal `content` parts whose `image_url.url` is empty or an
+ *      unparseable data URL. Gemini returns `"Invalid base64 image_url."`
  *
  * Mutates `messages` in place to keep the SDK's retry/fallback paths consistent
  * (mirrors how `sanitizeMessagesForAzureVisionImages` and the
@@ -26,6 +32,8 @@
  * Returns counters so callers can log when sanitization actually altered
  * anything.
  */
+
+import { Buffer } from 'node:buffer';
 
 /** Fields OpenAI SDK may attach to assistant messages that Gemini's validator rejects. */
 const ASSISTANT_EXTRA_FIELDS = [
@@ -44,23 +52,71 @@ const ALLOWED_TOOL_CALL_KEYS = new Set(['id', 'type', 'function', 'index']);
 /** Allowed fields on a tool_call.function entry. */
 const ALLOWED_TOOL_CALL_FUNCTION_KEYS = new Set(['name', 'arguments']);
 
+/**
+ * Cheap data-URL sanity check: must start with `data:image/...;base64,` and the
+ * payload must be non-empty and decode to at least a few bytes. We don't try to
+ * validate the magic bytes here (Azure does that); we only drop URLs that are
+ * structurally malformed or empty, which is the class Gemini 400s on.
+ */
+function isParseableDataImageUrl(url: unknown): boolean {
+  if (typeof url !== 'string' || url.length === 0) return false;
+  if (!url.startsWith('data:')) return true; // remote URL; let the provider decide
+  const match = /^data:([^;,]+)(;base64)?,(.*)$/i.exec(url);
+  if (!match) return false;
+  const [, mime, isBase64, payload] = match;
+  if (!mime || !payload) return false;
+  if (!isBase64) return true; // non-base64 data URL; we don't second-guess
+  try {
+    const decoded = Buffer.from(payload, 'base64');
+    return decoded.length > 8;
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeContentParts(content: unknown, counters: { imagePartsStripped: number }): unknown {
+  if (!Array.isArray(content)) return content;
+  const cleaned: any[] = [];
+  for (const part of content) {
+    if (!part || typeof part !== 'object') {
+      cleaned.push(part);
+      continue;
+    }
+    if (part.type === 'image_url') {
+      const url = part.image_url?.url ?? part.image_url;
+      if (!isParseableDataImageUrl(url)) {
+        counters.imagePartsStripped++;
+        continue;
+      }
+    }
+    cleaned.push(part);
+  }
+  return cleaned;
+}
+
 export function sanitizeMessagesForGemini(messages: any[]): {
   assistantContentCoerced: number;
+  toolContentCoerced: number;
   toolNameStripped: number;
   assistantExtrasStripped: number;
   toolCallExtrasStripped: number;
+  imagePartsStripped: number;
 } {
   let assistantContentCoerced = 0;
+  let toolContentCoerced = 0;
   let toolNameStripped = 0;
   let assistantExtrasStripped = 0;
   let toolCallExtrasStripped = 0;
+  const imageCounter = { imagePartsStripped: 0 };
 
   if (!Array.isArray(messages)) {
     return {
       assistantContentCoerced,
+      toolContentCoerced,
       toolNameStripped,
       assistantExtrasStripped,
       toolCallExtrasStripped,
+      imagePartsStripped: imageCounter.imagePartsStripped,
     };
   }
 
@@ -111,16 +167,38 @@ export function sanitizeMessagesForGemini(messages: any[]): {
       }
     }
 
-    if (m.role === 'tool' && 'name' in m) {
-      delete m.name;
-      toolNameStripped++;
+    if (m.role === 'tool') {
+      if ('name' in m) {
+        delete m.name;
+        toolNameStripped++;
+      }
+      // Gemini rejects `content: null/undefined` on tool messages with
+      // "Invalid value for 'content': expected a string, got null."
+      if (m.content === null || m.content === undefined) {
+        m.content = '';
+        toolContentCoerced++;
+      } else if (typeof m.content !== 'string' && !Array.isArray(m.content)) {
+        try {
+          m.content = JSON.stringify(m.content);
+        } catch {
+          m.content = String(m.content);
+        }
+        toolContentCoerced++;
+      }
+    }
+
+    // Multimodal parts — strip malformed image_url entries on any role.
+    if (Array.isArray(m.content)) {
+      m.content = sanitizeContentParts(m.content, imageCounter);
     }
   }
 
   return {
     assistantContentCoerced,
+    toolContentCoerced,
     toolNameStripped,
     assistantExtrasStripped,
     toolCallExtrasStripped,
+    imagePartsStripped: imageCounter.imagePartsStripped,
   };
 }
