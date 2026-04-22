@@ -8,6 +8,128 @@ import { createInstancePlanCore } from '@/app/api/agents/tools/instance_plan/cre
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
+// Per-field cutoffs used to slim the `list` response.
+// The orchestrator and other assistants just need an overview of existing
+// plans (id, title, status, step list). Returning the full instructions /
+// actual_output of every prior plan on every tool call inflates the chat
+// history to 150-200 KB and has triggered "400 (no body)" responses from
+// Gemini's v1beta/openai compat layer. The full record is still reachable
+// via the standard HTTP endpoint when a UI/worker needs it.
+const PLAN_TEXT_FIELD_LIMIT = 800;
+const PLAN_DESCRIPTION_LIMIT = 400;
+const STEP_TEXT_FIELD_LIMIT = 500;
+
+type StringMap = Record<string, unknown>;
+
+function truncateTextField(
+  target: StringMap,
+  field: string,
+  limit: number,
+): void {
+  const value = target[field];
+  if (typeof value !== 'string') return;
+  if (value.length <= limit) return;
+  target[field] = value.slice(0, limit);
+  target[`${field}_truncated`] = true;
+  target[`${field}_full_length`] = value.length;
+}
+
+function slimStep(step: unknown): unknown {
+  if (!step || typeof step !== 'object') return step;
+  const src = step as StringMap;
+  const slim: StringMap = {
+    id: src.id,
+    title: src.title,
+    order: src.order,
+    status: src.status,
+    type: src.type,
+    role: src.role,
+    skill: src.skill,
+    started_at: src.started_at,
+    completed_at: src.completed_at,
+    duration_seconds: src.duration_seconds,
+    retry_count: src.retry_count,
+  };
+  for (const field of ['description', 'instructions', 'expected_output', 'actual_output', 'error_message']) {
+    if (typeof src[field] === 'string' && (src[field] as string).length > 0) {
+      slim[field] = src[field];
+      truncateTextField(slim, field, STEP_TEXT_FIELD_LIMIT);
+    }
+  }
+  if (Array.isArray(src.artifacts)) {
+    slim.artifacts_count = (src.artifacts as unknown[]).length;
+  }
+  return slim;
+}
+
+/**
+ * Build a compact overview of a plan row. Preserves every identifier and
+ * status field the caller needs to decide whether to create/update a plan,
+ * but truncates the large free-text fields so the JSON stays small.
+ */
+function slimPlan(plan: unknown): unknown {
+  if (!plan || typeof plan !== 'object') return plan;
+  const src = plan as StringMap;
+  const slim: StringMap = {
+    id: src.id,
+    title: src.title,
+    plan_type: src.plan_type,
+    status: src.status,
+    priority: src.priority,
+    instance_id: src.instance_id,
+    site_id: src.site_id,
+    user_id: src.user_id,
+    agent_id: src.agent_id,
+    created_at: src.created_at,
+    updated_at: src.updated_at,
+  };
+
+  if (typeof src.description === 'string') {
+    slim.description = src.description;
+    truncateTextField(slim, 'description', PLAN_DESCRIPTION_LIMIT);
+  }
+  if (typeof src.instructions === 'string') {
+    slim.instructions = src.instructions;
+    truncateTextField(slim, 'instructions', PLAN_TEXT_FIELD_LIMIT);
+  }
+  if (typeof src.expected_output === 'string') {
+    slim.expected_output = src.expected_output;
+    truncateTextField(slim, 'expected_output', PLAN_TEXT_FIELD_LIMIT);
+  }
+
+  if (Array.isArray(src.success_criteria)) {
+    slim.success_criteria_count = (src.success_criteria as unknown[]).length;
+  }
+  if (Array.isArray(src.validation_rules)) {
+    slim.validation_rules_count = (src.validation_rules as unknown[]).length;
+  }
+
+  if (Array.isArray(src.steps)) {
+    const rawSteps = src.steps as unknown[];
+    slim.steps = rawSteps.map(slimStep);
+    slim.steps_count = rawSteps.length;
+  }
+
+  return slim;
+}
+
+function slimListResponse(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw;
+  const envelope = raw as StringMap;
+  const data = envelope.data as StringMap | undefined;
+  if (!data || !Array.isArray(data.plans)) return raw;
+  return {
+    ...envelope,
+    data: {
+      ...data,
+      plans: (data.plans as unknown[]).map(slimPlan),
+      _slimmed: true,
+      _slim_note:
+        'Fields description/instructions/expected_output and steps[*] free-text are truncated per entry. Use the HTTP endpoint or fetch by id for full bodies.',
+    },
+  };
+}
+
 export interface InstancePlanToolParams {
   action: 'create' | 'list' | 'update' | 'execute_step';
   
@@ -209,7 +331,8 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
           ...params,
           instance_id: params.instance_id || instance_id,
         };
-        return getInstancePlansCore(filters);
+        const raw = await getInstancePlansCore(filters);
+        return slimListResponse(raw);
       }
 
       throw new Error(`Invalid action: ${action}`);

@@ -17,6 +17,10 @@ import {
   type RuntimeProbeApiTarget,
 } from '@/app/api/cron/shared/step-runtime-probe';
 import { runE2eScenarios } from '@/app/api/cron/shared/step-e2e-runner';
+import {
+  sandboxCaptureScreenshotsTool,
+  sandboxVisualCritiqueTool,
+} from '@/app/api/agents/tools/sandbox/visual-tools';
 
 const WD = SandboxService.WORK_DIR;
 const PROBE_PORT = SandboxService.VISUAL_PROBE_PORT;
@@ -304,12 +308,16 @@ export function sandboxTailApiLogTool(sandbox: Sandbox) {
   };
 }
 
-export function getQaSandboxTools(sandbox: Sandbox) {
+export { sandboxCaptureScreenshotsTool, sandboxVisualCritiqueTool };
+
+export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string) {
   return [
     sandboxProbeRoutesTool(sandbox),
     sandboxProbeApiTool(sandbox),
     sandboxRunScenarioTool(sandbox),
     sandboxTailServerLogTool(sandbox),
     sandboxTailApiLogTool(sandbox),
+    sandboxCaptureScreenshotsTool(sandbox, requirementId),
+    sandboxVisualCritiqueTool(),
   ];
 }

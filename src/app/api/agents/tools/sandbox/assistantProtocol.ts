@@ -391,6 +391,6 @@ export function getSandboxTools(
     sandboxListFilesTool(sandbox),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx?.instance_id),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
-    ...getQaSandboxTools(sandbox),
+    ...getQaSandboxTools(sandbox, requirementId),
   ];
 }
