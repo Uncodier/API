@@ -409,6 +409,17 @@ export class SandboxService {
   }
 
   /**
+   * True if the name cannot be used as refs/heads/<name> for `git push` (e.g. missing,
+   * the literal "HEAD" with or without bad whitespace, or case-only "head").
+   */
+  private static isInvalidOriginBranchName(name: string): boolean {
+    const b = String(name).trim();
+    if (!b) return true;
+    if (b === 'HEAD' || b.toLowerCase() === 'head') return true;
+    return false;
+  }
+
+  /**
    * True when HEAD is not attached to a branch (e.g. right after `git checkout <sha>`).
    * Uses `git symbolic-ref` which is the canonical way to detect detached HEAD —
    * `rev-parse --abbrev-ref HEAD` returns the ambiguous literal string `HEAD` in that case.
@@ -505,9 +516,9 @@ export class SandboxService {
   ): Promise<{ branch: string; pushed: boolean; commitCount: number }> {
     const cwd = SandboxService.WORK_DIR;
     const message = options.message ?? 'Automated commit by Assistant';
+    const safeTitle = (options.title && String(options.title).trim()) || 'requirement';
 
     if (options.requirementId) {
-      const safeTitle = (options.title && String(options.title).trim()) || 'requirement';
       await SandboxService.ensureFeatureBranchForCron(sandbox, options.requirementId, safeTitle);
     }
 
@@ -520,7 +531,7 @@ export class SandboxService {
       );
     }
 
-    let branch = await SandboxService.getCurrentBranch(sandbox);
+    let branch = (await SandboxService.getCurrentBranch(sandbox)).trim();
     const dirty = await SandboxService.hasWorkingTreeChanges(sandbox);
     let aheadCount = await SandboxService.countCommitsAheadOfRemote(sandbox, branch, cwd);
 
@@ -567,7 +578,24 @@ export class SandboxService {
       }
     }
 
-    branch = await SandboxService.getCurrentBranch(sandbox);
+    // Cron: always attach the working tree to the canonical feature ref before measuring / pushing
+    // so the local ref matches origin and we are never in a "named HEAD" / whitespace edge case.
+    if (options.requirementId) {
+      const canPushName = SandboxService.buildBranchName(options.requirementId, safeTitle);
+      const att = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-B', canPushName], cwd);
+      if (att.exitCode !== 0) {
+        throw new Error(
+          `Could not attach HEAD to feature branch for push: ${canPushName} — ${await att.stderr()}`,
+        );
+      }
+    }
+
+    branch = (await SandboxService.getCurrentBranch(sandbox)).trim();
+    if (SandboxService.isInvalidOriginBranchName(branch) && !options.requirementId) {
+      throw new Error(
+        'Cannot push: current branch is not a valid ref name. Pass requirementId, or run `git checkout -B <feature-branch>`.',
+      );
+    }
     aheadCount = await SandboxService.countCommitsAheadOfRemote(sandbox, branch, cwd);
 
     if (aheadCount === 0) {
@@ -575,16 +603,27 @@ export class SandboxService {
       return { branch, pushed: false, commitCount: 0 };
     }
 
-    console.log(`[Sandbox] ${aheadCount} commit(s) ahead of remote on ${branch}, pushing...`);
-    const pushed = await SandboxService.pushWithRebaseRetry(sandbox, branch, cwd);
+    const pushName = options.requirementId
+      ? SandboxService.buildBranchName(options.requirementId, safeTitle)
+      : branch;
+    if (SandboxService.isInvalidOriginBranchName(pushName)) {
+      throw new Error(
+        'Cannot push: invalid target branch name (empty, HEAD, or unknown). The workspace must be on a real branch for origin.',
+      );
+    }
+
+    console.log(`[Sandbox] ${aheadCount} commit(s) ahead of remote on ${branch}, pushing as ${pushName}...`);
+    const pushed = await SandboxService.pushWithRebaseRetry(sandbox, pushName, cwd);
     if (!pushed.ok) {
-      throw new Error(`Failed to push branch ${branch}: ${pushed.stderr}`);
+      throw new Error(`Failed to push branch ${pushName}: ${pushed.stderr}`);
     }
 
     const finalAhead = pushed.rebased
       ? await SandboxService.countCommitsAheadOfRemote(sandbox, branch, cwd)
       : aheadCount;
-    console.log(`[Sandbox] Successfully pushed ${aheadCount} commit(s) to ${branch}${pushed.rebased ? ' (after rebase on origin)' : ''}`);
+    console.log(
+      `[Sandbox] Successfully pushed ${aheadCount} commit(s) to ${pushName}${pushed.rebased ? ' (after rebase on origin)' : ''}`,
+    );
     return { branch, pushed: true, commitCount: pushed.rebased ? Math.max(finalAhead, 0) : aheadCount };
   }
 
@@ -599,14 +638,20 @@ export class SandboxService {
     branch: string,
     cwd: string,
   ): Promise<{ ok: true; rebased: boolean } | { ok: false; stderr: string }> {
-    if (!branch || branch === 'HEAD') {
+    const b = String(branch).trim();
+    if (SandboxService.isInvalidOriginBranchName(b)) {
       return {
         ok: false,
         stderr:
-          'Refusing to push: sandbox HEAD is detached or branch is unknown. The caller must attach HEAD to a real branch before pushing.',
+          'Refusing to push: target branch is empty, HEAD, or not a real branch name. Attach with `git checkout -B <branch>` or pass requirementId in commit options.',
       };
     }
-    const first = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
+    // Fully qualify the destination ref so the remote always receives refs/heads/<name>.
+    // Using `git push -u origin <name>` is ambiguous for some remotes/servers when
+    // the local side resolves oddly; `HEAD:refs/heads/<name>` is explicit and also
+    // works when the current commit is the one to publish.
+    const refspec = `HEAD:refs/heads/${b}`;
+    const first = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', refspec], cwd);
     if (first.exitCode === 0) {
       return { ok: true, rebased: false };
     }
@@ -617,29 +662,29 @@ export class SandboxService {
       return { ok: false, stderr: firstStderr };
     }
 
-    console.warn(`[Sandbox] push rejected (non-fast-forward) on ${branch} — fetching + rebasing onto origin and retrying once`);
+    console.warn(`[Sandbox] push rejected (non-fast-forward) on ${b} — fetching + rebasing onto origin and retrying once`);
 
-    const fetchRes = await SandboxService.runWithCwd(sandbox, 'git', ['fetch', 'origin', branch], cwd);
+    const fetchRes = await SandboxService.runWithCwd(sandbox, 'git', ['fetch', 'origin', b], cwd);
     if (fetchRes.exitCode !== 0) {
-      return { ok: false, stderr: `Initial push rejected and fetch origin ${branch} failed: ${await fetchRes.stderr()}\n---\n${firstStderr}` };
+      return { ok: false, stderr: `Initial push rejected and fetch origin ${b} failed: ${await fetchRes.stderr()}\n---\n${firstStderr}` };
     }
 
-    const rebaseRes = await SandboxService.runWithCwd(sandbox, 'git', ['rebase', `origin/${branch}`], cwd);
+    const rebaseRes = await SandboxService.runWithCwd(sandbox, 'git', ['rebase', `origin/${b}`], cwd);
     if (rebaseRes.exitCode !== 0) {
       const rebaseErr = await rebaseRes.stderr();
       await SandboxService.runWithCwd(sandbox, 'git', ['rebase', '--abort'], cwd);
       return {
         ok: false,
-        stderr: `Push rejected and automatic rebase on origin/${branch} produced conflicts — manual resolution required: ${rebaseErr}\n---\n${firstStderr}`,
+        stderr: `Push rejected and automatic rebase on origin/${b} produced conflicts — manual resolution required: ${rebaseErr}\n---\n${firstStderr}`,
       };
     }
 
-    const retry = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
+    const retry = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', refspec], cwd);
     if (retry.exitCode === 0) {
       return { ok: true, rebased: true };
     }
     const retryStderr = await retry.stderr();
-    return { ok: false, stderr: `Push still rejected after rebase on origin/${branch}: ${retryStderr}\n---\nInitial rejection: ${firstStderr}` };
+    return { ok: false, stderr: `Push still rejected after rebase on origin/${b}: ${retryStderr}\n---\nInitial rejection: ${firstStderr}` };
   }
 
   /**
