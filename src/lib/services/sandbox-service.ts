@@ -382,7 +382,9 @@ export class SandboxService {
   }
 
   /**
-   * Returns the current git branch name inside the sandbox.
+   * Returns the current git branch name inside the sandbox. When HEAD is detached
+   * (e.g. after `git checkout <sha>`) git reports the literal string `HEAD`; callers
+   * should treat that as "no branch" and recover onto one before pushing.
    */
   static async getCurrentBranch(sandbox: Sandbox): Promise<string> {
     const cwd = SandboxService.WORK_DIR;
@@ -391,6 +393,17 @@ export class SandboxService {
       throw new Error(`Failed to detect current branch: ${await res.stderr()}`);
     }
     return (await res.stdout()).trim();
+  }
+
+  /**
+   * True when HEAD is not attached to a branch (e.g. right after `git checkout <sha>`).
+   * Uses `git symbolic-ref` which is the canonical way to detect detached HEAD —
+   * `rev-parse --abbrev-ref HEAD` returns the ambiguous literal string `HEAD` in that case.
+   */
+  static async isDetachedHead(sandbox: Sandbox): Promise<boolean> {
+    const cwd = SandboxService.WORK_DIR;
+    const res = await SandboxService.runWithCwd(sandbox, 'git', ['symbolic-ref', '-q', 'HEAD'], cwd);
+    return res.exitCode !== 0;
   }
 
   /** True if working tree has unstaged/staged/untracked changes vs last commit. */
@@ -402,8 +415,11 @@ export class SandboxService {
   }
 
   /**
-   * Cron must not leave work on main/master: push is blocked there. When requirementId is set,
-   * move HEAD to feature/{shortId}-{slug} (create or checkout). Preserves the working tree.
+   * Cron must not leave work on main/master or detached HEAD: push is blocked from the
+   * default branches and `git push origin HEAD` fails when the remote can't resolve a
+   * target ref (common when agents run `git checkout <sha>` inside the sandbox).
+   * When requirementId is set, move HEAD to feature/{shortId}-{slug} (create or checkout),
+   * preserving the working tree and any commits made while detached.
    */
   static async ensureFeatureBranchForCron(
     sandbox: Sandbox,
@@ -411,8 +427,9 @@ export class SandboxService {
     title: string,
   ): Promise<void> {
     const cwd = SandboxService.WORK_DIR;
-    const head = await SandboxService.getCurrentBranch(sandbox);
-    if (head !== 'main' && head !== 'master') {
+    const detached = await SandboxService.isDetachedHead(sandbox);
+    const head = detached ? 'HEAD (detached)' : await SandboxService.getCurrentBranch(sandbox);
+    if (!detached && head !== 'main' && head !== 'master') {
       return;
     }
 
@@ -420,6 +437,18 @@ export class SandboxService {
     console.log(
       `[Sandbox] HEAD is ${head} — switching to "${featureBranch}" before persisting changes (cron)`,
     );
+
+    if (detached) {
+      // `git checkout -B` creates the branch or resets it to the current commit, so any
+      // commits produced while detached are preserved on the feature branch. We intentionally
+      // do NOT fetch/rebase here: the detached state usually means the agent restored a
+      // specific sha, and we want to push exactly that state.
+      const co = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-B', featureBranch], cwd);
+      if (co.exitCode !== 0) {
+        throw new Error(`Failed to attach detached HEAD to ${featureBranch}: ${await co.stderr()}`);
+      }
+      return;
+    }
 
     await SandboxService.runWithCwd(sandbox, 'git', ['fetch', 'origin'], cwd);
 
@@ -467,6 +496,15 @@ export class SandboxService {
     if (options.requirementId) {
       const safeTitle = (options.title && String(options.title).trim()) || 'requirement';
       await SandboxService.ensureFeatureBranchForCron(sandbox, options.requirementId, safeTitle);
+    }
+
+    if (await SandboxService.isDetachedHead(sandbox)) {
+      // Without a requirementId we can't derive a feature-branch name, and pushing
+      // `HEAD` to origin fails with "not a full refname". Surface a deterministic
+      // error instead of producing the confusing git hint.
+      throw new Error(
+        'Sandbox HEAD is detached — commitAndPush requires a branch. Pass requirementId to auto-create a feature branch, or have the agent run `git checkout -B <branch>` first.',
+      );
     }
 
     let branch = await SandboxService.getCurrentBranch(sandbox);
@@ -548,6 +586,13 @@ export class SandboxService {
     branch: string,
     cwd: string,
   ): Promise<{ ok: true; rebased: boolean } | { ok: false; stderr: string }> {
+    if (!branch || branch === 'HEAD') {
+      return {
+        ok: false,
+        stderr:
+          'Refusing to push: sandbox HEAD is detached or branch is unknown. The caller must attach HEAD to a real branch before pushing.',
+      };
+    }
     const first = await SandboxService.runWithCwd(sandbox, 'git', ['push', '-u', 'origin', branch], cwd);
     if (first.exitCode === 0) {
       return { ok: true, rebased: false };

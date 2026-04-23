@@ -51,11 +51,12 @@ function buildPushRecoveryAppend(requirementId: string, expectedBranch: string):
 The automated commit/push did NOT complete successfully, or the platform could not verify your work on GitHub.
 Prefer sandbox_push_checkpoint (title_hint = current step title) if the tool is available; use sandbox_restore_checkpoint (action=list) to list commits and action=restore to rewind the sandbox working tree only; otherwise use sandbox_run_command with cwd ${wd} (e.g. cd ${wd} && ...).
 
-1) Inspect: git status -sb && git branch -v && git remote -v
-2) Work on a feature branch, NOT main/master. Expected branch name for this requirement: "${expectedBranch}"
+1) Inspect: git status -sb && git branch -v && git remote -v && git symbolic-ref -q HEAD || echo DETACHED
+2) Work on a feature branch, NOT main/master, and NOT detached HEAD. Expected branch name for this requirement: "${expectedBranch}"
    - If you are on main/master: git fetch origin && git checkout -b "${expectedBranch}" OR git checkout "${expectedBranch}" if it already exists locally/remotely.
+   - If HEAD is detached (git symbolic-ref failed above): git checkout -B "${expectedBranch}"   # preserves commits made while detached.
 3) Stage and commit: git add -A && git commit -m "chore: sync step work"  (if nothing to commit, skip commit)
-4) Push: git push -u origin HEAD
+4) Push the named branch (NOT 'HEAD'): git push -u origin "${expectedBranch}"
 The usual rule against manual git commit/push is SUSPENDED until git push succeeds. Read stderr if push fails (permissions, branch, etc.).
 5) Confirm: git status should be clean and your branch should track origin.
 
