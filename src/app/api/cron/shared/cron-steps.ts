@@ -164,6 +164,13 @@ fi`,
   return { removed, effectiveSandboxId };
 }
 
+// Bootstrap `requirement.spec.md` lives in its own 'use step' module so the
+// large template string does not bloat this file past the 500-line budget.
+// Re-exported here for backwards compatibility with callers that import it
+// from `cron-steps` alongside the other durable steps.
+export { bootstrapRequirementSpecStep } from './bootstrap-spec-step';
+export type { BootstrapRequirementSpecResult } from './bootstrap-spec-step';
+
 // ─── Step: Get active instance plan ──────────────────────────────────
 
 export async function getActiveInstancePlanStep(instanceId: string, siteId: string) {

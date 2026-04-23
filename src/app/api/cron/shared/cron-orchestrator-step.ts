@@ -131,13 +131,24 @@ export async function runOrchestratorStep(params: {
   // add skill_lookup + instance_plan(list) + investigate + plan create. Give
   // it more headroom, and nudge it if it's drifting into pure exploration.
   const MAX_TURNS = 25;
-  const PLAN_NUDGE_AFTER_TURN = 6;
+  // The coordinator should reach `instance_plan create` within a handful of
+  // tool calls (list backlog → upsert → start → create). Firing the nudge
+  // after turn 2 catches drift early — the previous threshold of 6 never
+  // triggered because models tended to return a plain-text response around
+  // turn 3–4, which flipped isDone=true and exited the loop silently.
+  const PLAN_NUDGE_AFTER_TURN = 2;
+  // Maximum number of times we will override an `isDone=true && !createdPlan`
+  // signal by re-injecting the reminder. Prevents an infinite loop if the
+  // model never produces tool calls at all, while still giving it a real
+  // second chance to emit `instance_plan action='create'`.
+  const MAX_NO_PLAN_OVERRIDES = 3;
   let turns = 0;
   let isDone = false;
   let result: any;
   let messages: any[] = [{ role: 'user', content: initialMessage }];
   let nudged = false;
   let createdPlan = false;
+  let noPlanOverrides = 0;
 
   const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
 
@@ -229,7 +240,18 @@ export async function runOrchestratorStep(params: {
       }
     }
 
-    // Nudge once: if after several turns the orchestrator is still only
+    const noPlanReminder = [
+      'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
+      'Stop running additional sandbox_* commands unless you are blocked.',
+      'IMMEDIATE NEXT ACTIONS:',
+      '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
+      '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
+      '  3. Call `instance_plan` with `action="create"`. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
+      '  4. Call `requirement_status` with `status="in-progress"`.',
+      'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
+    ].join('\n');
+
+    // Nudge once: if after a couple of turns the orchestrator is still only
     // exploring (no instance_plan create yet), remind it that PLANNING is
     // its deliverable. Otherwise the cron loops forever producing no plan.
     if (!isDone && !createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
@@ -237,22 +259,29 @@ export async function runOrchestratorStep(params: {
       console.log(
         `[CronStep] Orchestrator nudge at turn ${turns}: still no instance_plan(create) — injecting reminder.`,
       );
-      messages = [
-        ...messages,
-        {
-          role: 'user',
-          content: [
-            'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
-            'Stop running additional sandbox_* commands unless you are blocked.',
-            'IMMEDIATE NEXT ACTIONS:',
-            '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items first.',
-            '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
-            '  3. Call `instance_plan` with `action="create"`. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
-            '  4. Call `requirement_status` with `status="in-progress"`.',
-            'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
-          ].join('\n'),
-        },
-      ];
+      messages = [...messages, { role: 'user', content: noPlanReminder }];
+    }
+
+    // Force-continue: the model sometimes returns a plain-text assistant
+    // message ("I reviewed the backlog, will create the plan next…") which
+    // flips isDone=true before any `instance_plan action='create'` fires.
+    // Accepting that signal would let the cron exit empty-handed and pick
+    // the same requirement up on the next tick ad infinitum. When we still
+    // have budget, inject the same reminder and keep iterating. Capped by
+    // MAX_NO_PLAN_OVERRIDES so a truly stuck model cannot burn the whole
+    // turn budget on empty assistant messages.
+    if (
+      isDone &&
+      !createdPlan &&
+      noPlanOverrides < MAX_NO_PLAN_OVERRIDES &&
+      turns < MAX_TURNS
+    ) {
+      noPlanOverrides++;
+      console.warn(
+        `[CronStep] Orchestrator returned isDone=true at turn ${turns} without creating a plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
+      );
+      messages = [...messages, { role: 'user', content: noPlanReminder }];
+      isDone = false;
     }
   }
 

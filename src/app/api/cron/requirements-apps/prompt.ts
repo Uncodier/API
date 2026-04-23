@@ -53,10 +53,38 @@ export interface CoordinatorPromptInput {
  * the mental model matches the deliverable (app/site vs doc vs slides vs
  * contract vs task).
  */
+/**
+ * Hard cap for the raw `instructions` block we embed in the orchestrator
+ * prompt. Long enough to carry a full feature spec (several KB) but small
+ * enough that we never blow the context window — the backlog snapshot,
+ * progress log and tool catalogue still need room.
+ */
+const MAX_INSTRUCTIONS_CHARS = 4000;
+
+function renderInstructionsBlock(instructions: string | null | undefined): string {
+  const raw = (instructions ?? '').trim();
+  if (!raw) {
+    return `
+INSTRUCTIONS (raw from DB):
+  (none — use the title + any existing backlog/spec as the contract)
+`;
+  }
+  const clipped = raw.length > MAX_INSTRUCTIONS_CHARS
+    ? raw.slice(0, MAX_INSTRUCTIONS_CHARS) + `\n…[truncated; full text in requirements.instructions, ${raw.length - MAX_INSTRUCTIONS_CHARS} more chars]`
+    : raw;
+  return `
+INSTRUCTIONS (raw from DB — PRIMARY contract source this cycle; use it to seed the backlog when empty):
+"""
+${clipped}
+"""
+`;
+}
+
 export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string {
   const kind = classifyRequirementType(p.type);
   const flow = getFlow(kind);
   const snapshot = renderBacklogSnapshot(flow, p.backlog ?? null);
+  const instructionsBlock = renderInstructionsBlock(p.instructions);
   const progress = p.recentProgress?.length
     ? `\nRECENT PROGRESS (last 3 entries of progress.md, newest first):\n${p.recentProgress.slice(-3).reverse().map((l) => `  - ${l}`).join('\n')}`
     : '';
@@ -78,7 +106,7 @@ REQUIREMENT:
 - ID: ${p.reqId}
 - Title: ${p.title}
 - Flow kind: ${kind} (gate strategy: ${flow.gate_strategy}${flow.standard_library ? `, standard library: ${flow.standard_library.name}` : ''})
-
+${instructionsBlock}
 INSTANCE:
 - instance_id: ${p.instanceId}
 - site_id: ${p.site_id}
@@ -112,12 +140,12 @@ ENVIRONMENT:
 
 WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the current phase and pending queue.
-2. If the backlog is empty, derive 3-8 items from \`requirement.spec.md\` and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental').
+2. If the backlog is empty, derive 3-8 items DIRECTLY FROM THE "INSTRUCTIONS (raw from DB)" BLOCK ABOVE and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). Do NOT \`sandbox_read_file\` \`requirement.spec.md\` / \`feature_list.json\` first — those files may not exist yet on a fresh branch; the INSTRUCTIONS block is the authoritative contract for this cycle. If \`requirement.spec.md\` happens to exist, you MAY read it to enrich the items, but treat it as optional.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
 5. Report progress with \`requirement_status\` (status='in-progress').
 
-HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`).
+HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created.
 
 HARD RULE ACCEPTANCE (Phase 10):
 - Every \`tier='core'\` item MUST have at least one acceptance entry containing a concrete anchor: an HTTP verb (GET/POST/PUT/DELETE), a route (starts with /), a status code, or an observable verb (returns/renders/inserts/redirects/creates/deletes). Narrative acceptance such as "home shows product vision" is REJECTED by the Judge.

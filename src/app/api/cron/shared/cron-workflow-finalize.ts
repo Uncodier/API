@@ -153,7 +153,7 @@ export async function createFinalStatusStep(params: {
   smokeError?: string;
   postFinallyBuildError?: string;
   audit?: CronAuditContext;
-}): Promise<{ effectiveStatus: 'done' | 'in-progress' }> {
+}): Promise<{ effectiveStatus: 'done' | 'in-progress' | 'blocked' }> {
   'use step';
   const {
     site_id,
@@ -175,7 +175,7 @@ export async function createFinalStatusStep(params: {
 
   const { data: existing } = await supabaseAdmin
     .from('requirement_status')
-    .select('id, repo_url, preview_url, source_code')
+    .select('id, status, message, repo_url, preview_url, source_code, updated_at')
     .eq('requirement_id', reqId)
     .eq('instance_id', instanceId)
     .order('created_at', { ascending: false })
@@ -184,12 +184,46 @@ export async function createFinalStatusStep(params: {
 
   type ExistingRow = {
     id: string;
+    status?: string | null;
+    message?: string | null;
     repo_url?: string | null;
     preview_url?: string | null;
     source_code?: string | null;
+    updated_at?: string | null;
   } | null;
 
   const row = existing as ExistingRow;
+
+  // If a prior step in the same workflow tick recorded a 'blocked' status
+  // (e.g. orchestrator-no-plan, re-plan loop guard), preserve it. Flipping
+  // it back to 'in-progress' would let the cron route pick the requirement
+  // up again on the next tick (its filter is `status in [backlog, in-progress]`),
+  // defeating the blocker and re-entering the same failure loop. We use a
+  // short recency window so an older 'blocked' row from a previous day does
+  // not permanently freeze the requirement — only this-cycle blockers win.
+  const BLOCKED_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
+  const existingUpdatedAtMs = row?.updated_at ? Date.parse(row.updated_at) : NaN;
+  const existingIsFreshBlocked =
+    row?.status === 'blocked' &&
+    Number.isFinite(existingUpdatedAtMs) &&
+    Date.now() - existingUpdatedAtMs < BLOCKED_WINDOW_MS;
+
+  if (existingIsFreshBlocked) {
+    console.log(
+      `[CronStep] Preserving fresh 'blocked' status on requirement_status ${row!.id} — not overwriting with cycle finalize.`,
+    );
+    await logCronInfrastructureEvent(audit ?? { instanceId, siteId: site_id }, {
+      event: CronInfraEvent.FINAL_STATUS,
+      level: 'warn',
+      message: "Finalize skipped: an in-cycle 'blocked' status is preserved for human intervention.",
+      details: {
+        preserved_status: 'blocked',
+        existing_status_id: row!.id,
+        existing_message: row!.message ?? null,
+      },
+    });
+    return { effectiveStatus: 'blocked' };
+  }
   const incomingPreview = previewUrl?.trim() || '';
   const incomingSource = sourceCodeUrl?.trim() || '';
 

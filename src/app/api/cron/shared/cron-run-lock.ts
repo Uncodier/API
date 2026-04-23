@@ -55,6 +55,36 @@ export interface AcquiredCronLock {
   expiresAt: string;
 }
 
+/**
+ * PostgREST error shape exposed by @supabase/supabase-js. Carries `code`
+ * (PostgreSQL SQLSTATE or PGRST* code), `details` and `hint` — all of
+ * which we want in logs to distinguish a schema-cache miss from RLS,
+ * permission, or filter-syntax errors.
+ */
+interface PostgrestErrorLike {
+  message?: string;
+  code?: string;
+  details?: string | null;
+  hint?: string | null;
+}
+
+/**
+ * `true` only when the error unambiguously indicates the lock columns are
+ * unknown to PostgREST. We check the SQLSTATE (`42703` = undefined_column)
+ * and the PGRST-specific schema-cache code in addition to the message, so
+ * we don't silently swallow unrelated failures (RLS, permission, filter
+ * syntax, etc.) under the "columns missing" branch.
+ */
+function isLockColumnsMissingError(err: PostgrestErrorLike): boolean {
+  const code = err.code || '';
+  if (code === '42703' || code === 'PGRST204') return true;
+  const msg = err.message || '';
+  return (
+    /column\s+[^\s]*cron_lock_(expires_at|run_id)\s+does not exist/i.test(msg) ||
+    /could not find the '?cron_lock_(expires_at|run_id)'? column/i.test(msg)
+  );
+}
+
 /** Returns true-ish AcquiredCronLock if we took the lock; null if another run owns it. */
 export async function acquireRunLock(
   requirementId: string,
@@ -73,14 +103,27 @@ export async function acquireRunLock(
     .select('id');
 
   if (error) {
-    const msg = error.message || String(error);
-    // If the columns do not exist yet, let the cron run without protection
-    // so we don't hard-break production before the migration lands.
-    if (/cron_lock_expires_at|cron_lock_run_id|column .* does not exist/i.test(msg)) {
-      console.warn(`[CronRunLock] columns missing — running without lock (apply add_requirements_cron_run_lock.sql): ${msg}`);
+    const err = error as PostgrestErrorLike;
+    // Log the *full* PostgREST error (code/details/hint) so a schema-cache
+    // miss can be distinguished from RLS, permission, or filter errors.
+    const diag = {
+      reqId: requirementId,
+      code: err.code,
+      message: err.message,
+      details: err.details,
+      hint: err.hint,
+    };
+    if (isLockColumnsMissingError(err)) {
+      console.warn(
+        '[CronRunLock] columns missing — running without lock. ' +
+          'Apply src/scripts/add_requirements_cron_run_lock.sql AND reload the ' +
+          "PostgREST schema cache (Supabase Dashboard → API → 'Reload schema cache', " +
+          "or run `NOTIFY pgrst, 'reload schema';`).",
+        diag,
+      );
       return { runId, expiresAt };
     }
-    console.warn(`[CronRunLock] acquire failed for ${requirementId}: ${msg}`);
+    console.warn('[CronRunLock] acquire failed', diag);
     return null;
   }
 
@@ -104,11 +147,17 @@ export async function releaseRunLock(requirementId: string, runId: string): Prom
       .eq('cron_lock_run_id', runId);
 
     if (error) {
-      const msg = error.message || String(error);
-      if (/cron_lock_expires_at|cron_lock_run_id|column .* does not exist/i.test(msg)) {
+      const err = error as PostgrestErrorLike;
+      if (isLockColumnsMissingError(err)) {
         return;
       }
-      console.warn(`[CronRunLock] release failed for ${requirementId}: ${msg}`);
+      console.warn('[CronRunLock] release failed', {
+        reqId: requirementId,
+        code: err.code,
+        message: err.message,
+        details: err.details,
+        hint: err.hint,
+      });
     }
   } catch (e: unknown) {
     console.warn(`[CronRunLock] release threw for ${requirementId}:`, e instanceof Error ? e.message : e);

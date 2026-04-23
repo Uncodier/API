@@ -3,6 +3,7 @@
 import {
   createSandboxStep,
   cleanupNestedProjectsStep,
+  bootstrapRequirementSpecStep,
   getActiveInstancePlanStep,
   checkRecentPlansGuardStep,
   reconcilePlanStep,
@@ -63,6 +64,25 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     instanceType,
   });
   sandboxId = cleanup.effectiveSandboxId;
+
+  // Step 1b.1: Make sure `requirement.spec.md` exists on the branch before
+  // the coordinator runs. The orchestrator prompt asks the model to derive
+  // backlog items from this file; when it does not exist (fresh branch, no
+  // commit yet) the model loops on failed `sandbox_read_file` calls and
+  // never reaches `instance_plan action='create'`. Idempotent — never
+  // overwrites a spec that is already on disk.
+  try {
+    await bootstrapRequirementSpecStep({
+      sandboxId,
+      requirementId: reqId,
+      audit: cronAudit,
+    });
+  } catch (e: unknown) {
+    console.warn(
+      '[CronAppsWorkflow] bootstrap requirement.spec.md failed (non-fatal):',
+      e instanceof Error ? e.message : e,
+    );
+  }
 
   // Step 1c: Provision the Uncodie Platform API key (test-only) for this
   // requirement and inject it into the sandbox `.env.local` so the generated
