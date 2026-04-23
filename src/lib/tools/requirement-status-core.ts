@@ -5,14 +5,21 @@ import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding
 /**
  * Pure (next/server-free) implementation of the requirement_status tool core.
  *
- * Why a separate module: the Next.js route file imports `next/server`, which
- * transitively pulls in `ua-parser-js` and uses `__dirname`. That breaks when
- * this code runs inside the Vercel Workflow runtime (Edge-like sandbox), e.g.
- * from `src/app/api/cron/requirements-apps/workflow.ts`. Importing the core
- * functions from here keeps the workflow bundle free of Node-only globals.
+ * Why this lives under `src/lib/tools/` instead of next to the route file:
+ * the Next.js route at `src/app/api/agents/tools/requirement_status/route.ts`
+ * imports `next/server`, which transitively pulls in `ua-parser-js` and uses
+ * `__dirname`. When a Vercel Workflow bundle (`'use workflow'` / `'use step'`)
+ * imports any file that sits next to that route, the Turbopack/Next.js bundler
+ * co-bundles the sibling `route.ts` into the workflow graph and we hit a
+ * `ReferenceError: __dirname is not defined` at init time inside the
+ * Edge-like workflow runtime.
  *
- * Keep this file free of any `next/server`, `next/headers`, or other Next.js
- * runtime imports.
+ * Keeping the shared logic outside the `app/` tree guarantees that workflow
+ * modules (cron commit helpers, cron-workflow-finalize, etc.) can consume the
+ * same implementation as the HTTP route without dragging `next/server` in.
+ *
+ * IMPORTANT: keep this module free of any `next/server`, `next/headers`, or
+ * other Next.js runtime imports.
  */
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

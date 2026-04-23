@@ -1,4 +1,7 @@
-import { createRequirementStatusCore, listRequirementStatusCore } from './core';
+import {
+  createRequirementStatusCore,
+  listRequirementStatusCore,
+} from '@/lib/tools/requirement-status-core';
 
 export function requirementStatusTool(site_id: string, default_instance_id?: string) {
   return {

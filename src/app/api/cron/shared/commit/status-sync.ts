@@ -1,5 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/core';
+// NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the
+// Vercel Workflow bundler doesn't co-bundle `requirement_status/route.ts`
+// (which imports `next/server` and crashes with `__dirname is not defined`).
+import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 import { logInstancePreviewUrlRecorded } from '@/lib/services/cron-audit-log';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
@@ -157,9 +160,12 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     return { updated: false, preview_url, repo_url };
   }
 
+  // NOTE: `requirement_status` is append-only by design — only `created_at`
+  // exists on the row. Do NOT write `updated_at` here: the column is absent
+  // from the schema cache and Supabase rejects the whole UPDATE (which would
+  // silently drop the Vercel-provided preview_url / repo_url).
   const patch: Record<string, string> = {
     repo_url,
-    updated_at: new Date().toISOString(),
   };
   if (preview_url !== null && preview_url !== '') {
     patch.preview_url = preview_url;
@@ -215,7 +221,9 @@ export async function patchLatestRequirementStatusColumns(params: {
   if (Object.keys(patch).length === 0) {
     return { updated: false, error: 'No deliverable columns to write (empty patch).' };
   }
-  patch.updated_at = new Date().toISOString();
+  // `requirement_status` has no `updated_at` column (append-only table). Writing
+  // it here would make Supabase reject the entire UPDATE and silently lose
+  // deliverable URLs coming from the Vercel webhook / sandbox checkpoint.
 
   const validInstance = instanceId && UUID_RE.test(instanceId) ? instanceId : null;
 
@@ -246,11 +254,7 @@ export async function patchLatestRequirementStatusColumns(params: {
       console.warn('[RequirementStatusPatch] Update failed:', upErr.message);
       return { updated: false, error: upErr.message };
     }
-    console.log(
-      `[RequirementStatusPatch] Updated ${rowId} (${Object.keys(patch)
-        .filter((k) => k !== 'updated_at')
-        .join(', ')})`,
-    );
+    console.log(`[RequirementStatusPatch] Updated ${rowId} (${Object.keys(patch).join(', ')})`);
     if (columns.preview_url?.trim()) {
       await logInstancePreviewUrlRecorded({
         siteId: resolvedSiteId,

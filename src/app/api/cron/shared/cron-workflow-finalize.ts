@@ -5,7 +5,10 @@
 'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/core';
+// NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the
+// Vercel Workflow bundler doesn't co-bundle `requirement_status/route.ts`
+// (which imports `next/server` and crashes with `__dirname is not defined`).
+import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,

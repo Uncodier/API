@@ -134,7 +134,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   if (recentPlansGuard.shouldBlockRequirement) {
     try {
       const { createRequirementStatusCore } = await import(
-        '@/app/api/agents/tools/requirement_status/core'
+        '@/lib/tools/requirement-status-core'
       );
       await createRequirementStatusCore({
         site_id,
@@ -185,7 +185,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         );
         try {
           const { createRequirementStatusCore } = await import(
-            '@/app/api/agents/tools/requirement_status/core'
+            '@/lib/tools/requirement-status-core'
           );
           await createRequirementStatusCore({
             site_id,

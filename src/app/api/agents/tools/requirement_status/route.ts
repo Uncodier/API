@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createRequirementStatusCore, listRequirementStatusCore } from './core';
+import {
+  createRequirementStatusCore,
+  listRequirementStatusCore,
+} from '@/lib/tools/requirement-status-core';
 
-// Re-export for backwards compatibility with code that previously imported
-// the core helpers directly from the route file. New callers (workflows, cron
-// helpers, assistant protocols) should import from `./core` to avoid pulling
-// `next/server` into Edge / Vercel Workflow bundles.
+// Re-export for backwards compatibility with code that previously imported the
+// core helpers through the route file. New callers (workflows, cron helpers,
+// assistant protocols) MUST import from `@/lib/tools/requirement-status-core`
+// directly — importing anything that lives next to this `route.ts` causes the
+// Vercel Workflow bundler to co-bundle `next/server` and crashes with
+// `ReferenceError: __dirname is not defined` at workflow init time.
 export { createRequirementStatusCore, listRequirementStatusCore };
 
 export async function POST(request: NextRequest) {
