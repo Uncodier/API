@@ -9,10 +9,38 @@
 import type { Browser } from 'puppeteer-core';
 import puppeteerCore from 'puppeteer-core';
 
+/**
+ * Vercel Workflow / isolated step runtimes often omit `VERCEL=1` but still run on
+ * Linux with `HOME` like `/home/sbx_user…` and no puppeteer cache — we must not
+ * fall through to full `puppeteer` there.
+ */
 function useServerlessChromium(): boolean {
-  if (process.env.AWS_LAMBDA_FUNCTION_VERSION) return true;
-  if (process.env.VERCEL !== '1') return false;
-  return process.env.VERCEL_ENV !== 'development';
+  if (process.env.AWS_LAMBDA_EXECUTION_ENV || process.env.AWS_LAMBDA_FUNCTION_VERSION) {
+    return true;
+  }
+
+  // `vercel dev` — use bundled Chrome from `puppeteer` (macOS/Windows).
+  if (process.env.VERCEL_ENV === 'development') {
+    return false;
+  }
+
+  if (process.env.VERCEL === '1' || process.env.VERCEL === 'true') {
+    return true;
+  }
+  if (process.env.VERCEL_URL) {
+    return true;
+  }
+  if (process.env.VERCEL_ENV === 'production' || process.env.VERCEL_ENV === 'preview') {
+    return true;
+  }
+  if (process.env.VERCEL_DEPLOYMENT_ID) {
+    return true;
+  }
+  if (process.env.HOME?.includes('sbx_user')) {
+    return true;
+  }
+
+  return false;
 }
 
 export async function launchPuppeteerForGate(): Promise<Browser> {

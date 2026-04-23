@@ -52,6 +52,16 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
   if (s.includes('[vercel]') || s.includes('vercel/npm layout')) {
     return 'vercel_layout';
   }
+  // Sandbox / automatic rebase stopped with conflicts — must run before generic non-fast-forward / "[rejected]".
+  if (
+    messageMentionsRebase(s) &&
+    (s.includes('could not apply') || s.includes('produced conflict'))
+  ) {
+    return 'rebase_conflict';
+  }
+  if (messageMentionsRebase(s) && s.includes('manual resolution')) {
+    return 'rebase_ops_only';
+  }
   if (s.includes('[rejected]') || s.includes('non-fast-forward') || s.includes('fetch first')) {
     return 'non_fast_forward';
   }
@@ -76,9 +86,6 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
   }
   if (s.includes('could not resolve host') || s.includes('network') || s.includes('connection reset')) {
     return 'network';
-  }
-  if (messageMentionsRebase(s) && s.includes('manual resolution')) {
-    return 'rebase_ops_only';
   }
   return null;
 }
@@ -159,7 +166,26 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
       operatorMessage,
     };
   }
-  if (kindRaw === 'rebase_conflict' || (messageMentionsRebase(s) && s.includes('conflict'))) {
+  if (
+    (s.includes('non-ground-truth') ||
+      s.includes('not auto-fixable') ||
+      s.includes('rebase stopped on non-ground-truth')) &&
+    (messageMentionsRebase(s) || s.includes('could not apply') || s.includes('manual resolution'))
+  ) {
+    return {
+      failureKind: 'rebase_ops_only',
+      agentActionable: true,
+      agentMessage:
+        'Rebase has conflicts in source code files. Resolve them locally (not only progress/ground-truth), then add, rebase --continue, and push.',
+      operatorMessage,
+    };
+  }
+  const rebaseConflictLike =
+    kindRaw === 'rebase_conflict' ||
+    s.includes('could not apply') ||
+    (messageMentionsRebase(s) &&
+      (s.includes('conflict') || s.includes('produced conflict') || s.includes('manual resolution')));
+  if (rebaseConflictLike) {
     const files = extractConflictFiles(fullMessage);
     const short = files.length
       ? `Rebase/merge stopped on conflict in: ${files.slice(0, 8).join(', ')}${files.length > 8 ? '…' : ''}. Resolve conflicts, then continue rebase/merge and push, or align with origin (fetch + rebase/merge) before checkpointing.`
@@ -172,15 +198,6 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
     };
   }
   if (kindRaw === 'rebase_ops_only' || s.includes('manual resolution required')) {
-    if (s.includes('non-ground-truth') || s.includes('not auto-fixable') || s.includes('rebase stopped on non-ground-truth')) {
-      return {
-        failureKind: 'rebase_ops_only',
-        agentActionable: true,
-        agentMessage:
-          'Rebase has conflicts in source code files. Resolve them locally (not only progress/ground-truth), then add, rebase --continue, and push.',
-        operatorMessage,
-      };
-    }
     return {
       failureKind: 'rebase_ops_only',
       agentActionable: true,

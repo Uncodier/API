@@ -49,4 +49,12 @@ Automatic merge failed; fix conflicts and then commit the result.`;
     expect(t.failureKind).toBe('invalid_ref');
     expect(t.agentActionable).toBe(true);
   });
+
+  it('classifies automatic rebase with could not apply as rebase_conflict, not non_fast_forward', () => {
+    const msg = `Failed to push branch feature/req-fa9f1eb3: Push rejected and automatic rebase on origin/feature/req-fa9f1eb3 produced conflicts — manual resolution required: Rebasing (1/5) error: could not apply 525f41ce... [checkpoint] hint: Resolve all conflicts manually`;
+    const t = triageGitPushError(msg);
+    expect(t.failureKind).toBe('rebase_conflict');
+    expect(t.agentActionable).toBe(true);
+    expect(t.agentMessage).toMatch(/Rebase|conflict|rebase/);
+  });
 });
