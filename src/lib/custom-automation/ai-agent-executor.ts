@@ -814,7 +814,24 @@ export class AIAgentExecutor {
     }
 
     if (initialMessages) {
-      messages.push(...initialMessages);
+      // When `system` is explicit, drop any system messages already present
+      // in `initialMessages`. This is the typical re-entry case: the caller
+      // passes back our previous return value (which always begins with the
+      // system message we prepended). Without this filter, every additional
+      // turn adds another system entry, producing histories like
+      // [system_new, system_old, user, assistant, tool]. Gemini's
+      // OpenAI-compat layer 400s (no body) on multi-system histories, and
+      // Azure/OpenAI just waste tokens on the duplicate prompt.
+      const sanitizedInitial = system
+        ? initialMessages.filter((m: any) => m?.role !== 'system')
+        : initialMessages;
+      const droppedSystems = initialMessages.length - sanitizedInitial.length;
+      if (droppedSystems > 0) {
+        console.log(
+          `₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Dropped ${droppedSystems} duplicate system message(s) from initialMessages (using explicit system param)`,
+        );
+      }
+      messages.push(...sanitizedInitial);
     } else if (prompt) {
       messages.push({ role: 'user', content: prompt });
     }
@@ -903,6 +920,7 @@ export class AIAgentExecutor {
             assistantExtrasStripped,
             toolCallExtrasStripped,
             imagePartsStripped,
+            systemMessagesDeduped,
           } = sanitizeMessagesForGemini(messages);
           if (
             assistantContentCoerced > 0 ||
@@ -910,10 +928,11 @@ export class AIAgentExecutor {
             toolNameStripped > 0 ||
             assistantExtrasStripped > 0 ||
             toolCallExtrasStripped > 0 ||
-            imagePartsStripped > 0
+            imagePartsStripped > 0 ||
+            systemMessagesDeduped > 0
           ) {
             console.warn(
-              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] coerced ${assistantContentCoerced} assistant content(s) + ${toolContentCoerced} tool content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s), ${imagePartsStripped} malformed image part(s)`,
+              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] coerced ${assistantContentCoerced} assistant content(s) + ${toolContentCoerced} tool content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s), ${imagePartsStripped} malformed image part(s), deduped ${systemMessagesDeduped} extra system message(s)`,
             );
           }
         }

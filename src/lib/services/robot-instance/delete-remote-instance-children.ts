@@ -13,8 +13,10 @@
  * generating harmless but confusing "schema cache" errors.
  *
  * Prefer DB function `delete_instance_logs_batch` (src/scripts/delete_instance_logs_batch_fn.sql)
- * so each batch is a single bounded DELETE. Requires the index from
- * src/scripts/add_instance_logs_instance_id_index.sql.
+ * so each batch is a single bounded DELETE. Requires the indexes from
+ * src/scripts/add_instance_logs_perf_indexes.sql — without the
+ * (parent_log_id) index the ON DELETE SET NULL self-FK forces a seq scan
+ * per deleted row and the function times out.
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';

@@ -101,12 +101,14 @@ export function sanitizeMessagesForGemini(messages: any[]): {
   assistantExtrasStripped: number;
   toolCallExtrasStripped: number;
   imagePartsStripped: number;
+  systemMessagesDeduped: number;
 } {
   let assistantContentCoerced = 0;
   let toolContentCoerced = 0;
   let toolNameStripped = 0;
   let assistantExtrasStripped = 0;
   let toolCallExtrasStripped = 0;
+  let systemMessagesDeduped = 0;
   const imageCounter = { imagePartsStripped: 0 };
 
   if (!Array.isArray(messages)) {
@@ -117,7 +119,27 @@ export function sanitizeMessagesForGemini(messages: any[]): {
       assistantExtrasStripped,
       toolCallExtrasStripped,
       imagePartsStripped: imageCounter.imagePartsStripped,
+      systemMessagesDeduped,
     };
+  }
+
+  // Gemini's OpenAI-compat layer 400s (no body) when the request carries more
+  // than one `role: 'system'` entry. This shows up after multi-turn
+  // orchestrators echo back the previous response (which already starts with
+  // a system message) AND prepend a fresh one. Collapse all systems into a
+  // single entry at index 0, preserving the FIRST system's content (callers
+  // own the canonical prompt — see ai-agent-executor.ts where this is the
+  // explicit `system` param).
+  const systemIndices: number[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (messages[i]?.role === 'system') systemIndices.push(i);
+  }
+  if (systemIndices.length > 1) {
+    // Remove all but the first, in reverse order so indices stay valid.
+    for (let i = systemIndices.length - 1; i >= 1; i--) {
+      messages.splice(systemIndices[i], 1);
+      systemMessagesDeduped++;
+    }
   }
 
   for (const m of messages) {
@@ -200,5 +222,6 @@ export function sanitizeMessagesForGemini(messages: any[]): {
     assistantExtrasStripped,
     toolCallExtrasStripped,
     imagePartsStripped: imageCounter.imagePartsStripped,
+    systemMessagesDeduped,
   };
 }
