@@ -3,7 +3,6 @@
 import {
   createSandboxStep,
   cleanupNestedProjectsStep,
-  bootstrapRequirementSpecStep,
   getActiveInstancePlanStep,
   checkRecentPlansGuardStep,
   reconcilePlanStep,
@@ -15,6 +14,9 @@ import {
   stopSandboxStep,
   releaseRunLockStep,
 } from '../shared/cron-steps';
+// Import directly — the 'use step' plugin forbids re-exports, so the step
+// lives in its own module.
+import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';

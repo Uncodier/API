@@ -164,12 +164,12 @@ fi`,
   return { removed, effectiveSandboxId };
 }
 
-// Bootstrap `requirement.spec.md` lives in its own 'use step' module so the
-// large template string does not bloat this file past the 500-line budget.
-// Re-exported here for backwards compatibility with callers that import it
-// from `cron-steps` alongside the other durable steps.
-export { bootstrapRequirementSpecStep } from './bootstrap-spec-step';
-export type { BootstrapRequirementSpecResult } from './bootstrap-spec-step';
+// NOTE: `bootstrapRequirementSpecStep` lives in `./bootstrap-spec-step.ts`.
+// It is NOT re-exported from this module because the SWC `swc-workflow-plugin`
+// enforces that `'use step'` files only emit top-level async function
+// declarations — any `export { … } from` form fails the build with
+//   "Only async functions can be exported from a \"use step\" file".
+// Callers must import the step directly from `./bootstrap-spec-step`.
 
 // ─── Step: Get active instance plan ──────────────────────────────────
 
