@@ -36,6 +36,10 @@ export default async function middleware(request) {
   const isOutstandWebhook =
     request.nextUrl.pathname === '/api/integrations/outstand/webhooks';
 
+  // Vercel webhook: secret validated in route (VERCEL_WEBHOOK_SECRET)
+  const isVercelWebhook =
+    request.nextUrl.pathname === '/api/integrations/vercel/webhook';
+
   // Verificar si es una ruta pública explícita
   const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
   
@@ -50,6 +54,7 @@ export default async function middleware(request) {
     isWhatsAppWebhook,
     isAgentMailWebhook,
     isOutstandWebhook,
+    isVercelWebhook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
       'authorization': request.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
@@ -81,6 +86,15 @@ export default async function middleware(request) {
     const response = NextResponse.next();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Outstand-Webhook', 'true');
+    return response;
+  }
+
+  // Para Vercel webhook, permitir sin API key (secret validado en la ruta)
+  if (isVercelWebhook) {
+    console.log('[Middleware] Vercel webhook detected - skipping origin/API validation');
+    const response = NextResponse.next();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Vercel-Webhook', 'true');
     return response;
   }
 
