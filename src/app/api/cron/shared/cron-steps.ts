@@ -438,10 +438,45 @@ export async function recordPostFinallyBuildFailureStep(params: {
 
 // ─── Step: Get preview URL ───────────────────────────────────────────
 
-export async function getPreviewUrlStep(owner: string, repo: string, branch: string): Promise<string | null> {
+export async function getPreviewUrlStep(
+  owner: string,
+  repo: string,
+  branch: string,
+  requirementId?: string,
+): Promise<string | null> {
   'use step';
   if (!branch || branch === 'main' || branch === 'master') return null;
-  return SandboxService.getPreviewUrl(owner, repo, branch);
+
+  // Fast path: the Vercel webhook already persists `preview_url` on
+  // `requirement_status` on `deployment.succeeded` (see
+  // `src/lib/integrations/vercel/process-webhook.ts`). Reading from the DB
+  // returns instantly instead of blocking the workflow — and the sandbox —
+  // on GitHub's deployments API for up to 100s while Vercel builds.
+  if (requirementId) {
+    try {
+      const { data } = await supabaseAdmin
+        .from('requirement_status')
+        .select('preview_url, created_at')
+        .eq('requirement_id', requirementId)
+        .not('preview_url', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1);
+      const fromWebhook = data?.[0]?.preview_url?.trim();
+      if (fromWebhook) return fromWebhook;
+    } catch (e: unknown) {
+      console.warn(
+        '[getPreviewUrlStep] webhook-fast-path lookup failed, falling back to poll:',
+        e instanceof Error ? e.message : e,
+      );
+    }
+  }
+
+  // Fallback: short GitHub poll for the race where the webhook has not fired
+  // yet. Reduced from 20×5s (100s) to 3×2s (6s): keeping the sandbox alive
+  // longer does not make Vercel build faster — if the preview is still not
+  // ready, the webhook populates the URL async and the next cron tick picks
+  // it up via the fast path above.
+  return SandboxService.getPreviewUrl(owner, repo, branch, 3, 2000);
 }
 
 // ─── Step: Check source code in storage ──────────────────────────────

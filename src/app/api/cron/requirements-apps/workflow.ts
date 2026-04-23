@@ -22,8 +22,11 @@ import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import { detectAdminLoopStep } from '../shared/admin-loop-step';
+import {
+  getBacklogSnapshotStep,
+  recordRequirementBlockedStep,
+} from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
-import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAppsWorkflowInput {
@@ -53,10 +56,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     requirementId: reqId,
   };
 
+  // Hoisted so the `finally` can always stop the latest VM even when a step
+  // throws. Without this, any exception between create and the happy-path
+  // stop leaks the sandbox: it keeps billing memory until Vercel kills it on
+  // timeout (observed: 280 creates/day vs ~1 stop/day in instance_logs).
+  // Every step that may reprovision the VM updates this via `effectiveSandboxId`.
+  let sandboxId: string | null = null;
+
   try {
   // Step 1: Create sandbox → returns serializable info
   const created = await createSandboxStep(reqId, type, title, cronAudit);
-  let sandboxId = created.sandboxId;
+  sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch, instanceType } = created;
 
   // Step 1b: Remove any nested project directories left by previous agent cycles
@@ -113,13 +123,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     console.warn('[CronAppsWorkflow] admin-loop probe failed:', e instanceof Error ? e.message : e);
   }
 
-  let backlogSnapshot: Awaited<ReturnType<typeof listBacklog>>['backlog'] | null = null;
-  try {
-    const snap = await listBacklog(reqId);
-    backlogSnapshot = snap.backlog;
-  } catch (e: unknown) {
-    console.warn('[CronAppsWorkflow] backlog snapshot unavailable:', e instanceof Error ? e.message : e);
+  // Pulled via a durable step because the workflow VM forbids direct `fetch`.
+  // The step swallows transient errors and returns `backlog: null`, which the
+  // prompt builder already handles as "empty backlog" guidance.
+  const backlogSnap = await getBacklogSnapshotStep(reqId);
+  if (backlogSnap.error) {
+    console.warn(`[CronAppsWorkflow] backlog snapshot unavailable: ${backlogSnap.error}`);
   }
+  const backlogSnapshot = backlogSnap.backlog;
 
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
@@ -154,22 +165,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
 
   if (recentPlansGuard.shouldBlockRequirement) {
-    try {
-      const { createRequirementStatusCore } = await import(
-        '@/lib/tools/requirement-status-core'
-      );
-      await createRequirementStatusCore({
-        site_id,
-        instance_id: instanceId,
-        requirement_id: reqId,
-        status: 'blocked',
-        message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
-      });
-    } catch (err) {
-      console.error('[CronAppsWorkflow] Failed to record re-plan-loop blocker:', err);
+    const rec = await recordRequirementBlockedStep({
+      site_id,
+      instance_id: instanceId,
+      requirement_id: reqId,
+      message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
+    });
+    if (!rec.ok) {
+      console.error(`[CronAppsWorkflow] Failed to record re-plan-loop blocker: ${rec.error}`);
     }
-    // Release the lock and exit without touching the sandbox further.
-    await stopSandboxStep(sandboxId, cronAudit);
+    // Let the outer `finally` stop the sandbox — avoids duplicate stop calls
+    // and keeps the cleanup path in one place.
     return { reqId, branch: branchName, previewUrl: null, status: 'blocked' as const };
   }
 
@@ -205,20 +211,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         console.warn(
           `[CronAppsWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
         );
-        try {
-          const { createRequirementStatusCore } = await import(
-            '@/lib/tools/requirement-status-core'
-          );
-          await createRequirementStatusCore({
-            site_id,
-            instance_id: instanceId,
-            requirement_id: reqId,
-            status: 'blocked',
-            message:
-              'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
-          });
-        } catch (err) {
-          console.error('[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker:', err);
+        const rec = await recordRequirementBlockedStep({
+          site_id,
+          instance_id: instanceId,
+          requirement_id: reqId,
+          message:
+            'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
+        });
+        if (!rec.ok) {
+          console.error(`[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
         }
       }
     }
@@ -309,7 +310,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const binding = await resolveGitBindingForRequirement(reqId, 'applications');
   const owner = binding.org;
   const repoName = binding.repo;
-  const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch);
+  const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);
 
   // Step 7: Check source code
   const sourceCodeUrl = await checkSourceCodeStep(reqId);
@@ -340,11 +341,21 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     audit: cronAudit,
   });
 
-  // Step 10: Clean up sandbox
-  await stopSandboxStep(sandboxId, cronAudit);
-
+  // Sandbox stop happens in the outer `finally` — never in the happy path.
+  // Keeping a single exit point guarantees we never leak a VM even when a
+  // late step (validate/final-status/preview) throws.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } finally {
+    if (sandboxId) {
+      try {
+        await stopSandboxStep(sandboxId, cronAudit);
+      } catch (e: unknown) {
+        console.warn(
+          '[CronAppsWorkflow] stopSandboxStep threw in finally:',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
     await releaseRunLockStep(reqId, cronLockRunId);
   }
 }

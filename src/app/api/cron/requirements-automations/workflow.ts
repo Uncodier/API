@@ -23,6 +23,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
+import { recordRequirementBlockedStep } from '../shared/workflow-db-steps';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAutoWorkflowInput {
@@ -51,10 +52,17 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
     requirementId: reqId,
   };
 
+  // Hoisted so the `finally` can always stop the latest VM even when a step
+  // throws. Without this, any exception between create and the happy-path
+  // stop leaks the sandbox: it keeps billing memory until Vercel kills it on
+  // timeout. Every step that may reprovision the VM updates this via
+  // `effectiveSandboxId`.
+  let sandboxId: string | null = null;
+
   try {
   // Step 1: Create sandbox (automation repo)
   const created = await createSandboxStep(reqId, 'automation', title, cronAudit);
-  let sandboxId = created.sandboxId;
+  sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch } = created;
 
   // Step 1b: Remove any nested project directories left by previous agent cycles
@@ -117,21 +125,16 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
   }
 
   if (recentPlansGuard.shouldBlockRequirement) {
-    try {
-      const { createRequirementStatusCore } = await import(
-        '@/lib/tools/requirement-status-core'
-      );
-      await createRequirementStatusCore({
-        site_id,
-        instance_id: instanceId,
-        requirement_id: reqId,
-        status: 'blocked',
-        message: `Re-plan loop detected on automation: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
-      });
-    } catch (err) {
-      console.error('[CronAutoWorkflow] Failed to record re-plan-loop blocker:', err);
+    const rec = await recordRequirementBlockedStep({
+      site_id,
+      instance_id: instanceId,
+      requirement_id: reqId,
+      message: `Re-plan loop detected on automation: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
+    });
+    if (!rec.ok) {
+      console.error(`[CronAutoWorkflow] Failed to record re-plan-loop blocker: ${rec.error}`);
     }
-    await stopSandboxStep(sandboxId, cronAudit);
+    // Let the outer `finally` stop the sandbox — single exit point.
     return { reqId, branch: branchName, previewUrl: null, status: 'blocked' as const };
   }
 
@@ -167,20 +170,15 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
         console.warn(
           `[CronAutoWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
         );
-        try {
-          const { createRequirementStatusCore } = await import(
-            '@/lib/tools/requirement-status-core'
-          );
-          await createRequirementStatusCore({
-            site_id,
-            instance_id: instanceId,
-            requirement_id: reqId,
-            status: 'blocked',
-            message:
-              'Orchestrator finished without producing an instance_plan (automation workflow). Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate if this repeats.',
-          });
-        } catch (err) {
-          console.error('[CronAutoWorkflow] Failed to record orchestrator-no-plan blocker:', err);
+        const rec = await recordRequirementBlockedStep({
+          site_id,
+          instance_id: instanceId,
+          requirement_id: reqId,
+          message:
+            'Orchestrator finished without producing an instance_plan (automation workflow). Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate if this repeats.',
+        });
+        if (!rec.ok) {
+          console.error(`[CronAutoWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
         }
       }
     }
@@ -270,7 +268,7 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
   const binding = await resolveGitBindingForRequirement(reqId, 'automation');
   const gitOrg = binding.org;
   const autoRepo = binding.repo;
-  const previewUrl = await getPreviewUrlStep(gitOrg, autoRepo, effectiveBranch);
+  const previewUrl = await getPreviewUrlStep(gitOrg, autoRepo, effectiveBranch, reqId);
   const sourceCodeUrl = await checkSourceCodeStep(reqId);
 
   // Step 7: HTTP validation — also checks repo_url / branch consistency vs
@@ -299,11 +297,19 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
     audit: cronAudit,
   });
 
-  // Step 9: Clean up
-  await stopSandboxStep(sandboxId, cronAudit);
-
+  // Sandbox stop happens in the outer `finally` — never in the happy path.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } finally {
+    if (sandboxId) {
+      try {
+        await stopSandboxStep(sandboxId, cronAudit);
+      } catch (e: unknown) {
+        console.warn(
+          '[CronAutoWorkflow] stopSandboxStep threw in finally:',
+          e instanceof Error ? e.message : e,
+        );
+      }
+    }
     await releaseRunLockStep(reqId, cronLockRunId);
   }
 }
