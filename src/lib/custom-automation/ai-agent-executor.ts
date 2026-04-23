@@ -644,7 +644,13 @@ export class AIAgentExecutor {
 
     let content = '';
     let reasoningContent = '';
-    const toolCallsAccum: Record<string | number, { id?: string; type: 'function'; function: { name?: string; arguments?: string }; insertedAt: number }> = {};
+    // `extra_content` carries Gemini 3's thought_signature
+    // (`extra_content.google.thought_signature`). We MUST persist it verbatim
+    // across the history or the next call 400s with "Function call is missing
+    // a thought_signature". See:
+    //   https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+    //   https://github.com/openai/openai-openapi/issues/517
+    const toolCallsAccum: Record<string | number, { id?: string; type: 'function'; function: { name?: string; arguments?: string }; extra_content?: any; insertedAt: number }> = {};
     let insertionCounter = 0;
     let finishReason: string | undefined;
     let usage: { prompt_tokens: number; completion_tokens: number; total_tokens: number } | undefined;
@@ -723,6 +729,15 @@ export class AIAgentExecutor {
           if (tc.function?.arguments) {
             toolCallsAccum[idx].function!.arguments = (toolCallsAccum[idx].function!.arguments || '') + (tc.function.arguments || '');
           }
+          // Gemini 3: preserve vendor extras (thought_signature). Later
+          // deltas may replace/extend the object — keep the most recent
+          // complete value.
+          if (tc.extra_content && typeof tc.extra_content === 'object') {
+            toolCallsAccum[idx].extra_content = {
+              ...(toolCallsAccum[idx].extra_content || {}),
+              ...tc.extra_content,
+            };
+          }
         }
       }
     }
@@ -755,11 +770,15 @@ export class AIAgentExecutor {
       content: content || null,
     };
     if (toolCallsArray.length > 0) {
-      message.tool_calls = toolCallsArray.map((tc) => ({
-        id: tc.id,
-        type: 'function' as const,
-        function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
-      }));
+      message.tool_calls = toolCallsArray.map((tc) => {
+        const out: any = {
+          id: tc.id,
+          type: 'function' as const,
+          function: { name: tc.function!.name!, arguments: tc.function!.arguments || '{}' },
+        };
+        if (tc.extra_content) out.extra_content = tc.extra_content;
+        return out;
+      });
     }
 
     return { message, usage, finish_reason: finishReason, streamingLogId };
@@ -921,6 +940,7 @@ export class AIAgentExecutor {
             toolCallExtrasStripped,
             imagePartsStripped,
             systemMessagesDeduped,
+            thoughtSignatureSentinelsInjected,
           } = sanitizeMessagesForGemini(messages);
           if (
             assistantContentCoerced > 0 ||
@@ -929,10 +949,11 @@ export class AIAgentExecutor {
             assistantExtrasStripped > 0 ||
             toolCallExtrasStripped > 0 ||
             imagePartsStripped > 0 ||
-            systemMessagesDeduped > 0
+            systemMessagesDeduped > 0 ||
+            thoughtSignatureSentinelsInjected > 0
           ) {
             console.warn(
-              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] coerced ${assistantContentCoerced} assistant content(s) + ${toolContentCoerced} tool content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s), ${imagePartsStripped} malformed image part(s), deduped ${systemMessagesDeduped} extra system message(s)`,
+              `₍ᐢ•(ܫ)•ᐢ₎ [GEMINI_SANITIZE] coerced ${assistantContentCoerced} assistant content(s) + ${toolContentCoerced} tool content(s) to "", stripped ${toolNameStripped} tool name field(s), ${assistantExtrasStripped} assistant extra field(s), ${toolCallExtrasStripped} tool_call extra field(s), ${imagePartsStripped} malformed image part(s), deduped ${systemMessagesDeduped} extra system message(s), injected ${thoughtSignatureSentinelsInjected} thought_signature sentinel(s)`,
             );
           }
         }

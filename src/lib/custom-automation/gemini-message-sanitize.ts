@@ -46,11 +46,48 @@ const ASSISTANT_EXTRA_FIELDS = [
   'function_call',
 ] as const;
 
-/** Allowed fields on a tool_call entry. Everything else gets stripped. */
-const ALLOWED_TOOL_CALL_KEYS = new Set(['id', 'type', 'function', 'index']);
+/**
+ * Allowed fields on a tool_call entry. Everything else gets stripped.
+ *
+ * `extra_content` is NON-STANDARD OpenAI but REQUIRED by Gemini 3+: it carries
+ * `extra_content.google.thought_signature`, the cryptographic fingerprint of
+ * the model's chain-of-thought. Omitting it on the next turn triggers a 400
+ * "Function call is missing a thought_signature" (often surfaced as "400 status
+ * code (no body)" through the OpenAI-compat layer). See
+ * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+ */
+const ALLOWED_TOOL_CALL_KEYS = new Set(['id', 'type', 'function', 'index', 'extra_content']);
 
 /** Allowed fields on a tool_call.function entry. */
 const ALLOWED_TOOL_CALL_FUNCTION_KEYS = new Set(['name', 'arguments']);
+
+/**
+ * Google-documented "last resort" bypass for thought-signature validation.
+ * Used only when we don't have a real signature (e.g. history rehydrated from
+ * a non-Gemini source, or a legacy turn produced before we started
+ * accumulating the field from streaming deltas). Google warns this degrades
+ * model performance, so we only inject it when there is no real signature.
+ * https://docs.cloud.google.com/vertex-ai/generative-ai/docs/thought-signatures
+ */
+const THOUGHT_SIGNATURE_SENTINEL = 'skip_thought_signature_validator';
+
+function hasThoughtSignature(tc: any): boolean {
+  const sig = tc?.extra_content?.google?.thought_signature;
+  return typeof sig === 'string' && sig.length > 0;
+}
+
+function ensureThoughtSignatureSentinel(tc: any): boolean {
+  if (!tc || typeof tc !== 'object') return false;
+  if (hasThoughtSignature(tc)) return false;
+  if (!tc.extra_content || typeof tc.extra_content !== 'object') {
+    tc.extra_content = {};
+  }
+  if (!tc.extra_content.google || typeof tc.extra_content.google !== 'object') {
+    tc.extra_content.google = {};
+  }
+  tc.extra_content.google.thought_signature = THOUGHT_SIGNATURE_SENTINEL;
+  return true;
+}
 
 /**
  * Cheap data-URL sanity check: must start with `data:image/...;base64,` and the
@@ -102,6 +139,7 @@ export function sanitizeMessagesForGemini(messages: any[]): {
   toolCallExtrasStripped: number;
   imagePartsStripped: number;
   systemMessagesDeduped: number;
+  thoughtSignatureSentinelsInjected: number;
 } {
   let assistantContentCoerced = 0;
   let toolContentCoerced = 0;
@@ -109,6 +147,7 @@ export function sanitizeMessagesForGemini(messages: any[]): {
   let assistantExtrasStripped = 0;
   let toolCallExtrasStripped = 0;
   let systemMessagesDeduped = 0;
+  let thoughtSignatureSentinelsInjected = 0;
   const imageCounter = { imagePartsStripped: 0 };
 
   if (!Array.isArray(messages)) {
@@ -120,6 +159,7 @@ export function sanitizeMessagesForGemini(messages: any[]): {
       toolCallExtrasStripped,
       imagePartsStripped: imageCounter.imagePartsStripped,
       systemMessagesDeduped,
+      thoughtSignatureSentinelsInjected,
     };
   }
 
@@ -163,7 +203,8 @@ export function sanitizeMessagesForGemini(messages: any[]): {
       }
 
       if (Array.isArray(m.tool_calls)) {
-        for (const tc of m.tool_calls) {
+        for (let i = 0; i < m.tool_calls.length; i++) {
+          const tc = m.tool_calls[i];
           if (!tc || typeof tc !== 'object') continue;
           for (const key of Object.keys(tc)) {
             if (!ALLOWED_TOOL_CALL_KEYS.has(key)) {
@@ -178,6 +219,16 @@ export function sanitizeMessagesForGemini(messages: any[]): {
                 toolCallExtrasStripped++;
               }
             }
+          }
+          // Gemini 3 mandates a `thought_signature` on the first functionCall
+          // part of every turn. If we didn't capture one (e.g. a non-streaming
+          // provider that dropped the vendor extras, or rehydrated history),
+          // inject Google's documented bypass sentinel on the first tool_call
+          // so the next request doesn't 400 with "Function call is missing a
+          // thought_signature". Parallel calls: only the first part needs it
+          // per Google's spec, but it's safe to set on all.
+          if (i === 0 && ensureThoughtSignatureSentinel(tc)) {
+            thoughtSignatureSentinelsInjected++;
           }
         }
       } else if (m.tool_calls === null || m.tool_calls === undefined) {
@@ -223,5 +274,6 @@ export function sanitizeMessagesForGemini(messages: any[]): {
     toolCallExtrasStripped,
     imagePartsStripped: imageCounter.imagePartsStripped,
     systemMessagesDeduped,
+    thoughtSignatureSentinelsInjected,
   };
 }

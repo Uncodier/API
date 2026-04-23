@@ -30,11 +30,20 @@ interface RequirementRow {
 }
 
 async function loadRequirement(requirementId: string): Promise<RequirementRow | null> {
-  const { data } = await supabaseAdmin
+  // Propagate the Supabase error instead of swallowing it: otherwise every
+  // transient DB failure (RLS misconfig, env var missing in a different
+  // runtime, network hiccup) would bubble up as a misleading
+  // `Requirement <id> not found`, masking the real problem at the caller.
+  const { data, error } = await supabaseAdmin
     .from('requirements')
     .select('id, type, metadata')
     .eq('id', requirementId)
     .maybeSingle();
+  if (error) {
+    throw new Error(
+      `Failed to load requirement ${requirementId}: ${error.message}${error.code ? ` (code=${error.code})` : ''}`,
+    );
+  }
   return (data as RequirementRow) ?? null;
 }
 

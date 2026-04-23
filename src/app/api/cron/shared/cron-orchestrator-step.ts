@@ -185,12 +185,40 @@ export async function runOrchestratorStep(params: {
       const status = rawErr?.status ?? rawErr?.response?.status;
       const body = rawErr?.error || rawErr?.response?.data;
       const rawMsg = typeof rawErr?.message === 'string' ? rawErr.message : String(rawErr);
+
+      // For empty-body 400s (Gemini's openai-compat loves these), the ONLY
+      // signal we have is what we sent. Surface the last assistant tool_call
+      // name and a small slice of tool names directly in the thrown message
+      // so operators see the likely offender in the dashboard without having
+      // to correlate with the separate `logChatCompletionFailure` line.
+      let lastToolCallName: string | undefined;
+      let lastToolMessageName: string | undefined;
+      for (let i = messages.length - 1; i >= 0 && (!lastToolCallName || !lastToolMessageName); i--) {
+        const m: any = messages[i];
+        if (!m || typeof m !== 'object') continue;
+        if (!lastToolCallName && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+          const tc = m.tool_calls[m.tool_calls.length - 1];
+          if (typeof tc?.function?.name === 'string') lastToolCallName = tc.function.name;
+        }
+        if (!lastToolMessageName && m.role === 'tool' && typeof m.name === 'string') {
+          lastToolMessageName = m.name;
+        }
+      }
+      const toolNamesPreview = fullTools
+        .map((t: any) => t?.function?.name || t?.name)
+        .filter((x: unknown): x is string => typeof x === 'string')
+        .slice(0, 8)
+        .join(',');
+
       const summary = [
         `Orchestrator failed at turn ${turns}`,
         `provider=openai-compat`,
         `model=${orchestratorModel}`,
         `tools=${fullTools.length}`,
         `messages=${messages.length}`,
+        lastToolCallName ? `lastToolCall=${lastToolCallName}` : null,
+        lastToolMessageName ? `lastToolMsg=${lastToolMessageName}` : null,
+        toolNamesPreview ? `toolNames=[${toolNamesPreview}]` : null,
         status !== undefined ? `status=${status}` : null,
         rawErr?.code ? `code=${rawErr.code}` : null,
         rawErr?.request_id ? `request_id=${rawErr.request_id}` : null,
@@ -199,8 +227,17 @@ export async function runOrchestratorStep(params: {
         .filter(Boolean)
         .join(' | ');
       console.error(`[CronStep] ${summary}`, body ? { body } : '');
-      // Hard cap at 2KB so Vercel Workflow never has to spill this to S3.
-      const flat = new Error(summary.length > 2048 ? summary.slice(0, 2048) + '…' : summary);
+      // Hard cap at ~1.5KB and drop the stack. The FatalError wrapper that
+      // Vercel Workflow builds around us already contributes several hundred
+      // bytes of framing; any real stack traces (with /var/task/.next/server
+      // frames) push the payload past the inline threshold and force a
+      // RemoteRef spill, which then breaks the `run_failed` Zod validation
+      // (`run.error: expected object, received undefined`). Without a stack
+      // we lose nothing (callers already log the raw error above) and the
+      // error stays inline every time.
+      const MAX = 1536;
+      const flat = new Error(summary.length > MAX ? summary.slice(0, MAX) + '…' : summary);
+      flat.stack = flat.message;
       throw flat;
     }
     messages = result.messages;
