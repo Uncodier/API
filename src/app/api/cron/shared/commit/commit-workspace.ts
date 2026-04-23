@@ -173,10 +173,11 @@ fi`,
     }
     const errMsg = e?.message || String(e);
     const tri = triageGitPushError(errMsg);
+    const logSummary = tri.agentMessage.replace(/\s+/g, ' ').trim().slice(0, 500);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.COMMIT_PUSH,
       level: tri.agentActionable ? 'error' : 'warn',
-      message: `Git commit/push failed (${tri.failureKind}): ${errMsg.slice(0, 600)}`,
+      message: `Git commit/push failed (${tri.failureKind}): ${logSummary}`,
       details: {
         headShort,
         error: errMsg.slice(0, 4000),
