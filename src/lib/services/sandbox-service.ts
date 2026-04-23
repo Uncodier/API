@@ -382,9 +382,11 @@ export class SandboxService {
   }
 
   /**
-   * Returns the current git branch name inside the sandbox. When HEAD is detached
-   * (e.g. after `git checkout <sha>`) git reports the literal string `HEAD`; callers
-   * should treat that as "no branch" and recover onto one before pushing.
+   * Returns the current git branch name inside the sandbox.
+   * `rev-parse --abbrev-ref HEAD` returns the literal `HEAD` in two cases: (1) true
+   * detached checkout; (2) an **unborn** branch (no commits yet) where HEAD still
+   * symbolically points at refs/heads/<name>. The latter must resolve to the real
+   * name (e.g. `main`); otherwise `git push -u origin HEAD` fails on the remote.
    */
   static async getCurrentBranch(sandbox: Sandbox): Promise<string> {
     const cwd = SandboxService.WORK_DIR;
@@ -392,7 +394,18 @@ export class SandboxService {
     if (res.exitCode !== 0) {
       throw new Error(`Failed to detect current branch: ${await res.stderr()}`);
     }
-    return (await res.stdout()).trim();
+    const abbr = (await res.stdout()).trim();
+    if (abbr !== 'HEAD') {
+      return abbr;
+    }
+    const sym = await SandboxService.runWithCwd(sandbox, 'git', ['symbolic-ref', '-q', '--short', 'HEAD'], cwd);
+    if (sym.exitCode === 0) {
+      const name = (await sym.stdout()).trim();
+      if (name) {
+        return name;
+      }
+    }
+    return 'HEAD';
   }
 
   /**
