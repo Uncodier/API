@@ -112,16 +112,22 @@ ENVIRONMENT:
 
 WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the current phase and pending queue.
-2. If the backlog is empty, derive 3-8 items from \`requirement.spec.md\` and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`.
+2. If the backlog is empty, derive 3-8 items from \`requirement.spec.md\` and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental').
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
 5. Report progress with \`requirement_status\` (status='in-progress').
 
 HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`).
 
+HARD RULE ACCEPTANCE (Phase 10):
+- Every \`tier='core'\` item MUST have at least one acceptance entry containing a concrete anchor: an HTTP verb (GET/POST/PUT/DELETE), a route (starts with /), a status code, or an observable verb (returns/renders/inserts/redirects/creates/deletes). Narrative acceptance such as "home shows product vision" is REJECTED by the Judge.
+- Landings, architecture overviews, README pages, and "visión del producto" items are \`tier='ornamental'\`. They do NOT count for requirement closure and cannot be used to flip \`completion_status='completed'\`.
+- A core \`kind='page'\` must ship \`src/app/<route>/page.tsx\`; \`kind='crud'\` must ship \`src/app/api/<resource>/route.ts\` with both GET and POST handlers; \`kind='auth'\` must ship \`/login\` or \`src/app/api/auth/**/route.ts\`. The feature-coverage signal checks this on disk every cycle.
+
 QUALITY GATE (kind=${kind}):
 - The per-step gate runs the flow-specific probes automatically (${describeGate(flow)}).
 - Development step instructions MUST include concrete, user-visible acceptance criteria — not just "build the feature" — so the Judge archetype can verify them post-gate.
+- Admin-only diffs (\`README.md\`, \`progress.md\`, \`evidence/*\`, \`feature_list.json\`, \`requirement.spec.md\`) REJECT \`tier='core'\` items. Core items must ship code under \`src/**\`.
 `;
 }
 
@@ -168,7 +174,8 @@ ${pending.length ? pending.map((i) => `    - ${renderItem(i)}`).join('\n') : '  
 
 function renderItem(i: BacklogItem): string {
   const accept = (i.acceptance || []).slice(0, 2).map((a) => `"${a.slice(0, 80)}"`).join(' + ');
-  return `[${i.id.slice(0, 8)}] kind=${i.kind} scope=${i.scope_level} attempts=${i.attempts} — ${i.title}${accept ? ` | acceptance: ${accept}` : ''}`;
+  const tier = i.tier ?? 'core';
+  return `[${i.id.slice(0, 8)}] kind=${i.kind} tier=${tier} scope=${i.scope_level} attempts=${i.attempts} — ${i.title}${accept ? ` | acceptance: ${accept}` : ''}`;
 }
 
 /** Back-compat alias kept until all workflows adopt the new name. */

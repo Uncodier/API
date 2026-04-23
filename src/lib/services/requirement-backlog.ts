@@ -17,10 +17,11 @@ import {
   type BacklogItemKind,
   type BacklogItemScope,
   type BacklogItemStatus,
+  type BacklogItemTier,
   type RequirementBacklog,
 } from './requirement-backlog-types';
 
-export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope, RequirementBacklog };
+export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope, BacklogItemTier, RequirementBacklog };
 
 interface RequirementRow {
   id: string;
@@ -55,10 +56,34 @@ async function writeBacklog(requirementId: string, backlog: RequirementBacklog, 
   if (error) throw new Error(`Failed to persist backlog: ${error.message}`);
 }
 
+/**
+ * Phase 10: completion ratio is computed over **core** items only. Ornamental
+ * items (landings, polish, README sections) do not gate requirement closure.
+ * When there are zero core items we fall back to the full-set ratio so
+ * existing requirements don't regress to 1.0 trivially.
+ */
 function computeRatio(items: BacklogItem[]): number {
   if (!items.length) return 0;
-  const done = items.filter((i) => i.status === 'done').length;
-  return Math.round((done / items.length) * 1000) / 1000;
+  const core = items.filter((i) => (i.tier ?? 'core') === 'core');
+  const denom = core.length > 0 ? core.length : items.length;
+  const pool = core.length > 0 ? core : items;
+  const done = pool.filter((i) => i.status === 'done').length;
+  return Math.round((done / denom) * 1000) / 1000;
+}
+
+/**
+ * True when every `tier='core'` item is in a terminal, successful state.
+ * Consumers (flow engine, close-requirement gates) should call this instead
+ * of checking `completion_ratio === 1`.
+ */
+export function coreItemsAllDone(items: BacklogItem[]): boolean {
+  const core = items.filter((i) => (i.tier ?? 'core') === 'core');
+  if (core.length === 0) return false;
+  return core.every((i) => i.status === 'done');
+}
+
+export function pendingCoreItems(items: BacklogItem[]): BacklogItem[] {
+  return items.filter((i) => (i.tier ?? 'core') === 'core' && i.status !== 'done' && i.status !== 'rejected');
 }
 
 // Web Crypto UUID generator. Avoids importing the Node `crypto` module so this
@@ -94,6 +119,7 @@ function ensureItemDefaults(partial: Partial<BacklogItem> & { title: string; kin
     attempts: typeof partial.attempts === 'number' ? partial.attempts : 0,
     assumptions: partial.assumptions,
     scope_level: partial.scope_level || 'full',
+    tier: partial.tier ?? 'core',
     depends_on: partial.depends_on,
     evidence: partial.evidence,
     created_at: partial.created_at || now,

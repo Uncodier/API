@@ -1,5 +1,5 @@
 import { executeBacklogCore, type BacklogAction, type BacklogCoreParams } from './route';
-import type { BacklogItemKind, BacklogItemStatus } from '@/lib/services/requirement-backlog';
+import type { BacklogItemKind, BacklogItemStatus, BacklogItemTier } from '@/lib/services/requirement-backlog';
 
 export function requirementBacklogTool(_siteId: string, defaultRequirementId?: string) {
   return {
@@ -41,6 +41,11 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         },
         touches: { type: 'array', items: { type: 'string' }, description: 'Files or file globs this item is expected to touch.' },
         scope_level: { type: 'string', enum: ['full', 'mvp', 'minimal'], description: 'Requested scope. Default full.' },
+        tier: {
+          type: 'string',
+          enum: ['core', 'ornamental'],
+          description: 'Functional tier. `core` = must-ship functional item (the Judge applies kind-specific hard contracts and rejects narrative-only acceptance). `ornamental` = polish / landing / nice-to-have (relaxed contracts, does not block requirement closure). Default `core`.',
+        },
         depends_on: { type: 'array', items: { type: 'string' }, description: 'Item ids this depends on (must be done first).' },
         status: {
           type: 'string',
@@ -65,6 +70,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         acceptance: args.acceptance,
         touches: args.touches,
         scope_level: args.scope_level,
+        tier: args.tier as BacklogItemTier | undefined,
         depends_on: args.depends_on,
         status: args.status as BacklogItemStatus | undefined,
         reason: args.reason,

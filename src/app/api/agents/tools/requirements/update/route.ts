@@ -7,6 +7,7 @@ import {
   normalizeGitBindingInput,
   type GitBinding,
 } from '@/lib/services/requirement-git-binding';
+import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
 import {
   PartialRequirementMetadataSchema,
   verifyGitBindingReachable,
@@ -49,6 +50,24 @@ export async function updateRequirementCore(params: any) {
 
   if (existing.site_id !== site_id) {
     throw new Error('No tienes permiso para actualizar este requerimiento');
+  }
+
+  // Phase 10 guardrail: reject a requirement closure while core backlog items
+  // are still pending. This blocks the classic loop where the orchestrator
+  // flips completion_status='completed' after delivering only a landing.
+  const wantsClose =
+    updateFields.completion_status === 'completed' ||
+    updateFields.status === 'done';
+  if (wantsClose) {
+    try {
+      const gate = await canCloseRequirement(requirement_id);
+      if (!gate.ok) {
+        throw new Error(`Cannot close requirement: ${gate.reason}. Rewrite acceptance with executable anchors, downgrade narrative items to tier='ornamental', or finish the pending core items before setting completion_status='completed'.`);
+      }
+    } catch (e: unknown) {
+      if (e instanceof Error && e.message.startsWith('Cannot close requirement:')) throw e;
+      console.warn(`[RequirementsUpdate] canCloseRequirement check failed (continuing): ${e instanceof Error ? e.message : e}`);
+    }
   }
 
   // If metadata.git is present, merge against the existing binding so callers

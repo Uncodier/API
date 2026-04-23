@@ -18,6 +18,7 @@
 import type { BacklogItem, BacklogItemKind } from '@/lib/services/requirement-backlog-types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import type { EvidenceRecord } from '@/lib/services/requirement-ground-truth';
+import { validateAcceptance } from '@/lib/services/requirement-acceptance';
 
 export type CriticSeverity = 'blocker' | 'major' | 'minor';
 
@@ -110,7 +111,41 @@ function gateSignals(evidence: EvidenceRecord): {
 }
 
 function commitSummary(evidence: EvidenceRecord): { sha?: string; files: string[] } {
-  return { sha: evidence.commit_sha, files: [] };
+  return { sha: evidence.commit_sha, files: evidence.changed_files ?? [] };
+}
+
+function isTier(item: BacklogItem, tier: 'core' | 'ornamental'): boolean {
+  return (item.tier ?? 'core') === tier;
+}
+
+function isAdminOnlyDiff(files: string[]): boolean {
+  if (!files.length) return false;
+  return files.every((f) =>
+    /\.md$/i.test(f) ||
+    /^evidence\//.test(f) ||
+    /^progress\.md$/i.test(f) ||
+    /^DECISIONS\.md$/i.test(f) ||
+    /^README(\.md)?$/i.test(f) ||
+    /^feature_list\.json$/i.test(f) ||
+    /^requirement\.spec\.md$/i.test(f) ||
+    /^\.instructions$/i.test(f),
+  );
+}
+
+function isLandingOnlyDiff(files: string[]): boolean {
+  if (!files.length) return false;
+  const code = files.filter((f) => /^src\//.test(f));
+  if (!code.length) return false;
+  // Landing-only = every code change is either the root page.tsx, layout.tsx,
+  // a component under src/components/, or globals.css. No API route, no nested
+  // /app/<feature>/page.tsx, no middleware, no lib/services/* touched.
+  return code.every((f) =>
+    /^src\/app\/page\.(t|j)sx?$/.test(f) ||
+    /^src\/app\/layout\.(t|j)sx?$/.test(f) ||
+    /^src\/app\/globals\.css$/.test(f) ||
+    /^src\/components\//.test(f) ||
+    /^src\/styles\//.test(f),
+  );
 }
 
 function evidenceClaim(evidence: EvidenceRecord): string {
@@ -131,6 +166,21 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
       severity: 'major',
       fix_hint: 'Backlog item has no acceptance criteria. Add at least one observable acceptance line via requirement_backlog upsert.',
     });
+  } else {
+    const v = validateAcceptance(item.acceptance);
+    if (!v.has_any_executable && isTier(item, 'core')) {
+      out.push({
+        rule: 'narrative-acceptance',
+        severity: 'blocker',
+        fix_hint: `All ${item.acceptance.length} acceptance entr${item.acceptance.length === 1 ? 'y is' : 'ies are'} narrative. Rewrite at least one with a concrete anchor: HTTP verb (GET/POST), route (starting with /), status code, or observable verb (returns, renders, inserts, redirects). Narrative acceptance cannot be verified against evidence.`,
+      });
+    } else if (v.narrative.length > 0 && isTier(item, 'core')) {
+      out.push({
+        rule: 'partially-narrative-acceptance',
+        severity: 'minor',
+        fix_hint: `${v.narrative.length}/${item.acceptance.length} acceptance entries lack concrete anchors — judge will ignore them when matching evidence.`,
+      });
+    }
   }
   const calls = toolCalls(evidence);
   if (calls.length === 0) {
@@ -141,13 +191,36 @@ function criticGenericRules(ctx: ArchetypeContext): CriticSuggestion[] {
     });
   }
   const c = commitSummary(evidence);
-  const onlyDocs = c.files.length > 0 && c.files.every((f) => /\.md$|^evidence\/|^progress\.md$/.test(f));
-  if (onlyDocs) {
+  if (isAdminOnlyDiff(c.files) && isTier(item, 'core')) {
     out.push({
       rule: 'admin-only-commit',
-      severity: 'major',
-      fix_hint: 'Commit touches only docs / evidence. Producer must ship code changes for kind != "report" items.',
+      severity: 'blocker',
+      fix_hint: `Commit touches only docs / evidence / ground-truth files (${c.files.slice(0, 3).join(', ')}${c.files.length > 3 ? '…' : ''}). Core items must ship code changes under src/**. Either downgrade this item to tier='ornamental' via requirement_backlog upsert, or produce the actual code.`,
     });
+  }
+  if (evidence.feature_coverage) {
+    for (const kr of evidence.feature_coverage.kind_requirements ?? []) {
+      if (!kr.satisfied) {
+        out.push({
+          rule: `feature-coverage:${kr.requirement}`,
+          severity: 'blocker',
+          fix_hint: `kind=${kr.kind} contract failed: ${kr.requirement}. Detail: ${kr.detail || 'n/a'}`,
+        });
+      }
+    }
+    const missingPages =
+      (evidence.feature_coverage.expected_page_routes?.length ?? 0) -
+      (evidence.feature_coverage.present_page_files?.length ?? 0);
+    const missingApis =
+      (evidence.feature_coverage.expected_api_routes?.length ?? 0) -
+      (evidence.feature_coverage.present_api_files?.length ?? 0);
+    if (missingPages > 0 || missingApis > 0) {
+      out.push({
+        rule: 'feature-coverage:missing-routes',
+        severity: 'blocker',
+        fix_hint: `Acceptance / touches declared routes that do not exist on disk — pages missing: ${missingPages}, api handlers missing: ${missingApis}. Ship them or rewrite acceptance.`,
+      });
+    }
   }
   return out;
 }
@@ -160,6 +233,14 @@ function criticAppRules(ctx: ArchetypeContext): CriticSuggestion[] {
   }
   if (sig.runtime && sig.runtime.ok === false) {
     out.push({ rule: 'runtime-fail', severity: 'blocker', fix_hint: 'Runtime probe failed. App did not boot — inspect server logs.' });
+  }
+  const files = commitSummary(ctx.evidence).files;
+  if (isLandingOnlyDiff(files) && isTier(ctx.item, 'core') && (ctx.item.kind === 'page' || ctx.item.kind === 'component' || ctx.item.kind === 'crud' || ctx.item.kind === 'auth')) {
+    out.push({
+      rule: 'admin-only-landing',
+      severity: 'blocker',
+      fix_hint: `Core item kind=${ctx.item.kind} but commit only modified the root landing / components / globals.css. This is the "map-instead-of-product" pattern. Ship the actual feature: a nested page under src/app/<feature>/page.tsx, an API handler under src/app/api/<feature>/route.ts, or a real middleware — or downgrade to tier='ornamental'.`,
+    });
   }
   return out;
 }
@@ -206,25 +287,47 @@ function defaultUnmatched(item: BacklogItem): string[] {
   return [...(item.acceptance ?? [])];
 }
 
+/**
+ * Phase 10: stricter acceptance matching.
+ *
+ *   1. Narrative acceptance (no anchor) is marked as unmatched regardless of
+ *      evidence text — the Judge cannot rubber-stamp a landing just because
+ *      some words overlap.
+ *   2. Executable acceptance is matched via its anchors (routes, HTTP verbs,
+ *      status codes, observable verbs) rather than generic 4-char keywords.
+ *      A route anchor must appear verbatim in the haystack; a status-code
+ *      anchor must appear as a number/status literal; an observable verb
+ *      must co-occur with at least one other anchor or keyword from the
+ *      acceptance line so we don't match "returns" anywhere in logs.
+ */
 function matchAcceptanceByKeywords(
   acceptance: string[],
   haystacks: string[],
 ): { matched: string[]; unmatched: string[] } {
   const matched: string[] = [];
   const unmatched: string[] = [];
+  const validation = validateAcceptance(acceptance);
+  const analysisByText = new Map(validation.analyses.map((a) => [a.text, a]));
+  const haystackLower = haystacks.map((h) => h.toLowerCase());
   for (const a of acceptance) {
-    const tokens = a
-      .toLowerCase()
-      .replace(/[^a-z0-9 ]+/g, ' ')
-      .split(/\s+/)
-      .filter((t) => t.length >= 4);
-    if (tokens.length === 0) {
+    const analysis = analysisByText.get(a);
+    if (!analysis || !analysis.executable) {
       unmatched.push(a);
       continue;
     }
-    const hit = haystacks.some((hay) => {
-      const lower = hay.toLowerCase();
-      return tokens.every((t) => lower.includes(t));
+    // Every anchor must have at least one corroborating signal in the evidence.
+    // This guards against "returns 200" matching a log line elsewhere — we
+    // require at least 2 anchors to co-occur in the SAME haystack entry when
+    // the line has ≥2 anchors, else the single anchor must appear.
+    const anchorStrings = analysis.anchors.map((an) => an.value.toLowerCase());
+    const minHits = Math.min(2, anchorStrings.length);
+    const hit = haystackLower.some((hay) => {
+      let count = 0;
+      for (const anchor of anchorStrings) {
+        if (hay.includes(anchor)) count++;
+        if (count >= minHits) return true;
+      }
+      return count >= minHits;
     });
     if (hit) matched.push(a);
     else unmatched.push(a);
@@ -245,6 +348,30 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (sig.build && !sig.build.ok) return rejected(item, 'build gate failed');
   if (sig.runtime && sig.runtime.ok === false) return rejected(item, 'runtime gate failed');
   if (sig.scenarios && sig.scenarios.ok === false) return rejected(item, 'scenario gate failed');
+
+  // Phase 10: hard contracts for core items.
+  if (isTier(item, 'core')) {
+    const narrative = !validateAcceptance(item.acceptance).has_any_executable;
+    if (narrative) {
+      return rejected(item, 'core item has only narrative acceptance — rewrite with an executable anchor (route, HTTP verb, status code, observable verb) or downgrade to tier=ornamental');
+    }
+    if (isAdminOnlyDiff(evidence.changed_files ?? [])) {
+      return rejected(item, 'core item commit is admin-only (docs/evidence/ground-truth). Ship code under src/** or set tier=ornamental.');
+    }
+    if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
+      const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
+      const reason = kr.length
+        ? `feature coverage failed — ${kr.map((k) => `${k.kind}:${k.requirement}`).join(', ')}`
+        : 'feature coverage failed — declared touches/routes missing on disk';
+      return rejected(item, reason);
+    }
+    if (
+      (item.kind === 'page' || item.kind === 'component' || item.kind === 'crud' || item.kind === 'auth') &&
+      isLandingOnlyDiff(evidence.changed_files ?? [])
+    ) {
+      return rejected(item, `kind=${item.kind} but commit only changed landing/components (admin-only-landing pattern). Ship the real feature or downgrade.`);
+    }
+  }
   return matchOrEscalate(item, evidence);
 }
 
@@ -275,6 +402,23 @@ function judgeContract(item: BacklogItem, evidence: EvidenceRecord): JudgeResult
 function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (!hasToolCall(evidence, (c) => /curl|fetch|http|test/i.test(c.name))) {
     return rejected(item, 'backend judge requires an HTTP probe or test run');
+  }
+  if (isTier(item, 'core')) {
+    if (!validateAcceptance(item.acceptance).has_any_executable) {
+      return rejected(item, 'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)');
+    }
+    if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
+      const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
+      const reason = kr.length
+        ? `backend feature coverage failed — ${kr.map((k) => `${k.kind}:${k.requirement}`).join(', ')}`
+        : 'backend feature coverage failed — declared api route handler missing or incomplete';
+      return rejected(item, reason);
+    }
+    // Soft runtime check: at least one successful 2xx/3xx runtime tool call.
+    const anyRuntimeOk = toolCalls(evidence).some((c) => /^curl\s/.test(c.name) && c.ok);
+    if (!anyRuntimeOk) {
+      return rejected(item, 'backend core item needs at least one successful HTTP probe against the shipped route');
+    }
   }
   return matchOrEscalate(item, evidence);
 }

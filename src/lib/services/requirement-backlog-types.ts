@@ -24,6 +24,24 @@ export type BacklogItemKind =
 
 export type BacklogItemScope = 'full' | 'mvp' | 'minimal';
 
+/**
+ * Tier separates **core** (functional, must ship to call the requirement
+ * "done") from **ornamental** (nice-to-have polish, landings, README pages).
+ * Introduced in Phase 10 to stop the "map-instead-of-product" failure mode
+ * where the producer shipped a landing describing the product and the judge
+ * approved because the acceptance was narrative.
+ *
+ * Rules:
+ *   - `completion_ratio` is computed over `core` items only.
+ *   - Judge applies kind-specific hard contracts ONLY to core items.
+ *   - The requirement cannot reach `completed` while any core item is pending.
+ *
+ * Backwards-compat: existing items without `tier` are treated as `core`
+ * (strict). That means legacy narrative items will now visibly block closure
+ * until they are downgraded to `ornamental` or rewritten with real acceptance.
+ */
+export type BacklogItemTier = 'core' | 'ornamental';
+
 export interface BacklogItem {
   id: string;
   title: string;
@@ -35,6 +53,7 @@ export interface BacklogItem {
   attempts: number;
   assumptions?: string[];
   scope_level: BacklogItemScope;
+  tier?: BacklogItemTier;
   depends_on?: string[];
   evidence?: EvidenceRecord;
   created_at?: string;

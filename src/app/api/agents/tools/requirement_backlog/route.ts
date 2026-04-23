@@ -10,6 +10,7 @@ import {
   upsertBacklogItem,
   type BacklogItemStatus,
   type BacklogItemKind,
+  type BacklogItemTier,
 } from '@/lib/services/requirement-backlog';
 
 export type BacklogAction =
@@ -32,6 +33,7 @@ export interface BacklogCoreParams {
   acceptance?: string[];
   touches?: string[];
   scope_level?: 'full' | 'mvp' | 'minimal';
+  tier?: BacklogItemTier;
   depends_on?: string[];
   status?: BacklogItemStatus;
   reason?: string;
@@ -61,6 +63,7 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
           acceptance: params.acceptance,
           touches: params.touches,
           scope_level: params.scope_level,
+          tier: params.tier,
           depends_on: params.depends_on,
         },
       });

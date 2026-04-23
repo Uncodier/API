@@ -22,7 +22,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { classifyRequirementType, getFlow } from '@/lib/services/requirement-flows';
 import { upsertBacklogItem } from '@/lib/services/requirement-backlog';
-import type { BacklogItemKind } from '@/lib/services/requirement-backlog-types';
+import type { BacklogItemKind, BacklogItemTier } from '@/lib/services/requirement-backlog-types';
 
 interface Args {
   dryRun: boolean;
@@ -44,20 +44,44 @@ function parseArgs(argv: string[]): Args {
 interface RawItem {
   title: string;
   done: boolean;
+  tier: BacklogItemTier;
+}
+
+function parseChecklist(body: string, tier: BacklogItemTier): RawItem[] {
+  const items: RawItem[] = [];
+  for (const raw of body.split('\n')) {
+    const m = raw.match(/^\s*-\s+\[( |x|X)\]\s+(.+?)\s*$/);
+    if (!m) continue;
+    const done = m[1].toLowerCase() === 'x';
+    const title = m[2].trim();
+    if (title) items.push({ title, done, tier });
+  }
+  return items;
+}
+
+/**
+ * Phase 10: prefer explicit "Functional / Core" vs "Ornamental / Nice to have"
+ * sections when they exist. That way the seed script respects the author's
+ * intent — only items parsed from a Functional section get tier='core'.
+ */
+function parseTieredSections(instructions: string): RawItem[] {
+  const funcRe = /^##\s+(Functional|Funcional|Core)\s*(\(.*\))?\s*$/mi;
+  const ornRe = /^##\s+(Ornamental|Nice[- ]?to[- ]?have|Polish)\s*(\(.*\))?\s*$/mi;
+  const funcBody = extractSection(instructions, funcRe);
+  const ornBody = extractSection(instructions, ornRe);
+  const items: RawItem[] = [];
+  if (funcBody) items.push(...parseChecklist(funcBody, 'core'));
+  if (ornBody) items.push(...parseChecklist(ornBody, 'ornamental'));
+  return items;
 }
 
 function parseExecutionPlan(instructions: string): RawItem[] {
   const plan = extractSection(instructions, /^##\s+9\.\s*Execution\s*Plan/mi);
   if (!plan) return [];
-  const items: RawItem[] = [];
-  for (const raw of plan.split('\n')) {
-    const m = raw.match(/^\s*-\s+\[( |x|X)\]\s+(.+?)\s*$/);
-    if (!m) continue;
-    const done = m[1].toLowerCase() === 'x';
-    const title = m[2].trim();
-    if (title) items.push({ title, done });
-  }
-  return items;
+  // Legacy "## 9. Execution Plan" checklists don't distinguish core vs
+  // ornamental. To stay strict-by-default we treat them all as `core` and
+  // let the Judge / Critic escalate items that clearly don't belong.
+  return parseChecklist(plan, 'core');
 }
 
 function extractSection(markdown: string, headingRe: RegExp): string | null {
@@ -84,7 +108,10 @@ function heuristicItems(instructions: string): RawItem[] {
     const key = title.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    items.push({ title, done: false });
+    // Heuristic: lines that only mention documentation / landing / overview
+    // get demoted to ornamental so the Judge doesn't block closure on them.
+    const ornamental = /\b(landing|overview|vision|visi[oó]n|README|map|mapa|arquitectura|mock|mockup|placeholder)\b/i.test(title);
+    items.push({ title, done: false, tier: ornamental ? 'ornamental' : 'core' });
   }
   return items.slice(0, 10);
 }
@@ -124,8 +151,12 @@ async function seedOne(reqId: string, dryRun: boolean): Promise<boolean> {
   const flowKinds = flow.backlog_kinds;
 
   const instructions = typeof req.instructions === 'string' ? req.instructions : '';
-  let raw = parseExecutionPlan(instructions);
-  let source: 'execution_plan' | 'heuristic' = 'execution_plan';
+  let raw = parseTieredSections(instructions);
+  let source: 'tiered_sections' | 'execution_plan' | 'heuristic' = 'tiered_sections';
+  if (raw.length === 0) {
+    raw = parseExecutionPlan(instructions);
+    source = 'execution_plan';
+  }
   if (raw.length === 0) {
     raw = heuristicItems(instructions);
     source = 'heuristic';
@@ -135,27 +166,77 @@ async function seedOne(reqId: string, dryRun: boolean): Promise<boolean> {
     return false;
   }
 
-  console.log(`[seed] ${reqId} kind=${kind} source=${source} items=${raw.length}${dryRun ? ' (dry-run)' : ''}`);
+  const coreCount = raw.filter((r) => r.tier === 'core').length;
+  console.log(
+    `[seed] ${reqId} kind=${kind} source=${source} items=${raw.length} core=${coreCount} ornamental=${raw.length - coreCount}${dryRun ? ' (dry-run)' : ''}`,
+  );
   if (dryRun) {
-    for (const r of raw.slice(0, 5)) console.log(`    - ${r.done ? '[x]' : '[ ]'} ${r.title}`);
-    if (raw.length > 5) console.log(`    ... ${raw.length - 5} more`);
+    for (const r of raw.slice(0, 8)) console.log(`    - ${r.done ? '[x]' : '[ ]'} [${r.tier}] ${r.title}`);
+    if (raw.length > 8) console.log(`    ... ${raw.length - 8} more`);
     return true;
   }
 
   for (const r of raw) {
+    const itemKind = inferKind(r.title, flowKinds);
+    // Build a slightly more anchored acceptance so the Judge tokenizer has
+    // something to match. The orchestrator LLM is expected to refine these
+    // on its next pass via `requirement_backlog action='upsert'`.
+    const acceptance = r.tier === 'core'
+      ? buildCoreAcceptance(r.title, itemKind)
+      : [`Delivers "${r.title}" as described in the instructions`];
     await upsertBacklogItem({
       requirementId: reqId,
       item: {
         title: r.title,
-        kind: inferKind(r.title, flowKinds),
+        kind: itemKind,
         phase_id: phaseId,
-        acceptance: [`Delivers "${r.title}" as described in the instructions`],
+        acceptance,
         scope_level: 'full',
+        tier: r.tier,
         status: r.done ? 'done' : 'pending',
       },
     });
   }
   return true;
+}
+
+function buildCoreAcceptance(title: string, kind: BacklogItemKind): string[] {
+  const t = title.toLowerCase();
+  const out: string[] = [];
+  switch (kind) {
+    case 'page':
+      out.push(`Renders page at /${slugify(title)} and returns 200`);
+      break;
+    case 'crud':
+      out.push(`GET /api/${slugify(title)} returns 200 with a list`);
+      out.push(`POST /api/${slugify(title)} creates a record and returns 201`);
+      break;
+    case 'api':
+      out.push(`GET /api/${slugify(title)} returns 200`);
+      break;
+    case 'auth':
+      out.push(`/login accepts credentials and redirects on success`);
+      break;
+    case 'integration':
+      out.push(`Integration endpoint responds 200 on a live probe`);
+      break;
+    default:
+      out.push(`Delivers "${title}" with an observable, testable outcome`);
+  }
+  // Always keep the original title as an acceptance hint so downstream skills
+  // can refine it without losing the author's intent.
+  out.push(`Matches original request: ${title}`);
+  return out;
+}
+
+function slugify(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/[áàä]/g, 'a').replace(/[éèë]/g, 'e').replace(/[íìï]/g, 'i')
+    .replace(/[óòö]/g, 'o').replace(/[úùü]/g, 'u').replace(/[ñ]/g, 'n')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 40) || 'feature';
 }
 
 async function main() {

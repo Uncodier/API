@@ -17,6 +17,20 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
  * file did not write.
  */
 
+export interface FeatureCoverageEvidence {
+  ok: boolean;
+  declared_touches?: string[];
+  present_touches?: string[];
+  missing_touches?: string[];
+  expected_page_routes?: string[];
+  expected_api_routes?: string[];
+  present_page_files?: string[];
+  present_api_files?: string[];
+  acceptance_route_anchors?: string[];
+  kind_requirements?: Array<{ kind: string; requirement: string; satisfied: boolean; detail?: string }>;
+  summary?: string;
+}
+
 export interface EvidenceRecord {
   schema_version: 1;
   item_id: string;
@@ -25,6 +39,17 @@ export interface EvidenceRecord {
   build?: { command: string; exit_code: number; duration_ms: number };
   runtime?: { route: string; http_status: number; screenshot_url?: string };
   scenarios?: { name: string; pass: boolean; duration_ms: number }[];
+  /**
+   * Files the producer actually changed in the commit that triggered this
+   * evidence capture. Used by the Critic's `admin-only-commit` /
+   * `admin-only-landing` rules and by feature-coverage cross-checks.
+   */
+  changed_files?: string[];
+  /**
+   * Structural proof that the item shipped the files / routes its contract
+   * promised. Computed by `computeFeatureCoverage` in Phase 10.
+   */
+  feature_coverage?: FeatureCoverageEvidence;
   commit_sha?: string;
   assumptions_logged?: string[];
   critic_passes: number;

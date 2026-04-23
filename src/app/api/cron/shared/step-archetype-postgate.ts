@@ -18,6 +18,8 @@ import {
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
+import { computeFeatureCoverage, summarizeFeatureCoverage } from './feature-coverage';
+import { inferTargetRoutesFromDiff } from './step-runtime-targets';
 
 export interface PostGateGateSignals {
   build?: { ok: boolean };
@@ -27,6 +29,12 @@ export interface PostGateGateSignals {
   scenarios?: {
     scenarios?: Array<{ scenario: string; pass: boolean; duration_ms: number }>;
   };
+  /**
+   * Files actually modified by the producer in this cycle (sourced from
+   * `git diff` inside the runtime probe). Passed to the archetype runner so
+   * the Critic / Judge can enforce `admin-only-commit` + `admin-only-landing`.
+   */
+  changed_files?: string[];
 }
 
 export interface RunArchetypePostGateInput {
@@ -57,7 +65,31 @@ export async function runArchetypePostGate(
     const { kind, item } = await getBacklogItem(input.requirementId, input.backlogItemId);
     if (!item) return { ran: false };
 
-    const evidenceRecord = buildEvidenceRecord(input.signals, input.capturedAt);
+    // Phase 10: structural coverage check before the archetype pass. Runs
+    // cheap `test -f` probes in the sandbox; any failure turns into a judge
+    // rejection through the evidence.feature_coverage slice.
+    let coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null = null;
+    try {
+      coverage = await computeFeatureCoverage({ sandbox: input.sandbox, item });
+    } catch (e: unknown) {
+      console.warn(`[CronStep] feature coverage failed: ${e instanceof Error ? e.message : e}`);
+    }
+
+    // Reuse the diff-inference helper to enrich evidence with the list of
+    // files this cycle actually changed. Critic / Judge use it to detect
+    // admin-only commits and landing-only diffs.
+    let changedFiles: string[] = input.signals.changed_files ?? [];
+    if (changedFiles.length === 0) {
+      try {
+        const inferred = await inferTargetRoutesFromDiff(input.sandbox);
+        changedFiles = inferred.changedFiles ?? [];
+      } catch (e: unknown) {
+        console.warn(`[CronStep] changed_files inference failed: ${e instanceof Error ? e.message : e}`);
+      }
+    }
+    const signalsWithDiff: PostGateGateSignals = { ...input.signals, changed_files: changedFiles };
+
+    const evidenceRecord = buildEvidenceRecord(signalsWithDiff, input.capturedAt, coverage);
     const persisted = await writeEvidence({
       sandbox: input.sandbox,
       cwd: SandboxService.WORK_DIR,
@@ -128,12 +160,14 @@ export async function runArchetypePostGate(
       details: {
         step_id: input.stepId,
         backlog_item_id: item.id,
+        tier: item.tier ?? 'core',
         critic_blockers: critic.suggestions.filter((s) => s.severity === 'blocker').length,
         critic_majors: critic.suggestions.filter((s) => s.severity === 'major').length,
         judge_verdict: judge.verdict,
         judge_reason: judge.reason,
         matched_acceptance: judge.matched_acceptance.length,
         unmatched_acceptance: judge.unmatched_acceptance.length,
+        feature_coverage: coverage ? summarizeFeatureCoverage(coverage) : 'n/a',
         healing_applied: healingApplied,
       },
     });
@@ -150,6 +184,7 @@ export async function runArchetypePostGate(
 function buildEvidenceRecord(
   signals: PostGateGateSignals,
   capturedAt: string,
+  coverage: Awaited<ReturnType<typeof computeFeatureCoverage>> | null,
 ): Omit<EvidenceRecord, 'item_id' | 'schema_version'> {
   return {
     captured_at: capturedAt,
@@ -167,6 +202,22 @@ function buildEvidenceRecord(
       pass: s.pass,
       duration_ms: s.duration_ms,
     })),
+    changed_files: signals.changed_files,
+    feature_coverage: coverage
+      ? {
+          ok: coverage.ok,
+          declared_touches: coverage.declared_touches,
+          present_touches: coverage.present_touches,
+          missing_touches: coverage.missing_touches,
+          expected_page_routes: coverage.expected_page_routes,
+          expected_api_routes: coverage.expected_api_routes,
+          present_page_files: coverage.present_page_files,
+          present_api_files: coverage.present_api_files,
+          acceptance_route_anchors: coverage.acceptance_route_anchors,
+          kind_requirements: coverage.kind_requirements,
+          summary: summarizeFeatureCoverage(coverage),
+        }
+      : undefined,
     critic_passes: 0,
   };
 }
