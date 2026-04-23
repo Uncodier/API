@@ -8,8 +8,8 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
-import type { Browser, Page } from 'puppeteer';
-import puppeteer from 'puppeteer';
+import type { Browser, Page } from 'puppeteer-core';
+import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import type { ScenarioOutcome, ScenarioSignal, ScenarioStepOutcome } from './step-iteration-signals';
 
@@ -295,11 +295,19 @@ export async function runE2eScenarios(params: E2eRunnerParams): Promise<E2eRunne
   const outcomes: ScenarioOutcome[] = [];
   try {
     if (!browser) {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
-      });
-      ownsBrowser = true;
+      try {
+        browser = await launchPuppeteerForGate();
+        ownsBrowser = true;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        return {
+          ok: false,
+          scenarios: [],
+          scenarios_read: scenarios.length,
+          base_url: baseUrl,
+          error: `browser launch failed: ${msg.slice(0, 400)}`,
+        };
+      }
     }
 
     for (const scenario of scenarios) {

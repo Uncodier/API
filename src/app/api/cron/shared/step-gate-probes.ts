@@ -41,6 +41,8 @@ import {
 } from './step-iteration-signals';
 import { detectCopyHygieneIssues, summarizeCopyHygiene } from './step-copy-hygiene';
 import type { GitRepoKind } from './cron-commit-helpers';
+import type { Browser } from 'puppeteer-core';
+import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 
 export type ProbeSignals = {
   runtime?: RuntimeSignal;
@@ -172,143 +174,174 @@ export async function runRuntimeAndVisualProbes(params: {
     return { ok: true, signals: out };
   }
 
+  let gateBrowser: Browser | undefined;
   try {
-    const visual = await runVisualProbe({
-      sandbox,
-      port: runtimeProbe.port,
-      pageRoutes: inferred.pageRoutes,
-      requirementId,
-      stepOrder,
-    });
-    out.console = visual.console;
-    out.visual = visual.visual_raw;
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.VISUAL_PROBE,
-      level: visual.ok ? 'info' : 'warn',
-      message: `Step ${stepOrder} visual probe: ${visual.screenshots.length} screenshot(s) at ${visual.base_url || 'n/a'}`.slice(0, 400),
-      details: {
-        stepOrder,
-        ok: visual.ok,
-        base_url: visual.base_url,
-        screenshots: visual.screenshots.map((s) => ({ route: s.route, viewport: s.viewport, url: s.url })),
-        error: visual.error,
-      },
-    });
-    if (visual.console.entries.length || visual.console.page_errors.length || visual.console.failed_requests.length) {
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.CONSOLE_PROBE,
-        level: visual.console.ok ? 'info' : 'warn',
-        message: `Step ${stepOrder} console probe: ${visual.console.entries.length} entries, ${visual.console.page_errors.length} pageerror, ${visual.console.failed_requests.length} failed reqs`.slice(0, 400),
-        details: {
-          stepOrder,
-          entries_sample: visual.console.entries.slice(0, 12),
-          page_errors: visual.console.page_errors.slice(0, 6),
-          failed_requests: visual.console.failed_requests.slice(0, 10),
-        },
-      });
-    }
-    if (!visual.console.ok) {
-      await stopProbeServer(sandbox, runtimeProbe.port);
-      return {
-        ok: false,
-        error: `Client runtime errors detected — see console/page_errors/failed_requests`,
-        signals: out,
-      };
-    }
-    if (visual.visual_raw.screenshots.length) {
-      const critic = await runVisualCritic({
-        screenshots: visual.visual_raw.screenshots,
-        step: {
-          order: stepOrder,
-          title: stepContext?.title,
-          instructions: stepContext?.instructions,
-          expected_output: stepContext?.expected_output,
-        },
-        brand_context: stepContext?.brand_context,
-      });
-      out.visual = mergeCriticIntoVisualSignal(visual.visual_raw, critic);
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.VISUAL_CRITIC_VERDICT,
-        level: critic.skipped ? 'warn' : critic.pass ? 'info' : 'warn',
-        message: `Step ${stepOrder} visual critic: ${critic.skipped ? `skipped (${critic.skipped})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
-        details: {
-          stepOrder,
-          pass: critic.pass,
-          skipped: critic.skipped,
-          summary: critic.summary,
-          defects: critic.defects.slice(0, 20),
-          model_used: critic.model_used,
-        },
-      });
-      if (verdictBlocksGate(critic)) {
-        await stopProbeServer(sandbox, runtimeProbe.port);
-        return {
-          ok: false,
-          error: `Visual critic blocked gate — ${critic.summary.slice(0, 240)}`,
-          signals: out,
-        };
-      }
-    }
+    gateBrowser = await launchPuppeteerForGate();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] Visual probe threw (non-fatal):', msg);
+    console.warn('[GateProbes] Puppeteer launch failed (skip visual/e2e):', msg);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.VISUAL_PROBE,
       level: 'warn',
-      message: `Step ${stepOrder} visual probe threw: ${msg.slice(0, 300)}`,
+      message: `Step ${stepOrder} gate browser launch failed: ${msg.slice(0, 300)}`,
       details: { stepOrder, error: msg.slice(0, 800) },
     });
+    try {
+      await stopProbeServer(sandbox, runtimeProbe.port);
+    } catch {
+      /* ignore */
+    }
+    return { ok: true, signals: out };
   }
 
   try {
-    const e2e = await runE2eScenarios({
-      sandbox,
-      port: runtimeProbe.port,
-      requirementId,
-      stepOrder,
-    });
-    if (e2e.scenarios_read > 0) {
-      out.scenarios = { ok: e2e.ok, scenarios: e2e.scenarios };
+    try {
+      const visual = await runVisualProbe({
+        sandbox,
+        port: runtimeProbe.port,
+        pageRoutes: inferred.pageRoutes,
+        requirementId,
+        stepOrder,
+        browser: gateBrowser,
+      });
+      out.console = visual.console;
+      out.visual = visual.visual_raw;
       await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.SCENARIO_RUN,
-        level: e2e.ok ? 'info' : 'warn',
-        message: `Step ${stepOrder} e2e scenarios: ${e2e.scenarios.filter((s) => s.pass).length}/${e2e.scenarios.length} pass`.slice(0, 400),
+        event: CronInfraEvent.VISUAL_PROBE,
+        level: visual.ok ? 'info' : 'warn',
+        message: `Step ${stepOrder} visual probe: ${visual.screenshots.length} screenshot(s) at ${visual.base_url || 'n/a'}`.slice(0, 400),
         details: {
           stepOrder,
-          scenarios_read: e2e.scenarios_read,
-          base_url: e2e.base_url,
-          scenarios: e2e.scenarios.map((s) => ({
-            name: s.scenario,
-            pass: s.pass,
-            duration_ms: s.duration_ms,
-            failed_step: s.steps.find((st) => !st.ok)?.index,
-            failure: s.steps.find((st) => !st.ok)?.error,
-          })),
-          error: e2e.error,
+          ok: visual.ok,
+          base_url: visual.base_url,
+          screenshots: visual.screenshots.map((s) => ({ route: s.route, viewport: s.viewport, url: s.url })),
+          error: visual.error,
         },
       });
-      if (!e2e.ok) {
-        await stopProbeServer(sandbox, runtimeProbe.port);
+      if (visual.console.entries.length || visual.console.page_errors.length || visual.console.failed_requests.length) {
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.CONSOLE_PROBE,
+          level: visual.console.ok ? 'info' : 'warn',
+          message: `Step ${stepOrder} console probe: ${visual.console.entries.length} entries, ${visual.console.page_errors.length} pageerror, ${visual.console.failed_requests.length} failed reqs`.slice(0, 400),
+          details: {
+            stepOrder,
+            entries_sample: visual.console.entries.slice(0, 12),
+            page_errors: visual.console.page_errors.slice(0, 6),
+            failed_requests: visual.console.failed_requests.slice(0, 10),
+          },
+        });
+      }
+      if (!visual.console.ok) {
         return {
           ok: false,
-          error: `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ')}`,
+          error: `Client runtime errors detected — see console/page_errors/failed_requests`,
           signals: out,
         };
       }
+      if (visual.visual_raw.screenshots.length) {
+        const critic = await runVisualCritic({
+          screenshots: visual.visual_raw.screenshots,
+          step: {
+            order: stepOrder,
+            title: stepContext?.title,
+            instructions: stepContext?.instructions,
+            expected_output: stepContext?.expected_output,
+          },
+          brand_context: stepContext?.brand_context,
+        });
+        out.visual = mergeCriticIntoVisualSignal(visual.visual_raw, critic);
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.VISUAL_CRITIC_VERDICT,
+          level: critic.skipped ? 'warn' : critic.pass ? 'info' : 'warn',
+          message: `Step ${stepOrder} visual critic: ${critic.skipped ? `skipped (${critic.skipped})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
+          details: {
+            stepOrder,
+            pass: critic.pass,
+            skipped: critic.skipped,
+            summary: critic.summary,
+            defects: critic.defects.slice(0, 20),
+            model_used: critic.model_used,
+          },
+        });
+        if (verdictBlocksGate(critic)) {
+          return {
+            ok: false,
+            error: `Visual critic blocked gate — ${critic.summary.slice(0, 240)}`,
+            signals: out,
+          };
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[GateProbes] Visual probe threw (non-fatal):', msg);
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.VISUAL_PROBE,
+        level: 'warn',
+        message: `Step ${stepOrder} visual probe threw: ${msg.slice(0, 300)}`,
+        details: { stepOrder, error: msg.slice(0, 800) },
+      });
     }
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] E2E runner threw (non-fatal):', msg);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.SCENARIO_RUN,
-      level: 'warn',
-      message: `Step ${stepOrder} e2e runner threw: ${msg.slice(0, 300)}`,
-      details: { stepOrder, error: msg.slice(0, 800) },
-    });
+
+    try {
+      const e2e = await runE2eScenarios({
+        sandbox,
+        port: runtimeProbe.port,
+        requirementId,
+        stepOrder,
+        browser: gateBrowser,
+      });
+      if (e2e.scenarios_read > 0 || e2e.error) {
+        out.scenarios = { ok: e2e.ok, scenarios: e2e.scenarios };
+        const summary =
+          e2e.scenarios.length > 0
+            ? `${e2e.scenarios.filter((s) => s.pass).length}/${e2e.scenarios.length} pass`
+            : (e2e.error ?? 'no scenario results').slice(0, 200);
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.SCENARIO_RUN,
+          level: e2e.ok ? 'info' : 'warn',
+          message: `Step ${stepOrder} e2e scenarios: ${summary}`.slice(0, 400),
+          details: {
+            stepOrder,
+            scenarios_read: e2e.scenarios_read,
+            base_url: e2e.base_url,
+            scenarios: e2e.scenarios.map((s) => ({
+              name: s.scenario,
+              pass: s.pass,
+              duration_ms: s.duration_ms,
+              failed_step: s.steps.find((st) => !st.ok)?.index,
+              failure: s.steps.find((st) => !st.ok)?.error,
+            })),
+            error: e2e.error,
+          },
+        });
+        if (!e2e.ok) {
+          return {
+            ok: false,
+            error: `E2E scenarios failed — ${e2e.scenarios.filter((s) => !s.pass).map((s) => s.scenario).join(', ') || e2e.error || 'unknown'}`.slice(
+              0,
+              500,
+            ),
+            signals: out,
+          };
+        }
+      }
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[GateProbes] E2E runner threw (non-fatal):', msg);
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.SCENARIO_RUN,
+        level: 'warn',
+        message: `Step ${stepOrder} e2e runner threw: ${msg.slice(0, 300)}`,
+        details: { stepOrder, error: msg.slice(0, 800) },
+      });
+    }
   } finally {
+    if (gateBrowser) await gateBrowser.close().catch(() => {});
     try {
       await stopProbeServer(sandbox, runtimeProbe.port);
-    } catch {}
+    } catch {
+      /* ignore */
+    }
   }
 
   return { ok: true, signals: out };

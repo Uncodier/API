@@ -12,8 +12,8 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
-import type { Browser, Page } from 'puppeteer';
-import puppeteer from 'puppeteer';
+import type { Browser, Page } from 'puppeteer-core';
+import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import type {
   ConsoleSignal,
@@ -79,6 +79,7 @@ async function uploadScreenshot(
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
   const repoUrl = process.env.REPOSITORY_SUPABASE_URL;
   const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY;
+  // Required in production (e.g. Vercel) for uploads; without them all probes return 0 screenshots.
   if (!repoUrl || !repoKey) {
     return { error: 'REPOSITORY_SUPABASE_* env vars missing — screenshot not uploaded' };
   }
@@ -266,15 +267,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   let ownsBrowser = false;
   try {
     if (!browser) {
-      browser = await puppeteer.launch({
-        headless: true,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-features=IsolateOrigins,site-per-process',
-        ],
-      });
+      browser = await launchPuppeteerForGate();
       ownsBrowser = true;
     }
     const page = await browser.newPage();
