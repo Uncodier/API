@@ -10,8 +10,10 @@ import {
 import { syncGroundTruthBeforeCommit } from '@/lib/services/requirement-ground-truth';
 import {
   syncLatestRequirementStatusWithPreview,
+  resolveGitBindingForRequirement,
   type GitRepoKind,
 } from './status-sync';
+import { snapshotAfterSuccessfulPushAndRecreate } from '@/lib/services/sandbox-persisted-snapshot';
 import {
   CommitPushTriageError,
   triageGitPushError,
@@ -39,12 +41,18 @@ export async function commitWorkspaceToOrigin(
   pushed: boolean;
   commitCount: number;
   requirementStatusSync?: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null;
+  /** When the Vercel SDK snapshot stops the prior VM, this is the replacement sandbox (same disk via snapshot). */
+  sandboxReplacement?: Sandbox;
+  snapshotId?: string;
 }> {
   try {
     await sandbox.extendTimeout(3 * 60 * 1000);
   } catch {
     /* may be at limit */
   }
+
+  const priorSandboxId = sandbox.sandboxId;
+  let activeSandbox: Sandbox = sandbox;
 
   const cwd = SandboxService.WORK_DIR;
   await assertPlatformGitLayout(sandbox);
@@ -118,7 +126,7 @@ fi`,
     }
 
     const msg = message ?? `Implement ${title} (${reqId})`;
-    const result = await SandboxService.commitAndPush(sandbox, {
+    const result = await SandboxService.commitAndPush(activeSandbox, {
       message: msg,
       requirementId: reqId,
       title,
@@ -142,6 +150,29 @@ fi`,
 
     const gitRepoKind = options?.gitRepoKind ?? 'applications';
     const persistStatus = !options?.deferRequirementStatusPersist;
+    let snapshotId: string | undefined;
+    const token = process.env.GITHUB_TOKEN;
+    if (result.pushed && result.commitCount > 0 && audit?.siteId && result.branch && token) {
+      try {
+        const binding = await resolveGitBindingForRequirement(reqId, gitRepoKind);
+        const authRepoUrl = `https://x-access-token:${token}@github.com/${binding.org}/${binding.repo}.git`;
+        const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
+        const recreated = await snapshotAfterSuccessfulPushAndRecreate({
+          sandbox: activeSandbox,
+          branch: result.branch,
+          authRepoUrl,
+          requirementId: reqId,
+          instanceType,
+          title,
+          auditCtx: audit,
+        });
+        activeSandbox = recreated.sandbox;
+        snapshotId = recreated.snapshotId;
+      } catch (e: unknown) {
+        console.warn('[CronPersist] post-push snapshot/recreate failed:', e instanceof Error ? e.message : e);
+      }
+    }
+
     let requirementStatusSync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null = null;
     if (result.pushed && audit?.siteId && result.branch) {
       try {
@@ -152,6 +183,7 @@ fi`,
           instanceId: audit.instanceId,
           gitRepoKind,
           persist: persistStatus,
+          snapshot_id: snapshotId,
         });
       } catch (e: unknown) {
         console.warn(
@@ -161,11 +193,15 @@ fi`,
       }
     }
 
+    const sandboxReplacement = activeSandbox.sandboxId !== priorSandboxId ? activeSandbox : undefined;
+
     return {
       branch: result.branch,
       pushed: result.pushed,
       commitCount: result.commitCount,
       requirementStatusSync,
+      ...(sandboxReplacement ? { sandboxReplacement } : {}),
+      ...(snapshotId ? { snapshotId } : {}),
     };
   } catch (e: any) {
     if (e instanceof CommitPushTriageError) {

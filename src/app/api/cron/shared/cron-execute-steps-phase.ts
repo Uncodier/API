@@ -284,6 +284,7 @@ export async function executeStepsPhaseStep(params: {
 
       lastTouchedStepId = workingStep.id;
 
+      const sandboxActiveRef = { current: sandbox };
       const sandboxTools = getSandboxTools(sandbox, reqId, {
         site_id,
         instance_id: instanceId,
@@ -291,6 +292,7 @@ export async function executeStepsPhaseStep(params: {
         requirement_type: requirementType,
         plan_id: planId,
         active_step_id: workingStep.id,
+        activeSandboxRef: sandboxActiveRef,
       });
 
       const stepContext: AssistantContext = {
@@ -339,8 +341,14 @@ export async function executeStepsPhaseStep(params: {
           { id: planId, steps: workingPlanSteps, title },
           workingStep,
           sandbox,
-          { gitRepoKind: git_repo_kind, flow: classifyRequirementType(requirementType) },
+          {
+            gitRepoKind: git_repo_kind,
+            flow: classifyRequirementType(requirementType),
+            sandboxActiveRef,
+          },
         );
+        sandbox = sandboxActiveRef.current;
+        effectiveSandboxId = sandbox.sandboxId;
 
         if (stepResult.ok) {
           console.log(`[CronStep] ✓ Step ${workingStep.order} passed`);

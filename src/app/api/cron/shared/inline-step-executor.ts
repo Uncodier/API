@@ -158,7 +158,11 @@ export async function inlineExecutePlanStep(
   plan: any,
   step: any,
   sandbox: Sandbox,
-  execOpts?: { gitRepoKind?: GitRepoKind; flow?: RequirementKind },
+  execOpts?: {
+    gitRepoKind?: GitRepoKind;
+    flow?: RequirementKind;
+    sandboxActiveRef?: { current: Sandbox };
+  },
 ): Promise<InlineExecutePlanStepResult> {
   const { instance_id, site_id, user_id } = context.executionOptions;
   const requirementId = context.instance?.requirement_id || '';
@@ -332,8 +336,9 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
       const planTitle = plan.title || step.title || 'plan';
       const flow: RequirementKind = execOpts?.flow ?? 'app';
+      const gateSandbox = execOpts?.sandboxActiveRef?.current ?? sandbox;
       const gate = await runGateForFlow({
-        sandbox,
+        sandbox: gateSandbox,
         workDir: SandboxService.WORK_DIR,
         requirementId,
         flow,
@@ -370,7 +375,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         const backlogItemId = extractBacklogItemId(step);
         if (backlogItemId) {
           await runArchetypePostGate({
-            sandbox,
+            sandbox: gateSandbox,
             requirementId,
             backlogItemId,
             stepId: step.id,

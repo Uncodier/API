@@ -18,6 +18,10 @@ import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
+function liveSandbox(sandbox: Sandbox, toolsCtx?: SandboxToolsContext): Sandbox {
+  return toolsCtx?.activeSandboxRef?.current ?? sandbox;
+}
+
 function resolvePath(inputPath: string | undefined, defaultPath: string): string {
   if (!inputPath) return defaultPath;
   if (inputPath.startsWith('/')) return inputPath;
@@ -86,6 +90,8 @@ export type SandboxToolsContext = {
   /** When set (cron executor), sandbox_push_checkpoint updates this plan step for auditing */
   plan_id?: string;
   active_step_id?: string;
+  /** Updated when sandbox_push_checkpoint snapshots the VM (SDK stops the old sandbox). */
+  activeSandboxRef?: { current: Sandbox };
 };
 
 export function sandboxRunCommandTool(sandbox: Sandbox) {
@@ -239,8 +245,9 @@ export function sandboxPushCheckpointTool(
             }
           : undefined;
       try {
+        const s0 = liveSandbox(sandbox, toolsCtx);
         const result = await commitWorkspaceToOrigin(
-          sandbox,
+          s0,
           title,
           requirementId,
           `[checkpoint] ${label}`,
@@ -250,6 +257,10 @@ export function sandboxPushCheckpointTool(
             deferRequirementStatusPersist: true,
           },
         );
+        if (result.sandboxReplacement && toolsCtx?.activeSandboxRef) {
+          toolsCtx.activeSandboxRef.current = result.sandboxReplacement;
+        }
+        const sUpload = liveSandbox(sandbox, toolsCtx);
         let sync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null =
           result.requirementStatusSync ?? null;
         if (result.branch != null && sync == null) {
@@ -266,7 +277,7 @@ export function sandboxPushCheckpointTool(
           !result.pushed && (result.branch === 'main' || result.branch === 'master')
             ? ' You may still be on the default branch with nothing to push — make edits on the feature branch or call again after changes.'
             : '';
-        const sourceArchive = await uploadSandboxSourceArchiveToRepository(sandbox, requirementId);
+        const sourceArchive = await uploadSandboxSourceArchiveToRepository(sUpload, requirementId);
 
         const rk = toolsCtx?.git_repo_kind ?? 'applications';
         const binding = await resolveGitBindingForRequirement(requirementId, rk);
@@ -275,12 +286,13 @@ export function sandboxPushCheckpointTool(
             ? gitBindingBranchTreeUrl(binding, String(result.branch))
             : undefined;
 
-        const cols: Partial<Record<'repo_url' | 'preview_url' | 'source_code', string>> = {};
+        const cols: Partial<Record<'repo_url' | 'preview_url' | 'source_code' | 'snapshot_id', string>> = {};
         if (sync?.repo_url || fallbackRepoUrl) {
           cols.repo_url = (sync?.repo_url || fallbackRepoUrl) as string;
         }
         if (sync?.preview_url) cols.preview_url = sync.preview_url;
         if (sourceArchive.ok) cols.source_code = sourceArchive.public_url;
+        if (result.snapshotId?.trim()) cols.snapshot_id = result.snapshotId.trim();
 
         let statusPatched = false;
         let statusRowCreated = false;

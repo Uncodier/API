@@ -347,15 +347,20 @@ export async function commitAndPushStep(
   'use step';
   const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
   try {
-    const { sandbox, sandboxId: effectiveSandboxId } = await connectOrRecreateRequirementSandbox({
+    const connected = await connectOrRecreateRequirementSandbox({
       sandboxId,
       requirementId: reqId,
       instanceType,
       title: title?.trim() || reqId,
       audit,
     });
-    const r = await commitWorkspaceToOrigin(sandbox, title, reqId, message, audit, { gitRepoKind });
-    const up = await uploadSandboxSourceArchiveToRepository(sandbox, reqId);
+    let effectiveSandboxId = connected.sandboxId;
+    const r = await commitWorkspaceToOrigin(connected.sandbox, title, reqId, message, audit, { gitRepoKind });
+    const sand = r.sandboxReplacement ?? connected.sandbox;
+    if (r.sandboxReplacement) {
+      effectiveSandboxId = r.sandboxReplacement.sandboxId;
+    }
+    const up = await uploadSandboxSourceArchiveToRepository(sand, reqId);
     if (up.ok) {
       console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
     } else {

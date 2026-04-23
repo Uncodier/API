@@ -88,6 +88,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   preview_url_resolved?: string | null;
   use_resolved_preview_only?: boolean;
   persist?: boolean;
+  snapshot_id?: string | null;
 }): Promise<{ updated: boolean; preview_url: string | null; repo_url: string }> {
   const {
     requirementId,
@@ -99,6 +100,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     preview_url_resolved,
     use_resolved_preview_only,
     persist = true,
+    snapshot_id,
   } = params;
   const binding = gitBinding ?? (await resolveGitBindingForRequirement(requirementId, gitRepoKind));
   const repo_url = gitBindingBranchTreeUrl(binding, branch);
@@ -170,6 +172,9 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   if (preview_url !== null && preview_url !== '') {
     patch.preview_url = preview_url;
   }
+  if (snapshot_id != null && String(snapshot_id).trim() !== '') {
+    patch.snapshot_id = String(snapshot_id).trim();
+  }
 
   const { error: upErr } = await supabaseAdmin.from('requirement_status').update(patch).eq('id', rowId);
   if (upErr) {
@@ -188,7 +193,9 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     });
   }
 
-  console.log(`[RequirementStatusSync] Updated ${rowId} (repo_url${preview_url !== null ? ' + preview_url' : ''})`);
+  console.log(
+    `[RequirementStatusSync] Updated ${rowId} (repo_url${preview_url !== null ? ' + preview_url' : ''}${patch.snapshot_id ? ' + snapshot_id' : ''})`,
+  );
   return { updated: true, preview_url, repo_url };
 }
 
@@ -196,7 +203,7 @@ export async function patchLatestRequirementStatusColumns(params: {
   requirementId: string;
   siteId?: string;
   instanceId?: string;
-  columns: Partial<Record<'repo_url' | 'preview_url' | 'source_code', string>>;
+  columns: Partial<Record<'repo_url' | 'preview_url' | 'source_code' | 'snapshot_id', string>>;
 }): Promise<{ updated: boolean; created?: boolean; error?: string }> {
   const { requirementId, instanceId, columns } = params;
   const resolvedSiteId = await resolveSiteIdForRequirementStatus({
@@ -212,7 +219,7 @@ export async function patchLatestRequirementStatusColumns(params: {
   }
 
   const patch: Record<string, string> = {};
-  for (const key of ['repo_url', 'preview_url', 'source_code'] as const) {
+  for (const key of ['repo_url', 'preview_url', 'source_code', 'snapshot_id'] as const) {
     const v = columns[key];
     if (typeof v === 'string' && v.trim() !== '') {
       patch[key] = v.trim();
@@ -276,6 +283,7 @@ export async function patchLatestRequirementStatusColumns(params: {
       repo_url: patch.repo_url,
       preview_url: patch.preview_url,
       source_code: patch.source_code,
+      snapshot_id: patch.snapshot_id,
       status: 'in-progress',
       message: 'Deliverables recorded from sandbox checkpoint (repo, preview, source archive).',
     });

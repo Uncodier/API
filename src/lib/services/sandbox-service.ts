@@ -132,6 +132,7 @@ export class SandboxService {
     title: string = '',
     audit?: CronAuditContext,
     gitBinding?: GitBinding,
+    opts?: { skipSnapshotReuse?: boolean },
   ): Promise<SandboxResult> {
     const auditCtx: CronAuditContext | undefined = audit?.siteId
       ? { ...audit, requirementId: audit.requirementId ?? requirementId }
@@ -159,6 +160,23 @@ export class SandboxService {
     const repoUrlPlain = `https://github.com/${gitOrg}/${repoName}.git`;
     const authRepoUrl = `https://x-access-token:${githubToken}@github.com/${gitOrg}/${repoName}.git`;
     const workDir = SandboxService.WORK_DIR;
+
+    if (!opts?.skipSnapshotReuse) {
+      try {
+        const { tryStartFromPersistedSnapshot } = await import('@/lib/services/sandbox-persisted-snapshot');
+        const fromSnap = await tryStartFromPersistedSnapshot({
+          requirementId,
+          instanceType,
+          title,
+          binding,
+          githubToken,
+          auditCtx,
+        });
+        if (fromSnap) return fromSnap;
+      } catch (e: unknown) {
+        console.warn('[Sandbox] persisted snapshot bootstrap error:', e instanceof Error ? e.message : e);
+      }
+    }
 
     console.log('[Sandbox] Creating sandbox (SDK git source)...');
     let sandbox: Sandbox;

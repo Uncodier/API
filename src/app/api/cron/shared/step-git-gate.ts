@@ -85,12 +85,16 @@ async function persistOrVerifyOrigin(
   label: string,
   audit?: CronAuditContext,
   gitRepoKind?: GitRepoKind,
-): Promise<PersistOriginResult> {
+): Promise<PersistOriginResult & { sandbox?: Sandbox }> {
   try {
     const r = await commitWorkspaceToOrigin(sandbox, planTitle, requirementId, label, audit, {
       gitRepoKind,
     });
-    return { ok: r.pushed, branch: r.branch };
+    return {
+      ok: r.pushed,
+      branch: r.branch,
+      ...(r.sandboxReplacement ? { sandbox: r.sandboxReplacement } : {}),
+    };
   } catch (e: unknown) {
     if (isCommitPushTriageError(e)) {
       const t = e.triage;
@@ -190,7 +194,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   signals: GateSignals;
 }> {
   const {
-    sandbox,
+    sandbox: initialSandbox,
     planTitle,
     requirementId,
     stepOrder,
@@ -204,6 +208,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     gitRepoKind = 'applications',
   } = params;
 
+  let sandbox = initialSandbox;
   let lastResult = initialLastResult;
   const signals: GateSignals = {};
 
@@ -274,6 +279,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     audit,
     gitRepoKind,
   );
+  if (persist.sandbox) sandbox = persist.sandbox;
 
   if (!persist.ok) {
     const canRecover = persist.agentActionable !== false;
@@ -323,6 +329,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
           audit,
           gitRepoKind,
         );
+        if (persist.sandbox) sandbox = persist.sandbox;
         if (persist.ok) break;
       }
     } else {

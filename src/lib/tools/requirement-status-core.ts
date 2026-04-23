@@ -59,6 +59,7 @@ export async function createRequirementStatusCore(params: {
   repo_url?: string;
   preview_url?: string;
   source_code?: string;
+  snapshot_id?: string;
   status?: string;
   message?: string;
   cycle?: string;
@@ -72,6 +73,7 @@ export async function createRequirementStatusCore(params: {
     repo_url,
     preview_url,
     source_code,
+    snapshot_id,
     status,
     message,
     cycle,
@@ -124,6 +126,7 @@ export async function createRequirementStatusCore(params: {
         repo_url: repo_url || null,
         preview_url: preview_url || null,
         source_code: source_code || null,
+        snapshot_id: snapshot_id?.trim() || null,
         status: effectiveStatus,
         message: message || null,
         cycle: cycle || null,
