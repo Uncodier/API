@@ -420,6 +420,26 @@ export class SandboxService {
   }
 
   /**
+   * Clears an incomplete rebase/merge from a previous agent or failed automated push.
+   * If `.git/rebase-merge` is left over, a subsequent `git rebase` fails with
+   * "there is already a rebase-merge directory", and the next `commitAndPush` can
+   * surface unrelated errors (e.g. `HEAD` refspec) in the same log minute.
+   */
+  private static async clearStuckGitOperationState(sandbox: Sandbox, cwd: string): Promise<void> {
+    const sh = `
+[ -d .git/rebase-merge ] || [ -d .git/rebase-apply ] || [ -f .git/MERGE_HEAD ] || exit 0
+git rebase --abort 2>/dev/null || true
+git rebase --quit 2>/dev/null || true
+if [ -d .git/rebase-merge ] || [ -d .git/rebase-apply ]; then
+  rm -rf .git/rebase-merge .git/rebase-apply
+fi
+[ -f .git/MERGE_HEAD ] && git merge --abort 2>/dev/null || true
+exit 0
+`;
+    await SandboxService.runWithCwd(sandbox, 'sh', ['-c', sh], cwd);
+  }
+
+  /**
    * True when HEAD is not attached to a branch (e.g. right after `git checkout <sha>`).
    * Uses `git symbolic-ref` which is the canonical way to detect detached HEAD —
    * `rev-parse --abbrev-ref HEAD` returns the ambiguous literal string `HEAD` in that case.
@@ -517,6 +537,8 @@ export class SandboxService {
     const cwd = SandboxService.WORK_DIR;
     const message = options.message ?? 'Automated commit by Assistant';
     const safeTitle = (options.title && String(options.title).trim()) || 'requirement';
+
+    await SandboxService.clearStuckGitOperationState(sandbox, cwd);
 
     if (options.requirementId) {
       await SandboxService.ensureFeatureBranchForCron(sandbox, options.requirementId, safeTitle);
@@ -669,10 +691,12 @@ export class SandboxService {
       return { ok: false, stderr: `Initial push rejected and fetch origin ${b} failed: ${await fetchRes.stderr()}\n---\n${firstStderr}` };
     }
 
+    await SandboxService.clearStuckGitOperationState(sandbox, cwd);
     const rebaseRes = await SandboxService.runWithCwd(sandbox, 'git', ['rebase', `origin/${b}`], cwd);
     if (rebaseRes.exitCode !== 0) {
       const rebaseErr = await rebaseRes.stderr();
       await SandboxService.runWithCwd(sandbox, 'git', ['rebase', '--abort'], cwd);
+      await SandboxService.clearStuckGitOperationState(sandbox, cwd);
       return {
         ok: false,
         stderr: `Push rejected and automatic rebase on origin/${b} produced conflicts — manual resolution required: ${rebaseErr}\n---\n${firstStderr}`,
