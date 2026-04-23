@@ -38,7 +38,10 @@ function flattenAppSignals(rich: GateSignals): FlowGateSignal[] {
     out.push({ name: 'scenarios', ok: !!rich.scenarios.ok, detail: rich.scenarios.scenarios ? `${rich.scenarios.scenarios.length} scenario(s)` : undefined });
   }
   if (rich.origin) {
-    out.push({ name: 'origin', ok: !!rich.origin.ok, detail: rich.origin.error || rich.origin.branch });
+    const detail = rich.origin.ok
+      ? rich.origin.branch
+      : rich.origin.errorForAgent || rich.origin.error;
+    out.push({ name: 'origin', ok: !!rich.origin.ok, detail });
   }
   if (rich.deploy) {
     const state = rich.deploy.deployState ?? 'unknown';

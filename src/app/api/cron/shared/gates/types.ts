@@ -27,6 +27,7 @@ import type {
   BuildSignal,
   ConsoleSignal,
   DeploySignal,
+  OriginSignal,
   RuntimeSignal,
   ScenarioSignal,
   VisualSignal,
@@ -78,7 +79,7 @@ export interface AppRichSignals {
   console?: ConsoleSignal;
   visual?: VisualSignal;
   scenarios?: ScenarioSignal;
-  origin?: { ok: boolean; branch?: string; error?: string };
+  origin?: OriginSignal;
   deploy?: DeploySignal;
 }
 

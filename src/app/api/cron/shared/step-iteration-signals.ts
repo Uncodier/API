@@ -11,6 +11,7 @@ import type {
   RuntimeProbeResult,
   RuntimeProbeServerError,
 } from './step-runtime-probe';
+import type { GitPushFailureKind } from '@/lib/services/git-push-error-triage';
 
 export type GateFailureCategory =
   | 'layout'
@@ -114,6 +115,18 @@ export type DeploySignal = {
   buildLogExcerpt?: string | null;
 };
 
+/** Origin (git push) gate outcome: full `error` for ops; `errorForAgent` for executor prompts. */
+export type OriginSignal = {
+  ok: boolean;
+  branch?: string;
+  /** Full git stderr / message for operators and instance_logs. */
+  error?: string;
+  /** Short, stable line for the model (from push triage). */
+  errorForAgent?: string;
+  failureKind?: GitPushFailureKind;
+  agentActionable?: boolean;
+};
+
 /**
  * Evidence captured at the end of a Consumer turn, BEFORE the Critic runs.
  * Cross-references three independent sources so that free-text claims by the
@@ -164,7 +177,7 @@ export type StepIterationSignals = {
   console?: ConsoleSignal;
   scenarios?: ScenarioSignal;
   visual?: VisualSignal;
-  origin?: { ok: boolean; branch?: string; error?: string };
+  origin?: OriginSignal;
   deploy?: DeploySignal;
   categories_failed: GateFailureCategory[];
   top_level_error?: string;
@@ -328,7 +341,11 @@ export function formatIterationSignals(sig: StepIterationSignals): string {
   if (sig.scenarios) body.push(formatScenarios(sig.scenarios));
   if (sig.visual) body.push(formatVisual(sig.visual));
   if (sig.origin && !sig.origin.ok) {
-    body.push(section('ORIGIN', `push not verified: ${sig.origin.error || 'unknown'}`));
+    const line =
+      (sig.origin.errorForAgent && sig.origin.errorForAgent.trim()) ||
+      (sig.origin.error && sig.origin.error.trim()) ||
+      'unknown';
+    body.push(section('ORIGIN', `push not verified: ${line}`));
   }
   if (sig.deploy) body.push(formatDeploy(sig.deploy));
 

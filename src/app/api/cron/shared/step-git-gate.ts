@@ -25,6 +25,11 @@ import {
   logCronInfrastructureEvent,
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
+import {
+  isCommitPushTriageError,
+  triageGitPushError,
+  type GitPushFailureKind,
+} from '@/lib/services/git-push-error-triage';
 import { fetchAndLogVercelBuildLog } from '@/lib/services/vercel-build-logs';
 import { runRuntimeAndVisualProbes } from './step-gate-probes';
 import type {
@@ -32,6 +37,7 @@ import type {
   BuildSignal,
   ConsoleSignal,
   DeploySignal,
+  OriginSignal,
   RuntimeSignal,
   ScenarioSignal,
   VisualSignal,
@@ -63,6 +69,15 @@ The usual rule against manual git commit/push is SUSPENDED until git push succee
 Reply briefly when push succeeded or paste the error from git.`;
 }
 
+type PersistOriginResult = {
+  ok: boolean;
+  branch: string;
+  error?: string;
+  errorForAgent?: string;
+  failureKind?: GitPushFailureKind;
+  agentActionable?: boolean;
+};
+
 async function persistOrVerifyOrigin(
   sandbox: Sandbox,
   planTitle: string,
@@ -70,14 +85,34 @@ async function persistOrVerifyOrigin(
   label: string,
   audit?: CronAuditContext,
   gitRepoKind?: GitRepoKind,
-): Promise<{ ok: boolean; branch: string; error?: string }> {
+): Promise<PersistOriginResult> {
   try {
     const r = await commitWorkspaceToOrigin(sandbox, planTitle, requirementId, label, audit, {
       gitRepoKind,
     });
     return { ok: r.pushed, branch: r.branch };
-  } catch (e: any) {
-    return { ok: false, branch: '', error: e?.message || String(e) };
+  } catch (e: unknown) {
+    if (isCommitPushTriageError(e)) {
+      const t = e.triage;
+      return {
+        ok: false,
+        branch: '',
+        error: t.operatorMessage,
+        errorForAgent: t.agentMessage,
+        failureKind: t.failureKind,
+        agentActionable: t.agentActionable,
+      };
+    }
+    const msg = e instanceof Error ? e.message : String(e);
+    const tri = triageGitPushError(msg);
+    return {
+      ok: false,
+      branch: '',
+      error: tri.operatorMessage,
+      errorForAgent: tri.agentMessage,
+      failureKind: tri.failureKind,
+      agentActionable: tri.agentActionable,
+    };
   }
 }
 
@@ -143,7 +178,7 @@ export type GateSignals = {
   console?: ConsoleSignal;
   visual?: VisualSignal;
   scenarios?: ScenarioSignal;
-  origin?: { ok: boolean; branch?: string; error?: string };
+  origin?: OriginSignal;
   deploy?: DeploySignal;
 };
 
@@ -230,6 +265,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     return { ok: true, lastResult, signals };
   }
 
+  let didPushRecovery = false;
   let persist = await persistOrVerifyOrigin(
     sandbox,
     planTitle,
@@ -240,63 +276,89 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   );
 
   if (!persist.ok) {
-    console.warn(
-      `[StepGitGate] Origin not verified (${persist.error || 'not pushed'}). Starting push recovery (${MAX_PUSH_RECOVERY_TURNS} turns).`,
-    );
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_ORIGIN,
-      level: 'warn',
-      message: `Step ${stepOrder} gate: origin not verified before recovery (${persist.error || 'not pushed'})`.slice(
-        0,
-        500,
-      ),
-      details: { stepOrder, error: persist.error?.slice?.(0, 800) },
-    });
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_PUSH_RECOVERY,
-      message: `Step ${stepOrder}: starting push recovery (max ${MAX_PUSH_RECOVERY_TURNS} agent turns)`,
-      details: { stepOrder, maxTurns: MAX_PUSH_RECOVERY_TURNS },
-    });
-    // The expected branch for recovery is derived solely from the requirement
-    // UUID; the title becomes an optional cosmetic suffix. This matches what
-    // createRequirementSandbox will emit when creating a fresh branch.
-    const expectedBranch = buildRequirementBranchName(requirementId, planTitle);
-    const recoverySystem = stepPrompt + buildPushRecoveryAppend(requirementId, expectedBranch);
-    const recoveryUser = {
-      role: 'user' as const,
-      content:
-        'REACTIVE TASK: Your work is not confirmed on the remote yet. Follow PUSH RECOVERY: confirm the code is correct, then commit and push so the team can see it.',
-    };
-    let recoveryMessages = [...currentMessages, recoveryUser];
-
-    for (let t = 0; t < MAX_PUSH_RECOVERY_TURNS; t++) {
-      console.log(`[StepGitGate] Push recovery turn ${t + 1}/${MAX_PUSH_RECOVERY_TURNS}`);
-      lastResult = await executeAssistantStep(recoveryMessages, context.instance, {
-        ...context.executionOptions,
-        system_prompt: recoverySystem,
-        custom_tools: fullTools,
-      });
-      recoveryMessages = lastResult.messages;
-      persist = await persistOrVerifyOrigin(
-        sandbox,
-        planTitle,
-        requirementId,
-        `Cron step ${stepOrder} recovery ${t + 1} (${requirementId})`,
-        audit,
-        gitRepoKind,
+    const canRecover = persist.agentActionable !== false;
+    if (canRecover) {
+      didPushRecovery = true;
+      console.warn(
+        `[StepGitGate] Origin not verified (${persist.errorForAgent || persist.error || 'not pushed'}). Starting push recovery (${MAX_PUSH_RECOVERY_TURNS} turns).`,
       );
-      if (persist.ok) break;
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.GATE_ORIGIN,
+        level: 'warn',
+        message: `Step ${stepOrder} gate: origin not verified before recovery (${
+          persist.errorForAgent || persist.error || 'not pushed'
+        })`.slice(0, 500),
+        details: { stepOrder, error: persist.error?.slice?.(0, 800), failureKind: persist.failureKind },
+      });
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.GATE_PUSH_RECOVERY,
+        message: `Step ${stepOrder}: starting push recovery (max ${MAX_PUSH_RECOVERY_TURNS} agent turns)`,
+        details: { stepOrder, maxTurns: MAX_PUSH_RECOVERY_TURNS },
+      });
+      // The expected branch for recovery is derived solely from the requirement
+      // UUID; the title becomes an optional cosmetic suffix. This matches what
+      // createRequirementSandbox will emit when creating a fresh branch.
+      const expectedBranch = buildRequirementBranchName(requirementId, planTitle);
+      const recoverySystem = stepPrompt + buildPushRecoveryAppend(requirementId, expectedBranch);
+      const recoveryUser = {
+        role: 'user' as const,
+        content:
+          'REACTIVE TASK: Your work is not confirmed on the remote yet. Follow PUSH RECOVERY: confirm the code is correct, then commit and push so the team can see it.',
+      };
+      let recoveryMessages = [...currentMessages, recoveryUser];
+
+      for (let t = 0; t < MAX_PUSH_RECOVERY_TURNS; t++) {
+        console.log(`[StepGitGate] Push recovery turn ${t + 1}/${MAX_PUSH_RECOVERY_TURNS}`);
+        lastResult = await executeAssistantStep(recoveryMessages, context.instance, {
+          ...context.executionOptions,
+          system_prompt: recoverySystem,
+          custom_tools: fullTools,
+        });
+        recoveryMessages = lastResult.messages;
+        persist = await persistOrVerifyOrigin(
+          sandbox,
+          planTitle,
+          requirementId,
+          `Cron step ${stepOrder} recovery ${t + 1} (${requirementId})`,
+          audit,
+          gitRepoKind,
+        );
+        if (persist.ok) break;
+      }
+    } else {
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.GATE_ORIGIN,
+        level: 'warn',
+        message: `Step ${stepOrder} gate: origin not verified; push recovery skipped (not agent-actionable)`,
+        details: {
+          stepOrder,
+          error: persist.error?.slice?.(0, 800),
+          failureKind: persist.failureKind,
+        },
+      });
     }
   }
 
   if (!persist.ok) {
-    const errFinal = `Origin push not verified after recovery: ${persist.error || 'branch not synced'}`;
-    signals.origin = { ok: false, error: persist.error };
+    const agentLine = persist.errorForAgent || persist.error || 'branch not synced';
+    const errFinal = `Origin push not verified${didPushRecovery ? ' after recovery' : ''}: ${agentLine}`;
+    signals.origin = {
+      ok: false,
+      error: persist.error,
+      errorForAgent: persist.errorForAgent,
+      failureKind: persist.failureKind,
+      agentActionable: persist.agentActionable,
+    };
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_ORIGIN,
       level: 'error',
       message: `Step ${stepOrder} gate: ${errFinal}`.slice(0, 500),
-      details: { stepOrder, error: errFinal.slice(0, 1200) },
+      details: {
+        stepOrder,
+        error: persist.error?.slice(0, 1200),
+        errorForAgent: persist.errorForAgent,
+        failureKind: persist.failureKind,
+      },
     });
     return {
       ok: false,
