@@ -1,4 +1,4 @@
-import { createRequirementStatusCore, listRequirementStatusCore } from './route';
+import { createRequirementStatusCore, listRequirementStatusCore } from './core';
 
 export function requirementStatusTool(site_id: string, default_instance_id?: string) {
   return {

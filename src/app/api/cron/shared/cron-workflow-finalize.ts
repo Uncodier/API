@@ -5,7 +5,7 @@
 'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/route';
+import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/core';
 import {
   CronInfraEvent,
   logCronInfrastructureEvent,

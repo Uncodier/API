@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/route';
+import { createRequirementStatusCore } from '@/app/api/agents/tools/requirement_status/core';
 import { logInstancePreviewUrlRecorded } from '@/lib/services/cron-audit-log';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
