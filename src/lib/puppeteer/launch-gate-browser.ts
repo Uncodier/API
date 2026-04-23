@@ -6,6 +6,7 @@
  * Skip that path for `vercel dev` (VERCEL_ENV=development) so local macOS
  * keeps using bundled Chrome from `puppeteer`.
  */
+import { existsSync, unlinkSync } from 'node:fs';
 import type { Browser } from 'puppeteer-core';
 import puppeteerCore from 'puppeteer-core';
 
@@ -15,7 +16,7 @@ import puppeteerCore from 'puppeteer-core';
  * fall through to full `puppeteer` there.
  */
 function useServerlessChromium(): boolean {
-  if (process.env.AWS_LAMBDA_EXECUTION_ENV || process.env.AWS_LAMBDA_FUNCTION_VERSION) {
+  if (process.env.AWS_LAMBDA_FUNCTION_VERSION || process.env.AWS_EXECUTION_ENV) {
     return true;
   }
 
@@ -43,8 +44,49 @@ function useServerlessChromium(): boolean {
   return false;
 }
 
+/**
+ * Sparticuz only inflates `al2023.tar.br` (libnss3, libnspr4, …) when
+ * `isRunningInAwsLambdaNode20()` is true, which reads `AWS_EXECUTION_ENV` /
+ * `AWS_LAMBDA_JS_RUNTIME`. Vercel does not set those, so Chromium is extracted
+ * without NSS libs → Code 127. Set Lambda-like markers before loading the
+ * package so its module initializer runs `setupLambdaEnvironment` and
+ * `executablePath` unpacks dependencies. Skip when already on real Lambda.
+ */
+function applySparticuzLambdaShimForVercel(): void {
+  if (process.env.AWS_EXECUTION_ENV || process.env.AWS_LAMBDA_FUNCTION_VERSION) {
+    return;
+  }
+  const major = parseInt(process.versions.node.split('.')[0] ?? '20', 10);
+  // Package only matches 18 (al2) vs 20+/22+ (al2023). Map Node 21+ to 22.x.
+  if (major >= 22 || major === 21) {
+    process.env.AWS_LAMBDA_JS_RUNTIME ??= 'nodejs22.x';
+    process.env.AWS_EXECUTION_ENV ??= 'AWS_Lambda_nodejs22.x';
+  } else if (major >= 20) {
+    process.env.AWS_LAMBDA_JS_RUNTIME ??= 'nodejs20.x';
+    process.env.AWS_EXECUTION_ENV ??= 'AWS_Lambda_nodejs20.x';
+  } else {
+    process.env.AWS_LAMBDA_JS_RUNTIME ??= 'nodejs18.x';
+    process.env.AWS_EXECUTION_ENV ??= 'AWS_Lambda_nodejs18.x';
+  }
+}
+
+/** Warm invocations can reuse `/tmp/chromium` from a broken run that skipped NSS extract. */
+function clearStaleSparticuzChromiumBinary(): void {
+  if (!existsSync('/tmp/chromium')) return;
+  if (existsSync('/tmp/al2023/lib/libnss3.so') || existsSync('/tmp/al2/lib/libnss3.so')) {
+    return;
+  }
+  try {
+    unlinkSync('/tmp/chromium');
+  } catch {
+    /* ignore */
+  }
+}
+
 export async function launchPuppeteerForGate(): Promise<Browser> {
   if (useServerlessChromium()) {
+    applySparticuzLambdaShimForVercel();
+    clearStaleSparticuzChromiumBinary();
     const chromium = (await import('@sparticuz/chromium')).default;
     const executablePath = await chromium.executablePath();
     return puppeteerCore.launch({
