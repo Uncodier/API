@@ -39,6 +39,7 @@ import {
   type ScenarioSignal,
   type VisualSignal,
 } from './step-iteration-signals';
+import { detectCopyHygieneIssues, summarizeCopyHygiene } from './step-copy-hygiene';
 import type { GitRepoKind } from './cron-commit-helpers';
 
 export type ProbeSignals = {
@@ -143,6 +144,28 @@ export async function runRuntimeAndVisualProbes(params: {
       details: { stepOrder, error: msg.slice(0, 800) },
     });
     return { ok: true, signals: out };
+  }
+
+  if (runtimeProbe && runtimeProbe.pages.length) {
+    const hygiene = detectCopyHygieneIssues(runtimeProbe.pages);
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.COPY_HYGIENE,
+      level: hygiene.ok ? 'info' : 'warn',
+      message: `Step ${stepOrder} copy hygiene: ${hygiene.ok ? 'OK' : `${hygiene.issues.length} leak(s)`}`.slice(0, 400),
+      details: {
+        stepOrder,
+        ok: hygiene.ok,
+        issues: hygiene.issues.slice(0, 10),
+      },
+    });
+    if (!hygiene.ok) {
+      if (shouldRunVisual) await stopProbeServer(sandbox, runtimeProbe.port);
+      return {
+        ok: false,
+        error: summarizeCopyHygiene(hygiene),
+        signals: out,
+      };
+    }
   }
 
   if (!shouldRunVisual || !runtimeProbe) {

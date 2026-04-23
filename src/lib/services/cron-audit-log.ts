@@ -39,6 +39,8 @@ export const CronInfraEvent = {
   API_PROBE: 'cron_infra_api_probe',
   /** Per-step browser console + pageerror capture during visual probe. */
   CONSOLE_PROBE: 'cron_infra_console_probe',
+  /** Per-step copy hygiene check: scans rendered HTML for orchestrator-internal taxonomy leaks. */
+  COPY_HYGIENE: 'cron_infra_copy_hygiene',
   /** E2E scenario run outcome (pass/fail + artifacts). */
   SCENARIO_RUN: 'cron_infra_scenario_run',
   /** Per-step visual probe: screenshots + network trace at declared viewports. */

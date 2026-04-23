@@ -49,6 +49,32 @@ Instead:
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
 
+### 3.1 Internal taxonomy is INVISIBLE to the user (gate-blocking)
+The orchestrator state — backlog item ids, requirement ids, scope levels, phase ids, tier flags, file names like `requirement.spec.md` / `progress.md` / `feature_list.json` / `evidence/` — MUST NEVER appear in rendered HTML. The runtime probe scans every page body and the gate hard-rejects the step (failure category `copy`) when any of these surface in the user-facing copy:
+
+- UUIDs (`ac83a5a9-4eed-42a3-a285-e92ae17ba44e`).
+- Tokens: `item_id`, `requirement_id`, `scope_level`, `phase_id`, `backlog item`, `feature_list`, `spec.md`, `requirement.spec`, `progress.md`, `evidence/`, `tier=core`, `tier=ornamental`.
+- Meta-prose narrating which backlog item produced the page: `Resumen del backlog`, `El item <id>`, `queda resumido`, `landing visible y construible en '/'`, `Backlog summary`, etc.
+- Generic placeholders: `lorem ipsum`, `placeholder copy`, `coming soon (placeholder)`, `TODO:`, `TBD:`.
+
+The recurring failure mode is interpreting a backlog item title (e.g. *"Resume the backlog in a landing visible and buildable at /"*) as user copy. That is wrong: the backlog title is an instruction to YOU; the page must showcase the actual product (audience, value prop, real CTAs).
+
+```tsx
+// Bad — leaks orchestrator state into the rendered home
+<section>
+  <h2>Resumen del backlog</h2>
+  <p>El item ac83a5a9-4eed-42a3-a285-e92ae17ba44e queda resumido en una landing visible y construible en "/".</p>
+</section>
+
+// Good — user-facing product copy from the requirement spec
+<section>
+  <h2>Reserva tu espacio en minutos</h2>
+  <p>Encuentra coworking flexible cerca de ti, reserva al instante y únete a la comunidad habitUall.</p>
+</section>
+```
+
+If the backlog item title is the only context you have, derive copy from `requirement.spec.md` sections 1 (vision), 2 (audience) and 4 (value prop). Never paraphrase the item title and never print the item id.
+
 ### 4. Shift-left build
 Before reporting completion:
 1. `sandbox_run_command npm run build`.
