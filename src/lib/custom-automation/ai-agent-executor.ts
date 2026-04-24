@@ -977,10 +977,10 @@ export class AIAgentExecutor {
         // After enough iterations with a schema, drop tools to force JSON output.
         const shouldForceJson = schema && iterations > 15;
 
-        if (!shouldForceJson) {
+        if (!shouldForceJson && openaiTools.length > 0) {
           completionOptions.tools = openaiTools;
           console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Including tools in API call`);
-        } else {
+        } else if (shouldForceJson) {
           console.log(`⚠️ [EXECUTOR] Forcing JSON output - removing tools (iteration ${iterations})`);
         }
 

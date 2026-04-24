@@ -96,7 +96,24 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
   });
   for (const s of screenshots) {
     userBlocks.push({ type: 'text', text: `route="${s.route}" viewport="${s.viewport}"` });
-    userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
+    
+    try {
+      // Gemini's OpenAI compatibility layer requires base64 data URIs, it does not support HTTP URLs.
+      // We fetch the image and convert it to base64 before sending.
+      const imgRes = await fetch(s.url);
+      if (imgRes.ok) {
+        const arrayBuffer = await imgRes.arrayBuffer();
+        const base64 = Buffer.from(arrayBuffer).toString('base64');
+        const contentType = imgRes.headers.get('content-type') || 'image/png';
+        userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
+      } else {
+        console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${s.url} - ${imgRes.status}`);
+        userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback to URL, might fail depending on provider
+      }
+    } catch (e) {
+      console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
+      userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback
+    }
   }
 
   let rawText = '';
