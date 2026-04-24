@@ -65,7 +65,58 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let sandboxId: string | null = null;
 
   try {
-  // Step 1: Create sandbox → returns serializable info
+  // Step 1: Check for active plan BEFORE creating the sandbox
+  // This saves VM costs if we are in a re-plan loop cooldown or blocked state.
+  const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);
+  const actionableSteps = existingPlan?.steps
+    ? (existingPlan.steps as any[]).filter((s: any) =>
+        s.status === 'pending' || s.status === 'in_progress' || (s.status === 'failed' && (s.retry_count ?? 0) < 2))
+    : [];
+  const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
+
+  // Step 2: If no active plan, decide whether re-planning is safe.
+  let recentPlansGuard: Awaited<ReturnType<typeof checkRecentPlansGuardStep>> = {
+    recentCount: 0,
+    latestCompletedAtMs: null,
+    shouldSkipOrchestrator: false,
+    shouldBlockRequirement: false,
+  };
+  
+  if (!hasActivePlan) {
+    recentPlansGuard = await checkRecentPlansGuardStep({ instanceId, siteId: site_id });
+    if (recentPlansGuard.reason) {
+      console.log(`[CronAppsWorkflow] Recent-plans guard: ${recentPlansGuard.reason}`);
+    }
+  }
+
+  if (recentPlansGuard.shouldBlockRequirement) {
+    const rec = await recordRequirementBlockedStep({
+      site_id,
+      instance_id: instanceId,
+      requirement_id: reqId,
+      message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
+    });
+    if (!rec.ok) {
+      console.error(`[CronAppsWorkflow] Failed to record re-plan-loop blocker: ${rec.error}`);
+    }
+    // Early exit without creating a sandbox
+    return { reqId, branch: null, previewUrl: null, status: 'blocked' as const };
+  }
+
+  const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
+
+  // Early exit if we are skipping the orchestrator AND there is no active plan.
+  // This means we are in the cooldown period and there is no work to do.
+  // We don't want to create a sandbox just to do nothing and push an empty commit.
+  if (skipOrchestrator && !hasActivePlan) {
+    console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute.`);
+    return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
+  }
+
+  // Step 3: Create sandbox → returns serializable info
+  // We only create it if we actually need to run steps, run the orchestrator,
+  // or if we are skipping the orchestrator but still want to finalize the cycle
+  // (e.g., to check if a Vercel preview URL is now ready).
   const created = await createSandboxStep(reqId, type, title, cronAudit);
   sandboxId = created.sandboxId;
   const { branchName, workDir, isNewBranch, instanceType } = created;
@@ -135,50 +186,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     backlog: backlogSnapshot,
   });
 
-  // Step 2: Check for active plan
-  const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);
-  const actionableSteps = existingPlan?.steps
-    ? (existingPlan.steps as any[]).filter((s: any) =>
-        s.status === 'pending' || s.status === 'in_progress' || (s.status === 'failed' && (s.retry_count ?? 0) < 2))
-    : [];
-  const hasActivePlan = !!(existingPlan && actionableSteps.length > 0);
-
-  // Step 2b: If no active plan, decide whether re-planning is safe.
-  // When the orchestrator has already produced one (or several) plans in the
-  // recent past for this instance and the requirement is still in-progress,
-  // a new plan would just duplicate work and feed the re-plan loop we saw
-  // after switching to Gemini. Block or skip instead.
-  let recentPlansGuard: Awaited<ReturnType<typeof checkRecentPlansGuardStep>> = {
-    recentCount: 0,
-    latestCompletedAtMs: null,
-    shouldSkipOrchestrator: false,
-    shouldBlockRequirement: false,
-  };
-  if (!hasActivePlan) {
-    recentPlansGuard = await checkRecentPlansGuardStep({ instanceId, siteId: site_id });
-    if (recentPlansGuard.reason) {
-      console.log(`[CronAppsWorkflow] Recent-plans guard: ${recentPlansGuard.reason}`);
-    }
-  }
-
-  if (recentPlansGuard.shouldBlockRequirement) {
-    const rec = await recordRequirementBlockedStep({
-      site_id,
-      instance_id: instanceId,
-      requirement_id: reqId,
-      message: `Re-plan loop detected: ${recentPlansGuard.reason}. Review recent instance_plans for this requirement and re-open manually once unblocked.`,
-    });
-    if (!rec.ok) {
-      console.error(`[CronAppsWorkflow] Failed to record re-plan-loop blocker: ${rec.error}`);
-    }
-    // Let the outer `finally` stop the sandbox — avoids duplicate stop calls
-    // and keeps the cleanup path in one place.
-    return { reqId, branch: branchName, previewUrl: null, status: 'blocked' as const };
-  }
-
-  const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
-
-  // Step 3: Run orchestrator (if no pending plan)
+  // Step 4: Run orchestrator (if no pending plan)
   if (!skipOrchestrator) {
     console.log(`[CronAppsWorkflow] PHASE 1: Running orchestrator`);
     const prompt = isNewBranch
@@ -236,7 +244,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   await extendRunLockStep(reqId, cronLockRunId);
 
-  // Step 4: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
+  // Step 5: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
   let planCompleted = false;
 
@@ -267,6 +275,12 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       planCompleted = reconciledStatus === 'completed';
     } else {
       console.log(`[CronAppsWorkflow] No active plan found.`);
+      // If there's no active plan, but we didn't skip the cycle, it means we
+      // either just finished a plan or we are finalizing a previous cycle.
+      // We check the most recent plan to see if it was completed.
+      if (existingPlan?.status === 'completed') {
+        planCompleted = true;
+      }
     }
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
