@@ -45,12 +45,26 @@ export async function verifyPlatformGitLayout(
     return { ok: false, reason: 'git rev-parse --show-toplevel failed' };
   }
   const top = ((await topRes.stdout()) || '').trim().replace(/\/$/, '');
+  // Compare *canonical* paths. `git rev-parse --show-toplevel` may return a
+  // logical path while `pwd -P` resolves symlinks — a mismatch here caused
+  // pingSandboxWorkspace to fail on every connectOrRecreate even for healthy
+  // sandboxes, triggering endless reprovisions + zombie VMs.
+  const topCanonRes = await runInWorkDir(
+    sandbox,
+    'sh',
+    ['-c', 'cd "$(git rev-parse --show-toplevel)" && pwd -P'],
+    cwd,
+  );
+  if (topCanonRes.exitCode !== 0) {
+    return { ok: false, reason: 'failed to canonicalize git top-level (pwd -P)' };
+  }
+  const topCanon = ((await topCanonRes.stdout()) || '').trim().replace(/\/$/, '');
   const pwdRes = await runInWorkDir(sandbox, 'sh', ['-c', `cd "${cwd}" && pwd -P`], cwd);
   const here = ((await pwdRes.stdout()) || '').trim().replace(/\/$/, '');
-  if (top !== here) {
+  if (topCanon !== here) {
     return {
       ok: false,
-      reason: `Git top-level (${top}) does not match workspace root (${here}). Keep the clone at ${cwd} only.`,
+      reason: `Git top-level canonical (${topCanon}) does not match workspace root canonical (${here}); raw top was (${top}). Keep the clone at ${cwd} only.`,
     };
   }
   return { ok: true };

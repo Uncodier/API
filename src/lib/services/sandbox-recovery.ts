@@ -52,8 +52,26 @@ export async function connectOrRecreateRequirementSandbox(params: {
     return { sandbox, sandboxId, recovered: false, branchName };
   }
 
+  if (sandbox) {
+    // Layout ping failed — stop this VM before creating another, otherwise
+    // every connectOrRecreate leaves a billing zombie (dashboard full of Running).
+    try {
+      await sandbox.stop();
+      console.log(`[Sandbox] Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
+    } catch (e: unknown) {
+      console.warn(
+        `[Sandbox] stop() before reprovision failed (${sandboxId}):`,
+        e instanceof Error ? e.message : e,
+      );
+    }
+  } else {
+    console.warn(
+      `[Sandbox] Sandbox.get failed for id=${sandboxId} — reprovisioning (previous VM may still bill until timeout if it exists)`,
+    );
+  }
+
   console.warn(
-    `[Sandbox] Sandbox unreachable (id=${sandboxId}) — reprovisioning VM and syncing to origin`,
+    `[Sandbox] Reprovisioning VM and syncing to origin (replaced id=${sandboxId})`,
   );
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
   const auditCtx: CronAuditContext | undefined = audit?.siteId
