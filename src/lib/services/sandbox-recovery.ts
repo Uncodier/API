@@ -23,6 +23,15 @@ async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
   return null;
 }
 
+/** Reattach to an existing VM without provisioning a replacement (use right after create). */
+export async function getSandboxWithRetriesOrThrow(sandboxId: string): Promise<Sandbox> {
+  const s = await tryGetSandbox(sandboxId);
+  if (!s) {
+    throw new Error(`Sandbox.get failed after ${GET_SANDBOX_ATTEMPTS} attempts (${sandboxId})`);
+  }
+  return s;
+}
+
 /**
  * Best-effort stop by id (handles flaky `get` on first try: a second get may
  * still attach to a Running VM that would otherwise be orphaned when we

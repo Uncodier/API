@@ -71,11 +71,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const { branchName, workDir, isNewBranch, instanceType } = created;
 
   // Step 1b: Remove any nested project directories left by previous agent cycles
-  const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit, {
-    requirementId: reqId,
-    title,
-    instanceType,
-  });
+  const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit);
   sandboxId = cleanup.effectiveSandboxId;
 
   // Step 1b.1: Make sure `requirement.spec.md` exists on the branch before

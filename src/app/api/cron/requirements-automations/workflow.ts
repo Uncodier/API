@@ -67,11 +67,7 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   const { branchName, workDir, isNewBranch } = created;
 
   // Step 1b: Remove any nested project directories left by previous agent cycles
-  const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit, {
-    requirementId: reqId,
-    title,
-    instanceType: 'automation',
-  });
+  const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit);
   sandboxId = cleanup.effectiveSandboxId;
 
   const orchestratorPrompt = `You are an automation runner inside a Vercel Sandbox.

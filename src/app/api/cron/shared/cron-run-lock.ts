@@ -7,10 +7,14 @@
  * rejected as non-fast-forward (or they clobber each other's sandbox files).
  *
  * Design:
- *  - `acquireRunLock` performs one atomic UPDATE:
+ *  - `acquireRunLock` performs one atomic UPDATE with a PostgREST `.or` filter
+ *    on the lock time. The compare value must be double-quoted: ISO strings
+ *    include `.` in the fractional seconds, and unquoted values break
+ *    PostgREST’s `column.operator.value` parsing (can yield `42703` and was
+ *    incorrectly treated as "missing lock columns" when `42703` matched broadly).
  *      SET cron_lock_expires_at = :expiresAt, cron_lock_run_id = :runId
  *      WHERE id = :reqId
- *        AND (cron_lock_expires_at IS NULL OR cron_lock_expires_at < NOW())
+ *        AND (cron_lock_expires_at IS NULL OR cron_lock_expires_at < :now)
  *    If no row is affected, another workflow already holds the lock.
  *  - `releaseRunLock` clears the columns only when the caller still owns the
  *    lock (matches `runId`), so a stale release from a crashed run cannot
@@ -80,19 +84,38 @@ interface PostgrestErrorLike {
 
 /**
  * `true` only when the error unambiguously indicates the lock columns are
- * unknown to PostgREST. We check the SQLSTATE (`42703` = undefined_column)
- * and the PGRST-specific schema-cache code in addition to the message, so
- * we don't silently swallow unrelated failures (RLS, permission, filter
- * syntax, etc.) under the "columns missing" branch.
+ * unknown to PostgREST / PostgreSQL. **Do not** match bare `42703` — any
+ * undefined column in the generated query uses that code; mis-parsed `or`
+ * filters (e.g. unquoted ISO timestamps with `.` ms) can produce 42703 for
+ * unrelated identifiers and would otherwise be misclassified and run without a lock.
  */
 function isLockColumnsMissingError(err: PostgrestErrorLike): boolean {
   const code = err.code || '';
-  if (code === '42703' || code === 'PGRST204') return true;
   const msg = err.message || '';
-  return (
-    /column\s+[^\s]*cron_lock_(expires_at|run_id)\s+does not exist/i.test(msg) ||
-    /could not find the '?cron_lock_(expires_at|run_id)'? column/i.test(msg)
-  );
+  const implicatesLockCols =
+    /cron_lock_(expires_at|run_id)/i.test(msg) &&
+    (/does not exist/i.test(msg) ||
+      /could not find/i.test(msg) ||
+      /not found in schema cache/i.test(msg));
+  if (implicatesLockCols) return true;
+  if (code === 'PGRST204' && /cron_lock_(expires_at|run_id)/i.test(msg)) return true;
+  return false;
+}
+
+/** PostgREST uses `.` to separate col.op.value; ISO ms (`...10.460Z`) must be quoted. */
+function postgrestOrTimestampLiteral(iso: string): string {
+  return `"${iso.replace(/"/g, '""')}"`;
+}
+
+/** For logs only — which Supabase project this serverless function is using (not the key). */
+function supabaseUrlHostnameForLogs(): string {
+  const u = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  if (!u) return 'unset';
+  try {
+    return new URL(u).hostname;
+  } catch {
+    return 'invalid-url';
+  }
 }
 
 /** Returns true-ish AcquiredCronLock if we took the lock; null if another run owns it. */
@@ -104,12 +127,13 @@ export async function acquireRunLock(
   const runId = opts?.runId ?? makeRunId();
   const nowIso = new Date().toISOString();
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+  const orClause = `cron_lock_expires_at.is.null,cron_lock_expires_at.lt.${postgrestOrTimestampLiteral(nowIso)}`;
 
   const { data, error } = await supabaseAdmin
     .from('requirements')
     .update({ cron_lock_expires_at: expiresAt, cron_lock_run_id: runId })
     .eq('id', requirementId)
-    .or(`cron_lock_expires_at.is.null,cron_lock_expires_at.lt.${nowIso}`)
+    .or(orClause)
     .select('id');
 
   if (error) {
@@ -118,6 +142,7 @@ export async function acquireRunLock(
     // miss can be distinguished from RLS, permission, or filter errors.
     const diag = {
       reqId: requirementId,
+      supabaseHost: supabaseUrlHostnameForLogs(),
       code: err.code,
       message: err.message,
       details: err.details,
@@ -128,7 +153,9 @@ export async function acquireRunLock(
         '[CronRunLock] columns missing — running without lock. ' +
           'Apply src/scripts/add_requirements_cron_run_lock.sql AND reload the ' +
           "PostgREST schema cache (Supabase Dashboard → API → 'Reload schema cache', " +
-          "or run `NOTIFY pgrst, 'reload schema';`).",
+          "or run `NOTIFY pgrst, 'reload schema';`). " +
+          'If the columns exist in SQL, compare `supabaseHost` here to the project in the dashboard ' +
+          '(Vercel preview may use different env than production).',
         diag,
       );
       return { runId, expiresAt };

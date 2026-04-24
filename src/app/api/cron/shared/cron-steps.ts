@@ -13,7 +13,10 @@
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
+import {
+  connectOrRecreateRequirementSandbox,
+  getSandboxWithRetriesOrThrow,
+} from '@/lib/services/sandbox-recovery';
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
@@ -77,6 +80,13 @@ export async function createSandboxStep(
 
 // ─── Step: Clean up nested project directories ──────────────────────
 
+/**
+ * Removes mistaken nested Next roots. After a fresh `createSandboxStep`, pass
+ * **no** `recovery` — only `Sandbox.get` with retries. Passing `recovery` runs
+ * `connectOrRecreateRequirementSandbox`, which provisions a **new** VM when
+ * `get` fails transiently right after create → duplicate snapshot sandboxes
+ * billing in parallel.
+ */
 export async function cleanupNestedProjectsStep(
   sandboxId: string,
   audit?: CronAuditContext,
@@ -96,7 +106,7 @@ export async function cleanupNestedProjectsStep(
     sandbox = conn.sandbox;
     effectiveSandboxId = conn.sandboxId;
   } else {
-    sandbox = await Sandbox.get({ sandboxId });
+    sandbox = await getSandboxWithRetriesOrThrow(sandboxId);
   }
   const cwd = SandboxService.WORK_DIR;
   const removed: string[] = [];
