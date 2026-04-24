@@ -115,8 +115,23 @@ function generateSandboxScript(params: {
   bucket: string;
 }): string {
   return `
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+let chromium = require('@sparticuz/chromium');
+if (chromium.default) chromium = chromium.default;
 const fs = require('fs');
+
+// Apply Lambda shim for Vercel Sandbox (Amazon Linux 2023)
+const major = parseInt(process.versions.node.split('.')[0] || '20', 10);
+if (major >= 22 || major === 21) {
+  process.env.AWS_LAMBDA_JS_RUNTIME = process.env.AWS_LAMBDA_JS_RUNTIME || 'nodejs22.x';
+  process.env.AWS_EXECUTION_ENV = process.env.AWS_EXECUTION_ENV || 'AWS_Lambda_nodejs22.x';
+} else if (major >= 20) {
+  process.env.AWS_LAMBDA_JS_RUNTIME = process.env.AWS_LAMBDA_JS_RUNTIME || 'nodejs20.x';
+  process.env.AWS_EXECUTION_ENV = process.env.AWS_EXECUTION_ENV || 'AWS_Lambda_nodejs20.x';
+} else {
+  process.env.AWS_LAMBDA_JS_RUNTIME = process.env.AWS_LAMBDA_JS_RUNTIME || 'nodejs18.x';
+  process.env.AWS_EXECUTION_ENV = process.env.AWS_EXECUTION_ENV || 'AWS_Lambda_nodejs18.x';
+}
 
 const PORT = ${params.port};
 const VIEWPORTS = ${JSON.stringify(params.viewports)};
@@ -171,8 +186,16 @@ async function uploadScreenshot(buffer, route, viewport) {
 async function run() {
   let browser;
   try {
+    const executablePath = await chromium.executablePath();
     browser = await puppeteer.launch({
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+      args: [
+        ...chromium.args,
+        '--disable-dev-shm-usage',
+        '--disable-features=IsolateOrigins,site-per-process',
+      ],
+      defaultViewport: chromium.defaultViewport,
+      executablePath,
+      headless: chromium.headless,
     });
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(TIMEOUT_MS);
@@ -315,15 +338,15 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   const { sandbox } = params;
   const wd = SandboxService.WORK_DIR;
   
-  // Check if puppeteer is installed in the sandbox
-  const checkCmd = `cd ${wd} && npm ls puppeteer > /dev/null 2>&1 || echo "NOT_INSTALLED"`;
+  // Check if puppeteer-core is installed in the sandbox (/tmp)
+  const checkCmd = `cd /tmp && npm ls puppeteer-core > /dev/null 2>&1 || echo "NOT_INSTALLED"`;
   const checkRes = await sandbox.runCommand('sh', ['-c', checkCmd]);
   const checkOut = await checkRes.stdout().catch(() => '');
   
   if (checkOut.includes('NOT_INSTALLED')) {
-    console.log('[VisualProbe] Installing puppeteer in sandbox /tmp...');
+    console.log('[VisualProbe] Installing puppeteer-core and @sparticuz/chromium in sandbox /tmp...');
     // Install in /tmp to avoid dirtying the user's package.json
-    await sandbox.runCommand('sh', ['-c', 'cd /tmp && npm init -y && npm install puppeteer --no-save']);
+    await sandbox.runCommand('sh', ['-c', 'cd /tmp && npm init -y && npm install puppeteer-core @sparticuz/chromium --no-save']);
   }
 
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
@@ -366,11 +389,17 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   let failedRequests: ConsoleSignal['failed_requests'] = [];
   let screenshots: VisualProbeScreenshot[] = [];
 
+  let scriptStderr = '';
   try {
-    const r = await sandbox.runCommand('node', [scriptPath]);
+    const r = await sandbox.runCommand('sh', ['-c', `cd /tmp && node ${scriptPath}`]);
     const out = await r.stdout().catch(() => '');
     const err = await r.stderr().catch(() => '');
+    scriptStderr = err.trim();
     
+    if (scriptStderr.length > 0) {
+      console.warn(`[VisualProbe] script stderr: ${scriptStderr}`);
+    }
+
     if (r.exitCode !== 0) {
       throw new Error(`Script exited with code ${r.exitCode}. stderr: ${err}`);
     }
@@ -387,12 +416,13 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
       pageErrors = parsed.pageErrors || [];
       failedRequests = parsed.failedRequests || [];
     } catch (e) {
-      console.error(`[VisualProbe] Failed to parse script output: ${jsonLine.slice(0, 200)}`);
+      console.error(`[VisualProbe] Failed to parse script output: ${out.slice(-500)}`);
       throw new Error('Failed to parse script output');
     }
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn(`[VisualProbe] visual probe crashed: ${msg}`);
+    const fullError = `visual probe crashed: ${msg}\nStderr: ${scriptStderr}`;
+    console.warn(`[VisualProbe] ${fullError}`);
     return {
       ok: false,
       duration_ms: Date.now() - started,
@@ -400,7 +430,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
       console: buildConsoleSignal(consoleEntries, pageErrors, failedRequests),
       visual_raw: { ok: false, pass: false, defects: [], screenshots: [] },
       base_url: baseUrl,
-      error: `visual probe crashed: ${msg}`,
+      error: fullError,
     };
   }
 
@@ -424,6 +454,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     console: consoleSignal,
     visual_raw: visualRaw,
     base_url: baseUrl,
+    error: screenshots.length === 0 ? `0 screenshots captured. Stderr: ${scriptStderr}` : undefined,
   };
 }
 
