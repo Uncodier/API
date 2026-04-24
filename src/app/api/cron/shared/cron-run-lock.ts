@@ -132,14 +132,13 @@ export async function acquireRunLock(
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
   const orClause = `cron_lock_expires_at.is.null,cron_lock_expires_at.lt.${postgrestOrTimestampLiteral(nowIso)}`;
 
-  const { data, error } = await supabaseAdmin
+  const { error } = await supabaseAdmin
     .from('requirements')
     .update({ cron_lock_expires_at: expiresAt, cron_lock_run_id: runId })
     .eq('id', requirementId)
-    .or(orClause)
-    .select('id');
+    .or(orClause);
 
-    if (error) {
+  if (error) {
       const err = error as PostgrestErrorLike;
       // Log the *full* PostgREST error (code/details/hint) so a schema-cache
       // miss can be distinguished from RLS, permission, or filter errors.
@@ -179,7 +178,14 @@ export async function acquireRunLock(
     return null;
   }
 
-  if (!data || data.length === 0) {
+  // Comprobamos si el update tuvo éxito leyendo la fila
+  const { data: verifyData } = await supabaseAdmin
+    .from('requirements')
+    .select('id, cron_lock_run_id')
+    .eq('id', requirementId)
+    .single();
+
+  if (!verifyData || verifyData.cron_lock_run_id !== runId) {
     return null;
   }
 
