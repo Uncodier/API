@@ -18,6 +18,7 @@ import {
   getPreviewUrlStep,
   checkSourceCodeStep,
   stopSandboxStep,
+  extendRunLockStep,
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
@@ -190,6 +191,8 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
     );
   }
 
+  await extendRunLockStep(reqId, cronLockRunId);
+
   // Step 4: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
   let planCompleted = false;
@@ -236,6 +239,8 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
       pushResult = { branch: branchName, pushed: false, commitCount: 0 };
     }
   }
+
+  await extendRunLockStep(reqId, cronLockRunId);
 
   let postFinallyBuildError: string | undefined;
   if (pushResult && !(stepsPhase?.anyStepFailed)) {

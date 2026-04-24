@@ -22,8 +22,7 @@
  *  - Cron routes (regular Next.js runtime) import these helpers directly.
  *  - Workflow modules (`'use workflow'`) must NOT call these directly — Supabase
  *    uses `fetch` which is not available in the workflow VM. Instead, call
- *    `releaseRunLockStep` from `./cron-steps.ts`, which wraps the release in
- *    a durable step.
+ *    `releaseRunLockStep` / `extendRunLockStep` from `./cron-steps.ts`.
  *
  * Columns and indexes come from
  * `src/scripts/add_requirements_cron_run_lock.sql`; run that migration before
@@ -47,8 +46,19 @@ function makeRunId(): string {
   return `cron-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
 }
 
-/** Default TTL for a cron workflow lock (15 minutes — longer than any expected run). */
-export const CRON_RUN_LOCK_TTL_MS = 15 * 60 * 1000;
+/**
+ * Default TTL for a cron workflow lock.
+ *
+ * Durable workflows (orchestrator + plan steps + build) routinely exceed 15 minutes.
+ * When `cron_lock_expires_at` passes, the next cron tick can `acquireRunLock` again
+ * while the previous workflow is still running step workers → **parallel runs for the
+ * same requirement**, multiple `Sandbox.create` / reprovisions in the same second, and
+ * runaway Sandbox billing. See instance_logs bursts on a single `requirement_id`.
+ *
+ * `extendRunLockStep` refreshes this from long-running workflow phases; the initial
+ * TTL must still cover the gap until the first extend.
+ */
+export const CRON_RUN_LOCK_TTL_MS = 2 * 60 * 60 * 1000;
 
 export interface AcquiredCronLock {
   runId: string;

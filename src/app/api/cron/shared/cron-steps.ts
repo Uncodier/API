@@ -17,7 +17,11 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { commitWorkspaceToOrigin, type GitRepoKind } from './cron-commit-helpers';
-import { releaseRunLock as _releaseRunLockImpl } from './cron-run-lock';
+import {
+  releaseRunLock as _releaseRunLockImpl,
+  extendRunLock as _extendRunLockImpl,
+  CRON_RUN_LOCK_TTL_MS,
+} from './cron-run-lock';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { validateBuildForStep } from './step-git-gate';
 import {
@@ -529,6 +533,22 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
       details: { sandboxId },
     });
   }
+}
+
+// ─── Step: Extend cron run lock ─────────────────────────────────────
+//
+// Refreshes `cron_lock_expires_at` while a long durable workflow is still
+// running. Call after heavy phases so runs beyond the initial TTL cannot
+// overlap with a new cron tick (parallel sandboxes on the same requirement).
+
+export async function extendRunLockStep(
+  requirementId: string,
+  runId: string | undefined,
+  ttlMs: number = CRON_RUN_LOCK_TTL_MS,
+): Promise<void> {
+  'use step';
+  if (!runId) return;
+  await _extendRunLockImpl(requirementId, runId, ttlMs);
 }
 
 // ─── Step: Release cron run lock ────────────────────────────────────

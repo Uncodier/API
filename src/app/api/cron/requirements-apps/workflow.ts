@@ -12,6 +12,7 @@ import {
   getPreviewUrlStep,
   checkSourceCodeStep,
   stopSandboxStep,
+  extendRunLockStep,
   releaseRunLockStep,
 } from '../shared/cron-steps';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
@@ -231,6 +232,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     );
   }
 
+  await extendRunLockStep(reqId, cronLockRunId);
+
   // Step 4: Execute plan steps (always re-fetch so pause/delete in the same cycle is respected)
   const activePlan = await getActiveInstancePlanStep(instanceId, site_id);
   let planCompleted = false;
@@ -278,6 +281,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       pushResult = { branch: branchName, pushed: false, commitCount: 0 };
     }
   }
+
+  await extendRunLockStep(reqId, cronLockRunId);
 
   let postFinallyBuildError: string | undefined;
   if (pushResult && !(stepsPhase?.anyStepFailed)) {
