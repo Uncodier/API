@@ -108,6 +108,9 @@ export async function connectOrRecreateRequirementSandbox(params: {
       .select('active_sandbox_id')
       .eq('requirement_id', requirementId)
       .eq('instance_id', audit.instanceId)
+      .not('active_sandbox_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (reqStatus?.active_sandbox_id && reqStatus.active_sandbox_id !== sandboxId) {

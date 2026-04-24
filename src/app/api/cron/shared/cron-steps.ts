@@ -57,12 +57,19 @@ export async function createSandboxStep(
   'use step';
 
   if (audit?.instanceId) {
-    const { data: reqStatus } = await supabaseAdmin
+    const { data: reqStatus, error } = await supabaseAdmin
       .from('requirement_status')
       .select('active_sandbox_id')
       .eq('requirement_id', reqId)
       .eq('instance_id', audit.instanceId)
+      .not('active_sandbox_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
       .maybeSingle();
+
+    if (error) {
+      console.error(`[CronStep] Error fetching active_sandbox_id:`, error);
+    }
 
     if (reqStatus?.active_sandbox_id) {
       try {
