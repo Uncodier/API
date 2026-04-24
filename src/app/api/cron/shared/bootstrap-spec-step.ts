@@ -1,3 +1,4 @@
+'use step';
 /**
  * Durable step: bootstrap `requirement.spec.md` from the DB before the
  * coordinator runs.
@@ -11,7 +12,6 @@
  * rules as the other durable steps): safe to import `@vercel/sandbox`,
  * `supabase-client`, etc.
  */
-'use step';
 
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';

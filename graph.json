@@ -1,0 +1,136 @@
+{
+  "../shared/admin-loop-step.ts": [
+    "../shared/loop-detectors.ts"
+  ],
+  "../shared/archetype-runner.ts": [],
+  "../shared/bootstrap-spec-step.ts": [],
+  "../shared/commit/checkpoint.ts": [
+    "../shared/commit/commit-workspace.ts",
+    "../shared/commit/status-sync.ts"
+  ],
+  "../shared/commit/commit-workspace.ts": [
+    "../shared/commit/status-sync.ts",
+    "../shared/vercel-npm-repo-guard.ts"
+  ],
+  "../shared/commit/status-sync.ts": [],
+  "../shared/cron-commit-helpers.ts": [
+    "../shared/commit/checkpoint.ts",
+    "../shared/commit/commit-workspace.ts",
+    "../shared/commit/status-sync.ts"
+  ],
+  "../shared/cron-execute-steps-phase.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/cron-orchestrator-step.ts",
+    "../shared/inline-step-executor.ts"
+  ],
+  "../shared/cron-orchestrator-step.ts": [
+    "../shared/loop-detectors.ts"
+  ],
+  "../shared/cron-run-lock.ts": [],
+  "../shared/cron-steps.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/cron-run-lock.ts",
+    "../shared/step-git-gate.ts"
+  ],
+  "../shared/cron-workflow-finalize.ts": [],
+  "../shared/feature-coverage.ts": [],
+  "../shared/gates/gate-app.ts": [
+    "../shared/gates/types.ts",
+    "../shared/step-git-gate.ts"
+  ],
+  "../shared/gates/gate-backend.ts": [
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/gate-contract.ts": [
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/gate-doc.ts": [
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/gate-slides.ts": [
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/gate-task.ts": [
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/index.ts": [
+    "../shared/gates/gate-app.ts",
+    "../shared/gates/gate-backend.ts",
+    "../shared/gates/gate-contract.ts",
+    "../shared/gates/gate-doc.ts",
+    "../shared/gates/gate-slides.ts",
+    "../shared/gates/gate-task.ts",
+    "../shared/gates/types.ts"
+  ],
+  "../shared/gates/types.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/step-iteration-signals.ts"
+  ],
+  "../shared/inline-step-executor.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/gates/index.ts",
+    "../shared/loop-detectors.ts",
+    "../shared/step-archetype-postgate.ts",
+    "../shared/step-git-prompts.ts",
+    "../shared/step-iteration-signals.ts"
+  ],
+  "../shared/loop-detectors.ts": [],
+  "../shared/platform-key-step.ts": [],
+  "../shared/step-archetype-postgate.ts": [
+    "../shared/archetype-runner.ts",
+    "../shared/feature-coverage.ts",
+    "../shared/step-runtime-targets.ts"
+  ],
+  "../shared/step-copy-hygiene.ts": [
+    "../shared/step-runtime-probe.ts"
+  ],
+  "../shared/step-e2e-runner.ts": [
+    "../shared/step-iteration-signals.ts"
+  ],
+  "../shared/step-gate-probes.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/step-copy-hygiene.ts",
+    "../shared/step-e2e-runner.ts",
+    "../shared/step-iteration-signals.ts",
+    "../shared/step-runtime-probe.ts",
+    "../shared/step-runtime-targets.ts",
+    "../shared/step-visual-critic.ts",
+    "../shared/step-visual-probe.ts"
+  ],
+  "../shared/step-git-gate.ts": [
+    "../shared/cron-commit-helpers.ts",
+    "../shared/gates/index.ts",
+    "../shared/step-gate-probes.ts",
+    "../shared/step-git-prompts.ts",
+    "../shared/step-iteration-signals.ts",
+    "../shared/vercel-npm-repo-guard.ts"
+  ],
+  "../shared/step-git-prompts.ts": [],
+  "../shared/step-iteration-signals.ts": [
+    "../shared/step-runtime-probe.ts"
+  ],
+  "../shared/step-runtime-probe.ts": [],
+  "../shared/step-runtime-targets.ts": [],
+  "../shared/step-visual-critic.ts": [
+    "../shared/step-iteration-signals.ts"
+  ],
+  "../shared/step-visual-probe.ts": [
+    "../shared/step-iteration-signals.ts"
+  ],
+  "../shared/vercel-npm-repo-guard.ts": [],
+  "../shared/workflow-db-steps.ts": [],
+  "prompt.ts": [
+    "../shared/step-git-prompts.ts"
+  ],
+  "workflow.ts": [
+    "../shared/admin-loop-step.ts",
+    "../shared/bootstrap-spec-step.ts",
+    "../shared/cron-execute-steps-phase.ts",
+    "../shared/cron-orchestrator-step.ts",
+    "../shared/cron-steps.ts",
+    "../shared/cron-workflow-finalize.ts",
+    "../shared/platform-key-step.ts",
+    "../shared/workflow-db-steps.ts",
+    "prompt.ts"
+  ]
+}

@@ -1,8 +1,8 @@
+'use step';
 /**
  * Durable workflow steps: HTTP validation + requirement_status finalization.
  * Split from cron-steps.ts to keep file size manageable.
  */
-'use step';
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 // NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the

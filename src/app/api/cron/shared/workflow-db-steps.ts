@@ -1,3 +1,4 @@
+'use step';
 /**
  * Durable step wrappers for DB calls that would otherwise run inside the
  * workflow VM and hit the `fetch` restriction:
@@ -11,7 +12,6 @@
  *     files, so each step has to be declared where callers import from.
  *   - Keeps `cron-steps.ts` under the 500-line budget.
  */
-'use step';
 
 import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { RequirementBacklog } from '@/lib/services/requirement-backlog-types';

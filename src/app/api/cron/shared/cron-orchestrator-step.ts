@@ -1,7 +1,7 @@
+'use step';
 /**
  * Orchestrator LLM pass (instance_plan, sandbox investigate, etc.) — 'use step' bundle.
  */
-'use step';
 
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';

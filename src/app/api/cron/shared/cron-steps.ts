@@ -1,3 +1,4 @@
+'use step';
 /**
  * Durable step functions for cron workflows.
  *
@@ -8,7 +9,6 @@
  * Pattern: steps receive `sandboxId` (string) and reconnect via Sandbox.get().
  * The workflow only passes serializable data between steps.
  */
-'use step';
 
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';

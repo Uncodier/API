@@ -1,7 +1,7 @@
+'use step';
 /**
  * Pending/failed plan step execution loop + post-plan smoke test (cron sandbox).
  */
-'use step';
 
 import { Sandbox } from '@vercel/sandbox';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
