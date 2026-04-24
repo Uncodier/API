@@ -221,9 +221,16 @@ export async function executeStepsPhaseStep(params: {
   let haltReason: PlanExecutionHaltReason | undefined;
 
   let workingPlanSteps: any[] = [...allSteps];
+  const startTime = Date.now();
+  const MAX_EXECUTION_TIME_MS = 3 * 60 * 1000; // 3 minutes
 
   try {
     outer: for (const planStep of stepsToRun) {
+      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        console.log(`[CronStep] Reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting step loop to prevent Vercel timeout.`);
+        break outer;
+      }
+
       const gateOuter = await getPlanExecutionGate(planId);
       if (!gateOuter.runnable) {
         planExecutionHalted = true;

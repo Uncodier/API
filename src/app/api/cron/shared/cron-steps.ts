@@ -544,6 +544,7 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
         delayMs *= 2;
       } else {
         /* sandbox may have auto-stopped or failed permanently */
+        console.warn(`[CronStep] 🚨 ZOMBIE ALERT: Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`, e);
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.SANDBOX_STOP,
           level: 'warn',

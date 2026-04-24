@@ -71,7 +71,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const { branchName, workDir, isNewBranch, instanceType } = created;
 
   // Step 1b: Remove any nested project directories left by previous agent cycles
-  const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit);
+  const cleanup = await cleanupNestedProjectsStep(sandboxId!, cronAudit);
   sandboxId = cleanup.effectiveSandboxId;
 
   // Step 1b.1: Make sure `requirement.spec.md` exists on the branch before
@@ -82,7 +82,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // overwrites a spec that is already on disk.
   try {
     await bootstrapRequirementSpecStep({
-      sandboxId,
+      sandboxId: sandboxId!,
       requirementId: reqId,
       audit: cronAudit,
     });
@@ -99,7 +99,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // service credentials. Idempotent: reuses any active key already linked to
   // the remote_instance.
   await provisionPlatformKeyStep({
-    sandboxId,
+    sandboxId: sandboxId!,
     requirementId: reqId,
     siteId: site_id,
     userId: user_id,
@@ -112,7 +112,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // the metadata audit trail. Treating it as an FYI early avoids breaking
   // workflows that have not yet wired the action.
   try {
-    const adminLoop = await detectAdminLoopStep({ sandboxId });
+    const adminLoop = await detectAdminLoopStep({ sandboxId: sandboxId! });
     if (adminLoop.triggered) {
       console.warn(`[CronAppsWorkflow] ${adminLoop.reason}`);
     }
@@ -186,7 +186,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       : `Continue "${title}". All previous steps done — create a NEW plan for the next iteration.`;
 
     const orch = await runOrchestratorStep({
-      sandboxId,
+      sandboxId: sandboxId!,
       reqId,
       requirementType: type,
       orchestratorPrompt,
@@ -205,18 +205,24 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     if (!orch.createdPlan) {
       const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
       if (!postOrchPlan) {
-        console.warn(
-          `[CronAppsWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
-        );
-        const rec = await recordRequirementBlockedStep({
-          site_id,
-          instance_id: instanceId,
-          requirement_id: reqId,
-          message:
-            'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
-        });
-        if (!rec.ok) {
-          console.error(`[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
+        if (orch.timedOut) {
+          console.warn(
+            `[CronAppsWorkflow] Orchestrator timed out before creating instance_plan for req ${reqId} — skipping blocker to allow retry next cycle.`,
+          );
+        } else {
+          console.warn(
+            `[CronAppsWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+          );
+          const rec = await recordRequirementBlockedStep({
+            site_id,
+            instance_id: instanceId,
+            requirement_id: reqId,
+            message:
+              'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
+          });
+          if (!rec.ok) {
+            console.error(`[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
+          }
         }
       }
     }
@@ -241,7 +247,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   try {
     if (activePlan?.steps) {
       stepsPhase = await executeStepsPhaseStep({
-        sandboxId,
+        sandboxId: sandboxId!,
         title,
         reqId,
         requirementType: type,
@@ -265,7 +271,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
     if (!anyFail) {
-      const pushed = await commitAndPushStep(sandboxId, title, reqId, undefined, cronAudit, 'applications');
+      const pushed = await commitAndPushStep(sandboxId!, title, reqId, undefined, cronAudit, 'applications');
       pushResult = pushed;
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;
@@ -282,7 +288,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   let postFinallyBuildError: string | undefined;
   if (pushResult && !(stepsPhase?.anyStepFailed)) {
-    const pf = await postFinallyBuildStep(sandboxId, cronAudit, {
+    const pf = await postFinallyBuildStep(sandboxId!, cronAudit, {
       requirementId: reqId,
       title,
       instanceType,
@@ -346,6 +352,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Keeping a single exit point guarantees we never leak a VM even when a
   // late step (validate/final-status/preview) throws.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
+  } catch (e: any) {
+    console.error(`[CronAppsWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
+    // Let the finally block handle the sandbox stop
+    throw e;
   } finally {
     if (sandboxId) {
       try {

@@ -6,6 +6,7 @@
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
+import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
 import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
@@ -107,13 +108,25 @@ export async function runOrchestratorStep(params: {
   const audit: CronAuditContext | undefined = site_id
     ? { instanceId, siteId: site_id, userId: user_id, requirementId: reqId }
     : undefined;
-  const { sandbox, sandboxId: effectiveSandboxId } = await connectOrRecreateRequirementSandbox({
-    sandboxId,
-    requirementId: reqId,
-    instanceType,
-    title: requirementTitle?.trim() || reqId,
-    audit,
-  });
+    
+  let effectiveSandboxId = sandboxId;
+  let sandbox: Sandbox;
+  
+  try {
+    const connected = await connectOrRecreateRequirementSandbox({
+      sandboxId,
+      requirementId: reqId,
+      instanceType,
+      title: requirementTitle?.trim() || reqId,
+      audit,
+    });
+    sandbox = connected.sandbox;
+    effectiveSandboxId = connected.sandboxId;
+  } catch (err: unknown) {
+    console.error(`[CronStep] 🚨 CRITICAL ERROR: connectOrRecreateRequirementSandbox failed in orchestrator:`, err);
+    throw err; // Re-throw so the outer workflow catches it and can clean up if needed
+  }
+
   const sandboxTools = getSandboxTools(sandbox, reqId, {
     site_id,
     instance_id: instanceId,
@@ -152,7 +165,18 @@ export async function runOrchestratorStep(params: {
 
   const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
 
+  const startTime = Date.now();
+  const MAX_EXECUTION_TIME_MS = 3 * 60 * 1000; // 3 minutes
+
+  let timedOut = false;
+
   while (!isDone && turns < MAX_TURNS) {
+    if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+      console.log(`[CronStep] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
+      timedOut = true;
+      break;
+    }
+
     turns++;
     try {
       result = await executeAssistantStep(
@@ -323,7 +347,7 @@ export async function runOrchestratorStep(params: {
   }
 
   console.log(
-    `[CronStep] Orchestrator finished after ${turns} turn(s) (createdPlan=${createdPlan}, isDone=${isDone})`,
+    `[CronStep] Orchestrator finished after ${turns} turn(s) (createdPlan=${createdPlan}, isDone=${isDone}, timedOut=${timedOut})`,
   );
-  return { turns, effectiveSandboxId, createdPlan };
+  return { turns, effectiveSandboxId, createdPlan, timedOut };
 }

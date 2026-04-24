@@ -9,10 +9,12 @@
     "src/app/api/ai/video/route.ts": { "maxDuration": 300 },
     "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 },
     "src/app/.well-known/workflow/v1/step/route.js": {
-      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@vercel/sandbox,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
     },
     "src/app/.well-known/workflow/v1/flow/route.js": {
-      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@vercel/sandbox,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
+      "maxDuration": 300,
+      "includeFiles": "node_modules/{openai,zod,zod-to-json-schema,@google/generative-ai,scrapybara,uuid,crypto-js,portkey-ai,@sparticuz/chromium,puppeteer-core}/**"
     }
   },
   "regions": ["iad1"],
