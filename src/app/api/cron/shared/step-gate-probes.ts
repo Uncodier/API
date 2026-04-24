@@ -179,19 +179,7 @@ export async function runRuntimeAndVisualProbes(params: {
     gateBrowser = await launchPuppeteerForGate();
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    console.warn('[GateProbes] Puppeteer launch failed (skip visual/e2e):', msg);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.VISUAL_PROBE,
-      level: 'warn',
-      message: `Step ${stepOrder} gate browser launch failed: ${msg.slice(0, 300)}`,
-      details: { stepOrder, error: msg.slice(0, 800) },
-    });
-    try {
-      await stopProbeServer(sandbox, runtimeProbe.port);
-    } catch {
-      /* ignore */
-    }
-    return { ok: true, signals: out };
+    console.warn('[GateProbes] Puppeteer launch failed (skip e2e):', msg);
   }
 
   try {
@@ -202,7 +190,6 @@ export async function runRuntimeAndVisualProbes(params: {
         pageRoutes: inferred.pageRoutes,
         requirementId,
         stepOrder,
-        browser: gateBrowser,
       });
       out.console = visual.console;
       out.visual = visual.visual_raw;

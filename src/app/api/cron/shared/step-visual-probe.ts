@@ -12,8 +12,6 @@
  */
 
 import type { Sandbox } from '@vercel/sandbox';
-import type { Browser, Page } from 'puppeteer-core';
-import { launchPuppeteerForGate } from '@/lib/puppeteer/launch-gate-browser';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import type {
   ConsoleSignal,
@@ -43,8 +41,6 @@ export type VisualProbeParams = {
   stepOrder: number;
   /** Screenshot timeout per page. */
   pageTimeoutMs?: number;
-  /** Use existing browser instance (tests); otherwise launches one. */
-  browser?: Browser;
 };
 
 export type VisualProbeScreenshot = {
@@ -66,6 +62,11 @@ export type VisualProbeResult = {
 
 const DEFAULT_PAGE_TIMEOUT = 15_000;
 const SCREENSHOT_BUCKET_PATH_PREFIX = 'probe-screenshots';
+
+function normalizeRoute(route: string): string {
+  if (!route.startsWith('/')) return `/${route}`;
+  return route;
+}
 
 function routeFilename(route: string, viewport: string): string {
   const safeRoute = route.replace(/^\/+/, '').replace(/[^a-z0-9-_]/gi, '_') || 'root';
@@ -102,165 +103,206 @@ async function uploadScreenshot(
   return { url: data.publicUrl, storage_path: storagePath };
 }
 
-function normalizeRoute(route: string): string {
-  if (!route.startsWith('/')) return `/${route}`;
-  return route;
-}
-
-async function probeOnePage(params: {
-  page: Page;
-  baseUrl: string;
-  route: string;
-  viewport: VisualProbeViewport;
+function generateSandboxScript(params: {
+  port: number;
+  viewports: VisualProbeViewport[];
+  pageRoutes: string[];
   pageTimeoutMs: number;
-  consoleEntries: ConsoleSignalEntry[];
-  pageErrors: ConsoleSignal['page_errors'];
-  failedRequests: ConsoleSignal['failed_requests'];
   requirementId?: string;
   stepOrder: number;
-}): Promise<VisualProbeScreenshot | null> {
-  const {
-    page,
-    baseUrl,
-    route,
-    viewport,
-    pageTimeoutMs,
-    consoleEntries,
-    pageErrors,
-    failedRequests,
-    requirementId,
-    stepOrder,
-  } = params;
+  repoUrl: string;
+  repoKey: string;
+  bucket: string;
+}): string {
+  return `
+const puppeteer = require('puppeteer');
+const fs = require('fs');
 
-  const safeRoute = normalizeRoute(route);
-  const target = `${baseUrl.replace(/\/$/, '')}${safeRoute}`;
+const PORT = ${params.port};
+const VIEWPORTS = ${JSON.stringify(params.viewports)};
+const ROUTES = ${JSON.stringify(params.pageRoutes)};
+const TIMEOUT_MS = ${params.pageTimeoutMs};
+const REQ_ID = ${JSON.stringify(params.requirementId || 'unknown')};
+const STEP_ORDER = ${params.stepOrder};
+const REPO_URL = ${JSON.stringify(params.repoUrl)};
+const REPO_KEY = ${JSON.stringify(params.repoKey)};
+const BUCKET = ${JSON.stringify(params.bucket)};
 
-  try {
-    await page.setViewport({
-      width: viewport.width,
-      height: viewport.height,
-      deviceScaleFactor: viewport.deviceScaleFactor ?? 1,
-      isMobile: !!viewport.isMobile,
-    });
-  } catch {}
+const consoleEntries = [];
+const pageErrors = [];
+const failedRequests = [];
+const screenshots = [];
 
-  page.removeAllListeners('console');
-  page.removeAllListeners('pageerror');
-  page.removeAllListeners('requestfailed');
-  page.removeAllListeners('response');
+function routeFilename(route, viewport) {
+  const safeRoute = route.replace(/^\\/+/, '').replace(/[^a-z0-9-_]/gi, '_') || 'root';
+  return \`\${safeRoute}__\${viewport}__\${Date.now()}.png\`;
+}
 
-  page.on('console', (msg) => {
-    const type = msg.type();
-    const levelMap: Record<string, ConsoleSignalEntry['level']> = {
-      log: 'log',
-      info: 'info',
-      warn: 'warn',
-      warning: 'warn',
-      error: 'error',
-      debug: 'debug',
-      verbose: 'debug',
-    };
-    const level = levelMap[type] || 'log';
-    const text = msg.text().slice(0, 600);
-    const loc = msg.location();
-    consoleEntries.push({
-      level,
-      text,
-      source: loc?.url ? `${loc.url}:${loc.lineNumber ?? 0}` : undefined,
-      route: safeRoute,
-      viewport: viewport.name,
-    });
-  });
-  page.on('pageerror', (err) => {
-    pageErrors.push({
-      message: err.message.slice(0, 400),
-      stack_tail: err.stack ? err.stack.split('\n').slice(-3).join('\n').slice(0, 400) : undefined,
-      route: safeRoute,
-      viewport: viewport.name,
-    });
-  });
-  page.on('requestfailed', (req) => {
-    failedRequests.push({
-      url: req.url().slice(0, 300),
-      failure: req.failure()?.errorText,
-      route: safeRoute,
-      viewport: viewport.name,
-    });
-  });
-  page.on('response', (res) => {
-    const status = res.status();
-    if (status >= 400) {
-      failedRequests.push({
-        url: res.url().slice(0, 300),
-        status,
-        route: safeRoute,
-        viewport: viewport.name,
-      });
-    }
-  });
+async function uploadScreenshot(buffer, route, viewport) {
+  const filename = routeFilename(route, viewport);
+  const ridFolder = REQ_ID ? \`req-\${REQ_ID}\` : 'req-unknown';
+  const storagePath = \`probe-screenshots/\${ridFolder}/step-\${STEP_ORDER}/\${filename}\`;
 
-  let responseStatus = 0;
-  let resp;
+  const url = \`\${REPO_URL}/storage/v1/object/\${BUCKET}/\${storagePath}\`;
   
-  // Retry loop for 502/503/504 (tunnel waking up)
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      resp = await page.goto(target, { waitUntil: 'load', timeout: pageTimeoutMs });
-      responseStatus = resp?.status() ?? 0;
-      
-      if (responseStatus === 502 || responseStatus === 503 || responseStatus === 504) {
-        if (attempt < 3) {
-          console.log(`[VisualProbe] Got ${responseStatus} on ${target}, retrying in 2s...`);
-          await new Promise(r => setTimeout(r, 2000));
-          continue;
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Authorization': \`Bearer \${REPO_KEY}\`,
+        'apikey': REPO_KEY,
+        'Content-Type': 'image/png'
+      },
+      body: buffer
+    });
+    
+    if (!res.ok) {
+      const text = await res.text();
+      return { error: \`Upload failed: \${res.status} \${text}\` };
+    }
+    
+    const publicUrl = \`\${REPO_URL}/storage/v1/object/public/\${BUCKET}/\${storagePath}\`;
+    return { url: publicUrl, storage_path: storagePath };
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
+async function run() {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const page = await browser.newPage();
+    page.setDefaultNavigationTimeout(TIMEOUT_MS);
+    page.setDefaultTimeout(TIMEOUT_MS);
+
+    for (const viewport of VIEWPORTS) {
+      for (const route of ROUTES) {
+        const safeRoute = route.startsWith('/') ? route : '/' + route;
+        const target = \`http://127.0.0.1:\${PORT}\${safeRoute}\`;
+
+        try {
+          await page.setViewport({
+            width: viewport.width,
+            height: viewport.height,
+            deviceScaleFactor: viewport.deviceScaleFactor || 1,
+            isMobile: !!viewport.isMobile,
+          });
+        } catch (e) {}
+
+        page.removeAllListeners('console');
+        page.removeAllListeners('pageerror');
+        page.removeAllListeners('requestfailed');
+        page.removeAllListeners('response');
+
+        page.on('console', (msg) => {
+          const type = msg.type();
+          const levelMap = { log: 'log', info: 'info', warn: 'warn', warning: 'warn', error: 'error', debug: 'debug', verbose: 'debug' };
+          const loc = msg.location();
+          consoleEntries.push({
+            level: levelMap[type] || 'log',
+            text: msg.text().slice(0, 600),
+            source: loc?.url ? \`\${loc.url}:\${loc.lineNumber || 0}\` : undefined,
+            route: safeRoute,
+            viewport: viewport.name,
+          });
+        });
+
+        page.on('pageerror', (err) => {
+          pageErrors.push({
+            message: err.message.slice(0, 400),
+            stack_tail: err.stack ? err.stack.split('\\n').slice(-3).join('\\n').slice(0, 400) : undefined,
+            route: safeRoute,
+            viewport: viewport.name,
+          });
+        });
+
+        page.on('requestfailed', (req) => {
+          failedRequests.push({
+            url: req.url().slice(0, 300),
+            failure: req.failure()?.errorText,
+            route: safeRoute,
+            viewport: viewport.name,
+          });
+        });
+
+        page.on('response', (res) => {
+          if (res.status() >= 400) {
+            failedRequests.push({
+              url: res.url().slice(0, 300),
+              status: res.status(),
+              route: safeRoute,
+              viewport: viewport.name,
+            });
+          }
+        });
+
+        let responseStatus = 0;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const resp = await page.goto(target, { waitUntil: 'load', timeout: TIMEOUT_MS });
+            responseStatus = resp?.status() || 0;
+            if (responseStatus === 502 || responseStatus === 503 || responseStatus === 504) {
+              if (attempt < 3) {
+                await new Promise(r => setTimeout(r, 2000));
+                continue;
+              }
+            }
+            break;
+          } catch (e) {
+            if (attempt < 3 && (e.message.includes('ERR_CONNECTION_REFUSED') || e.message.includes('ERR_NAME_NOT_RESOLVED') || e.message.includes('Timeout'))) {
+              await new Promise(r => setTimeout(r, 2000));
+              continue;
+            }
+            failedRequests.push({
+              url: target,
+              failure: \`goto: \${e.message.slice(0, 200)}\`,
+              route: safeRoute,
+              viewport: viewport.name,
+            });
+            if (!e.message.toLowerCase().includes('timeout')) {
+              break; // Fatal error, but we'll still try to screenshot
+            }
+            break;
+          }
+        }
+
+        await new Promise(r => setTimeout(r, 2000)); // Hydration wait
+
+        try {
+          const buf = await page.screenshot({ type: 'png', fullPage: true });
+          if (buf && buf.length > 0) {
+            const up = await uploadScreenshot(buf, safeRoute, viewport.name);
+            if (up.url) {
+              screenshots.push({ route: safeRoute, viewport: viewport.name, url: up.url, storage_path: up.storage_path });
+            } else {
+              console.error(\`[VisualProbe] Upload failed for \${safeRoute}: \${up.error}\`);
+            }
+          }
+        } catch (e) {
+          console.error(\`[VisualProbe] Screenshot failed for \${safeRoute}: \${e.message}\`);
         }
       }
-      break;
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (attempt < 3 && (msg.includes('ERR_CONNECTION_REFUSED') || msg.includes('ERR_NAME_NOT_RESOLVED') || msg.includes('Timeout'))) {
-        console.log(`[VisualProbe] Got ${msg} on ${target}, retrying in 2s...`);
-        await new Promise(r => setTimeout(r, 2000));
-        continue;
-      }
-      
-      failedRequests.push({
-        url: target,
-        failure: `goto: ${msg.slice(0, 200)}`,
-        route: safeRoute,
-        viewport: viewport.name,
-      });
-      
-      // If it's just a timeout on the last attempt, the page might still be visible.
-      if (!msg.toLowerCase().includes('timeout')) {
-        return null;
-      }
-      break;
     }
+  } catch (e) {
+    console.error(\`[VisualProbe] Fatal error: \${e.message}\`);
+  } finally {
+    if (browser) await browser.close().catch(() => {});
+    
+    // Output the results as JSON
+    console.log(JSON.stringify({
+      screenshots,
+      consoleEntries,
+      pageErrors,
+      failedRequests
+    }));
   }
+}
 
-  // Wait a bit extra for client-side hydration/rendering
-  await new Promise(r => setTimeout(r, 2000));
-
-  try {
-    const buf = (await page.screenshot({ type: 'png', fullPage: true })) as Buffer;
-    const up = await uploadScreenshot(buf, {
-      requirementId,
-      stepOrder,
-      route: safeRoute,
-      viewport: viewport.name,
-    });
-    if (up.url) {
-      return { route: safeRoute, viewport: viewport.name, url: up.url, storage_path: up.storage_path };
-    }
-    if (up.error) {
-      console.warn(`[VisualProbe] Screenshot upload failed for ${safeRoute} at ${viewport.name}: ${up.error}`);
-    }
-    return null;
-  } catch (e: unknown) {
-    console.warn(`[VisualProbe] Screenshot capture failed for ${safeRoute} at ${viewport.name}:`, e);
-    return null;
-  }
+run();
+`;
 }
 
 export async function runVisualProbe(params: VisualProbeParams): Promise<VisualProbeResult> {
@@ -270,10 +312,38 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   const pageTimeoutMs = params.pageTimeoutMs ?? DEFAULT_PAGE_TIMEOUT;
   const pageRoutes = Array.from(new Set(params.pageRoutes.map(normalizeRoute))).slice(0, 12);
 
-  const consoleEntries: ConsoleSignalEntry[] = [];
-  const pageErrors: ConsoleSignal['page_errors'] = [];
-  const failedRequests: ConsoleSignal['failed_requests'] = [];
-  const screenshots: VisualProbeScreenshot[] = [];
+  const { sandbox } = params;
+  const wd = SandboxService.WORK_DIR;
+  
+  // Check if puppeteer is installed in the sandbox
+  const checkCmd = `cd ${wd} && npm ls puppeteer > /dev/null 2>&1 || echo "NOT_INSTALLED"`;
+  const checkRes = await sandbox.runCommand('sh', ['-c', checkCmd]);
+  const checkOut = await checkRes.stdout().catch(() => '');
+  
+  if (checkOut.includes('NOT_INSTALLED')) {
+    console.log('[VisualProbe] Installing puppeteer in sandbox /tmp...');
+    // Install in /tmp to avoid dirtying the user's package.json
+    await sandbox.runCommand('sh', ['-c', 'cd /tmp && npm init -y && npm install puppeteer --no-save']);
+  }
+
+  const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
+  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  const scriptContent = generateSandboxScript({
+    port,
+    viewports,
+    pageRoutes: pageRoutes.length > 0 ? pageRoutes : ['/'],
+    pageTimeoutMs,
+    requirementId: params.requirementId,
+    stepOrder: params.stepOrder,
+    repoUrl: repoUrl || '',
+    repoKey: repoKey || '',
+    bucket
+  });
+
+  const scriptPath = '/tmp/visual-probe.js';
+  await sandbox.writeFiles([{ path: scriptPath, content: scriptContent }]);
 
   let baseUrl: string;
   try {
@@ -291,43 +361,38 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     };
   }
 
-  let browser: Browser | undefined = params.browser;
-  let ownsBrowser = false;
+  let consoleEntries: ConsoleSignalEntry[] = [];
+  let pageErrors: ConsoleSignal['page_errors'] = [];
+  let failedRequests: ConsoleSignal['failed_requests'] = [];
+  let screenshots: VisualProbeScreenshot[] = [];
+
   try {
-    if (!browser) {
-      browser = await launchPuppeteerForGate();
-      ownsBrowser = true;
-    }
-    const page = await browser.newPage();
-    page.setDefaultNavigationTimeout(pageTimeoutMs);
-    page.setDefaultTimeout(pageTimeoutMs);
-
-    if (pageRoutes.length === 0) {
-      console.warn(`[VisualProbe] No pageRoutes provided to runVisualProbe. Defaulting to ['/']`);
-      pageRoutes.push('/');
+    const r = await sandbox.runCommand('node', [scriptPath]);
+    const out = await r.stdout().catch(() => '');
+    const err = await r.stderr().catch(() => '');
+    
+    if (r.exitCode !== 0) {
+      throw new Error(`Script exited with code ${r.exitCode}. stderr: ${err}`);
     }
 
-    for (const viewport of viewports) {
-      for (const route of pageRoutes) {
-        const shot = await probeOnePage({
-          page,
-          baseUrl,
-          route,
-          viewport,
-          pageTimeoutMs,
-          consoleEntries,
-          pageErrors,
-          failedRequests,
-          requirementId: params.requirementId,
-          stepOrder: params.stepOrder,
-        });
-        if (shot) screenshots.push(shot);
-      }
+    // Parse the JSON output from the script
+    // The script outputs the JSON on the last line
+    const lines = out.trim().split('\n');
+    const jsonLine = lines[lines.length - 1];
+    
+    try {
+      const parsed = JSON.parse(jsonLine);
+      screenshots = parsed.screenshots || [];
+      consoleEntries = parsed.consoleEntries || [];
+      pageErrors = parsed.pageErrors || [];
+      failedRequests = parsed.failedRequests || [];
+    } catch (e) {
+      console.error(`[VisualProbe] Failed to parse script output: ${jsonLine.slice(0, 200)}`);
+      throw new Error('Failed to parse script output');
     }
-
-    await page.close().catch(() => {});
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[VisualProbe] visual probe crashed: ${msg}`);
     return {
       ok: false,
       duration_ms: Date.now() - started,
@@ -337,10 +402,6 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
       base_url: baseUrl,
       error: `visual probe crashed: ${msg}`,
     };
-  } finally {
-    if (ownsBrowser && browser) {
-      await browser.close().catch(() => {});
-    }
   }
 
   const hasErrors =

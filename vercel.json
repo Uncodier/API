@@ -21,7 +21,7 @@
   "crons": [
     {
       "path": "/api/cron/requirements-apps",
-      "schedule": "*/5 * * * *"
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/cron/requirements-automations",
