@@ -388,7 +388,7 @@ export async function executeStepsPhaseStep(params: {
                 plan_id: planId,
                 step_id: workingStep.id,
                 step_order: workingStep.order,
-                gate_error_excerpt: stepResult.gateError.slice(0, 800),
+                gate_error_excerpt: (!stepResult.ok ? stepResult.gateError : '').slice(0, 800),
               },
             });
             anyStepFailed = true;
@@ -437,11 +437,23 @@ export async function executeStepsPhaseStep(params: {
 
         if (stepResult.ok) {
           console.log(`[CronStep] ✓ Step ${workingStep.order} passed`);
-          executed++;
-          await checkpointPlanIteration(sandbox, title, reqId, workingStep, 'success', audit, {
-            gitRepoKind: git_repo_kind,
-          });
-          continue outer;
+          try {
+            await checkpointPlanIteration(sandbox, title, reqId, workingStep, 'success', audit, {
+              gitRepoKind: git_repo_kind,
+            });
+            executed++;
+            continue outer;
+          } catch (err: any) {
+            console.error(`[CronStep] Checkpoint failed for step ${workingStep.order}: ${err?.message}`);
+            await updateInstancePlanCore({
+              plan_id: planId,
+              instance_id: instanceId,
+              site_id,
+              steps: [{ id: workingStep.id, status: 'failed', error_message: `Checkpoint failed: ${err?.message}`, completed_at: new Date().toISOString() }],
+            });
+            anyStepFailed = true;
+            break outer;
+          }
         }
 
         const gateError = stepResult.gateError;

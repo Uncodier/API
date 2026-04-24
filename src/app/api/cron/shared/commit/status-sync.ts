@@ -209,7 +209,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   }
 
   console.log(
-    `[RequirementStatusSync] Updated ${rowId} (repo_url${preview_url !== null ? ' + preview_url' : ''}${patch.snapshot_id ? ' + snapshot_id' : ''})`,
+    `[RequirementStatusSync] Updated ${rowId} (repo_url${preview_url !== null ? ' + preview_url' : ''}${patch.snapshot_id ? ' + snapshot_id' : ''}${patch.source_code ? ' + source_code' : ''})`,
   );
   return { updated: true, preview_url, repo_url };
 }

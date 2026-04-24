@@ -78,8 +78,8 @@ async function uploadScreenshot(
   params: { requirementId?: string; stepOrder: number; route: string; viewport: string },
 ): Promise<{ url?: string; storage_path?: string; error?: string }> {
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.APPS_SUPABASE_URL || process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.APPS_SUPABASE_SERVICE_KEY || process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   // Required in production (e.g. Vercel) for uploads; without them all probes return 0 screenshots.
   if (!repoUrl || !repoKey) {
     return { error: 'SUPABASE_* env vars missing — screenshot not uploaded' };
@@ -362,8 +362,8 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   }
 
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.APPS_SUPABASE_URL || process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.APPS_SUPABASE_SERVICE_KEY || process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
   const scriptContent = generateSandboxScript({
     port,

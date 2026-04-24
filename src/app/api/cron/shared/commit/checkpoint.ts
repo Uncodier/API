@@ -62,5 +62,6 @@ export async function checkpointPlanIteration(
       message: `Checkpoint failed after step ${planStep.order}: ${(e?.message || e).toString().slice(0, 400)}`,
       details: { step_order: planStep.order, step_id: planStep.id },
     });
+    throw e;
   }
 }

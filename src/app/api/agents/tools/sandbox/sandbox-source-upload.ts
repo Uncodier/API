@@ -3,6 +3,10 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
+import { join } from 'path';
+import { tmpdir } from 'os';
+import { readFileSync, unlinkSync } from 'fs';
+
 export type SandboxSourceUploadOk = {
   ok: true;
   public_url: string;
@@ -30,8 +34,8 @@ export async function uploadSandboxSourceArchiveToRepository(
   }
 
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.APPS_SUPABASE_URL || process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.APPS_SUPABASE_SERVICE_KEY || process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!repoUrl || !repoKey) {
     return {
       ok: false,
@@ -51,12 +55,18 @@ export async function uploadSandboxSourceArchiveToRepository(
     return { ok: false, error: `Failed to archive source code: ${(await tarRes.stderr()).trim()}` };
   }
 
-  const b64Res = await sandbox.runCommand('base64', ['-w', '0', tarPath]);
-  if (b64Res.exitCode !== 0) {
-    return { ok: false, error: `Failed to encode archive: ${(await b64Res.stderr()).trim()}` };
+  const localTarPath = join(tmpdir(), tarName);
+  let buffer: Buffer;
+  try {
+    await sandbox.downloadFile({ path: tarPath }, { path: localTarPath });
+    buffer = readFileSync(localTarPath);
+  } catch (e: any) {
+    return { ok: false, error: `Failed to download archive from sandbox: ${e.message}` };
+  } finally {
+    try {
+      unlinkSync(localTarPath);
+    } catch (_) {}
   }
-  const b64Content = (await b64Res.stdout()).trim();
-  const buffer = Buffer.from(b64Content, 'base64');
 
   const { createClient } = await import('@supabase/supabase-js');
   const storageClient = createClient(repoUrl, repoKey, {

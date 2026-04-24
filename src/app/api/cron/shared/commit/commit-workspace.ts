@@ -189,7 +189,7 @@ fi`,
     }
 
     let requirementStatusSync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null = null;
-    if (result.pushed && audit?.siteId && result.branch) {
+    if (audit?.siteId && result.branch) {
       try {
         requirementStatusSync = await syncLatestRequirementStatusWithPreview({
           requirementId: reqId,

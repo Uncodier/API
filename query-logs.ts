@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
-import path from 'path';
+import * as path from 'path';
 
 dotenv.config({ path: path.resolve(process.cwd(), '.env.local') });
 
@@ -18,7 +18,7 @@ async function main() {
   const { data, error } = await supabase
     .from('instance_logs')
     .select('created_at, level, message, details')
-    .eq('details->>base_url', 'https://sb-36f1xxw7zpwq.vercel.run')
+    .eq('details->>base_url', 'https://sb-5axklt2wgdbv.vercel.run')
     .order('created_at', { ascending: false })
     .limit(5);
 
