@@ -420,7 +420,12 @@ export async function commitAndPushStep(
     console.log(
       `[CronPersist] commitAndPushStep finally branch=${r.branch} pushed=${r.pushed} commitCount=${r.commitCount}`,
     );
-    return { ...r, effectiveSandboxId };
+    return {
+      branch: r.branch,
+      pushed: r.pushed,
+      commitCount: r.commitCount,
+      effectiveSandboxId,
+    };
   } catch (err: any) {
     console.error('[CronPersist] commitAndPushStep FAILED:', err?.message || err, err?.stack);
     return null;

@@ -150,6 +150,8 @@ export async function acquireRunLock(
       message: err.message,
       details: err.details,
       hint: err.hint,
+      keyStart: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 15),
+      keyEnd: process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(-10),
     };
     if (isLockColumnsMissingError(err)) {
       console.warn(
