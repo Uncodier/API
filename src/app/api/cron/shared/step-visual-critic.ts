@@ -9,10 +9,8 @@
  */
 
 import type { VisualSignal, VisualDefect } from './step-iteration-signals';
+import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 
-import OpenAI from 'openai';
-
-const DEFAULT_VISION_MODEL = process.env.MAKINARI_VISUAL_CRITIC_MODEL || 'gpt-4o-mini';
 const DEFAULT_TIMEOUT_MS = 45_000;
 const MAX_SCREENSHOTS_PER_CALL = 6;
 
@@ -50,19 +48,12 @@ Severities:
 - minor: nitpicks, polish
 `.trim();
 
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  gemini: 'gemini-3.1-pro-preview',
-  azure: 'gpt-4o',
-  openai: 'gpt-4o',
-};
-
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
   if (!input.screenshots.length) {
     return { pass: true, defects: [], summary: 'no screenshots to evaluate', skipped: 'no_screenshots' };
   }
 
   const screenshots = input.screenshots.slice(0, MAX_SCREENSHOTS_PER_CALL);
-  const model = input.model || process.env.AI_MODEL || DEFAULT_MODEL_BY_PROVIDER[process.env.AI_PROVIDER || 'gemini'] || 'gemini-3.1-pro-preview';
   const rubric = input.rubric || DEFAULT_RUBRIC;
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
@@ -108,67 +99,27 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeout);
-
   let rawText = '';
+  let modelUsed = input.model || 'unknown';
+  
   try {
-    const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
-    let client: OpenAI;
-    let requestModel: string | undefined = model;
-
-    if (provider === 'azure') {
-      const endpoint = process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-      const apiKey = process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
-      const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || DEFAULT_MODEL_BY_PROVIDER.azure;
-      const apiVersion = process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
-      
-      if (!endpoint || !apiKey) {
-        return { pass: true, defects: [], summary: 'visual critic skipped — Azure API keys not configured', skipped: 'missing_env' };
-      }
-      
-      client = new OpenAI({
-        apiKey,
-        baseURL: `${endpoint.replace(/\/$/, '')}/openai/deployments/${deployment}`,
-        defaultQuery: { 'api-version': apiVersion },
-        defaultHeaders: { 'api-key': apiKey },
-      });
-      requestModel = deployment; // Azure SDK requires model param, usually deployment name
-    } else if (provider === 'openai') {
-      const baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
-      const apiKey = process.env.OPENAI_API_KEY;
-      
-      if (!apiKey) {
-        return { pass: true, defects: [], summary: 'visual critic skipped — OpenAI API keys not configured', skipped: 'missing_env' };
-      }
-      
-      client = new OpenAI({ apiKey, baseURL });
-      requestModel = model || DEFAULT_MODEL_BY_PROVIDER.openai;
-    } else {
-      // Gemini (default)
-      const baseURL = process.env.GEMINI_OPENAI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/';
-      const apiKey = process.env.GEMINI_API_KEY;
-      
-      if (!apiKey) {
-        return { pass: true, defects: [], summary: 'visual critic skipped — Gemini API keys not configured', skipped: 'missing_env' };
-      }
-      
-      client = new OpenAI({ apiKey, baseURL });
-      requestModel = model || DEFAULT_MODEL_BY_PROVIDER.gemini;
-    }
-
-    const resp = await client.chat.completions.create({
-      model: requestModel!,
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userBlocks as any },
-      ],
-      temperature: 0.1,
-      response_format: { type: 'json_object' },
-      stream: false,
-    }, { signal: controller.signal });
+    const executor = new AIAgentExecutor({ model: input.model });
+    modelUsed = executor.getModel(); // capture the actual model resolved by executor
     
-    rawText = resp.choices[0]?.message?.content ?? '';
+    const actPromise = executor.act({
+      tools: [],
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userBlocks as any }],
+      temperature: 0.1,
+    });
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(`Timeout of ${timeout}ms exceeded`)), timeout);
+    });
+
+    const response = await Promise.race([actPromise, timeoutPromise]);
+    rawText = response.text;
+
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return {
@@ -176,10 +127,8 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       defects: [],
       summary: `visual critic skipped — request failed: ${msg.slice(0, 200)}`,
       skipped: 'request_failed',
-      model_used: model,
+      model_used: modelUsed,
     };
-  } finally {
-    clearTimeout(timer);
   }
 
   const parsed = safeParseVerdict(rawText);
@@ -189,7 +138,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       defects: [],
       summary: `visual critic skipped — could not parse JSON: ${rawText.slice(0, 200)}`,
       skipped: 'parse_error',
-      model_used: model,
+      model_used: modelUsed,
     };
   }
 
@@ -197,7 +146,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     pass: !!parsed.pass,
     defects: parsed.defects,
     summary: parsed.summary,
-    model_used: model,
+    model_used: modelUsed,
   };
 }
 
