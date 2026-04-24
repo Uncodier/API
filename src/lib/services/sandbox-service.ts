@@ -17,6 +17,7 @@ import {
   resolveDefaultGitBinding,
   type GitBinding,
 } from '@/lib/services/requirement-git-binding';
+import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 
 export interface SandboxResult {
   sandbox: Sandbox;
@@ -195,6 +196,11 @@ export class SandboxService {
         },
       });
       console.log('[Sandbox] Sandbox created successfully');
+      
+      if (auditCtx?.instanceId) {
+        await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandbox.sandboxId, auditCtx.siteId)
+          .catch(e => console.error('[Sandbox] Failed to persist active_sandbox_id:', e));
+      }
     } catch (err: any) {
       console.error('[Sandbox] Sandbox.create() failed:', err?.message || err);
       throw new Error(`Sandbox.create() failed: ${err?.message || 'Unknown error'}`);

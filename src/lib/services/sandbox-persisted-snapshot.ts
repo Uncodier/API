@@ -11,6 +11,7 @@ import type { GitBinding } from '@/lib/services/requirement-git-binding';
 import { persistedSnapshotMatchesBinding } from '@/lib/services/sandbox-persisted-snapshot-policy';
 import type { SandboxResult } from '@/lib/services/sandbox-service';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 
 export { persistedSnapshotMatchesBinding } from '@/lib/services/sandbox-persisted-snapshot-policy';
 
@@ -128,6 +129,11 @@ export async function tryStartFromPersistedSnapshot(params: {
       ports: [SandboxService.VISUAL_PROBE_PORT],
       source: { type: 'snapshot', snapshotId: row.snapshot_id },
     });
+    
+    if (auditCtx?.instanceId) {
+      await persistActiveSandboxId(requirementId, auditCtx.instanceId, sandbox.sandboxId, auditCtx.siteId)
+        .catch(e => console.error('[Sandbox] Failed to persist active_sandbox_id from snapshot:', e));
+    }
   } catch (e: unknown) {
     console.warn(
       '[Sandbox] Sandbox.create(snapshot) failed, falling back to git:',
@@ -277,14 +283,8 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       
       if (auditCtx?.instanceId) {
         // Update the DB to point to the new sandbox immediately
-        supabaseAdmin
-          .from('requirement_status')
-          .update({ active_sandbox_id: next.sandboxId })
-          .eq('requirement_id', requirementId)
-          .eq('instance_id', auditCtx.instanceId)
-          .then(({ error }) => {
-            if (error) console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, error);
-          });
+        await persistActiveSandboxId(requirementId, auditCtx.instanceId, next.sandboxId, auditCtx.siteId)
+          .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, e));
       }
 
       // No hacemos await aquí para no bloquear el setup del nuevo sandbox, 

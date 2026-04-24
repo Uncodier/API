@@ -51,6 +51,51 @@ async function checkRepoUrlMatchesRequirement(
   return null;
 }
 
+export async function persistActiveSandboxId(
+  requirement_id: string,
+  instance_id: string,
+  active_sandbox_id: string,
+  site_id?: string
+) {
+  // Try to update existing rows
+  const { data, error } = await supabaseAdmin
+    .from('requirement_status')
+    .update({ active_sandbox_id })
+    .eq('requirement_id', requirement_id)
+    .eq('instance_id', instance_id)
+    .select('id');
+
+  if (error) {
+    console.error(`[RequirementStatus] Failed to update active_sandbox_id:`, error);
+  }
+
+  // If no rows were updated, we need to create one
+  if (!data || data.length === 0) {
+    let resolvedSiteId = site_id;
+    if (!resolvedSiteId) {
+      const { data: inst } = await supabaseAdmin
+        .from('instances')
+        .select('site_id')
+        .eq('id', instance_id)
+        .maybeSingle();
+      resolvedSiteId = inst?.site_id;
+    }
+
+    if (resolvedSiteId) {
+      await createRequirementStatusCore({
+        site_id: resolvedSiteId,
+        instance_id,
+        requirement_id,
+        active_sandbox_id,
+        status: 'in-progress',
+        message: 'Sandbox provisioned',
+      });
+    } else {
+      console.error(`[RequirementStatus] Cannot persist active_sandbox_id: missing site_id for instance ${instance_id}`);
+    }
+  }
+}
+
 export async function createRequirementStatusCore(params: {
   site_id: string;
   instance_id?: string;

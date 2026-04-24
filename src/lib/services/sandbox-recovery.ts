@@ -1,5 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { verifyPlatformGitLayout } from '@/lib/services/sandbox-git-layout';
 import {
   CronInfraEvent,
@@ -151,12 +152,8 @@ export async function connectOrRecreateRequirementSandbox(params: {
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
 
   if (audit?.instanceId) {
-    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    await supabaseAdmin
-      .from('requirement_status')
-      .update({ active_sandbox_id: created.sandbox.sandboxId })
-      .eq('requirement_id', requirementId)
-      .eq('instance_id', audit.instanceId);
+    await persistActiveSandboxId(requirementId, audit.instanceId, created.sandbox.sandboxId, audit.siteId)
+      .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${created.sandbox.sandboxId}:`, e));
   }
 
   const auditCtx: CronAuditContext | undefined = audit?.siteId

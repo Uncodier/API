@@ -86,14 +86,6 @@ export async function createSandboxStep(
 
   const result = await SandboxService.createRequirementSandbox(reqId, instanceType, title, audit);
 
-  if (audit?.instanceId) {
-    await supabaseAdmin
-      .from('requirement_status')
-      .update({ active_sandbox_id: result.sandbox.sandboxId })
-      .eq('requirement_id', reqId)
-      .eq('instance_id', audit.instanceId);
-  }
-
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.WORKFLOW_SANDBOX_READY,
     message: `Sandbox ready for cron (VM + git + npm): ${result.sandbox.sandboxId} @ ${result.branchName}`,

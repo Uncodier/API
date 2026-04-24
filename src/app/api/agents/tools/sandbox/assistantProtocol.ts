@@ -1,6 +1,7 @@
 import { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import {
   commitWorkspaceToOrigin,
@@ -263,14 +264,8 @@ export function sandboxPushCheckpointTool(
         
         // Update active_sandbox_id in DB if we got a replacement sandbox
         if (result.sandboxReplacement && toolsCtx?.instance_id && requirementId) {
-          supabaseAdmin
-            .from('requirement_status')
-            .update({ active_sandbox_id: result.sandboxReplacement.sandboxId })
-            .eq('requirement_id', requirementId)
-            .eq('instance_id', toolsCtx.instance_id)
-            .then(({ error }) => {
-              if (error) console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, error);
-            });
+          persistActiveSandboxId(requirementId, toolsCtx.instance_id, result.sandboxReplacement.sandboxId, toolsCtx.site_id)
+            .catch(e => console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, e));
         }
 
         const sUpload = liveSandbox(sandbox, toolsCtx);
