@@ -260,6 +260,19 @@ export function sandboxPushCheckpointTool(
         if (result.sandboxReplacement && toolsCtx?.activeSandboxRef) {
           toolsCtx.activeSandboxRef.current = result.sandboxReplacement;
         }
+        
+        // Update active_sandbox_id in DB if we got a replacement sandbox
+        if (result.sandboxReplacement && toolsCtx?.instance_id && requirementId) {
+          supabaseAdmin
+            .from('requirement_status')
+            .update({ active_sandbox_id: result.sandboxReplacement.sandboxId })
+            .eq('requirement_id', requirementId)
+            .eq('instance_id', toolsCtx.instance_id)
+            .then(({ error }) => {
+              if (error) console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, error);
+            });
+        }
+
         const sUpload = liveSandbox(sandbox, toolsCtx);
         let sync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null =
           result.requirementStatusSync ?? null;
