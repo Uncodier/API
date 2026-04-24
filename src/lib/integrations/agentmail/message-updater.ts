@@ -104,7 +104,46 @@ export async function findMessageByDeliveryDetails(
         .lte('created_at', end)
         .eq('role', 'assistant') // Sent messages are assistant role
         .order('created_at', { ascending: false })
-        .limit(50); // Get more results to filter in-memory
+        .limit(1000); // Get more results to filter in-memory
+    };
+
+    // Helper to check case-insensitive match, handling formats like "Name <email@domain.com>"
+    const extractEmail = (str: string) => {
+      const match = str.match(/<([^>]+)>/);
+      return match ? match[1].toLowerCase().trim() : str.toLowerCase().trim();
+    };
+    
+    const normalizedRecipient = extractEmail(recipient);
+
+    // Helper to filter messages by recipient
+    const filterByRecipient = (messages: any[]) => {
+      if (!messages || messages.length === 0) return [];
+      
+      return messages.filter(msg => {
+        const customData = msg.custom_data || {};
+        
+        const checkMatch = (value: any) => {
+          if (!value) return false;
+          
+          const checkSingle = (v: string) => {
+            if (typeof v !== 'string') return false;
+            const normV = extractEmail(v);
+            return normV === normalizedRecipient;
+          };
+
+          if (Array.isArray(value)) {
+            return value.some(checkSingle);
+          }
+          return checkSingle(value);
+        };
+        
+        if (checkMatch(customData.delivery?.to)) return true;
+        if (checkMatch(customData.delivery?.details?.recipient)) return true;
+        if (checkMatch(customData.to)) return true;
+        if (checkMatch(customData.recipient)) return true;
+        
+        return false;
+      });
     };
 
     // Phase 1: Search in short time window (±5 minutes)
@@ -115,9 +154,11 @@ export async function findMessageByDeliveryDetails(
       return null;
     }
 
-    // Phase 2: If no messages found, search in extended time window (±24 hours)
-    if (!allMessages || allMessages.length === 0) {
-      console.log('[AgentMail] ⚠️ No messages found in short time window (±5 min). Extending search to ±24h...');
+    let matchingMessages = filterByRecipient(allMessages || []);
+
+    // Phase 2: If no matching messages found, search in extended time window (±24 hours)
+    if (matchingMessages.length === 0) {
+      console.log('[AgentMail] ⚠️ No matching messages found in short time window (±5 min). Extending search to ±24h...');
       
       const extendedStart = new Date(eventTime.getTime() - 24 * 60 * 60 * 1000).toISOString();
       const extendedEnd = new Date(eventTime.getTime() + 24 * 60 * 60 * 1000).toISOString();
@@ -129,60 +170,16 @@ export async function findMessageByDeliveryDetails(
         return null;
       }
       
-      if (!extendedMessages || extendedMessages.length === 0) {
+      matchingMessages = filterByRecipient(extendedMessages || []);
+      
+      if (matchingMessages.length === 0) {
         console.log('[AgentMail] ⚠️ No messages found in extended time window (±24h)');
         return null;
       }
 
-      console.log(`[AgentMail] 🔍 Found ${extendedMessages.length} messages in extended window (±24h)`);
-      allMessages = extendedMessages;
+      console.log(`[AgentMail] 🔍 Found ${extendedMessages?.length || 0} messages in extended window, ${matchingMessages.length} match recipient`);
     } else {
-      console.log(`[AgentMail] 🔍 Found ${allMessages.length} messages in short time window (±5 min)`);
-    }
-
-    console.log(`[AgentMail] 🔍 Filtering ${allMessages.length} candidate messages by recipient...`);
-
-    // Filter messages by recipient in-memory (handle multiple storage locations and formats)
-    const matchingMessages = allMessages.filter(msg => {
-      const customData = msg.custom_data || {};
-      
-      // Check multiple possible locations for recipient data:
-      // 1. custom_data.delivery.to (array or string) - added by webhook updates
-      const deliveryTo = customData.delivery?.to;
-      if (deliveryTo) {
-        if (Array.isArray(deliveryTo)) {
-          if (deliveryTo.includes(recipient)) return true;
-        } else if (deliveryTo === recipient) {
-          return true;
-        }
-      }
-      
-      // 2. custom_data.delivery.details.recipient (string) - from initial creation
-      if (customData.delivery?.details?.recipient === recipient) {
-        return true;
-      }
-      
-      // 3. custom_data.to (fallback, top-level)
-      const topLevelTo = customData.to;
-      if (topLevelTo) {
-        if (Array.isArray(topLevelTo)) {
-          if (topLevelTo.includes(recipient)) return true;
-        } else if (topLevelTo === recipient) {
-          return true;
-        }
-      }
-      
-      // 4. custom_data.recipient (used by AgentMailSendService/EmailSendService)
-      if (customData.recipient === recipient) {
-        return true;
-      }
-      
-      return false;
-    });
-
-    if (matchingMessages.length === 0) {
-      console.log(`[AgentMail] ⚠️ No messages found matching recipient: ${recipient}`);
-      return null;
+      console.log(`[AgentMail] 🔍 Found ${allMessages?.length || 0} messages in short time window, ${matchingMessages.length} match recipient`);
     }
 
     console.log(`[AgentMail] 🔍 Found ${matchingMessages.length} message(s) matching recipient`);
