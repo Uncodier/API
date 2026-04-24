@@ -49,13 +49,13 @@ Severities:
 `.trim();
 
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
-  const baseURL = process.env.VERCEL_AI_GATEWAY_OPENAI;
-  const apiKey = process.env.VERCEL_AI_GATEWAY_API_KEY;
+  const baseURL = process.env.VERCEL_AI_GATEWAY_OPENAI || process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
+  const apiKey = process.env.VERCEL_AI_GATEWAY_API_KEY || process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
   if (!baseURL || !apiKey) {
     return {
       pass: true,
       defects: [],
-      summary: 'visual critic skipped — VERCEL_AI_GATEWAY_* not configured',
+      summary: 'visual critic skipped — API keys not configured',
       skipped: 'missing_env',
     };
   }
@@ -115,14 +115,29 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
 
   let rawText = '';
   try {
-    const resp = await fetch(`${baseURL.replace(/\/$/, '')}/v1/chat/completions`, {
+    const isAzure = baseURL === process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
+    const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+    const apiVersion = process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
+    
+    const url = isAzure 
+      ? `${baseURL.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`
+      : `${baseURL.replace(/\/$/, '')}/v1/chat/completions`;
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+
+    if (isAzure) {
+      headers['api-key'] = apiKey;
+    } else {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const resp = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
+      headers,
       body: JSON.stringify({
-        model,
+        model: isAzure ? undefined : model,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userBlocks },

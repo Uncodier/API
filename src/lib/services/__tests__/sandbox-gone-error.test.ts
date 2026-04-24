@@ -7,6 +7,10 @@ describe('isSandboxGoneError', () => {
     ).toBe(true);
   });
 
+  it('detects 410 status code without gone', () => {
+    expect(isSandboxGoneError('Status code 410 is not ok')).toBe(true);
+  });
+
   it('detects microVM unavailable wording', () => {
     expect(isSandboxGoneError('The sandbox microVM is unavailable. Please retry.')).toBe(true);
   });
