@@ -7,16 +7,20 @@ import {
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
 
-const GET_SANDBOX_ATTEMPTS = 3;
-const GET_SANDBOX_RETRY_MS = 400;
+const GET_SANDBOX_ATTEMPTS = 5;
 
 async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
+  let delayMs = 1000;
   for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
     try {
       return await Sandbox.get({ sandboxId });
-    } catch {
+    } catch (e: unknown) {
       if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
-        await new Promise<void>((resolve) => setTimeout(resolve, GET_SANDBOX_RETRY_MS));
+        console.warn(`[Sandbox] tryGetSandbox attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        delayMs *= 2; // Exponential backoff: 1s, 2s, 4s, 8s
+      } else {
+        console.error(`[Sandbox] tryGetSandbox failed after ${GET_SANDBOX_ATTEMPTS} attempts for ${sandboxId}.`);
       }
     }
   }
@@ -40,10 +44,21 @@ export async function getSandboxWithRetriesOrThrow(sandboxId: string): Promise<S
 async function stopSandboxByIdQuiet(sandboxId: string): Promise<void> {
   const s = await tryGetSandbox(sandboxId);
   if (!s) return;
-  try {
-    await s.stop({ blocking: false });
-  } catch {
-    /* ignore */
+  
+  let delayMs = 1000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await s.stop({ blocking: false });
+      return;
+    } catch (e: unknown) {
+      if (attempt < 2) {
+        console.warn(`[Sandbox] stopSandboxByIdQuiet attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        delayMs *= 2;
+      } else {
+        console.error(`[Sandbox] Failed to stop sandbox ${sandboxId} after 3 attempts. It may be orphaned.`);
+      }
+    }
   }
 }
 
@@ -87,14 +102,21 @@ export async function connectOrRecreateRequirementSandbox(params: {
   if (sandbox) {
     // Layout ping failed — stop this VM before creating another, otherwise
     // every connectOrRecreate leaves a billing zombie (dashboard full of Running).
-    try {
-      await sandbox.stop();
-      console.log(`[Sandbox] Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
-    } catch (e: unknown) {
-      console.warn(
-        `[Sandbox] stop() before reprovision failed (${sandboxId}):`,
-        e instanceof Error ? e.message : e,
-      );
+    let delayMs = 1000;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await sandbox.stop();
+        console.log(`[Sandbox] Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
+        break;
+      } catch (e: unknown) {
+        if (attempt < 2) {
+          console.warn(`[Sandbox] stop() before reprovision attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          delayMs *= 2;
+        } else {
+          console.error(`[Sandbox] stop() before reprovision failed after 3 attempts (${sandboxId}):`, e instanceof Error ? e.message : e);
+        }
+      }
     }
   } else {
     console.warn(

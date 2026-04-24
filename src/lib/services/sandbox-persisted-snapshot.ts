@@ -83,10 +83,20 @@ async function installGitIdentity(sandbox: Sandbox, authRepoUrl: string): Promis
 }
 
 async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
-  try {
-    await sandbox.stop({ blocking: false });
-  } catch {
-    /* ignore */
+  let delayMs = 1000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await sandbox.stop({ blocking: false });
+      return;
+    } catch (e: unknown) {
+      if (attempt < 2) {
+        console.warn(`[Sandbox] stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        delayMs *= 2;
+      } else {
+        console.error(`[Sandbox] Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
+      }
+    }
   }
 }
 

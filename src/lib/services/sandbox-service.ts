@@ -347,10 +347,20 @@ export class SandboxService {
 
   /** Best-effort stop when setup fails after `Sandbox.create` (avoids zombie billing). */
   private static async stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
-    try {
-      await sandbox.stop();
-    } catch {
-      /* ignore */
+    let delayMs = 1000;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await sandbox.stop();
+        return;
+      } catch (e: unknown) {
+        if (attempt < 2) {
+          console.warn(`[Sandbox] stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
+          await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+          delayMs *= 2;
+        } else {
+          console.error(`[Sandbox] Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
+        }
+      }
     }
   }
 

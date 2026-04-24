@@ -525,23 +525,33 @@ export async function checkSourceCodeStep(reqId: string): Promise<string | null>
 
 export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContext) {
   'use step';
-  try {
-    const sandbox = await Sandbox.get({ sandboxId });
-    await sandbox.stop();
-    console.log(`[CronStep] Sandbox ${sandboxId} stopped`);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.SANDBOX_STOP,
-      message: `Sandbox stopped (${sandboxId})`,
-      details: { sandboxId },
-    });
-  } catch {
-    /* sandbox may have auto-stopped */
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.SANDBOX_STOP,
-      level: 'warn',
-      message: `Sandbox stop skipped or failed (${sandboxId})`,
-      details: { sandboxId },
-    });
+  let delayMs = 1000;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const sandbox = await Sandbox.get({ sandboxId });
+      await sandbox.stop();
+      console.log(`[CronStep] Sandbox ${sandboxId} stopped`);
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.SANDBOX_STOP,
+        message: `Sandbox stopped (${sandboxId})`,
+        details: { sandboxId },
+      });
+      return;
+    } catch (e: unknown) {
+      if (attempt < 2) {
+        console.warn(`[CronStep] Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
+        await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+        delayMs *= 2;
+      } else {
+        /* sandbox may have auto-stopped or failed permanently */
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.SANDBOX_STOP,
+          level: 'warn',
+          message: `Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`,
+          details: { sandboxId, error: e instanceof Error ? e.message : String(e) },
+        });
+      }
+    }
   }
 }
 
