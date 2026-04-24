@@ -29,6 +29,7 @@ Starting with the harness refactor, `makinari-fase-validacion` is a **Consumer**
 2. Verify the response matches the canonical backend shape (`{ ok: true, mode: "test", data: ... }` — see `makinari-rol-backend`).
 3. Confirm no DB mutation happened in test mode (by querying a known count or by reading audit logs).
 4. CRITICAL: Verify that the endpoint actually performs the requested database operations when not in test mode. Do NOT accept mock responses.
+5. CRITICAL: For authentication endpoints (login, signup, session), verify that they actually authenticate the user and return valid session tokens/cookies. Do NOT accept mock responses.
 
 ### 3. Validate content deliverables
 - Verify copy matches the brand tone captured during investigation.

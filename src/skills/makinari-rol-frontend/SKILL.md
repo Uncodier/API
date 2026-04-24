@@ -44,10 +44,12 @@ When the requirement says "functionalize" or "wire", do NOT ship:
 - Lorem ipsum or placeholder text.
 - Hardcoded demo data that will ship to production.
 - Mocked API responses or fake databases in the frontend.
+- Fake authentication states (e.g., `const isLoggedIn = true;`).
 
 Instead:
 - Connect to real backends (Supabase / project API) if available.
 - CRITICAL: For transactional features (forms, bookings, creation, updates), you MUST implement the full end-to-end flow. Do NOT mock the data in the frontend. If the backend API doesn't exist, you must create it or escalate.
+- CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the frontend.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
 

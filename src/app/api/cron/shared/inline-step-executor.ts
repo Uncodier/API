@@ -246,6 +246,7 @@ RULES:
 - Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST use sandbox_push_checkpoint before finishing the step when you changed the repo (see CHECKPOINTS below). Use sandbox_restore_checkpoint (action=list | restore) only if you need to rewind locally.
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
 - CRITICAL: Do NOT mock data or use hardcoded responses in the UI unless explicitly requested. You MUST integrate with real backend APIs and databases. If a feature is transactional (e.g., booking, creating, updating), you MUST implement the full end-to-end flow.
+- CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the backend and frontend. Do NOT use fake "isLoggedIn = true" states.
 
 ${TOOL_LOOKUP_HINT}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
