@@ -322,7 +322,15 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
       let isDone = false;
       let turns = 0;
+      const startTime = Date.now();
+      const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
+
       while (!isDone && turns < MAX_TURNS) {
+        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+          console.log(`[CronStep] Step ${step.order} reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
+          break;
+        }
+
         turns++;
         console.log(`[CronStep] Step ${step.order} attempt ${totalAttempts} turn ${turns}`);
         lastResult = await executeAssistantStep(currentMessages, context.instance, {
@@ -337,29 +345,36 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       const planTitle = plan.title || step.title || 'plan';
       const flow: RequirementKind = execOpts?.flow ?? 'app';
       const gateSandbox = execOpts?.sandboxActiveRef?.current ?? sandbox;
-      const gate = await runGateForFlow({
-        sandbox: gateSandbox,
-        workDir: SandboxService.WORK_DIR,
-        requirementId,
-        flow,
-        audit,
-        appContext: {
-          planTitle,
-          stepOrder: step.order,
-          stepPrompt: systemPromptThisRound,
-          stepContext: {
-            title: step.title,
-            instructions: step.instructions,
-            expected_output: step.expected_output,
-            brand_context: (plan as any)?.brand_context,
+      
+      let gate: Awaited<ReturnType<typeof runGateForFlow>>;
+      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns.`);
+        gate = { ok: false, error: 'Execution time limit reached before validation. Will resume next cycle.' };
+      } else {
+        gate = await runGateForFlow({
+          sandbox: gateSandbox,
+          workDir: SandboxService.WORK_DIR,
+          requirementId,
+          flow,
+          audit,
+          appContext: {
+            planTitle,
+            stepOrder: step.order,
+            stepPrompt: systemPromptThisRound,
+            stepContext: {
+              title: step.title,
+              instructions: step.instructions,
+              expected_output: step.expected_output,
+              brand_context: (plan as any)?.brand_context,
+            },
+            currentMessages,
+            assistantContext: context,
+            fullTools,
+            lastResult,
+            gitRepoKind: execOpts?.gitRepoKind,
           },
-          currentMessages,
-          assistantContext: context,
-          fullTools,
-          lastResult,
-          gitRepoKind: execOpts?.gitRepoKind,
-        },
-      });
+        });
+      }
 
       // Back-compat shape for the rest of the loop: the app/site gate
       // populates `richSignals` + `vercelDeploy` + `lastResult`; light gates
@@ -465,30 +480,38 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       const bucketLimit = budgetFor(bucket);
       const bucketExhausted = used[bucket] > bucketLimit;
 
-      if (bucketExhausted) {
-        const reason = `bucket "${bucket}" exhausted after ${used[bucket] - 1}/${bucketLimit} retries`;
-        await updateInstancePlanCore({
-          plan_id: plan.id,
-          instance_id,
-          site_id,
-          steps: [
-            {
-              id: step.id,
-              status: 'failed',
-              error_message: `${reason}: ${lastGateError}`,
-              completed_at: new Date().toISOString(),
-            },
-          ],
-        });
+      if (bucketExhausted || Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        const reason = bucketExhausted 
+          ? `bucket "${bucket}" exhausted after ${used[bucket] - 1}/${bucketLimit} retries`
+          : `max execution time reached (${MAX_EXECUTION_TIME_MS}ms)`;
+          
+        if (bucketExhausted) {
+          await updateInstancePlanCore({
+            plan_id: plan.id,
+            instance_id,
+            site_id,
+            steps: [
+              {
+                id: step.id,
+                status: 'failed',
+                error_message: `${reason}: ${lastGateError}`,
+                completed_at: new Date().toISOString(),
+              },
+            ],
+          });
+        }
+        
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.STEP_STATUS,
-          level: 'error',
-          message: `Plan step ${step.order} failed gate (${reason}): ${lastGateError.slice(0, 300)}`,
+          level: bucketExhausted ? 'error' : 'warn',
+          message: bucketExhausted 
+            ? `Plan step ${step.order} failed gate (${reason}): ${lastGateError!.slice(0, 300)}`
+            : `Plan step ${step.order} paused due to time limit. Will resume next cycle.`,
           details: {
             plan_id: plan.id,
             step_id: step.id,
             step_order: step.order,
-            status: 'failed',
+            status: bucketExhausted ? 'failed' : 'paused',
             phase: 'gate',
             bucket,
             bucket_limit: bucketLimit,
@@ -496,7 +519,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
             categories_failed: categories,
           },
         });
-        return { ok: false, gateError: lastGateError };
+        return { ok: false, gateError: lastGateError! };
       }
     }
 

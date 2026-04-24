@@ -222,7 +222,7 @@ export async function executeStepsPhaseStep(params: {
 
   let workingPlanSteps: any[] = [...allSteps];
   const startTime = Date.now();
-  const MAX_EXECUTION_TIME_MS = 3 * 60 * 1000; // 3 minutes
+  const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
 
   try {
     outer: for (const planStep of stepsToRun) {
@@ -327,6 +327,10 @@ export async function executeStepsPhaseStep(params: {
       };
 
       try {
+        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+          console.log(`[CronStep] Reached max execution time (${MAX_EXECUTION_TIME_MS}ms) before starting inline step execution. Halting step loop to prevent Vercel timeout.`);
+          break outer;
+        }
         if (needsRetryCountBump && !didRetryCountBump) {
           didRetryCountBump = true;
           console.log(`[CronStep] → Step ${workingStep.order}: ${workingStep.title} (RETRY from failed)`);
@@ -441,6 +445,12 @@ export async function executeStepsPhaseStep(params: {
         }
 
         const gateError = stepResult.gateError;
+
+        // Check if the step failed due to a timeout
+        if (gateError && gateError.includes('Execution time limit reached')) {
+          console.log(`[CronStep] Step ${workingStep.order} paused due to time limit. Halting step loop to prevent Vercel timeout.`);
+          break outer;
+        }
 
         if (orchestratorPassesUsed < MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES) {
           orchestratorPassesUsed++;
