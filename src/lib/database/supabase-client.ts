@@ -18,8 +18,8 @@ export function getSupabaseServiceRoleUrl(): string {
 // Obtener las variables de entorno para Supabase (como fallback para retrocompatibilidad,
 // aunque ahora se leen dinámicamente en los getters)
 const getEnvVars = () => ({
-  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim() || '',
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY?.trim() || '',
 });
 
 let _supabaseInstance: SupabaseClient | null = null;
