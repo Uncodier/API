@@ -77,11 +77,11 @@ async function uploadScreenshot(
   params: { requirementId?: string; stepOrder: number; route: string; viewport: string },
 ): Promise<{ url?: string; storage_path?: string; error?: string }> {
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   // Required in production (e.g. Vercel) for uploads; without them all probes return 0 screenshots.
   if (!repoUrl || !repoKey) {
-    return { error: 'REPOSITORY_SUPABASE_* env vars missing — screenshot not uploaded' };
+    return { error: 'SUPABASE_* env vars missing — screenshot not uploaded' };
   }
   const { createClient } = await import('@supabase/supabase-js');
   const storageClient = createClient(repoUrl, repoKey, {
@@ -229,8 +229,12 @@ async function probeOnePage(params: {
     if (up.url) {
       return { route: safeRoute, viewport: viewport.name, url: up.url, storage_path: up.storage_path };
     }
+    if (up.error) {
+      console.warn(`[VisualProbe] Screenshot upload failed for ${safeRoute} at ${viewport.name}: ${up.error}`);
+    }
     return null;
-  } catch {
+  } catch (e: unknown) {
+    console.warn(`[VisualProbe] Screenshot capture failed for ${safeRoute} at ${viewport.name}:`, e);
     return null;
   }
 }

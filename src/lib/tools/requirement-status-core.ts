@@ -60,6 +60,7 @@ export async function createRequirementStatusCore(params: {
   preview_url?: string;
   source_code?: string;
   snapshot_id?: string;
+  active_sandbox_id?: string;
   status?: string;
   message?: string;
   cycle?: string;
@@ -74,6 +75,7 @@ export async function createRequirementStatusCore(params: {
     preview_url,
     source_code,
     snapshot_id,
+    active_sandbox_id,
     status,
     message,
     cycle,
@@ -115,6 +117,17 @@ export async function createRequirementStatusCore(params: {
   const validAssetId = asset_id && UUID_RE.test(asset_id) ? asset_id : null;
   const validInstanceId = instance_id && UUID_RE.test(instance_id) ? instance_id : null;
 
+  // Find the current active_sandbox_id to carry it over to the new status row
+  const { data: currentStatus } = await supabaseAdmin
+    .from('requirement_status')
+    .select('active_sandbox_id')
+    .eq('requirement_id', requirement_id)
+    .eq('instance_id', validInstanceId)
+    .not('active_sandbox_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   const { data, error } = await supabaseAdmin
     .from('requirement_status')
     .insert([
@@ -127,6 +140,7 @@ export async function createRequirementStatusCore(params: {
         preview_url: preview_url || null,
         source_code: source_code || null,
         snapshot_id: snapshot_id?.trim() || null,
+        active_sandbox_id: active_sandbox_id || currentStatus?.active_sandbox_id || null,
         status: effectiveStatus,
         message: message || null,
         cycle: cycle || null,

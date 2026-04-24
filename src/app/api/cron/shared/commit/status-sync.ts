@@ -176,6 +176,17 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     patch.snapshot_id = String(snapshot_id).trim();
   }
 
+  // Also carry over active_sandbox_id when creating a new row
+  let active_sandbox_id: string | null = null;
+  if (rowId) {
+    const { data: rowData } = await supabaseAdmin
+      .from('requirement_status')
+      .select('active_sandbox_id')
+      .eq('id', rowId)
+      .single();
+    active_sandbox_id = rowData?.active_sandbox_id || null;
+  }
+
   const { error: upErr } = await supabaseAdmin.from('requirement_status').update(patch).eq('id', rowId);
   if (upErr) {
     console.warn('[RequirementStatusSync] Update failed:', upErr.message);
@@ -276,6 +287,18 @@ export async function patchLatestRequirementStatusColumns(params: {
   }
 
   try {
+    // Carry over active_sandbox_id if we are creating a new row
+    let active_sandbox_id: string | null = null;
+    const { data: anyRow } = await supabaseAdmin
+      .from('requirement_status')
+      .select('active_sandbox_id')
+      .eq('requirement_id', requirementId)
+      .not('active_sandbox_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    active_sandbox_id = anyRow?.active_sandbox_id || null;
+
     await createRequirementStatusCore({
       site_id: resolvedSiteId,
       instance_id: validInstance ?? undefined,
@@ -284,6 +307,7 @@ export async function patchLatestRequirementStatusColumns(params: {
       preview_url: patch.preview_url,
       source_code: patch.source_code,
       snapshot_id: patch.snapshot_id,
+      active_sandbox_id: active_sandbox_id || undefined,
       status: 'in-progress',
       message: 'Deliverables recorded from sandbox checkpoint (repo, preview, source archive).',
     });

@@ -541,8 +541,8 @@ export async function getPreviewUrlStep(
 export async function checkSourceCodeStep(reqId: string): Promise<string | null> {
   'use step';
   const { createClient } = await import('@supabase/supabase-js');
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!repoUrl || !repoKey) return null;
 
   const storageClient = createClient(repoUrl, repoKey, {

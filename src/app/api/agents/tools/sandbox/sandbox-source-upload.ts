@@ -30,12 +30,12 @@ export async function uploadSandboxSourceArchiveToRepository(
   }
 
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
-  const repoUrl = process.env.REPOSITORY_SUPABASE_URL;
-  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY;
+  const repoUrl = process.env.REPOSITORY_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const repoKey = process.env.REPOSITORY_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!repoUrl || !repoKey) {
     return {
       ok: false,
-      error: 'REPOSITORY_SUPABASE_URL and REPOSITORY_SUPABASE_ANON_KEY are required for source archive upload.',
+      error: 'SUPABASE_URL and SUPABASE_ANON_KEY are required for source archive upload.',
     };
   }
 

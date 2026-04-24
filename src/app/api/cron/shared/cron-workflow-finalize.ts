@@ -282,6 +282,8 @@ export async function createFinalStatusStep(params: {
       `[CronStep] Updated requirement_status ${existing.id} → ${effectiveStatus} | preview: ${mergedPreviewUrl || 'none'} | source: ${mergedSourceCode ? 'yes' : 'no'}`,
     );
   } else {
+    // Note: We don't pass active_sandbox_id here because this is the final status
+    // and the sandbox is about to be stopped anyway.
     await createRequirementStatusCore({
       site_id,
       instance_id: instanceId,

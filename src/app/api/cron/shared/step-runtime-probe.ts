@@ -163,7 +163,7 @@ function buildProbeScript(params: {
   lines.push(`: > ${logPath}`);
   lines.push(`: > ${resultPath}`);
   lines.push(`rm -f ${pidPath}`);
-  lines.push(`npx --yes next start -p ${port} >> ${logPath} 2>&1 &`);
+  lines.push(`npx --yes next start -H 0.0.0.0 -p ${port} >> ${logPath} 2>&1 &`);
   lines.push('SERVER_PID=$!');
   lines.push(`echo $SERVER_PID > ${pidPath}`);
   lines.push('READY=0');
