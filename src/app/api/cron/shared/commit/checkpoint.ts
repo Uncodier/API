@@ -51,15 +51,31 @@ export async function checkpointPlanIteration(
       details: { step_order: planStep.order, step_id: planStep.id, step_title: stepLabel },
     });
   } catch (e: any) {
+    const msg = (e?.message || e).toString();
     console.error(
       `[CronPersist] CHECKPOINT_FAILED step=${planStep.order}:`,
-      e?.message || e,
+      msg,
       e?.stack,
     );
+    
+    // Si el sandbox murió (410), no es un error de código, es de infraestructura.
+    // Lo logueamos como advertencia pero NO lanzamos la excepción para no fallar el paso
+    // que ya había pasado su validación (gate) exitosamente.
+    if (/\b410\b/.test(msg)) {
+      console.warn(`[CronPersist] Ignorando error 410 en checkpoint final para el paso ${planStep.order} (el agente ya había hecho push)`);
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.CHECKPOINT,
+        level: 'warn',
+        message: `Checkpoint skipped after step ${planStep.order}: Sandbox expired (410 Gone)`,
+        details: { step_order: planStep.order, step_id: planStep.id, error: msg.slice(0, 400) },
+      });
+      return;
+    }
+
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.CHECKPOINT,
       level: 'error',
-      message: `Checkpoint failed after step ${planStep.order}: ${(e?.message || e).toString().slice(0, 400)}`,
+      message: `Checkpoint failed after step ${planStep.order}: ${msg.slice(0, 400)}`,
       details: { step_order: planStep.order, step_id: planStep.id },
     });
     throw e;

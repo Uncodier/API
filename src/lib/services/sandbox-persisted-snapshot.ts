@@ -252,19 +252,37 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
   auditCtx?: CronAuditContext;
 }): Promise<{ sandbox: Sandbox; snapshotId?: string }> {
   const { branch, authRepoUrl, requirementId, instanceType, title, auditCtx } = params;
-  let snapshotId: string;
-  try {
+    let snapshotId: string;
     try {
-      await params.sandbox.extendTimeout(2 * 60 * 1000);
-    } catch {
-      /* ignore */
+      try {
+        await params.sandbox.extendTimeout(2 * 60 * 1000);
+      } catch {
+        /* ignore */
+      }
+      const snap = await params.sandbox.snapshot({ expiration: 0 });
+      snapshotId = snap.snapshotId;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('[Sandbox] post-push snapshot() failed:', msg);
+      
+      // Si el snapshot falla porque el sandbox expiró (410 Gone),
+      // no podemos retornar el mismo sandbox viejo porque está muerto.
+      // Debemos forzar la creación de uno nuevo desde Git.
+      if (/\b410\b/.test(msg)) {
+        console.warn('[Sandbox] Sandbox is gone (410). Provisioning fresh git sandbox instead of reusing dead VM.');
+        const recovered = await SandboxService.createRequirementSandbox(
+          requirementId,
+          instanceType,
+          title,
+          auditCtx,
+          undefined,
+          { skipSnapshotReuse: true },
+        );
+        return { sandbox: recovered.sandbox };
+      }
+      
+      return { sandbox: params.sandbox };
     }
-    const snap = await params.sandbox.snapshot({ expiration: 0 });
-    snapshotId = snap.snapshotId;
-  } catch (e: unknown) {
-    console.warn('[Sandbox] post-push snapshot() failed:', e instanceof Error ? e.message : e);
-    return { sandbox: params.sandbox };
-  }
 
   let next: Sandbox | undefined;
   try {
