@@ -5,7 +5,7 @@
  * general del comando después de la ejecución de herramientas.
  */
 import { ToolExecutionResult } from '../types';
-import { CommandService } from '../../../services/command';
+import { CommandService } from '../../../services/command/CommandService';
 
 /**
  * Update command status after all functions have been executed

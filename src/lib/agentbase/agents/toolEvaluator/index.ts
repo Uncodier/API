@@ -14,7 +14,7 @@ import { prepareMessagesFromCommand, validateAndNormalizeTools } from './message
 import { FunctionCall, ToolExecutionResult } from './types';
 import { CommandCache } from '../../services/command/CommandCache';
 // Importar directamente CommandService para evitar imports dinámicos
-import { CommandService } from '../../services/command';
+import { CommandService } from '../../services/command/CommandService';
 // Importar desde las nuevas ubicaciones refactorizadas
 import { runToolExecution } from './executor/runner';
 

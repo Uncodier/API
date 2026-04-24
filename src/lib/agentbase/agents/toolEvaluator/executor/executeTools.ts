@@ -45,7 +45,15 @@ function debugHeaders(headers: Record<string, string>, context: string) {
 let composioToolset: OpenAIToolSet | null = null;
 
 // Instancia del WorkflowService (singleton)
-const workflowService = WorkflowService.getInstance();
+// Se inicializa de forma perezosa para evitar problemas de dependencias circulares
+let workflowServiceInstance: WorkflowService | null = null;
+
+function getWorkflowService(): WorkflowService {
+  if (!workflowServiceInstance) {
+    workflowServiceInstance = WorkflowService.getInstance();
+  }
+  return workflowServiceInstance;
+}
 
 // Inicializar el toolset de Composio si es necesario
 async function getComposioToolset(): Promise<OpenAIToolSet> {
@@ -200,7 +208,7 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
     });
     
     // Ejecutar workflow usando el servicio existente con timeout
-    const workflowPromise = workflowService.executeWorkflow(
+    const workflowPromise = getWorkflowService().executeWorkflow(
       'executeToolWorkflow',
       workflowInput,
       workflowOptions

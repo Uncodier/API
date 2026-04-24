@@ -1,5 +1,5 @@
 import { CommandFactory } from '@/lib/agentbase';
-import { commandService, waitForCommandCompletion } from './command-utils';
+import { getCommandService, waitForCommandCompletion } from './command-utils';
 
 // Function to execute Growth Marketer campaign planning
 export async function executeGrowthMarketerCampaignPlanning(
@@ -91,7 +91,7 @@ ${context}`;
     });
 
     // Execute planning command
-    const planningCommandId = await commandService.submitCommand(planningCommand);
+    const planningCommandId = await getCommandService().submitCommand(planningCommand);
     console.log(`📈 Growth Marketer campaign planning command created: ${planningCommandId}`);
 
     // Wait for planning completion
@@ -230,7 +230,7 @@ ${campaignsContext}`;
     });
 
     // Execute requirements command
-    const requirementsCommandId = await commandService.submitCommand(requirementsCommand);
+    const requirementsCommandId = await getCommandService().submitCommand(requirementsCommand);
     console.log(`📋 Task Manager requirements command created: ${requirementsCommandId}`);
 
     // Wait for requirements completion
@@ -792,7 +792,7 @@ Previous Authentication Sessions: ${JSON.stringify(previousSessions, null, 2)}
     });
 
     // Execute browser automation command
-    const planningCommandId = await commandService.submitCommand(planningCommand);
+    const planningCommandId = await getCommandService().submitCommand(planningCommand);
     console.log(`🤖 Robot browser execution command created: ${planningCommandId}`);
 
     // Wait for execution planning completion

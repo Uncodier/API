@@ -5,7 +5,7 @@
  * de las funciones después de su ejecución.
  */
 import { ToolExecutionResult } from '../types';
-import { CommandService } from '../../../services/command';
+import { CommandService } from '../../../services/command/CommandService';
 
 /**
  * Update function status in command to completed for successful executions

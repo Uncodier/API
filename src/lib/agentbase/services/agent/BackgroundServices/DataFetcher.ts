@@ -6,7 +6,7 @@ import { Base } from '../../../agents/Base';
 import { AgentCacheService } from '../AgentCacheService';
 import { DatabaseAdapter } from '../../../adapters/DatabaseAdapter';
 import { CapabilitiesExtractor } from './CapabilitiesExtractor';
-import { CommandCache } from '../../../services/command';
+import { CommandCache } from '../../command/CommandCache';
 
 export class DataFetcher {
   private static agentCache = new AgentCacheService(); // Fresh instance for Edge Functions

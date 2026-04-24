@@ -5,7 +5,7 @@
  * del comando con los resultados de la ejecución de herramientas.
  */
 import { FunctionCall, ToolExecutionResult } from '../types';
-import { CommandService } from '../../../services/command';
+import { CommandService } from '../../../services/command/CommandService';
 
 /**
  * Update command context with tool execution results

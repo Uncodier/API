@@ -1,5 +1,5 @@
 import { CommandFactory } from '@/lib/agentbase';
-import { commandService, waitForCommandCompletion } from './command-utils';
+import { getCommandService, waitForCommandCompletion } from './command-utils';
 
 // Function to execute Growth Marketer segment analysis
 export async function executeGrowthMarketerSegmentAnalysis(
@@ -165,7 +165,7 @@ ${context}`;
     });
 
     // Execute analysis command
-    const analysisCommandId = await commandService.submitCommand(analysisCommand);
+    const analysisCommandId = await getCommandService().submitCommand(analysisCommand);
     console.log(`📈 Growth Marketer segment analysis command created: ${analysisCommandId}`);
 
     // Wait for analysis completion
@@ -450,7 +450,7 @@ ${context}`;
     });
 
     // Execute ICP command
-    const icpCommandId = await commandService.submitCommand(icpCommand);
+    const icpCommandId = await getCommandService().submitCommand(icpCommand);
     console.log(`📈 Growth Marketer ICP analysis command created: ${icpCommandId}`);
 
     // Wait for ICP completion

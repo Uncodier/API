@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { CommandFactory } from '@/lib/agentbase';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { isValidUUID, commandService, waitForCommandCompletion } from '@/lib/helpers/command-utils';
+import { isValidUUID, getCommandService, waitForCommandCompletion } from '@/lib/helpers/command-utils';
 import { findTaskManagerAgent, findGrowthMarketerAgent, getPendingCampaigns } from '@/lib/helpers/agent-finder';
 
 
@@ -134,7 +134,7 @@ ${campaignsContext}`;
     });
 
     // Execute requirements command
-    const requirementsCommandId = await commandService.submitCommand(requirementsCommand);
+    const requirementsCommandId = await getCommandService().submitCommand(requirementsCommand);
     console.log(`📋 Task Manager requirements command created: ${requirementsCommandId}`);
 
     // Wait for requirements completion

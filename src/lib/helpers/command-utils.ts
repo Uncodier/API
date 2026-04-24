@@ -8,13 +8,21 @@ export function isValidUUID(uuid: string): boolean {
 }
 
 // Inicializar el agente y obtener el servicio de comandos
-const processorInitializer = ProcessorInitializer.getInstance();
-processorInitializer.initialize();
-export const commandService = processorInitializer.getCommandService();
+let commandServiceInstance: any = null;
+
+export function getCommandService() {
+  if (!commandServiceInstance) {
+    const processorInitializer = ProcessorInitializer.getInstance();
+    processorInitializer.initialize();
+    commandServiceInstance = processorInitializer.getCommandService();
+  }
+  return commandServiceInstance;
+}
 
 // Función para obtener el UUID de la base de datos para un comando
 export async function getCommandDbUuid(internalId: string): Promise<string | null> {
   try {
+    const commandService = getCommandService();
     // Intentar obtener el comando
     const command = await commandService.getCommandById(internalId);
     
@@ -28,6 +36,7 @@ export async function getCommandDbUuid(internalId: string): Promise<string | nul
     
     // Buscar en el mapa de traducción interno del CommandService
     try {
+      const commandService = getCommandService();
       // @ts-ignore - Accediendo a propiedades internas
       const idMap = (commandService as any).idTranslationMap;
       if (idMap && idMap.get && idMap.get(internalId)) {
@@ -86,6 +95,7 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
         const cachedCommand = CommandCache.getCachedCommand(commandId);
         
         // Luego obtener desde BD para estado actualizado
+        const commandService = getCommandService();
         executedCommand = await commandService.getCommandById(commandId);
         
         // Reset consecutive errors on successful fetch

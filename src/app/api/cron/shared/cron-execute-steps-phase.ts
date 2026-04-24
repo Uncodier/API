@@ -222,46 +222,47 @@ export async function executeStepsPhaseStep(params: {
 
   let workingPlanSteps: any[] = [...allSteps];
 
-  outer: for (const planStep of stepsToRun) {
-    const gateOuter = await getPlanExecutionGate(planId);
-    if (!gateOuter.runnable) {
-      planExecutionHalted = true;
-      haltReason = gateOuter.reason;
-      console.log(
-        `[CronStep] Plan execution halted between steps (plan_id=${planId} reason=${gateOuter.reason})`,
-      );
-      await logCronInfrastructureEvent(haltAudit, {
-        event: CronInfraEvent.PLAN_EXECUTION_HALTED,
-        level: 'warn',
-        message: `Plan step loop stopped between steps — ${gateOuter.reason}`,
-        details: { plan_id: planId, halt_reason: gateOuter.reason },
-      });
-      break outer;
-    }
+  try {
+    outer: for (const planStep of stepsToRun) {
+      const gateOuter = await getPlanExecutionGate(planId);
+      if (!gateOuter.runnable) {
+        planExecutionHalted = true;
+        haltReason = gateOuter.reason;
+        console.log(
+          `[CronStep] Plan execution halted between steps (plan_id=${planId} reason=${gateOuter.reason})`,
+        );
+        await logCronInfrastructureEvent(haltAudit, {
+          event: CronInfraEvent.PLAN_EXECUTION_HALTED,
+          level: 'warn',
+          message: `Plan step loop stopped between steps — ${gateOuter.reason}`,
+          details: { plan_id: planId, halt_reason: gateOuter.reason },
+        });
+        break outer;
+      }
 
-    let reconnect: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;
-    try {
-      reconnect = await connectOrRecreateRequirementSandbox({
-        sandboxId: effectiveSandboxId,
-        requirementId: reqId,
-        instanceType,
-        title,
-        audit: haltAudit,
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.error(`[CronStep] Sandbox reconnect failed between steps: ${msg}`);
-      await logCronInfrastructureEvent(haltAudit, {
-        event: CronInfraEvent.STEP_STATUS,
-        level: 'error',
-        message: `executeStepsPhaseStep: sandbox reconnect failed — ${msg.slice(0, 400)}`,
-        details: { plan_id: planId, error: msg.slice(0, 2000) },
-      }).catch(() => {});
-      anyStepFailed = true;
-      break outer;
-    }
-    sandbox = reconnect.sandbox;
-    effectiveSandboxId = reconnect.sandboxId;
+      let reconnect: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;
+      try {
+        reconnect = await connectOrRecreateRequirementSandbox({
+          sandboxId: effectiveSandboxId,
+          requirementId: reqId,
+          instanceType,
+          title,
+          audit: haltAudit,
+        });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[CronStep] Sandbox reconnect failed between steps: ${msg}`);
+        await logCronInfrastructureEvent(haltAudit, {
+          event: CronInfraEvent.STEP_STATUS,
+          level: 'error',
+          message: `executeStepsPhaseStep: sandbox reconnect failed — ${msg.slice(0, 400)}`,
+          details: { plan_id: planId, error: msg.slice(0, 2000) },
+        }).catch(() => {});
+        anyStepFailed = true;
+        break outer;
+      }
+      sandbox = reconnect.sandbox;
+      effectiveSandboxId = reconnect.sandboxId;
 
     const needsRetryCountBump = planStep.status === 'failed';
     let didRetryCountBump = false;
@@ -530,6 +531,12 @@ export async function executeStepsPhaseStep(params: {
         break outer;
       }
     }
+  }
+  } catch (criticalErr) {
+    console.error(`[CronStep] 🚨 CRITICAL ERROR in executeStepsPhaseStep loop:`, criticalErr);
+    anyStepFailed = true;
+    // We do NOT stop the sandbox here. We just ensure the error is caught so we can return
+    // the `effectiveSandboxId` to the outer workflow, which will stop it in its `finally` block.
   }
 
   let smokeError: string | null = null;

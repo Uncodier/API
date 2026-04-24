@@ -10,16 +10,11 @@ function isValidUUID(uuid: string): boolean {
   return uuidRegex.test(uuid);
 }
 
-// Inicializar el agente y obtener el servicio de comandos
-const processorInitializer = ProcessorInitializer.getInstance();
-processorInitializer.initialize();
-const commandService = processorInitializer.getCommandService();
-
 // ID fijo para usuarios anónimos/invitados que debe existir en la base de datos
 const ANONYMOUS_USER_ID = "00000000-0000-0000-0000-000000000000"; // El ID real del usuario anónimo en tu sistema
 
 // Función para obtener el UUID de la base de datos para un comando
-async function getCommandDbUuid(internalId: string): Promise<string | null> {
+async function getCommandDbUuid(internalId: string, commandService: any): Promise<string | null> {
   try {
     // Intentar obtener el comando
     const command = await commandService.getCommandById(internalId);
@@ -72,7 +67,7 @@ async function getCommandDbUuid(internalId: string): Promise<string | null> {
 }
 
 // Función para esperar a que un comando se complete
-async function waitForCommandCompletion(commandId: string, maxAttempts = 100, delayMs = 1000) {
+async function waitForCommandCompletion(commandId: string, commandService: any, maxAttempts = 100, delayMs = 1000) {
   let executedCommand = null;
   let attempts = 0;
   let dbUuid: string | null = null;
@@ -110,7 +105,7 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
           
           // Intentar obtener el UUID de la base de datos si aún no lo tenemos
           if (!dbUuid || !isValidUUID(dbUuid)) {
-            dbUuid = await getCommandDbUuid(commandId);
+            dbUuid = await getCommandDbUuid(commandId, commandService);
             console.log(`🔍 UUID obtenido después de completar: ${dbUuid || 'No encontrado'}`);
           }
           
@@ -129,7 +124,7 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
           
           // Último intento de obtener el UUID
           if (!dbUuid || !isValidUUID(dbUuid)) {
-            dbUuid = await getCommandDbUuid(commandId);
+            dbUuid = await getCommandDbUuid(commandId, commandService);
             console.log(`🔍 UUID obtenido antes de timeout: ${dbUuid || 'No encontrado'}`);
           }
           
@@ -570,6 +565,11 @@ async function getTeamMemberInfo(teamMemberId: string): Promise<any | null> {
 
 export async function POST(request: Request) {
   try {
+    // Inicializar el agente y obtener el servicio de comandos
+    const processorInitializer = ProcessorInitializer.getInstance();
+    processorInitializer.initialize();
+    const commandService = processorInitializer.getCommandService();
+
     const body = await request.json();
     
     // Extract origin from request headers
@@ -866,13 +866,13 @@ export async function POST(request: Request) {
     console.log(`📝 Comando creado con ID interno: ${internalCommandId}`);
     
     // Intentar obtener el UUID de la base de datos inmediatamente después de crear el comando
-    let initialDbUuid = await getCommandDbUuid(internalCommandId);
+    let initialDbUuid = await getCommandDbUuid(internalCommandId, commandService);
     if (initialDbUuid) {
       console.log(`📌 UUID de base de datos obtenido inicialmente: ${initialDbUuid}`);
     }
     
     // Esperar a que el comando se complete utilizando nuestra función
-    const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId);
+    const { command: executedCommand, dbUuid, completed } = await waitForCommandCompletion(internalCommandId, commandService);
     
     // Usar el UUID obtenido inicialmente si no tenemos uno válido después de la ejecución
     const effectiveDbUuid = (dbUuid && isValidUUID(dbUuid)) ? dbUuid : initialDbUuid;
