@@ -354,11 +354,11 @@ export class SandboxService {
         return;
       } catch (e: unknown) {
         if (attempt < 2) {
-          console.warn(`[Sandbox] stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
+          console.warn(`[Sandbox] 🧹 CLEANUP: stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
           delayMs *= 2;
         } else {
-          console.error(`[Sandbox] Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
+          console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
         }
       }
     }

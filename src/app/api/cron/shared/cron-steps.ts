@@ -530,7 +530,7 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
     try {
       const sandbox = await Sandbox.get({ sandboxId });
       await sandbox.stop();
-      console.log(`[CronStep] Sandbox ${sandboxId} stopped`);
+      console.log(`[CronStep] 🧹 CLEANUP: Sandbox ${sandboxId} stopped`);
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.SANDBOX_STOP,
         message: `Sandbox stopped (${sandboxId})`,
@@ -539,7 +539,7 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
       return;
     } catch (e: unknown) {
       if (attempt < 2) {
-        console.warn(`[CronStep] Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
+        console.warn(`[CronStep] 🧹 CLEANUP: Sandbox stop attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         delayMs *= 2;
       } else {
@@ -547,7 +547,7 @@ export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContex
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.SANDBOX_STOP,
           level: 'warn',
-          message: `Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`,
+          message: `🚨 ZOMBIE ALERT: Sandbox stop skipped or failed (${sandboxId}) after 3 attempts`,
           details: { sandboxId, error: e instanceof Error ? e.message : String(e) },
         });
       }

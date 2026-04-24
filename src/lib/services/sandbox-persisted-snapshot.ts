@@ -90,11 +90,11 @@ async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
       return;
     } catch (e: unknown) {
       if (attempt < 2) {
-        console.warn(`[Sandbox] stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
+        console.warn(`[Sandbox] 🧹 CLEANUP: stopSandboxQuiet attempt ${attempt + 1} failed for ${sandbox.sandboxId}. Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         delayMs *= 2;
       } else {
-        console.error(`[Sandbox] Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
+        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to stop sandbox ${sandbox.sandboxId} after 3 attempts. It may be orphaned.`);
       }
     }
   }
@@ -268,6 +268,19 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       ports: [SandboxService.VISUAL_PROBE_PORT],
       source: { type: 'snapshot', snapshotId },
     });
+    
+    // Inmediatamente después de crear el nuevo, intentamos detener el viejo
+    // sin importar si el resto del setup del nuevo falla o tiene éxito.
+    // Esto previene que el viejo quede huérfano si el setup del nuevo lanza una excepción.
+    if (params.sandbox.sandboxId !== next.sandboxId) {
+      console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${params.sandbox.sandboxId} after successful recreate into ${next.sandboxId}`);
+      // No hacemos await aquí para no bloquear el setup del nuevo sandbox, 
+      // pero aseguramos que el proceso de apagado comience.
+      stopSandboxQuiet(params.sandbox).catch(e => {
+        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
+      });
+    }
+
     try {
       await next.extendTimeout(EXTEND_AFTER_CREATE_MS);
     } catch {
@@ -278,11 +291,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       message: 'Vercel Sandbox VM recreated from post-push snapshot',
       details: { requirementId, instanceType, snapshotId },
     });
-    // snapshot() may stop the source VM asynchronously; stop explicitly as soon
-    // as the replacement exists to avoid two "Running" sandboxes on the dashboard.
-    if (params.sandbox.sandboxId !== next.sandboxId) {
-      await stopSandboxQuiet(params.sandbox);
-    }
+    
     await installGitIdentity(next, authRepoUrl);
     const workDir = SandboxService.WORK_DIR;
     const fetchRes = await SandboxService.runCommandInSandbox(next, 'git', ['fetch', '--all'], workDir);

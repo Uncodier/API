@@ -68,6 +68,7 @@ const nextraConfig = withNextra({
     'pino',
     'composio-core',
     '@vercel/sandbox',
+    '@supabase/supabase-js',
   ],
   
   // Configuración adicional para CSS Modules

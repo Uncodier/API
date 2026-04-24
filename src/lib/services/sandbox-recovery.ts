@@ -52,11 +52,11 @@ async function stopSandboxByIdQuiet(sandboxId: string): Promise<void> {
       return;
     } catch (e: unknown) {
       if (attempt < 2) {
-        console.warn(`[Sandbox] stopSandboxByIdQuiet attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
+        console.warn(`[Sandbox] 🧹 CLEANUP: stopSandboxByIdQuiet attempt ${attempt + 1} failed for ${sandboxId}. Retrying in ${delayMs}ms...`);
         await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
         delayMs *= 2;
       } else {
-        console.error(`[Sandbox] Failed to stop sandbox ${sandboxId} after 3 attempts. It may be orphaned.`);
+        console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to stop sandbox ${sandboxId} after 3 attempts. It may be orphaned.`);
       }
     }
   }
@@ -106,15 +106,15 @@ export async function connectOrRecreateRequirementSandbox(params: {
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         await sandbox.stop();
-        console.log(`[Sandbox] Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
+        console.warn(`[Sandbox] 🧹 CLEANUP: Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
         break;
       } catch (e: unknown) {
         if (attempt < 2) {
-          console.warn(`[Sandbox] stop() before reprovision attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
+          console.warn(`[Sandbox] 🧹 CLEANUP: stop() before reprovision attempt ${attempt + 1} failed (${sandboxId}). Retrying in ${delayMs}ms...`);
           await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
           delayMs *= 2;
         } else {
-          console.error(`[Sandbox] stop() before reprovision failed after 3 attempts (${sandboxId}):`, e instanceof Error ? e.message : e);
+          console.error(`[Sandbox] 🚨 ZOMBIE ALERT: stop() before reprovision failed after 3 attempts (${sandboxId}):`, e instanceof Error ? e.message : e);
         }
       }
     }
