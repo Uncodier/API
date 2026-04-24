@@ -1,11 +1,25 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
+/**
+ * PostgREST base URL for the **service role** client (server/cron, `supabaseAdmin`).
+ * If unset, falls back to `NEXT_PUBLIC_SUPABASE_URL`.
+ *
+ * Use the default `https://<project-ref>.supabase.co` here when
+ * `NEXT_PUBLIC_SUPABASE_URL` is a custom domain whose PostgREST lags the schema
+ * (e.g. `42703` on new columns) while the project-ref URL is correct.
+ * Server-only — not exposed to the browser.
+ */
+export function getSupabaseServiceRoleUrl(): string {
+  const direct = process.env.SUPABASE_URL?.trim();
+  if (direct) return direct;
+  return process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || '';
+}
+
 // Obtener las variables de entorno para Supabase (como fallback para retrocompatibilidad,
 // aunque ahora se leen dinámicamente en los getters)
 const getEnvVars = () => ({
-  supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL || '',
   supabaseAnonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '',
-  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
 });
 
 let _supabaseInstance: SupabaseClient | null = null;
@@ -16,12 +30,13 @@ let _supabaseAdminInstance: SupabaseClient | null = null;
  */
 export const getSupabase = (): SupabaseClient => {
   if (!_supabaseInstance) {
-    const { supabaseUrl, supabaseAnonKey } = getEnvVars();
-    
+    const { supabaseAnonKey } = getEnvVars();
+    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || '';
+
     if (!supabaseUrl || !supabaseAnonKey) {
       throw new Error('Supabase URL o Anon Key no están definidas en las variables de entorno. Son necesarias para esta operación.');
     }
-    
+
     _supabaseInstance = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         autoRefreshToken: true,
@@ -38,12 +53,13 @@ export const getSupabase = (): SupabaseClient => {
  */
 export const getSupabaseAdmin = (): SupabaseClient => {
   if (!_supabaseAdminInstance) {
-    const { supabaseUrl, supabaseServiceRoleKey } = getEnvVars();
-    
+    const { supabaseServiceRoleKey } = getEnvVars();
+    const supabaseUrl = getSupabaseServiceRoleUrl();
+
     if (!supabaseUrl || !supabaseServiceRoleKey) {
       throw new Error('Supabase URL o Service Role Key no están definidas en las variables de entorno. Son necesarias para esta operación.');
     }
-    
+
     _supabaseAdminInstance = createClient(supabaseUrl, supabaseServiceRoleKey, {
       auth: {
         autoRefreshToken: false,

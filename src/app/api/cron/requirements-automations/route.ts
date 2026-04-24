@@ -16,6 +16,7 @@ export async function GET(req: Request) {
   try {
     console.log('[Cron Auto] cron debug env', {
       supabaseHost: getSupabaseUrlHostForLogs(),
+      supabaseServiceUrlFromEnv: Boolean(process.env.SUPABASE_URL),
       hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       vercelEnv: process.env.VERCEL_ENV ?? 'local',
       vercelUrl: process.env.VERCEL_URL ?? null,

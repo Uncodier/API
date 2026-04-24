@@ -34,7 +34,7 @@
  * missing, logging a warning and allowing the workflow to proceed).
  */
 
-import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSupabaseServiceRoleUrl, supabaseAdmin } from '@/lib/database/supabase-client';
 
 /**
  * UUID generator that works inside the Vercel Workflow bundle (no `require`
@@ -108,11 +108,11 @@ function postgrestOrTimestampLiteral(iso: string): string {
 }
 
 /**
- * Hostname of `NEXT_PUBLIC_SUPABASE_URL` for logs (which PostgREST this process uses).
+ * Hostname of the PostgREST URL used by `supabaseAdmin` (`SUPABASE_URL` or `NEXT_PUBLIC_SUPABASE_URL`).
  * Exported for cron route debug lines; does not expose secrets.
  */
 export function getSupabaseUrlHostForLogs(): string {
-  const u = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const u = getSupabaseServiceRoleUrl();
   if (!u) return 'unset';
   try {
     return new URL(u).hostname;
