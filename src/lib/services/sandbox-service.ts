@@ -201,16 +201,17 @@ export class SandboxService {
     }
 
     try {
-      await sandbox.extendTimeout(SandboxService.EXTEND_AFTER_CREATE_MS);
-    } catch (e: unknown) {
-      console.warn('[Sandbox] extendTimeout after create failed:', e instanceof Error ? e.message : e);
-    }
+      try {
+        await sandbox.extendTimeout(SandboxService.EXTEND_AFTER_CREATE_MS);
+      } catch (e: unknown) {
+        console.warn('[Sandbox] extendTimeout after create failed:', e instanceof Error ? e.message : e);
+      }
 
-    await logCronInfrastructureEvent(auditCtx, {
-      event: CronInfraEvent.SANDBOX_VM_CREATED,
-      message: 'Vercel Sandbox VM created',
-      details: { requirementId, instanceType },
-    });
+      await logCronInfrastructureEvent(auditCtx, {
+        event: CronInfraEvent.SANDBOX_VM_CREATED,
+        message: 'Vercel Sandbox VM created',
+        details: { requirementId, instanceType },
+      });
 
     await sandbox.runCommand('git', [
       'config', '--global', 'user.name',
@@ -334,6 +335,23 @@ export class SandboxService {
       },
     });
     return { sandbox, branchName: newBranch, workDir, isNewBranch: true, instanceType };
+    } catch (setupErr: unknown) {
+      console.warn(
+        '[Sandbox] Workspace setup failed after VM create; stopping sandbox:',
+        setupErr instanceof Error ? setupErr.message : setupErr,
+      );
+      await SandboxService.stopSandboxQuiet(sandbox);
+      throw setupErr;
+    }
+  }
+
+  /** Best-effort stop when setup fails after `Sandbox.create` (avoids zombie billing). */
+  private static async stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
+    try {
+      await sandbox.stop();
+    } catch {
+      /* ignore */
+    }
   }
 
   /** True when `origin/<branch>` exists on the remote (uses `ls-remote --heads`). */

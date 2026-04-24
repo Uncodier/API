@@ -250,8 +250,9 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     return { sandbox: params.sandbox };
   }
 
+  let next: Sandbox | undefined;
   try {
-    const next = await Sandbox.create({
+    next = await Sandbox.create({
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
       ports: [SandboxService.VISUAL_PROBE_PORT],
@@ -297,6 +298,9 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     await assertPlatformGitLayout(next);
     return { sandbox: next, snapshotId };
   } catch (e: unknown) {
+    if (next) {
+      await stopSandboxQuiet(next);
+    }
     console.error(
       '[Sandbox] recreate from post-push snapshot failed; provisioning fresh git sandbox:',
       e instanceof Error ? e.message : e,
