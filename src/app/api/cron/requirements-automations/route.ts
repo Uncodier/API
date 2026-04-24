@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
 import cronParser from 'cron-parser';
-import { acquireRunLock } from '../shared/cron-run-lock';
+import { acquireRunLock, getSupabaseUrlHostForLogs } from '../shared/cron-run-lock';
 
 export const maxDuration = 300;
 
@@ -14,6 +14,14 @@ export async function GET(req: Request) {
   }
 
   try {
+    console.log('[Cron Auto] cron debug env', {
+      supabaseHost: getSupabaseUrlHostForLogs(),
+      hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+      vercelEnv: process.env.VERCEL_ENV ?? 'local',
+      vercelUrl: process.env.VERCEL_URL ?? null,
+      requestUrl: req.url,
+    });
+
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
@@ -50,11 +58,22 @@ export async function GET(req: Request) {
 
     const requirement = dueRequirements[0];
     const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
+    console.log('[Cron Auto] cron debug pick', {
+      dueCount: dueRequirements.length,
+      reqId,
+      status: requirement.status,
+      type,
+    });
 
     // Per-requirement advisory lock (see cron-run-lock.ts). Cron-automations
     // fires every minute; many automation workflows take longer than that,
     // so without this lock overlapping runs race on the same feature branch.
     const runLock = await acquireRunLock(reqId);
+    console.log('[Cron Auto] cron debug lock', {
+      reqId,
+      acquired: runLock != null,
+      runId: runLock?.runId ?? null,
+    });
     if (!runLock) {
       console.log(`[Cron Auto] Skipping ${reqId} — another workflow is already running (lock held)`);
       return NextResponse.json({

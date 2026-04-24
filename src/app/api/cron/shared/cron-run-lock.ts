@@ -107,8 +107,11 @@ function postgrestOrTimestampLiteral(iso: string): string {
   return `"${iso.replace(/"/g, '""')}"`;
 }
 
-/** For logs only — which Supabase project this serverless function is using (not the key). */
-function supabaseUrlHostnameForLogs(): string {
+/**
+ * Hostname of `NEXT_PUBLIC_SUPABASE_URL` for logs (which PostgREST this process uses).
+ * Exported for cron route debug lines; does not expose secrets.
+ */
+export function getSupabaseUrlHostForLogs(): string {
   const u = process.env.NEXT_PUBLIC_SUPABASE_URL;
   if (!u) return 'unset';
   try {
@@ -142,7 +145,7 @@ export async function acquireRunLock(
     // miss can be distinguished from RLS, permission, or filter errors.
     const diag = {
       reqId: requirementId,
-      supabaseHost: supabaseUrlHostnameForLogs(),
+      supabaseHost: getSupabaseUrlHostForLogs(),
       code: err.code,
       message: err.message,
       details: err.details,

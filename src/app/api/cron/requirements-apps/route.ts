@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
-import { acquireRunLock } from '../shared/cron-run-lock';
+import { acquireRunLock, getSupabaseUrlHostForLogs } from '../shared/cron-run-lock';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
@@ -32,6 +32,14 @@ export async function GET(req: Request) {
   }
 
   try {
+    console.log('[Cron Apps] cron debug env', {
+      supabaseHost: getSupabaseUrlHostForLogs(),
+      hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
+      vercelEnv: process.env.VERCEL_ENV ?? 'local',
+      vercelUrl: process.env.VERCEL_URL ?? null,
+      requestUrl: req.url,
+    });
+
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     // Flow-agnostic: the cron picks any requirement kind (app/site/doc/slides/
     // contract/automation/task/makinari). The orchestrator resolves the flow
@@ -53,11 +61,22 @@ export async function GET(req: Request) {
 
     const requirement = requirements[0];
     const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
+    console.log('[Cron Apps] cron debug pick', {
+      candidateCount: requirements.length,
+      reqId,
+      status: requirement.status,
+      type,
+    });
 
     // Per-requirement advisory lock: prevents two overlapping ticks from
     // launching parallel workflows on the same requirement. Without this we
     // hit `! [rejected] non-fast-forward` on push and clobber sandbox files.
     const runLock = await acquireRunLock(reqId);
+    console.log('[Cron Apps] cron debug lock', {
+      reqId,
+      acquired: runLock != null,
+      runId: runLock?.runId ?? null,
+    });
     if (!runLock) {
       console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
       return NextResponse.json({
