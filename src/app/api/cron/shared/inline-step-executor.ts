@@ -349,7 +349,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       let gate: Awaited<ReturnType<typeof runGateForFlow>>;
       if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
         console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns.`);
-        gate = { ok: false, error: 'Execution time limit reached before validation. Will resume next cycle.' };
+        gate = { ok: false, error: 'Execution time limit reached before validation. Will resume next cycle.', flow, signals: [] };
       } else {
         gate = await runGateForFlow({
           sandbox: gateSandbox,

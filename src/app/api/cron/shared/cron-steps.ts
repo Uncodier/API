@@ -306,9 +306,8 @@ export async function checkRecentPlansGuardStep(params: {
   const minutesSinceLatest =
     latestCompletedAtMs !== null ? (Date.now() - latestCompletedAtMs) / 60_000 : Infinity;
 
-  const shouldBlockRequirement = recentCount >= blockAfter;
-  const shouldSkipOrchestrator =
-    shouldBlockRequirement || (recentCount >= 1 && minutesSinceLatest < skipAfterMinutes);
+  const shouldBlockRequirement = false; // Disabled by user request
+  const shouldSkipOrchestrator = false; // Disabled by user request
 
   let reason: string | undefined;
   if (shouldBlockRequirement) {

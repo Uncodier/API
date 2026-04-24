@@ -115,12 +115,9 @@ function generateSandboxScript(params: {
   bucket: string;
 }): string {
   return `
-const puppeteer = require('puppeteer-core');
-let chromium = require('@sparticuz/chromium');
-if (chromium.default) chromium = chromium.default;
 const fs = require('fs');
 
-// Apply Lambda shim for Vercel Sandbox (Amazon Linux 2023)
+// Apply Lambda shim for Vercel Sandbox (Amazon Linux 2023) BEFORE requiring sparticuz
 const major = parseInt(process.versions.node.split('.')[0] || '20', 10);
 if (major >= 22 || major === 21) {
   process.env.AWS_LAMBDA_JS_RUNTIME = process.env.AWS_LAMBDA_JS_RUNTIME || 'nodejs22.x';
@@ -132,6 +129,17 @@ if (major >= 22 || major === 21) {
   process.env.AWS_LAMBDA_JS_RUNTIME = process.env.AWS_LAMBDA_JS_RUNTIME || 'nodejs18.x';
   process.env.AWS_EXECUTION_ENV = process.env.AWS_EXECUTION_ENV || 'AWS_Lambda_nodejs18.x';
 }
+
+// Clear stale binary if extraction failed previously
+if (fs.existsSync('/tmp/chromium')) {
+  if (!fs.existsSync('/tmp/al2023/lib/libnss3.so') && !fs.existsSync('/tmp/al2/lib/libnss3.so')) {
+    try { fs.unlinkSync('/tmp/chromium'); } catch (e) {}
+  }
+}
+
+const puppeteer = require('puppeteer-core');
+let chromium = require('@sparticuz/chromium');
+if (chromium.default) chromium = chromium.default;
 
 const PORT = ${params.port};
 const VIEWPORTS = ${JSON.stringify(params.viewports)};
@@ -347,6 +355,10 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     console.log('[VisualProbe] Installing puppeteer-core and @sparticuz/chromium in sandbox /tmp...');
     // Install in /tmp to avoid dirtying the user's package.json
     await sandbox.runCommand('sh', ['-c', 'cd /tmp && npm init -y && npm install puppeteer-core @sparticuz/chromium --no-save']);
+    
+    // Debug: Check OS and install deps if possible
+    await sandbox.runCommand('sh', ['-c', 'cat /etc/os-release || true']);
+    await sandbox.runCommand('sh', ['-c', 'yum install -y nss nspr || apt-get update && apt-get install -y libnss3 libnspr4 || true']);
   }
 
   const bucket = process.env.SUPABASE_BUCKET || 'workspaces';
