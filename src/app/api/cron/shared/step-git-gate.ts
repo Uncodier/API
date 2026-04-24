@@ -30,6 +30,7 @@ import {
   triageGitPushError,
   type GitPushFailureKind,
 } from '@/lib/services/git-push-error-triage';
+import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { fetchAndLogVercelBuildLog } from '@/lib/services/vercel-build-logs';
 import { runRuntimeAndVisualProbes } from './step-gate-probes';
 import type {
@@ -76,6 +77,8 @@ type PersistOriginResult = {
   errorForAgent?: string;
   failureKind?: GitPushFailureKind;
   agentActionable?: boolean;
+  /** MicroVM stopped — reprovision, do not burn gate retries on push recovery. */
+  sandboxUnavailable?: boolean;
 };
 
 async function persistOrVerifyOrigin(
@@ -105,6 +108,7 @@ async function persistOrVerifyOrigin(
         errorForAgent: t.agentMessage,
         failureKind: t.failureKind,
         agentActionable: t.agentActionable,
+        sandboxUnavailable: t.failureKind === 'sandbox_unavailable',
       };
     }
     const msg = e instanceof Error ? e.message : String(e);
@@ -116,6 +120,7 @@ async function persistOrVerifyOrigin(
       errorForAgent: tri.agentMessage,
       failureKind: tri.failureKind,
       agentActionable: tri.agentActionable,
+      sandboxUnavailable: tri.failureKind === 'sandbox_unavailable',
     };
   }
 }
@@ -192,6 +197,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   error?: string;
   vercelDeploy?: VercelDeployGateInfo;
   signals: GateSignals;
+  sandboxUnavailable?: boolean;
 }> {
   const {
     sandbox: initialSandbox,
@@ -216,25 +222,33 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   if (vercelLayoutErr) {
     const msg = `Vercel/npm layout: ${vercelLayoutErr}`;
     signals.build = { ok: false, layout_error: vercelLayoutErr };
+    const gone = isSandboxGoneError(msg);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
-      level: 'error',
+      level: gone ? 'warn' : 'error',
       message: `Step ${stepOrder} gate: ${msg.slice(0, 500)}`,
-      details: { stepOrder, error: msg.slice(0, 1200) },
+      details: { stepOrder, error: msg.slice(0, 1200), sandbox_unavailable: gone },
     });
-    return { ok: false, lastResult, error: msg, signals };
+    return { ok: false, lastResult, error: msg, signals, ...(gone ? { sandboxUnavailable: true } : {}) };
   }
 
   const buildError = await validateBuildForStep(sandbox);
   if (buildError) {
     signals.build = { ok: false, error_tail: buildError };
+    const gone = isSandboxGoneError(buildError);
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
-      level: 'error',
+      level: gone ? 'warn' : 'error',
       message: `Step ${stepOrder} gate: npm run build failed`,
-      details: { stepOrder, error: buildError.slice(0, 1200) },
+      details: { stepOrder, error: buildError.slice(0, 1200), sandbox_unavailable: gone },
     });
-    return { ok: false, lastResult, error: buildError, signals };
+    return {
+      ok: false,
+      lastResult,
+      error: buildError,
+      signals,
+      ...(gone ? { sandboxUnavailable: true } : {}),
+    };
   }
 
   signals.build = { ok: true };
@@ -262,7 +276,22 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
   if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
   if (!runtimeOutcome.ok) {
-    return { ok: false, lastResult, error: runtimeOutcome.error, signals };
+    const gone = isSandboxGoneError(runtimeOutcome.error);
+    if (gone) {
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.RUNTIME_PROBE,
+        level: 'warn',
+        message: `Step ${stepOrder} gate: runtime probe failed — sandbox unavailable (will reprovision)`,
+        details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
+      });
+    }
+    return {
+      ok: false,
+      lastResult,
+      error: runtimeOutcome.error,
+      signals,
+      ...(gone ? { sandboxUnavailable: true } : {}),
+    };
   }
 
   if (!requirementId) {
@@ -282,6 +311,34 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   if (persist.sandbox) sandbox = persist.sandbox;
 
   if (!persist.ok) {
+    if (persist.sandboxUnavailable) {
+      const agentLine = persist.errorForAgent || persist.error || 'Sandbox microVM unavailable';
+      signals.origin = {
+        ok: false,
+        error: persist.error,
+        errorForAgent: persist.errorForAgent,
+        failureKind: persist.failureKind,
+        agentActionable: false,
+      };
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.GATE_ORIGIN,
+        level: 'warn',
+        message: `Step ${stepOrder} gate: sandbox unavailable during origin check — ${agentLine}`.slice(0, 500),
+        details: {
+          stepOrder,
+          error: persist.error?.slice(0, 1200),
+          failureKind: persist.failureKind,
+          sandbox_unavailable: true,
+        },
+      });
+      return {
+        ok: false,
+        lastResult,
+        error: agentLine,
+        signals,
+        sandboxUnavailable: true,
+      };
+    }
     const canRecover = persist.agentActionable !== false;
     if (canRecover) {
       didPushRecovery = true;
@@ -331,6 +388,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         );
         if (persist.sandbox) sandbox = persist.sandbox;
         if (persist.ok) break;
+        if (persist.sandboxUnavailable) break;
       }
     } else {
       await logCronInfrastructureEvent(audit, {
@@ -347,6 +405,34 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   }
 
   if (!persist.ok) {
+    if (persist.sandboxUnavailable) {
+      const agentLine = persist.errorForAgent || persist.error || 'Sandbox microVM unavailable';
+      signals.origin = {
+        ok: false,
+        error: persist.error,
+        errorForAgent: persist.errorForAgent,
+        failureKind: persist.failureKind,
+        agentActionable: false,
+      };
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.GATE_ORIGIN,
+        level: 'warn',
+        message: `Step ${stepOrder} gate: sandbox unavailable after recovery attempts — ${agentLine}`.slice(0, 500),
+        details: {
+          stepOrder,
+          error: persist.error?.slice(0, 1200),
+          failureKind: persist.failureKind,
+          sandbox_unavailable: true,
+        },
+      });
+      return {
+        ok: false,
+        lastResult,
+        error: agentLine,
+        signals,
+        sandboxUnavailable: true,
+      };
+    }
     const agentLine = persist.errorForAgent || persist.error || 'branch not synced';
     const errFinal = `Origin push not verified${didPushRecovery ? ' after recovery' : ''}: ${agentLine}`;
     signals.origin = {

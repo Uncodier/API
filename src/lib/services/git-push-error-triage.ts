@@ -3,6 +3,8 @@
  * can reasonably act on in the sandbox.
  */
 
+import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
+
 export type GitPushFailureKind =
   | 'non_fast_forward'
   | 'rebase_conflict'
@@ -14,6 +16,7 @@ export type GitPushFailureKind =
   | 'attach_index'
   | 'invalid_ref'
   | 'vercel_layout'
+  | 'sandbox_unavailable'
   | 'unknown';
 
 export type GitPushTriage = {
@@ -116,6 +119,15 @@ export function extractConflictFiles(message: string): string[] {
 export function triageGitPushError(fullMessage: string): GitPushTriage {
   const operatorMessage = String(fullMessage).slice(0, 8000);
   const s = fullMessage.toLowerCase();
+  if (isSandboxGoneError(fullMessage)) {
+    return {
+      failureKind: 'sandbox_unavailable',
+      agentActionable: false,
+      agentMessage:
+        'Sandbox microVM is no longer running (stopped or expired). The platform will provision a fresh VM and retry — this is not a code defect.',
+      operatorMessage,
+    };
+  }
   const kindRaw = classifyGitPushFailureMessage(fullMessage);
 
   if (kindRaw === 'attach_index') {

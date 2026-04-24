@@ -147,7 +147,7 @@ export async function runSmokeTest(sandbox: Sandbox): Promise<string | null> {
 
 export type InlineExecutePlanStepResult =
   | { ok: true }
-  | { ok: false; gateError: string };
+  | { ok: false; gateError: string; sandboxUnavailable?: boolean };
 
 /**
  * Completes when gate passes ({ ok: true }) or after all gate retries ({ ok: false, gateError }).
@@ -366,6 +366,22 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       // only populate `signals[]`. Fall back to empty objects so downstream
       // code that reads `gate.signals.*` keeps working.
       const rich = gate.richSignals ?? {};
+      if (!gate.ok && gate.sandboxUnavailable) {
+        const msg = gate.error || 'Sandbox microVM is no longer available.';
+        await logCronInfrastructureEvent(audit, {
+          event: CronInfraEvent.STEP_STATUS,
+          level: 'warn',
+          message: `Plan step ${step.order} gate: sandbox unavailable (infra) — ${msg.slice(0, 400)}`,
+          details: {
+            plan_id: plan.id,
+            step_id: step.id,
+            step_order: step.order,
+            phase: 'gate_sandbox_gone',
+            sandbox_unavailable: true,
+          },
+        });
+        return { ok: false, gateError: msg, sandboxUnavailable: true };
+      }
       if (gate.ok) {
         lastResult = gate.lastResult ?? lastResult;
         const checkedAt = new Date().toISOString();

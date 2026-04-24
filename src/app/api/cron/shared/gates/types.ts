@@ -102,4 +102,9 @@ export interface FlowGateResult {
   lastResult?: any;
   /** Populated by the app/site gate after the Vercel deploy poll. */
   vercelDeploy?: VercelDeployInfo;
+  /**
+   * True when the Vercel microVM stopped mid-gate (410 Gone, etc.). Caller
+   * should reprovision and retry the step — not treat as a code failure.
+   */
+  sandboxUnavailable?: boolean;
 }

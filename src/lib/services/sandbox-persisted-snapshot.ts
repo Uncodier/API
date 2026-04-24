@@ -268,6 +268,11 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       message: 'Vercel Sandbox VM recreated from post-push snapshot',
       details: { requirementId, instanceType, snapshotId },
     });
+    // snapshot() may stop the source VM asynchronously; stop explicitly as soon
+    // as the replacement exists to avoid two "Running" sandboxes on the dashboard.
+    if (params.sandbox.sandboxId !== next.sandboxId) {
+      await stopSandboxQuiet(params.sandbox);
+    }
     await installGitIdentity(next, authRepoUrl);
     const workDir = SandboxService.WORK_DIR;
     const fetchRes = await SandboxService.runCommandInSandbox(next, 'git', ['fetch', '--all'], workDir);

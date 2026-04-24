@@ -87,5 +87,6 @@ export async function runAppGate(input: FlowGateInput): Promise<FlowGateResult> 
     richSignals,
     lastResult: gate.lastResult,
     vercelDeploy: gate.vercelDeploy,
+    sandboxUnavailable: gate.sandboxUnavailable,
   };
 }

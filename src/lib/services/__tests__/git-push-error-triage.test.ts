@@ -50,6 +50,15 @@ Automatic merge failed; fix conflicts and then commit the result.`;
     expect(t.agentActionable).toBe(true);
   });
 
+  it('classifies sandbox 410 Gone as sandbox_unavailable (not agent-actionable)', () => {
+    const t = triageGitPushError(
+      'Sandbox has stopped execution (410 Gone). Unable to fix the origin push issue because the sandbox microVM is unavailable.',
+    );
+    expect(t.failureKind).toBe('sandbox_unavailable');
+    expect(t.agentActionable).toBe(false);
+    expect(t.agentMessage).toMatch(/provision|retry|not a code/i);
+  });
+
   it('classifies automatic rebase with could not apply as rebase_conflict, not non_fast_forward', () => {
     const msg = `Failed to push branch feature/req-fa9f1eb3: Push rejected and automatic rebase on origin/feature/req-fa9f1eb3 produced conflicts — manual resolution required: Rebasing (1/5) error: could not apply 525f41ce... [checkpoint] hint: Resolve all conflicts manually`;
     const t = triageGitPushError(msg);

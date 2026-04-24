@@ -22,6 +22,9 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 /** Orchestrator passes after executor exhausts gate retries — instance_plan rewrite before final step failure */
 const MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES = 2;
 
+/** Reprovision + re-run the same plan step when the microVM returns 410 Gone mid-gate (not a code failure). */
+const MAX_SANDBOX_GONE_MID_STEP = 4;
+
 function buildPlanAdaptationUserMessage(
   planTitle: string,
   reqId: string,
@@ -336,19 +339,89 @@ export async function executeStepsPhaseStep(params: {
           requirementId: reqId,
         };
 
-        const stepResult = await inlineExecutePlanStep(
-          stepContext,
-          { id: planId, steps: workingPlanSteps, title },
-          workingStep,
-          sandbox,
-          {
-            gitRepoKind: git_repo_kind,
-            flow: classifyRequirementType(requirementType),
-            sandboxActiveRef,
-          },
-        );
-        sandbox = sandboxActiveRef.current;
-        effectiveSandboxId = sandbox.sandboxId;
+        let stepResult: Awaited<ReturnType<typeof inlineExecutePlanStep>>;
+        let sandboxGoneAttempts = 0;
+        for (;;) {
+          stepResult = await inlineExecutePlanStep(
+            stepContext,
+            { id: planId, steps: workingPlanSteps, title },
+            workingStep,
+            sandbox,
+            {
+              gitRepoKind: git_repo_kind,
+              flow: classifyRequirementType(requirementType),
+              sandboxActiveRef,
+            },
+          );
+          sandbox = sandboxActiveRef.current;
+          effectiveSandboxId = sandbox.sandboxId;
+
+          const sandboxGone =
+            !stepResult.ok &&
+            'sandboxUnavailable' in stepResult &&
+            stepResult.sandboxUnavailable === true;
+
+          if (!sandboxGone) break;
+
+          sandboxGoneAttempts++;
+          if (sandboxGoneAttempts > MAX_SANDBOX_GONE_MID_STEP) {
+            console.error(
+              `[CronStep] Sandbox still unavailable for step ${workingStep.order} after ${MAX_SANDBOX_GONE_MID_STEP} reprovision attempt(s)`,
+            );
+            await logCronInfrastructureEvent(audit, {
+              event: CronInfraEvent.STEP_STATUS,
+              level: 'error',
+              message: `executeStepsPhaseStep: sandbox unavailable after ${MAX_SANDBOX_GONE_MID_STEP} reprovisions — will retry next cycle`,
+              details: {
+                plan_id: planId,
+                step_id: workingStep.id,
+                step_order: workingStep.order,
+                gate_error_excerpt: stepResult.gateError.slice(0, 800),
+              },
+            });
+            anyStepFailed = true;
+            break outer;
+          }
+
+          console.warn(
+            `[CronStep] Sandbox gone during step ${workingStep.order} — reprovision ${sandboxGoneAttempts}/${MAX_SANDBOX_GONE_MID_STEP}`,
+          );
+          await logCronInfrastructureEvent(audit, {
+            event: CronInfraEvent.SANDBOX_REPROVISIONED,
+            level: 'warn',
+            message: `Mid-step reprovision after sandbox unavailable (attempt ${sandboxGoneAttempts}/${MAX_SANDBOX_GONE_MID_STEP})`,
+            details: {
+              plan_id: planId,
+              step_id: workingStep.id,
+              step_order: workingStep.order,
+              reason: 'sandbox_unavailable_mid_gate',
+            },
+          });
+
+          try {
+            const re = await connectOrRecreateRequirementSandbox({
+              sandboxId: effectiveSandboxId,
+              requirementId: reqId,
+              instanceType,
+              title,
+              audit: haltAudit,
+            });
+            sandbox = re.sandbox;
+            effectiveSandboxId = re.sandboxId;
+            sandboxActiveRef.current = sandbox;
+          } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`[CronStep] Mid-step reprovision failed: ${msg}`);
+            await logCronInfrastructureEvent(audit, {
+              event: CronInfraEvent.STEP_STATUS,
+              level: 'error',
+              message: `executeStepsPhaseStep: mid-step reconnect failed — ${msg.slice(0, 400)}`,
+              details: { plan_id: planId, error: msg.slice(0, 2000) },
+            }).catch(() => {});
+            anyStepFailed = true;
+            break outer;
+          }
+        }
 
         if (stepResult.ok) {
           console.log(`[CronStep] ✓ Step ${workingStep.order} passed`);

@@ -7,11 +7,34 @@ import {
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
 
+const GET_SANDBOX_ATTEMPTS = 3;
+const GET_SANDBOX_RETRY_MS = 400;
+
 async function tryGetSandbox(sandboxId: string): Promise<Sandbox | null> {
+  for (let attempt = 0; attempt < GET_SANDBOX_ATTEMPTS; attempt++) {
+    try {
+      return await Sandbox.get({ sandboxId });
+    } catch {
+      if (attempt < GET_SANDBOX_ATTEMPTS - 1) {
+        await new Promise<void>((resolve) => setTimeout(resolve, GET_SANDBOX_RETRY_MS));
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * Best-effort stop by id (handles flaky `get` on first try: a second get may
+ * still attach to a Running VM that would otherwise be orphaned when we
+ * `Sandbox.create` a replacement).
+ */
+async function stopSandboxByIdQuiet(sandboxId: string): Promise<void> {
+  const s = await tryGetSandbox(sandboxId);
+  if (!s) return;
   try {
-    return await Sandbox.get({ sandboxId });
+    await s.stop({ blocking: false });
   } catch {
-    return null;
+    /* ignore */
   }
 }
 
@@ -66,13 +89,14 @@ export async function connectOrRecreateRequirementSandbox(params: {
     }
   } else {
     console.warn(
-      `[Sandbox] Sandbox.get failed for id=${sandboxId} — reprovisioning (previous VM may still bill until timeout if it exists)`,
+      `[Sandbox] Sandbox.get failed for id=${sandboxId} after retries — will stop by id if still reachable, then reprovision`,
     );
   }
 
   console.warn(
     `[Sandbox] Reprovisioning VM and syncing to origin (replaced id=${sandboxId})`,
   );
+  await stopSandboxByIdQuiet(sandboxId);
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
   const auditCtx: CronAuditContext | undefined = audit?.siteId
     ? { ...audit, requirementId: audit.requirementId ?? requirementId }
