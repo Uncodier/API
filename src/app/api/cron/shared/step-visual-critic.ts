@@ -49,16 +49,6 @@ Severities:
 `.trim();
 
 export async function runVisualCritic(input: VisualCriticInput): Promise<VisualCriticResult> {
-  const baseURL = process.env.VERCEL_AI_GATEWAY_OPENAI || process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-  const apiKey = process.env.VERCEL_AI_GATEWAY_API_KEY || process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
-  if (!baseURL || !apiKey) {
-    return {
-      pass: true,
-      defects: [],
-      summary: 'visual critic skipped — API keys not configured',
-      skipped: 'missing_env',
-    };
-  }
   if (!input.screenshots.length) {
     return { pass: true, defects: [], summary: 'no screenshots to evaluate', skipped: 'no_screenshots' };
   }
@@ -115,21 +105,44 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
 
   let rawText = '';
   try {
-    const isAzure = baseURL === process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
-    const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-    const apiVersion = process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
-    
-    const url = isAzure 
-      ? `${baseURL.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`
-      : `${baseURL.replace(/\/$/, '')}/v1/chat/completions`;
+    const provider = (process.env.AI_PROVIDER || 'gemini').toLowerCase();
+    let url = '';
+    let headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    let requestModel: string | undefined = model;
 
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (isAzure) {
+    if (provider === 'azure') {
+      const endpoint = process.env.MICROSOFT_AZURE_OPENAI_ENDPOINT;
+      const apiKey = process.env.MICROSOFT_AZURE_OPENAI_API_KEY;
+      const deployment = process.env.MICROSOFT_AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+      const apiVersion = process.env.MICROSOFT_AZURE_OPENAI_API_VERSION || '2024-08-01-preview';
+      
+      if (!endpoint || !apiKey) {
+        return { pass: true, defects: [], summary: 'visual critic skipped — Azure API keys not configured', skipped: 'missing_env' };
+      }
+      
+      url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
       headers['api-key'] = apiKey;
+      requestModel = undefined; // Azure doesn't use model in body
+    } else if (provider === 'openai') {
+      const baseURL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v1';
+      const apiKey = process.env.OPENAI_API_KEY;
+      
+      if (!apiKey) {
+        return { pass: true, defects: [], summary: 'visual critic skipped — OpenAI API keys not configured', skipped: 'missing_env' };
+      }
+      
+      url = `${baseURL.replace(/\/$/, '')}/chat/completions`;
+      headers['Authorization'] = `Bearer ${apiKey}`;
     } else {
+      // Gemini (default)
+      const baseURL = process.env.GEMINI_OPENAI_BASE_URL || 'https://generativelanguage.googleapis.com/v1beta/openai/';
+      const apiKey = process.env.GEMINI_API_KEY;
+      
+      if (!apiKey) {
+        return { pass: true, defects: [], summary: 'visual critic skipped — Gemini API keys not configured', skipped: 'missing_env' };
+      }
+      
+      url = `${baseURL.replace(/\/$/, '')}/chat/completions`;
       headers['Authorization'] = `Bearer ${apiKey}`;
     }
 
@@ -137,7 +150,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: isAzure ? undefined : model,
+        model: requestModel,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userBlocks },

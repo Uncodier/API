@@ -444,12 +444,22 @@ export async function executeStepsPhaseStep(params: {
             executed++;
             continue outer;
           } catch (err: any) {
-            console.error(`[CronStep] Checkpoint failed for step ${workingStep.order}: ${err?.message}`);
+            const msg = err?.message || String(err);
+            console.error(`[CronStep] Checkpoint failed for step ${workingStep.order}: ${msg}`);
+            
+            // Si el error es un 410, el checkpoint plan iteration ya lo maneja como warning
+            // pero si por alguna razón llega aquí, no debemos fallar el plan.
+            if (/\b410\b/.test(msg)) {
+              console.warn(`[CronStep] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
+              executed++;
+              continue outer;
+            }
+
             await updateInstancePlanCore({
               plan_id: planId,
               instance_id: instanceId,
               site_id,
-              steps: [{ id: workingStep.id, status: 'failed', error_message: `Checkpoint failed: ${err?.message}`, completed_at: new Date().toISOString() }],
+              steps: [{ id: workingStep.id, status: 'failed', error_message: `Checkpoint failed: ${msg}`, completed_at: new Date().toISOString() }],
             });
             anyStepFailed = true;
             break outer;
