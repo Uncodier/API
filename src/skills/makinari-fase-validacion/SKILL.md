@@ -22,11 +22,13 @@ Starting with the harness refactor, `makinari-fase-validacion` is a **Consumer**
 1. `sandbox_run_command npm run build`. Fix every TypeScript, ESLint, and import error.
 2. Check the permanent preview URL — it is extracted automatically from the GitHub Deployments API after push. Do NOT guess or construct it.
 3. After deployment: `sandbox_run_command curl -s <preview_url>` to confirm the deployment is alive.
+4. CRITICAL: For transactional features, you MUST verify that the frontend actually integrates with the backend and database. Do NOT accept mock data or hardcoded responses.
 
 ### 2. Validate the backend (automations / endpoints)
 1. Every endpoint MUST accept `?mode=test`. Call it: `sandbox_run_command curl -s "<endpoint_url>?mode=test"`.
 2. Verify the response matches the canonical backend shape (`{ ok: true, mode: "test", data: ... }` — see `makinari-rol-backend`).
 3. Confirm no DB mutation happened in test mode (by querying a known count or by reading audit logs).
+4. CRITICAL: Verify that the endpoint actually performs the requested database operations when not in test mode. Do NOT accept mock responses.
 
 ### 3. Validate content deliverables
 - Verify copy matches the brand tone captured during investigation.

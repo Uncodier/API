@@ -43,9 +43,11 @@ When the requirement says "functionalize" or "wire", do NOT ship:
 - Buttons without handlers.
 - Lorem ipsum or placeholder text.
 - Hardcoded demo data that will ship to production.
+- Mocked API responses or fake databases in the frontend.
 
 Instead:
 - Connect to real backends (Supabase / project API) if available.
+- CRITICAL: For transactional features (forms, bookings, creation, updates), you MUST implement the full end-to-end flow. Do NOT mock the data in the frontend. If the backend API doesn't exist, you must create it or escalate.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
 

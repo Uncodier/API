@@ -77,6 +77,7 @@ Act either by:
 - Do NOT write scenarios that assert only `HTTP 200`. That's already covered by the runtime probe.
 - Scenarios MUST exercise real user-visible behavior: navigation, forms, state changes, async data.
 - Never stub fetches or mock the backend inside a scenario. Scenarios run against the live `next start` server.
+- CRITICAL: If the E2E runner fails to launch (e.g., missing Chrome), DO NOT fall back to just verifying HTTP 200 via `sandbox_probe_routes` for transactional features. You MUST verify that the backend API actually works (e.g., by using `sandbox_probe_api` to send a POST request and verifying the database/state changes). A UI that returns 200 but doesn't save data is a FAILURE.
 
 ### 6. Accessibility and UX floor
 For every page in the critical journey, verify (via scenario or visual review):
