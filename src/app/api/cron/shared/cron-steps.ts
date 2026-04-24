@@ -26,7 +26,6 @@ import {
   extendRunLock as _extendRunLockImpl,
   CRON_RUN_LOCK_TTL_MS,
 } from './cron-run-lock';
-import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { validateBuildForStep } from './step-git-gate';
 import {
   CronInfraEvent,
@@ -409,12 +408,6 @@ export async function commitAndPushStep(
     const sand = r.sandboxReplacement ?? connected.sandbox;
     if (r.sandboxReplacement) {
       effectiveSandboxId = r.sandboxReplacement.sandboxId;
-    }
-    const up = await uploadSandboxSourceArchiveToRepository(sand, reqId);
-    if (up.ok) {
-      console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
-    } else {
-      console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
     }
     console.log(
       `[CronPersist] commitAndPushStep finally branch=${r.branch} pushed=${r.pushed} commitCount=${r.commitCount}`,

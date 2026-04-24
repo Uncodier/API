@@ -12,7 +12,6 @@ import {
 } from '@/app/api/cron/shared/cron-commit-helpers';
 import { gitBindingBranchTreeUrl } from '@/lib/services/requirement-git-binding';
 import { sandboxRestoreCheckpointTool } from '@/app/api/agents/tools/sandbox/sandbox-checkpoint-restore';
-import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { sandboxCodeSearchTool } from '@/app/api/agents/tools/sandbox/code-search-tool';
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
@@ -268,7 +267,6 @@ export function sandboxPushCheckpointTool(
             .catch(e => console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, e));
         }
 
-        const sUpload = liveSandbox(sandbox, toolsCtx);
         let sync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null =
           result.requirementStatusSync ?? null;
         if (result.branch != null && sync == null) {
@@ -285,7 +283,6 @@ export function sandboxPushCheckpointTool(
           !result.pushed && (result.branch === 'main' || result.branch === 'master')
             ? ' You may still be on the default branch with nothing to push — make edits on the feature branch or call again after changes.'
             : '';
-        const sourceArchive = await uploadSandboxSourceArchiveToRepository(sUpload, requirementId);
 
         const rk = toolsCtx?.git_repo_kind ?? 'applications';
         const binding = await resolveGitBindingForRequirement(requirementId, rk);
@@ -299,7 +296,7 @@ export function sandboxPushCheckpointTool(
           cols.repo_url = (sync?.repo_url || fallbackRepoUrl) as string;
         }
         if (sync?.preview_url) cols.preview_url = sync.preview_url;
-        if (sourceArchive.ok) cols.source_code = sourceArchive.public_url;
+        if (result.source_code) cols.source_code = result.source_code;
         if (result.snapshotId?.trim()) cols.snapshot_id = result.snapshotId.trim();
 
         let statusPatched = false;
@@ -324,11 +321,9 @@ export function sandboxPushCheckpointTool(
               ? ' repo_url refreshed on requirement_status (preview pending or unavailable).'
               : '';
         const sourceNote =
-          sourceArchive?.ok === true
-            ? ` source_code archive → requirement_status: ${sourceArchive.public_url}`
-            : sourceArchive?.ok === false
-              ? ` Source archive upload skipped/failed: ${sourceArchive.error}`
-              : '';
+          result.source_code
+            ? ` source_code archive → requirement_status: ${result.source_code}`
+            : '';
         const patchNote = statusPatched
           ? statusRowCreated
             ? ' New requirement_status row created with deliverables.'

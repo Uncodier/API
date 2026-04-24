@@ -89,6 +89,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   use_resolved_preview_only?: boolean;
   persist?: boolean;
   snapshot_id?: string | null;
+  source_code?: string | null;
 }): Promise<{ updated: boolean; preview_url: string | null; repo_url: string }> {
   const {
     requirementId,
@@ -174,6 +175,9 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   }
   if (snapshot_id != null && String(snapshot_id).trim() !== '') {
     patch.snapshot_id = String(snapshot_id).trim();
+  }
+  if (params.source_code != null && String(params.source_code).trim() !== '') {
+    patch.source_code = String(params.source_code).trim();
   }
 
   // Also carry over active_sandbox_id when creating a new row

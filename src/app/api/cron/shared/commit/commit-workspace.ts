@@ -18,6 +18,7 @@ import {
   CommitPushTriageError,
   triageGitPushError,
 } from '@/lib/services/git-push-error-triage';
+import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 
 export {
   classifyGitPushFailure,
@@ -44,6 +45,7 @@ export async function commitWorkspaceToOrigin(
   /** When the Vercel SDK snapshot stops the prior VM, this is the replacement sandbox (same disk via snapshot). */
   sandboxReplacement?: Sandbox;
   snapshotId?: string;
+  source_code?: string;
 }> {
   try {
     await sandbox.extendTimeout(3 * 60 * 1000);
@@ -173,6 +175,19 @@ fi`,
       }
     }
 
+    let source_code: string | undefined;
+    try {
+      const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
+      if (up.ok) {
+        source_code = up.public_url;
+        console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
+      } else {
+        console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
+      }
+    } catch (e: unknown) {
+      console.warn('[CronPersist] source archive upload failed:', e instanceof Error ? e.message : e);
+    }
+
     let requirementStatusSync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null = null;
     if (result.pushed && audit?.siteId && result.branch) {
       try {
@@ -184,6 +199,7 @@ fi`,
           gitRepoKind,
           persist: persistStatus,
           snapshot_id: snapshotId,
+          source_code,
         });
       } catch (e: unknown) {
         console.warn(
@@ -202,6 +218,7 @@ fi`,
       requirementStatusSync,
       ...(sandboxReplacement ? { sandboxReplacement } : {}),
       ...(snapshotId ? { snapshotId } : {}),
+      ...(source_code ? { source_code } : {}),
     };
   } catch (e: any) {
     if (e instanceof CommitPushTriageError) {
