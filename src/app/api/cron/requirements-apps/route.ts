@@ -57,156 +57,167 @@ export async function GET(req: Request) {
       .in('status', ['backlog', 'in-progress'])
       .or(`created_at.gte.${oneMonthAgo},updated_at.gte.${oneMonthAgo}`)
       .order('updated_at', { ascending: false })
-      .limit(1);
+      .limit(3);
 
     if (error) throw error;
     if (!requirements || requirements.length === 0) {
       return NextResponse.json({ message: 'No app requirements to process' });
     }
 
-    const requirement = requirements[0];
-    const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
-    console.log('[Cron Apps] cron debug pick', {
-      candidateCount: requirements.length,
-      reqId,
-      status: requirement.status,
-      type,
-    });
+    const results = [];
 
-    // Per-requirement advisory lock: prevents two overlapping ticks from
-    // launching parallel workflows on the same requirement. Without this we
-    // hit `! [rejected] non-fast-forward` on push and clobber sandbox files.
-    const runLock = await acquireRunLock(reqId);
-    console.log('[Cron Apps] cron debug lock', {
-      reqId,
-      acquired: runLock != null,
-      runId: runLock?.runId ?? null,
-    });
-    if (!runLock) {
-      console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
-      return NextResponse.json({
-        message: `Requirement ${reqId} is locked by another workflow; skipping tick.`,
+    for (const requirement of requirements) {
+      const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
+      console.log('[Cron Apps] cron debug pick', {
         reqId,
-        skipped: true,
+        status: requirement.status,
+        type,
       });
-    }
 
-    console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
+      // Per-requirement advisory lock: prevents two overlapping ticks from
+      // launching parallel workflows on the same requirement. Without this we
+      // hit `! [rejected] non-fast-forward` on push and clobber sandbox files.
+      const runLock = await acquireRunLock(reqId);
+      console.log('[Cron Apps] cron debug lock', {
+        reqId,
+        acquired: runLock != null,
+        runId: runLock?.runId ?? null,
+      });
+      if (!runLock) {
+        console.log(`[Cron Apps] Skipping ${reqId} — another workflow is already running (lock held)`);
+        results.push({
+          reqId,
+          skipped: true,
+          reason: 'locked',
+        });
+        continue;
+      }
 
-    if (requirement.status === 'backlog') {
-      await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
-    }
+      console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
-    // Find or create remote_instance
-    let instanceId: string | undefined;
-    const { data: prevStatusForInstance } = await supabaseAdmin
-      .from('requirement_status')
-      .select('instance_id')
-      .eq('requirement_id', reqId)
-      .not('instance_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1);
+      if (requirement.status === 'backlog') {
+        await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
+      }
 
-    if (prevStatusForInstance?.[0]?.instance_id) {
-      instanceId = prevStatusForInstance[0].instance_id;
-    } else {
-      const { data: instances } = await supabaseAdmin
-        .from('remote_instances')
-        .select('id, instance_type') // Select instance_type as well
-        .eq('site_id', site_id)
-        .eq('name', `req-runner-${reqId}`)
+      // Find or create remote_instance
+      let instanceId: string | undefined;
+      const { data: prevStatusForInstance } = await supabaseAdmin
+        .from('requirement_status')
+        .select('instance_id')
+        .eq('requirement_id', reqId)
+        .not('instance_id', 'is', null)
+        .order('created_at', { ascending: false })
         .limit(1);
 
-      if (instances && instances.length > 0) {
-        instanceId = instances[0].id;
-        if (!instances[0].instance_type) {
-          await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
-        }
+      if (prevStatusForInstance?.[0]?.instance_id) {
+        instanceId = prevStatusForInstance[0].instance_id;
       } else {
-        const { data: newInstance, error: insertErr } = await supabaseAdmin
+        const { data: instances } = await supabaseAdmin
           .from('remote_instances')
-          .insert(
-            cronRemoteInstancePayload({
-              site_id,
-              user_id,
-              name: `req-runner-${reqId}`,
-              created_by: user_id,
-            }),
-          )
-          .select('id')
-          .single();
-        if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
-        instanceId = newInstance?.id;
+          .select('id, instance_type') // Select instance_type as well
+          .eq('site_id', site_id)
+          .eq('name', `req-runner-${reqId}`)
+          .limit(1);
+
+        if (instances && instances.length > 0) {
+          instanceId = instances[0].id;
+          if (!instances[0].instance_type) {
+            await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
+          }
+        } else {
+          const { data: newInstance, error: insertErr } = await supabaseAdmin
+            .from('remote_instances')
+            .insert(
+              cronRemoteInstancePayload({
+                site_id,
+                user_id,
+                name: `req-runner-${reqId}`,
+                created_by: user_id,
+              }),
+            )
+            .select('id')
+            .single();
+          if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
+          instanceId = newInstance?.id;
+        }
+      }
+
+      if (!instanceId) {
+        console.error(`[Cron Apps] Failed to create or find remote_instance for req ${reqId}`);
+        results.push({ reqId, error: 'Failed to create or find remote_instance' });
+        continue;
+      }
+
+      // Build previous work context
+      const { data: prevStatuses } = await supabaseAdmin
+        .from('requirement_status')
+        .select('status, message, preview_url, repo_url, created_at')
+        .eq('requirement_id', reqId)
+        .order('created_at', { ascending: false })
+        .limit(10);
+
+      const { data: prevPlans } = await supabaseAdmin
+        .from('instance_plans')
+        .select('id, title, status, steps')
+        .eq('instance_id', instanceId)
+        .order('created_at', { ascending: false })
+        .limit(3);
+
+      // Extract actionable blockers from the latest status
+      const latestStatus = prevStatuses?.[0];
+      let blockerContext = '';
+      if (latestStatus && latestStatus.status !== 'done') {
+        const blockers: string[] = [];
+        if (latestStatus.message?.includes('preview_url returns error/404')) {
+          blockers.push('CRITICAL: The deployed preview URL returns 404. The app has no working root page. You MUST create a plan step to fix the root route (e.g. src/app/page.tsx).');
+        }
+        if (latestStatus.message?.includes('no push')) {
+          blockers.push('WARNING: Last cycle produced no git push. The agent must write actual files, not just update metadata.');
+        }
+        if (latestStatus.message?.includes('plan not completed')) {
+          blockers.push('WARNING: Last plan did not complete all steps. Review failed steps and address root causes.');
+        }
+        if (!latestStatus.preview_url) {
+          blockers.push('No preview URL available yet. Ensure code changes are meaningful so the deployment works.');
+        }
+        if (blockers.length) {
+          blockerContext = `\n⚠️ BLOCKERS FROM LAST CYCLE (MUST ADDRESS FIRST):\n${blockers.map(b => `- ${b}`).join('\n')}\n`;
+        }
+      }
+
+      const previousWorkContext = [
+        blockerContext,
+        (prevStatuses?.length || prevPlans?.length)
+          ? `\nPREVIOUS WORK:\n${prevStatuses?.length ? `- Latest status: ${latestStatus?.status} — ${latestStatus?.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
+          : '',
+      ].filter(Boolean).join('\n');
+
+      // Start the workflow — durable execution with step-level retries
+      console.log(`[Cron Apps] Starting workflow for req ${reqId}, instance ${instanceId}`);
+      try {
+        const workflowRun = await start(runCronAppsWorkflow, [{
+          reqId,
+          title,
+          instructions,
+          type,
+          site_id,
+          user_id,
+          instanceId,
+          previousWorkContext,
+          instance_type: type,
+          cronLockRunId: runLock.runId,
+        }]);
+
+        results.push({ reqId, runId: workflowRun.runId, started: true });
+      } catch (err: any) {
+        console.error(`[Cron Apps] Error starting workflow for req ${reqId}:`, err);
+        results.push({ reqId, error: err?.message || 'Failed to start workflow' });
       }
     }
 
-    if (!instanceId) throw new Error('Failed to create or find remote_instance');
-
-    // Build previous work context
-    const { data: prevStatuses } = await supabaseAdmin
-      .from('requirement_status')
-      .select('status, message, preview_url, repo_url, created_at')
-      .eq('requirement_id', reqId)
-      .order('created_at', { ascending: false })
-      .limit(10);
-
-    const { data: prevPlans } = await supabaseAdmin
-      .from('instance_plans')
-      .select('id, title, status, steps')
-      .eq('instance_id', instanceId)
-      .order('created_at', { ascending: false })
-      .limit(3);
-
-    // Extract actionable blockers from the latest status
-    const latestStatus = prevStatuses?.[0];
-    let blockerContext = '';
-    if (latestStatus && latestStatus.status !== 'done') {
-      const blockers: string[] = [];
-      if (latestStatus.message?.includes('preview_url returns error/404')) {
-        blockers.push('CRITICAL: The deployed preview URL returns 404. The app has no working root page. You MUST create a plan step to fix the root route (e.g. src/app/page.tsx).');
-      }
-      if (latestStatus.message?.includes('no push')) {
-        blockers.push('WARNING: Last cycle produced no git push. The agent must write actual files, not just update metadata.');
-      }
-      if (latestStatus.message?.includes('plan not completed')) {
-        blockers.push('WARNING: Last plan did not complete all steps. Review failed steps and address root causes.');
-      }
-      if (!latestStatus.preview_url) {
-        blockers.push('No preview URL available yet. Ensure code changes are meaningful so the deployment works.');
-      }
-      if (blockers.length) {
-        blockerContext = `\n⚠️ BLOCKERS FROM LAST CYCLE (MUST ADDRESS FIRST):\n${blockers.map(b => `- ${b}`).join('\n')}\n`;
-      }
-    }
-
-    const previousWorkContext = [
-      blockerContext,
-      (prevStatuses?.length || prevPlans?.length)
-        ? `\nPREVIOUS WORK:\n${prevStatuses?.length ? `- Latest status: ${latestStatus?.status} — ${latestStatus?.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
-        : '',
-    ].filter(Boolean).join('\n');
-
-    // Start the workflow — durable execution with step-level retries
-    console.log(`[Cron Apps] Starting workflow for req ${reqId}, instance ${instanceId}`);
-    const workflowRun = await start(runCronAppsWorkflow, [{
-      reqId,
-      title,
-      instructions,
-      type,
-      site_id,
-      user_id,
-      instanceId,
-      previousWorkContext,
-      instance_type: type,
-      cronLockRunId: runLock.runId,
-    }]);
-
-    return new Response(workflowRun.readable, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'X-Workflow-Run-Id': workflowRun.runId,
-      },
+    return NextResponse.json({
+      message: `Processed ${results.length} requirements`,
+      results,
     });
 
   } catch (e: any) {
