@@ -274,6 +274,19 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     // Esto previene que el viejo quede huérfano si el setup del nuevo lanza una excepción.
     if (params.sandbox.sandboxId !== next.sandboxId) {
       console.warn(`[Sandbox] 🧹 CLEANUP: Stopping old sandbox ${params.sandbox.sandboxId} after successful recreate into ${next.sandboxId}`);
+      
+      if (auditCtx?.instanceId) {
+        // Update the DB to point to the new sandbox immediately
+        supabaseAdmin
+          .from('requirement_status')
+          .update({ active_sandbox_id: next.sandboxId })
+          .eq('requirement_id', requirementId)
+          .eq('instance_id', auditCtx.instanceId)
+          .then(({ error }) => {
+            if (error) console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, error);
+          });
+      }
+
       // No hacemos await aquí para no bloquear el setup del nuevo sandbox, 
       // pero aseguramos que el proceso de apagado comience.
       stopSandboxQuiet(params.sandbox).catch(e => {

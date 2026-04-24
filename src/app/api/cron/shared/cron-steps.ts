@@ -16,6 +16,7 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   connectOrRecreateRequirementSandbox,
   getSandboxWithRetriesOrThrow,
+  pingSandboxWorkspace,
 } from '@/lib/services/sandbox-recovery';
 import { getActiveInstancePlan as _getActiveInstancePlan } from '@/app/api/robots/instance/assistant/plan-steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
@@ -54,7 +55,44 @@ export async function createSandboxStep(
   audit?: CronAuditContext,
 ): Promise<SandboxInfo> {
   'use step';
+
+  if (audit?.instanceId) {
+    const { data: reqStatus } = await supabaseAdmin
+      .from('requirement_status')
+      .select('active_sandbox_id')
+      .eq('requirement_id', reqId)
+      .eq('instance_id', audit.instanceId)
+      .maybeSingle();
+
+    if (reqStatus?.active_sandbox_id) {
+      try {
+        const sandbox = await Sandbox.get({ sandboxId: reqStatus.active_sandbox_id });
+        if (await pingSandboxWorkspace(sandbox)) {
+          console.log(`[CronStep] Reusing existing active sandbox ${reqStatus.active_sandbox_id} from DB`);
+          const branchName = await SandboxService.getCurrentBranch(sandbox);
+          return {
+            sandboxId: sandbox.sandboxId,
+            branchName,
+            workDir: SandboxService.WORK_DIR,
+            isNewBranch: false,
+            instanceType,
+          };
+        }
+      } catch (e) {
+        console.warn(`[CronStep] Existing active sandbox ${reqStatus.active_sandbox_id} is dead. Provisioning new one.`);
+      }
+    }
+  }
+
   const result = await SandboxService.createRequirementSandbox(reqId, instanceType, title, audit);
+
+  if (audit?.instanceId) {
+    await supabaseAdmin
+      .from('requirement_status')
+      .update({ active_sandbox_id: result.sandbox.sandboxId })
+      .eq('requirement_id', reqId)
+      .eq('instance_id', audit.instanceId);
+  }
 
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.WORKFLOW_SANDBOX_READY,
@@ -525,6 +563,17 @@ export async function checkSourceCodeStep(reqId: string): Promise<string | null>
 
 export async function stopSandboxStep(sandboxId: string, audit?: CronAuditContext) {
   'use step';
+
+  if (audit?.instanceId && audit?.requirementId) {
+    // Clear the active_sandbox_id from DB so next run doesn't try to use it
+    await supabaseAdmin
+      .from('requirement_status')
+      .update({ active_sandbox_id: null })
+      .eq('requirement_id', audit.requirementId)
+      .eq('instance_id', audit.instanceId)
+      .eq('active_sandbox_id', sandboxId); // Only clear if it hasn't been overwritten
+  }
+
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {

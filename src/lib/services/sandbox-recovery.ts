@@ -99,6 +99,26 @@ export async function connectOrRecreateRequirementSandbox(params: {
     return { sandbox, sandboxId, recovered: false, branchName };
   }
 
+  // If the provided sandboxId failed, check if the DB has a newer active_sandbox_id
+  if (audit?.instanceId) {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data: reqStatus } = await supabaseAdmin
+      .from('requirement_status')
+      .select('active_sandbox_id')
+      .eq('requirement_id', requirementId)
+      .eq('instance_id', audit.instanceId)
+      .maybeSingle();
+
+    if (reqStatus?.active_sandbox_id && reqStatus.active_sandbox_id !== sandboxId) {
+      console.warn(`[Sandbox] Provided sandboxId ${sandboxId} failed, but DB has newer active_sandbox_id ${reqStatus.active_sandbox_id}. Trying that...`);
+      const dbSandbox = await tryGetSandbox(reqStatus.active_sandbox_id);
+      if (dbSandbox && (await pingSandboxWorkspace(dbSandbox))) {
+        const branchName = await SandboxService.getCurrentBranch(dbSandbox);
+        return { sandbox: dbSandbox, sandboxId: reqStatus.active_sandbox_id, recovered: true, branchName };
+      }
+    }
+  }
+
   if (sandbox) {
     // Layout ping failed — stop this VM before creating another, otherwise
     // every connectOrRecreate leaves a billing zombie (dashboard full of Running).
@@ -129,6 +149,16 @@ export async function connectOrRecreateRequirementSandbox(params: {
   );
   await stopSandboxByIdQuiet(sandboxId);
   const created = await SandboxService.createRequirementSandbox(requirementId, instanceType, title, audit);
+
+  if (audit?.instanceId) {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    await supabaseAdmin
+      .from('requirement_status')
+      .update({ active_sandbox_id: created.sandbox.sandboxId })
+      .eq('requirement_id', requirementId)
+      .eq('instance_id', audit.instanceId);
+  }
+
   const auditCtx: CronAuditContext | undefined = audit?.siteId
     ? { ...audit, requirementId: audit.requirementId ?? requirementId }
     : undefined;
