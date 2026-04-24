@@ -81,7 +81,7 @@ export async function runRuntimeAndVisualProbes(params: {
     inferred = { pageRoutes: [], apiRoutes: [], changedFiles: [] };
   }
 
-  const shouldRunVisual = gitRepoKind === 'applications' && inferred.pageRoutes.length > 0;
+  const shouldRunVisual = gitRepoKind === 'applications';
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {

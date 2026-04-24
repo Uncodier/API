@@ -210,24 +210,24 @@ export async function runOrchestratorStep(params: {
       const body = rawErr?.error || rawErr?.response?.data;
       const rawMsg = typeof rawErr?.message === 'string' ? rawErr.message : String(rawErr);
 
-      // For empty-body 400s (Gemini's openai-compat loves these), the ONLY
-      // signal we have is what we sent. Surface the last assistant tool_call
-      // name and a small slice of tool names directly in the thrown message
-      // so operators see the likely offender in the dashboard without having
-      // to correlate with the separate `logChatCompletionFailure` line.
-      let lastToolCallName: string | undefined;
-      let lastToolMessageName: string | undefined;
-      for (let i = messages.length - 1; i >= 0 && (!lastToolCallName || !lastToolMessageName); i--) {
-        const m: any = messages[i];
-        if (!m || typeof m !== 'object') continue;
-        if (!lastToolCallName && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
-          const tc = m.tool_calls[m.tool_calls.length - 1];
-          if (typeof tc?.function?.name === 'string') lastToolCallName = tc.function.name;
-        }
-        if (!lastToolMessageName && m.role === 'tool' && typeof m.name === 'string') {
-          lastToolMessageName = m.name;
-        }
+    // For empty-body 400s (Gemini's openai-compat loves these), the ONLY
+    // signal we have is what we sent. Surface the last assistant tool_call
+    // name and a small slice of tool names directly in the thrown message
+    // so operators see the likely offender in the dashboard without having
+    // to correlate with the separate `logChatCompletionFailure` line.
+    let lastToolCallName: string | undefined;
+    let lastToolMessageName: string | undefined;
+    for (let i = messages.length - 1; i >= 0 && (!lastToolCallName || !lastToolMessageName); i--) {
+      const m: any = messages[i];
+      if (!m || typeof m !== 'object') continue;
+      if (!lastToolCallName && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+        const tc = m.tool_calls[m.tool_calls.length - 1];
+        if (typeof tc?.function?.name === 'string') lastToolCallName = tc.function.name;
       }
+      if (!lastToolMessageName && m.role === 'tool' && typeof m.name === 'string') {
+        lastToolMessageName = m.name;
+      }
+    }
       const toolNamesPreview = fullTools
         .map((t: any) => t?.function?.name || t?.name)
         .filter((x: unknown): x is string => typeof x === 'string')

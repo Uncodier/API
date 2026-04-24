@@ -265,8 +265,13 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 
   // Step 6: Preview + source code — resolve the automation repo from the
   // requirement's persisted git binding (metadata.git) with env fallback.
-  const { resolveGitBindingForRequirement } = await import('../shared/cron-commit-helpers');
-  const binding = await resolveGitBindingForRequirement(reqId, 'automation');
+  const { getRequirementGitBinding, resolveDefaultGitBinding } = await import('@/lib/services/requirement-git-binding');
+  let binding;
+  try {
+    binding = await getRequirementGitBinding(reqId, 'automation');
+  } catch {
+    binding = resolveDefaultGitBinding('automation');
+  }
   const gitOrg = binding.org;
   const autoRepo = binding.repo;
   const previewUrl = await getPreviewUrlStep(gitOrg, autoRepo, effectiveBranch, reqId);

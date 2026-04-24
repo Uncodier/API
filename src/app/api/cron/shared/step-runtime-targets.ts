@@ -16,9 +16,9 @@ export type InferredTargetRoutes = {
 const DEFAULT_METHOD: InferredTargetRoutes['apiRoutes'][number]['method'] = 'GET';
 
 function pageRouteFromFile(rel: string): string | null {
-  const m = rel.match(/^src\/app\/(.+)\/page\.(tsx|jsx|ts|js)$/);
+  const m = rel.match(/^src\/app\/(.*)page\.(tsx|jsx|ts|js)$/);
   if (!m) return null;
-  const segments = m[1].split('/');
+  const segments = m[1].split('/').filter(Boolean);
   const cleaned = segments.filter((seg) => !seg.startsWith('(') || !seg.endsWith(')'));
   if (cleaned.some((seg) => seg.startsWith('[') && seg.endsWith(']'))) return null;
   const path = '/' + cleaned.join('/');

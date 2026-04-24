@@ -39,6 +39,7 @@ export async function GET(req: Request) {
       hasServiceRoleKey: Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY),
       keyStart: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 15),
       keyEnd: process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(-10),
+      keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length,
       vercelEnv: process.env.VERCEL_ENV ?? 'local',
       vercelUrl: process.env.VERCEL_URL ?? null,
       requestUrl: req.url,

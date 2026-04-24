@@ -313,8 +313,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 6: Get preview URL using the requirement's persisted git binding
   // (metadata.git) so we query the same repo that the sandbox pushed to.
-  const { resolveGitBindingForRequirement } = await import('../shared/cron-commit-helpers');
-  const binding = await resolveGitBindingForRequirement(reqId, 'applications');
+  const { getRequirementGitBinding, resolveDefaultGitBinding } = await import('@/lib/services/requirement-git-binding');
+  let binding;
+  try {
+    binding = await getRequirementGitBinding(reqId, 'applications');
+  } catch {
+    binding = resolveDefaultGitBinding('applications');
+  }
   const owner = binding.org;
   const repoName = binding.repo;
   const previewUrl = await getPreviewUrlStep(owner, repoName, effectiveBranch, reqId);

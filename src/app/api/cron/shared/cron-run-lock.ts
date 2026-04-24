@@ -139,20 +139,22 @@ export async function acquireRunLock(
     .or(orClause)
     .select('id');
 
-  if (error) {
-    const err = error as PostgrestErrorLike;
-    // Log the *full* PostgREST error (code/details/hint) so a schema-cache
-    // miss can be distinguished from RLS, permission, or filter errors.
-    const diag = {
-      reqId: requirementId,
-      supabaseHost: getSupabaseUrlHostForLogs(),
-      code: err.code,
-      message: err.message,
-      details: err.details,
-      hint: err.hint,
-      keyStart: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 15),
-      keyEnd: process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(-10),
-    };
+    if (error) {
+      const err = error as PostgrestErrorLike;
+      // Log the *full* PostgREST error (code/details/hint) so a schema-cache
+      // miss can be distinguished from RLS, permission, or filter errors.
+      const diag = {
+        reqId: requirementId,
+        supabaseHost: getSupabaseUrlHostForLogs(),
+        code: err.code,
+        message: err.message,
+        details: err.details,
+        hint: err.hint,
+        keyStart: process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 15),
+        keyEnd: process.env.SUPABASE_SERVICE_ROLE_KEY?.slice(-10),
+        keyLength: process.env.SUPABASE_SERVICE_ROLE_KEY?.length,
+        fullError: JSON.stringify(error),
+      };
     if (isLockColumnsMissingError(err)) {
       console.warn(
         '[CronRunLock] columns missing — running without lock. ' +
@@ -163,6 +165,14 @@ export async function acquireRunLock(
           '(Vercel preview may use different env than production).',
         diag,
       );
+      // Even if the columns are missing, we still return the runId and expiresAt
+      // so the workflow can proceed without the lock.
+      return { runId, expiresAt };
+    }
+    // Si el error es de permisos (P0001: CREATE_UPDATE_PERMISSION_DENIED),
+    // también permitimos que el workflow continúe sin bloqueo para no detener el cron.
+    if (err.message?.includes('CREATE_UPDATE_PERMISSION_DENIED')) {
+      console.warn('[CronRunLock] Permission denied when acquiring lock. Running without lock.', diag);
       return { runId, expiresAt };
     }
     console.warn('[CronRunLock] acquire failed', diag);
@@ -199,6 +209,7 @@ export async function releaseRunLock(requirementId: string, runId: string): Prom
         message: err.message,
         details: err.details,
         hint: err.hint,
+        fullError: JSON.stringify(error),
       });
     }
   } catch (e: unknown) {

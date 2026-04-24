@@ -200,23 +200,47 @@ async function probeOnePage(params: {
   });
 
   let responseStatus = 0;
-  try {
-    const resp = await page.goto(target, { waitUntil: 'networkidle2', timeout: pageTimeoutMs });
-    responseStatus = resp?.status() ?? 0;
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    failedRequests.push({
-      url: target,
-      failure: `goto: ${msg.slice(0, 200)}`,
-      route: safeRoute,
-      viewport: viewport.name,
-    });
-    return null;
+  let resp;
+  
+  // Retry loop for 502/503/504 (tunnel waking up)
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      resp = await page.goto(target, { waitUntil: 'load', timeout: pageTimeoutMs });
+      responseStatus = resp?.status() ?? 0;
+      
+      if (responseStatus === 502 || responseStatus === 503 || responseStatus === 504) {
+        if (attempt < 3) {
+          console.log(`[VisualProbe] Got ${responseStatus} on ${target}, retrying in 2s...`);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+      }
+      break;
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (attempt < 3 && (msg.includes('ERR_CONNECTION_REFUSED') || msg.includes('ERR_NAME_NOT_RESOLVED') || msg.includes('Timeout'))) {
+        console.log(`[VisualProbe] Got ${msg} on ${target}, retrying in 2s...`);
+        await new Promise(r => setTimeout(r, 2000));
+        continue;
+      }
+      
+      failedRequests.push({
+        url: target,
+        failure: `goto: ${msg.slice(0, 200)}`,
+        route: safeRoute,
+        viewport: viewport.name,
+      });
+      
+      // If it's just a timeout on the last attempt, the page might still be visible.
+      if (!msg.toLowerCase().includes('timeout')) {
+        return null;
+      }
+      break;
+    }
   }
 
-  if (responseStatus >= 400) {
-    return null;
-  }
+  // Wait a bit extra for client-side hydration/rendering
+  await new Promise(r => setTimeout(r, 2000));
 
   try {
     const buf = (await page.screenshot({ type: 'png', fullPage: true })) as Buffer;
@@ -277,6 +301,11 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     const page = await browser.newPage();
     page.setDefaultNavigationTimeout(pageTimeoutMs);
     page.setDefaultTimeout(pageTimeoutMs);
+
+    if (pageRoutes.length === 0) {
+      console.warn(`[VisualProbe] No pageRoutes provided to runVisualProbe. Defaulting to ['/']`);
+      pageRoutes.push('/');
+    }
 
     for (const viewport of viewports) {
       for (const route of pageRoutes) {
