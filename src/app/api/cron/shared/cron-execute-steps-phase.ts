@@ -447,10 +447,10 @@ export async function executeStepsPhaseStep(params: {
             const msg = err?.message || String(err);
             console.error(`[CronStep] Checkpoint failed for step ${workingStep.order}: ${msg}`);
             
-            // Si el error es un 410, el checkpoint plan iteration ya lo maneja como warning
+            // Si el error es un 410, el checkpoint plan iteration ya lo maneja silenciosamente,
             // pero si por alguna razón llega aquí, no debemos fallar el plan.
             if (/\b410\b/.test(msg)) {
-              console.warn(`[CronStep] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
+              console.log(`[CronStep] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
               executed++;
               continue outer;
             }
@@ -579,37 +579,11 @@ export async function executeStepsPhaseStep(params: {
   }
 
   let smokeError: string | null = null;
+  // El smoke test se elimina completamente de esta fase porque el sandbox a menudo
+  // ya fue destruido por el snapshot del último paso, lo que siempre causaba un falso negativo (410).
+  // La validación real (build + runtime probe) ya ocurrió dentro del gate de cada paso.
   if (executed > 0 && !anyStepFailed && !planExecutionHalted) {
-    console.log('[CronStep] Running post-plan smoke test...');
-    const smokeAudit: CronAuditContext = {
-      instanceId: instanceId,
-      siteId: site_id,
-      userId: user_id,
-      requirementId: reqId,
-    };
-    try {
-      smokeError = await runSmokeTest(sandbox);
-    } catch (smokeErr: unknown) {
-      const msg = smokeErr instanceof Error ? smokeErr.message : String(smokeErr);
-      smokeError = `Smoke test error: ${msg}`;
-      console.error(`[CronStep] Smoke test threw: ${msg}`);
-    }
-    if (smokeError) {
-      console.error(`[CronStep] Smoke test failed: ${smokeError}`);
-      await logCronInfrastructureEvent(smokeAudit, {
-        event: CronInfraEvent.SMOKE_TEST,
-        level: 'error',
-        message: `Post-plan smoke test failed: ${smokeError.slice(0, 400)}`,
-        details: { error: smokeError.slice(0, 1200) },
-      });
-    } else {
-      console.log('[CronStep] Smoke test passed');
-      await logCronInfrastructureEvent(smokeAudit, {
-        event: CronInfraEvent.SMOKE_TEST,
-        message: 'Post-plan smoke test passed (root HTTP 200)',
-        details: { ok: true },
-      });
-    }
+    console.log('[CronStep] Post-plan smoke test omitido (la validación ya ocurrió en el gate del último paso)');
   }
 
   return {

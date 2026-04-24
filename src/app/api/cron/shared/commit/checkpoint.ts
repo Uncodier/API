@@ -59,16 +59,10 @@ export async function checkpointPlanIteration(
     );
     
     // Si el sandbox murió (410), no es un error de código, es de infraestructura.
-    // Lo logueamos como advertencia pero NO lanzamos la excepción para no fallar el paso
-    // que ya había pasado su validación (gate) exitosamente.
+    // Como el agente ya hizo su propio push (sandbox_push_checkpoint), este paso redundante
+    // puede fallar silenciosamente si el contenedor expiró, sin ensuciar los logs de infra.
     if (/\b410\b/.test(msg)) {
-      console.warn(`[CronPersist] Ignorando error 410 en checkpoint final para el paso ${planStep.order} (el agente ya había hecho push)`);
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.CHECKPOINT,
-        level: 'warn',
-        message: `Checkpoint skipped after step ${planStep.order}: Sandbox expired (410 Gone)`,
-        details: { step_order: planStep.order, step_id: planStep.id, error: msg.slice(0, 400) },
-      });
+      console.log(`[CronPersist] Checkpoint redundante omitido para el paso ${planStep.order} (el sandbox expiró pero el agente ya había hecho push)`);
       return;
     }
 
