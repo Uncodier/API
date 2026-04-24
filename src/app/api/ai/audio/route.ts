@@ -142,20 +142,8 @@ export async function POST(request: NextRequest) {
           },
         });
       } catch (geminiError: any) {
-        console.warn(`[audio api] Gemini provider failed, trying Vercel fallback...`, geminiError);
-        try {
-          const audio = await synthesizeWithVercel(text, voice, format, model);
-          return new NextResponse(audio as any, {
-            status: 200,
-            headers: {
-              'Content-Type': format === 'wav' ? 'audio/wav' : format === 'ogg' ? 'audio/ogg' : 'audio/mpeg',
-              'Content-Length': String(audio.length),
-              'X-Fallback-Provider': 'vercel'
-            },
-          });
-        } catch (fallbackError: any) {
-          throw new Error(`Both Gemini and Vercel failed. Gemini: ${geminiError.message}. Vercel: ${fallbackError.message}`);
-        }
+        console.warn(`[audio api] Gemini provider failed.`, geminiError);
+        throw new Error(`Gemini failed: ${geminiError.message}`);
       }
     }
 

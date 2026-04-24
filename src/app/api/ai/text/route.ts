@@ -162,8 +162,8 @@ export async function POST(request: NextRequest) {
         const result = await generateWithAzure({ messages, temperature, maxTokens, topP });
         return NextResponse.json(result);
       } catch (err) {
-        console.warn('[text api] Azure provider failed, trying Vercel fallback...', err);
-        const fallback = await generateWithVercelGateway({ messages, model, temperature, maxTokens, topP });
+        console.warn('[text api] Azure provider failed, trying Gemini fallback...', err);
+        const fallback = await generateWithGemini({ messages, model, temperature, maxTokens, topP });
         return NextResponse.json({ ...fallback, fallbackFrom: 'azure' });
       }
     }
@@ -173,8 +173,8 @@ export async function POST(request: NextRequest) {
         const result = await generateWithGemini({ messages, model, temperature, maxTokens, topP });
         return NextResponse.json(result);
       } catch (err) {
-        console.warn('[text api] Gemini provider failed, trying Vercel fallback...', err);
-        const fallback = await generateWithVercelGateway({ messages, model, temperature, maxTokens, topP });
+        console.warn('[text api] Gemini provider failed, trying Azure fallback...', err);
+        const fallback = await generateWithAzure({ messages, temperature, maxTokens, topP });
         return NextResponse.json({ ...fallback, fallbackFrom: 'gemini' });
       }
     }

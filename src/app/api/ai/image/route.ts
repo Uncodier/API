@@ -805,9 +805,14 @@ export async function POST(request: NextRequest) {
       try {
         result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
       } catch (err) {
-        console.warn('[image api] Azure provider failed, trying Vercel fallback...', err);
-        result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
-        result.fallbackFrom = 'azure';
+        console.warn('[image api] Azure provider failed, trying Gemini fallback...', err);
+        try {
+          result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
+          result.fallbackFrom = 'azure';
+        } catch (fallbackErr: any) {
+          console.error('[image api] Gemini fallback also failed:', fallbackErr);
+          throw new Error(`Both Azure and Gemini providers failed. Azure: ${err instanceof Error ? err.message : String(err)}. Gemini: ${fallbackErr.message || fallbackErr}`);
+        }
       }
     } else if (provider === 'gemini') {
       try {
