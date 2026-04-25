@@ -93,7 +93,12 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 - Automations MUST support ?mode=test and ?mode=prod.
 - NEVER run git commit or git push as orchestrator — the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
-- ${TOOL_LOOKUP_HINT}`;
+- ${TOOL_LOOKUP_HINT}
+
+CRITICAL EXECUTION RULES:
+1. ALWAYS THINK OUT LOUD: You MUST output a brief text explanation of your reasoning and plan BEFORE invoking any tool. Never output just a tool call without text.
+2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
+3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).`;
 
   // Step 2: Check for active plan
   const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);

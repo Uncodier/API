@@ -145,6 +145,11 @@ WORKFLOW (follow IN ORDER):
 4. Create the plan: \`instance_plan\` with \`action='create'\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
 5. Report progress with \`requirement_status\` (status='in-progress').
 
+CRITICAL EXECUTION RULES:
+1. ALWAYS THINK OUT LOUD: You MUST output a brief text explanation of your reasoning and plan BEFORE invoking any tool. Never output just a tool call without text.
+2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
+3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
+
 HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created.
 
 HARD RULE ACCEPTANCE (Phase 10):

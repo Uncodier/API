@@ -124,6 +124,10 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}
 
 RULES:
 - Focus ONLY on completing this specific step. Do not plan — EXECUTE.
+- CRITICAL EXECUTION RULES:
+  1. ALWAYS THINK OUT LOUD: You MUST output a brief text explanation of your reasoning and plan BEFORE invoking any tool. Never output just a tool call without text.
+  2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
+  3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
 - Next.js App Router in this repo: pages only under src/app/ (e.g. src/app/prd/page.tsx). Never create a root folder named "app/" or "app/src/app/" — the GitHub repo may be called "apps" but that is not a path to mirror in the filesystem.
 - Never use a top-level app/ folder for routes (e.g. app/src/app/prd breaks Vercel).
 - Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.

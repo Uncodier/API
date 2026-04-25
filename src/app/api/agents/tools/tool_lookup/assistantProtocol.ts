@@ -302,6 +302,24 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
   };
 }
 
+function injectThoughtProcess(tool: RoutedTool): RoutedTool {
+  if (!tool || !tool.parameters || !tool.parameters.properties) return tool;
+  return {
+    ...tool,
+    parameters: {
+      ...tool.parameters,
+      properties: {
+        ...tool.parameters.properties,
+        thought_process: {
+          type: 'string',
+          description: 'Obligatorio. Explica paso a paso por qué estás llamando a esta herramienta y qué esperas lograr con ella basándote en tu objetivo actual.'
+        }
+      },
+      required: [...(tool.parameters.required || []), 'thought_process']
+    }
+  };
+}
+
 /**
  * Partition helper: given the full tools array and a set of always-on tool
  * names, returns `[...alwaysOn, tool_lookup(rest)]`.
@@ -312,13 +330,18 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
 export function withToolLookup(allTools: RoutedTool[], alwaysOnNames: ReadonlySet<string>): RoutedTool[] {
   const alwaysOn: RoutedTool[] = [];
   const routed: RoutedTool[] = [];
-  for (const t of allTools) {
+  
+  const toolsWithThoughtProcess = allTools.map(injectThoughtProcess);
+  
+  for (const t of toolsWithThoughtProcess) {
     if (!t || typeof t.name !== 'string') continue;
     if (alwaysOnNames.has(t.name)) alwaysOn.push(t);
     else routed.push(t);
   }
   if (routed.length === 0) return alwaysOn;
-  return [...alwaysOn, toolLookupTool(routed)];
+  
+  const lookupTool = injectThoughtProcess(toolLookupTool(routed) as RoutedTool);
+  return [...alwaysOn, lookupTool];
 }
 
 /**
@@ -365,11 +388,18 @@ export function isAlwaysOnToolName(name: string): boolean {
 export function routeTools(allTools: RoutedTool[]): RoutedTool[] {
   const alwaysOn: RoutedTool[] = [];
   const routed: RoutedTool[] = [];
-  for (const t of allTools) {
+  
+  // Inject thought_process into all tools to force the model to reason before acting
+  const toolsWithThoughtProcess = allTools.map(injectThoughtProcess);
+
+  for (const t of toolsWithThoughtProcess) {
     if (!t || typeof t.name !== 'string') continue;
     if (isAlwaysOnToolName(t.name)) alwaysOn.push(t);
     else routed.push(t);
   }
+  
   if (routed.length === 0) return alwaysOn;
-  return [...alwaysOn, toolLookupTool(routed)];
+  
+  const lookupTool = injectThoughtProcess(toolLookupTool(routed) as RoutedTool);
+  return [...alwaysOn, lookupTool];
 }

@@ -82,6 +82,31 @@ export function createAssistantOnStepHandler(
       let failedToolCalls = 0;
 
       for (const toolCall of step.toolCalls) {
+        // Extract and save thought_process as a thinking log if present
+        if (toolCall.args && typeof toolCall.args.thought_process === 'string' && toolCall.args.thought_process.trim() !== '') {
+          const { error: thinkingLogError } = await supabaseAdmin.from('instance_logs').insert({
+            log_type: 'thinking',
+            level: 'info',
+            message: toolCall.args.thought_process,
+            details: {
+              provider,
+              response_type: 'reasoning',
+              tool_name: toolCall.toolName,
+              tool_call_id: toolCall.id || toolCall.toolCallId,
+            },
+            instance_id: instance_id,
+            site_id: site_id,
+            user_id: user_id,
+            parent_log_id: parentLogId,
+          });
+
+          if (thinkingLogError) {
+            console.error(`❌ Error saving thought_process log for ${toolCall.toolName}:`, thinkingLogError);
+          } else {
+            console.log(`₍ᐢ•(ܫ)•ᐢ₎ [THINKING] Saved thought_process for ${toolCall.toolName}`);
+          }
+        }
+
         // Find corresponding tool result
         const toolResult = step.toolResults?.find(
           (tr: any) => tr.toolCallId === toolCall.id || tr.toolCallId === toolCall.toolCallId
