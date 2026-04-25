@@ -100,15 +100,34 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     try {
       // Gemini's OpenAI compatibility layer requires base64 data URIs, it does not support HTTP URLs.
       // We fetch the image and convert it to base64 before sending.
-      const imgRes = await fetch(s.url);
+      
+      // If the bucket is private, the public URL will return 400 or 404.
+      // We rewrite the URL to use the authenticated endpoint and pass the service role key.
+      const isSupabaseStorage = s.url.includes('/storage/v1/object/public/');
+      const fetchUrl = isSupabaseStorage ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') : s.url;
+      
+      const supabaseKey = 
+        process.env.APPS_SUPABASE_SERVICE_KEY || 
+        process.env.REPOSITORY_SUPABASE_SERVICE_KEY || 
+        process.env.REPOSITORY_SUPABASE_ANON_KEY || 
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+        '';
+
+      const headers: Record<string, string> = {};
+      if (isSupabaseStorage && supabaseKey) {
+        headers['Authorization'] = `Bearer ${supabaseKey}`;
+        headers['apikey'] = supabaseKey;
+      }
+
+      const imgRes = await fetch(fetchUrl, { headers });
       if (imgRes.ok) {
         const arrayBuffer = await imgRes.arrayBuffer();
         const base64 = Buffer.from(arrayBuffer).toString('base64');
         const contentType = imgRes.headers.get('content-type') || 'image/png';
         userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
       } else {
-        console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${s.url} - ${imgRes.status}`);
-        userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback to URL, might fail depending on provider
+        console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${fetchUrl} - ${imgRes.status}`);
+        userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback to original URL, might fail depending on provider
       }
     } catch (e) {
       console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
