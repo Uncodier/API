@@ -226,7 +226,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
       level: gone ? 'warn' : 'error',
-      message: `Step ${stepOrder} gate: ${msg.slice(0, 500)}`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${msg.slice(0, 500)}`,
       details: { stepOrder, error: msg.slice(0, 1200), sandbox_unavailable: gone },
     });
     return { ok: false, lastResult, error: msg, signals, ...(gone ? { sandboxUnavailable: true } : {}) };
@@ -239,7 +239,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_BUILD,
       level: gone ? 'warn' : 'error',
-      message: `Step ${stepOrder} gate: npm run build failed`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build failed`,
       details: { stepOrder, error: buildError.slice(0, 1200), sandbox_unavailable: gone },
     });
     return {
@@ -254,7 +254,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   signals.build = { ok: true };
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.GATE_BUILD,
-    message: `Step ${stepOrder} gate: npm run build passed`,
+    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build passed`,
     details: { stepOrder },
   });
 
@@ -281,7 +281,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.RUNTIME_PROBE,
         level: 'warn',
-        message: `Step ${stepOrder} gate: runtime probe failed — sandbox unavailable (will reprovision)`,
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: runtime probe failed — sandbox unavailable (will reprovision)`,
         details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
       });
     }
@@ -323,7 +323,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.GATE_ORIGIN,
         level: 'warn',
-        message: `Step ${stepOrder} gate: sandbox unavailable during origin check — ${agentLine}`.slice(0, 500),
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: sandbox unavailable during origin check — ${agentLine}`.slice(0, 500),
         details: {
           stepOrder,
           error: persist.error?.slice(0, 1200),
@@ -348,14 +348,14 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.GATE_ORIGIN,
         level: 'warn',
-        message: `Step ${stepOrder} gate: origin not verified before recovery (${
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: origin not verified before recovery (${
           persist.errorForAgent || persist.error || 'not pushed'
         })`.slice(0, 500),
         details: { stepOrder, error: persist.error?.slice?.(0, 800), failureKind: persist.failureKind },
       });
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.GATE_PUSH_RECOVERY,
-        message: `Step ${stepOrder}: starting push recovery (max ${MAX_PUSH_RECOVERY_TURNS} agent turns)`,
+        message: `${stepOrder !== undefined ? `Step ${stepOrder}: ` : ''}starting push recovery (max ${MAX_PUSH_RECOVERY_TURNS} agent turns)`,
         details: { stepOrder, maxTurns: MAX_PUSH_RECOVERY_TURNS },
       });
       // The expected branch for recovery is derived solely from the requirement
@@ -394,7 +394,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.GATE_ORIGIN,
         level: 'warn',
-        message: `Step ${stepOrder} gate: origin not verified; push recovery skipped (not agent-actionable)`,
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: origin not verified; push recovery skipped (not agent-actionable)`,
         details: {
           stepOrder,
           error: persist.error?.slice?.(0, 800),
@@ -417,7 +417,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.GATE_ORIGIN,
         level: 'warn',
-        message: `Step ${stepOrder} gate: sandbox unavailable after recovery attempts — ${agentLine}`.slice(0, 500),
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: sandbox unavailable after recovery attempts — ${agentLine}`.slice(0, 500),
         details: {
           stepOrder,
           error: persist.error?.slice(0, 1200),
@@ -445,7 +445,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_ORIGIN,
       level: 'error',
-      message: `Step ${stepOrder} gate: ${errFinal}`.slice(0, 500),
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${errFinal}`.slice(0, 500),
       details: {
         stepOrder,
         error: persist.error?.slice(0, 1200),
@@ -464,7 +464,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   signals.origin = { ok: true, branch: persist.branch };
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.GATE_ORIGIN,
-    message: `Step ${stepOrder} gate: origin verified (branch ${persist.branch})`,
+    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: origin verified (branch ${persist.branch})`,
     details: { stepOrder, branch: persist.branch },
   });
 
@@ -472,7 +472,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   if (!branch || branch === 'main' || branch === 'master') {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_VERCEL_DEPLOY,
-      message: `Step ${stepOrder} gate: deploy check skipped (default branch)`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: deploy check skipped (default branch)`,
       details: { stepOrder, branch },
     });
     const deploy: DeploySignal = { previewUrl: null, deployState: 'skipped_default_branch', detail: branch };
@@ -494,7 +494,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_VERCEL_DEPLOY,
       level: 'error',
-      message: `Step ${stepOrder} gate: ${errSha}`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${errSha}`,
       details: { stepOrder, branch },
     });
     return { ok: false, lastResult, error: errSha, signals };
@@ -535,7 +535,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   if (poll.state === 'success' && poll.previewUrl) {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_VERCEL_DEPLOY,
-      message: `Step ${stepOrder} gate: GitHub deployment success (preview URL)`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: GitHub deployment success (preview URL)`,
       details: {
         stepOrder,
         branch,
@@ -582,7 +582,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_VERCEL_DEPLOY,
       level: 'error',
-      message: `Step ${stepOrder} gate: ${err.slice(0, 500)}`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${err.slice(0, 500)}`,
       details: { stepOrder, branch, sha: sha.slice(0, 12), state: poll.state },
     });
     signals.deploy = {
@@ -611,7 +611,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   await logCronInfrastructureEvent(audit, {
     event: CronInfraEvent.GATE_VERCEL_DEPLOY,
     level: 'error',
-    message: `Step ${stepOrder} gate: ${errTimeout.slice(0, 500)}`,
+    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${errTimeout.slice(0, 500)}`,
     details: { stepOrder, branch, sha: sha.slice(0, 12), state: poll.state },
   });
   signals.deploy = {

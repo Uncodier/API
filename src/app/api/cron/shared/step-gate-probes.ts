@@ -96,7 +96,7 @@ export async function runRuntimeAndVisualProbes(params: {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.RUNTIME_PROBE,
       level: runtimeProbe.ok ? 'info' : 'error',
-      message: `Step ${stepOrder} runtime probe: ${summarizeRuntimeProbe(runtimeProbe).slice(0, 400)}`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe: ${summarizeRuntimeProbe(runtimeProbe).slice(0, 400)}`,
       details: {
         stepOrder,
         ok: runtimeProbe.ok,
@@ -113,7 +113,7 @@ export async function runRuntimeAndVisualProbes(params: {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.API_PROBE,
         level: out.api.ok ? 'info' : 'warn',
-        message: `Step ${stepOrder} api probe: ${runtimeProbe.apis.length} endpoint(s)`.slice(0, 400),
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}api probe: ${runtimeProbe.apis.length} endpoint(s)`.slice(0, 400),
         details: {
           stepOrder,
           apis: runtimeProbe.apis.map((a) => ({
@@ -142,7 +142,7 @@ export async function runRuntimeAndVisualProbes(params: {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.RUNTIME_PROBE,
       level: 'warn',
-      message: `Step ${stepOrder} runtime probe threw: ${msg.slice(0, 300)}`,
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe threw: ${msg.slice(0, 300)}`,
       details: { stepOrder, error: msg.slice(0, 800) },
     });
     return { ok: true, signals: out };
@@ -153,7 +153,7 @@ export async function runRuntimeAndVisualProbes(params: {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.COPY_HYGIENE,
       level: hygiene.ok ? 'info' : 'warn',
-      message: `Step ${stepOrder} copy hygiene: ${hygiene.ok ? 'OK' : `${hygiene.issues.length} leak(s)`}`.slice(0, 400),
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}copy hygiene: ${hygiene.ok ? 'OK' : `${hygiene.issues.length} leak(s)`}`.slice(0, 400),
       details: {
         stepOrder,
         ok: hygiene.ok,
@@ -196,7 +196,7 @@ export async function runRuntimeAndVisualProbes(params: {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.VISUAL_PROBE,
         level: visual.ok ? 'info' : 'warn',
-        message: `Step ${stepOrder} visual probe: ${visual.screenshots.length} screenshot(s) at ${visual.base_url || 'n/a'}`.slice(0, 400),
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual probe: ${visual.screenshots.length} screenshot(s) at ${visual.base_url || 'n/a'}`.slice(0, 400),
         details: {
           stepOrder,
           ok: visual.ok,
@@ -209,7 +209,7 @@ export async function runRuntimeAndVisualProbes(params: {
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.CONSOLE_PROBE,
           level: visual.console.ok ? 'info' : 'warn',
-          message: `Step ${stepOrder} console probe: ${visual.console.entries.length} entries, ${visual.console.page_errors.length} pageerror, ${visual.console.failed_requests.length} failed reqs`.slice(0, 400),
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}console probe: ${visual.console.entries.length} entries, ${visual.console.page_errors.length} pageerror, ${visual.console.failed_requests.length} failed reqs`.slice(0, 400),
           details: {
             stepOrder,
             entries_sample: visual.console.entries.slice(0, 12),
@@ -240,7 +240,7 @@ export async function runRuntimeAndVisualProbes(params: {
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.VISUAL_CRITIC_VERDICT,
           level: critic.skipped ? 'warn' : critic.pass ? 'info' : 'warn',
-          message: `Step ${stepOrder} visual critic: ${critic.skipped ? `skipped (${critic.skipped})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual critic: ${critic.skipped ? `skipped (${critic.skipped})` : critic.pass ? 'pass' : 'fail'} — ${critic.summary.slice(0, 200)}`.slice(0, 400),
           details: {
             stepOrder,
             pass: critic.pass,
@@ -264,7 +264,7 @@ export async function runRuntimeAndVisualProbes(params: {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.VISUAL_PROBE,
         level: 'warn',
-        message: `Step ${stepOrder} visual probe threw: ${msg.slice(0, 300)}`,
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}visual probe threw: ${msg.slice(0, 300)}`,
         details: { stepOrder, error: msg.slice(0, 800) },
       });
     }
@@ -286,7 +286,7 @@ export async function runRuntimeAndVisualProbes(params: {
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.SCENARIO_RUN,
           level: e2e.ok ? 'info' : 'warn',
-          message: `Step ${stepOrder} e2e scenarios: ${summary}`.slice(0, 400),
+          message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e scenarios: ${summary}`.slice(0, 400),
           details: {
             stepOrder,
             scenarios_read: e2e.scenarios_read,
@@ -318,7 +318,7 @@ export async function runRuntimeAndVisualProbes(params: {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.SCENARIO_RUN,
         level: 'warn',
-        message: `Step ${stepOrder} e2e runner threw: ${msg.slice(0, 300)}`,
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}e2e runner threw: ${msg.slice(0, 300)}`,
         details: { stepOrder, error: msg.slice(0, 800) },
       });
     }

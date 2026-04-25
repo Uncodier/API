@@ -84,7 +84,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
   userBlocks.push({
     type: 'text',
     text: [
-      `Step ${input.step.order}${input.step.title ? `: ${input.step.title}` : ''}`,
+      input.step.order !== undefined ? `Step ${input.step.order}${input.step.title ? `: ${input.step.title}` : ''}` : (input.step.title ? `Step: ${input.step.title}` : 'Step evaluation'),
       input.step.instructions ? `Instructions: ${input.step.instructions.slice(0, 600)}` : '',
       input.step.expected_output ? `Expected output: ${input.step.expected_output.slice(0, 400)}` : '',
       input.brand_context ? `Brand context: ${input.brand_context.slice(0, 400)}` : '',
