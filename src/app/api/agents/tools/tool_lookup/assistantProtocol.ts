@@ -358,6 +358,7 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   'sandbox_write_file',
   'sandbox_push_checkpoint',
   'sandbox_restore_checkpoint',
+  'sandbox_read_logs',
   // QA sandbox tools (names from getQaSandboxTools — we keep any whose name starts with sandbox_ or qa_)
   // They are added dynamically below via the isAlwaysOn() helper if needed.
 

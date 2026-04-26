@@ -100,13 +100,57 @@ function budgetFor(bucket: RetryBucket): number {
   return MAX_VISUAL_RETRIES;
 }
 
-function buildGateRetryUserMessage(signals: StepIterationSignals): string {
+function buildGateRetryUserMessage(signals: StepIterationSignals, oversizeFiles?: string[]): string {
   const wd = SandboxService.WORK_DIR;
-  return [
+  const baseMessage = [
     formatIterationSignals(signals),
     '',
     `(sandbox work_dir: ${wd}) After fixing, call sandbox_push_checkpoint once the build + runtime are clean.`,
-  ].join('\n');
+  ].join('\\n');
+
+  if (oversizeFiles && oversizeFiles.length > 0) {
+    const warning = [
+      '',
+      '🚨 MANDATORY REFACTORING REQUIRED 🚨',
+      'The following files exceed the 500-line limit:',
+      ...oversizeFiles.map(f => `  - ${f}`),
+      '',
+      'You MUST refactor these files into smaller components (e.g., extract sections into new files) BEFORE attempting to fix any visual regressions or logic bugs. Editing oversized files leads to duplications and stray characters.',
+    ].join('\\n');
+    return baseMessage + warning;
+  }
+
+  return baseMessage;
+}
+
+/**
+ * Checks for modified files that exceed the 500-line limit.
+ */
+async function checkOversizeFiles(sandbox: Sandbox): Promise<string[]> {
+  const wd = SandboxService.WORK_DIR;
+  const script = `
+    cd ${wd}
+    # Get modified files (unstaged + staged) or just check common large files if no diff
+    files=$(git diff --name-only HEAD || find src -name "*.tsx" -o -name "*.ts" | head -n 20)
+    oversize=""
+    for f in $files; do
+      if [ -f "$f" ]; then
+        lines=$(wc -l < "$f" | tr -d ' ')
+        if [ "$lines" -gt 500 ]; then
+          oversize="$oversize$f ($lines lines)\\n"
+        fi
+      fi
+    done
+    echo -n "$oversize"
+  `;
+  try {
+    const res = await sandbox.runCommand('sh', ['-c', script]);
+    const out = await res.stdout();
+    return out.split('\\n').filter(line => line.trim().length > 0);
+  } catch (e) {
+    console.warn('[CronStep] Failed to check oversize files:', e);
+    return [];
+  }
 }
 
 /**
@@ -247,7 +291,10 @@ RULES:
   1. ALWAYS THINK OUT LOUD: You MUST output a brief text explanation of your reasoning and plan BEFORE invoking any tool. Never output just a tool call without text.
   2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
   3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
-- Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST use sandbox_push_checkpoint before finishing the step when you changed the repo (see CHECKPOINTS below). Use sandbox_restore_checkpoint (action=list | restore) only if you need to rewind locally.
+  4. DATA VS UI RULE: If visual feedback shows "Missing Content" or empty lists, DO NOT change CSS/UI first. Verify the API response, database seed, and console logs. You might be trying to fix a data problem with CSS. You can use \`sandbox_read_logs\` to check server/console logs if needed.
+  5. CIRCUIT BREAKER: If you attempt to fix the same visual regression or UI bug 3 times and fail, YOU MUST STOP. Revert your last broken changes, mark the step as blocked, and explain the technical reason. Do not enter infinite loops.
+  6. FILE SIZE LIMIT: You MUST respect the 500-line limit per file. If a file is too large, refactor it into smaller components BEFORE applying fixes. Duplications and stray characters occur when editing files that are too large.
+- Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST use sandbox_push_checkpoint before finishing the step when you changed the repo (see CHECKPOINTS below). Use sandbox_restore_checkpoint (action=list | restore) only if you need to rewind locally. Use sandbox_read_logs to read server and console logs.
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
 - CRITICAL: Do NOT mock data or use hardcoded responses in the UI unless explicitly requested. You MUST integrate with real backend APIs and databases. If a feature is transactional (e.g., booking, creating, updating), you MUST implement the full end-to-end flow.
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the backend and frontend. Do NOT use fake "isLoggedIn = true" states.
@@ -265,6 +312,9 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   const fullTools = routeTools(
     getAssistantTools(site_id, user_id, instance_id, context.customTools),
   );
+  
+  // Añadir explícitamente instance_logs a las herramientas disponibles en el prompt
+  const hasLogsTool = fullTools.some(t => t.name === 'tool_lookup' || t.name === 'instance_logs');
   const initialUser = {
     role: 'user' as const,
     content: `Execute step ${step.order}: ${step.title}. ${step.instructions}`,
@@ -300,9 +350,10 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         }
       }
       if (lastSignals) {
+        const oversizeFiles = await checkOversizeFiles(sandbox);
         currentMessages = [
           ...currentMessages,
-          { role: 'user', content: buildGateRetryUserMessage(lastSignals) },
+          { role: 'user', content: buildGateRetryUserMessage(lastSignals, oversizeFiles) },
         ];
         await logCronInfrastructureEvent(audit, {
           event: CronInfraEvent.STEP_STATUS,
@@ -317,6 +368,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
             categories_failed: lastSignals.categories_failed,
             error_excerpt: (lastGateError || '').slice(0, 500),
             used_budgets: { ...used },
+            oversize_files: oversizeFiles,
           },
         });
       }

@@ -30,7 +30,7 @@ import type { CronAuditContext } from '@/lib/services/cron-audit-log';
  * Always-on (visible schemas):
  *   - Sandbox + skills: skill_lookup, sandbox_run_command, sandbox_read_file,
  *     sandbox_list_files, sandbox_write_file, sandbox_push/restore_checkpoint,
- *     plus any tool whose name starts with "sandbox_" or "qa_".
+ *     sandbox_read_logs, plus any tool whose name starts with "sandbox_" or "qa_".
  *   - Plan + status contract: instance_plan, requirement_status, requirements.
  *   - The router itself: tool_lookup.
  *

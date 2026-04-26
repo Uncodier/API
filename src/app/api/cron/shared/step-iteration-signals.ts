@@ -105,7 +105,7 @@ export type VisualSignal = {
   pass: boolean;
   summary?: string;
   defects: VisualDefect[];
-  screenshots: Array<{ route: string; viewport: string; url: string }>;
+  screenshots: Array<{ route: string; viewport: string; url: string; dom_snippet?: string }>;
 };
 
 export type DeploySignal = {
@@ -302,9 +302,12 @@ function formatVisual(s: VisualSignal): string {
     parts.push('screenshots:');
     for (const sh of s.screenshots) {
       parts.push(`  - ${sh.route} (${sh.viewport}): ${sh.url}`);
+      if (sh.dom_snippet) {
+        parts.push(`    dom_snippet: ${sh.dom_snippet}`);
+      }
     }
   }
-  return section('VISUAL CRITIC', parts.join('\n'));
+  return section('VISUAL CRITIC', parts.join('\\n'));
 }
 
 function formatDeploy(s: DeploySignal): string {

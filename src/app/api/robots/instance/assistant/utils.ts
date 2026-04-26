@@ -57,6 +57,7 @@ import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/as
 import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
 import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
 import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
+import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -265,6 +266,7 @@ export const getAssistantTools = (
     audienceTool(siteId, userId ?? '', instanceId),
     sendBulkMessagesTool(siteId),
     publishTool(siteId, userId ?? '', instanceId),
+    sandboxReadLogsTool(),
   ];
 
   if (agentType === 'gear') {

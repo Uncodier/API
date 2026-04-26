@@ -48,6 +48,7 @@ export type VisualProbeScreenshot = {
   viewport: string;
   url: string;
   storage_path?: string;
+  dom_snippet?: string;
 };
 
 export type VisualProbeResult = {
@@ -304,10 +305,44 @@ async function run() {
 
         try {
           const buf = await page.screenshot({ type: 'png', fullPage: true });
+          
+          // Extraer un DOM snippet simplificado para contexto del agente
+          let domSnippet = '';
+          try {
+            domSnippet = await page.evaluate(() => {
+              const body = document.body.cloneNode(true);
+              // Limpiar elementos ruidosos
+              const tagsToRemove = ['script', 'style', 'svg', 'iframe', 'noscript'];
+              tagsToRemove.forEach(tag => {
+                const elements = body.querySelectorAll(tag);
+                elements.forEach(el => el.parentNode?.removeChild(el));
+              });
+              // Limpiar atributos ruidosos
+              const allElements = body.querySelectorAll('*');
+              allElements.forEach(el => {
+                el.removeAttribute('class');
+                el.removeAttribute('style');
+                el.removeAttribute('data-reactroot');
+              });
+              
+              const html = body.innerHTML.replace(/\\s+/g, ' ').trim();
+              // Truncar a 2500 caracteres para no saturar el context window
+              return html.length > 2500 ? html.substring(0, 2500) + '... [TRUNCATED]' : html;
+            });
+          } catch (e) {
+            console.error(\`[VisualProbe] Failed to extract DOM for \${safeRoute}: \${e.message}\`);
+          }
+
           if (buf && buf.length > 0) {
             const up = await uploadScreenshot(buf, safeRoute, viewport.name);
             if (up.url) {
-              screenshots.push({ route: safeRoute, viewport: viewport.name, url: up.url, storage_path: up.storage_path });
+              screenshots.push({ 
+                route: safeRoute, 
+                viewport: viewport.name, 
+                url: up.url, 
+                storage_path: up.storage_path,
+                dom_snippet: domSnippet 
+              });
             } else {
               console.error(\`[VisualProbe] Upload failed for \${safeRoute}: \${up.error}\`);
             }
@@ -456,7 +491,12 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
     ok: screenshots.length > 0,
     pass: screenshots.length > 0 && !hasErrors,
     defects: [],
-    screenshots: screenshots.map((s) => ({ route: s.route, viewport: s.viewport, url: s.url })),
+    screenshots: screenshots.map((s) => ({ 
+      route: s.route, 
+      viewport: s.viewport, 
+      url: s.url,
+      dom_snippet: s.dom_snippet 
+    })),
   };
 
   return {

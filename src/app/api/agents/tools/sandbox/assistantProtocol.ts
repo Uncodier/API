@@ -14,6 +14,7 @@ import { gitBindingBranchTreeUrl } from '@/lib/services/requirement-git-binding'
 import { sandboxRestoreCheckpointTool } from '@/app/api/agents/tools/sandbox/sandbox-checkpoint-restore';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { sandboxCodeSearchTool } from '@/app/api/agents/tools/sandbox/code-search-tool';
+import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/assistantProtocol';
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 
 const WORK_DIR = SandboxService.WORK_DIR;
@@ -172,6 +173,138 @@ export function sandboxReadFileTool(sandbox: Sandbox) {
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         throw new Error(`Failed to read file: ${msg}`);
+      }
+    }
+  };
+}
+
+export function sandboxEditFileTool(sandbox: Sandbox) {
+  return {
+    name: 'sandbox_edit_file',
+    description: 'Performs exact string replacements in a file in the Vercel Sandbox filesystem. Use this instead of sandbox_write_file to edit parts of large files without overwriting the whole file.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: `File path relative to ${WORK_DIR} (e.g. "src/app/foo/page.tsx") or absolute.`,
+        },
+        old_string: { type: 'string', description: 'The exact text to replace. Must be unique in the file.' },
+        new_string: { type: 'string', description: 'The text to replace it with.' }
+      },
+      required: ['path', 'old_string', 'new_string']
+    },
+    execute: async (args: { path: string, old_string: string, new_string: string }) => {
+      let resolved = resolvePath(args.path, WORK_DIR);
+      resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
+
+      try {
+        const content = await sandbox.fs.readFile(resolved, 'utf8');
+        
+        if (!content.includes(args.old_string)) {
+          return { 
+            success: false, 
+            error: 'old_string not found in file. Make sure you provided the exact text including whitespace and indentation.' 
+          };
+        }
+
+        const occurrences = content.split(args.old_string).length - 1;
+        if (occurrences > 1) {
+          return {
+            success: false,
+            error: `old_string is not unique (found ${occurrences} times). Please provide a larger string with more surrounding context.`
+          };
+        }
+
+        const newContent = content.replace(args.old_string, args.new_string);
+        await sandbox.writeFiles([{ path: resolved, content: newContent }]);
+        
+        return { success: true, path: resolved };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to edit file: ${msg}`);
+      }
+    }
+  };
+}
+
+export function sandboxDeleteFileTool(sandbox: Sandbox) {
+  return {
+    name: 'sandbox_delete_file',
+    description: 'Deletes a file or directory in the Vercel Sandbox filesystem.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: {
+          type: 'string',
+          description: `File or directory path relative to ${WORK_DIR} (e.g. "src/app/foo/page.tsx") or absolute.`,
+        }
+      },
+      required: ['path']
+    },
+    execute: async (args: { path: string }) => {
+      let resolved = resolvePath(args.path, WORK_DIR);
+      resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
+
+      try {
+        const result = await sandbox.runCommand('rm', ['-rf', resolved]);
+        if (result.exitCode !== 0) {
+          throw new Error(`Failed to delete: ${await result.stderr()}`);
+        }
+        return { success: true, path: resolved };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to delete file: ${msg}`);
+      }
+    }
+  };
+}
+
+export function sandboxReadLintsTool(sandbox: Sandbox) {
+  return {
+    name: 'sandbox_read_lints',
+    description: 'Read and display linter and TypeScript errors from the Vercel Sandbox workspace. Use this to quickly verify your changes without waiting for a full build.',
+    parameters: {
+      type: 'object',
+      properties: {
+        paths: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Optional array of file paths to check. If empty, checks the entire workspace.',
+        }
+      }
+    },
+    execute: async (args: { paths?: string[] }) => {
+      try {
+        const pathsArg = (args.paths && args.paths.length > 0) ? args.paths.join(' ') : '';
+        
+        // Ejecutar tsc para errores de TypeScript (sin emitir archivos)
+        const tscCmd = `npx tsc --noEmit ${pathsArg}`;
+        const tscResult = await sandbox.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${tscCmd}`]);
+        const tscOutput = await tscResult.stdout();
+        const tscError = await tscResult.stderr();
+        
+        // Ejecutar eslint
+        const eslintCmd = `npx eslint ${pathsArg || '.'} --format stylish`;
+        const eslintResult = await sandbox.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${eslintCmd}`]);
+        const eslintOutput = await eslintResult.stdout();
+        const eslintError = await eslintResult.stderr();
+
+        const combinedOutput = [
+          '--- TypeScript Diagnostics ---',
+          tscOutput.trim() || tscError.trim() || 'No TypeScript errors.',
+          '',
+          '--- ESLint Diagnostics ---',
+          eslintOutput.trim() || eslintError.trim() || 'No ESLint errors.'
+        ].join('\n');
+
+        return { 
+          success: tscResult.exitCode === 0 && eslintResult.exitCode === 0,
+          diagnostics: combinedOutput 
+        };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to read lints: ${msg}`);
       }
     }
   };
@@ -404,10 +537,14 @@ export function getSandboxTools(
     sandboxCodeSearchTool(sandbox),
     sandboxRunCommandTool(sandbox),
     sandboxWriteFileTool(sandbox),
+    sandboxEditFileTool(sandbox),
+    sandboxDeleteFileTool(sandbox),
     sandboxReadFileTool(sandbox),
     sandboxListFilesTool(sandbox),
+    sandboxReadLintsTool(sandbox),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx?.instance_id),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
+    sandboxReadLogsTool(sandbox),
     ...getQaSandboxTools(sandbox, requirementId),
   ];
 }
