@@ -141,7 +141,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
 
   let q = supabaseAdmin
     .from('requirement_status')
-    .select('id')
+    .select('id, preview_url')
     .eq('requirement_id', requirementId)
     .order('created_at', { ascending: false })
     .limit(1);
@@ -158,6 +158,7 @@ export async function syncLatestRequirementStatusWithPreview(params: {
   }
 
   const rowId = rows?.[0]?.id;
+  const existingPreviewUrl = rows?.[0]?.preview_url;
   if (!rowId) {
     console.warn('[RequirementStatusSync] No requirement_status row to update for', requirementId);
     return { updated: false, preview_url, repo_url };
@@ -180,24 +181,13 @@ export async function syncLatestRequirementStatusWithPreview(params: {
     patch.source_code = String(params.source_code).trim();
   }
 
-  // Also carry over active_sandbox_id when creating a new row
-  let active_sandbox_id: string | null = null;
-  if (rowId) {
-    const { data: rowData } = await supabaseAdmin
-      .from('requirement_status')
-      .select('active_sandbox_id')
-      .eq('id', rowId)
-      .single();
-    active_sandbox_id = rowData?.active_sandbox_id || null;
-  }
-
   const { error: upErr } = await supabaseAdmin.from('requirement_status').update(patch).eq('id', rowId);
   if (upErr) {
     console.warn('[RequirementStatusSync] Update failed:', upErr.message);
     return { updated: false, preview_url, repo_url };
   }
 
-  if (preview_url) {
+  if (preview_url && preview_url !== existingPreviewUrl) {
     await logInstancePreviewUrlRecorded({
       siteId: resolvedSiteId,
       instanceId: validInstance ?? instanceId ?? null,
@@ -250,24 +240,27 @@ export async function patchLatestRequirementStatusColumns(params: {
   const validInstance = instanceId && UUID_RE.test(instanceId) ? instanceId : null;
 
   let rowId: string | null = null;
+  let existingPreviewUrl: string | null = null;
   if (validInstance) {
     const { data: scoped } = await supabaseAdmin
       .from('requirement_status')
-      .select('id')
+      .select('id, preview_url')
       .eq('requirement_id', requirementId)
       .eq('instance_id', validInstance)
       .order('created_at', { ascending: false })
       .limit(1);
     rowId = scoped?.[0]?.id ?? null;
+    existingPreviewUrl = scoped?.[0]?.preview_url ?? null;
   }
   if (!rowId) {
     const { data: anyRow } = await supabaseAdmin
       .from('requirement_status')
-      .select('id')
+      .select('id, preview_url')
       .eq('requirement_id', requirementId)
       .order('created_at', { ascending: false })
       .limit(1);
     rowId = anyRow?.[0]?.id ?? null;
+    existingPreviewUrl = anyRow?.[0]?.preview_url ?? null;
   }
 
   if (rowId) {
@@ -277,7 +270,7 @@ export async function patchLatestRequirementStatusColumns(params: {
       return { updated: false, error: upErr.message };
     }
     console.log(`[RequirementStatusPatch] Updated ${rowId} (${Object.keys(patch).join(', ')})`);
-    if (columns.preview_url?.trim()) {
+    if (columns.preview_url?.trim() && columns.preview_url.trim() !== existingPreviewUrl) {
       await logInstancePreviewUrlRecorded({
         siteId: resolvedSiteId,
         instanceId: validInstance ?? instanceId ?? null,
