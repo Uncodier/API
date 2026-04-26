@@ -30,8 +30,6 @@ import { runArchetypePostGate, extractBacklogItemId } from './step-archetype-pos
 import { detectActionLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import { syncProgressEntry } from '@/lib/services/requirement-ground-truth';
 import { logAssumption } from '@/lib/services/requirement-backlog';
-import { syncProgressEntry } from '@/lib/services/requirement-ground-truth';
-import { logAssumption } from '@/lib/services/requirement-backlog';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
