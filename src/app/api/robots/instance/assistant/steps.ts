@@ -21,7 +21,7 @@ export interface AssistantContext {
   executionOptions: {
     use_sdk_tools: boolean;
     /** Logging/credits label (NOT the underlying LLM provider). */
-    provider: 'azure' | 'openai';
+    provider: 'azure' | 'openai' | 'gemini';
     instance_id: string;
     site_id: string;
     user_id: string;

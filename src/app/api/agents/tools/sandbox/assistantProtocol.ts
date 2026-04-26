@@ -501,15 +501,6 @@ export function sandboxPushCheckpointTool(
           ...(statusPatchError ? { requirement_status_error: statusPatchError } : {}),
           preview_url: sync?.preview_url ?? null,
           repo_url: sync?.repo_url,
-          ...(sourceArchive?.ok === true
-            ? {
-                source_archive_url: sourceArchive.public_url,
-                source_archive_file: sourceArchive.file,
-                source_archive_bytes: sourceArchive.size_bytes,
-              }
-            : sourceArchive?.ok === false
-              ? { source_upload_error: sourceArchive.error }
-              : {}),
           message: result.pushed
             ? `Pushed to origin on branch "${result.branch}".${previewNote}${sourceNote}${patchNote}`
             : `No push performed (clean tree in sync, or could not publish). branch=${result.branch}.${hint}${previewNote}${sourceNote}${patchNote}`,

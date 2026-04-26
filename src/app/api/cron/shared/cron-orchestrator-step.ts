@@ -194,7 +194,7 @@ export async function runOrchestratorStep(params: {
         { id: instanceId, site_id, user_id, requirement_id: reqId },
         {
           use_sdk_tools: false,
-          provider: 'openai',
+          provider: 'gemini',
           instance_id: instanceId,
           site_id,
           user_id,

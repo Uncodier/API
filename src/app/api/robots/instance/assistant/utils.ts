@@ -170,7 +170,7 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 export function determineInstanceCapabilities(instance: any, use_sdk_tools: boolean): {
   isScrapybaraInstance: boolean;
   shouldUseSDKTools: boolean;
-  provider: 'azure' | 'openai';
+  provider: 'azure' | 'openai' | 'gemini';
   capabilities: {
     hasPCTools: boolean;
     hasBrowserAutomation: boolean;
@@ -179,9 +179,9 @@ export function determineInstanceCapabilities(instance: any, use_sdk_tools: bool
   };
 } {
   const providerEnv = process.env.ROBOT_SDK_PROVIDER;
-  const provider = (providerEnv === 'azure' || providerEnv === 'openai') 
+  const provider = (providerEnv === 'azure' || providerEnv === 'openai' || providerEnv === 'gemini') 
     ? providerEnv 
-    : 'azure';
+    : 'gemini';
   
   // Scrapybara is disabled
   const isScrapybaraInstance = false;

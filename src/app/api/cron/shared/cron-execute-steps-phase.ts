@@ -312,7 +312,7 @@ export async function executeStepsPhaseStep(params: {
         customTools: [...sandboxTools],
         executionOptions: {
           use_sdk_tools: false,
-          provider: 'openai',
+          provider: 'gemini',
           instance_id: instanceId,
           site_id,
           user_id,

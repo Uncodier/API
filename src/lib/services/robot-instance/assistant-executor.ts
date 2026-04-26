@@ -90,9 +90,9 @@ export interface AssistantExecutionOptions {
   use_sdk_tools?: boolean;
   /**
    * Label used for credits/logging (NOT the underlying LLM provider).
-   * Kept as 'azure' | 'openai' for backwards-compatibility.
+   * Kept as 'azure' | 'openai' | 'gemini' for backwards-compatibility.
    */
-  provider?: 'azure' | 'openai';
+  provider?: 'azure' | 'openai' | 'gemini';
   system_prompt?: string;
   custom_tools?: any[];
   instance_id?: string;
@@ -150,7 +150,7 @@ export async function executeAssistantStep(
     user_id,
   } = options || {};
   
-  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'azure';
+  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
 
   if (site_id) {
     try {
@@ -418,7 +418,7 @@ export async function executeAssistant(
     user_id,
   } = options || {};
   
-  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'azure';
+  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
 
   if (site_id) {
     try {
