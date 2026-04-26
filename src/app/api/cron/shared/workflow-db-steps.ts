@@ -82,3 +82,18 @@ export async function recordRequirementBlockedStep(
     return { ok: false, error: msg };
   }
 }
+
+export async function resetCronAttemptsStep(requirementId: string): Promise<void> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    if (data?.metadata) {
+      await supabaseAdmin.from('requirements').update({
+        metadata: { ...data.metadata, cron_attempts: 0 }
+      }).eq('id', requirementId);
+    }
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to reset cron_attempts for req ${requirementId}:`, e);
+  }
+}

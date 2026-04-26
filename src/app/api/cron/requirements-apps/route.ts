@@ -95,8 +95,27 @@ export async function GET(req: Request) {
 
       console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
+      const currentAttempts = requirement.metadata?.cron_attempts || 0;
+      if (currentAttempts >= 3) {
+        console.log(`[Cron Apps] Skipping ${reqId} — blocked due to 3 consecutive failures without progress.`);
+        await supabaseAdmin.from('requirements').update({ 
+          status: 'blocked',
+          updated_at: new Date().toISOString()
+        }).eq('id', reqId);
+        await releaseRunLock(reqId, runLock.runId);
+        results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker' });
+        continue;
+      }
+
       if (requirement.status === 'backlog') {
-        await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
+        await supabaseAdmin.from('requirements').update({ 
+          status: 'in-progress',
+          metadata: { ...requirement.metadata, cron_attempts: currentAttempts + 1 }
+        }).eq('id', reqId);
+      } else {
+        await supabaseAdmin.from('requirements').update({ 
+          metadata: { ...requirement.metadata, cron_attempts: currentAttempts + 1 }
+        }).eq('id', reqId);
       }
 
       // Find or create remote_instance

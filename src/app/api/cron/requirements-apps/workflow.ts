@@ -26,6 +26,7 @@ import { detectAdminLoopStep } from '../shared/admin-loop-step';
 import {
   getBacklogSnapshotStep,
   recordRequirementBlockedStep,
+  resetCronAttemptsStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -366,6 +367,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     postFinallyBuildError,
     audit: cronAudit,
   });
+
+  if (didPush || planCompleted) {
+    await resetCronAttemptsStep(reqId);
+  }
 
   // Sandbox stop happens in the outer `finally` — never in the happy path.
   // Keeping a single exit point guarantees we never leak a VM even when a

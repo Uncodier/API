@@ -172,7 +172,17 @@ export async function runOrchestratorStep(params: {
 
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-      console.log(`[CronStep] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
+      console.log(`[CronStep] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Saving WIP state and halting to prevent Vercel timeout.`);
+      try {
+        const { SandboxService } = await import('@/lib/services/sandbox-service');
+        await SandboxService.commitAndPush(sandbox, {
+          requirementId: reqId,
+          title: requirementTitle || reqId,
+          message: `WIP: Orchestrator paused due to time limit`,
+        });
+      } catch (e) {
+        console.warn(`[CronStep] Failed to save Orchestrator WIP state:`, e);
+      }
       timedOut = true;
       break;
     }

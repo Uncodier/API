@@ -200,8 +200,11 @@ export async function createRequirementStatusCore(params: {
     throw new Error(`Error inserting requirement status: ${error.message}`);
   }
 
-  if (effectiveStatus === 'completed' || effectiveStatus === 'done' || effectiveStatus === 'in-progress') {
-    const mappedStatus = effectiveStatus === 'in-progress' ? 'in-progress' : 'done';
+  if (effectiveStatus === 'completed' || effectiveStatus === 'done' || effectiveStatus === 'in-progress' || effectiveStatus === 'blocked' || effectiveStatus === 'failed') {
+    let mappedStatus = 'in-progress';
+    if (effectiveStatus === 'completed' || effectiveStatus === 'done') mappedStatus = 'done';
+    if (effectiveStatus === 'blocked' || effectiveStatus === 'failed') mappedStatus = 'blocked';
+    
     await supabaseAdmin
       .from('requirements')
       .update({ status: mappedStatus, updated_at: new Date().toISOString() })

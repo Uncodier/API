@@ -17,6 +17,8 @@ import type { GitRepoKind } from './cron-commit-helpers';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
+import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import {
   deriveCategoriesFailed,
   deriveRetryBucket,
@@ -298,6 +300,7 @@ RULES:
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
 - CRITICAL: Do NOT mock data or use hardcoded responses in the UI unless explicitly requested. You MUST integrate with real backend APIs and databases. If a feature is transactional (e.g., booking, creating, updating), you MUST implement the full end-to-end flow.
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the backend and frontend. Do NOT use fake "isLoggedIn = true" states.
+- CRITICAL: TDD & DB MIGRATIONS. You MUST write Jest tests and Supabase migrations before marking the step as complete. The Judge will reject core items without passing tests.
 
 ${TOOL_LOOKUP_HINT}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
@@ -391,13 +394,34 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
         turns++;
         console.log(`[CronStep] Step ${step.order} attempt ${totalAttempts} turn ${turns}`);
-        lastResult = await executeAssistantStep(currentMessages, context.instance, {
-          ...context.executionOptions,
-          system_prompt: systemPromptThisRound,
-          custom_tools: fullTools,
-        });
-        currentMessages = lastResult.messages;
-        isDone = lastResult.isDone;
+        try {
+          lastResult = await executeAssistantStep(currentMessages, context.instance, {
+            ...context.executionOptions,
+            system_prompt: systemPromptThisRound,
+            custom_tools: fullTools,
+          });
+          currentMessages = lastResult.messages;
+          isDone = lastResult.isDone;
+        } catch (err: any) {
+          if (isSandboxGoneError(err?.message || String(err))) {
+            console.warn(`[CronStep] Sandbox gone mid-step (turn ${turns}). Reprovisioning and retrying turn...`);
+            const re = await connectOrRecreateRequirementSandbox({
+              sandboxId: sandbox.sandboxId,
+              requirementId,
+              instanceType: execOpts?.gitRepoKind === 'automation' ? 'automation' : 'applications',
+              title: plan.title || step.title || requirementId,
+              audit,
+            });
+            sandbox = re.sandbox;
+            if (execOpts?.sandboxActiveRef) {
+              execOpts.sandboxActiveRef.current = sandbox;
+            }
+            // Re-run the turn
+            turns--;
+            continue;
+          }
+          throw err;
+        }
       }
 
       const planTitle = plan.title || step.title || 'plan';
@@ -406,7 +430,16 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       
       let gate: Awaited<ReturnType<typeof runGateForFlow>>;
       if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-        console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns.`);
+        console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns. Saving WIP state.`);
+        try {
+          await SandboxService.commitAndPush(gateSandbox, {
+            requirementId,
+            title: planTitle,
+            message: `WIP: Paused due to time limit on step ${step.order}`,
+          });
+        } catch (e) {
+          console.warn(`[CronStep] Failed to save WIP state:`, e);
+        }
         gate = { ok: false, error: 'Execution time limit reached before validation. Will resume next cycle.', flow, signals: [] };
       } else {
         gate = await runGateForFlow({

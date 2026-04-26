@@ -242,6 +242,20 @@ function criticAppRules(ctx: ArchetypeContext): CriticSuggestion[] {
       fix_hint: `Core item kind=${ctx.item.kind} but commit only modified the root landing / components / globals.css. This is the "map-instead-of-product" pattern. Ship the actual feature: a nested page under src/app/<feature>/page.tsx, an API handler under src/app/api/<feature>/route.ts, or a real middleware — or downgrade to tier='ornamental'.`,
     });
   }
+
+  const text = `${ctx.item.title} ${ctx.item.acceptance?.join(' ') || ''}`.toLowerCase();
+  const involvesDb = ctx.item.kind === 'crud' || text.includes('database') || text.includes('supabase') || text.includes('table') || text.includes('schema');
+  if (involvesDb && isTier(ctx.item, 'core')) {
+    const touchedDb = files.some(f => f.includes('supabase/migrations/') || f.includes('schema') || f.includes('database'));
+    if (!touchedDb) {
+      out.push({
+        rule: 'missing-db-schema',
+        severity: 'major',
+        fix_hint: `Item appears to involve database/supabase (kind=${ctx.item.kind}), but no migration or schema files were touched. Ensure you create Supabase migrations if adding new tables.`,
+      });
+    }
+  }
+
   return out;
 }
 
@@ -358,6 +372,22 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
     if (isAdminOnlyDiff(evidence.changed_files ?? [])) {
       return rejected(item, 'core item commit is admin-only (docs/evidence/ground-truth). Ship code under src/** or set tier=ornamental.');
     }
+    
+    // TDD Assertion: Core items must have passing tests
+    const hasPassingTests = evidence.tests?.some((t) => t.exit_code === 0 && t.ran_after_changes) ?? false;
+    if (!hasPassingTests) {
+      return rejected(item, 'core item requires successful test evidence — write and run Jest tests before claiming done');
+    }
+
+    const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();
+    const involvesDb = item.kind === 'crud' || text.includes('database') || text.includes('supabase') || text.includes('table') || text.includes('schema');
+    if (involvesDb) {
+      const touchedDb = (evidence.changed_files ?? []).some(f => f.includes('supabase/migrations/') || f.includes('schema') || f.includes('database'));
+      if (!touchedDb) {
+        return rejected(item, 'core item requires database/schema changes, but no migration or schema files were touched. Create Supabase migrations or schema definitions.');
+      }
+    }
+
     if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
       const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
       const reason = kr.length
@@ -407,6 +437,22 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
     if (!validateAcceptance(item.acceptance).has_any_executable) {
       return rejected(item, 'backend core item has narrative-only acceptance — add a concrete anchor (route/verb/status)');
     }
+    
+    // TDD Assertion: Core items must have passing tests
+    const hasPassingTests = evidence.tests?.some((t) => t.exit_code === 0 && t.ran_after_changes) ?? false;
+    if (!hasPassingTests) {
+      return rejected(item, 'backend core item requires successful test evidence — write and run Jest tests before claiming done');
+    }
+
+    const text = `${item.title} ${item.acceptance?.join(' ') || ''}`.toLowerCase();
+    const involvesDb = item.kind === 'crud' || text.includes('database') || text.includes('supabase') || text.includes('table') || text.includes('schema');
+    if (involvesDb) {
+      const touchedDb = (evidence.changed_files ?? []).some(f => f.includes('supabase/migrations/') || f.includes('schema') || f.includes('database'));
+      if (!touchedDb) {
+        return rejected(item, 'backend core item requires database/schema changes, but no migration or schema files were touched. Create Supabase migrations or schema definitions.');
+      }
+    }
+
     if (evidence.feature_coverage && evidence.feature_coverage.ok === false) {
       const kr = (evidence.feature_coverage.kind_requirements ?? []).filter((k) => !k.satisfied);
       const reason = kr.length
