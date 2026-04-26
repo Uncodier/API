@@ -30,6 +30,9 @@ const UpdateInstancePlanSchema = z.object({
     retry_count: z.number().int().optional(),
     error_message: z.string().optional().nullable(),
     artifacts: z.array(z.any()).optional().nullable(),
+    role: z.string().optional(),
+    skill: z.string().optional(),
+    test_command: z.string().optional(),
     /** Set when sandbox_push_checkpoint was invoked during cron executor runs */
     checkpoint_tool_invoked_at: z.string().optional().nullable(),
     checkpoint_tool_calls: z.number().int().optional(),

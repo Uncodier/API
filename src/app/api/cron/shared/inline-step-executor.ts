@@ -300,7 +300,7 @@ RULES:
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
 - CRITICAL: Do NOT mock data or use hardcoded responses in the UI unless explicitly requested. You MUST integrate with real backend APIs and databases. If a feature is transactional (e.g., booking, creating, updating), you MUST implement the full end-to-end flow.
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the backend and frontend. Do NOT use fake "isLoggedIn = true" states.
-- CRITICAL: TDD & DB MIGRATIONS. You MUST write Jest tests and Supabase migrations before marking the step as complete. The Judge will reject core items without passing tests.
+- CRITICAL: TDD & DB MIGRATIONS. You MUST write Jest tests and Supabase migrations before marking the step as complete. Run tests using: \`${step.test_command || 'npm run test'}\`. The Judge will reject core items without passing tests.
 
 ${TOOL_LOOKUP_HINT}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
@@ -400,6 +400,17 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
             system_prompt: systemPromptThisRound,
             custom_tools: fullTools,
           });
+          
+          // If any tool returned a sandbox gone error to the LLM, intercept it
+          // so we can reprovision the sandbox instead of letting the LLM give up.
+          const hasSandboxGoneError = lastResult.messages?.some((m: any) => 
+            m.role === 'tool' && isSandboxGoneError(typeof m.content === 'string' ? m.content : JSON.stringify(m.content))
+          );
+          
+          if (hasSandboxGoneError) {
+            throw new Error('410 Gone / sandbox_stopped');
+          }
+          
           currentMessages = lastResult.messages;
           isDone = lastResult.isDone;
         } catch (err: any) {

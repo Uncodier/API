@@ -39,6 +39,7 @@ Before calling `instance_plan action="create"`, verify:
 - [ ] Validation (`makinari-fase-validacion`) runs before reporting.
 - [ ] Reporting (`makinari-fase-reporteado`) is the final step.
 - [ ] Each step names either `skill` (preferred) or `role`. Never leave both empty.
+- [ ] Each step specifies a `test_command` appropriate for the skill (e.g., `"npm run test:backend"` for `makinari-rol-backend`, `"npm run test:frontend"` for `makinari-rol-frontend`). If omitted, it defaults to `"npm run test"`.
 - [ ] `instructions` on each step is concrete (specific files, specific endpoints, specific assertions) — no "implement the feature".
 
 ### 3. Plan templates by requirement type
@@ -52,7 +53,7 @@ Before calling `instance_plan action="create"`, verify:
   "steps": [
     { "id": "step_base", "order": 1, "title": "Project base", "skill": "makinari-obj-template-selection", "instructions": "Pick Vitrina vs generic app per req section 8; git checkout; append BASE: <branch> to instructions." },
     { "id": "step_invest", "order": 2, "title": "Investigation", "skill": "makinari-fase-investigacion", "instructions": "Produce Investigation section per output contract." },
-    { "id": "step_fe", "order": 3, "title": "Frontend", "skill": "makinari-rol-frontend", "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers." },
+    { "id": "step_fe", "order": 3, "title": "Frontend", "skill": "makinari-rol-frontend", "test_command": "npm run test:frontend", "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers." },
     { "id": "step_qa", "order": 4, "title": "QA", "skill": "makinari-rol-qa", "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json." },
     { "id": "step_val", "order": 5, "title": "Validation", "skill": "makinari-fase-validacion", "instructions": "npm run build, verify preview, write test_results.json." },
     { "id": "step_report", "order": 6, "title": "Report", "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with preview URL." }
@@ -69,7 +70,7 @@ Before calling `instance_plan action="create"`, verify:
   "steps": [
     { "id": "step_base", "order": 1, "skill": "makinari-obj-template-selection", "instructions": "Select automation runner Vitrina branch." },
     { "id": "step_invest", "order": 2, "skill": "makinari-fase-investigacion", "instructions": "Confirm endpoint shape + env vars per req section 6.1 and 6.3." },
-    { "id": "step_be", "order": 3, "skill": "makinari-rol-backend", "instructions": "Implement endpoint with ?mode=test and ?mode=prod per req section 6.1." },
+    { "id": "step_be", "order": 3, "skill": "makinari-rol-backend", "test_command": "npm run test:backend", "instructions": "Implement endpoint with ?mode=test and ?mode=prod per req section 6.1." },
     { "id": "step_obj", "order": 4, "skill": "makinari-obj-automatizacion", "instructions": "Inject runner UI via Vitrina data.json." },
     { "id": "step_qa", "order": 5, "skill": "makinari-rol-qa", "instructions": "Scenario exercises mode=test from the runner UI and asserts response shape." },
     { "id": "step_val", "order": 6, "skill": "makinari-fase-validacion", "instructions": "curl mode=test, write test_results.json." },

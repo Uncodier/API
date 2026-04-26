@@ -33,6 +33,7 @@ const CreateInstancePlanSchema = z.object({
     artifacts: z.array(z.any()).optional().nullable(),
     role: z.string().optional(),
     skill: z.string().optional(),
+    test_command: z.string().optional(),
   })).optional(),
 });
 
@@ -105,6 +106,7 @@ export async function createInstancePlanCore(params: any) {
       artifacts: [],
       role: step.role || null,
       skill: step.skill || null,
+      test_command: step.test_command || null,
     }));
   }
 
