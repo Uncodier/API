@@ -104,26 +104,28 @@ export async function runRuntimeAndVisualProbes(params: {
     });
     out.runtime = buildRuntimeSignalFromProbe(runtimeProbe);
     out.api = buildApiSignalFromProbe(runtimeProbe);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.RUNTIME_PROBE,
-      level: runtimeProbe.ok ? 'info' : 'error',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe: ${summarizeRuntimeProbe(runtimeProbe).slice(0, 400)}`,
-      details: {
-        stepOrder,
-        ok: runtimeProbe.ok,
-        port: runtimeProbe.port,
-        pages: runtimeProbe.pages.map((p) => ({ path: p.path, status: p.http_status })),
-        apis: runtimeProbe.apis.map((a) => ({ method: a.method, path: a.path, status: a.http_status })),
-        server_errors: runtimeProbe.server_errors.slice(0, 10),
-        startup_error: runtimeProbe.startup_error,
-        changed_files: inferred.changedFiles.slice(0, 50),
-        visual_planned: shouldRunVisual,
-      },
-    });
-    if (runtimeProbe.apis.length) {
+    if (!runtimeProbe.ok) {
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.RUNTIME_PROBE,
+        level: 'error',
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}runtime probe: ${summarizeRuntimeProbe(runtimeProbe).slice(0, 400)}`,
+        details: {
+          stepOrder,
+          ok: runtimeProbe.ok,
+          port: runtimeProbe.port,
+          pages: runtimeProbe.pages.map((p) => ({ path: p.path, status: p.http_status })),
+          apis: runtimeProbe.apis.map((a) => ({ method: a.method, path: a.path, status: a.http_status })),
+          server_errors: runtimeProbe.server_errors.slice(0, 10),
+          startup_error: runtimeProbe.startup_error,
+          changed_files: inferred.changedFiles.slice(0, 50),
+          visual_planned: shouldRunVisual,
+        },
+      });
+    }
+    if (runtimeProbe.apis.length && !out.api?.ok) {
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.API_PROBE,
-        level: out.api.ok ? 'info' : 'warn',
+        level: 'warn',
         message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}api probe: ${runtimeProbe.apis.length} endpoint(s)`.slice(0, 400),
         details: {
           stepOrder,
@@ -161,16 +163,18 @@ export async function runRuntimeAndVisualProbes(params: {
 
   if (runtimeProbe && runtimeProbe.pages.length) {
     const hygiene = detectCopyHygieneIssues(runtimeProbe.pages);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.COPY_HYGIENE,
-      level: hygiene.ok ? 'info' : 'warn',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}copy hygiene: ${hygiene.ok ? 'OK' : `${hygiene.issues.length} leak(s)`}`.slice(0, 400),
-      details: {
-        stepOrder,
-        ok: hygiene.ok,
-        issues: hygiene.issues.slice(0, 10),
-      },
-    });
+    if (!hygiene.ok) {
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.COPY_HYGIENE,
+        level: 'warn',
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}copy hygiene: ${hygiene.issues.length} leak(s)`.slice(0, 400),
+        details: {
+          stepOrder,
+          ok: hygiene.ok,
+          issues: hygiene.issues.slice(0, 10),
+        },
+      });
+    }
     if (!hygiene.ok) {
       if (shouldRunVisual) await stopProbeServer(sandbox, runtimeProbe.port);
       return {
