@@ -211,7 +211,7 @@ Vitrina PDF — branch `feature/16ccdd2c-6636-4b38-a4fc-89ea2c9fe0cc`. Client wa
 ## 12. Backlog canonical (source of truth for progress)
 
 Starting with the harness refactor, `## 9. Execution Plan` is a **read-only
-render** of `feature_list.json` / `requirements.metadata.backlog`. You do NOT
+render** of `feature_list.json` / `requirements.backlog`. You do NOT
 track completion inside the requirement spec. Instead:
 
 - When the spec is created, emit a matching set of `BacklogItem`s via the

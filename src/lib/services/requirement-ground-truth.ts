@@ -6,7 +6,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
  *
  * The repository tree is the single source of truth for a requirement's work:
  *   - requirement.spec.md     immutable contract (overview, goals, acceptance).
- *   - feature_list.json       mirror of requirements.metadata.backlog.
+ *   - feature_list.json       mirror of requirements.backlog.
  *   - progress.md             session-by-session log (append-only).
  *   - DECISIONS.md            architecture + assumption log (append-only).
  *   - evidence/<item_id>.json structured evidence per backlog item.
@@ -116,7 +116,7 @@ function isoNow(): string {
 function loadRequirementMetadata(requirementId: string) {
   return supabaseAdmin
     .from('requirements')
-    .select('id, title, type, site_id, metadata')
+    .select('id, title, type, site_id, metadata, backlog, progress')
     .eq('id', requirementId)
     .maybeSingle();
 }
@@ -139,16 +139,14 @@ export async function writeEvidence(params: {
   // Persist in DB backlog item's evidence field (canonical).
   try {
     const { data: req } = await loadRequirementMetadata(params.requirementId);
-    const metadata = (req?.metadata ?? {}) as Record<string, any>;
-    const backlog = (metadata.backlog ?? { schema_version: 1, items: [] }) as any;
+    const backlog = (req?.backlog ?? { schema_version: 1, items: [] }) as any;
     const items: any[] = Array.isArray(backlog.items) ? backlog.items : [];
     const idx = items.findIndex((it) => it?.id === params.itemId);
     if (idx >= 0) {
       items[idx] = { ...items[idx], evidence: full };
     }
     backlog.items = items;
-    metadata.backlog = backlog;
-    await supabaseAdmin.from('requirements').update({ metadata }).eq('id', params.requirementId);
+    await supabaseAdmin.from('requirements').update({ backlog }).eq('id', params.requirementId);
   } catch (e: unknown) {
     console.warn('[GroundTruth.writeEvidence] DB persist failed:', e instanceof Error ? e.message : e);
   }
@@ -176,7 +174,7 @@ export async function syncBacklogToFile(params: {
 }): Promise<{ wrote: boolean; items: number }> {
   try {
     const { data: req } = await loadRequirementMetadata(params.requirementId);
-    const backlog = (req?.metadata as any)?.backlog;
+    const backlog = req?.backlog as any;
     if (!backlog) return { wrote: false, items: 0 };
     await writeSandboxFile(params.sandbox, params.cwd, 'feature_list.json', JSON.stringify(backlog, null, 2));
     return { wrote: true, items: Array.isArray(backlog.items) ? backlog.items.length : 0 };
@@ -216,11 +214,10 @@ export async function syncProgressEntry(params: {
   // Shadow the last N entries on the requirement metadata for quick reads.
   try {
     const { data: req } = await loadRequirementMetadata(params.requirementId);
-    const metadata = (req?.metadata ?? {}) as Record<string, any>;
-    const log: ProgressEntry[] = Array.isArray(metadata.progress_log) ? metadata.progress_log : [];
+    const log: ProgressEntry[] = Array.isArray(req?.progress) ? req.progress : [];
     log.push(entry);
-    metadata.progress_log = log.slice(-50);
-    await supabaseAdmin.from('requirements').update({ metadata }).eq('id', params.requirementId);
+    const newProgress = log.slice(-50);
+    await supabaseAdmin.from('requirements').update({ progress: newProgress }).eq('id', params.requirementId);
   } catch (e: unknown) {
     console.warn('[GroundTruth.syncProgressEntry] DB shadow failed:', e instanceof Error ? e.message : e);
   }

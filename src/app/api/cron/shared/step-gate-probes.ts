@@ -81,7 +81,18 @@ export async function runRuntimeAndVisualProbes(params: {
     inferred = { pageRoutes: [], apiRoutes: [], changedFiles: [] };
   }
 
-  const shouldRunVisual = gitRepoKind === 'applications';
+  const stepText = `${stepContext?.title || ''} ${stepContext?.instructions || ''}`.toLowerCase();
+  const isBackendOrDevops = /api|endpoint|database|migration|server|auth|backend|supabase|deploy|ci\/cd|build|push|docker|nginx|vercel|infra|devops/.test(stepText);
+  
+  const touchesFrontend = inferred.changedFiles.some(f => 
+    f.includes('src/components/') || 
+    (f.includes('src/app/') && !f.includes('/api/')) || 
+    f.endsWith('.css') || 
+    f.includes('tailwind.config') ||
+    f.includes('postcss.config')
+  );
+
+  const shouldRunVisual = gitRepoKind === 'applications' && (!isBackendOrDevops || touchesFrontend);
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {

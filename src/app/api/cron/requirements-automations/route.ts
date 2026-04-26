@@ -98,7 +98,7 @@ export async function GET(req: Request) {
       let instanceId: string | undefined;
       const { data: prevStatuses } = await supabaseAdmin
         .from('requirement_status')
-        .select('instance_id, status, message, preview_url, repo_url, created_at')
+        .select('instance_id, stage, message, preview_url, repo_url, created_at')
         .eq('requirement_id', reqId)
         .not('instance_id', 'is', null)
         .order('created_at', { ascending: false })
@@ -151,7 +151,7 @@ export async function GET(req: Request) {
 
       const latestStatus = prevStatuses?.[0];
       let blockerContext = '';
-      if (latestStatus && latestStatus.status !== 'done') {
+      if (latestStatus && latestStatus.stage !== 'done') {
         const blockers: string[] = [];
         if (latestStatus.message?.includes('preview_url returns error/404')) {
           blockers.push('CRITICAL: The deployed preview URL returns 404. The app has no working root page. Fix the root route first.');
@@ -170,7 +170,7 @@ export async function GET(req: Request) {
       const previousWorkContext = [
         blockerContext,
         (prevStatuses?.length || prevPlans?.length)
-          ? `\nPREVIOUS WORK:\n${latestStatus ? `- Latest status: ${latestStatus.status} — ${latestStatus.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
+          ? `\nPREVIOUS WORK:\n${latestStatus ? `- Latest stage: ${latestStatus.stage} — ${latestStatus.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
           : '',
       ].filter(Boolean).join('\n');
 

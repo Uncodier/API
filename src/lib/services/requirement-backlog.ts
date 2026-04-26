@@ -1,5 +1,5 @@
 /**
- * Backlog service — reads/writes `requirements.metadata.backlog` with the
+ * Backlog service — reads/writes `requirements.backlog` with the
  * WIP=1 rule enforced. The backlog is agnostic to requirement kind; phase ids
  * come from the flow registry (`requirement-flows.ts`).
  */
@@ -27,6 +27,7 @@ interface RequirementRow {
   id: string;
   type: string | null;
   metadata: Record<string, any> | null;
+  backlog: Record<string, any> | null;
 }
 
 async function loadRequirement(requirementId: string): Promise<RequirementRow | null> {
@@ -36,7 +37,7 @@ async function loadRequirement(requirementId: string): Promise<RequirementRow | 
   // `Requirement <id> not found`, masking the real problem at the caller.
   const { data, error } = await supabaseAdmin
     .from('requirements')
-    .select('id, type, metadata')
+    .select('id, type, metadata, backlog')
     .eq('id', requirementId)
     .maybeSingle();
   if (error) {
@@ -47,8 +48,8 @@ async function loadRequirement(requirementId: string): Promise<RequirementRow | 
   return (data as RequirementRow) ?? null;
 }
 
-function toBacklog(metadata: Record<string, any> | null, defaultPhase: string): RequirementBacklog {
-  const raw = (metadata?.backlog as RequirementBacklog | undefined) ?? null;
+function toBacklog(backlogData: Record<string, any> | null, defaultPhase: string): RequirementBacklog {
+  const raw = (backlogData as RequirementBacklog | undefined) ?? null;
   if (!raw) return emptyBacklog(defaultPhase);
   return {
     schema_version: 1,
@@ -59,9 +60,8 @@ function toBacklog(metadata: Record<string, any> | null, defaultPhase: string): 
   };
 }
 
-async function writeBacklog(requirementId: string, backlog: RequirementBacklog, existingMetadata: Record<string, any> | null) {
-  const metadata = { ...(existingMetadata || {}), backlog };
-  const { error } = await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+async function writeBacklog(requirementId: string, backlog: RequirementBacklog) {
+  const { error } = await supabaseAdmin.from('requirements').update({ backlog }).eq('id', requirementId);
   if (error) throw new Error(`Failed to persist backlog: ${error.message}`);
 }
 
@@ -143,7 +143,7 @@ export async function listBacklog(requirementId: string): Promise<{ kind: Requir
   const flow = getFlow(kind);
   return {
     kind,
-    backlog: toBacklog(req.metadata, flow.phases[0]?.id || 'default'),
+    backlog: toBacklog(req.backlog, flow.phases[0]?.id || 'default'),
   };
 }
 
@@ -163,7 +163,7 @@ export async function upsertBacklogItem(params: {
   const req = await loadRequirement(params.requirementId);
   if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
   const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.metadata, flow.phases[0]?.id || 'default');
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
 
   const idx = params.item.id ? backlog.items.findIndex((i) => i.id === params.item.id) : -1;
   const next = ensureItemDefaults(
@@ -175,7 +175,7 @@ export async function upsertBacklogItem(params: {
     backlog.items.push(next);
   }
   backlog.completion_ratio = computeRatio(backlog.items);
-  await writeBacklog(params.requirementId, backlog, req.metadata);
+  await writeBacklog(params.requirementId, backlog);
   return next;
 }
 
@@ -183,7 +183,7 @@ export async function markInProgress(params: { requirementId: string; itemId: st
   const req = await loadRequirement(params.requirementId);
   if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
   const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.metadata, flow.phases[0]?.id || 'default');
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
 
   const active = backlog.items.find((i) => i.status === 'in_progress');
   if (active && active.id !== params.itemId) {
@@ -200,7 +200,7 @@ export async function markInProgress(params: { requirementId: string; itemId: st
     attempts: (backlog.items[idx].attempts || 0) + 1,
     updated_at: new Date().toISOString(),
   };
-  await writeBacklog(params.requirementId, backlog, req.metadata);
+  await writeBacklog(params.requirementId, backlog);
   return backlog.items[idx];
 }
 
@@ -213,7 +213,7 @@ export async function setItemStatus(params: {
   const req = await loadRequirement(params.requirementId);
   if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
   const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.metadata, flow.phases[0]?.id || 'default');
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
 
   const idx = backlog.items.findIndex((i) => i.id === params.itemId);
   if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
@@ -236,7 +236,7 @@ export async function setItemStatus(params: {
   const advance = advancePhaseIfReadyInMemory(backlog, flow);
   const toWrite = advance ? advance.nextBacklog : backlog;
 
-  await writeBacklog(params.requirementId, toWrite, req.metadata);
+  await writeBacklog(params.requirementId, toWrite);
   return toWrite.items[idx];
 }
 
@@ -248,7 +248,7 @@ export async function downgradeScope(params: { requirementId: string; itemId: st
   const req = await loadRequirement(params.requirementId);
   if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
   const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.metadata, flow.phases[0]?.id || 'default');
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
 
   const idx = backlog.items.findIndex((i) => i.id === params.itemId);
   if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
@@ -260,7 +260,7 @@ export async function downgradeScope(params: { requirementId: string; itemId: st
     status: 'pending',
     updated_at: new Date().toISOString(),
   };
-  await writeBacklog(params.requirementId, backlog, req.metadata);
+  await writeBacklog(params.requirementId, backlog);
   return backlog.items[idx];
 }
 
@@ -268,7 +268,7 @@ export async function logAssumption(params: { requirementId: string; itemId: str
   const req = await loadRequirement(params.requirementId);
   if (!req) throw new Error(`Requirement ${params.requirementId} not found`);
   const flow = getFlow(classifyRequirementType(req.type));
-  const backlog = toBacklog(req.metadata, flow.phases[0]?.id || 'default');
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
 
   const idx = backlog.items.findIndex((i) => i.id === params.itemId);
   if (idx < 0) throw new Error(`Item ${params.itemId} not found`);
@@ -278,7 +278,7 @@ export async function logAssumption(params: { requirementId: string; itemId: str
     assumptions: [...assumptions, params.assumption].slice(-20),
     updated_at: new Date().toISOString(),
   };
-  await writeBacklog(params.requirementId, backlog, req.metadata);
+  await writeBacklog(params.requirementId, backlog);
   return backlog.items[idx];
 }
 

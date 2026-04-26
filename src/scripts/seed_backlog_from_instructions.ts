@@ -1,9 +1,9 @@
 /**
- * Seed `requirements.metadata.backlog` for legacy in-progress requirements
+ * Seed `requirements.backlog` for legacy in-progress requirements
  * that predate the Flow + Backlog refactor (Phase 2).
  *
  * Idempotent:
- *   - Skips requirements that already carry `metadata.backlog` with items.
+ *   - Skips requirements that already carry `backlog` with items.
  *   - Parses `## 9. Execution Plan` checkbox list from `requirements.instructions`
  *     (preferred) and converts each `- [ ] foo` / `- [x] foo` line into a
  *     `BacklogItem`.
@@ -133,16 +133,16 @@ function inferKind(title: string, flowKinds: BacklogItemKind[]): BacklogItemKind
 async function seedOne(reqId: string, dryRun: boolean): Promise<boolean> {
   const { data: req } = await supabaseAdmin
     .from('requirements')
-    .select('id, type, instructions, metadata, status')
+    .select('id, type, instructions, backlog, status')
     .eq('id', reqId)
     .maybeSingle();
   if (!req) {
     console.warn(`[seed] requirement ${reqId} not found`);
     return false;
   }
-  const meta = (req.metadata as Record<string, any> | null) ?? null;
-  if (meta?.backlog?.items && Array.isArray(meta.backlog.items) && meta.backlog.items.length > 0) {
-    console.log(`[seed] skip ${reqId} — backlog already present (${meta.backlog.items.length} items)`);
+  const backlog = (req.backlog as Record<string, any> | null) ?? null;
+  if (backlog?.items && Array.isArray(backlog.items) && backlog.items.length > 0) {
+    console.log(`[seed] skip ${reqId} — backlog already present (${backlog.items.length} items)`);
     return false;
   }
   const kind = classifyRequirementType(req.type);

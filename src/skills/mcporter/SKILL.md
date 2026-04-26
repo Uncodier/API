@@ -15,7 +15,7 @@ Document the migration from the deprecated `mcporter` CLI to the assistant's bui
 | Old (`mcporter`) | New (assistant tools) |
 | --- | --- |
 | `mcporter call makinari.requirements action="list"` | `requirements` tool with `action="list"` |
-| `mcporter call makinari.requirement_status action="create"` | `requirement_status` tool with `action="create"` |
+| `mcporter call makinari.requirement_status action="create"` | `requirement_status` tool with `action="create"` and `stage` |
 | `mcporter call makinari.instance_plan action="create"` | `instance_plan` tool with `action="create"` |
 | `mcporter call makinari.instance_plan action="execute_step"` | `instance_plan` tool with `action="execute_step"` |
 | `mcporter call makinari.site_settings` | Site settings tool or `memories` |

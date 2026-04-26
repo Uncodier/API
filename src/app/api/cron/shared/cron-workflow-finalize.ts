@@ -176,7 +176,7 @@ export async function createFinalStatusStep(params: {
 
   const { data: existing } = await supabaseAdmin
     .from('requirement_status')
-    .select('id, status, message, repo_url, preview_url, source_code, updated_at')
+    .select('id, stage, message, repo_url, preview_url, source_code, updated_at')
     .eq('requirement_id', reqId)
     .eq('instance_id', instanceId)
     .order('created_at', { ascending: false })
@@ -185,7 +185,7 @@ export async function createFinalStatusStep(params: {
 
   type ExistingRow = {
     id: string;
-    status?: string | null;
+    stage?: string | null;
     message?: string | null;
     repo_url?: string | null;
     preview_url?: string | null;
@@ -195,7 +195,7 @@ export async function createFinalStatusStep(params: {
 
   const row = existing as ExistingRow;
 
-  // If a prior step in the same workflow tick recorded a 'blocked' status
+  // If a prior step in the same workflow tick recorded a 'blocked' stage
   // (e.g. orchestrator-no-plan, re-plan loop guard), preserve it. Flipping
   // it back to 'in-progress' would let the cron route pick the requirement
   // up again on the next tick (its filter is `status in [backlog, in-progress]`),
@@ -205,20 +205,20 @@ export async function createFinalStatusStep(params: {
   const BLOCKED_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
   const existingUpdatedAtMs = row?.updated_at ? Date.parse(row.updated_at) : NaN;
   const existingIsFreshBlocked =
-    row?.status === 'blocked' &&
+    row?.stage === 'blocked' &&
     Number.isFinite(existingUpdatedAtMs) &&
     Date.now() - existingUpdatedAtMs < BLOCKED_WINDOW_MS;
 
   if (existingIsFreshBlocked) {
     console.log(
-      `[CronStep] Preserving fresh 'blocked' status on requirement_status ${row!.id} — not overwriting with cycle finalize.`,
+      `[CronStep] Preserving fresh 'blocked' stage on requirement_status ${row!.id} — not overwriting with cycle finalize.`,
     );
     await logCronInfrastructureEvent(audit ?? { instanceId, siteId: site_id }, {
       event: CronInfraEvent.FINAL_STATUS,
       level: 'warn',
-      message: "Finalize skipped: an in-cycle 'blocked' status is preserved for human intervention.",
+      message: "Finalize skipped: an in-cycle 'blocked' stage is preserved for human intervention.",
       details: {
-        preserved_status: 'blocked',
+        preserved_stage: 'blocked',
         existing_status_id: row!.id,
         existing_message: row!.message ?? null,
       },
@@ -277,7 +277,7 @@ export async function createFinalStatusStep(params: {
     repo_url: mergedRepoUrl,
     preview_url: mergedPreviewUrl,
     source_code: mergedSourceCode,
-    status: effectiveStatus,
+    stage: effectiveStatus,
     message: isComplete
       ? `Cycle complete. Repo: ${repoUrl} | Preview: ${mergedPreviewUrl} | Source: ${mergedSourceCode}`
       : `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,
@@ -301,7 +301,7 @@ export async function createFinalStatusStep(params: {
       repo_url: statusPayload.repo_url ?? undefined,
       preview_url: statusPayload.preview_url ?? undefined,
       source_code: statusPayload.source_code ?? undefined,
-      status: statusPayload.status,
+      stage: statusPayload.stage,
       message: statusPayload.message,
     });
     console.log(

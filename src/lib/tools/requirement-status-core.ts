@@ -87,7 +87,7 @@ export async function persistActiveSandboxId(
         instance_id,
         requirement_id,
         active_sandbox_id,
-        status: 'in-progress',
+        stage: 'in-progress',
         message: 'Sandbox provisioned',
       });
     } else {
@@ -106,7 +106,7 @@ export async function createRequirementStatusCore(params: {
   source_code?: string;
   snapshot_id?: string;
   active_sandbox_id?: string;
-  status?: string;
+  stage?: string;
   message?: string;
   cycle?: string;
   endpoint_url?: string;
@@ -121,21 +121,21 @@ export async function createRequirementStatusCore(params: {
     source_code,
     snapshot_id,
     active_sandbox_id,
-    status,
+    stage,
     message,
     cycle,
     endpoint_url,
   } = params;
 
-  if (!site_id || !requirement_id || !status) {
-    throw new Error('site_id, requirement_id, and status are required');
+  if (!site_id || !requirement_id || !stage) {
+    throw new Error('site_id, requirement_id, and stage are required');
   }
 
   // Deliverable gate: done only with repo_url, preview or endpoint, and source archive URL.
   const hasRepo = !!repo_url;
   const hasEndpoint = !!(preview_url || endpoint_url);
   const hasSourceArchive = !!source_code?.trim();
-  let effectiveStatus = status;
+  let effectiveStage = stage;
   const missing: string[] = [];
   if (!hasRepo) missing.push('repo_url');
   if (!hasEndpoint) missing.push('preview_url/endpoint_url');
@@ -152,11 +152,11 @@ export async function createRequirementStatusCore(params: {
     if (strict) missing.push(`git_consistency: ${consistencyErr}`);
   }
 
-  if ((status === 'done' || status === 'completed') && missing.length > 0) {
+  if ((stage === 'done' || stage === 'completed') && missing.length > 0) {
     console.warn(
-      `[RequirementStatus] Downgrading "${status}" → "in-progress" for req ${requirement_id} — missing: ${missing.join(', ')}`,
+      `[RequirementStatus] Downgrading "${stage}" → "in-progress" for req ${requirement_id} — missing: ${missing.join(', ')}`,
     );
-    effectiveStatus = 'in-progress';
+    effectiveStage = 'in-progress';
   }
 
   const validAssetId = asset_id && UUID_RE.test(asset_id) ? asset_id : null;
@@ -186,7 +186,7 @@ export async function createRequirementStatusCore(params: {
         source_code: source_code || null,
         snapshot_id: snapshot_id?.trim() || null,
         active_sandbox_id: active_sandbox_id || currentStatus?.active_sandbox_id || null,
-        status: effectiveStatus,
+        stage: effectiveStage,
         message: message || null,
         cycle: cycle || null,
         endpoint_url: endpoint_url || null,
@@ -200,10 +200,10 @@ export async function createRequirementStatusCore(params: {
     throw new Error(`Error inserting requirement status: ${error.message}`);
   }
 
-  if (effectiveStatus === 'completed' || effectiveStatus === 'done' || effectiveStatus === 'in-progress' || effectiveStatus === 'blocked' || effectiveStatus === 'failed') {
+  if (effectiveStage === 'completed' || effectiveStage === 'done' || effectiveStage === 'in-progress' || effectiveStage === 'blocked' || effectiveStage === 'failed') {
     let mappedStatus = 'in-progress';
-    if (effectiveStatus === 'completed' || effectiveStatus === 'done') mappedStatus = 'done';
-    if (effectiveStatus === 'blocked' || effectiveStatus === 'failed') mappedStatus = 'blocked';
+    if (effectiveStage === 'completed' || effectiveStage === 'done') mappedStatus = 'done';
+    if (effectiveStage === 'blocked' || effectiveStage === 'failed') mappedStatus = 'blocked';
     
     await supabaseAdmin
       .from('requirements')

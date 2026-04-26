@@ -87,14 +87,12 @@ export async function advancePhaseIfReady(requirementId: string): Promise<{ adva
   }
   const { data } = await supabaseAdmin
     .from('requirements')
-    .select('metadata')
+    .select('backlog')
     .eq('id', requirementId)
     .maybeSingle();
-  const metadata = ((data?.metadata as Record<string, any>) || {}) as Record<string, any>;
-  const backlog = metadata.backlog || {};
+  const backlog = ((data?.backlog as Record<string, any>) || {}) as Record<string, any>;
   backlog.current_phase_id = decision.to.id;
-  metadata.backlog = backlog;
-  await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+  await supabaseAdmin.from('requirements').update({ backlog }).eq('id', requirementId);
   return { advanced: true, to: decision.to };
 }
 

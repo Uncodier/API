@@ -318,7 +318,7 @@ export async function runOrchestratorStep(params: {
       '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
       '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
       '  3. Call `instance_plan` with `action="create"`. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
-      '  4. Call `requirement_status` with `status="in-progress"`.',
+      '  4. Call `requirement_status` with `stage="in-progress"`.',
       'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
     ].join('\n');
 

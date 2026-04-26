@@ -143,7 +143,7 @@ WORKFLOW (follow IN ORDER):
 2. If the backlog is empty, derive 3-8 items DIRECTLY FROM THE "INSTRUCTIONS (raw from DB)" BLOCK ABOVE and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). Do NOT \`sandbox_read_file\` \`requirement.spec.md\` / \`feature_list.json\` first — those files may not exist yet on a fresh branch; the INSTRUCTIONS block is the authoritative contract for this cycle. If \`requirement.spec.md\` happens to exist, you MAY read it to enrich the items, but treat it as optional.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
-5. Report progress with \`requirement_status\` (status='in-progress').
+5. Report progress with \`requirement_status\` (stage='in-progress').
 
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.

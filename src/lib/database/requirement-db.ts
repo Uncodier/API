@@ -103,7 +103,7 @@ export interface DbRequirementStatus {
   repo_url: string | null;
   preview_url: string | null;
   source_code: string | null;
-  status: string;
+  stage: string;
   message: string | null;
   cycle: string | null;
   endpoint_url: string | null;
@@ -114,7 +114,7 @@ export interface RequirementStatusFilters {
   requirement_id?: string;
   site_id?: string;
   instance_id?: string;
-  status?: string;
+  stage?: string;
   limit?: number;
   offset?: number;
 }
@@ -318,7 +318,7 @@ export async function getRequirementStatuses(filters: RequirementStatusFilters):
   if (filters.requirement_id) query = query.eq('requirement_id', filters.requirement_id);
   if (filters.site_id) query = query.eq('site_id', filters.site_id);
   if (filters.instance_id) query = query.eq('instance_id', filters.instance_id);
-  if (filters.status) query = query.eq('status', filters.status);
+  if (filters.stage) query = query.eq('stage', filters.stage);
 
   query = query.order('created_at', { ascending: false });
 

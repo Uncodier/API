@@ -170,7 +170,7 @@ export async function GET(req: Request) {
       // Build previous work context
       const { data: prevStatuses } = await supabaseAdmin
         .from('requirement_status')
-        .select('status, message, preview_url, repo_url, created_at')
+        .select('stage, message, preview_url, repo_url, created_at')
         .eq('requirement_id', reqId)
         .order('created_at', { ascending: false })
         .limit(10);
@@ -185,7 +185,7 @@ export async function GET(req: Request) {
       // Extract actionable blockers from the latest status
       const latestStatus = prevStatuses?.[0];
       let blockerContext = '';
-      if (latestStatus && latestStatus.status !== 'done') {
+      if (latestStatus && latestStatus.stage !== 'done') {
         const blockers: string[] = [];
         if (latestStatus.message?.includes('preview_url returns error/404')) {
           blockers.push('CRITICAL: The deployed preview URL returns 404. The app has no working root page. You MUST create a plan step to fix the root route (e.g. src/app/page.tsx).');
@@ -207,7 +207,7 @@ export async function GET(req: Request) {
       const previousWorkContext = [
         blockerContext,
         (prevStatuses?.length || prevPlans?.length)
-          ? `\nPREVIOUS WORK:\n${prevStatuses?.length ? `- Latest status: ${latestStatus?.status} — ${latestStatus?.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
+          ? `\nPREVIOUS WORK:\n${prevStatuses?.length ? `- Latest stage: ${latestStatus?.stage} — ${latestStatus?.message || 'no message'}` : ''}\n${prevPlans?.length ? `- Recent plans: ${prevPlans.map((p: any) => `${p.title} (${p.status})`).join(', ')}` : ''}\n`
           : '',
       ].filter(Boolean).join('\n');
 

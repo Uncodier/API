@@ -658,15 +658,17 @@ CREATE TABLE public.requirements (
   command_id uuid,
   type USER-DEFINED DEFAULT 'task'::requirement_type,
   metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+  backlog jsonb NOT NULL DEFAULT '{}'::jsonb,
+  progress jsonb NOT NULL DEFAULT '[]'::jsonb,
   CONSTRAINT requirements_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_requirements FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT requirements_user_id_fkey FOREIGN KEY (user_id) REFERENCES auth.users(id),
   CONSTRAINT requirements_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
 );
 
--- Harness engineering (Phase 1-9) — runtime state persisted in `metadata jsonb`.
+-- Harness engineering (Phase 1-9) — runtime state persisted in `backlog` and `progress`.
 --
--- metadata.backlog: {
+-- backlog: {
 --   schema_version: 1,
 --   items: [{
 --     id, title, kind, phase_id, acceptance[], touches[], status, attempts,
@@ -679,9 +681,30 @@ CREATE TABLE public.requirements (
 -- metadata.auth_provider: 'supabase' | 'auth0' (Phase 2c — per-tenant auth).
 -- metadata.platform_key_id: uuid of the test-only Platform API key (Phase 2b).
 --
--- requirement_status.status extended with 'needs_review' by
+-- requirement_status.stage extended with 'needs_review' by
 -- src/scripts/alter_requirement_status_needs_review.sql (Phase 9) — emitted by
 -- the self-heal policy when an item exhausts its attempts without Judge approval.
+
+CREATE TABLE public.requirement_status (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  requirement_id uuid NOT NULL,
+  instance_id uuid,
+  asset_id uuid,
+  site_id uuid NOT NULL,
+  repo_url text,
+  preview_url text,
+  source_code text,
+  snapshot_id text,
+  active_sandbox_id text,
+  stage text NOT NULL CHECK (stage = ANY (ARRAY['pending'::text, 'in-progress'::text, 'on-review'::text, 'completed'::text, 'done'::text, 'failed'::text, 'blocked'::text, 'paused'::text, 'cancelled'::text, 'backlog'::text, 'validated'::text, 'needs_review'::text])),
+  message text,
+  cycle text,
+  endpoint_url text,
+  created_at timestamp with time zone NOT NULL DEFAULT now(),
+  CONSTRAINT requirement_status_pkey PRIMARY KEY (id),
+  CONSTRAINT requirement_status_requirement_id_fkey FOREIGN KEY (requirement_id) REFERENCES public.requirements(id),
+  CONSTRAINT requirement_status_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
+);
 
 CREATE TABLE public.sale_orders (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),

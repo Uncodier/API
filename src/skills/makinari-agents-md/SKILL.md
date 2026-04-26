@@ -39,7 +39,7 @@ ground-truth files.
 - `requirement.spec.md`   — immutable contract (overview, goals, non-goals,
   guidelines, section 6 contracts, section 7 acceptance, section 8 base hint).
   Append only to `## Revisions` when contract fields change.
-- `feature_list.json`     — backlog. Mirror of `requirements.metadata.backlog`.
+- `feature_list.json`     — backlog. Mirror of `requirements.backlog`.
   Only the `requirement_backlog` tool mutates it; humans read, agents read.
 - `progress.md`           — session log. One append per cycle. Summary + next.
 - `DECISIONS.md`          — append-only architecture decisions + assumptions.

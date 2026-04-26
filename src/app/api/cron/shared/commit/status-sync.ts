@@ -312,7 +312,7 @@ export async function patchLatestRequirementStatusColumns(params: {
       source_code: patch.source_code,
       snapshot_id: patch.snapshot_id,
       active_sandbox_id: active_sandbox_id || undefined,
-      status: 'in-progress',
+      stage: 'in-progress',
       message: 'Deliverables recorded from sandbox checkpoint (repo, preview, source archive).',
     });
     console.log(`[RequirementStatusPatch] Inserted requirement_status for ${requirementId}`);
