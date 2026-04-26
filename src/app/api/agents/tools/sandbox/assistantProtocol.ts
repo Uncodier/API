@@ -16,6 +16,7 @@ import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-too
 import { sandboxCodeSearchTool } from '@/app/api/agents/tools/sandbox/code-search-tool';
 import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/assistantProtocol';
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
+import { sandboxDbMigrateTool } from '@/app/api/agents/tools/sandbox/sandbox-db-migrate';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
@@ -540,6 +541,7 @@ export function getSandboxTools(
     sandboxReadFileTool(sandbox, toolsCtx),
     sandboxListFilesTool(sandbox, toolsCtx),
     sandboxReadLintsTool(sandbox, toolsCtx),
+    sandboxDbMigrateTool(sandbox, requirementId, toolsCtx),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxReadLogsTool(sandbox, toolsCtx),

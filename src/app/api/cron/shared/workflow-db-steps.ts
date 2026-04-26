@@ -70,7 +70,7 @@ export async function recordRequirementBlockedStep(
       site_id: input.site_id,
       instance_id: input.instance_id,
       requirement_id: input.requirement_id,
-      status: 'blocked',
+      stage: 'blocked',
       message: input.message,
     });
     return { ok: true };

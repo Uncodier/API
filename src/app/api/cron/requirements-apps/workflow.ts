@@ -15,6 +15,7 @@ import {
   extendRunLockStep,
   releaseRunLockStep,
 } from '../shared/cron-steps';
+import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
@@ -286,6 +287,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
     if (!anyFail) {
+      const dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit);
+      sandboxId = dbMig.effectiveSandboxId;
+      if (dbMig.errors.length > 0) {
+         console.warn(`[CronAppsWorkflow] DB Migrations had errors:`, dbMig.errors);
+      } else if (dbMig.applied.length > 0) {
+         console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
+      }
+
       const pushed = await commitAndPushStep(sandboxId!, title, reqId, undefined, cronAudit, 'applications');
       pushResult = pushed;
       if (pushed?.effectiveSandboxId) {
