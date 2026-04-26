@@ -297,6 +297,8 @@ function formatVisual(s: VisualSignal): string {
         `  - [${d.severity}/${d.category}] ${d.route} (${d.viewport}): ${d.description}${d.fix_hint ? ` | fix: ${d.fix_hint}` : ''}`,
       );
     }
+    parts.push('');
+    parts.push('IMPORTANT: Visual defects (even minor ones) MUST be fixed if possible. If you cannot fix them, you MUST log them in the backlog assumptions using the requirement_backlog tool (action=log_assumption) so QA is aware.');
   }
   if (s.screenshots.length) {
     parts.push('screenshots:');
@@ -356,8 +358,9 @@ export function formatIterationSignals(sig: StepIterationSignals): string {
   body.push(
     [
       '1) Fix the FIRST category in `categories_failed` — higher categories often cause later ones.',
-      '2) After fixing, re-run npm run build; the gate will re-probe automatically.',
-      '3) Only stop when the gate passes (or you receive an explicit human-review instruction).',
+      '2) Review the VISUAL CRITIC section. If there are defects, you MUST fix them or use the requirement_backlog tool (action=log_assumption) to document them for QA.',
+      '3) After fixing or logging, re-run npm run build; the gate will re-probe automatically.',
+      '4) Only stop when the gate passes (or you receive an explicit human-review instruction).',
     ].join('\n'),
   );
 

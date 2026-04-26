@@ -24,9 +24,14 @@ import {
   deriveRetryBucket,
   formatIterationSignals,
   type StepIterationSignals,
+  type VisualDefect,
 } from './step-iteration-signals';
 import { runArchetypePostGate, extractBacklogItemId } from './step-archetype-postgate';
 import { detectActionLoop, type AssistantToolCallSnapshot } from './loop-detectors';
+import { syncProgressEntry } from '@/lib/services/requirement-ground-truth';
+import { logAssumption } from '@/lib/services/requirement-backlog';
+import { syncProgressEntry } from '@/lib/services/requirement-ground-truth';
+import { logAssumption } from '@/lib/services/requirement-backlog';
 
 const ROLE_TO_SKILL: Record<string, string> = {
   'template_selection': 'makinari-obj-template-selection',
@@ -152,6 +157,48 @@ async function checkOversizeFiles(sandbox: Sandbox): Promise<string[]> {
   } catch (e) {
     console.warn('[CronStep] Failed to check oversize files:', e);
     return [];
+  }
+}
+
+/**
+ * Persists visual critic feedback to the ground truth (progress.md and backlog assumptions)
+ * so that QA or subsequent cycles are aware of visual defects that didn't block the gate
+ * or were present when retries were exhausted.
+ */
+async function persistVisualFeedback(params: {
+  sandbox: Sandbox;
+  requirementId: string;
+  itemId: string;
+  defects: VisualDefect[];
+}) {
+  if (!params.defects || params.defects.length === 0) return;
+  
+  try {
+    const defectLines = params.defects.map(d => `[${d.severity}] ${d.category}: ${d.description}`).join(' | ');
+    const feedbackMsg = `Visual Critic Feedback: ${defectLines}`;
+    
+    // 1. Log to progress.md for session history
+    await syncProgressEntry({
+      sandbox: params.sandbox,
+      cwd: SandboxService.WORK_DIR,
+      requirementId: params.requirementId,
+      entry: {
+        ts: new Date().toISOString(),
+        item_id: params.itemId,
+        summary: feedbackMsg.slice(0, 200),
+      }
+    });
+    
+    // 2. Add to backlog assumptions so it reflects in instructions
+    await logAssumption({
+      requirementId: params.requirementId,
+      itemId: params.itemId,
+      assumption: feedbackMsg.slice(0, 500)
+    });
+    
+    console.log(`[CronStep] Persisted visual critic feedback for item ${params.itemId}`);
+  } catch (e) {
+    console.warn(`[CronStep] Failed to persist visual critic feedback:`, e);
   }
 }
 
@@ -296,6 +343,7 @@ RULES:
   4. DATA VS UI RULE: If visual feedback shows "Missing Content" or empty lists, DO NOT change CSS/UI first. Verify the API response, database seed, and console logs. You might be trying to fix a data problem with CSS. You can use \`sandbox_read_logs\` to check server/console logs if needed.
   5. CIRCUIT BREAKER: If you attempt to fix the same visual regression or UI bug 3 times and fail, YOU MUST STOP. Revert your last broken changes, mark the step as blocked, and explain the technical reason. Do not enter infinite loops.
   6. FILE SIZE LIMIT: You MUST respect the 500-line limit per file. If a file is too large, refactor it into smaller components BEFORE applying fixes. Duplications and stray characters occur when editing files that are too large.
+  7. VISUAL CRITIC FEEDBACK: If the gate returns visual defects, you MUST fix them. If a defect is impossible to fix in this step, you MUST use the \`requirement_backlog\` tool with \`action="log_assumption"\` to document it for QA before you stop.
 - Use sandbox_write_file, sandbox_run_command, sandbox_read_file to write and test code. You MUST use sandbox_push_checkpoint before finishing the step when you changed the repo (see CHECKPOINTS below). Use sandbox_restore_checkpoint (action=list | restore) only if you need to rewind locally. Use sandbox_read_logs to read server and console logs.
 - After implementing, VALIDATE your work: run "npm run build" and check for errors. If the build fails, fix it before finishing.
 - CRITICAL: Do NOT mock data or use hardcoded responses in the UI unless explicitly requested. You MUST integrate with real backend APIs and databases. If a feature is transactional (e.g., booking, creating, updating), you MUST implement the full end-to-end flow.
@@ -483,6 +531,43 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       // only populate `signals[]`. Fall back to empty objects so downstream
       // code that reads `gate.signals.*` keeps working.
       const rich = gate.richSignals ?? {};
+
+      // --- PERSIST VISUAL CRITIC FEEDBACK ---
+      const visualDefects = rich.visual?.defects;
+      if (visualDefects && visualDefects.length > 0) {
+        const backlogItemId = extractBacklogItemId(step);
+        if (backlogItemId) {
+          try {
+            const defectLines = visualDefects.map(d => `[${d.severity}] ${d.category}: ${d.description}`).join(' | ');
+            const feedbackMsg = `Visual Critic Feedback: ${defectLines}`;
+            
+            // 1. Log to progress.md for session history
+            await syncProgressEntry({
+              sandbox: gateSandbox,
+              cwd: SandboxService.WORK_DIR,
+              requirementId,
+              entry: {
+                ts: new Date().toISOString(),
+                item_id: backlogItemId,
+                summary: feedbackMsg.slice(0, 200),
+              }
+            });
+            
+            // 2. Add to backlog assumptions so it reflects in instructions
+            await logAssumption({
+              requirementId,
+              itemId: backlogItemId,
+              assumption: feedbackMsg.slice(0, 500)
+            });
+            
+            console.log(`[CronStep] Persisted visual critic feedback for item ${backlogItemId}`);
+          } catch (e) {
+            console.warn(`[CronStep] Failed to persist visual critic feedback:`, e);
+          }
+        }
+      }
+      // --------------------------------------
+
       if (!gate.ok && gate.sandboxUnavailable) {
         const msg = gate.error || 'Sandbox microVM is no longer available.';
         await logCronInfrastructureEvent(audit, {
@@ -506,6 +591,20 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         console.log(`[CronStep] Gate OK for flow "${flow}" after step ${step.order} (attempt ${totalAttempts})`);
 
         const backlogItemId = extractBacklogItemId(step);
+        
+        // --- PERSIST VISUAL CRITIC FEEDBACK ---
+        // Even if the gate passes, there might be minor visual defects that QA should know about.
+        const visualDefects = rich.visual?.defects;
+        if (visualDefects && visualDefects.length > 0 && backlogItemId) {
+          await persistVisualFeedback({
+            sandbox: gateSandbox,
+            requirementId,
+            itemId: backlogItemId,
+            defects: visualDefects,
+          });
+        }
+        // --------------------------------------
+
         if (backlogItemId) {
           await runArchetypePostGate({
             sandbox: gateSandbox,
@@ -588,6 +687,20 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
           : `max execution time reached (${MAX_EXECUTION_TIME_MS}ms)`;
           
         if (bucketExhausted) {
+          // --- PERSIST VISUAL CRITIC FEEDBACK ON FAILURE ---
+          // If we exhausted retries and there are visual defects, log them so they aren't lost.
+          const backlogItemId = extractBacklogItemId(step);
+          const visualDefects = rich.visual?.defects;
+          if (visualDefects && visualDefects.length > 0 && backlogItemId) {
+            await persistVisualFeedback({
+              sandbox: gateSandbox,
+              requirementId,
+              itemId: backlogItemId,
+              defects: visualDefects,
+            });
+          }
+          // -------------------------------------------------
+
           await updateInstancePlanCore({
             plan_id: plan.id,
             instance_id,

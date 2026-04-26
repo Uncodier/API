@@ -142,7 +142,7 @@ WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the current phase and pending queue.
 2. If the backlog is empty, derive 3-8 items DIRECTLY FROM THE "INSTRUCTIONS (raw from DB)" BLOCK ABOVE and \`action='upsert'\` them. Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). Do NOT \`sandbox_read_file\` \`requirement.spec.md\` / \`feature_list.json\` first — those files may not exist yet on a fresh branch; the INSTRUCTIONS block is the authoritative contract for this cycle. If \`requirement.spec.md\` happens to exist, you MAY read it to enrich the items, but treat it as optional.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
-4. Create the plan: \`instance_plan\` with \`action='create'\`. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
+4. Create the plan: \`instance_plan\` with \`action='create'\`. BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests). Do NOT just copy the item title into a single step. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`.
 5. Report progress with \`requirement_status\` (stage='in-progress').
 
 CRITICAL EXECUTION RULES:

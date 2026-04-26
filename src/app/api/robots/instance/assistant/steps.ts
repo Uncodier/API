@@ -203,6 +203,9 @@ export async function prepareAssistantContext(
     systemPrompt?.toLowerCase().trim() === 'plan' && !hasLinkedRequirement
       ? `\n\n📋 PLAN MODE: Your system prompt is set to "plan". You MUST always use the instance_plan tool: create or list the execution plan (action "create" or "list") as appropriate, then execute steps with action "execute_step" when carrying out the plan. Do not skip using instance_plan when the user asks for planning or task execution.
 
+BREAKING DOWN THE PLAN:
+- When creating or updating a plan, BREAK DOWN the objective into specific, actionable execution steps (e.g., 1. investigate/setup, 2. core logic, 3. tests). Do NOT just copy the user's prompt or task title into a single step.
+
 PLAN vs STEPS:
 - If the user's request describes a DIFFERENT plan (new objective, new scope, or different approach than the previous plan): use action "create" to create a NEW plan. Do not reuse or update the old plan.
 - If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.`
