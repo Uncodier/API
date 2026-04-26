@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
-import { acquireRunLock, getSupabaseUrlHostForLogs } from '../shared/cron-run-lock';
+import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
