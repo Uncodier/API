@@ -16,6 +16,7 @@ import {
 } from '@/lib/services/cron-audit-log';
 import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
+import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
 
 const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
 
@@ -240,7 +241,7 @@ export async function createFinalStatusStep(params: {
   }
 
   const hasSourceArchive = !!mergedSourceCode;
-  const isComplete =
+  let isComplete =
     !!planCompleted &&
     didPush &&
     !!mergedPreviewUrl &&
@@ -249,7 +250,6 @@ export async function createFinalStatusStep(params: {
     smokeOk &&
     !postFinallyBuildError &&
     hasSourceArchive;
-  const effectiveStatus = isComplete ? 'done' : 'in-progress';
 
   const missingParts: string[] = [];
   if (!planCompleted) missingParts.push('plan not completed');
@@ -260,6 +260,16 @@ export async function createFinalStatusStep(params: {
   if (!hasSourceArchive) missingParts.push('no source_code archive in storage');
   if (smokeError) missingParts.push(`smoke test: ${smokeError}`);
   if (postFinallyBuildError) missingParts.push(`post-finally build: ${postFinallyBuildError.slice(0, 200)}`);
+
+  if (isComplete) {
+    const closeCheck = await canCloseRequirement(reqId);
+    if (!closeCheck.ok) {
+      isComplete = false;
+      missingParts.push(`backlog not complete: ${closeCheck.reason}`);
+    }
+  }
+
+  const effectiveStatus = isComplete ? 'done' : 'in-progress';
 
   const mergedRepoUrl = didPush ? (repoUrl || null) : row?.repo_url ?? null;
 
