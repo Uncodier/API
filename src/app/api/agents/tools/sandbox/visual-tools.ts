@@ -17,6 +17,7 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { runRuntimeProbe, stopProbeServer } from '@/app/api/cron/shared/step-runtime-probe';
 import {
   runVisualProbe,
@@ -26,7 +27,7 @@ import { runVisualCritic } from '@/app/api/cron/shared/step-visual-critic';
 
 const PROBE_PORT = SandboxService.VISUAL_PROBE_PORT;
 
-export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: string) {
+export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: string, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_capture_screenshots',
     description:
@@ -81,6 +82,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
       boot_timeout_ms?: number;
       page_timeout_ms?: number;
     }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const routes = (args.routes && args.routes.length ? args.routes : ['/'])
         .map((r) => (typeof r === 'string' ? r.trim() : ''))
         .filter(Boolean);
@@ -100,7 +102,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
         : undefined;
 
       const rt = await runRuntimeProbe({
-        sandbox,
+        sandbox: s0,
         pageRoutes: [routes[0]],
         apiRoutes: [],
         durationMs: args.boot_timeout_ms ?? 25_000,
@@ -108,7 +110,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
         keepServerAlive: true,
       });
       if (!rt.ok || rt.startup_error) {
-        await stopProbeServer(sandbox, rt.port);
+        await stopProbeServer(s0, rt.port);
         return {
           ok: false,
           server_booted: false,
@@ -122,7 +124,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
 
       try {
         const visual = await runVisualProbe({
-          sandbox,
+          sandbox: s0,
           port: rt.port,
           pageRoutes: routes,
           viewports,
@@ -147,7 +149,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
           failed_requests: visual.console.failed_requests.slice(0, 30),
         };
       } finally {
-        await stopProbeServer(sandbox, rt.port);
+        await stopProbeServer(s0, rt.port);
       }
     },
   };

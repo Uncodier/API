@@ -1,6 +1,7 @@
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
-export function sandboxReadLogsTool(sandbox?: any) {
+export function sandboxReadLogsTool(sandbox?: any, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_logs',
     description: 'Reads the local development server logs (e.g. Next.js server) and browser console logs from the visual probe. Use this tool when you need to investigate 500 errors, hydration failures, or missing content that might be caused by backend/API issues.',
@@ -33,6 +34,8 @@ export function sandboxReadLogsTool(sandbox?: any) {
                : `cat /tmp/visual-probe-console.log 2>/dev/null || echo "No console logs found"`
            }
         }
+        
+        const s0 = liveSandbox(sandbox, toolsCtx);
 
         let script = '';
         if (args.log_type === 'server') {
@@ -57,7 +60,7 @@ export function sandboxReadLogsTool(sandbox?: any) {
           `;
         }
         
-        const res = await sandbox.runCommand('sh', ['-c', script]);
+        const res = await s0.runCommand('sh', ['-c', script]);
         const out = await res.stdout();
         const err = await res.stderr();
 

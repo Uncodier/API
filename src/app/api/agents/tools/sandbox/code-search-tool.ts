@@ -18,6 +18,7 @@
  */
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 type RunResult = { stdout: string; stderr: string; exitCode: number };
 
@@ -398,7 +399,7 @@ async function actionTree(sandbox: Sandbox, args: { path?: string; max_depth?: n
 
 // ---- tool factory ---------------------------------------------------------
 
-export function sandboxCodeSearchTool(sandbox: Sandbox) {
+export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_code_search',
     description:
@@ -467,7 +468,8 @@ export function sandboxCodeSearchTool(sandbox: Sandbox) {
       max_depth?: number;
       max_results?: number;
     }) => {
-      const bins = await ensureSearchBinaries(sandbox);
+      const s0 = liveSandbox(sandbox, toolsCtx);
+      const bins = await ensureSearchBinaries(s0);
       if (!bins.rg && (args.action === 'find_files' || args.action === 'grep' || args.action === 'tree')) {
         return {
           ok: false,
@@ -478,13 +480,13 @@ export function sandboxCodeSearchTool(sandbox: Sandbox) {
       }
       switch (args.action) {
         case 'find_files':
-          return actionFindFiles(sandbox, args);
+          return actionFindFiles(s0, args);
         case 'grep':
-          return actionGrep(sandbox, args);
+          return actionGrep(s0, args);
         case 'find_symbol':
-          return actionFindSymbol(sandbox, args, bins);
+          return actionFindSymbol(s0, args, bins);
         case 'tree':
-          return actionTree(sandbox, args);
+          return actionTree(s0, args);
         default:
           return { ok: false, error: `Unknown action: ${(args as { action: string }).action}` };
       }

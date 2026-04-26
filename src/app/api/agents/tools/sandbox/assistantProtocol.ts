@@ -19,7 +19,7 @@ import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
-function liveSandbox(sandbox: Sandbox, toolsCtx?: SandboxToolsContext): Sandbox {
+export function liveSandbox(sandbox: Sandbox, toolsCtx?: SandboxToolsContext): Sandbox {
   return toolsCtx?.activeSandboxRef?.current ?? sandbox;
 }
 
@@ -95,7 +95,7 @@ export type SandboxToolsContext = {
   activeSandboxRef?: { current: Sandbox };
 };
 
-export function sandboxRunCommandTool(sandbox: Sandbox) {
+export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_run_command',
     description: `Execute a shell command inside the Vercel Sandbox microVM. The default working directory is ${WORK_DIR} which contains the cloned repository.`,
@@ -118,12 +118,13 @@ export function sandboxRunCommandTool(sandbox: Sandbox) {
           exitCode: 1,
         };
       }
-      return SandboxService.runCommandInSandbox(sandbox, args.command, args.args || [], resolvePath(args.cwd, WORK_DIR));
+      const s0 = liveSandbox(sandbox, toolsCtx);
+      return SandboxService.runCommandInSandbox(s0, args.command, args.args || [], resolvePath(args.cwd, WORK_DIR));
     }
   };
 }
 
-export function sandboxWriteFileTool(sandbox: Sandbox) {
+export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_write_file',
     description: 'Write or overwrite a file in the Vercel Sandbox filesystem.',
@@ -142,19 +143,20 @@ export function sandboxWriteFileTool(sandbox: Sandbox) {
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
 
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const parentDir = resolved.includes('/')
         ? resolved.slice(0, resolved.lastIndexOf('/'))
         : WORK_DIR;
       if (parentDir) {
-        await sandbox.fs.mkdir(parentDir, { recursive: true });
+        await s0.fs.mkdir(parentDir, { recursive: true });
       }
-      await sandbox.writeFiles([{ path: resolved, content: args.content }]);
+      await s0.writeFiles([{ path: resolved, content: args.content }]);
       return { success: true, path: resolved };
     }
   };
 }
 
-export function sandboxReadFileTool(sandbox: Sandbox) {
+export function sandboxReadFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_file',
     description: 'Read the contents of a file from the Vercel Sandbox filesystem.',
@@ -167,8 +169,9 @@ export function sandboxReadFileTool(sandbox: Sandbox) {
     },
     execute: async (args: { path: string }) => {
       const resolved = normalizeSandboxFsPath(WORK_DIR, resolvePath(args.path, WORK_DIR));
+      const s0 = liveSandbox(sandbox, toolsCtx);
       try {
-        const content = await sandbox.fs.readFile(resolved, 'utf8');
+        const content = await s0.fs.readFile(resolved, 'utf8');
         return { content };
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -178,7 +181,7 @@ export function sandboxReadFileTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxEditFileTool(sandbox: Sandbox) {
+export function sandboxEditFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_edit_file',
     description: 'Performs exact string replacements in a file in the Vercel Sandbox filesystem. Use this instead of sandbox_write_file to edit parts of large files without overwriting the whole file.',
@@ -197,9 +200,10 @@ export function sandboxEditFileTool(sandbox: Sandbox) {
     execute: async (args: { path: string, old_string: string, new_string: string }) => {
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
+      const s0 = liveSandbox(sandbox, toolsCtx);
 
       try {
-        const content = await sandbox.fs.readFile(resolved, 'utf8');
+        const content = await s0.fs.readFile(resolved, 'utf8');
         
         if (!content.includes(args.old_string)) {
           return { 
@@ -217,7 +221,7 @@ export function sandboxEditFileTool(sandbox: Sandbox) {
         }
 
         const newContent = content.replace(args.old_string, args.new_string);
-        await sandbox.writeFiles([{ path: resolved, content: newContent }]);
+        await s0.writeFiles([{ path: resolved, content: newContent }]);
         
         return { success: true, path: resolved };
       } catch (e: unknown) {
@@ -228,7 +232,7 @@ export function sandboxEditFileTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxDeleteFileTool(sandbox: Sandbox) {
+export function sandboxDeleteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_delete_file',
     description: 'Deletes a file or directory in the Vercel Sandbox filesystem.',
@@ -245,9 +249,10 @@ export function sandboxDeleteFileTool(sandbox: Sandbox) {
     execute: async (args: { path: string }) => {
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
+      const s0 = liveSandbox(sandbox, toolsCtx);
 
       try {
-        const result = await sandbox.runCommand('rm', ['-rf', resolved]);
+        const result = await s0.runCommand('rm', ['-rf', resolved]);
         if (result.exitCode !== 0) {
           throw new Error(`Failed to delete: ${await result.stderr()}`);
         }
@@ -260,7 +265,7 @@ export function sandboxDeleteFileTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxReadLintsTool(sandbox: Sandbox) {
+export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_lints',
     description: 'Read and display linter and TypeScript errors from the Vercel Sandbox workspace. Use this to quickly verify your changes without waiting for a full build.',
@@ -276,17 +281,18 @@ export function sandboxReadLintsTool(sandbox: Sandbox) {
     },
     execute: async (args: { paths?: string[] }) => {
       try {
+        const s0 = liveSandbox(sandbox, toolsCtx);
         const pathsArg = (args.paths && args.paths.length > 0) ? args.paths.join(' ') : '';
         
         // Ejecutar tsc para errores de TypeScript (sin emitir archivos)
         const tscCmd = `npx tsc --noEmit ${pathsArg}`;
-        const tscResult = await sandbox.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${tscCmd}`]);
+        const tscResult = await s0.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${tscCmd}`]);
         const tscOutput = await tscResult.stdout();
         const tscError = await tscResult.stderr();
         
         // Ejecutar eslint
         const eslintCmd = `npx eslint ${pathsArg || '.'} --format stylish`;
-        const eslintResult = await sandbox.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${eslintCmd}`]);
+        const eslintResult = await s0.runCommand('sh', ['-c', `cd ${WORK_DIR} && ${eslintCmd}`]);
         const eslintOutput = await eslintResult.stdout();
         const eslintError = await eslintResult.stderr();
 
@@ -310,7 +316,7 @@ export function sandboxReadLintsTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxListFilesTool(sandbox: Sandbox) {
+export function sandboxListFilesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_list_files',
     description: 'List files and directories in the Vercel Sandbox filesystem.',
@@ -322,7 +328,8 @@ export function sandboxListFilesTool(sandbox: Sandbox) {
     },
     execute: async (args: { path?: string }) => {
       const dir = normalizeSandboxFsPath(WORK_DIR, resolvePath(args.path, WORK_DIR));
-      const result = await sandbox.runCommand('ls', ['-la', dir]);
+      const s0 = liveSandbox(sandbox, toolsCtx);
+      const result = await s0.runCommand('ls', ['-la', dir]);
       if (result.exitCode !== 0) {
         throw new Error(`Failed to list files: ${await result.stderr()}`);
       }
@@ -525,17 +532,17 @@ export function getSandboxTools(
 ) {
   return [
     skillLookupTool({ requirement_type: toolsCtx?.requirement_type }),
-    sandboxCodeSearchTool(sandbox),
-    sandboxRunCommandTool(sandbox),
-    sandboxWriteFileTool(sandbox),
-    sandboxEditFileTool(sandbox),
-    sandboxDeleteFileTool(sandbox),
-    sandboxReadFileTool(sandbox),
-    sandboxListFilesTool(sandbox),
-    sandboxReadLintsTool(sandbox),
-    sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx?.instance_id),
+    sandboxCodeSearchTool(sandbox, toolsCtx),
+    sandboxRunCommandTool(sandbox, toolsCtx),
+    sandboxWriteFileTool(sandbox, toolsCtx),
+    sandboxEditFileTool(sandbox, toolsCtx),
+    sandboxDeleteFileTool(sandbox, toolsCtx),
+    sandboxReadFileTool(sandbox, toolsCtx),
+    sandboxListFilesTool(sandbox, toolsCtx),
+    sandboxReadLintsTool(sandbox, toolsCtx),
+    sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
-    sandboxReadLogsTool(sandbox),
-    ...getQaSandboxTools(sandbox, requirementId),
+    sandboxReadLogsTool(sandbox, toolsCtx),
+    ...getQaSandboxTools(sandbox, requirementId, toolsCtx),
   ];
 }

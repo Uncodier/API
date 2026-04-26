@@ -10,6 +10,7 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import {
   runRuntimeProbe,
   stopProbeServer,
@@ -37,7 +38,7 @@ async function readTail(sandbox: Sandbox, path: string, maxBytes: number): Promi
   }
 }
 
-export function sandboxProbeRoutesTool(sandbox: Sandbox) {
+export function sandboxProbeRoutesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_probe_routes',
     description:
@@ -57,9 +58,10 @@ export function sandboxProbeRoutesTool(sandbox: Sandbox) {
       },
     },
     execute: async (args: { routes?: string[]; duration_ms?: number }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const routes = (args.routes && args.routes.length ? args.routes : ['/']).map((r) => r.trim()).filter(Boolean);
       const result = await runRuntimeProbe({
-        sandbox,
+        sandbox: s0,
         pageRoutes: routes,
         durationMs: args.duration_ms,
         port: PROBE_PORT,
@@ -79,7 +81,7 @@ export function sandboxProbeRoutesTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxProbeApiTool(sandbox: Sandbox) {
+export function sandboxProbeApiTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_probe_api',
     description:
@@ -117,6 +119,7 @@ export function sandboxProbeApiTool(sandbox: Sandbox) {
       endpoints: Array<{ path: string; method?: RuntimeProbeApiTarget['method']; payload?: unknown }>;
       duration_ms?: number;
     }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const apis: RuntimeProbeApiTarget[] = (args.endpoints || [])
         .filter((e) => e && typeof e.path === 'string' && e.path.trim())
         .map((e) => ({
@@ -129,7 +132,7 @@ export function sandboxProbeApiTool(sandbox: Sandbox) {
         return { ok: false, error: 'No valid endpoints provided.' };
       }
       const result = await runRuntimeProbe({
-        sandbox,
+        sandbox: s0,
         pageRoutes: [],
         apiRoutes: apis,
         durationMs: args.duration_ms,
@@ -149,7 +152,7 @@ export function sandboxProbeApiTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxRunScenarioTool(sandbox: Sandbox) {
+export function sandboxRunScenarioTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_run_scenario',
     description:
@@ -174,8 +177,9 @@ export function sandboxRunScenarioTool(sandbox: Sandbox) {
       },
     },
     execute: async (args: { scenarios_dir?: string; only?: string[]; duration_ms?: number }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const rt = await runRuntimeProbe({
-        sandbox,
+        sandbox: s0,
         pageRoutes: ['/'],
         apiRoutes: [],
         durationMs: args.duration_ms ?? 25_000,
@@ -183,7 +187,7 @@ export function sandboxRunScenarioTool(sandbox: Sandbox) {
         keepServerAlive: true,
       });
       if (!rt.ok || rt.startup_error) {
-        await stopProbeServer(sandbox, rt.port);
+        await stopProbeServer(s0, rt.port);
         return {
           ok: false,
           server_booted: false,
@@ -195,7 +199,7 @@ export function sandboxRunScenarioTool(sandbox: Sandbox) {
 
       try {
         const result = await runE2eScenarios({
-          sandbox,
+          sandbox: s0,
           scenariosDir: args.scenarios_dir,
           port: PROBE_PORT,
           stepOrder: 0,
@@ -224,13 +228,13 @@ export function sandboxRunScenarioTool(sandbox: Sandbox) {
           error: result.error,
         };
       } finally {
-        await stopProbeServer(sandbox, rt.port);
+        await stopProbeServer(s0, rt.port);
       }
     },
   };
 }
 
-export function sandboxTailServerLogTool(sandbox: Sandbox) {
+export function sandboxTailServerLogTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_tail_server_log',
     description:
@@ -249,10 +253,11 @@ export function sandboxTailServerLogTool(sandbox: Sandbox) {
       },
     },
     execute: async (args: { port?: number; max_bytes?: number }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const port = args.port ?? PROBE_PORT;
       const maxBytes = Math.max(512, Math.min(32_000, args.max_bytes ?? 8_000));
       const path = `/tmp/makinari-server-${port}.log`;
-      const tail = await readTail(sandbox, path, maxBytes);
+      const tail = await readTail(s0, path, maxBytes);
       return {
         path,
         bytes_returned: tail.length,
@@ -262,7 +267,7 @@ export function sandboxTailServerLogTool(sandbox: Sandbox) {
   };
 }
 
-export function sandboxTailApiLogTool(sandbox: Sandbox) {
+export function sandboxTailApiLogTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_tail_api_log',
     description:
@@ -286,6 +291,7 @@ export function sandboxTailApiLogTool(sandbox: Sandbox) {
       required: ['route'],
     },
     execute: async (args: { route: string; port?: number; max_lines?: number }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       const port = args.port ?? PROBE_PORT;
       const maxLines = Math.max(10, Math.min(500, args.max_lines ?? 80));
       const path = `/tmp/makinari-server-${port}.log`;
@@ -294,7 +300,7 @@ export function sandboxTailApiLogTool(sandbox: Sandbox) {
         return { path, lines: [], error: 'route must be a non-empty substring' };
       }
       try {
-        const res = await sandbox.runCommand('sh', [
+        const res = await s0.runCommand('sh', [
           '-c',
           `grep -F -- '${needle}' ${path} 2>/dev/null | tail -n ${maxLines} || true`,
         ]);
@@ -310,14 +316,14 @@ export function sandboxTailApiLogTool(sandbox: Sandbox) {
 
 export { sandboxCaptureScreenshotsTool, sandboxVisualCritiqueTool };
 
-export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string) {
+export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string, toolsCtx?: SandboxToolsContext) {
   return [
-    sandboxProbeRoutesTool(sandbox),
-    sandboxProbeApiTool(sandbox),
-    sandboxRunScenarioTool(sandbox),
-    sandboxTailServerLogTool(sandbox),
-    sandboxTailApiLogTool(sandbox),
-    sandboxCaptureScreenshotsTool(sandbox, requirementId),
+    sandboxProbeRoutesTool(sandbox, toolsCtx),
+    sandboxProbeApiTool(sandbox, toolsCtx),
+    sandboxRunScenarioTool(sandbox, toolsCtx),
+    sandboxTailServerLogTool(sandbox, toolsCtx),
+    sandboxTailApiLogTool(sandbox, toolsCtx),
+    sandboxCaptureScreenshotsTool(sandbox, requirementId, toolsCtx),
     sandboxVisualCritiqueTool(),
   ];
 }

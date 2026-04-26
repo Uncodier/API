@@ -5,6 +5,8 @@ import { patchLatestRequirementStatusColumns } from '@/app/api/cron/shared/cron-
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
+import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+
 /** Subject lines we treat as automated / pushed checkpoints (see sandbox_push_checkpoint & cron-commit-helpers). */
 export function isLikelyCheckpointSubject(subject: string): boolean {
   return /\[checkpoint\]/i.test(subject) || /^WIP:\s*step\b/i.test(subject.trim());
@@ -22,16 +24,16 @@ export async function listCommitsInSandbox(
   sandbox: Sandbox,
   limit: number,
 ): Promise<{ branch: string; commits: SandboxCheckpointRow[] }> {
-  const branchRes = await sandbox.runCommand('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: WORK_DIR });
+  const branchRes = await sandbox.runCommand({ cmd: 'git', args: ['rev-parse', '--abbrev-ref', 'HEAD'], cwd: WORK_DIR });
   const branch =
     branchRes.exitCode === 0 ? (await branchRes.stdout()).trim() : '(unknown)';
 
   const cap = Math.min(Math.max(limit, 5), 80);
-  const logRes = await sandbox.runCommand(
-    'git',
-    ['log', `-${cap}`, '--format=%H\t%s\t%ci'],
-    { cwd: WORK_DIR },
-  );
+  const logRes = await sandbox.runCommand({
+    cmd: 'git',
+    args: ['log', `-${cap}`, '--format=%H\t%s\t%ci'],
+    cwd: WORK_DIR,
+  });
   if (logRes.exitCode !== 0) {
     throw new Error(`git log failed: ${await logRes.stderr()}`);
   }
@@ -57,7 +59,8 @@ export async function listCommitsInSandbox(
   return { branch, commits };
 }
 
-export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: string, instanceId?: string) {
+export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: string, toolsCtx?: SandboxToolsContext) {
+  const instanceId = toolsCtx?.instance_id;
   return {
     name: 'sandbox_restore_checkpoint',
     description:
@@ -93,8 +96,9 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
       limit?: number;
       force?: boolean;
     }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
       try {
-        await sandbox.extendTimeout(2 * 60 * 1000);
+        await s0.extendTimeout(2 * 60 * 1000);
       } catch {
         /* ignore */
       }
@@ -102,7 +106,7 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
       const limit = args.limit ?? 30;
 
       if (args.action === 'list') {
-        const { branch, commits } = await listCommitsInSandbox(sandbox, limit);
+        const { branch, commits } = await listCommitsInSandbox(s0, limit);
         const checkpointCommits = commits.filter((c) => c.is_checkpoint);
         return {
           ok: true,
@@ -123,7 +127,7 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
       }
 
       if (!args.force) {
-        const st = await sandbox.runCommand('git', ['status', '--porcelain'], { cwd: WORK_DIR });
+        const st = await s0.runCommand({ cmd: 'git', args: ['status', '--porcelain'], cwd: WORK_DIR });
         if (st.exitCode === 0 && (await st.stdout()).trim().length > 0) {
           return {
             ok: false,
@@ -133,7 +137,9 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
         }
       }
 
-      const verify = await sandbox.runCommand('git', ['rev-parse', '--verify', `${sha}^{commit}`], {
+      const verify = await s0.runCommand({
+        cmd: 'git',
+        args: ['rev-parse', '--verify', `${sha}^{commit}`],
         cwd: WORK_DIR,
       });
       if (verify.exitCode !== 0) {
@@ -144,7 +150,7 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
       }
       const fullSha = (await verify.stdout()).trim();
 
-      const reset = await sandbox.runCommand('git', ['reset', '--hard', fullSha], { cwd: WORK_DIR });
+      const reset = await s0.runCommand({ cmd: 'git', args: ['reset', '--hard', fullSha], cwd: WORK_DIR });
       if (reset.exitCode !== 0) {
         return {
           ok: false,
@@ -152,7 +158,7 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
         };
       }
 
-      const head = await sandbox.runCommand('git', ['rev-parse', '--short', 'HEAD'], { cwd: WORK_DIR });
+      const head = await s0.runCommand({ cmd: 'git', args: ['rev-parse', '--short', 'HEAD'], cwd: WORK_DIR });
       const base = {
         ok: true as const,
         restored_to: fullSha,
@@ -163,7 +169,7 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
 
       if (requirementId?.trim()) {
         const rid = requirementId.trim();
-        const up = await uploadSandboxSourceArchiveToRepository(sandbox, rid);
+        const up = await uploadSandboxSourceArchiveToRepository(s0, rid);
         if (up.ok) {
           const pr = await patchLatestRequirementStatusColumns({
             requirementId: rid,
