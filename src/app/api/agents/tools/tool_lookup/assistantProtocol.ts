@@ -312,7 +312,7 @@ function injectThoughtProcess(tool: RoutedTool): RoutedTool {
         ...tool.parameters.properties,
         thought_process: {
           type: 'string',
-          description: 'Obligatorio. Explica paso a paso por qué estás llamando a esta herramienta y qué esperas lograr con ella basándote en tu objetivo actual.'
+          description: 'Required. Explain step-by-step why you are calling this tool and what you expect to achieve based on your current objective.'
         }
       },
       required: [...(tool.parameters.required || []), 'thought_process']

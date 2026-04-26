@@ -288,7 +288,7 @@ SHELL LIMITATIONS:
 RULES:
 - Focus ONLY on this step. Do not plan — EXECUTE.
 - CRITICAL EXECUTION RULES:
-  1. ALWAYS THINK OUT LOUD: You MUST output a brief text explanation of your reasoning and plan BEFORE invoking any tool. Never output just a tool call without text.
+  1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
   2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
   3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
   4. DATA VS UI RULE: If visual feedback shows "Missing Content" or empty lists, DO NOT change CSS/UI first. Verify the API response, database seed, and console logs. You might be trying to fix a data problem with CSS. You can use \`sandbox_read_logs\` to check server/console logs if needed.
