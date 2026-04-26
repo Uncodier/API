@@ -89,6 +89,7 @@ export async function runOrchestratorStep(params: {
   git_repo_kind?: 'applications' | 'automation';
   /** Used when reprovisioning the VM (branch title) */
   requirementTitle?: string;
+  globalStartTime?: number;
 }) {
   'use step';
   const {
@@ -165,13 +166,13 @@ export async function runOrchestratorStep(params: {
 
   const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
 
-  const startTime = Date.now();
+  const globalStartTime = params.globalStartTime ?? Date.now();
   const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
 
   let timedOut = false;
 
   while (!isDone && turns < MAX_TURNS) {
-    if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+    if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
       console.log(`[CronStep] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Saving WIP state and halting to prevent Vercel timeout.`);
       try {
         const { SandboxService } = await import('@/lib/services/sandbox-service');

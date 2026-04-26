@@ -363,6 +363,7 @@ export async function executeStepsPhaseStep(params: {
               gitRepoKind: git_repo_kind,
               flow: classifyRequirementType(requirementType),
               sandboxActiveRef,
+              globalStartTime: startTime,
             },
           );
           sandbox = sandboxActiveRef.current;
@@ -490,6 +491,7 @@ export async function executeStepsPhaseStep(params: {
             initialMessage: buildPlanAdaptationUserMessage(title, reqId, planId, workingStep, gateError),
             git_repo_kind,
             requirementTitle: title,
+            globalStartTime: startTime,
           });
           effectiveSandboxId = orchOut.effectiveSandboxId;
           let afterOrch: Awaited<ReturnType<typeof connectOrRecreateRequirementSandbox>>;

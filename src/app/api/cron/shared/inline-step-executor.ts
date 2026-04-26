@@ -253,6 +253,7 @@ export async function inlineExecutePlanStep(
     gitRepoKind?: GitRepoKind;
     flow?: RequirementKind;
     sandboxActiveRef?: { current: Sandbox };
+    globalStartTime?: number;
   },
 ): Promise<InlineExecutePlanStepResult> {
   const { instance_id, site_id, user_id } = context.executionOptions;
@@ -372,6 +373,8 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   let currentMessages: any[] = [initialUser];
   let lastResult: any;
   const MAX_TURNS = 10;
+  const globalStartTime = execOpts?.globalStartTime ?? Date.now();
+  const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
 
   try {
     const used: Record<RetryBucket, number> = { build: 0, runtime: 0, visual: 0 };
@@ -429,11 +432,9 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
       let isDone = false;
       let turns = 0;
-      const startTime = Date.now();
-      const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
 
       while (!isDone && turns < MAX_TURNS) {
-        if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+        if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
           console.log(`[CronStep] Step ${step.order} reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
           break;
         }
@@ -486,7 +487,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       const gateSandbox = execOpts?.sandboxActiveRef?.current ?? sandbox;
       
       let gate: Awaited<ReturnType<typeof runGateForFlow>>;
-      if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+      if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
         console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns. Saving WIP state.`);
         try {
           await SandboxService.commitAndPush(gateSandbox, {
@@ -679,7 +680,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       const bucketLimit = budgetFor(bucket);
       const bucketExhausted = used[bucket] > bucketLimit;
 
-      if (bucketExhausted || Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+      if (bucketExhausted || Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
         const reason = bucketExhausted 
           ? `bucket "${bucket}" exhausted after ${used[bucket] - 1}/${bucketLimit} retries`
           : `max execution time reached (${MAX_EXECUTION_TIME_MS}ms)`;
