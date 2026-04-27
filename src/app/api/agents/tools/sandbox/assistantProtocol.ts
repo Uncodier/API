@@ -17,6 +17,7 @@ import { sandboxCodeSearchTool } from '@/app/api/agents/tools/sandbox/code-searc
 import { sandboxReadLogsTool } from '@/app/api/agents/tools/sandbox_read_logs/assistantProtocol';
 import { getQaSandboxTools } from '@/app/api/agents/tools/sandbox/qa-tools';
 import { sandboxDbMigrateTool } from '@/app/api/agents/tools/sandbox/sandbox-db-migrate';
+import { sandboxDbInspectTool } from '@/app/api/agents/tools/sandbox/sandbox-db-inspect';
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
@@ -542,6 +543,7 @@ export function getSandboxTools(
     sandboxListFilesTool(sandbox, toolsCtx),
     sandboxReadLintsTool(sandbox, toolsCtx),
     sandboxDbMigrateTool(sandbox, requirementId, toolsCtx),
+    sandboxDbInspectTool(requirementId, toolsCtx),
     sandboxRestoreCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxPushCheckpointTool(sandbox, requirementId, toolsCtx),
     sandboxReadLogsTool(sandbox, toolsCtx),

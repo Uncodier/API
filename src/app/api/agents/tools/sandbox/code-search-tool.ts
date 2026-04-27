@@ -397,26 +397,177 @@ async function actionTree(sandbox: Sandbox, args: { path?: string; max_depth?: n
   };
 }
 
+// ---- vector_search --------------------------------------------------------
+
+const VECTOR_SCRIPT = `
+const Module = require('module');
+const originalRequire = Module.prototype.require;
+Module.prototype.require = function(request) {
+  if (request === 'sharp') {
+    return {};
+  }
+  return originalRequire.apply(this, arguments);
+};
+
+const fs = require('fs');
+const { execSync } = require('child_process');
+
+const WORK_DIR = process.argv[2];
+const QUERY = process.argv[3];
+const MAX_RESULTS = parseInt(process.argv[4] || '10', 10);
+const CACHE_FILE = '/tmp/vector_index.json';
+const RG_BIN = '/tmp/agent-bin/rg';
+
+process.env.HF_HUB_DISABLE_PROGRESS_BARS = '1';
+
+async function main() {
+  try {
+    require.resolve('/tmp/node_modules/@xenova/transformers');
+  } catch (e) {
+    execSync('npm install @xenova/transformers onnxruntime-node --no-optional --ignore-scripts', { cwd: '/tmp', stdio: 'ignore' });
+  }
+
+  const { pipeline, cos_sim, env } = require('/tmp/node_modules/@xenova/transformers');
+  
+  env.cacheDir = '/tmp/.cache/transformers';
+
+  const extractor = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2');
+
+  let index = [];
+
+  if (fs.existsSync(CACHE_FILE)) {
+    index = JSON.parse(fs.readFileSync(CACHE_FILE, 'utf8'));
+  } else {
+    const rgCmd = RG_BIN + " --files --hidden --no-messages -g '!node_modules/**' -g '!.git/**' -g '!.next/**' -g '!.turbo/**' -g '!.vercel/**' -g '!dist/**' -g '!build/**' -g '!coverage/**' -g '!.cache/**' " + WORK_DIR;
+    let files = [];
+    try {
+      files = execSync(rgCmd, { encoding: 'utf8' }).split('\\n').filter(Boolean);
+    } catch (e) {
+      // rg might fail if no files found
+    }
+
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(file, 'utf8');
+        if (content.length > 1000000) continue;
+        if (content.includes('\\0')) continue;
+
+        const lines = content.split('\\n');
+        const chunkSize = 50;
+        for (let i = 0; i < lines.length; i += chunkSize) {
+          const chunk = lines.slice(i, i + chunkSize).join('\\n');
+          if (chunk.trim().length < 10) continue;
+          
+          const output = await extractor(chunk, { pooling: 'mean', normalize: true });
+          const embedding = Array.from(output.data);
+          
+          index.push({
+            file: file.replace(WORK_DIR + '/', ''),
+            line: i + 1,
+            text: chunk.length > 400 ? chunk.slice(0, 400) + '...' : chunk,
+            embedding
+          });
+        }
+      } catch (e) {
+        // ignore unreadable files
+      }
+    }
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(index));
+  }
+
+  const queryOutput = await extractor(QUERY, { pooling: 'mean', normalize: true });
+  const queryEmbedding = Array.from(queryOutput.data);
+
+  const results = index.map(item => {
+    const score = cos_sim(queryEmbedding, item.embedding);
+    return { file: item.file, line: item.line, text: item.text, score };
+  });
+
+  results.sort((a, b) => b.score - a.score);
+  const topResults = results.slice(0, MAX_RESULTS);
+
+  console.log('VECTOR_SEARCH_RESULT:' + JSON.stringify({ ok: true, results: topResults }));
+}
+
+main().catch(err => {
+  console.log('VECTOR_SEARCH_RESULT:' + JSON.stringify({ ok: false, error: err.message }));
+});
+`;
+
+async function actionVectorSearch(
+  sandbox: Sandbox,
+  args: { pattern?: string; path?: string; max_results?: number },
+  bins: EnsureBins,
+) {
+  if (!bins.rg) {
+    return {
+      ok: false,
+      error: 'ripgrep (rg) is required for vector_search to list files, but it is not available.',
+    };
+  }
+  const query = (args.pattern ?? '').trim();
+  if (!query) {
+    return { ok: false, error: 'pattern (query) is required for vector_search.' };
+  }
+  const limit = clampInt(args.max_results, 10, 1, 50);
+  const scope = resolveScope(args.path);
+
+  const writeRes = await shRun(
+    sandbox,
+    `cat << 'EOF' > /tmp/vector_search.js\n${VECTOR_SCRIPT}\nEOF`
+  );
+  if (writeRes.exitCode !== 0) {
+    return { ok: false, error: `Failed to write vector_search.js: ${writeRes.stderr}` };
+  }
+
+  const cmd = `node /tmp/vector_search.js ${shellEscape(scope)} ${shellEscape(query)} ${limit}`;
+  const res = await shRun(sandbox, cmd);
+
+  const match = res.stdout.match(/VECTOR_SEARCH_RESULT:(.*)/);
+  if (!match) {
+    return {
+      ok: false,
+      error: `Vector search script failed or produced no valid output. Exit code: ${res.exitCode}. Stderr: ${res.stderr.trim() || res.stdout.trim()}`,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(match[1]);
+    if (!parsed.ok) {
+      return { ok: false, error: parsed.error };
+    }
+    return {
+      ok: true,
+      query,
+      scope,
+      count: parsed.results.length,
+      results: parsed.results,
+    };
+  } catch (e) {
+    return { ok: false, error: `Failed to parse vector search results: ${String(e)}` };
+  }
+}
+
 // ---- tool factory ---------------------------------------------------------
 
 export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_code_search',
     description:
-      'Navigate and search the cloned repository inside the sandbox WITHOUT shelling out raw grep/find. Backed by ripgrep (text + file listing, respects .gitignore) and ast-grep (AST-aware symbol search). Always prefer this over sandbox_run_command for searches — results are structured, capped, and noise-filtered. Actions: find_files | grep | find_symbol | tree. Bootstrap (binary install) runs once per sandbox on first call.',
+      'Navigate and search the cloned repository inside the sandbox WITHOUT shelling out raw grep/find. Backed by ripgrep (text + file listing), ast-grep (AST-aware symbol search), and transformers.js (vector search). Actions: find_files | grep | find_symbol | tree | vector_search. Bootstrap runs once per sandbox on first call.',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
-          enum: ['find_files', 'grep', 'find_symbol', 'tree'],
+          enum: ['find_files', 'grep', 'find_symbol', 'tree', 'vector_search'],
           description:
-            'find_files: list files by glob. grep: regex content search. find_symbol: AST-aware structural search via ast-grep (best for functions/components/classes). tree: directory summary with file counts.',
+            'find_files: list files by glob. grep: regex content search. find_symbol: AST-aware structural search via ast-grep. tree: directory summary. vector_search: semantic search using local embeddings.',
         },
         pattern: {
           type: 'string',
           description:
-            'For grep: regex (ripgrep syntax). For find_symbol: ast-grep pattern using $NAME / $$$ARGS metavariables, e.g. "function $NAME($$$) { $$$ }", "<$COMP $$$/>", "class $NAME extends $BASE { $$$ }".',
+            'For grep: regex (ripgrep syntax). For find_symbol: ast-grep pattern. For vector_search: natural language query.',
         },
         glob: {
           type: 'string',
@@ -451,13 +602,13 @@ export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
         max_results: {
           type: 'number',
           description:
-            'Cap on results. find_files default 200 (max 1000). grep default 100 (max 500). find_symbol default 50 (max 300).',
+            'Cap on results. find_files default 200. grep default 100. find_symbol default 50. vector_search default 10.',
         },
       },
       required: ['action'],
     },
     execute: async (args: {
-      action: 'find_files' | 'grep' | 'find_symbol' | 'tree';
+      action: 'find_files' | 'grep' | 'find_symbol' | 'tree' | 'vector_search';
       pattern?: string;
       glob?: string;
       lang?: string;
@@ -470,7 +621,7 @@ export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
     }) => {
       const s0 = liveSandbox(sandbox, toolsCtx);
       const bins = await ensureSearchBinaries(s0);
-      if (!bins.rg && (args.action === 'find_files' || args.action === 'grep' || args.action === 'tree')) {
+      if (!bins.rg && (args.action === 'find_files' || args.action === 'grep' || args.action === 'tree' || args.action === 'vector_search')) {
         return {
           ok: false,
           error:
@@ -487,6 +638,8 @@ export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
           return actionFindSymbol(s0, args, bins);
         case 'tree':
           return actionTree(s0, args);
+        case 'vector_search':
+          return actionVectorSearch(s0, args, bins);
         default:
           return { ok: false, error: `Unknown action: ${(args as { action: string }).action}` };
       }

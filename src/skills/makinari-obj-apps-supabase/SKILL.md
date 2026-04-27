@@ -75,17 +75,11 @@ create policy reservations_tenant on reservations
   with check (auth.jwt()->>'tenant_id' = current_setting('request.jwt.claims', true)::jsonb->>'tenant_id');
 ```
 
-2. Apply via Platform API (server-only):
+2. Apply the migration using the `sandbox_db_migrate` tool. Do NOT use `sandbox_run_command` with custom scripts or `fetch` to apply migrations.
 
-```ts
-await fetch(`${process.env.UNCODIE_API_BASE}/api/platform/db/migrations`, {
-  method: 'POST',
-  headers: { authorization: `Bearer ${process.env.UNCODIE_API_KEY}`, 'content-type': 'application/json' },
-  body: JSON.stringify({ sql: await readFile('migrations/0001_reservations.sql', 'utf8') }),
-});
-```
+3. Verify the table exists using the `sandbox_db_inspect` tool. Do NOT write custom Node.js scripts to test the connection.
 
-3. CRUD it from the SDK. RLS does the rest:
+4. CRUD it from the SDK. RLS does the rest:
 
 ```ts
 await db.from('reservations').insert({ user_id, starts_at, ends_at });
@@ -106,6 +100,7 @@ const { data } = await db.from('reservations').select('*').order('starts_at');
 
 ## Anti-patterns
 
+- **Writing custom Node.js scripts (e.g. `test-api.js`) to test the database connection.** This often fails due to missing env vars or dependencies in the sandbox. INSTEAD, use the `sandbox_db_inspect` tool to verify if tables exist or to sample data.
 - Adding `@supabase/supabase-js` with a foreign URL or service key.
 - Writing migrations that touch `public.*`, `auth.*` or `storage.*`
   outside the tenant bucket — the linter rejects them and your migration
@@ -120,6 +115,8 @@ const { data } = await db.from('reservations').select('*').order('starts_at');
 
 | Tool | When to use |
 | --- | --- |
+| `sandbox_db_migrate` | Apply pending SQL migrations to the tenant database schema. Use this after writing new migration files. |
+| `sandbox_db_inspect` | Verify if a table exists or sample data from the tenant database schema. Use this INSTEAD of writing custom Node.js test scripts. |
 | `sandbox_run_command` | `npm install @supabase/supabase-js` (already pinned at root for new bases). |
 | `sandbox_write_file` | Create `src/lib/supabase.ts`, `src/lib/supabase-server.ts`, `migrations/*.sql`. |
 | `requirement_status` | Mention `auth_provider` and the migration version after each schema change. |

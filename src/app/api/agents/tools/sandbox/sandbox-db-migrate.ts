@@ -9,7 +9,7 @@ export function sandboxDbMigrateTool(
 ) {
   return {
     name: 'sandbox_db_migrate',
-    description: 'Applies pending SQL migrations to the tenant database schema. Use this tool after writing new migration files (e.g. in migrations/ or supabase/migrations/) to execute them against the database. Do not use this for public or auth schemas.',
+    description: 'Applies pending SQL migrations to the tenant database schema. Use this tool after writing new migration files (e.g. in migrations/ or supabase/migrations/) to execute them against the database. Do not use this for public or auth schemas. After migrating, use sandbox_db_inspect to verify tables instead of writing custom test scripts.',
     parameters: {
       type: 'object',
       properties: {},
