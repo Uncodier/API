@@ -35,7 +35,7 @@ Pick Vitrina when the client wants a **fixed format** (articles, gallery, slides
 Pick Generic when the requirement is full product development, not a packaged Vitrina shell.
 
 - Prefer an **existing app baseline**: check out `main`, or a team baseline such as `core-infrastructure`.
-- **For complex apps with Auth/DB**: If the requirement needs login, users, or database, check out the `core-infrastructure-supabase` branch (based on the official Vercel Next.js + Supabase starter) instead of `main`.
+- **For complex apps with Auth/DB**: If the requirement needs login, users, or database, check out the `core-infrastructure-supabase` branch (based on the official Vercel Next.js + Supabase starter) instead of `main`. The branch already exists in the repo.
 - Do NOT create a second Next.js project under a nested folder. The platform expects ONE repo root at `/vercel/sandbox` with `package.json` at the root and routes under `src/app/`.
 - Do NOT run `npx create-next-app` unless `instructions` explicitly require a greenfield AND the repo is empty. The default is to extend the checked-out baseline.
 
@@ -45,7 +45,7 @@ Pick Generic when the requirement is full product development, not a packaged Vi
 2. Run Git in `/vercel/sandbox`:
    - `git fetch origin`
    - **For A**: `git checkout -B feature/<requirement_short_id> origin/<vitrina_branch>` (use the established naming convention for feature branches in this repo).
-   - **For B**: `git checkout <baseline>` (e.g. `main` / `core-infrastructure` / `core-infrastructure-supabase`), then create / switch to the feature branch for this requirement.
+   - **For B**: `git checkout <baseline>` (e.g. `main` / `core-infrastructure` / `core-infrastructure-supabase`), then create / switch to the feature branch for this requirement (`git checkout -b feature/<requirement_short_id>`).
 3. Confirm the tree: `sandbox_list_files .` — expect `package.json` at the root and `src/app/` layout consistent with the choice.
 4. **Persist the decision** via `requirements action="update"` — append a bullet to `instructions`:
    - `BASE: Vitrina <name> → branch <branch>` (for A), or
