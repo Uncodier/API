@@ -49,6 +49,7 @@ ${SANDBOX_REPO_ROOT_INVARIANT}
 
 CHECKPOINTS & RECOVERY (read this):
 - MANDATORY TOOL — sandbox_push_checkpoint: If you changed any files or created commits locally, you MUST call sandbox_push_checkpoint at least once before you stop working on this step (typically after npm run build succeeds). Use title_hint = this step's title. If the tool reports nothing to push because the tree is already synced with origin, that counts — but you must still have invoked it. Never skip it to "save time". skill_lookup and SKILL.md playbooks do NOT replace this — checkpoints are separate.
+- CRITICAL: Before calling sandbox_push_checkpoint on a new Next.js project, you MUST verify that node_modules and .next are NOT in the git cache. If they are, run \`git rm -r --cached node_modules .next\` first.
 - You must NOT consider the step finished until your repo changes are on the remote feature branch (origin). Automated cron workflows verify npm run build and commit+push before marking the step complete; if push fails, you get a REACTIVE TASK and must commit/push yourself until origin is updated.
 - Until origin is verified, the step does not complete. Do not use raw "git commit" or "git push" via sandbox_run_command during normal execution — EXCEPT: (1) call sandbox_push_checkpoint as above; (2) when you receive "REACTIVE TASK" / "PUSH RECOVERY", fix the repo and then use sandbox_push_checkpoint or follow the recovery git steps.
 - When calling tools that need IDs, use ${ridHint} and ${iidHint}.
