@@ -79,7 +79,14 @@ The recurring failure mode is interpreting a backlog item title (e.g. *"Resume t
 
 If the backlog item title is the only context you have, derive copy from `requirement.spec.md` sections 1 (vision), 2 (audience) and 4 (value prop). Never paraphrase the item title and never print the item id.
 
-### 4. Shift-left build
+### 4. The Boy Scout Rule (Refactor before you feature)
+When you open an existing file to add a new feature, you MUST evaluate its current health before adding your code:
+1. If the file is over 500 lines, you MUST extract parts of it into smaller components/modules BEFORE adding your new logic.
+2. If the file contains mock data or fake authentication, you MUST replace it with real integrations if possible.
+3. If the code is messy or lacks ES Modules structure, clean it up.
+Always leave the code cleaner than you found it. Do this refactoring as part of your current step.
+
+### 5. Shift-left build
 Before reporting completion:
 1. `sandbox_run_command npm run build`.
 2. Fix every TypeScript, ESLint, and import error. Clean build is the floor, not the ceiling.

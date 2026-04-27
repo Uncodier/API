@@ -85,7 +85,14 @@ type Input = z.infer<typeof InputSchema>;
 
 Never trust `req.json()` without parsing. Reject malformed input with `400` and a structured `error.details` payload (see section 2).
 
-### 4. Idempotency (webhooks, cron, retries)
+### 4. The Boy Scout Rule (Refactor before you feature)
+When you open an existing file to add a new feature, you MUST evaluate its current health before adding your code:
+1. If the file is over 500 lines, you MUST extract parts of it into smaller components/modules BEFORE adding your new logic.
+2. If the file contains mock data or fake authentication, you MUST replace it with real integrations if possible.
+3. If the code is messy or lacks ES Modules structure, clean it up.
+Always leave the code cleaner than you found it. Do this refactoring as part of your current step.
+
+### 5. Idempotency (webhooks, cron, retries)
 Any endpoint that mutates state MUST be safe to call twice with the same payload.
 
 - Accept an idempotency key from the caller (`Idempotency-Key` header) OR derive one deterministically from the payload (`hash(body + timestamp bucket)`).
