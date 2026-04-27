@@ -43,6 +43,7 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 | `makinari-obj-vitrinas` | Inject content into a selected Vitrina. |
 | `makinari-obj-automatizacion` | Deliver runner UI + endpoint for automations. |
 | `makinari-obj-tarea` | One-off script + Markdown Vitrina. |
+| `makinari-rol-maintenance-orchestrator` | Maintenance orchestration role. Runs in parallel to the main orchestrator. Owns the refactoring, technical debt cleanup, and QA regression of ALREADY COMPLETED backlog items. |
 
 Use `skill_lookup action="list"` if you need to confirm what is available.
 
@@ -78,6 +79,9 @@ Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality ov
 - When reviewing a sub-agent's `step_output`, look for the `[CONTRACT ADEQUATION]` flag.
 - Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
 - **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
+
+### 10. Do not rely on Maintenance
+You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming the `makinari-rol-maintenance-orchestrator` will clean it up later. The maintenance agent runs in parallel to clean up technical debt and perform regression testing on already completed items, but it is NOT a crutch for poor initial implementation. You must deliver production-ready code.
 
 ## Standard plan template (applications repo)
 

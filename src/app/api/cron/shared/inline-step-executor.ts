@@ -70,7 +70,7 @@ function collectStepToolCallSnapshots(messages: any[]): AssistantToolCallSnapsho
 /**
  * Infer the role from step title/instructions when the orchestrator didn't set one.
  */
-function inferRoleFromStep(step: any): string | null {
+export function inferRoleFromStep(step: any): string | null {
   const text = `${step.title || ''} ${step.instructions || ''}`.toLowerCase();
   if (
     /template|vitrina|vitrinas|bootstrap|project base|base branch|select.*repo|checkout.*origin/.test(
@@ -281,10 +281,9 @@ export async function inlineExecutePlanStep(
     },
   });
 
-  // Resolve role: explicit > inferred from step content
-  const effectiveRole = step.role || inferRoleFromStep(step);
-  if (!step.role && effectiveRole) {
-    console.log(`[CronStep] Inferred role "${effectiveRole}" for step ${step.order} (no explicit role set)`);
+  const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
+  if (!step.role && effectiveRole !== 'general') {
+    console.log(`[CronStep|${effectiveRole}] Inferred role "${effectiveRole}" for step ${step.order} (no explicit role set)`);
   }
 
   let skillContext = '';
@@ -292,7 +291,7 @@ export async function inlineExecutePlanStep(
   if (skillName) {
     const matched = SkillsService.getSkillBySlugOrName(skillName);
     if (matched) {
-      console.log(`[CronStep] Injecting skill "${skillName}" for step ${step.order}`);
+      console.log(`[CronStep|${effectiveRole}] Injecting skill "${skillName}" for step ${step.order}`);
       skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
     }
   }
@@ -390,7 +389,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         const action = detectActionLoop(recentCalls);
         if (action.triggered) {
           console.warn(
-            `[CronStep] Step ${step.order} action loop detected (${action.reason}). Skipping retry → falling back to gate failure for self-heal.`,
+            `[CronStep|${effectiveRole}] Step ${step.order} action loop detected (${action.reason}). Skipping retry → falling back to gate failure for self-heal.`,
           );
           await logCronInfrastructureEvent(audit, {
             event: CronInfraEvent.STEP_STATUS,
@@ -435,12 +434,12 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
       while (!isDone && turns < MAX_TURNS) {
         if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
-          console.log(`[CronStep] Step ${step.order} reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
+          console.log(`[CronStep|${effectiveRole}] Step ${step.order} reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
           break;
         }
 
         turns++;
-        console.log(`[CronStep] Step ${step.order} attempt ${totalAttempts} turn ${turns}`);
+        console.log(`[CronStep|${effectiveRole}] Step ${step.order} attempt ${totalAttempts} turn ${turns}`);
         try {
           lastResult = await executeAssistantStep(currentMessages, context.instance, {
             ...context.executionOptions,
@@ -462,7 +461,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
           isDone = lastResult.isDone;
         } catch (err: any) {
           if (isSandboxGoneError(err?.message || String(err))) {
-            console.warn(`[CronStep] Sandbox gone mid-step (turn ${turns}). Reprovisioning and retrying turn...`);
+            console.warn(`[CronStep|${effectiveRole}] Sandbox gone mid-step (turn ${turns}). Reprovisioning and retrying turn...`);
             const re = await connectOrRecreateRequirementSandbox({
               sandboxId: sandbox.sandboxId,
               requirementId,
@@ -488,7 +487,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       
       let gate: Awaited<ReturnType<typeof runGateForFlow>>;
       if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
-        console.log(`[CronStep] Skipping gate validation because max execution time was reached during LLM turns. Saving WIP state.`);
+        console.log(`[CronStep|${effectiveRole}] Skipping gate validation because max execution time was reached during LLM turns. Saving WIP state.`);
         try {
           await SandboxService.commitAndPush(gateSandbox, {
             requirementId,
@@ -496,7 +495,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
             message: `WIP: Paused due to time limit on step ${step.order}`,
           });
         } catch (e) {
-          console.warn(`[CronStep] Failed to save WIP state:`, e);
+          console.warn(`[CronStep|${effectiveRole}] Failed to save WIP state:`, e);
         }
         gate = { ok: false, error: 'Execution time limit reached before validation. Will resume next cycle.', flow, signals: [] };
       } else {
@@ -559,9 +558,9 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
               assumption: feedbackMsg.slice(0, 500)
             });
             
-            console.log(`[CronStep] Persisted visual critic feedback for item ${backlogItemId}`);
+            console.log(`[CronStep|${effectiveRole}] Persisted visual critic feedback for item ${backlogItemId}`);
           } catch (e) {
-            console.warn(`[CronStep] Failed to persist visual critic feedback:`, e);
+            console.warn(`[CronStep|${effectiveRole}] Failed to persist visual critic feedback:`, e);
           }
         }
       }
@@ -587,7 +586,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         lastResult = gate.lastResult ?? lastResult;
         const checkedAt = new Date().toISOString();
         const vd = gate.vercelDeploy;
-        console.log(`[CronStep] Gate OK for flow "${flow}" after step ${step.order} (attempt ${totalAttempts})`);
+        console.log(`[CronStep|${effectiveRole}] Gate OK for flow "${flow}" after step ${step.order} (attempt ${totalAttempts})`);
 
         const backlogItemId = extractBacklogItemId(step);
         
@@ -674,7 +673,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
       };
       lastSignals = nextSignals;
       console.error(
-        `[CronStep] Step ${step.order} gate failed (attempt ${totalAttempts}, bucket=${bucket}, budgets_used=${JSON.stringify(used)}): ${lastGateError.slice(0, 200)}`,
+        `[CronStep|${effectiveRole}] Step ${step.order} gate failed (attempt ${totalAttempts}, bucket=${bucket}, budgets_used=${JSON.stringify(used)}): ${lastGateError.slice(0, 200)}`,
       );
 
       const bucketLimit = budgetFor(bucket);
@@ -739,7 +738,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
     return { ok: false, gateError: 'Step gate exhausted without result' };
   } catch (error: any) {
-    console.error(`[CronStep] Step ${step.order} execution error: ${error.message}`);
+    console.error(`[CronStep|${effectiveRole}] Step ${step.order} execution error: ${error.message}`);
     await updateInstancePlanCore({
       plan_id: plan.id, instance_id, site_id,
       steps: [{ id: step.id, status: 'failed', error_message: error.message, completed_at: new Date().toISOString() }],

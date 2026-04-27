@@ -124,7 +124,7 @@ export async function runOrchestratorStep(params: {
     sandbox = connected.sandbox;
     effectiveSandboxId = connected.sandboxId;
   } catch (err: unknown) {
-    console.error(`[CronStep] 🚨 CRITICAL ERROR: connectOrRecreateRequirementSandbox failed in orchestrator:`, err);
+    console.error(`[CronStep|orchestrator] 🚨 CRITICAL ERROR: connectOrRecreateRequirementSandbox failed in orchestrator:`, err);
     throw err; // Re-throw so the outer workflow catches it and can clean up if needed
   }
 
@@ -138,7 +138,7 @@ export async function runOrchestratorStep(params: {
   const fullTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);
   const routedCount = fullTools.find((t: any) => t?.name === 'tool_lookup') ? 1 : 0;
   console.log(
-    `[CronStep] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tool_lookup=${routedCount}). Routed tools are discoverable via tool_lookup.`,
+    `[CronStep|orchestrator] Orchestrator tools visible to LLM: ${fullTools.length} (always-on + tool_lookup=${routedCount}). Routed tools are discoverable via tool_lookup.`,
   );
 
   // Gemini tends to explore the sandbox first; 15 turns isn't enough once you
@@ -173,7 +173,7 @@ export async function runOrchestratorStep(params: {
 
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
-      console.log(`[CronStep] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Saving WIP state and halting to prevent Vercel timeout.`);
+      console.log(`[CronStep|orchestrator] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Saving WIP state and halting to prevent Vercel timeout.`);
       try {
         const { SandboxService } = await import('@/lib/services/sandbox-service');
         await SandboxService.commitAndPush(sandbox, {
@@ -182,7 +182,7 @@ export async function runOrchestratorStep(params: {
           message: `WIP: Orchestrator paused due to time limit`,
         });
       } catch (e) {
-        console.warn(`[CronStep] Failed to save Orchestrator WIP state:`, e);
+        console.warn(`[CronStep|orchestrator] Failed to save Orchestrator WIP state:`, e);
       }
       timedOut = true;
       break;
@@ -261,7 +261,7 @@ export async function runOrchestratorStep(params: {
       ]
         .filter(Boolean)
         .join(' | ');
-      console.error(`[CronStep] ${summary}`, body ? { body } : '');
+      console.error(`[CronStep|orchestrator] ${summary}`, body ? { body } : '');
       // Hard cap at ~1.5KB and drop the stack. The FatalError wrapper that
       // Vercel Workflow builds around us already contributes several hundred
       // bytes of framing; any real stack traces (with /var/task/.next/server
@@ -284,7 +284,7 @@ export async function runOrchestratorStep(params: {
     const planningVerdict = detectPlanningLoop(callSnapshots);
     if (planningVerdict.triggered && !isDone) {
       console.warn(
-        `[CronStep] ${planningVerdict.reason} → injecting STOP feedback and freezing remaining turns.`,
+        `[CronStep|orchestrator] ${planningVerdict.reason} → injecting STOP feedback and freezing remaining turns.`,
       );
       messages = [
         ...messages,
@@ -329,7 +329,7 @@ export async function runOrchestratorStep(params: {
     if (!isDone && !createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
       nudged = true;
       console.log(
-        `[CronStep] Orchestrator nudge at turn ${turns}: still no instance_plan(create) — injecting reminder.`,
+        `[CronStep|orchestrator] Orchestrator nudge at turn ${turns}: still no instance_plan(create) — injecting reminder.`,
       );
       messages = [...messages, { role: 'user', content: noPlanReminder }];
     }
@@ -350,7 +350,7 @@ export async function runOrchestratorStep(params: {
     ) {
       noPlanOverrides++;
       console.warn(
-        `[CronStep] Orchestrator returned isDone=true at turn ${turns} without creating a plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
+        `[CronStep|orchestrator] Orchestrator returned isDone=true at turn ${turns} without creating a plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
       );
       messages = [...messages, { role: 'user', content: noPlanReminder }];
       isDone = false;
@@ -358,7 +358,7 @@ export async function runOrchestratorStep(params: {
   }
 
   console.log(
-    `[CronStep] Orchestrator finished after ${turns} turn(s) (createdPlan=${createdPlan}, isDone=${isDone}, timedOut=${timedOut})`,
+    `[CronStep|orchestrator] Orchestrator finished after ${turns} turn(s) (createdPlan=${createdPlan}, isDone=${isDone}, timedOut=${timedOut})`,
   );
   return { turns, effectiveSandboxId, createdPlan, timedOut };
 }

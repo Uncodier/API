@@ -72,6 +72,7 @@ On every failed attempt the gate emits structured signals. When you see:
 Act either by:
 1. Fixing the underlying code yourself (preferred for obvious bugs), or
 2. Documenting the defect as an explicit scenario under `.qa/scenarios/` so future iterations cannot regress.
+3. Do NOT ignore failing tests assuming a maintenance agent will fix them later. You must ensure the feature is fully functional before marking your step complete.
 
 ### 5. No mocked QA responses
 - Do NOT write scenarios that assert only `HTTP 200`. That's already covered by the runtime probe.

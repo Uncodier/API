@@ -90,7 +90,7 @@ When you open an existing file to add a new feature, you MUST evaluate its curre
 1. If the file is over 500 lines, you MUST extract parts of it into smaller components/modules BEFORE adding your new logic.
 2. If the file contains mock data or fake authentication, you MUST replace it with real integrations if possible.
 3. If the code is messy or lacks ES Modules structure, clean it up.
-Always leave the code cleaner than you found it. Do this refactoring as part of your current step.
+Always leave the code cleaner than you found it. Do this refactoring as part of your current step. Do NOT leave technical debt assuming a maintenance agent will clean it up later. You are responsible for the quality of the code you write.
 
 ### 5. Idempotency (webhooks, cron, retries)
 Any endpoint that mutates state MUST be safe to call twice with the same payload.

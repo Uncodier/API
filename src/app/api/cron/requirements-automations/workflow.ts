@@ -144,7 +144,7 @@ CRITICAL EXECUTION RULES:
 
   // Step 3: Run orchestrator (if needed)
   if (!skipOrchestrator) {
-    console.log(`[CronAutoWorkflow] PHASE 1: Orchestrator`);
+    console.log(`[CronAutoWorkflow|orchestrator] PHASE 1: Orchestrator`);
     const prompt = isNewBranch
       ? `Process automation "${title}". Investigate, then create an instance_plan.`
       : `Continue "${title}". All previous steps done — create a NEW plan.`;
@@ -169,9 +169,9 @@ CRITICAL EXECUTION RULES:
     if (!orch.createdPlan) {
       const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
       if (!postOrchPlan) {
-        console.warn(
-          `[CronAutoWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
-        );
+          console.warn(
+            `[CronAutoWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+          );
         const rec = await recordRequirementBlockedStep({
           site_id,
           instance_id: instanceId,
@@ -180,7 +180,7 @@ CRITICAL EXECUTION RULES:
             'Orchestrator finished without producing an instance_plan (automation workflow). Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate if this repeats.',
         });
         if (!rec.ok) {
-          console.error(`[CronAutoWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
+          console.error(`[CronAutoWorkflow|orchestrator] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
         }
       }
     }

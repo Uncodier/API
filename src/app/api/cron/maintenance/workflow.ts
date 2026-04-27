@@ -58,7 +58,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       workDir, branchName, backlog: backlogSnapshot,
     });
 
-    console.log(`[QAWorkflow] Running QA & Improvement agent directly (no steps/plans)`);
+    console.log(`[QAWorkflow|qa] Running QA & Improvement agent directly (no steps/plans)`);
     const prompt = `Review the backlog for DONE items. Pick one to audit. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. Do NOT create an instance_plan. Just do the work and finish your turn.`;
 
     const agentRun = await runMaintenanceAgentStep({
@@ -82,7 +82,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
         sandboxId = pushed.effectiveSandboxId;
       }
     } else {
-      console.log('[QAWorkflow] Skipping commitAndPushStep — agent timed out');
+      console.log('[QAWorkflow|qa] Skipping commitAndPushStep — agent timed out');
     }
 
     return { reqId, status: 'qa_improvement_cycle_complete' };

@@ -190,7 +190,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Step 4: Run orchestrator (if no pending plan)
   if (!skipOrchestrator) {
-    console.log(`[CronAppsWorkflow] PHASE 1: Running orchestrator`);
+    console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
     const prompt = isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`
       : `Continue "${title}". All previous steps done — create a NEW plan for the next iteration.`;
@@ -217,11 +217,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       if (!postOrchPlan) {
         if (orch.timedOut) {
           console.warn(
-            `[CronAppsWorkflow] Orchestrator timed out before creating instance_plan for req ${reqId} — skipping blocker to allow retry next cycle.`,
+            `[CronAppsWorkflow|orchestrator] Orchestrator timed out before creating instance_plan for req ${reqId} — skipping blocker to allow retry next cycle.`,
           );
         } else {
           console.warn(
-            `[CronAppsWorkflow] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+            `[CronAppsWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
           );
           const rec = await recordRequirementBlockedStep({
             site_id,
@@ -231,7 +231,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
               'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
           });
           if (!rec.ok) {
-            console.error(`[CronAppsWorkflow] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
+            console.error(`[CronAppsWorkflow|orchestrator] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
           }
         }
       }

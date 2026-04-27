@@ -8,7 +8,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
-import { inlineExecutePlanStep, runSmokeTest } from './inline-step-executor';
+import { inlineExecutePlanStep, runSmokeTest, inferRoleFromStep } from './inline-step-executor';
 import { classifyRequirementType } from '@/lib/services/requirement-flows';
 import { checkpointPlanIteration } from './cron-commit-helpers';
 import { runOrchestratorStep } from './cron-orchestrator-step';
@@ -327,13 +327,14 @@ export async function executeStepsPhaseStep(params: {
       };
 
       try {
+        const role = workingStep.role || inferRoleFromStep(workingStep) || 'general';
         if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
-          console.log(`[CronStep] Reached max execution time (${MAX_EXECUTION_TIME_MS}ms) before starting inline step execution. Halting step loop to prevent Vercel timeout.`);
+          console.log(`[CronStep|${role}] Reached max execution time (${MAX_EXECUTION_TIME_MS}ms) before starting inline step execution. Halting step loop to prevent Vercel timeout.`);
           break outer;
         }
         if (needsRetryCountBump && !didRetryCountBump) {
           didRetryCountBump = true;
-          console.log(`[CronStep] → Step ${workingStep.order}: ${workingStep.title} (RETRY from failed)`);
+          console.log(`[CronStep|${role}] → Step ${workingStep.order}: ${workingStep.title} (RETRY from failed)`);
           await updateInstancePlanCore({
             plan_id: planId,
             instance_id: instanceId,
@@ -341,7 +342,7 @@ export async function executeStepsPhaseStep(params: {
             steps: [{ id: workingStep.id, status: 'pending', retry_count: (workingStep.retry_count ?? 0) + 1 }],
           });
         } else if (orchestratorPassesUsed === 0) {
-          console.log(`[CronStep] → Step ${workingStep.order}: ${workingStep.title}`);
+          console.log(`[CronStep|${role}] → Step ${workingStep.order}: ${workingStep.title}`);
         }
 
         const audit: CronAuditContext = {
@@ -379,7 +380,7 @@ export async function executeStepsPhaseStep(params: {
           sandboxGoneAttempts++;
           if (sandboxGoneAttempts > MAX_SANDBOX_GONE_MID_STEP) {
             console.error(
-              `[CronStep] Sandbox still unavailable for step ${workingStep.order} after ${MAX_SANDBOX_GONE_MID_STEP} reprovision attempt(s)`,
+              `[CronStep|${role}] Sandbox still unavailable for step ${workingStep.order} after ${MAX_SANDBOX_GONE_MID_STEP} reprovision attempt(s)`,
             );
             await logCronInfrastructureEvent(audit, {
               event: CronInfraEvent.STEP_STATUS,
@@ -397,7 +398,7 @@ export async function executeStepsPhaseStep(params: {
           }
 
           console.warn(
-            `[CronStep] Sandbox gone during step ${workingStep.order} — reprovision ${sandboxGoneAttempts}/${MAX_SANDBOX_GONE_MID_STEP}`,
+            `[CronStep|${role}] Sandbox gone during step ${workingStep.order} — reprovision ${sandboxGoneAttempts}/${MAX_SANDBOX_GONE_MID_STEP}`,
           );
           await logCronInfrastructureEvent(audit, {
             event: CronInfraEvent.SANDBOX_REPROVISIONED,
@@ -424,7 +425,7 @@ export async function executeStepsPhaseStep(params: {
             sandboxActiveRef.current = sandbox;
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[CronStep] Mid-step reprovision failed: ${msg}`);
+            console.error(`[CronStep|${role}] Mid-step reprovision failed: ${msg}`);
             await logCronInfrastructureEvent(audit, {
               event: CronInfraEvent.STEP_STATUS,
               level: 'error',
@@ -437,7 +438,7 @@ export async function executeStepsPhaseStep(params: {
         }
 
         if (stepResult.ok) {
-          console.log(`[CronStep] ✓ Step ${workingStep.order} passed`);
+          console.log(`[CronStep|${role}] ✓ Step ${workingStep.order} passed`);
           try {
             await checkpointPlanIteration(sandbox, title, reqId, workingStep, 'success', audit, {
               gitRepoKind: git_repo_kind,
@@ -446,12 +447,12 @@ export async function executeStepsPhaseStep(params: {
             continue outer;
           } catch (err: any) {
             const msg = err?.message || String(err);
-            console.error(`[CronStep] Checkpoint failed for step ${workingStep.order}: ${msg}`);
+            console.error(`[CronStep|${role}] Checkpoint failed for step ${workingStep.order}: ${msg}`);
             
             // Si el error es un 410, el checkpoint plan iteration ya lo maneja silenciosamente,
             // pero si por alguna razón llega aquí, no debemos fallar el plan.
             if (/\b410\b/.test(msg)) {
-              console.log(`[CronStep] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
+              console.log(`[CronStep|${role}] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
               executed++;
               continue outer;
             }
@@ -471,14 +472,14 @@ export async function executeStepsPhaseStep(params: {
 
         // Check if the step failed due to a timeout
         if (gateError && gateError.includes('Execution time limit reached')) {
-          console.log(`[CronStep] Step ${workingStep.order} paused due to time limit. Halting step loop to prevent Vercel timeout.`);
+          console.log(`[CronStep|${role}] Step ${workingStep.order} paused due to time limit. Halting step loop to prevent Vercel timeout.`);
           break outer;
         }
 
         if (orchestratorPassesUsed < MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES) {
           orchestratorPassesUsed++;
           console.log(
-            `[CronStep] Step ${workingStep.order} gate failed — running plan adaptation orchestrator (${orchestratorPassesUsed}/${MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES})`,
+            `[CronStep|${role}] Step ${workingStep.order} gate failed — running plan adaptation orchestrator (${orchestratorPassesUsed}/${MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES})`,
           );
           const orchOut = await runOrchestratorStep({
             sandboxId: effectiveSandboxId,
@@ -505,7 +506,7 @@ export async function executeStepsPhaseStep(params: {
             });
           } catch (err: unknown) {
             const msg = err instanceof Error ? err.message : String(err);
-            console.error(`[CronStep] Sandbox reconnect after orchestrator failed: ${msg}`);
+            console.error(`[CronStep|${role}] Sandbox reconnect after orchestrator failed: ${msg}`);
             await logCronInfrastructureEvent(audit, {
               event: CronInfraEvent.STEP_STATUS,
               level: 'error',
@@ -553,7 +554,7 @@ export async function executeStepsPhaseStep(params: {
           if (refreshed) {
             workingStep = refreshed;
           } else {
-            console.error(`[CronStep] Step ${workingStep.id} missing from plan after adaptation — aborting phase`);
+            console.error(`[CronStep|${role}] Step ${workingStep.id} missing from plan after adaptation — aborting phase`);
             anyStepFailed = true;
             break outer;
           }
@@ -562,12 +563,12 @@ export async function executeStepsPhaseStep(params: {
         }
 
         console.log(
-          `[CronStep] ✗ Step ${workingStep.order} still failing after ${MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES} adaptation pass(es) — stopping plan run`,
+          `[CronStep|${role}] ✗ Step ${workingStep.order} still failing after ${MAX_PLAN_ADAPTATION_ORCHESTRATOR_PASSES} adaptation pass(es) — stopping plan run`,
         );
         anyStepFailed = true;
         break outer;
       } catch (err: any) {
-        console.error(`[CronStep] ✗ Step ${workingStep.order} failed: ${err?.message}`);
+        console.error(`[CronStep|${role}] ✗ Step ${workingStep.order} failed: ${err?.message}`);
         anyStepFailed = true;
         break outer;
       }
