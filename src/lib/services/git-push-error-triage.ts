@@ -81,7 +81,7 @@ export function classifyGitPushFailureMessage(stderr: string): string | null {
   ) {
     return 'auth';
   }
-  if (s.includes('pre-receive hook') || s.includes('hook declined')) {
+  if (s.includes('pre-receive hook') || s.includes('hook declined') || s.includes('gh001') || s.includes('large files detected')) {
     return 'server_hook';
   }
   if (messageMentionsRebase(s) && (s.includes('conflict') || s.includes('could not apply'))) {
@@ -165,8 +165,8 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
   if (kindRaw === 'server_hook') {
     return {
       failureKind: 'server_hook',
-      agentActionable: false,
-      agentMessage: `${OPS_ONLY_MESSAGE} (server hook)`,
+      agentActionable: true,
+      agentMessage: 'Push rejected by server hook (often due to file size limits, e.g., pushing node_modules or .next). Check git log and use `git reset --soft HEAD~1` and `git rm -r --cached node_modules .next` to remove large files from the commit history before pushing again.',
       operatorMessage,
     };
   }
