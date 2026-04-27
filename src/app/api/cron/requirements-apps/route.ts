@@ -99,14 +99,89 @@ export async function GET(req: Request) {
       console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
       const currentAttempts = requirement.metadata?.cron_attempts || 0;
-      if (currentAttempts >= 3) {
-        console.log(`[Cron Apps] Skipping ${reqId} — blocked due to 3 consecutive failures without progress.`);
+      if (currentAttempts >= 10) {
+        console.log(`[Cron Apps] Skipping ${reqId} — blocked due to 10 consecutive failures without progress. Triggering QA.`);
+        
+        // We need to get the latest error/status to send to QA
+        const { data: latestStatus } = await supabaseAdmin
+          .from('requirement_status')
+          .select('message, stage')
+          .eq('requirement_id', reqId)
+          .order('created_at', { ascending: false })
+          .limit(1);
+          
+        const errorMessage = latestStatus?.[0]?.message || 'Unknown error after 10 attempts';
+        const errorSummary = `The main builder failed 10 consecutive times. Last error: ${errorMessage}. YOUR PRIORITY IS TO FIX THIS ERROR. Ignore the "only audit done items" rule for this run and focus on unblocking the main builder by fixing the build/runtime error.`;
+
         await supabaseAdmin.from('requirements').update({ 
           status: 'blocked',
           updated_at: new Date().toISOString()
         }).eq('id', reqId);
+        
+        // Trigger QA workflow before continuing
+        const maintenanceLockKey = `${reqId}-maint`;
+        const maintRunLock = await acquireRunLock(maintenanceLockKey);
+        
+        if (maintRunLock) {
+          console.log(`[Cron Apps] Starting QA workflow for blocked req ${reqId}`);
+          
+          let maintInstanceId: string | undefined;
+          const maintInstanceName = `req-maint-${reqId}`;
+          
+          const { data: maintInstances } = await supabaseAdmin
+            .from('remote_instances')
+            .select('id')
+            .eq('site_id', site_id)
+            .eq('name', maintInstanceName)
+            .limit(1);
+
+          if (maintInstances && maintInstances.length > 0) {
+            maintInstanceId = maintInstances[0].id;
+          } else {
+            const { data: newMaintInstance } = await supabaseAdmin
+              .from('remote_instances')
+              .insert(
+                cronRemoteInstancePayload({
+                  site_id,
+                  user_id,
+                  name: maintInstanceName,
+                  created_by: user_id,
+                  instance_type: REMOTE_INSTANCE_TYPE_MAINTENANCE,
+                }),
+              )
+              .select('id')
+              .single();
+            maintInstanceId = newMaintInstance?.id;
+          }
+
+          if (maintInstanceId) {
+            try {
+              const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
+                reqId,
+                title,
+                instructions,
+                type,
+                site_id,
+                user_id,
+                instanceId: maintInstanceId,
+                previousWorkContext: errorSummary,
+                instance_type: type,
+                cronLockRunId: maintRunLock.runId,
+                maintenanceLockKey,
+              }]);
+
+              results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'qa_blocked' });
+            } catch (err: any) {
+              console.error(`[Cron Apps] Error starting QA workflow for blocked req ${reqId}:`, err);
+              await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+            }
+          } else {
+            await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+          }
+        }
+
         await releaseRunLock(reqId, runLock.runId);
-        results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker' });
+        results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker_qa_triggered' });
         continue;
       }
 

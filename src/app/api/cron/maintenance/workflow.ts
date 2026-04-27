@@ -56,6 +56,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     const maintenancePrompt = buildMaintenancePromptForFlow({
       reqId, title, type, instanceId, site_id,
       workDir, branchName, backlog: backlogSnapshot,
+      previousWorkContext: input.previousWorkContext,
     });
 
     console.log(`[QAWorkflow|qa] Running QA & Improvement agent directly (no steps/plans)`);

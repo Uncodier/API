@@ -20,12 +20,17 @@ export interface MaintenancePromptInput {
   workDir: string;
   branchName: string;
   backlog?: RequirementBacklog | null;
+  previousWorkContext?: string;
 }
 
 export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string {
   const kind = classifyRequirementType(p.type);
   const flow = getFlow(kind);
   const snapshot = renderMaintenanceBacklogSnapshot(flow, p.backlog ?? null);
+
+  const contextSection = p.previousWorkContext 
+    ? `\nCRITICAL CONTEXT FROM MAIN WORKFLOW:\n${p.previousWorkContext}\n` 
+    : '';
 
   return `You are the QA AND IMPROVEMENT AGENT of a requirement workflow running inside a secure Vercel Sandbox.
 
@@ -46,7 +51,7 @@ INSTANCE:
 
 YOUR ROLE: QA AND IMPROVEMENT AGENT
 Your job is to audit backlog items that the main team has marked as \`done\`, verify they ACTUALLY work as specified in the contract, fix any missing functionality, and improve the code quality. You are the safety net.
-
+${contextSection}
 ${snapshot}
 
 HARD RULES:
