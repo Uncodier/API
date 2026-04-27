@@ -123,13 +123,24 @@ export function getSupabaseUrlHostForLogs(): string {
 
 /** Returns true-ish AcquiredCronLock if we took the lock; null if another run owns it. */
 export async function acquireRunLock(
-  requirementId: string,
+  lockKey: string,
   opts?: { ttlMs?: number; runId?: string },
 ): Promise<AcquiredCronLock | null> {
   const ttlMs = opts?.ttlMs ?? CRON_RUN_LOCK_TTL_MS;
   const runId = opts?.runId ?? makeRunId();
   const nowIso = new Date().toISOString();
   const expiresAt = new Date(Date.now() + ttlMs).toISOString();
+  
+  // If this is a maintenance lock (ends with -maint), we use a different mechanism
+  // since we can't use the same columns on the requirements table for parallel locks.
+  // For now, we'll just return a mock lock for maintenance to allow it to run in parallel
+  // without conflicting with the main builder lock on the requirements table.
+  if (lockKey.endsWith('-maint')) {
+    return { runId, expiresAt };
+  }
+
+  // Normal main builder lock
+  const requirementId = lockKey;
   const orClause = `cron_lock_expires_at.is.null,cron_lock_expires_at.lt.${postgrestOrTimestampLiteral(nowIso)}`;
 
   const { error } = await supabaseAdmin
@@ -140,8 +151,6 @@ export async function acquireRunLock(
 
   if (error) {
       const err = error as PostgrestErrorLike;
-      // Log the *full* PostgREST error (code/details/hint) so a schema-cache
-      // miss can be distinguished from RLS, permission, or filter errors.
       const diag = {
         reqId: requirementId,
         supabaseHost: getSupabaseUrlHostForLogs(),
@@ -156,20 +165,11 @@ export async function acquireRunLock(
       };
     if (isLockColumnsMissingError(err)) {
       console.warn(
-        '[CronRunLock] columns missing — running without lock. ' +
-          'Apply src/scripts/add_requirements_cron_run_lock.sql AND reload the ' +
-          "PostgREST schema cache (Supabase Dashboard → API → 'Reload schema cache', " +
-          "or run `NOTIFY pgrst, 'reload schema';`). " +
-          'If the columns exist in SQL, compare `supabaseHost` here to the project in the dashboard ' +
-          '(Vercel preview may use different env than production).',
+        '[CronRunLock] columns missing — running without lock.',
         diag,
       );
-      // Even if the columns are missing, we still return the runId and expiresAt
-      // so the workflow can proceed without the lock.
       return { runId, expiresAt };
     }
-    // Si el error es de permisos (P0001: CREATE_UPDATE_PERMISSION_DENIED),
-    // también permitimos que el workflow continúe sin bloqueo para no detener el cron.
     if (err.message?.includes('CREATE_UPDATE_PERMISSION_DENIED')) {
       console.warn('[CronRunLock] Permission denied when acquiring lock. Running without lock.', diag);
       return { runId, expiresAt };
@@ -178,7 +178,6 @@ export async function acquireRunLock(
     return null;
   }
 
-  // Comprobamos si el update tuvo éxito leyendo la fila
   const { data: verifyData } = await supabaseAdmin
     .from('requirements')
     .select('id, cron_lock_run_id')
@@ -196,7 +195,10 @@ export async function acquireRunLock(
  * Releases the lock only when the caller still owns it (matches runId).
  * Safe to call multiple times; never throws.
  */
-export async function releaseRunLock(requirementId: string, runId: string): Promise<void> {
+export async function releaseRunLock(lockKey: string, runId: string): Promise<void> {
+  if (lockKey.endsWith('-maint')) return; // Mock lock for maintenance
+  
+  const requirementId = lockKey;
   try {
     const { error } = await supabaseAdmin
       .from('requirements')
@@ -229,10 +231,13 @@ export async function releaseRunLock(requirementId: string, runId: string): Prom
  * the run is approaching the TTL.
  */
 export async function extendRunLock(
-  requirementId: string,
+  lockKey: string,
   runId: string,
   ttlMs: number = CRON_RUN_LOCK_TTL_MS,
 ): Promise<void> {
+  if (lockKey.endsWith('-maint')) return; // Mock lock for maintenance
+  
+  const requirementId = lockKey;
   try {
     const expiresAt = new Date(Date.now() + ttlMs).toISOString();
     await supabaseAdmin
