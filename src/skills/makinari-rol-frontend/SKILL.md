@@ -28,7 +28,7 @@ The requirement's section 6.4 lists `data-testid` attributes the frontend must e
 
 - Add every declared test-id to the correct element.
 - **Never rename or remove** a declared test-id. QA scenarios and the automated gate target them by name; renaming is a regression.
-- If a needed element is missing from section 6.4, stop and add it via `requirements action="update"` with a `## Revisions` entry. Do NOT invent test-ids on your own.
+- **Contract Adequation:** If a needed element is missing from section 6.4 (e.g., a loading spinner, an error message, a clear button), do NOT stop or escalate. Create it, assign it a logical `data-testid`, and report it in your `step_output` using the `[CONTRACT ADEQUATION]` flag. See `makinari-contract-adequation` for details.
 
 ```tsx
 // Good
@@ -48,7 +48,7 @@ When the requirement says "functionalize" or "wire", do NOT ship:
 
 Instead:
 - Connect to real backends (Supabase / project API) if available.
-- CRITICAL: For transactional features (forms, bookings, creation, updates), you MUST implement the full end-to-end flow. Do NOT mock the data in the frontend. If the backend API doesn't exist, you must create it or escalate.
+- CRITICAL: For transactional features (forms, bookings, creation, updates), you MUST implement the full end-to-end flow. Do NOT mock the data in the frontend. If the backend API doesn't exist, **apply Contract Adequation**: assume the logical endpoint path, wire the form to it, and report the assumed endpoint in your `step_output` with the `[CONTRACT ADEQUATION]` flag so the Backend agent builds it next.
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the frontend.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.

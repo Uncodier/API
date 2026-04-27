@@ -20,9 +20,9 @@ Implement API endpoints, webhooks, and automations that satisfy the requirement'
 ## Execution Rules
 
 ### 1. Honor the requirement contract
-Read `requirement.instructions` sections 6.1 (API), 6.2 (DB), 6.3 (Env) and implement verbatim. If the contract is missing a detail you need:
-- Pause. Do NOT invent a field or a response shape.
-- Add a line to the requirement's `## Open Questions` via `requirements action="update"` and escalate through `instance_plan` so the orchestrator can resolve.
+Read `requirement.instructions` sections 6.1 (API), 6.2 (DB), 6.3 (Env) and implement verbatim. If the contract is missing a detail you need (e.g., a missing field, an unspecified helper endpoint):
+- **Apply Contract Adequation:** Do NOT pause or block execution. Proactively invent the missing field or endpoint using industry standards to complete the feature.
+- **Report it:** You MUST explicitly document this addition in your `step_output` using the `[CONTRACT ADEQUATION]` flag so the Orchestrator can sync the master contract. See `makinari-contract-adequation` for full details.
 
 ### 2. Dual-mode support (`?mode=test` and `?mode=prod`) — mandatory
 Every public endpoint MUST accept both modes.

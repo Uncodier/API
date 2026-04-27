@@ -47,7 +47,7 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 Use `skill_lookup action="list"` if you need to confirm what is available.
 
 ### 4. Translate ambiguous requests
-Your main leverage is turning a vague client line into a concrete directive. The `instructions` field on each step must be specific — file paths, endpoints, or acceptance criteria.
+Your main leverage is turning a vague client line into a concrete directive. The `instructions` field on each step must be specific — file paths, endpoints, or acceptance criteria. If you miss a detail, sub-agents are empowered to fill the gaps using the **Contract Adequation** protocol (see `makinari-contract-adequation`), but you should strive to be as complete as possible.
 
 **Worked examples**
 
@@ -72,6 +72,12 @@ The preview URL is the permanent Vercel deployment URL from the branch push (via
 ### 8. Defensive execution
 - If a tool call returns an error, do NOT blindly retry `create`. Do a `list` first to check if the previous call succeeded server-side.
 - Wrap mutations in error handling.
+
+### 9. Contract Adequation (Handling deviations)
+Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality over strict contract adherence. They may add missing `data-testid`s, endpoints, or DB fields to complete a feature.
+- When reviewing a sub-agent's `step_output`, look for the `[CONTRACT ADEQUATION]` flag.
+- Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
+- **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
 
 ## Standard plan template (applications repo)
 
