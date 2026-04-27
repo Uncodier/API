@@ -45,7 +45,9 @@ Pick Generic when the requirement is full product development, not a packaged Vi
 2. Run Git in `/vercel/sandbox`:
    - `git fetch origin`
    - **For A**: `git checkout -B feature/<requirement_short_id> origin/<vitrina_branch>` (use the established naming convention for feature branches in this repo).
-   - **For B**: `git checkout <baseline>` (e.g. `main` / `core-infrastructure` / `core-infrastructure-supabase`), then create / switch to the feature branch for this requirement (`git checkout -b feature/<requirement_short_id>`).
+   - **For B**: `git checkout <baseline>` (e.g. `main` / `core-infrastructure` / `core-infrastructure-supabase`).
+     - *Self-healing*: If `core-infrastructure-supabase` does not exist on origin, you MUST bootstrap it: `git checkout -b core-infrastructure-supabase`, run `rm -rf * && rm -rf .gitignore` to ensure the directory is empty, run `npx create-next-app@latest -e with-supabase . --yes`, **verify `.gitignore` contains `node_modules` and `.next`** (create it if missing), run `git add . && git commit -m "chore: setup supabase base"`, and push it (`sandbox_run_command` with `git push -u origin core-infrastructure-supabase`).
+     - Then create / switch to the feature branch for this requirement (`git checkout -b feature/<requirement_short_id>`).
 3. Confirm the tree: `sandbox_list_files .` — expect `package.json` at the root and `src/app/` layout consistent with the choice.
 4. **Persist the decision** via `requirements action="update"` — append a bullet to `instructions`:
    - `BASE: Vitrina <name> → branch <branch>` (for A), or
