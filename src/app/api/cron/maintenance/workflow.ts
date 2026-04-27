@@ -1,0 +1,102 @@
+'use workflow';
+
+import {
+  createSandboxStep,
+  cleanupNestedProjectsStep,
+  commitAndPushStep,
+  stopSandboxStep,
+  extendRunLockStep,
+  releaseRunLockStep,
+} from '../shared/cron-steps';
+import { runMaintenanceAgentStep } from './agent-step';
+import { getBacklogSnapshotStep } from '../shared/workflow-db-steps';
+import { buildMaintenancePromptForFlow } from './prompt';
+import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+
+export interface MaintenanceWorkflowInput {
+  reqId: string;
+  title: string;
+  instructions: string | null;
+  type: string;
+  site_id: string;
+  user_id: string;
+  instanceId: string;
+  previousWorkContext: string;
+  instance_type: string;
+  cronLockRunId?: string;
+  maintenanceLockKey: string;
+}
+
+export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
+  'use workflow';
+
+  const { reqId, title, type, site_id, user_id, instanceId, cronLockRunId, maintenanceLockKey } = input;
+  console.log(`[QAWorkflow] Starting QA & Improvement for req ${reqId}: ${title}`);
+
+  const cronAudit: CronAuditContext = {
+    instanceId,
+    siteId: site_id,
+    userId: user_id,
+    requirementId: reqId,
+  };
+
+  let sandboxId: string | null = null;
+
+  try {
+    const created = await createSandboxStep(reqId, type, title, cronAudit);
+    sandboxId = created.sandboxId;
+    const { branchName, workDir } = created;
+
+    const cleanup = await cleanupNestedProjectsStep(sandboxId!, cronAudit);
+    sandboxId = cleanup.effectiveSandboxId;
+
+    const backlogSnap = await getBacklogSnapshotStep(reqId);
+    const backlogSnapshot = backlogSnap.backlog;
+
+    const maintenancePrompt = buildMaintenancePromptForFlow({
+      reqId, title, type, instanceId, site_id,
+      workDir, branchName, backlog: backlogSnapshot,
+    });
+
+    console.log(`[QAWorkflow] Running QA & Improvement agent directly (no steps/plans)`);
+    const prompt = `Review the backlog for DONE items. Pick one to audit. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. Do NOT create an instance_plan. Just do the work and finish your turn.`;
+
+    const agentRun = await runMaintenanceAgentStep({
+      sandboxId: sandboxId!,
+      reqId,
+      requirementType: type,
+      maintenancePrompt,
+      instanceId,
+      site_id,
+      user_id,
+      initialMessage: prompt,
+      requirementTitle: title,
+    });
+    sandboxId = agentRun.effectiveSandboxId;
+
+    await extendRunLockStep(maintenanceLockKey, cronLockRunId);
+
+    if (!agentRun.timedOut) {
+      const pushed = await commitAndPushStep(sandboxId!, title, reqId, 'QA & Improvement: Fixes and Refactoring', cronAudit, 'applications');
+      if (pushed?.effectiveSandboxId) {
+        sandboxId = pushed.effectiveSandboxId;
+      }
+    } else {
+      console.log('[QAWorkflow] Skipping commitAndPushStep — agent timed out');
+    }
+
+    return { reqId, status: 'qa_improvement_cycle_complete' };
+  } catch (e: any) {
+    console.error(`[QAWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
+    throw e;
+  } finally {
+    if (sandboxId) {
+      try {
+        await stopSandboxStep(sandboxId, cronAudit);
+      } catch (e: unknown) {
+        console.warn('[QAWorkflow] stopSandboxStep threw in finally:', e);
+      }
+    }
+    await releaseRunLockStep(maintenanceLockKey, cronLockRunId);
+  }
+}

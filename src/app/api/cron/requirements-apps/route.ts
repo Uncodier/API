@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
+import { runMaintenanceWorkflow } from '../maintenance/workflow';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
+const REMOTE_INSTANCE_TYPE_MAINTENANCE = 'browser' as const;
 
 /** Cron runners use Vercel Sandbox workflows — not Scrapybara; keep provider/CDP null. */
 function cronRemoteInstancePayload(base: {
@@ -13,11 +15,12 @@ function cronRemoteInstancePayload(base: {
   user_id: string;
   name: string;
   created_by: string;
+  instance_type?: string;
 }) {
   return {
     ...base,
     status: 'pending' as const,
-    instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS,
+    instance_type: base.instance_type || REMOTE_INSTANCE_TYPE_CRON_APPS,
     provider_instance_id: null as string | null,
     cdp_url: null as string | null,
   };
@@ -118,7 +121,7 @@ export async function GET(req: Request) {
         }).eq('id', reqId);
       }
 
-      // Find or create remote_instance
+      // Find or create remote_instance for MAIN BUILDER
       let instanceId: string | undefined;
       const { data: prevStatusForInstance } = await supabaseAdmin
         .from('requirement_status')
@@ -211,8 +214,8 @@ export async function GET(req: Request) {
           : '',
       ].filter(Boolean).join('\n');
 
-      // Start the workflow — durable execution with step-level retries
-      console.log(`[Cron Apps] Starting workflow for req ${reqId}, instance ${instanceId}`);
+      // Start the MAIN workflow — durable execution with step-level retries
+      console.log(`[Cron Apps] Starting main workflow for req ${reqId}, instance ${instanceId}`);
       try {
         const workflowRun = await start(runCronAppsWorkflow, [{
           reqId,
@@ -227,10 +230,80 @@ export async function GET(req: Request) {
           cronLockRunId: runLock.runId,
         }]);
 
-        results.push({ reqId, runId: workflowRun.runId, started: true });
+        results.push({ reqId, runId: workflowRun.runId, started: true, type: 'main' });
       } catch (err: any) {
-        console.error(`[Cron Apps] Error starting workflow for req ${reqId}:`, err);
-        results.push({ reqId, error: err?.message || 'Failed to start workflow' });
+        console.error(`[Cron Apps] Error starting main workflow for req ${reqId}:`, err);
+        results.push({ reqId, error: err?.message || 'Failed to start main workflow' });
+      }
+
+      // ======================================================================
+      // PARALLEL MAINTENANCE WORKFLOW TRIGGER
+      // ======================================================================
+      // We launch the maintenance workflow entirely in parallel, on the exact same cron tick.
+      // It uses its own lock, its own remote_instance, and its own sandbox.
+      const maintenanceLockKey = `${reqId}-maint`;
+      const maintRunLock = await acquireRunLock(maintenanceLockKey);
+      
+      if (maintRunLock) {
+        console.log(`[Cron Apps] Starting PARALLEL maintenance workflow for req ${reqId}`);
+        
+        // Find or create remote_instance for MAINTENANCE
+        let maintInstanceId: string | undefined;
+        const maintInstanceName = `req-maint-${reqId}`;
+        
+        const { data: maintInstances } = await supabaseAdmin
+          .from('remote_instances')
+          .select('id')
+          .eq('site_id', site_id)
+          .eq('name', maintInstanceName)
+          .limit(1);
+
+        if (maintInstances && maintInstances.length > 0) {
+          maintInstanceId = maintInstances[0].id;
+        } else {
+          const { data: newMaintInstance, error: maintInsertErr } = await supabaseAdmin
+            .from('remote_instances')
+            .insert(
+              cronRemoteInstancePayload({
+                site_id,
+                user_id,
+                name: maintInstanceName,
+                created_by: user_id,
+                instance_type: REMOTE_INSTANCE_TYPE_MAINTENANCE,
+              }),
+            )
+            .select('id')
+            .single();
+          if (maintInsertErr) console.error('[Cron Apps] Error inserting maintenance remote_instance:', maintInsertErr);
+          maintInstanceId = newMaintInstance?.id;
+        }
+
+        if (maintInstanceId) {
+          try {
+            const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
+              reqId,
+              title,
+              instructions,
+              type,
+              site_id,
+              user_id,
+              instanceId: maintInstanceId,
+              previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
+              instance_type: type,
+              cronLockRunId: maintRunLock.runId,
+              maintenanceLockKey,
+            }]);
+
+            results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'maintenance' });
+          } catch (err: any) {
+            console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
+            await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+          }
+        } else {
+          await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+        }
+      } else {
+        console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
       }
     }
 
