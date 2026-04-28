@@ -28,9 +28,11 @@ import {
   getBacklogSnapshotStep,
   recordRequirementBlockedStep,
   unblockRequirementStep,
+  checkInstanceAndPlanStatusStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { sleep } from 'workflow';
 
 export interface CronAppsWorkflowInput {
   reqId: string;
@@ -67,6 +69,26 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   let sandboxId: string | null = null;
 
   try {
+  // Step 0: Check if instance or plan is paused
+  let pausedCheck = await checkInstanceAndPlanStatusStep(instanceId);
+  if (pausedCheck.isPaused) {
+    console.log(`[CronAppsWorkflow] Instance or plan is paused. Waiting for up to 5 minutes...`);
+    for (let i = 0; i < 5; i++) {
+      await sleep(60000); // 1 minute
+      pausedCheck = await checkInstanceAndPlanStatusStep(instanceId);
+      if (!pausedCheck.isPaused) {
+        console.log(`[CronAppsWorkflow] Resumed after ${i + 1} minutes.`);
+        break;
+      }
+    }
+    
+    if (pausedCheck.isPaused) {
+      console.log(`[CronAppsWorkflow] Still paused after 5 minutes. Killing workflow and unblocking requirement.`);
+      await unblockRequirementStep(reqId);
+      return { reqId, branch: null, previewUrl: null, status: 'paused' as const };
+    }
+  }
+
   // Step 1: Check for active plan BEFORE creating the sandbox
   // This saves VM costs if we are in a re-plan loop cooldown or blocked state.
   const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);

@@ -91,28 +91,31 @@ Your `instance_plan` should break this down into execution steps for specialized
 - **Step 3 (QA):** `makinari-rol-qa` -> "Test the booking flow from the UI to the API."
 - **Step 4 (Validation):** `makinari-fase-validacion` -> "Build and verify."
 
-### 6. Sequential execution — no race conditions
+### 6. Empty Sandbox Rule (Base Selection)
+If the branch is new and the sandbox is empty (only contains `.env.local` or `requirement.spec.md`), you MUST NOT start writing code, creating DB migrations, or running QA. The **very first step** of your plan MUST be `makinari-obj-template-selection` to clone the base repository (e.g., Next.js template).
+
+### 7. Sequential execution — no race conditions
 Steps execute one after another. Frontend MUST finish before DevOps starts. The system enforces this via `plan-steps.ts`. Do not try to parallelize across steps; parallelize within a step (e.g. multiple files in one frontend step).
 
-### 7. Preview URL rule
+### 8. Preview URL rule
 The preview URL is the permanent Vercel deployment URL from the branch push (via GitHub Deployments API). Do NOT construct or guess URLs. Validation curls target this permanent URL.
 
-### 8. Requirement instructions are the brain
+### 9. Requirement instructions are the brain
 - The requirement's `instructions` field is the persistent blueprint.
 - The bootstrapped `requirement.spec.md` starts with placeholders. In your **first planning cycle**, you MUST flesh out sections 2, 3, 4, 6, and 7 with concrete details (exact routes, data models, user roles) and overwrite the file using `sandbox_write_file`.
 - After the first cycle, `requirement.spec.md` is IMMUTABLE. Update the DB `instructions` via `requirements action="update"` as the plan evolves, and append to `## Revisions` in the markdown file.
 
-### 9. Defensive execution
+### 10. Defensive execution
 - If a tool call returns an error, do NOT blindly retry `create`. Do a `list` first to check if the previous call succeeded server-side.
 - Wrap mutations in error handling.
 
-### 10. Contract Adequation (Handling deviations)
+### 11. Contract Adequation (Handling deviations)
 Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality over strict contract adherence. They may add missing `data-testid`s, endpoints, or DB fields to complete a feature.
 - When reviewing a sub-agent's `step_output`, look for the `[CONTRACT ADEQUATION]` flag.
 - Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
 - **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
 
-### 11. Do not rely on Maintenance
+### 12. Do not rely on Maintenance
 You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming the `makinari-rol-maintenance-orchestrator` will clean it up later. The maintenance agent runs in parallel to clean up technical debt and perform regression testing on already completed items, but it is NOT a crutch for poor initial implementation. You must deliver production-ready code.
 
 ## Standard plan template (applications repo)

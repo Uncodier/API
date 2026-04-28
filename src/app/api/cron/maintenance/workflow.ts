@@ -9,9 +9,10 @@ import {
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { runMaintenanceAgentStep } from './agent-step';
-import { getBacklogSnapshotStep, unblockRequirementStep } from '../shared/workflow-db-steps';
+import { getBacklogSnapshotStep, unblockRequirementStep, checkInstanceAndPlanStatusStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { sleep } from 'workflow';
 
 export interface MaintenanceWorkflowInput {
   reqId: string;
@@ -43,6 +44,26 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
   let sandboxId: string | null = null;
 
   try {
+    // Step 0: Check if instance or plan is paused
+    let pausedCheck = await checkInstanceAndPlanStatusStep(instanceId);
+    if (pausedCheck.isPaused) {
+      console.log(`[QAWorkflow] Instance or plan is paused. Waiting for up to 5 minutes...`);
+      for (let i = 0; i < 5; i++) {
+        await sleep(60000); // 1 minute
+        pausedCheck = await checkInstanceAndPlanStatusStep(instanceId);
+        if (!pausedCheck.isPaused) {
+          console.log(`[QAWorkflow] Resumed after ${i + 1} minutes.`);
+          break;
+        }
+      }
+      
+      if (pausedCheck.isPaused) {
+        console.log(`[QAWorkflow] Still paused after 5 minutes. Killing workflow and unblocking requirement.`);
+        await unblockRequirementStep(reqId, true);
+        return { reqId, status: 'paused' as const };
+      }
+    }
+
     const created = await createSandboxStep(reqId, type, title, cronAudit);
     sandboxId = created.sandboxId;
     const { branchName, workDir } = created;

@@ -83,7 +83,37 @@ export async function recordRequirementBlockedStep(
   }
 }
 
+export async function checkInstanceAndPlanStatusStep(instanceId: string): Promise<{ isPaused: boolean }> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    
+    const { data: instanceData } = await supabaseAdmin
+      .from('remote_instances')
+      .select('status')
+      .eq('id', instanceId)
+      .single();
+
+    const { data: activePlan } = await supabaseAdmin
+      .from('instance_plans')
+      .select('status')
+      .eq('instance_id', instanceId)
+      .in('status', ['pending', 'in_progress', 'paused'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    return {
+      isPaused: instanceData?.status === 'paused' || activePlan?.status === 'paused'
+    };
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to check paused status for instance ${instanceId}:`, e);
+    return { isPaused: false };
+  }
+}
+
 export async function unblockRequirementStep(requirementId: string, forceStatusToInProgress = false): Promise<void> {
+
   'use step';
   try {
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
