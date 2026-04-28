@@ -228,7 +228,7 @@ CRITICAL EXECUTION RULES:
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
     if (!anyFail) {
-      const pushed = await commitAndPushStep(sandboxId, title, reqId, undefined, cronAudit, 'automation');
+      const pushed = await commitAndPushStep(sandboxId, title, reqId, `Cron cycle complete: ${title}`, cronAudit, 'automation');
       pushResult = pushed;
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;

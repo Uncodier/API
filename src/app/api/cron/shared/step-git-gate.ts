@@ -300,11 +300,12 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   }
 
   let didPushRecovery = false;
+  const commitTitle = stepContext?.title || planTitle;
   let persist = await persistOrVerifyOrigin(
     sandbox,
-    planTitle,
+    commitTitle,
     requirementId,
-    `Cron step ${stepOrder} pre-close (${requirementId})`,
+    `Cron step ${stepOrder}: ${commitTitle} (${requirementId})`,
     audit,
     gitRepoKind,
   );
@@ -380,9 +381,9 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         recoveryMessages = lastResult.messages;
         persist = await persistOrVerifyOrigin(
           sandbox,
-          planTitle,
+          commitTitle,
           requirementId,
-          `Cron step ${stepOrder} recovery ${t + 1} (${requirementId})`,
+          `Cron step ${stepOrder} recovery ${t + 1}: ${commitTitle} (${requirementId})`,
           audit,
           gitRepoKind,
         );

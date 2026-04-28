@@ -114,12 +114,14 @@ fi`,
       throw new Error(`[vercel] ${vercelLayoutErr}`);
     }
 
+    const msg = message ?? `Implement ${title} (${reqId})`;
+
     // Ground-truth mirror: progress.md / feature_list.json / evidence/*.json are
     // synced into the workspace right before the commit so the agent never has
     // to update them manually. Never throws — the commit proceeds even if the
     // mirror fails to write.
     try {
-      await syncGroundTruthBeforeCommit({ sandbox, requirementId: reqId, cwd, title });
+      await syncGroundTruthBeforeCommit({ sandbox, requirementId: reqId, cwd, title, note: msg });
     } catch (e: unknown) {
       console.warn(
         '[PreCommit] Ground-truth sync failed (continuing):',
@@ -127,7 +129,6 @@ fi`,
       );
     }
 
-    const msg = message ?? `Implement ${title} (${reqId})`;
     const result = await SandboxService.commitAndPush(activeSandbox, {
       message: msg,
       requirementId: reqId,

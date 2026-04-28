@@ -295,7 +295,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
          console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
       }
 
-      const pushed = await commitAndPushStep(sandboxId!, title, reqId, undefined, cronAudit, 'applications');
+      const pushed = await commitAndPushStep(sandboxId!, title, reqId, `Cron cycle complete: ${title}`, cronAudit, 'applications');
       pushResult = pushed;
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;

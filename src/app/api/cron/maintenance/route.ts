@@ -105,6 +105,36 @@ export async function GET(req: Request) {
         continue;
       }
 
+      // Validate instance and plan are not paused, otherwise put them in play
+      const { data: instanceData } = await supabaseAdmin
+        .from('remote_instances')
+        .select('status')
+        .eq('id', instanceId)
+        .single();
+
+      const { data: activePlan } = await supabaseAdmin
+        .from('instance_plans')
+        .select('id, status')
+        .eq('instance_id', instanceId)
+        .in('status', ['pending', 'in_progress', 'paused'])
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      if (instanceData?.status === 'paused' || activePlan?.status === 'paused') {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — instance or plan is paused`);
+        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        results.push({ reqId, skipped: true, reason: 'paused' });
+        continue;
+      }
+
+      if (instanceData && instanceData.status !== 'running') {
+        await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
+      }
+      if (activePlan && activePlan.status !== 'in_progress') {
+        await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', activePlan.id);
+      }
+
       try {
         const workflowRun = await start(runMaintenanceWorkflow, [{
           reqId,
