@@ -80,9 +80,21 @@ export async function updateInstancePlanCore(params: any) {
     });
 
     // Add new steps that might be in updates.steps but not in currentSteps
+    const seenNewTitles = new Set<string>();
+    
     updates.steps.forEach((incomingStep: any) => {
       if (!currentSteps.some((currentStep: any) => currentStep.id === incomingStep.id)) {
-        updatedSteps.push({ ...incomingStep, created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+        // Deduplicate new steps by title to prevent LLM hallucinations
+        if (incomingStep.title && !seenNewTitles.has(incomingStep.title)) {
+          seenNewTitles.add(incomingStep.title);
+          
+          updatedSteps.push({ 
+            ...incomingStep, 
+            id: incomingStep.id || `step_added_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+            created_at: new Date().toISOString(), 
+            updated_at: new Date().toISOString() 
+          });
+        }
       }
     });
 

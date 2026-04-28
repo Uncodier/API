@@ -89,7 +89,18 @@ export async function createInstancePlanCore(params: any) {
   // Prepare steps if provided
   let planSteps: any[] = [];
   if (validatedData.steps && validatedData.steps.length > 0) {
-    planSteps = validatedData.steps.map((step, index) => ({
+    // Deduplicate steps by title to prevent LLM hallucinations from repeating steps
+    const uniqueSteps: any[] = [];
+    const seenTitles = new Set<string>();
+    
+    for (const step of validatedData.steps) {
+      if (step.title && !seenTitles.has(step.title)) {
+        seenTitles.add(step.title);
+        uniqueSteps.push(step);
+      }
+    }
+
+    planSteps = uniqueSteps.map((step, index) => ({
       id: `step_${index + 1}`,
       title: step.title,
       description: step.description || step.title,
