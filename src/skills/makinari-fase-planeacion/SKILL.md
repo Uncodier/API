@@ -8,7 +8,7 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration', 'pl
 
 ## Objective
 
-"Map the path before walking." Turn the requirement contract and investigation findings into a concrete `instance_plan`. A good plan (a) covers every Acceptance Criterion, (b) binds each step to the correct skill, (c) orders steps so the automated gate passes, and (d) never duplicates an existing active plan.
+"Map the path before walking." Turn the requirement contract and investigation findings into a concrete `instance_plan`. Understand the hierarchy: You are taking **ONE Backlog Item** and breaking it down into a sequence of execution steps (the `instance_plan`). A good plan (a) covers every Acceptance Criterion of the current Backlog Item, (b) binds each step to the correct skill (Frontend, Backend, QA, etc.), (c) orders steps so the automated gate passes, and (d) never duplicates an existing active plan.
 
 ## Execution Rules
 
@@ -39,8 +39,10 @@ Before calling `instance_plan action="create"`, verify:
 - [ ] Validation (`makinari-fase-validacion`) runs before reporting.
 - [ ] Reporting (`makinari-fase-reporteado`) is the final step.
 - [ ] Each step names either `skill` (preferred) or `role`. Never leave both empty.
-- [ ] Each step specifies a `test_command` appropriate for the skill (e.g., `"npm run test:backend"` for `makinari-rol-backend`, `"npm run test:frontend"` for `makinari-rol-frontend`). If omitted, it defaults to `"npm run test"`.
-- [ ] `instructions` on each step is concrete (specific files, specific endpoints, specific assertions) — no "implement the feature".
+- [ ] Each step specifies `expected_output` defining exactly what artifact or state change proves the step succeeded.
+- [ ] Each step specifies `success_criteria` (array of strings) with concrete, observable checks for the step.
+- [ ] Each step specifies `validation_rules` (array of strings) to prevent regressions or anti-patterns during the step.
+- [ ] `instructions` on each step is concrete (specific files, specific endpoints, exact UI screens, navigation flows, specific assertions). For frontend steps, explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior — no "implement the feature" or "build the UI". Eliminate ambiguity.
 
 ### 3. Plan templates by requirement type
 
@@ -50,13 +52,71 @@ Before calling `instance_plan action="create"`, verify:
 {
   "action": "create",
   "title": "Implement: <requirement_title>",
+  "description": "End-to-end plan to deliver the backlog item.",
+  "expected_output": "Working feature deployed to preview URL.",
+  "success_criteria": ["All acceptance criteria met", "QA scenarios pass", "Build succeeds"],
+  "validation_rules": ["No mocked data", "Must use Shadcn UI"],
   "steps": [
-    { "id": "step_base", "order": 1, "title": "Project base", "skill": "makinari-obj-template-selection", "instructions": "Pick Vitrina vs generic app per req section 8; git checkout; append BASE: <branch> to instructions." },
-    { "id": "step_invest", "order": 2, "title": "Investigation", "skill": "makinari-fase-investigacion", "instructions": "Produce Investigation section per output contract." },
-    { "id": "step_fe", "order": 3, "title": "Frontend", "skill": "makinari-rol-frontend", "test_command": "npm run test:frontend", "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers." },
-    { "id": "step_qa", "order": 4, "title": "QA", "skill": "makinari-rol-qa", "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json." },
-    { "id": "step_val", "order": 5, "title": "Validation", "skill": "makinari-fase-validacion", "instructions": "npm run build, verify preview, write test_results.json." },
-    { "id": "step_report", "order": 6, "title": "Report", "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with preview URL." }
+    { 
+      "id": "step_base", 
+      "order": 1, 
+      "title": "Project base", 
+      "skill": "makinari-obj-template-selection", 
+      "instructions": "Pick Vitrina vs generic app per req section 8; git checkout; append BASE: <branch> to instructions.",
+      "expected_output": "Branch checked out and BASE appended to instructions.",
+      "success_criteria": ["git status shows clean working tree on feature branch"],
+      "validation_rules": ["Do not overwrite existing BASE if present"]
+    },
+    { 
+      "id": "step_invest", 
+      "order": 2, 
+      "title": "Investigation", 
+      "skill": "makinari-fase-investigacion", 
+      "instructions": "Produce Investigation section per output contract.",
+      "expected_output": "Investigation context gathered for downstream steps.",
+      "success_criteria": ["Dependencies verified"],
+      "validation_rules": ["Do not write code in this step"]
+    },
+    { 
+      "id": "step_fe", 
+      "order": 3, 
+      "title": "Frontend", 
+      "skill": "makinari-rol-frontend", 
+      "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior.",
+      "expected_output": "UI components and pages created and wired to real endpoints.",
+      "success_criteria": ["Pages render without 500 errors", "Shadcn components used for layout", "Responsive on mobile"],
+      "validation_rules": ["No mocked data", "Must use Tailwind classes"]
+    },
+    { 
+      "id": "step_qa", 
+      "order": 4, 
+      "title": "QA", 
+      "skill": "makinari-rol-qa", 
+      "instructions": "Author .qa/scenarios per req section 6.5, triage gate signals, write qa_results.json.",
+      "expected_output": "qa_results.json written with passing scenarios.",
+      "success_criteria": ["All scenarios pass", "No 503 errors on boot"],
+      "validation_rules": ["Scenarios must target real DOM test-ids"]
+    },
+    { 
+      "id": "step_val", 
+      "order": 5, 
+      "title": "Validation", 
+      "skill": "makinari-fase-validacion", 
+      "instructions": "npm run build, verify preview, write test_results.json.",
+      "expected_output": "test_results.json written with build success.",
+      "success_criteria": ["npm run build exits with 0"],
+      "validation_rules": ["Must not skip type checking"]
+    },
+    { 
+      "id": "step_report", 
+      "order": 6, 
+      "title": "Report", 
+      "skill": "makinari-fase-reporteado", 
+      "instructions": "Create requirement_status with preview URL.",
+      "expected_output": "requirement_status created in DB.",
+      "success_criteria": ["Preview URL is valid and reachable"],
+      "validation_rules": ["Do not report success if build failed"]
+    }
   ]
 }
 ```

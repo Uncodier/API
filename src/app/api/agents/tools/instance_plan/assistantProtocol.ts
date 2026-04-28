@@ -203,6 +203,8 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
                 type: { type: 'string', description: 'Type of step (e.g., task, research, content_creation)' },
                 instructions: { type: 'string', description: 'Detailed instructions for the step' },
                 expected_output: { type: 'string', description: 'Expected output of the step' },
+                success_criteria: { type: 'array', items: { type: 'string' }, description: 'Criteria for successful completion of this step' },
+                validation_rules: { type: 'array', items: { type: 'string' }, description: 'Rules for validating this step execution' },
                 actual_output: { type: 'string', description: 'Actual output after execution' },
                 started_at: { type: 'string', format: 'date-time', description: 'ISO 8601 datetime when step started' },
                 completed_at: { type: 'string', format: 'date-time', description: 'ISO 8601 datetime when step completed' },

@@ -47,8 +47,26 @@ Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads t
 
 Use `skill_lookup action="list"` if you need to confirm what is available.
 
-### 4. Translate ambiguous requests
-Your main leverage is turning a vague client line into a concrete directive. The `instructions` field on each step must be specific — file paths, endpoints, or acceptance criteria. If you miss a detail, sub-agents are empowered to fill the gaps using the **Contract Adequation** protocol (see `makinari-contract-adequation`), but you should strive to be as complete as possible.
+### 4. Translate ambiguous requests (NO AMBIGUOUS SCOPE)
+Your main leverage is turning a vague client line into a concrete directive. The `instructions` field on each step must be specific — file paths, endpoints, exact UI screens, navigation flows, or acceptance criteria. NEVER leave the UI/UX or navigation up to interpretation. If the client didn't specify how to navigate to a screen, YOU must define it. If you miss a detail, sub-agents are empowered to fill the gaps using the **Contract Adequation** protocol (see `makinari-contract-adequation`), but you should strive to be as complete as possible.
+
+**Example of a BAD Backlog Item (Ambiguous):**
+- **Title:** "Member Portal UI"
+- **Acceptance:** ["User can view spaces", "User can book a space"]
+
+**Example of a GOOD Backlog Item (Concrete):**
+- **Title:** "Member Portal - Spaces Grid and Booking Flow"
+- **Acceptance:** [
+    "GET /dashboard/spaces renders a grid of Space Cards using Shadcn UI.",
+    "Clicking a Space Card opens a Shadcn Dialog with the BookingForm component.",
+    "POST /api/bookings is called on form submit, returning 201 on success.",
+    "Sidebar navigation includes a link to /dashboard/spaces."
+  ]
+
+**Example of a GOOD Contract Update (`requirement.spec.md` -> `## 6. Contracts & Navigation`):**
+- "Navigation: `/login` -> `/dashboard` (default) -> `/dashboard/spaces` (via sidebar)."
+- "Data Model: Space (id, name, price, capacity, image_url)."
+- "API: POST `/api/bookings` requires `{ space_id, date, hours }`."
 
 **Worked examples**
 
@@ -58,29 +76,44 @@ Your main leverage is turning a vague client line into a concrete directive. The
 | "Quiero algo lindo para el portafolio" | "Make it pretty." | "Build `/portfolio` consuming `src/app/data.json` items (title, image, tags). Grid at 1280x800 (3 cols), stack at 375x812. Primary CTA `portfolio-view` above fold. Match brand tokens from memories." |
 | "Automatiza el reporte semanal" | "Automate the report." | "Expose `/api/report/weekly` with `?mode=test` returning fixture + `?mode=prod` generating PDF via `src/lib/services/report.ts`. Save artifact to Supabase bucket `reports/`. Emit `cron_infra_step_status` on completion." |
 
-### 5. Sequential execution — no race conditions
+### 5. The Hierarchy: Backlog Item -> Instance Plan
+Understand the structural hierarchy of the system:
+1. **Requirement:** The overall project (e.g., "Habituall Space Management App").
+2. **Backlog Item:** A specific feature or epic (e.g., "Member Portal - Spaces & Reservation View").
+3. **Instance Plan:** The sequence of technical steps to execute **ONE** Backlog Item.
+
+**Example Translation:**
+If the active Backlog Item is: `[item-3] Member Portal - Spaces & Reservation View` (Acceptance: GET /dashboard/spaces renders grid, POST /api/bookings creates reservation).
+
+Your `instance_plan` should break this down into execution steps for specialized agents:
+- **Step 1 (Frontend):** `makinari-rol-frontend` -> "Create `src/app/dashboard/spaces/page.tsx` with a grid of spaces. Use Shadcn UI Cards for each space displaying image, title, and price. Add a 'Book Now' button that opens a Shadcn Dialog containing `src/components/BookingForm.tsx`. Ensure responsive layout (1 col mobile, 3 cols desktop)."
+- **Step 2 (Backend):** `makinari-rol-backend` -> "Create `src/app/api/bookings/route.ts` handling POST requests to insert into the database. Validate payload against Space schema."
+- **Step 3 (QA):** `makinari-rol-qa` -> "Test the booking flow from the UI to the API."
+- **Step 4 (Validation):** `makinari-fase-validacion` -> "Build and verify."
+
+### 6. Sequential execution — no race conditions
 Steps execute one after another. Frontend MUST finish before DevOps starts. The system enforces this via `plan-steps.ts`. Do not try to parallelize across steps; parallelize within a step (e.g. multiple files in one frontend step).
 
-### 6. Preview URL rule
+### 7. Preview URL rule
 The preview URL is the permanent Vercel deployment URL from the branch push (via GitHub Deployments API). Do NOT construct or guess URLs. Validation curls target this permanent URL.
 
-### 7. Requirement instructions are the brain
+### 8. Requirement instructions are the brain
 - The requirement's `instructions` field is the persistent blueprint.
 - Read it from the requirement (injected in your system prompt).
 - Update it via `requirements action="update" instructions="..."` as the plan evolves.
 - Optionally snapshot as `REQUIREMENT.md` via `sandbox_write_file`.
 
-### 8. Defensive execution
+### 9. Defensive execution
 - If a tool call returns an error, do NOT blindly retry `create`. Do a `list` first to check if the previous call succeeded server-side.
 - Wrap mutations in error handling.
 
-### 9. Contract Adequation (Handling deviations)
+### 10. Contract Adequation (Handling deviations)
 Sub-agents (Frontend, Backend, QA) are instructed to prioritize functionality over strict contract adherence. They may add missing `data-testid`s, endpoints, or DB fields to complete a feature.
 - When reviewing a sub-agent's `step_output`, look for the `[CONTRACT ADEQUATION]` flag.
 - Do NOT treat these proactive additions as errors, hallucinations, or contract drift.
 - **Action required:** Immediately update the master `requirement.instructions` (via `requirements action="update"`) to incorporate these new elements so downstream agents (like QA) are aware of the updated contract. See `makinari-contract-adequation` for details.
 
-### 10. Do not rely on Maintenance
+### 11. Do not rely on Maintenance
 You are responsible for delivering a working, high-quality feature. Do NOT write messy code or skip tests assuming the `makinari-rol-maintenance-orchestrator` will clean it up later. The maintenance agent runs in parallel to clean up technical debt and perform regression testing on already completed items, but it is NOT a crutch for poor initial implementation. You must deliver production-ready code.
 
 ## Standard plan template (applications repo)
@@ -89,13 +122,71 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
 {
   "action": "create",
   "title": "Implement: <requirement_title>",
+  "description": "End-to-end plan to deliver the backlog item.",
+  "expected_output": "Working feature deployed to preview URL.",
+  "success_criteria": ["All acceptance criteria met", "QA scenarios pass", "Build succeeds"],
+  "validation_rules": ["No mocked data", "Must use Shadcn UI"],
   "steps": [
-    { "id": "step_base", "order": 1, "title": "Project base — Vitrina vs generic app", "skill": "makinari-obj-template-selection", "instructions": "From req type and instructions, pick Vitrina or generic app. git fetch; checkout into feature branch; append BASE: ... to requirement.instructions." },
-    { "id": "step_invest", "order": 2, "title": "Investigation", "skill": "makinari-fase-investigacion", "instructions": "Explore repo on the selected base, read existing code, check dependencies." },
-    { "id": "step_dev", "order": 3, "title": "Development", "skill": "makinari-rol-frontend", "instructions": "<specific files + testids + behaviors>" },
-    { "id": "step_qa", "order": 4, "title": "QA", "skill": "makinari-rol-qa", "instructions": "Author .qa/scenarios, triage gate signals, write qa_results.json." },
-    { "id": "step_val", "order": 5, "title": "Validation", "skill": "makinari-fase-validacion", "instructions": "npm run build, verify preview, write test_results.json." },
-    { "id": "step_report", "order": 6, "title": "Report", "skill": "makinari-fase-reporteado", "instructions": "Create requirement_status with preview URL." }
+    { 
+      "id": "step_base", 
+      "order": 1, 
+      "title": "Project base — Vitrina vs generic app", 
+      "skill": "makinari-obj-template-selection", 
+      "instructions": "From req type and instructions, pick Vitrina or generic app. git fetch; checkout into feature branch; append BASE: ... to requirement.instructions.",
+      "expected_output": "Branch checked out and BASE appended to instructions.",
+      "success_criteria": ["git status shows clean working tree on feature branch"],
+      "validation_rules": ["Do not overwrite existing BASE if present"]
+    },
+    { 
+      "id": "step_invest", 
+      "order": 2, 
+      "title": "Investigation", 
+      "skill": "makinari-fase-investigacion", 
+      "instructions": "Explore repo on the selected base, read existing code, check dependencies.",
+      "expected_output": "Investigation context gathered for downstream steps.",
+      "success_criteria": ["Dependencies verified"],
+      "validation_rules": ["Do not write code in this step"]
+    },
+    { 
+      "id": "step_dev", 
+      "order": 3, 
+      "title": "Development", 
+      "skill": "makinari-rol-frontend", 
+      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior.",
+      "expected_output": "UI components and pages created and wired to real endpoints.",
+      "success_criteria": ["Pages render without 500 errors", "Shadcn components used for layout", "Responsive on mobile"],
+      "validation_rules": ["No mocked data", "Must use Tailwind classes"]
+    },
+    { 
+      "id": "step_qa", 
+      "order": 4, 
+      "title": "QA", 
+      "skill": "makinari-rol-qa", 
+      "instructions": "Author .qa/scenarios, triage gate signals, write qa_results.json.",
+      "expected_output": "qa_results.json written with passing scenarios.",
+      "success_criteria": ["All scenarios pass", "No 503 errors on boot"],
+      "validation_rules": ["Scenarios must target real DOM test-ids"]
+    },
+    { 
+      "id": "step_val", 
+      "order": 5, 
+      "title": "Validation", 
+      "skill": "makinari-fase-validacion", 
+      "instructions": "npm run build, verify preview, write test_results.json.",
+      "expected_output": "test_results.json written with build success.",
+      "success_criteria": ["npm run build exits with 0"],
+      "validation_rules": ["Must not skip type checking"]
+    },
+    { 
+      "id": "step_report", 
+      "order": 6, 
+      "title": "Report", 
+      "skill": "makinari-fase-reporteado", 
+      "instructions": "Create requirement_status with preview URL.",
+      "expected_output": "requirement_status created in DB.",
+      "success_criteria": ["Preview URL is valid and reachable"],
+      "validation_rules": ["Do not report success if build failed"]
+    }
   ]
 }
 ```
