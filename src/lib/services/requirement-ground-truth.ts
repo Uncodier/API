@@ -64,6 +64,7 @@ export interface ProgressEntry {
   item_id?: string;
   summary: string;
   next?: string;
+  cycles?: number;
 }
 
 export interface DecisionEntry {
@@ -191,21 +192,60 @@ export async function syncProgressEntry(params: {
   entry: ProgressEntry;
 }): Promise<void> {
   const { entry } = params;
-  const line = [
-    `## ${entry.ts}`,
-    entry.cycle != null ? `- cycle: ${entry.cycle}` : null,
-    entry.phase ? `- phase: ${entry.phase}` : null,
-    entry.item_id ? `- item: ${entry.item_id}` : null,
-    `- summary: ${entry.summary}`,
-    entry.next ? `- next: ${entry.next}` : null,
-    '',
-  ]
-    .filter(Boolean)
-    .join('\n');
 
   try {
     const existing = (await readSandboxFile(params.sandbox, params.cwd, 'progress.md')) ?? '# Progress log\n\n';
-    const updated = existing.endsWith('\n') ? existing + line : existing + '\n' + line;
+    const lines = existing.trimEnd().split('\n');
+    
+    let lastHeaderIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].startsWith('## ')) {
+        lastHeaderIdx = i;
+        break;
+      }
+    }
+
+    let isDuplicate = false;
+    let cycleCount = 1;
+
+    if (lastHeaderIdx !== -1) {
+      const lastEntryLines = lines.slice(lastHeaderIdx);
+      const summaryLine = lastEntryLines.find(l => l.startsWith('- summary: '));
+      if (summaryLine && summaryLine === `- summary: ${entry.summary}`) {
+        isDuplicate = true;
+        const cycleLine = lastEntryLines.find(l => l.startsWith('- cycles: '));
+        if (cycleLine) {
+          const match = cycleLine.match(/- cycles: (\d+)/);
+          if (match) {
+            cycleCount = parseInt(match[1], 10) + 1;
+          }
+        } else {
+          cycleCount = 2;
+        }
+      }
+    }
+
+    const newLine = [
+      `## ${entry.ts}`,
+      entry.cycle != null ? `- cycle: ${entry.cycle}` : null,
+      entry.phase ? `- phase: ${entry.phase}` : null,
+      entry.item_id ? `- item: ${entry.item_id}` : null,
+      `- summary: ${entry.summary}`,
+      isDuplicate ? `- cycles: ${cycleCount}` : null,
+      entry.next ? `- next: ${entry.next}` : null,
+      '',
+    ]
+      .filter(Boolean)
+      .join('\n');
+
+    let updated = existing;
+    if (isDuplicate) {
+      lines.splice(lastHeaderIdx);
+      updated = lines.join('\n') + (lines.length > 0 ? '\n' : '') + newLine;
+    } else {
+      updated = existing.endsWith('\n') ? existing + newLine : existing + '\n' + newLine;
+    }
+
     await writeSandboxFile(params.sandbox, params.cwd, 'progress.md', updated);
   } catch (e: unknown) {
     console.warn('[GroundTruth.syncProgressEntry] failed:', e instanceof Error ? e.message : e);
@@ -215,7 +255,19 @@ export async function syncProgressEntry(params: {
   try {
     const { data: req } = await loadRequirementMetadata(params.requirementId);
     const log: ProgressEntry[] = Array.isArray(req?.progress) ? req.progress : [];
-    log.push(entry);
+    
+    if (log.length > 0) {
+      const lastLog = log[log.length - 1];
+      if (lastLog.summary === entry.summary) {
+        lastLog.ts = entry.ts;
+        lastLog.cycles = (lastLog.cycles || 1) + 1;
+      } else {
+        log.push(entry);
+      }
+    } else {
+      log.push(entry);
+    }
+    
     const newProgress = log.slice(-50);
     await supabaseAdmin.from('requirements').update({ progress: newProgress }).eq('id', params.requirementId);
   } catch (e: unknown) {
