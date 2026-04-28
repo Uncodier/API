@@ -95,14 +95,12 @@ export function inferRoleFromStep(step: any): string | null {
  */
 const MAX_BUILD_RETRIES = 6;
 const MAX_RUNTIME_RETRIES = 4;
-const MAX_VISUAL_RETRIES = 3;
 
-type RetryBucket = 'build' | 'runtime' | 'visual';
+type RetryBucket = 'build' | 'runtime';
 
 function budgetFor(bucket: RetryBucket): number {
   if (bucket === 'build') return MAX_BUILD_RETRIES;
-  if (bucket === 'runtime') return MAX_RUNTIME_RETRIES;
-  return MAX_VISUAL_RETRIES;
+  return MAX_RUNTIME_RETRIES;
 }
 
 function buildGateRetryUserMessage(signals: StepIterationSignals, oversizeFiles?: string[]): string {
@@ -376,11 +374,11 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
 
   try {
-    const used: Record<RetryBucket, number> = { build: 0, runtime: 0, visual: 0 };
+    const used: Record<RetryBucket, number> = { build: 0, runtime: 0 };
     let lastSignals: StepIterationSignals | null = null;
     let lastGateError: string | null = null;
     let totalAttempts = 0;
-    const HARD_CAP_ATTEMPTS = MAX_BUILD_RETRIES + MAX_RUNTIME_RETRIES + MAX_VISUAL_RETRIES;
+    const HARD_CAP_ATTEMPTS = MAX_BUILD_RETRIES + MAX_RUNTIME_RETRIES;
 
     while (totalAttempts < HARD_CAP_ATTEMPTS) {
       totalAttempts++;

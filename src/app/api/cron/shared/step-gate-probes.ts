@@ -92,7 +92,7 @@ export async function runRuntimeAndVisualProbes(params: {
     f.includes('postcss.config')
   );
 
-  const shouldRunVisual = gitRepoKind === 'applications' && (!isBackendOrDevops || touchesFrontend);
+  const shouldRunVisual = false; // Desactivado para el workflow principal, el QA se encarga de lo visual
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {

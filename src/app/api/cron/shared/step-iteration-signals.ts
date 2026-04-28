@@ -169,7 +169,7 @@ export type FeatureCoverageSignal = {
 export type StepIterationSignals = {
   attempt: number;
   max_attempts: number;
-  bucket?: 'build' | 'runtime' | 'visual';
+  bucket?: 'build' | 'runtime';
   step: { order: number; title?: string; expected_output?: string };
   build?: BuildSignal;
   runtime?: RuntimeSignal;
@@ -381,19 +381,9 @@ export function deriveCategoriesFailed(sig: Omit<StepIterationSignals, 'categori
 }
 
 /** Best-guess retry bucket from the first failing category. */
-export function deriveRetryBucket(categories: GateFailureCategory[]): 'build' | 'runtime' | 'visual' {
+export function deriveRetryBucket(categories: GateFailureCategory[]): 'build' | 'runtime' {
   if (categories.includes('build') || categories.includes('layout')) return 'build';
-  if (
-    categories.includes('runtime') ||
-    categories.includes('api') ||
-    categories.includes('console') ||
-    categories.includes('scenario') ||
-    categories.includes('origin') ||
-    categories.includes('deploy')
-  ) {
-    return 'runtime';
-  }
-  return 'visual';
+  return 'runtime';
 }
 
 export function buildRuntimeSignalFromProbe(r: {

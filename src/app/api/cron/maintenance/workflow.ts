@@ -74,6 +74,15 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     const backlogSnap = await getBacklogSnapshotStep(reqId);
     const backlogSnapshot = backlogSnap.backlog;
 
+    const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
+    const connected = await connectOrRecreateRequirementSandbox({
+      sandboxId: sandboxId!,
+      requirementId: reqId,
+      instanceType: type,
+      title,
+      audit: cronAudit,
+    });
+
     const maintenancePrompt = buildMaintenancePromptForFlow({
       reqId, title, type, instanceId, site_id,
       workDir, branchName, backlog: backlogSnapshot,
@@ -81,7 +90,33 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     });
 
     console.log(`[QAWorkflow|qa] Running QA & Improvement agent directly (no steps/plans)`);
-    const prompt = `Review the backlog for DONE items. Pick one to audit. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. Do NOT create an instance_plan. Just do the work and finish your turn.`;
+    
+    // Ejecutar las sondas visuales y E2E para obtener feedback de QA
+    const { runRuntimeAndVisualProbes } = await import('../shared/step-gate-probes');
+    const probes = await runRuntimeAndVisualProbes({
+      sandbox: connected.sandbox,
+      stepOrder: 0,
+      requirementId: reqId,
+      gitRepoKind: 'applications',
+      audit: cronAudit,
+      stepContext: {
+        title: 'QA Audit',
+        instructions: 'Audit the entire application for visual defects, runtime errors, and E2E scenario failures.',
+      }
+    });
+
+    let qaContext = '';
+    if (probes.signals.visual?.defects?.length) {
+      qaContext += `\nVISUAL DEFECTS FOUND:\n${probes.signals.visual.defects.map(d => `- [${d.severity}] ${d.route} (${d.viewport}): ${d.description} (Hint: ${d.fix_hint || 'N/A'})`).join('\n')}\n`;
+    }
+    if (probes.signals.console?.page_errors?.length) {
+      qaContext += `\nBROWSER CONSOLE ERRORS:\n${probes.signals.console.page_errors.map(e => `- ${e.route}: ${e.message}`).join('\n')}\n`;
+    }
+    if (probes.signals.scenarios?.scenarios?.filter(s => !s.pass)?.length) {
+      qaContext += `\nFAILED E2E SCENARIOS:\n${probes.signals.scenarios.scenarios.filter(s => !s.pass).map(s => `- ${s.scenario}: ${s.steps.find(st => !st.ok)?.error || 'Unknown error'}`).join('\n')}\n`;
+    }
+
+    const prompt = `Review the backlog for DONE items. Pick one to audit. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. Do NOT create an instance_plan. Just do the work and finish your turn.${qaContext ? `\n\nCRITICAL QA FEEDBACK TO FIX:\n${qaContext}` : ''}`;
 
     const agentRun = await runMaintenanceAgentStep({
       sandboxId: sandboxId!,
