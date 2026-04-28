@@ -99,9 +99,8 @@ The preview URL is the permanent Vercel deployment URL from the branch push (via
 
 ### 8. Requirement instructions are the brain
 - The requirement's `instructions` field is the persistent blueprint.
-- Read it from the requirement (injected in your system prompt).
-- Update it via `requirements action="update" instructions="..."` as the plan evolves.
-- Optionally snapshot as `REQUIREMENT.md` via `sandbox_write_file`.
+- The bootstrapped `requirement.spec.md` starts with placeholders. In your **first planning cycle**, you MUST flesh out sections 2, 3, 4, 6, and 7 with concrete details (exact routes, data models, user roles) and overwrite the file using `sandbox_write_file`.
+- After the first cycle, `requirement.spec.md` is IMMUTABLE. Update the DB `instructions` via `requirements action="update"` as the plan evolves, and append to `## Revisions` in the markdown file.
 
 ### 9. Defensive execution
 - If a tool call returns an error, do NOT blindly retry `create`. Do a `list` first to check if the previous call succeeded server-side.
