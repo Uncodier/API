@@ -1,8 +1,11 @@
 import { SkillsService } from '@/lib/services/skills-service';
+import { deductSandboxToolCredits, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 export type SkillLookupToolContext = {
   /** When set, list/search only include skills applicable to this requirement type (see SKILL.md types). */
   requirement_type?: string;
+  /** Pass toolsCtx to deduct credits */
+  toolsCtx?: SandboxToolsContext;
 };
 
 function summarizeForList(
@@ -58,6 +61,11 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
       skill_name?: string;
       limit?: number;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(ctx?.toolsCtx, 'skill_lookup', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const limit = Math.min(Math.max(args.limit ?? 20, 1), 40);
 
       if (args.action === 'list') {

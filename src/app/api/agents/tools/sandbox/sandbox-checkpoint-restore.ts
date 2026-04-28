@@ -5,7 +5,7 @@ import { patchLatestRequirementStatusColumns } from '@/app/api/cron/shared/cron-
 
 const WORK_DIR = SandboxService.WORK_DIR;
 
-import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 /** Subject lines we treat as automated / pushed checkpoints (see sandbox_push_checkpoint & cron-commit-helpers). */
 export function isLikelyCheckpointSubject(subject: string): boolean {
@@ -96,6 +96,11 @@ export function sandboxRestoreCheckpointTool(sandbox: Sandbox, requirementId?: s
       limit?: number;
       force?: boolean;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_restore_checkpoint', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       try {
         await s0.extendTimeout(2 * 60 * 1000);

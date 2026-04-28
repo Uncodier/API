@@ -1,5 +1,5 @@
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 export function sandboxReadLogsTool(sandbox?: any, toolsCtx?: SandboxToolsContext) {
   return {
@@ -21,6 +21,11 @@ export function sandboxReadLogsTool(sandbox?: any, toolsCtx?: SandboxToolsContex
       required: ['log_type']
     },
     execute: async (args: { log_type: 'server' | 'console'; lines?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_read_logs', args);
+      if (!creditCheck.success) {
+        return { success: false, error: creditCheck.error };
+      }
+
       const lines = Math.min(args.lines || 100, 500);
       const wd = SandboxService.WORK_DIR;
       

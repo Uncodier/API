@@ -326,8 +326,8 @@ export async function executeStepsPhaseStep(params: {
         expectedResultsAmount: 0,
       };
 
+      const role = workingStep.role || inferRoleFromStep(workingStep) || 'general';
       try {
-        const role = workingStep.role || inferRoleFromStep(workingStep) || 'general';
         if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
           console.log(`[CronStep|${role}] Reached max execution time (${MAX_EXECUTION_TIME_MS}ms) before starting inline step execution. Halting step loop to prevent Vercel timeout.`);
           break outer;

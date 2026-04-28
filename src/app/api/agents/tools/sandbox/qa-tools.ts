@@ -10,7 +10,7 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import {
   runRuntimeProbe,
   stopProbeServer,
@@ -58,6 +58,11 @@ export function sandboxProbeRoutesTool(sandbox: Sandbox, toolsCtx?: SandboxTools
       },
     },
     execute: async (args: { routes?: string[]; duration_ms?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_probe_routes', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const routes = (args.routes && args.routes.length ? args.routes : ['/']).map((r) => r.trim()).filter(Boolean);
       const result = await runRuntimeProbe({
@@ -119,6 +124,11 @@ export function sandboxProbeApiTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
       endpoints: Array<{ path: string; method?: RuntimeProbeApiTarget['method']; payload?: unknown }>;
       duration_ms?: number;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_probe_api', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const apis: RuntimeProbeApiTarget[] = (args.endpoints || [])
         .filter((e) => e && typeof e.path === 'string' && e.path.trim())
@@ -177,6 +187,11 @@ export function sandboxRunScenarioTool(sandbox: Sandbox, toolsCtx?: SandboxTools
       },
     },
     execute: async (args: { scenarios_dir?: string; only?: string[]; duration_ms?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_run_scenario', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const rt = await runRuntimeProbe({
         sandbox: s0,
@@ -253,6 +268,11 @@ export function sandboxTailServerLogTool(sandbox: Sandbox, toolsCtx?: SandboxToo
       },
     },
     execute: async (args: { port?: number; max_bytes?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_tail_server_log', args);
+      if (!creditCheck.success) {
+        return { path: '', bytes_returned: 0, tail: '', error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const port = args.port ?? PROBE_PORT;
       const maxBytes = Math.max(512, Math.min(32_000, args.max_bytes ?? 8_000));
@@ -291,6 +311,11 @@ export function sandboxTailApiLogTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
       required: ['route'],
     },
     execute: async (args: { route: string; port?: number; max_lines?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_tail_api_log', args);
+      if (!creditCheck.success) {
+        return { path: '', needle: '', lines: [], error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const port = args.port ?? PROBE_PORT;
       const maxLines = Math.max(10, Math.min(500, args.max_lines ?? 80));
@@ -324,6 +349,6 @@ export function getQaSandboxTools(sandbox: Sandbox, requirementId?: string, tool
     sandboxTailServerLogTool(sandbox, toolsCtx),
     sandboxTailApiLogTool(sandbox, toolsCtx),
     sandboxCaptureScreenshotsTool(sandbox, requirementId, toolsCtx),
-    sandboxVisualCritiqueTool(),
+    sandboxVisualCritiqueTool(toolsCtx),
   ];
 }

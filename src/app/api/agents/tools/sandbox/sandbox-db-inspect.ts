@@ -1,4 +1,4 @@
-import { SandboxToolsContext } from './assistantProtocol';
+import { SandboxToolsContext, deductSandboxToolCredits } from './assistantProtocol';
 import { getAppsAdminClient } from '@/lib/database/apps-supabase';
 
 function schemaForRequirement(requirementId: string): string {
@@ -23,6 +23,11 @@ export function sandboxDbInspectTool(
       required: ['table_name']
     },
     execute: async (args: { table_name: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_db_inspect', args);
+      if (!creditCheck.success) {
+        return { success: false, error: creditCheck.error };
+      }
+
       if (!requirementId) {
         return { success: false, error: 'requirement_id is missing in sandbox context; cannot inspect database.' };
       }

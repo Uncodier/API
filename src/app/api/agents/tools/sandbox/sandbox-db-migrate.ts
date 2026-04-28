@@ -1,6 +1,6 @@
 import { Sandbox } from '@vercel/sandbox';
 import { applyPendingMigrations } from '@/lib/services/apps-platform/migration-applier';
-import { SandboxToolsContext, liveSandbox } from './assistantProtocol';
+import { SandboxToolsContext, liveSandbox, deductSandboxToolCredits } from './assistantProtocol';
 
 export function sandboxDbMigrateTool(
   sandbox: Sandbox,
@@ -15,6 +15,11 @@ export function sandboxDbMigrateTool(
       properties: {},
     },
     execute: async () => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_db_migrate', {});
+      if (!creditCheck.success) {
+        return { success: false, error: creditCheck.error };
+      }
+
       if (!requirementId) {
         return { success: false, error: 'requirement_id is missing in sandbox context; cannot apply migrations.' };
       }

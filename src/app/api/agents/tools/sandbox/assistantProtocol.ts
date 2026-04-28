@@ -1,6 +1,7 @@
 import { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { CreditService } from '@/lib/services/billing/CreditService';
 import { persistActiveSandboxId } from '@/lib/tools/requirement-status-core';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import {
@@ -97,6 +98,34 @@ export type SandboxToolsContext = {
   activeSandboxRef?: { current: Sandbox };
 };
 
+export async function deductSandboxToolCredits(
+  toolsCtx: SandboxToolsContext | undefined,
+  toolName: string,
+  args: any
+): Promise<{ success: boolean; error?: string }> {
+  if (!toolsCtx?.site_id) return { success: true };
+  
+  const requiredCredits = CreditService.PRICING.SANDBOX_TOOL_CALL;
+  const hasCredits = await CreditService.validateCredits(toolsCtx.site_id, requiredCredits);
+  
+  if (!hasCredits) {
+    return { success: false, error: 'Insufficient credits for sandbox tool execution' };
+  }
+  
+  try {
+    await CreditService.deductCredits(
+      toolsCtx.site_id,
+      requiredCredits,
+      'sandbox_tool',
+      `Sandbox tool execution (${toolName})`,
+      { tool: toolName, args }
+    );
+    return { success: true };
+  } catch (e: any) {
+    return { success: false, error: e.message || 'Failed to deduct credits' };
+  }
+}
+
 export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_run_command',
@@ -111,6 +140,15 @@ export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
       required: ['command']
     },
     execute: async (args: { command: string, args?: string[], cwd?: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_run_command', args);
+      if (!creditCheck.success) {
+        return {
+          stdout: '',
+          stderr: `BLOCKED: ${creditCheck.error}`,
+          exitCode: 1,
+        };
+      }
+
       const fullCmd = [args.command, ...(args.args || [])].join(' ');
       const blocked = /create-next-app|create-react-app|create-vite|npm init|yarn init|pnpm init/i;
       if (blocked.test(fullCmd)) {
@@ -142,6 +180,11 @@ export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
       required: ['path', 'content']
     },
     execute: async (args: { path: string, content: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_write_file', { path: args.path });
+      if (!creditCheck.success) {
+        return { success: false, error: creditCheck.error };
+      }
+
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
 
@@ -170,6 +213,11 @@ export function sandboxReadFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
       required: ['path']
     },
     execute: async (args: { path: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_read_file', args);
+      if (!creditCheck.success) {
+        throw new Error(creditCheck.error);
+      }
+
       const resolved = normalizeSandboxFsPath(WORK_DIR, resolvePath(args.path, WORK_DIR));
       const s0 = liveSandbox(sandbox, toolsCtx);
       try {
@@ -200,6 +248,11 @@ export function sandboxEditFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCon
       required: ['path', 'old_string', 'new_string']
     },
     execute: async (args: { path: string, old_string: string, new_string: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_edit_file', { path: args.path });
+      if (!creditCheck.success) {
+        return { success: false, error: creditCheck.error };
+      }
+
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
       const s0 = liveSandbox(sandbox, toolsCtx);
@@ -249,6 +302,11 @@ export function sandboxDeleteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
       required: ['path']
     },
     execute: async (args: { path: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_delete_file', args);
+      if (!creditCheck.success) {
+        throw new Error(creditCheck.error);
+      }
+
       let resolved = resolvePath(args.path, WORK_DIR);
       resolved = normalizeSandboxFsPath(WORK_DIR, resolved);
       const s0 = liveSandbox(sandbox, toolsCtx);
@@ -282,6 +340,11 @@ export function sandboxReadLintsTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
       }
     },
     execute: async (args: { paths?: string[] }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_read_lints', args);
+      if (!creditCheck.success) {
+        throw new Error(creditCheck.error);
+      }
+
       try {
         const s0 = liveSandbox(sandbox, toolsCtx);
         const pathsArg = (args.paths && args.paths.length > 0) ? args.paths.join(' ') : '';
@@ -329,6 +392,11 @@ export function sandboxListFilesTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
       }
     },
     execute: async (args: { path?: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_list_files', args);
+      if (!creditCheck.success) {
+        throw new Error(creditCheck.error);
+      }
+
       const dir = normalizeSandboxFsPath(WORK_DIR, resolvePath(args.path, WORK_DIR));
       const s0 = liveSandbox(sandbox, toolsCtx);
       const result = await s0.runCommand('ls', ['-la', dir]);
@@ -368,6 +436,16 @@ export function sandboxPushCheckpointTool(
       },
     },
     execute: async (args: { title_hint?: string; message?: string }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_push_checkpoint', args);
+      if (!creditCheck.success) {
+        return {
+          ok: false,
+          pushed: false,
+          branch: '',
+          error: creditCheck.error,
+        };
+      }
+
       if (!requirementId?.trim()) {
         return {
           ok: false,
@@ -533,7 +611,7 @@ export function getSandboxTools(
   toolsCtx?: SandboxToolsContext,
 ) {
   return [
-    skillLookupTool({ requirement_type: toolsCtx?.requirement_type }),
+    skillLookupTool({ requirement_type: toolsCtx?.requirement_type, toolsCtx }),
     sandboxCodeSearchTool(sandbox, toolsCtx),
     sandboxRunCommandTool(sandbox, toolsCtx),
     sandboxWriteFileTool(sandbox, toolsCtx),

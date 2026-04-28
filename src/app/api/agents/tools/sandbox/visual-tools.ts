@@ -17,7 +17,7 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { runRuntimeProbe, stopProbeServer } from '@/app/api/cron/shared/step-runtime-probe';
 import {
   runVisualProbe,
@@ -82,6 +82,11 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
       boot_timeout_ms?: number;
       page_timeout_ms?: number;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_capture_screenshots', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const routes = (args.routes && args.routes.length ? args.routes : ['/'])
         .map((r) => (typeof r === 'string' ? r.trim() : ''))
@@ -155,7 +160,7 @@ export function sandboxCaptureScreenshotsTool(sandbox: Sandbox, requirementId?: 
   };
 }
 
-export function sandboxVisualCritiqueTool() {
+export function sandboxVisualCritiqueTool(toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_visual_critique',
     description:
@@ -210,6 +215,11 @@ export function sandboxVisualCritiqueTool() {
       rubric?: string;
       brand_context?: string;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_visual_critique', { step: args.step });
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const shots = (args.screenshots || []).filter(
         (s) =>
           s &&

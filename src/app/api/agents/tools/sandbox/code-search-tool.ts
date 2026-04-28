@@ -18,7 +18,7 @@
  */
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
-import { liveSandbox, type SandboxToolsContext } from '@/app/api/agents/tools/sandbox/assistantProtocol';
+import { liveSandbox, type SandboxToolsContext, deductSandboxToolCredits } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 
 type RunResult = { stdout: string; stderr: string; exitCode: number };
 
@@ -619,6 +619,11 @@ export function sandboxCodeSearchTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
       max_depth?: number;
       max_results?: number;
     }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_code_search', args);
+      if (!creditCheck.success) {
+        return { ok: false, error: creditCheck.error };
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
       const bins = await ensureSearchBinaries(s0);
       if (!bins.rg && (args.action === 'find_files' || args.action === 'grep' || args.action === 'tree' || args.action === 'vector_search')) {
