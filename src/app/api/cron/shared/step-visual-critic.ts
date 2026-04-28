@@ -53,136 +53,140 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
     return { pass: true, defects: [], summary: 'no screenshots to evaluate', skipped: 'no_screenshots' };
   }
 
-  const screenshots = input.screenshots.slice(0, MAX_SCREENSHOTS_PER_CALL);
   const rubric = input.rubric || DEFAULT_RUBRIC;
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const allDefects: VisualDefect[] = [];
+  let allPass = true;
+  const summaries: string[] = [];
+  let finalSkipped: string | undefined;
+  let finalModelUsed = input.model || 'unknown';
 
-  const systemPrompt = [
-    'You are a senior product designer reviewing the UI of a step committed by a coding agent.',
-    'Output STRICT JSON only — no prose, no markdown fences. The JSON shape is:',
-    '{',
-    '  "pass": boolean,',
-    '  "summary": string (1-2 sentences),',
-    '  "defects": Array<{',
-    '    "category": "hierarchy" | "spacing" | "typography" | "color_contrast" | "responsive" | "copy" | "state_missing" | "broken_visual",',
-    '    "severity": "blocker" | "major" | "minor",',
-    '    "route": string,',
-    '    "viewport": string,',
-    '    "description": string,',
-    '    "fix_hint": string',
-    '  }>',
-    '}',
-    'Rules: pass=false when there is at least one blocker or two+ majors. Always fill route and viewport from the image metadata header.',
-    'Rubric:',
-    rubric,
-  ].join('\n');
+  // Process in batches of MAX_SCREENSHOTS_PER_CALL
+  for (let i = 0; i < input.screenshots.length; i += MAX_SCREENSHOTS_PER_CALL) {
+    const batch = input.screenshots.slice(i, i + MAX_SCREENSHOTS_PER_CALL);
+    
+    const systemPrompt = [
+      'You are a senior product designer reviewing the UI of a step committed by a coding agent.',
+      'Output STRICT JSON only — no prose, no markdown fences. The JSON shape is:',
+      '{',
+      '  "pass": boolean,',
+      '  "summary": string (1-2 sentences),',
+      '  "defects": Array<{',
+      '    "category": "hierarchy" | "spacing" | "typography" | "color_contrast" | "responsive" | "copy" | "state_missing" | "broken_visual",',
+      '    "severity": "blocker" | "major" | "minor",',
+      '    "route": string,',
+      '    "viewport": string,',
+      '    "description": string,',
+      '    "fix_hint": string',
+      '  }>',
+      '}',
+      'Rules: pass=false when there is at least one blocker or two+ majors. Always fill route and viewport from the image metadata header.',
+      'Rubric:',
+      rubric,
+    ].join('\n');
 
-  const userBlocks: Array<
-    | { type: 'text'; text: string }
-    | { type: 'image_url'; image_url: { url: string } }
-  > = [];
-  userBlocks.push({
-    type: 'text',
-    text: [
-      input.step.order !== undefined ? `Step ${input.step.order}${input.step.title ? `: ${input.step.title}` : ''}` : (input.step.title ? `Step: ${input.step.title}` : 'Step evaluation'),
-      input.step.instructions ? `Instructions: ${input.step.instructions.slice(0, 600)}` : '',
-      input.step.expected_output ? `Expected output: ${input.step.expected_output.slice(0, 400)}` : '',
-      input.brand_context ? `Brand context: ${input.brand_context.slice(0, 400)}` : '',
-      '',
-      'Screenshots follow (each preceded by its route + viewport metadata).',
-    ]
-      .filter(Boolean)
-      .join('\n'),
-  });
-  for (const s of screenshots) {
-    userBlocks.push({ type: 'text', text: `route="${s.route}" viewport="${s.viewport}"` });
+    const userBlocks: Array<
+      | { type: 'text'; text: string }
+      | { type: 'image_url'; image_url: { url: string } }
+    > = [];
+    userBlocks.push({
+      type: 'text',
+      text: [
+        input.step.order !== undefined ? `Step ${input.step.order}${input.step.title ? `: ${input.step.title}` : ''}` : (input.step.title ? `Step: ${input.step.title}` : 'Step evaluation'),
+        input.step.instructions ? `Instructions: ${input.step.instructions.slice(0, 600)}` : '',
+        input.step.expected_output ? `Expected output: ${input.step.expected_output.slice(0, 400)}` : '',
+        input.brand_context ? `Brand context: ${input.brand_context.slice(0, 400)}` : '',
+        '',
+        `Screenshots follow (Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} of ${Math.ceil(input.screenshots.length / MAX_SCREENSHOTS_PER_CALL)}). Each is preceded by its route + viewport metadata.`,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    });
+
+    for (const s of batch) {
+      userBlocks.push({ type: 'text', text: `route="${s.route}" viewport="${s.viewport}"` });
+      
+      try {
+        const isSupabaseStorage = s.url.includes('/storage/v1/object/public/');
+        const fetchUrl = isSupabaseStorage ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') : s.url;
+        
+        const supabaseKey = 
+          process.env.APPS_SUPABASE_SERVICE_KEY || 
+          process.env.REPOSITORY_SUPABASE_SERVICE_KEY || 
+          process.env.REPOSITORY_SUPABASE_ANON_KEY || 
+          process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
+          '';
+
+        const headers: Record<string, string> = {};
+        if (isSupabaseStorage && supabaseKey) {
+          headers['Authorization'] = `Bearer ${supabaseKey}`;
+          headers['apikey'] = supabaseKey;
+        }
+
+        const imgRes = await fetch(fetchUrl, { headers });
+        if (imgRes.ok) {
+          const arrayBuffer = await imgRes.arrayBuffer();
+          const base64 = Buffer.from(arrayBuffer).toString('base64');
+          const contentType = imgRes.headers.get('content-type') || 'image/png';
+          userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
+        } else {
+          console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${fetchUrl} - ${imgRes.status}`);
+          userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
+        }
+      } catch (e) {
+        console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
+        userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
+      }
+    }
+
+    let rawText = '';
     
     try {
-      // Gemini's OpenAI compatibility layer requires base64 data URIs, it does not support HTTP URLs.
-      // We fetch the image and convert it to base64 before sending.
+      const executor = new AIAgentExecutor({ model: input.model });
+      finalModelUsed = executor.getModel();
       
-      // If the bucket is private, the public URL will return 400 or 404.
-      // We rewrite the URL to use the authenticated endpoint and pass the service role key.
-      const isSupabaseStorage = s.url.includes('/storage/v1/object/public/');
-      const fetchUrl = isSupabaseStorage ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') : s.url;
-      
-      const supabaseKey = 
-        process.env.APPS_SUPABASE_SERVICE_KEY || 
-        process.env.REPOSITORY_SUPABASE_SERVICE_KEY || 
-        process.env.REPOSITORY_SUPABASE_ANON_KEY || 
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 
-        '';
+      const actPromise = executor.act({
+        tools: [],
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userBlocks as any }],
+        temperature: 0.1,
+      });
 
-      const headers: Record<string, string> = {};
-      if (isSupabaseStorage && supabaseKey) {
-        headers['Authorization'] = `Bearer ${supabaseKey}`;
-        headers['apikey'] = supabaseKey;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error(`Timeout of ${timeout}ms exceeded`)), timeout);
+      });
+
+      const response = await Promise.race([actPromise, timeoutPromise]);
+      rawText = response.text;
+
+      const parsed = safeParseVerdict(rawText);
+      if (!parsed) {
+        finalSkipped = 'parse_error';
+        summaries.push(`Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} parse error.`);
+        continue;
       }
 
-      const imgRes = await fetch(fetchUrl, { headers });
-      if (imgRes.ok) {
-        const arrayBuffer = await imgRes.arrayBuffer();
-        const base64 = Buffer.from(arrayBuffer).toString('base64');
-        const contentType = imgRes.headers.get('content-type') || 'image/png';
-        userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
-      } else {
-        console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${fetchUrl} - ${imgRes.status}`);
-        userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback to original URL, might fail depending on provider
-      }
-    } catch (e) {
-      console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
-      userBlocks.push({ type: 'image_url', image_url: { url: s.url } }); // fallback
+      if (!parsed.pass) allPass = false;
+      allDefects.push(...parsed.defects);
+      if (parsed.summary) summaries.push(parsed.summary);
+
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      finalSkipped = 'request_failed';
+      summaries.push(`Batch ${Math.floor(i / MAX_SCREENSHOTS_PER_CALL) + 1} failed: ${msg.slice(0, 100)}`);
     }
   }
 
-  let rawText = '';
-  let modelUsed = input.model || 'unknown';
-  
-  try {
-    const executor = new AIAgentExecutor({ model: input.model });
-    modelUsed = executor.getModel(); // capture the actual model resolved by executor
-    
-    const actPromise = executor.act({
-      tools: [],
-      system: systemPrompt,
-      messages: [{ role: 'user', content: userBlocks as any }],
-      temperature: 0.1,
-    });
-
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      setTimeout(() => reject(new Error(`Timeout of ${timeout}ms exceeded`)), timeout);
-    });
-
-    const response = await Promise.race([actPromise, timeoutPromise]);
-    rawText = response.text;
-
-  } catch (e: unknown) {
-    const msg = e instanceof Error ? e.message : String(e);
-    return {
-      pass: true,
-      defects: [],
-      summary: `visual critic skipped — request failed: ${msg.slice(0, 200)}`,
-      skipped: 'request_failed',
-      model_used: modelUsed,
-    };
-  }
-
-  const parsed = safeParseVerdict(rawText);
-  if (!parsed) {
-    return {
-      pass: true,
-      defects: [],
-      summary: `visual critic skipped — could not parse JSON: ${rawText.slice(0, 200)}`,
-      skipped: 'parse_error',
-      model_used: modelUsed,
-    };
-  }
+  // If any batch failed to parse or request failed, but we have some results, we still return them
+  // but we might want to flag the summary
+  const finalSummary = summaries.join(' | ').slice(0, 400) || (finalSkipped ? `visual critic skipped — ${finalSkipped}` : 'No summary provided');
 
   return {
-    pass: !!parsed.pass,
-    defects: parsed.defects,
-    summary: parsed.summary,
-    model_used: modelUsed,
+    pass: allPass,
+    defects: allDefects,
+    summary: finalSummary,
+    model_used: finalModelUsed,
+    skipped: finalSkipped && allDefects.length === 0 ? finalSkipped : undefined, // Only consider totally skipped if NO defects were parsed at all
   };
 }
 
