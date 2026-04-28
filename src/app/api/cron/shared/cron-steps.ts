@@ -153,24 +153,33 @@ export async function cleanupNestedProjectsStep(
   const candidates = ['app', 'my-app', 'frontend', 'project', 'web'];
 
   for (const dir of candidates) {
-    const checkRes = await sandbox.runCommand('sh', [
-      '-c',
-      `test -f ${cwd}/${dir}/package.json && test -f ${cwd}/${dir}/next.config.ts -o -f ${cwd}/${dir}/next.config.mjs -o -f ${cwd}/${dir}/next.config.js && echo "NESTED"`,
-    ]);
-    const stdout = await checkRes.stdout();
-    if (stdout.trim() === 'NESTED') {
-      console.log(`[Cleanup] Removing nested project directory: ${dir}/`);
-      await sandbox.runCommand('rm', ['-rf', `${cwd}/${dir}`]);
-      removed.push(dir);
+    try {
+      const checkRes = await sandbox.runCommand('sh', [
+        '-c',
+        `test -f ${cwd}/${dir}/package.json && test -f ${cwd}/${dir}/next.config.ts -o -f ${cwd}/${dir}/next.config.mjs -o -f ${cwd}/${dir}/next.config.js && echo "NESTED"`,
+      ]);
+      const stdout = await checkRes.stdout();
+      if (stdout.trim() === 'NESTED') {
+        console.log(`[Cleanup] Removing nested project directory: ${dir}/`);
+        await sandbox.runCommand('rm', ['-rf', `${cwd}/${dir}`]);
+        removed.push(dir);
+      }
+    } catch (e: any) {
+      if (e?.message?.includes('422')) {
+        console.warn(`[Cleanup] Sandbox ${sandboxId} returned 422 (likely dead). Skipping cleanup; next step will recover it.`);
+        return { removed, effectiveSandboxId };
+      }
+      throw e;
     }
   }
 
   // Models often scaffold `app/src/app/...` at repo root (misreading "app directory").
   // That path is INVALID here — App Router lives only under `src/app/`. The previous
   // loop misses this when `app/` has no package.json (only files under app/src/).
-  const fixWrongAppDir = await sandbox.runCommand('sh', [
-    '-c',
-    `cd "${cwd}" || exit 0
+  try {
+    const fixWrongAppDir = await sandbox.runCommand('sh', [
+      '-c',
+      `cd "${cwd}" || exit 0
 if [ -d src/app ] && [ -d app/src/app ]; then
   rm -rf app
   echo FIX_DUP_APP_DIR
@@ -187,19 +196,26 @@ if [ -f package.json ] && [ ! -f app/package.json ] && [ -d app/src/app ] && [ !
   rm -rf app
   echo FIX_MOVE_APP_SRC_APP
 fi`,
-  ]);
-  const fixOut = (await fixWrongAppDir.stdout()).trim();
-  if (fixOut.includes('FIX_DUP_APP_DIR')) {
-    removed.push('app(dup-nested-vs-src)');
-    console.log('[Cleanup] Removed mistaken root app/ (canonical src/app/ already existed)');
-  }
-  if (fixOut.includes('FIX_FLATTEN_APP_SRC')) {
-    removed.push('app(flatten-src)');
-    console.log('[Cleanup] Flattened app/src/* into src/');
-  }
-  if (fixOut.includes('FIX_MOVE_APP_SRC_APP')) {
-    removed.push('app(moved-src-app)');
-    console.log('[Cleanup] Moved app/src/app → src/app and removed root app/');
+    ]);
+    const fixOut = (await fixWrongAppDir.stdout()).trim();
+    if (fixOut.includes('FIX_DUP_APP_DIR')) {
+      removed.push('app(dup-nested-vs-src)');
+      console.log('[Cleanup] Removed mistaken root app/ (canonical src/app/ already existed)');
+    }
+    if (fixOut.includes('FIX_FLATTEN_APP_SRC')) {
+      removed.push('app(flatten-src)');
+      console.log('[Cleanup] Flattened app/src/* into src/');
+    }
+    if (fixOut.includes('FIX_MOVE_APP_SRC_APP')) {
+      removed.push('app(moved-src-app)');
+      console.log('[Cleanup] Moved app/src/app → src/app and removed root app/');
+    }
+  } catch (e: any) {
+    if (e?.message?.includes('422')) {
+      console.warn(`[Cleanup] Sandbox ${sandboxId} returned 422 (likely dead). Skipping fixWrongAppDir; next step will recover it.`);
+      return { removed, effectiveSandboxId };
+    }
+    throw e;
   }
 
   if (removed.length > 0) {

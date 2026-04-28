@@ -185,33 +185,14 @@ export async function GET(req: Request) {
         continue;
       }
 
-      if (requirement.status === 'backlog') {
-        await supabaseAdmin.from('requirements').update({ 
-          status: 'in-progress',
-          metadata: { ...requirement.metadata, cron_attempts: currentAttempts + 1 }
-        }).eq('id', reqId);
-      } else {
-        await supabaseAdmin.from('requirements').update({ 
-          metadata: { ...requirement.metadata, cron_attempts: currentAttempts + 1 }
-        }).eq('id', reqId);
-      }
-
       // Find or create remote_instance for MAIN BUILDER
-      let instanceId: string | undefined;
-      const { data: prevStatusForInstance } = await supabaseAdmin
-        .from('requirement_status')
-        .select('instance_id')
-        .eq('requirement_id', reqId)
-        .not('instance_id', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(1);
-
-      if (prevStatusForInstance?.[0]?.instance_id) {
-        instanceId = prevStatusForInstance[0].instance_id;
-      } else {
+      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
+      
+      if (!instanceId) {
+        // 1. Look up the main builder instance by its canonical name
         const { data: instances } = await supabaseAdmin
           .from('remote_instances')
-          .select('id, instance_type') // Select instance_type as well
+          .select('id, instance_type')
           .eq('site_id', site_id)
           .eq('name', `req-runner-${reqId}`)
           .limit(1);
@@ -222,21 +203,72 @@ export async function GET(req: Request) {
             await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
           }
         } else {
-          const { data: newInstance, error: insertErr } = await supabaseAdmin
-            .from('remote_instances')
-            .insert(
-              cronRemoteInstancePayload({
-                site_id,
-                user_id,
-                name: `req-runner-${reqId}`,
-                created_by: user_id,
-              }),
-            )
-            .select('id')
-            .single();
-          if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
-          instanceId = newInstance?.id;
+          // 2. Fallback for legacy instances (before req-runner- naming convention)
+          // We must ensure we don't accidentally pick up a maintenance instance.
+          const { data: prevStatusForInstance } = await supabaseAdmin
+            .from('requirement_status')
+            .select('instance_id')
+            .eq('requirement_id', reqId)
+            .not('instance_id', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          if (prevStatusForInstance && prevStatusForInstance.length > 0) {
+            // Fetch the names of these instances to filter out maintenance ones
+            const instanceIds = prevStatusForInstance.map(s => s.instance_id);
+            const { data: legacyInstances } = await supabaseAdmin
+              .from('remote_instances')
+              .select('id, name')
+              .in('id', instanceIds)
+              .not('name', 'like', 'req-maint-%');
+              
+            if (legacyInstances && legacyInstances.length > 0) {
+              // Use the most recent non-maintenance instance
+              const validIds = new Set(legacyInstances.map(i => i.id));
+              const mostRecentValid = prevStatusForInstance.find(s => validIds.has(s.instance_id));
+              if (mostRecentValid) {
+                instanceId = mostRecentValid.instance_id;
+              }
+            }
+          }
+
+          // 3. If still no valid instance found, create a new one
+          if (!instanceId) {
+            const { data: newInstance, error: insertErr } = await supabaseAdmin
+              .from('remote_instances')
+              .insert(
+                cronRemoteInstancePayload({
+                  site_id,
+                  user_id,
+                  name: `req-runner-${reqId}`,
+                  created_by: user_id,
+                }),
+              )
+              .select('id')
+              .single();
+            if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
+            instanceId = newInstance?.id;
+          }
         }
+      }
+
+      const updatedMetadata = { 
+        ...requirement.metadata, 
+        cron_attempts: currentAttempts + 1 
+      };
+      if (instanceId) {
+        updatedMetadata.runner_instance_id = instanceId;
+      }
+
+      if (requirement.status === 'backlog') {
+        await supabaseAdmin.from('requirements').update({ 
+          status: 'in-progress',
+          metadata: updatedMetadata
+        }).eq('id', reqId);
+      } else {
+        await supabaseAdmin.from('requirements').update({ 
+          metadata: updatedMetadata
+        }).eq('id', reqId);
       }
 
       if (!instanceId) {
@@ -316,69 +348,87 @@ export async function GET(req: Request) {
       // ======================================================================
       // We launch the maintenance workflow entirely in parallel, on the exact same cron tick.
       // It uses its own lock, its own remote_instance, and its own sandbox.
-      const maintenanceLockKey = `${reqId}-maint`;
-      const maintRunLock = await acquireRunLock(maintenanceLockKey);
       
-      if (maintRunLock) {
-        console.log(`[Cron Apps] Starting PARALLEL maintenance workflow for req ${reqId}`);
-        
-        // Find or create remote_instance for MAINTENANCE
-        let maintInstanceId: string | undefined;
-        const maintInstanceName = `req-maint-${reqId}`;
-        
-        const { data: maintInstances } = await supabaseAdmin
-          .from('remote_instances')
-          .select('id')
-          .eq('site_id', site_id)
-          .eq('name', maintInstanceName)
-          .limit(1);
+      let hasCompletedBacklog = requirement.metadata?.has_completed_backlog === true;
+      
+      if (!hasCompletedBacklog && requirement.backlog?.items) {
+        hasCompletedBacklog = requirement.backlog.items.some((i: any) => i.status === 'done');
+        if (hasCompletedBacklog) {
+          // Save to metadata so we don't have to check the JSON array every time
+          await supabaseAdmin.from('requirements').update({
+            metadata: { ...requirement.metadata, has_completed_backlog: true }
+          }).eq('id', reqId);
+          requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
+        }
+      }
 
-        if (maintInstances && maintInstances.length > 0) {
-          maintInstanceId = maintInstances[0].id;
-        } else {
-          const { data: newMaintInstance, error: maintInsertErr } = await supabaseAdmin
+      if (!hasCompletedBacklog) {
+        console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — no completed backlog items yet`);
+      } else {
+        const maintenanceLockKey = `${reqId}-maint`;
+        const maintRunLock = await acquireRunLock(maintenanceLockKey);
+        
+        if (maintRunLock) {
+          console.log(`[Cron Apps] Starting PARALLEL maintenance workflow for req ${reqId}`);
+          
+          // Find or create remote_instance for MAINTENANCE
+          let maintInstanceId: string | undefined;
+          const maintInstanceName = `req-maint-${reqId}`;
+          
+          const { data: maintInstances } = await supabaseAdmin
             .from('remote_instances')
-            .insert(
-              cronRemoteInstancePayload({
+            .select('id')
+            .eq('site_id', site_id)
+            .eq('name', maintInstanceName)
+            .limit(1);
+
+          if (maintInstances && maintInstances.length > 0) {
+            maintInstanceId = maintInstances[0].id;
+          } else {
+            const { data: newMaintInstance, error: maintInsertErr } = await supabaseAdmin
+              .from('remote_instances')
+              .insert(
+                cronRemoteInstancePayload({
+                  site_id,
+                  user_id,
+                  name: maintInstanceName,
+                  created_by: user_id,
+                  instance_type: REMOTE_INSTANCE_TYPE_MAINTENANCE,
+                }),
+              )
+              .select('id')
+              .single();
+            if (maintInsertErr) console.error('[Cron Apps] Error inserting maintenance remote_instance:', maintInsertErr);
+            maintInstanceId = newMaintInstance?.id;
+          }
+
+          if (maintInstanceId) {
+            try {
+              const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
+                reqId,
+                title,
+                instructions,
+                type,
                 site_id,
                 user_id,
-                name: maintInstanceName,
-                created_by: user_id,
-                instance_type: REMOTE_INSTANCE_TYPE_MAINTENANCE,
-              }),
-            )
-            .select('id')
-            .single();
-          if (maintInsertErr) console.error('[Cron Apps] Error inserting maintenance remote_instance:', maintInsertErr);
-          maintInstanceId = newMaintInstance?.id;
-        }
+                instanceId: maintInstanceId,
+                previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
+                instance_type: type,
+                cronLockRunId: maintRunLock.runId,
+                maintenanceLockKey,
+              }]);
 
-        if (maintInstanceId) {
-          try {
-            const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
-              reqId,
-              title,
-              instructions,
-              type,
-              site_id,
-              user_id,
-              instanceId: maintInstanceId,
-              previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
-              instance_type: type,
-              cronLockRunId: maintRunLock.runId,
-              maintenanceLockKey,
-            }]);
-
-            results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'maintenance' });
-          } catch (err: any) {
-            console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
+              results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'maintenance' });
+            } catch (err: any) {
+              console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
+              await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+            }
+          } else {
             await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
           }
         } else {
-          await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+          console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
         }
-      } else {
-        console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
       }
     }
 

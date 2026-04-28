@@ -95,18 +95,9 @@ export async function GET(req: Request) {
       console.log(`[Cron Auto] Processing automation ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
       // Find or create remote_instance
-      let instanceId: string | undefined;
-      const { data: prevStatuses } = await supabaseAdmin
-        .from('requirement_status')
-        .select('instance_id, stage, message, preview_url, repo_url, created_at')
-        .eq('requirement_id', reqId)
-        .not('instance_id', 'is', null)
-        .order('created_at', { ascending: false })
-        .limit(10);
+      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
 
-      if (prevStatuses?.[0]?.instance_id) {
-        instanceId = prevStatuses[0].instance_id;
-      } else {
+      if (!instanceId) {
         const { data: instances } = await supabaseAdmin
           .from('remote_instances')
           .select('id')
@@ -114,27 +105,69 @@ export async function GET(req: Request) {
           .eq('name', `req-auto-${reqId}`)
           .limit(1);
 
-        if (instances?.length) {
+        if (instances && instances.length > 0) {
           instanceId = instances[0].id;
         } else {
-          const { data: newInstance, error: insertErr } = await supabaseAdmin
-            .from('remote_instances')
-            .insert({
-              name: `req-auto-${reqId}`,
-              site_id,
-              user_id,
-              created_by: user_id,
-              status: 'pending',
-              instance_type: 'browser',
-              provider_instance_id: null,
-              cdp_url: null,
-            })
-            .select('id')
-            .single();
-          if (insertErr) console.error('[Cron Auto] Error inserting remote_instance:', insertErr);
-          instanceId = newInstance?.id;
+          // Fallback for legacy instances
+          const { data: prevStatuses } = await supabaseAdmin
+            .from('requirement_status')
+            .select('instance_id')
+            .eq('requirement_id', reqId)
+            .not('instance_id', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          if (prevStatuses && prevStatuses.length > 0) {
+            const instanceIds = prevStatuses.map(s => s.instance_id);
+            const { data: legacyInstances } = await supabaseAdmin
+              .from('remote_instances')
+              .select('id, name')
+              .in('id', instanceIds)
+              .not('name', 'like', 'req-maint-%');
+              
+            if (legacyInstances && legacyInstances.length > 0) {
+              const validIds = new Set(legacyInstances.map(i => i.id));
+              const mostRecentValid = prevStatuses.find(s => validIds.has(s.instance_id));
+              if (mostRecentValid) {
+                instanceId = mostRecentValid.instance_id;
+              }
+            }
+          }
+
+          if (!instanceId) {
+            const { data: newInstance, error: insertErr } = await supabaseAdmin
+              .from('remote_instances')
+              .insert({
+                name: `req-auto-${reqId}`,
+                site_id,
+                user_id,
+                created_by: user_id,
+                status: 'pending',
+                instance_type: 'browser',
+                provider_instance_id: null,
+                cdp_url: null,
+              })
+              .select('id')
+              .single();
+            if (insertErr) console.error('[Cron Auto] Error inserting remote_instance:', insertErr);
+            instanceId = newInstance?.id;
+          }
+        }
+
+        if (instanceId) {
+          await supabaseAdmin.from('requirements').update({
+            metadata: { ...requirement.metadata, runner_instance_id: instanceId }
+          }).eq('id', reqId);
         }
       }
+
+      // Fetch statuses for context (previously done during instance lookup)
+      const { data: prevStatuses } = await supabaseAdmin
+        .from('requirement_status')
+        .select('instance_id, stage, message, preview_url, repo_url, created_at')
+        .eq('instance_id', instanceId)
+        .order('created_at', { ascending: false })
+        .limit(10);
 
       if (!instanceId) {
         console.error(`[Cron Auto] Failed to create or find remote_instance for req ${reqId}`);
