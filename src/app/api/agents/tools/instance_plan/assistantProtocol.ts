@@ -57,6 +57,12 @@ function slimStep(step: unknown): unknown {
       truncateTextField(slim, field, STEP_TEXT_FIELD_LIMIT);
     }
   }
+  if (Array.isArray(src.success_criteria) && src.success_criteria.length > 0) {
+    slim.success_criteria = src.success_criteria;
+  }
+  if (Array.isArray(src.validation_rules) && src.validation_rules.length > 0) {
+    slim.validation_rules = src.validation_rules;
+  }
   if (Array.isArray(src.artifacts)) {
     slim.artifacts_count = (src.artifacts as unknown[]).length;
   }

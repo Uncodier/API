@@ -39,6 +39,7 @@ Before calling `instance_plan action="create"`, verify:
 - [ ] Validation (`makinari-fase-validacion`) runs before reporting.
 - [ ] Reporting (`makinari-fase-reporteado`) is the final step.
 - [ ] Each step names either `skill` (preferred) or `role`. Never leave both empty.
+- [ ] The overall plan specifies `expected_output`, `success_criteria`, and `validation_rules` at the root level.
 - [ ] Each step specifies `expected_output` defining exactly what artifact or state change proves the step succeeded.
 - [ ] Each step specifies `success_criteria` (array of strings) with concrete, observable checks for the step.
 - [ ] Each step specifies `validation_rules` (array of strings) to prevent regressions or anti-patterns during the step.

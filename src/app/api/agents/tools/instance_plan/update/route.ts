@@ -23,6 +23,8 @@ const UpdateInstancePlanSchema = z.object({
     type: z.string().optional(),
     instructions: z.string().optional(),
     expected_output: z.string().optional(),
+    success_criteria: z.array(z.any()).optional(),
+    validation_rules: z.array(z.any()).optional(),
     actual_output: z.string().optional().nullable(),
     started_at: z.string().datetime().optional().nullable(),
     completed_at: z.string().datetime().optional().nullable(),
