@@ -152,6 +152,12 @@ async function runStep(
           timeout: ctx.defaultTimeoutMs,
         });
         if (resp) ctx.responseStatuses.push(resp.status());
+
+        const bodyText = await page.evaluate(() => document.body?.innerText?.toLowerCase() || '').catch(() => '');
+        if (bodyText.includes('this page could not be found') || bodyText.includes('application error') || bodyText.includes('404 page not found')) {
+          return { ok: false, error: 'Soft 404 or Next.js Error Boundary detected on page.' };
+        }
+
         return { ok: true };
       }
       case 'sleep': {

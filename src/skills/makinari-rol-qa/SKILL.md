@@ -80,6 +80,7 @@ Act either by:
 - Never stub fetches or mock the backend inside a scenario. Scenarios run against the live `next start` server.
 - CRITICAL: If the E2E runner fails to launch (e.g., missing Chrome), DO NOT fall back to just verifying HTTP 200 via `sandbox_probe_routes` for transactional features. You MUST verify that the backend API actually works (e.g., by using `sandbox_probe_api` to send a POST request and verifying the database/state changes). A UI that returns 200 but doesn't save data is a FAILURE.
 - CRITICAL: For authentication features (login, signup, protected routes), you MUST verify that the authentication flow actually works (e.g., logging in returns a valid session, accessing a protected route without authentication returns 401/redirects). Do NOT accept purely visual criteria like "renders a login form".
+- CRITICAL: Beware of "Soft 404s" and Next.js Error Boundaries. A crashed page or a 404 page ("This page could not be found") might return an HTTP 200 status. When using `sandbox_probe_routes` or `curl`, you MUST inspect the HTML body. If it contains "404", "This page could not be found", or "Application error", the route is broken. Do not rely solely on the visual critic to catch these routing failures.
 
 ### 6. Accessibility and UX floor
 For every page in the critical journey, verify (via scenario or visual review):

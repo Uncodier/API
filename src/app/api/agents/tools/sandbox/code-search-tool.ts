@@ -424,7 +424,7 @@ async function main() {
   try {
     require.resolve('/tmp/node_modules/@xenova/transformers');
   } catch (e) {
-    execSync('npm install @xenova/transformers onnxruntime-node --no-optional --ignore-scripts', { cwd: '/tmp', stdio: 'ignore' });
+    execSync('npm install @xenova/transformers onnxruntime-node --omit=optional', { cwd: '/tmp', stdio: 'ignore' });
   }
 
   const { pipeline, cos_sim, env } = require('/tmp/node_modules/@xenova/transformers');

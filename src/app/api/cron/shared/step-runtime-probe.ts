@@ -380,7 +380,21 @@ export async function runRuntimeProbe(params: RuntimeProbeParams): Promise<Runti
     startupError = startupError || 'next start did not respond within the probe window';
   }
 
-  const anyPageFailure = pages.some((p) => p.http_status < 200 || p.http_status >= 400 || p.http_status === 0);
+  let soft404Detected = false;
+  const anyPageFailure = pages.some((p) => {
+    if (p.http_status < 200 || p.http_status >= 400 || p.http_status === 0) return true;
+    const body = p.body_snippet?.toLowerCase() || '';
+    if (body.includes('this page could not be found') || body.includes('application error') || body.includes('404 page not found')) {
+      soft404Detected = true;
+      return true;
+    }
+    return false;
+  });
+
+  if (soft404Detected && !startupError) {
+    startupError = 'Soft 404 or Next.js Error Boundary detected in page response body.';
+  }
+
   const anyApi5xx = apis.some((a) => a.http_status >= 500 || a.http_status === 0);
   const hasBlockingServerError = serverErrors.some((e) =>
     ['module_not_found', 'unhandled_rejection', 'uncaught_exception', 'syntax_error', 'type_error'].includes(e.kind),
