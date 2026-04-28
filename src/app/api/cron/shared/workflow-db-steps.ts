@@ -83,17 +83,27 @@ export async function recordRequirementBlockedStep(
   }
 }
 
-export async function resetCronAttemptsStep(requirementId: string): Promise<void> {
+export async function unblockRequirementStep(requirementId: string, forceStatusToInProgress = false): Promise<void> {
   'use step';
   try {
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
-    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
-    if (data?.metadata) {
-      await supabaseAdmin.from('requirements').update({
-        metadata: { ...data.metadata, cron_attempts: 0 }
-      }).eq('id', requirementId);
+    const { data } = await supabaseAdmin.from('requirements').select('metadata, status').eq('id', requirementId).single();
+    
+    const newMetadata = data?.metadata ? { ...data.metadata, cron_attempts: 0 } : { cron_attempts: 0 };
+    
+    const updatePayload: any = {
+      metadata: newMetadata,
+      updated_at: new Date().toISOString()
+    };
+
+    if (forceStatusToInProgress || data?.status === 'blocked') {
+      updatePayload.status = 'in-progress';
     }
+    
+    await supabaseAdmin.from('requirements').update(updatePayload).eq('id', requirementId);
+    
+    console.log(`[WorkflowDbStep] Successfully unblocked req ${requirementId} and reset cron_attempts`);
   } catch (e: unknown) {
-    console.warn(`[WorkflowDbStep] Failed to reset cron_attempts for req ${requirementId}:`, e);
+    console.warn(`[WorkflowDbStep] Failed to unblock req ${requirementId}:`, e);
   }
 }

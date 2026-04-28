@@ -9,7 +9,7 @@ import {
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { runMaintenanceAgentStep } from './agent-step';
-import { getBacklogSnapshotStep } from '../shared/workflow-db-steps';
+import { getBacklogSnapshotStep, unblockRequirementStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -85,6 +85,10 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     } else {
       console.log('[QAWorkflow|qa] Skipping commitAndPushStep — agent timed out');
     }
+
+    // Unblock the requirement so the main builder can pick it up again
+    // This is especially important if QA was triggered because the main builder was blocked
+    await unblockRequirementStep(reqId, true);
 
     return { reqId, status: 'qa_improvement_cycle_complete' };
   } catch (e: any) {

@@ -27,7 +27,7 @@ import { detectAdminLoopStep } from '../shared/admin-loop-step';
 import {
   getBacklogSnapshotStep,
   recordRequirementBlockedStep,
-  resetCronAttemptsStep,
+  unblockRequirementStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -378,7 +378,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   if (didPush || planCompleted) {
-    await resetCronAttemptsStep(reqId);
+    await unblockRequirementStep(reqId);
   }
 
   // Sandbox stop happens in the outer `finally` — never in the happy path.
