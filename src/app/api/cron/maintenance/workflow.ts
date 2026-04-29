@@ -74,15 +74,6 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     const backlogSnap = await getBacklogSnapshotStep(reqId);
     const backlogSnapshot = backlogSnap.backlog;
 
-    const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
-    const connected = await connectOrRecreateRequirementSandbox({
-      sandboxId: sandboxId!,
-      requirementId: reqId,
-      instanceType: type,
-      title,
-      audit: cronAudit,
-    });
-
     const maintenancePrompt = buildMaintenancePromptForFlow({
       reqId, title, type, instanceId, site_id,
       workDir, branchName, backlog: backlogSnapshot,
@@ -92,9 +83,9 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     console.log(`[QAWorkflow|qa] Running QA & Improvement agent directly (no steps/plans)`);
     
     // Ejecutar las sondas visuales y E2E para obtener feedback de QA
-    const { runRuntimeAndVisualProbes } = await import('../shared/step-gate-probes');
-    const probes = await runRuntimeAndVisualProbes({
-      sandbox: connected.sandbox,
+    const { runGateProbesStep } = await import('../shared/step-gate-probes-step');
+    const probes = await runGateProbesStep({
+      sandboxId: sandboxId!,
       stepOrder: 0,
       requirementId: reqId,
       gitRepoKind: 'applications',
@@ -103,8 +94,11 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       stepContext: {
         title: 'QA Audit',
         instructions: 'Audit the entire application for visual defects, runtime errors, and E2E scenario failures.',
-      }
+      },
+      instanceType: type,
+      title,
     });
+    sandboxId = probes.effectiveSandboxId;
 
     let qaContext = '';
     if (probes.signals.visual?.defects?.length) {

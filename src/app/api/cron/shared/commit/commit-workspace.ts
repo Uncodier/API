@@ -129,33 +129,59 @@ fi`,
       );
     }
 
-    const result = await SandboxService.commitAndPush(activeSandbox, {
-      message: msg,
-      requirementId: reqId,
-      title,
-    });
-    console.log(
-      `[CronPersist] commitWorkspaceToOrigin head=${headShort} branch=${result.branch} pushed=${result.pushed} commitCount=${result.commitCount} (correlate with GitHub SHA after push)`,
-    );
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.COMMIT_PUSH,
-      message: result.pushed
-        ? `Git commit/push: ${result.commitCount} commit(s) on ${result.branch}`
-        : `Git commit/push: nothing to push (clean tree) on ${result.branch}`,
-      details: {
-        branch: result.branch,
-        pushed: result.pushed,
-        commitCount: result.commitCount,
-        headShort,
-        commitMessage: msg.slice(0, 200),
-      },
-    });
+    let result: { branch: string; pushed: boolean; commitCount: number } | undefined;
+    let pushError: any;
+
+    try {
+      result = await SandboxService.commitAndPush(activeSandbox, {
+        message: msg,
+        requirementId: reqId,
+        title,
+      });
+    } catch (e: any) {
+      pushError = e;
+      try {
+        const branch = await SandboxService.getCurrentBranch(activeSandbox);
+        result = { branch, pushed: false, commitCount: 0 };
+      } catch (branchErr) {
+        console.warn('[PreCommit] Could not get branch after push error:', branchErr);
+      }
+    }
+
+    if (result) {
+      console.log(
+        `[CronPersist] commitWorkspaceToOrigin head=${headShort} branch=${result.branch} pushed=${result.pushed} commitCount=${result.commitCount} (correlate with GitHub SHA after push)`,
+      );
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.COMMIT_PUSH,
+        message: pushError 
+          ? `Git commit/push failed on ${result.branch}`
+          : result.pushed
+          ? `Git commit/push: ${result.commitCount} commit(s) on ${result.branch}`
+          : `Git commit/push: nothing to push (clean tree) on ${result.branch}`,
+        details: {
+          branch: result.branch,
+          pushed: result.pushed,
+          commitCount: result.commitCount,
+          headShort,
+          commitMessage: msg.slice(0, 200),
+          error: pushError ? String(pushError) : undefined,
+        },
+      });
+    }
 
     const gitRepoKind = options?.gitRepoKind ?? 'applications';
     const persistStatus = !options?.deferRequirementStatusPersist;
     let snapshotId: string | undefined;
     const token = process.env.GITHUB_TOKEN;
-    if (result.pushed && result.commitCount > 0 && audit?.siteId && result.branch && token) {
+    
+    // We want to snapshot if we pushed successfully OR if we failed to push but have local commits (pushError is set).
+    // This preserves the local workspace state (e.g. for rebase_conflict recovery).
+    const shouldSnapshot = result && result.branch && token && audit?.siteId && (
+      (result.pushed && result.commitCount > 0) || pushError
+    );
+
+    if (shouldSnapshot) {
       try {
         const binding = await resolveGitBindingForRequirement(reqId, gitRepoKind);
         const authRepoUrl = `https://x-access-token:${token}@github.com/${binding.org}/${binding.repo}.git`;
@@ -168,6 +194,7 @@ fi`,
           instanceType,
           title,
           auditCtx: audit,
+          isPushRecovery: !!pushError,
         });
         activeSandbox = recreated.sandbox;
         snapshotId = recreated.snapshotId;
@@ -177,20 +204,22 @@ fi`,
     }
 
     let source_code: string | undefined;
-    try {
-      const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
-      if (up.ok) {
-        source_code = up.public_url;
-        console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
-      } else {
-        console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
+    if (result) {
+      try {
+        const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
+        if (up.ok) {
+          source_code = up.public_url;
+          console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
+        } else {
+          console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
+        }
+      } catch (e: unknown) {
+        console.warn('[CronPersist] source archive upload failed:', e instanceof Error ? e.message : e);
       }
-    } catch (e: unknown) {
-      console.warn('[CronPersist] source archive upload failed:', e instanceof Error ? e.message : e);
     }
 
     let requirementStatusSync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null = null;
-    if (audit?.siteId && result.branch) {
+    if (audit?.siteId && result?.branch) {
       try {
         requirementStatusSync = await syncLatestRequirementStatusWithPreview({
           requirementId: reqId,
@@ -210,12 +239,38 @@ fi`,
       }
     }
 
+    if (pushError) {
+      const errMsg = pushError?.message || String(pushError);
+      const tri = triageGitPushError(errMsg);
+      const logSummary = tri.agentMessage.replace(/\s+/g, ' ').trim().slice(0, 500);
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.COMMIT_PUSH,
+        level: tri.agentActionable ? 'error' : 'warn',
+        message: `Git commit/push failed (${tri.failureKind}): ${logSummary}`,
+        details: {
+          headShort,
+          error: errMsg.slice(0, 4000),
+          failureKind: tri.failureKind,
+          agentActionable: tri.agentActionable,
+          agentMessage: tri.agentMessage,
+        },
+      });
+      
+      throw Object.assign(new CommitPushTriageError(tri, { cause: pushError }), {
+        sandboxReplacement: activeSandbox.sandboxId !== priorSandboxId ? activeSandbox : undefined,
+        snapshotId,
+        source_code,
+        requirementStatusSync,
+        branch: result?.branch
+      });
+    }
+
     const sandboxReplacement = activeSandbox.sandboxId !== priorSandboxId ? activeSandbox : undefined;
 
     return {
-      branch: result.branch,
-      pushed: result.pushed,
-      commitCount: result.commitCount,
+      branch: result!.branch,
+      pushed: result!.pushed,
+      commitCount: result!.commitCount,
       requirementStatusSync,
       ...(sandboxReplacement ? { sandboxReplacement } : {}),
       ...(snapshotId ? { snapshotId } : {}),

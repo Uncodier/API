@@ -107,4 +107,9 @@ export interface FlowGateResult {
    * should reprovision and retry the step — not treat as a code failure.
    */
   sandboxUnavailable?: boolean;
+  /**
+   * When the gate replaces the sandbox (e.g. after taking a snapshot), it
+   * returns the new Sandbox instance here so the caller can use it.
+   */
+  sandboxReplacement?: Sandbox;
 }

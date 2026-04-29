@@ -575,13 +575,23 @@ export function sandboxPushCheckpointTool(
             ? `Pushed to origin on branch "${result.branch}".${previewNote}${sourceNote}${patchNote}`
             : `No push performed (clean tree in sync, or could not publish). branch=${result.branch}.${hint}${previewNote}${sourceNote}${patchNote}`,
         };
-      } catch (e: unknown) {
-        const err = e instanceof Error ? e.message : String(e);
+      } catch (e: any) {
+        // If the error has a sandboxReplacement (because we took a snapshot despite the push error),
+        // we MUST update the active sandbox ref, otherwise the agent will try to use a stopped VM.
+        if (e.sandboxReplacement && toolsCtx?.activeSandboxRef) {
+          toolsCtx.activeSandboxRef.current = e.sandboxReplacement;
+        }
+        if (e.sandboxReplacement && toolsCtx?.instance_id && requirementId) {
+          persistActiveSandboxId(requirementId, toolsCtx.instance_id, e.sandboxReplacement.sandboxId, toolsCtx.site_id)
+            .catch(err => console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${e.sandboxReplacement!.sandboxId}:`, err));
+        }
+
+        const errMessage = e instanceof Error ? e.message : String(e);
         return {
           ok: false,
           pushed: false,
-          branch: '',
-          error: err,
+          branch: e.branch || '',
+          error: errMessage,
         };
       }
     },

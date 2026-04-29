@@ -103,12 +103,13 @@ async function persistOrVerifyOrigin(
       const t = e.triage;
       return {
         ok: false,
-        branch: '',
+        branch: (e as any).branch || '',
         error: t.operatorMessage,
         errorForAgent: t.agentMessage,
         failureKind: t.failureKind,
         agentActionable: t.agentActionable,
         sandboxUnavailable: t.failureKind === 'sandbox_unavailable',
+        ...((e as any).sandboxReplacement ? { sandbox: (e as any).sandboxReplacement } : {}),
       };
     }
     const msg = e instanceof Error ? e.message : String(e);
@@ -121,6 +122,7 @@ async function persistOrVerifyOrigin(
       failureKind: tri.failureKind,
       agentActionable: tri.agentActionable,
       sandboxUnavailable: tri.failureKind === 'sandbox_unavailable',
+      ...((e as any).sandboxReplacement ? { sandbox: (e as any).sandboxReplacement } : {}),
     };
   }
 }
@@ -198,6 +200,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   vercelDeploy?: VercelDeployGateInfo;
   signals: GateSignals;
   sandboxUnavailable?: boolean;
+  sandboxReplacement?: Sandbox;
 }> {
   const {
     sandbox: initialSandbox,
@@ -338,6 +341,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         error: agentLine,
         signals,
         sandboxUnavailable: true,
+        sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
       };
     }
     const canRecover = persist.agentActionable !== false;
@@ -432,6 +436,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         error: agentLine,
         signals,
         sandboxUnavailable: true,
+        sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
       };
     }
     const agentLine = persist.errorForAgent || persist.error || 'branch not synced';
@@ -459,6 +464,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       lastResult,
       error: errFinal,
       signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }
 
@@ -483,6 +489,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
       lastResult,
       vercelDeploy: { previewUrl: null, deployState: 'skipped_default_branch', detail: branch },
       signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }
 
@@ -573,6 +580,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         buildLogExcerpt: vercelBuildExcerpt,
       },
       signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }
 
@@ -603,6 +611,7 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
         buildLogExcerpt: vercelBuildExcerpt,
       },
       signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
     };
   }
 
@@ -621,16 +630,17 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     detail: poll.detail,
     buildLogExcerpt: vercelBuildExcerpt,
   };
-  return {
-    ok: false,
-    lastResult,
-    error: errTimeout,
-    vercelDeploy: {
-      previewUrl: null,
-      deployState: poll.state,
-      detail: poll.detail,
-      buildLogExcerpt: vercelBuildExcerpt,
-    },
-    signals,
-  };
-}
+    return {
+      ok: false,
+      lastResult,
+      error: errTimeout,
+      vercelDeploy: {
+        previewUrl: null,
+        deployState: poll.state,
+        detail: poll.detail,
+        buildLogExcerpt: vercelBuildExcerpt,
+      },
+      signals,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+    };
+  }

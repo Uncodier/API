@@ -436,6 +436,14 @@ export async function commitAndPushStep(
     };
   } catch (err: any) {
     console.error('[CronPersist] commitAndPushStep FAILED:', err?.message || err, err?.stack);
+    if (err.sandboxReplacement) {
+      return {
+        branch: err.branch || '',
+        pushed: false,
+        commitCount: 0,
+        effectiveSandboxId: err.sandboxReplacement.sandboxId,
+      };
+    }
     return null;
   }
 }

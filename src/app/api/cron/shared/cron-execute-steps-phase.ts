@@ -457,6 +457,11 @@ export async function executeStepsPhaseStep(params: {
               continue outer;
             }
 
+            if (err.sandboxReplacement) {
+               effectiveSandboxId = err.sandboxReplacement.sandboxId;
+               sandboxActiveRef.current = err.sandboxReplacement;
+            }
+
             await updateInstancePlanCore({
               plan_id: planId,
               instance_id: instanceId,

@@ -522,6 +522,13 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
         });
       }
 
+      if (gate.sandboxReplacement) {
+        sandbox = gate.sandboxReplacement;
+        if (execOpts?.sandboxActiveRef) {
+          execOpts.sandboxActiveRef.current = sandbox;
+        }
+      }
+
       // Back-compat shape for the rest of the loop: the app/site gate
       // populates `richSignals` + `vercelDeploy` + `lastResult`; light gates
       // only populate `signals[]`. Fall back to empty objects so downstream

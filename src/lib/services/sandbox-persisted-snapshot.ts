@@ -250,8 +250,9 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
   instanceType: string;
   title: string;
   auditCtx?: CronAuditContext;
+  isPushRecovery?: boolean;
 }): Promise<{ sandbox: Sandbox; snapshotId?: string }> {
-  const { branch, authRepoUrl, requirementId, instanceType, title, auditCtx } = params;
+  const { branch, authRepoUrl, requirementId, instanceType, title, auditCtx, isPushRecovery } = params;
     let snapshotId: string;
     try {
       try {
@@ -329,22 +330,26 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     if (fetchRes.exitCode !== 0) {
       throw new Error(`fetch after snapshot recreate failed: ${fetchRes.stderr}`);
     }
-    const trackRes = await next.runCommand({
-      cmd: 'git',
-      args: ['checkout', '--track', `origin/${branch}`],
-      cwd: workDir,
-    });
-    if (trackRes.exitCode !== 0) {
-      const fb = await next.runCommand({
+    if (!isPushRecovery) {
+      const trackRes = await next.runCommand({
         cmd: 'git',
-        args: ['checkout', '-B', branch, `origin/${branch}`],
+        args: ['checkout', '--track', `origin/${branch}`],
         cwd: workDir,
       });
-      if (fb.exitCode !== 0) {
-        throw new Error(`checkout origin/${branch} after recreate failed: ${await fb.stderr()}`);
+      if (trackRes.exitCode !== 0) {
+        const fb = await next.runCommand({
+          cmd: 'git',
+          args: ['checkout', '-B', branch, `origin/${branch}`],
+          cwd: workDir,
+        });
+        if (fb.exitCode !== 0) {
+          throw new Error(`checkout origin/${branch} after recreate failed: ${await fb.stderr()}`);
+        }
       }
+      await SandboxService.syncTrackedBranchToRemoteTip(next, branch);
+    } else {
+      console.log(`[Sandbox] Skipping git checkout/sync because this is a push recovery snapshot.`);
     }
-    await SandboxService.syncTrackedBranchToRemoteTip(next, branch);
     await next.runCommand({
       cmd: 'npm',
       args: ['install', '--prefer-offline', '--no-audit', '--no-fund'],
