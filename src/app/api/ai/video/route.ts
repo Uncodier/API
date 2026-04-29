@@ -586,7 +586,8 @@ export async function POST(request: NextRequest) {
 
     // Validate credits for Video Generation
     try {
-      const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+      const duration = duration_seconds || 8;
+      const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
       const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
       if (!hasCredits) {
         return NextResponse.json(
@@ -612,9 +613,11 @@ export async function POST(request: NextRequest) {
 
     if (result && Array.isArray(result.videos) && result.videos.length > 0) {
       try {
+        const duration = duration_seconds || 8;
+        const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
         await CreditService.deductCredits(
           site_id, 
-          CreditService.PRICING.VIDEO_GENERATION * result.videos.length, 
+          requiredCredits * result.videos.length, 
           'video_generation', 
           `Video generation (${result.videos.length} videos)`,
           { prompt, provider }

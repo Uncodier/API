@@ -370,10 +370,12 @@ export async function executeAssistantStep(
           
           // Deduct credits for token usage
           if (site_id && result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
-            const totalTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0) + 
-                                ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+            const inputTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0);
+            const outputTokens = ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+            const totalTokens = inputTokens + outputTokens;
             
-            const tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+            const tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
+                               (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
             
             if (tokensCost > 0) {
               try {
@@ -498,10 +500,12 @@ export async function executeAssistant(
       // Deduct credits for token usage
       let tokensCost = 0;
       if (result.usage && ((result.usage as any).promptTokens || (result.usage as any).input_tokens)) {
-        const totalTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0) + 
-                            ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+        const inputTokens = ((result.usage as any).promptTokens || (result.usage as any).input_tokens || 0);
+        const outputTokens = ((result.usage as any).completionTokens || (result.usage as any).output_tokens || 0);
+        const totalTokens = inputTokens + outputTokens;
         
-        tokensCost = (totalTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_TOKEN_MILLION;
+        tokensCost = (inputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_INPUT_TOKEN_MILLION + 
+                     (outputTokens / 1_000_000) * CreditService.PRICING.ASSISTANT_OUTPUT_TOKEN_MILLION;
         
         if (tokensCost > 0 && site_id) {
           try {

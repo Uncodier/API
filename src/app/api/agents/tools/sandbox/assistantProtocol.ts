@@ -103,27 +103,10 @@ export async function deductSandboxToolCredits(
   toolName: string,
   args: any
 ): Promise<{ success: boolean; error?: string }> {
-  if (!toolsCtx?.site_id) return { success: true };
-  
-  const requiredCredits = CreditService.PRICING.SANDBOX_TOOL_CALL;
-  const hasCredits = await CreditService.validateCredits(toolsCtx.site_id, requiredCredits);
-  
-  if (!hasCredits) {
-    return { success: false, error: 'Insufficient credits for sandbox tool execution' };
-  }
-  
-  try {
-    await CreditService.deductCredits(
-      toolsCtx.site_id,
-      requiredCredits,
-      'sandbox_tool',
-      `Sandbox tool execution (${toolName})`,
-      { tool: toolName, args }
-    );
-    return { success: true };
-  } catch (e: any) {
-    return { success: false, error: e.message || 'Failed to deduct credits' };
-  }
+  // We no longer deduct credits per tool call.
+  // Sandbox usage is billed by the hour via a separate cron job or session tracker,
+  // and tokens are billed via the assistant execution wrapper.
+  return { success: true };
 }
 
 export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {

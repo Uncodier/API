@@ -9,7 +9,7 @@ import {
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { runMaintenanceAgentStep } from './agent-step';
-import { getBacklogSnapshotStep, unblockRequirementStep, checkInstanceAndPlanStatusStep } from '../shared/workflow-db-steps';
+import { getBacklogSnapshotStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { sleep } from 'workflow';
@@ -138,6 +138,9 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;
       }
+      
+      // Increment QA successful runs counter
+      await incrementQaSuccessfulRunsStep(reqId);
     } else {
       console.log('[QAWorkflow|qa] Skipping commitAndPushStep — agent timed out');
     }

@@ -54,8 +54,9 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
       try {
         console.log(`[GenerateAudioTool] 🎙️ Executing audio generation`);
         if (site_id) {
-          // Assuming 0.1 credits per generation for TTS, same as image for simplicity unless defined otherwise
-          const requiredCredits = CreditService.PRICING.IMAGE_GENERATION;
+          // Estimate duration based on text length (approx 1000 chars per minute)
+          const estimatedMinutes = args.text.length / 1000;
+          const requiredCredits = Math.max(0.01, estimatedMinutes * CreditService.PRICING.AUDIO_GENERATION_MINUTE);
           const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
           if (!hasCredits) {
             throw new Error('Insufficient credits for audio generation');

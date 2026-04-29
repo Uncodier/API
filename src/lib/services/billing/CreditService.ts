@@ -74,11 +74,13 @@ export class CreditService {
     PERSON_ROLE_SEARCH: 0.1,
     PLACES_SEARCH: 0.1,
     TAVILY_SEARCH: 0.1,
-    ASSISTANT_TOKEN_MILLION: 1.0, // 1 credit per million tokens
+    ASSISTANT_INPUT_TOKEN_MILLION: 1.0, // 1 credit per million input tokens
+    ASSISTANT_OUTPUT_TOKEN_MILLION: 20.0, // 20 credits per million output tokens
+    SANDBOX_HOUR: 0.5, // 0.5 credits per hour of sandbox usage
     IMAGE_GENERATION: 0.1,
-    VIDEO_GENERATION: 1.0,
+    VIDEO_GENERATION_MINUTE: 20.0,
+    AUDIO_GENERATION_MINUTE: 2.0,
     AUDIO_TRANSCRIPTION: 0.1,
     FRAME_EXTRACTION: 0.1,
-    SANDBOX_TOOL_CALL: 0.01
   };
 }

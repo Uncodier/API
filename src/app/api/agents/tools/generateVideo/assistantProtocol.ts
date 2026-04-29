@@ -75,7 +75,8 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
       try {
         console.log(`[GenerateVideoTool] 🎬 Executing video generation`);
         if (site_id) {
-          const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+          const duration = args.duration_seconds || 8;
+          const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
           const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
           if (!hasCredits) {
             throw new Error('Insufficient credits for video generation');
@@ -190,7 +191,8 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
       try {
         console.log(`[GenerateVideoTool-Scrapybara] 🎬 Executing video generation`);
         if (site_id) {
-          const requiredCredits = CreditService.PRICING.VIDEO_GENERATION;
+          const duration = args.duration_seconds || 8;
+          const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
           const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
           if (!hasCredits) {
             throw new Error('Insufficient credits for video generation');

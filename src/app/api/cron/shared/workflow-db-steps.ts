@@ -137,3 +137,25 @@ export async function unblockRequirementStep(requirementId: string, forceStatusT
     console.warn(`[WorkflowDbStep] Failed to unblock req ${requirementId}:`, e);
   }
 }
+
+export async function incrementQaSuccessfulRunsStep(requirementId: string): Promise<void> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    
+    const currentRuns = data?.metadata?.qa_successful_runs || 0;
+    const newMetadata = data?.metadata 
+      ? { ...data.metadata, qa_successful_runs: currentRuns + 1 } 
+      : { qa_successful_runs: 1 };
+    
+    await supabaseAdmin.from('requirements').update({
+      metadata: newMetadata,
+      updated_at: new Date().toISOString()
+    }).eq('id', requirementId);
+    
+    console.log(`[WorkflowDbStep] Incremented qa_successful_runs for req ${requirementId} to ${currentRuns + 1}`);
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to increment qa_successful_runs for req ${requirementId}:`, e);
+  }
+}
