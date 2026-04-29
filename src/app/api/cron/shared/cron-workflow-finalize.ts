@@ -17,6 +17,7 @@ import {
 import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
 import { canCloseRequirement } from '@/lib/services/requirement-flow-engine';
+import { deleteSnapshotQuiet } from '@/lib/services/sandbox-persisted-snapshot';
 
 const REQUIREMENT_GIT_STRICT = () => process.env.REQUIREMENT_GIT_STRICT === 'true';
 
@@ -315,6 +316,15 @@ export async function createFinalStatusStep(params: {
       .update({ status: 'done', updated_at: new Date().toISOString() })
       .eq('id', reqId);
     console.log(`[CronStep] Requirement ${reqId} → done`);
+    
+    // Clean up the final snapshot since the requirement is done
+    // and the code is safely in GitHub
+    if (existing?.snapshot_id) {
+      console.log(`[CronStep] Requirement done, cleaning up final snapshot: ${existing.snapshot_id}`);
+      deleteSnapshotQuiet(existing.snapshot_id).catch(e => {
+        console.error(`[CronStep] Failed to delete final snapshot ${existing.snapshot_id}:`, e);
+      });
+    }
   }
 
   await logCronInfrastructureEvent(audit ?? { instanceId, siteId: site_id }, {

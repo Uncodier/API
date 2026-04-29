@@ -102,6 +102,37 @@ async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
 }
 
 /**
+ * Attempts to delete a snapshot from Vercel by ID.
+ * Does not throw on failure to avoid breaking the main flow.
+ */
+export async function deleteSnapshotQuiet(snapshotId: string): Promise<void> {
+  if (!snapshotId) return;
+  
+  try {
+    const token = process.env.VERCEL_TOKEN || process.env.VERCEL_API_TOKEN;
+    if (!token) {
+      console.warn(`[Sandbox] 🧹 CLEANUP: Cannot delete snapshot ${snapshotId} because VERCEL_TOKEN is not set.`);
+      return;
+    }
+
+    const res = await fetch(`https://api.vercel.com/v1/sandboxes/snapshots/${snapshotId}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    if (res.ok) {
+      console.log(`[Sandbox] 🧹 CLEANUP: Deleted old snapshot ${snapshotId}`);
+    } else {
+      console.warn(`[Sandbox] 🧹 CLEANUP: Failed to delete snapshot ${snapshotId}: ${res.status} ${await res.text()}`);
+    }
+  } catch (e: unknown) {
+    console.error(`[Sandbox] 🧹 CLEANUP: Error deleting snapshot ${snapshotId}:`, e instanceof Error ? e.message : e);
+  }
+}
+
+/**
  * Best-effort: create VM from DB snapshot, fetch, checkout branch, sync to origin, npm install.
  * Returns null when skipped or failed (caller falls back to git clone).
  */
@@ -287,6 +318,11 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
 
   let next: Sandbox | undefined;
   try {
+    // Fetch the previous snapshot ID before creating a new one
+    // so we can delete it later to avoid billing leaks
+    const previousSnapshotRow = await fetchLatestRequirementSnapshotRow(requirementId, auditCtx?.instanceId);
+    const previousSnapshotId = previousSnapshotRow?.snapshot_id;
+
     next = await Sandbox.create({
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
@@ -311,6 +347,14 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       stopSandboxQuiet(params.sandbox).catch(e => {
         console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
       });
+      
+      // Delete the previous snapshot since we just created a new one
+      // This prevents Sandbox Storage billing accumulation
+      if (previousSnapshotId && previousSnapshotId !== snapshotId) {
+        deleteSnapshotQuiet(previousSnapshotId).catch(e => {
+          console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to delete previous snapshot ${previousSnapshotId}:`, e);
+        });
+      }
     }
 
     try {
