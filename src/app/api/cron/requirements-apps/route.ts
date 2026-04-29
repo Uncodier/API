@@ -341,10 +341,13 @@ export async function GET(req: Request) {
         .single();
 
       if (instanceData?.status === 'paused' || activePlan?.status === 'paused') {
-        console.log(`[Cron Apps] Skipping ${reqId} — instance or plan is paused`);
-        await releaseRunLock(reqId, runLock.runId);
-        results.push({ reqId, skipped: true, reason: 'paused' });
-        continue;
+        console.log(`[Cron Apps] ${reqId} — instance or plan was paused, resuming it.`);
+        if (instanceData?.status === 'paused') {
+          await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
+        }
+        if (activePlan?.status === 'paused') {
+          await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', activePlan.id);
+        }
       }
 
       if (instanceData && instanceData.status !== 'running') {
@@ -505,10 +508,16 @@ export async function GET(req: Request) {
                 .single();
   
               if (maintInstanceData?.status === 'paused' || maintActivePlan?.status === 'paused') {
-                console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — maintenance instance or plan is paused`);
-                await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
-                results.push({ reqId, skipped: true, type: 'maintenance', reason: 'paused' });
-              } else {
+                console.log(`[Cron Apps] PARALLEL maintenance for ${reqId} — maintenance instance or plan was paused, resuming it.`);
+                if (maintInstanceData?.status === 'paused') {
+                  await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
+                }
+                if (maintActivePlan?.status === 'paused') {
+                  await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', maintActivePlan.id);
+                }
+              }
+              
+              {
                 if (maintInstanceData && maintInstanceData.status !== 'running') {
                   await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
                 }
