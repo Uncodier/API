@@ -517,7 +517,7 @@ export async function GET(req: Request) {
                 }
               }
               
-              {
+              
                 if (maintInstanceData && maintInstanceData.status !== 'running') {
                   await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
                 }
@@ -545,12 +545,10 @@ export async function GET(req: Request) {
                   console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
                   await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
                 }
-              }
+              
             } else {
               await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
             }
-          } else {
-            console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
           }
         }
       }
