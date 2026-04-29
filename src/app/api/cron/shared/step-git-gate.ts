@@ -259,9 +259,9 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   });
 
   // Runtime probe: starts `next start` inside the sandbox, hits changed pages
-  // + API routes, captures server stdout/stderr. When there are pages + we're
-  // on an apps-style repo, leave the server alive so the visual probe can
-  // reuse it before we kill it.
+  // + API routes, captures server stdout/stderr.
+  // Visual probes are disabled here (shouldRunVisual is false in step-gate-probes.ts)
+  // so this only does a quick HTTP 200 check.
   const runtimeOutcome = await runRuntimeAndVisualProbes({
     sandbox,
     stepOrder,

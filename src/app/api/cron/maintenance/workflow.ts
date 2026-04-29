@@ -99,6 +99,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       requirementId: reqId,
       gitRepoKind: 'applications',
       audit: cronAudit,
+      shouldRunVisual: true,
       stepContext: {
         title: 'QA Audit',
         instructions: 'Audit the entire application for visual defects, runtime errors, and E2E scenario failures.',

@@ -58,6 +58,7 @@ export async function runRuntimeAndVisualProbes(params: {
   requirementId: string;
   gitRepoKind: GitRepoKind;
   audit?: CronAuditContext;
+  shouldRunVisual?: boolean;
   stepContext?: {
     title?: string;
     instructions?: string;
@@ -92,7 +93,7 @@ export async function runRuntimeAndVisualProbes(params: {
     f.includes('postcss.config')
   );
 
-  const shouldRunVisual = false; // Desactivado para el workflow principal, el QA se encarga de lo visual
+  const shouldRunVisual = params.shouldRunVisual ?? false; // Desactivado para el workflow principal, el QA se encarga de lo visual
 
   let runtimeProbe: Awaited<ReturnType<typeof runRuntimeProbe>> | null = null;
   try {
