@@ -193,34 +193,32 @@ export async function GET(req: Request) {
               }
             }
             
-            {
-              if (maintInstanceData && maintInstanceData.status !== 'running') {
-                await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
-              }
-              if (maintActivePlan && maintActivePlan.status !== 'in_progress') {
-                await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', maintActivePlan.id);
-              }
+            if (maintInstanceData && maintInstanceData.status !== 'running') {
+              await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
+            }
+            if (maintActivePlan && maintActivePlan.status !== 'in_progress') {
+              await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', maintActivePlan.id);
+            }
 
-              try {
-                const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
-                  reqId,
-                  title,
-                  instructions,
-                  type,
-                  site_id,
-                  user_id,
-                  instanceId: maintInstanceId,
-                  previousWorkContext: errorSummary,
-                  instance_type: type,
-                  cronLockRunId: maintRunLock.runId,
-                  maintenanceLockKey,
-                }]);
+            try {
+              const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
+                reqId,
+                title,
+                instructions,
+                type,
+                site_id,
+                user_id,
+                instanceId: maintInstanceId,
+                previousWorkContext: errorSummary,
+                instance_type: type,
+                cronLockRunId: maintRunLock.runId,
+                maintenanceLockKey,
+              }]);
 
-                results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'qa_blocked' });
-              } catch (err: any) {
-                console.error(`[Cron Apps] Error starting QA workflow for blocked req ${reqId}:`, err);
-                await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
-              }
+              results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'qa_blocked' });
+            } catch (err: any) {
+              console.error(`[Cron Apps] Error starting QA workflow for blocked req ${reqId}:`, err);
+              await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
             }
           } else {
             await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
@@ -518,37 +516,38 @@ export async function GET(req: Request) {
               }
               
               
-                if (maintInstanceData && maintInstanceData.status !== 'running') {
-                  await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
-                }
-                if (maintActivePlan && maintActivePlan.status !== 'in_progress') {
-                  await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', maintActivePlan.id);
-                }
-  
-                try {
-                  const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
-                    reqId,
-                    title,
-                    instructions,
-                    type,
-                    site_id,
-                    user_id,
-                    instanceId: maintInstanceId,
-                    previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
-                    instance_type: type,
-                    cronLockRunId: maintRunLock.runId,
-                    maintenanceLockKey,
-                  }]);
-  
-                  results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'maintenance' });
-                } catch (err: any) {
-                  console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
-                  await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
-                }
-              
+              if (maintInstanceData && maintInstanceData.status !== 'running') {
+                await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
+              }
+              if (maintActivePlan && maintActivePlan.status !== 'in_progress') {
+                await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('id', maintActivePlan.id);
+              }
+
+              try {
+                const maintWorkflowRun = await start(runMaintenanceWorkflow, [{
+                  reqId,
+                  title,
+                  instructions,
+                  type,
+                  site_id,
+                  user_id,
+                  instanceId: maintInstanceId,
+                  previousWorkContext: '', // Maintenance doesn't strictly need the main builder's blocker context
+                  instance_type: type,
+                  cronLockRunId: maintRunLock.runId,
+                  maintenanceLockKey,
+                }]);
+
+                results.push({ reqId, runId: maintWorkflowRun.runId, started: true, type: 'maintenance' });
+              } catch (err: any) {
+                console.error(`[Cron Apps] Error starting maintenance workflow for req ${reqId}:`, err);
+                await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
+              }
             } else {
               await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
             }
+          } else {
+            console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
           }
         }
       }
