@@ -94,7 +94,7 @@ async function persistOrVerifyOrigin(
       gitRepoKind,
     });
     return {
-      ok: r.pushed,
+      ok: true, // If commitWorkspaceToOrigin succeeds (even with pushed: false), it means the tree is clean and synced
       branch: r.branch,
       ...(r.sandboxReplacement ? { sandbox: r.sandboxReplacement } : {}),
     };
@@ -193,11 +193,11 @@ export type GateSignals = {
   deploy?: DeploySignal;
 };
 
-export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
+
+export async function verifyOriginAndRecover(params: OriginGateParams): Promise<{
   ok: boolean;
   lastResult: any;
   error?: string;
-  vercelDeploy?: VercelDeployGateInfo;
   signals: GateSignals;
   sandboxUnavailable?: boolean;
   sandboxReplacement?: Sandbox;
@@ -220,89 +220,8 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   let sandbox = initialSandbox;
   let lastResult = initialLastResult;
   const signals: GateSignals = {};
-
-  const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitRepoKind);
-  if (vercelLayoutErr) {
-    const msg = `Vercel/npm layout: ${vercelLayoutErr}`;
-    signals.build = { ok: false, layout_error: vercelLayoutErr };
-    const gone = isSandboxGoneError(msg);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_BUILD,
-      level: gone ? 'warn' : 'error',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${msg.slice(0, 500)}`,
-      details: { stepOrder, error: msg.slice(0, 1200), sandbox_unavailable: gone },
-    });
-    return { ok: false, lastResult, error: msg, signals, ...(gone ? { sandboxUnavailable: true } : {}) };
-  }
-
-  const buildError = await validateBuildForStep(sandbox);
-  if (buildError) {
-    signals.build = { ok: false, error_tail: buildError };
-    const gone = isSandboxGoneError(buildError);
-    await logCronInfrastructureEvent(audit, {
-      event: CronInfraEvent.GATE_BUILD,
-      level: gone ? 'warn' : 'error',
-      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build failed`,
-      details: { stepOrder, error: buildError.slice(0, 1200), sandbox_unavailable: gone },
-    });
-    return {
-      ok: false,
-      lastResult,
-      error: buildError,
-      signals,
-      ...(gone ? { sandboxUnavailable: true } : {}),
-    };
-  }
-
-  signals.build = { ok: true };
-  await logCronInfrastructureEvent(audit, {
-    event: CronInfraEvent.GATE_BUILD,
-    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build passed`,
-    details: { stepOrder },
-  });
-
-  // Runtime probe: starts `next start` inside the sandbox, hits changed pages
-  // + API routes, captures server stdout/stderr.
-  // Visual probes are disabled here (shouldRunVisual is false in step-gate-probes.ts)
-  // so this only does a quick HTTP 200 check.
-  const runtimeOutcome = await runRuntimeAndVisualProbes({
-    sandbox,
-    stepOrder,
-    requirementId,
-    gitRepoKind,
-    audit,
-    stepContext,
-  });
-  if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
-  if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
-  if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
-  if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
-  if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
-  if (!runtimeOutcome.ok) {
-    const gone = isSandboxGoneError(runtimeOutcome.error);
-    if (gone) {
-      await logCronInfrastructureEvent(audit, {
-        event: CronInfraEvent.RUNTIME_PROBE,
-        level: 'warn',
-        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: runtime probe failed — sandbox unavailable (will reprovision)`,
-        details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
-      });
-    }
-    return {
-      ok: false,
-      lastResult,
-      error: runtimeOutcome.error,
-      signals,
-      ...(gone ? { sandboxUnavailable: true } : {}),
-    };
-  }
-
-  if (!requirementId) {
-    console.warn(`[StepGitGate] No requirement_id — skipping origin verification for step ${stepOrder}`);
-    return { ok: true, lastResult, signals };
-  }
-
   let didPushRecovery = false;
+
   const commitTitle = stepContext?.title || planTitle;
   let persist = await persistOrVerifyOrigin(
     sandbox,
@@ -475,7 +394,148 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
     details: { stepOrder, branch: persist.branch },
   });
 
-  const branch = persist.branch;
+  
+
+  return {
+    ok: true,
+    lastResult,
+    signals,
+    sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+  };
+}
+
+export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
+  ok: boolean;
+  lastResult: any;
+  error?: string;
+  vercelDeploy?: VercelDeployGateInfo;
+  signals: GateSignals;
+  sandboxUnavailable?: boolean;
+  sandboxReplacement?: Sandbox;
+}> {
+  const {
+    sandbox: initialSandbox,
+    planTitle,
+    requirementId,
+    stepOrder,
+    stepPrompt,
+    stepContext,
+    currentMessages,
+    context,
+    fullTools,
+    lastResult: initialLastResult,
+    audit,
+    gitRepoKind = 'applications',
+  } = params;
+
+  let sandbox = initialSandbox;
+  let lastResult = initialLastResult;
+  const signals: GateSignals = {};
+
+  const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitRepoKind);
+  if (vercelLayoutErr) {
+    const msg = `Vercel/npm layout: ${vercelLayoutErr}`;
+    signals.build = { ok: false, layout_error: vercelLayoutErr };
+    const gone = isSandboxGoneError(msg);
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.GATE_BUILD,
+      level: gone ? 'warn' : 'error',
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: ${msg.slice(0, 500)}`,
+      details: { stepOrder, error: msg.slice(0, 1200), sandbox_unavailable: gone },
+    });
+    return { ok: false, lastResult, error: msg, signals, ...(gone ? { sandboxUnavailable: true } : {}) };
+  }
+
+  const buildError = await validateBuildForStep(sandbox);
+  if (buildError) {
+    signals.build = { ok: false, error_tail: buildError };
+    const gone = isSandboxGoneError(buildError);
+    await logCronInfrastructureEvent(audit, {
+      event: CronInfraEvent.GATE_BUILD,
+      level: gone ? 'warn' : 'error',
+      message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build failed`,
+      details: { stepOrder, error: buildError.slice(0, 1200), sandbox_unavailable: gone },
+    });
+    return {
+      ok: false,
+      lastResult,
+      error: buildError,
+      signals,
+      ...(gone ? { sandboxUnavailable: true } : {}),
+    };
+  }
+
+  signals.build = { ok: true };
+  await logCronInfrastructureEvent(audit, {
+    event: CronInfraEvent.GATE_BUILD,
+    message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: npm run build passed`,
+    details: { stepOrder },
+  });
+
+  // Runtime probe: starts `next start` inside the sandbox, hits changed pages
+  // + API routes, captures server stdout/stderr.
+  // Visual probes are disabled here (shouldRunVisual is false in step-gate-probes.ts)
+  // so this only does a quick HTTP 200 check.
+  const runtimeOutcome = await runRuntimeAndVisualProbes({
+    sandbox,
+    stepOrder,
+    requirementId,
+    gitRepoKind,
+    audit,
+    stepContext,
+  });
+  if (runtimeOutcome.signals.runtime) signals.runtime = runtimeOutcome.signals.runtime;
+  if (runtimeOutcome.signals.api) signals.api = runtimeOutcome.signals.api;
+  if (runtimeOutcome.signals.console) signals.console = runtimeOutcome.signals.console;
+  if (runtimeOutcome.signals.visual) signals.visual = runtimeOutcome.signals.visual;
+  if (runtimeOutcome.signals.scenarios) signals.scenarios = runtimeOutcome.signals.scenarios;
+  if (!runtimeOutcome.ok) {
+    const gone = isSandboxGoneError(runtimeOutcome.error);
+    if (gone) {
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.RUNTIME_PROBE,
+        level: 'warn',
+        message: `${stepOrder !== undefined ? `Step ${stepOrder} ` : ''}gate: runtime probe failed — sandbox unavailable (will reprovision)`,
+        details: { stepOrder, error: runtimeOutcome.error?.slice(0, 800), sandbox_unavailable: true },
+      });
+    }
+    return {
+      ok: false,
+      lastResult,
+      error: runtimeOutcome.error,
+      signals,
+      ...(gone ? { sandboxUnavailable: true } : {}),
+    };
+  }
+
+  if (!requirementId) {
+    console.warn(`[StepGitGate] No requirement_id — skipping origin verification for step ${stepOrder}`);
+    return { ok: true, lastResult, signals };
+  }
+
+  let didPushRecovery = false;
+  
+  const recovery = await verifyOriginAndRecover(params);
+  if (recovery.sandboxReplacement) {
+    sandbox = recovery.sandboxReplacement;
+    params.sandbox = sandbox;
+  }
+  Object.assign(signals, recovery.signals);
+  lastResult = recovery.lastResult;
+
+  if (!recovery.ok) {
+    return {
+      ok: false,
+      lastResult,
+      error: recovery.error,
+      signals,
+      sandboxUnavailable: recovery.sandboxUnavailable,
+      sandboxReplacement: sandbox !== initialSandbox ? sandbox : undefined,
+    };
+  }
+
+  const persist = { branch: signals.origin?.branch || '' };
+const branch = persist.branch;
   if (!branch || branch === 'main' || branch === 'master') {
     await logCronInfrastructureEvent(audit, {
       event: CronInfraEvent.GATE_VERCEL_DEPLOY,

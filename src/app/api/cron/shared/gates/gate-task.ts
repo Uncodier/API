@@ -1,4 +1,5 @@
 import type { FlowGateInput, FlowGateResult, FlowGateSignal } from './types';
+import { verifyOriginAndRecover } from '../step-git-gate';
 
 /**
  * Gate for `task` and `makinari` flows. Tasks ship artefacts: a script that
@@ -27,7 +28,43 @@ export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult>
   }
 
   const ok = signals.every((s) => s.ok);
-  return { ok, flow: input.flow, signals, reason: ok ? undefined : 'task gate failed' };
+  
+  if (!ok) {
+    return { ok, flow: input.flow, signals, reason: 'task gate failed' };
+  }
+
+  if (input.appContext) {
+    const recovery = await verifyOriginAndRecover({
+      sandbox: input.sandbox,
+      planTitle: input.appContext.planTitle,
+      requirementId: input.requirementId,
+      stepOrder: input.appContext.stepOrder,
+      stepPrompt: input.appContext.stepPrompt,
+      stepContext: input.appContext.stepContext,
+      currentMessages: input.appContext.currentMessages,
+      context: input.appContext.assistantContext,
+      fullTools: input.appContext.fullTools,
+      lastResult: input.appContext.lastResult,
+      audit: input.audit,
+      gitRepoKind: input.appContext.gitRepoKind,
+    });
+    if (recovery.sandboxReplacement) {
+      input.sandbox = recovery.sandboxReplacement;
+    }
+    if (!recovery.ok) {
+      return {
+        ok: false,
+        flow: input.flow,
+        signals: [...signals, ...(recovery.signals.origin ? [{ name: 'origin', ok: false, detail: recovery.error }] : [])],
+        reason: recovery.error,
+        sandboxUnavailable: recovery.sandboxUnavailable,
+        sandboxReplacement: recovery.sandboxReplacement,
+      };
+    }
+  }
+
+  return { ok, flow: input.flow, signals, reason: undefined, sandboxReplacement: input.sandbox };
+
 }
 
 async function runShell(input: FlowGateInput, command: string): Promise<{ stdout: string; exit: number }> {
