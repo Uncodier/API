@@ -14,6 +14,7 @@ import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { sleep } from 'workflow';
 
+
 export interface MaintenanceWorkflowInput {
   reqId: string;
   title: string;
@@ -129,10 +130,18 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     await extendRunLockStep(maintenanceLockKey, cronLockRunId);
 
     if (!agentRun.timedOut) {
+      
       const pushed = await commitAndPushStep(sandboxId!, title, reqId, 'QA & Improvement: Fixes and Refactoring', cronAudit, 'applications');
       if (pushed?.effectiveSandboxId) {
         sandboxId = pushed.effectiveSandboxId;
       }
+      
+      
+      if (pushed && !pushed.pushed) {
+        console.log('[QAWorkflow|qa] commitAndPushStep failed to push. QA flow currently does not support push recovery. Will retry next cycle.');
+      }
+
+
       
       // Increment QA successful runs counter
       await incrementQaSuccessfulRunsStep(reqId);

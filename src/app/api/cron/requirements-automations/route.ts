@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
 import cronParser from 'cron-parser';
-import { acquireRunLock, getSupabaseUrlHostForLogs } from '../shared/cron-run-lock';
+import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
