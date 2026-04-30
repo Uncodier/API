@@ -77,15 +77,21 @@ export async function updateInstancePlanCore(params: any) {
   if (updates.steps) {
     const currentSteps = existingPlan.steps || [];
     const updatedSteps = currentSteps.map((currentStep: any) => {
-      const incomingStep = updates.steps.find((s: any) => s.id === currentStep.id);
-      return incomingStep ? { ...currentStep, ...incomingStep, updated_at: new Date().toISOString() } : currentStep;
+      const incomingStep = updates.steps.find((s: any) => 
+        (s.id && s.id === currentStep.id) || 
+        (s.order !== undefined && s.order === currentStep.order)
+      );
+      return incomingStep ? { ...currentStep, ...incomingStep, id: currentStep.id, updated_at: new Date().toISOString() } : currentStep;
     });
 
     // Add new steps that might be in updates.steps but not in currentSteps
     const seenNewTitles = new Set<string>();
     
     updates.steps.forEach((incomingStep: any) => {
-      if (!currentSteps.some((currentStep: any) => currentStep.id === incomingStep.id)) {
+      if (!currentSteps.some((currentStep: any) => 
+        (incomingStep.id && currentStep.id === incomingStep.id) || 
+        (incomingStep.order !== undefined && currentStep.order === incomingStep.order)
+      )) {
         // Deduplicate new steps by title to prevent LLM hallucinations
         if (incomingStep.title && !seenNewTitles.has(incomingStep.title)) {
           seenNewTitles.add(incomingStep.title);
