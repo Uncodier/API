@@ -98,7 +98,74 @@ export async function GET(req: Request) {
 
       console.log(`[Cron Apps] Processing requirement ${reqId}: ${title} (lock runId=${runLock.runId})`);
 
-        const currentAttempts = requirement.metadata?.cron_attempts || 0;
+      // Find or create remote_instance for MAIN BUILDER
+      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
+      
+      if (!instanceId) {
+        // 1. Look up the main builder instance by its canonical name
+        const { data: instances } = await supabaseAdmin
+          .from('remote_instances')
+          .select('id, instance_type')
+          .eq('site_id', site_id)
+          .eq('name', `req-runner-${reqId}`)
+          .limit(1);
+
+        if (instances && instances.length > 0) {
+          instanceId = instances[0].id;
+          if (!instances[0].instance_type) {
+            await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
+          }
+        } else {
+          // 2. Fallback for legacy instances (before req-runner- naming convention)
+          // We must ensure we don't accidentally pick up a maintenance instance.
+          const { data: prevStatusForInstance } = await supabaseAdmin
+            .from('requirement_status')
+            .select('instance_id')
+            .eq('requirement_id', reqId)
+            .not('instance_id', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(10);
+
+          if (prevStatusForInstance && prevStatusForInstance.length > 0) {
+            // Fetch the names of these instances to filter out maintenance ones
+            const instanceIds = prevStatusForInstance.map(s => s.instance_id);
+            const { data: legacyInstances } = await supabaseAdmin
+              .from('remote_instances')
+              .select('id, name')
+              .in('id', instanceIds)
+              .not('name', 'like', 'req-maint-%');
+              
+            if (legacyInstances && legacyInstances.length > 0) {
+              // Use the most recent non-maintenance instance
+              const validIds = new Set(legacyInstances.map(i => i.id));
+              const mostRecentValid = prevStatusForInstance.find(s => validIds.has(s.instance_id));
+              if (mostRecentValid) {
+                instanceId = mostRecentValid.instance_id;
+              }
+            }
+          }
+
+          // 3. If still no valid instance found, create a new one
+          if (!instanceId) {
+            const { data: newInstance, error: insertErr } = await supabaseAdmin
+              .from('remote_instances')
+              .insert(
+                cronRemoteInstancePayload({
+                  site_id,
+                  user_id,
+                  name: `req-runner-${reqId}`,
+                  created_by: user_id,
+                }),
+              )
+              .select('id')
+              .single();
+            if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
+            instanceId = newInstance?.id;
+          }
+        }
+      }
+
+      const currentAttempts = requirement.metadata?.cron_attempts || 0;
       if (currentAttempts >= 10) {
         console.log(`[Cron Apps] Skipping ${reqId} — blocked due to 10 consecutive failures without progress. Triggering QA.`);
         
@@ -117,6 +184,12 @@ export async function GET(req: Request) {
           status: 'blocked',
           updated_at: new Date().toISOString()
         }).eq('id', reqId);
+
+        // Pause the main builder instance and plan so it doesn't consume resources
+        if (instanceId) {
+          await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
+          await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
+        }
         
         // Verify QA execution limit
         const doneItemsCount = requirement.backlog?.items?.filter((i: any) => i.status === 'done').length || 0;
@@ -228,73 +301,6 @@ export async function GET(req: Request) {
         await releaseRunLock(reqId, runLock.runId);
         results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker_qa_triggered' });
         continue;
-      }
-
-      // Find or create remote_instance for MAIN BUILDER
-      let instanceId: string | undefined = requirement.metadata?.runner_instance_id;
-      
-      if (!instanceId) {
-        // 1. Look up the main builder instance by its canonical name
-        const { data: instances } = await supabaseAdmin
-          .from('remote_instances')
-          .select('id, instance_type')
-          .eq('site_id', site_id)
-          .eq('name', `req-runner-${reqId}`)
-          .limit(1);
-
-        if (instances && instances.length > 0) {
-          instanceId = instances[0].id;
-          if (!instances[0].instance_type) {
-            await supabaseAdmin.from('remote_instances').update({ instance_type: REMOTE_INSTANCE_TYPE_CRON_APPS }).eq('id', instanceId);
-          }
-        } else {
-          // 2. Fallback for legacy instances (before req-runner- naming convention)
-          // We must ensure we don't accidentally pick up a maintenance instance.
-          const { data: prevStatusForInstance } = await supabaseAdmin
-            .from('requirement_status')
-            .select('instance_id')
-            .eq('requirement_id', reqId)
-            .not('instance_id', 'is', null)
-            .order('created_at', { ascending: false })
-            .limit(10);
-
-          if (prevStatusForInstance && prevStatusForInstance.length > 0) {
-            // Fetch the names of these instances to filter out maintenance ones
-            const instanceIds = prevStatusForInstance.map(s => s.instance_id);
-            const { data: legacyInstances } = await supabaseAdmin
-              .from('remote_instances')
-              .select('id, name')
-              .in('id', instanceIds)
-              .not('name', 'like', 'req-maint-%');
-              
-            if (legacyInstances && legacyInstances.length > 0) {
-              // Use the most recent non-maintenance instance
-              const validIds = new Set(legacyInstances.map(i => i.id));
-              const mostRecentValid = prevStatusForInstance.find(s => validIds.has(s.instance_id));
-              if (mostRecentValid) {
-                instanceId = mostRecentValid.instance_id;
-              }
-            }
-          }
-
-          // 3. If still no valid instance found, create a new one
-          if (!instanceId) {
-            const { data: newInstance, error: insertErr } = await supabaseAdmin
-              .from('remote_instances')
-              .insert(
-                cronRemoteInstancePayload({
-                  site_id,
-                  user_id,
-                  name: `req-runner-${reqId}`,
-                  created_by: user_id,
-                }),
-              )
-              .select('id')
-              .single();
-            if (insertErr) console.error('[Cron Apps] Error inserting remote_instance:', insertErr);
-            instanceId = newInstance?.id;
-          }
-        }
       }
 
       const updatedMetadata = { 
