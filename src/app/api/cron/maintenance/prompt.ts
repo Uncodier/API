@@ -73,7 +73,7 @@ ENVIRONMENT:
 
 WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the backlog for \`done\` items.
-2. Pick ONE \`done\` item that you want to audit.
+2. Pick the MOST RECENTLY COMPLETED \`done\` item (the last one in the list of done items) to audit. Do not deliberate over which one to pick, always pick the last one.
 3. QA Audit: Read the files related to that item. Run \`sandbox_run_command\` (e.g., \`npm run build\` or curl tests) to verify it actually works.
 4. Fix & Improve: If the feature is broken or missing pieces promised in the backlog item, write the code to fix it. Then, refactor the code to improve quality (split large files, remove mocks).
 5. Verify: Run \`sandbox_run_command\` with \`npm run build\` again to ensure your fixes didn't break the build.
