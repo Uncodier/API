@@ -66,6 +66,33 @@ export async function GET(req: Request) {
         continue;
       }
 
+      // Verify QA execution limit
+      const doneItemsCount = requirement.backlog?.items?.filter((i: any) => i.status === 'done').length || 0;
+      const maxQaRuns = doneItemsCount * 6;
+      const currentQaRuns = requirement.metadata?.qa_successful_runs || 0;
+      
+      if (currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items)`);
+        results.push({ reqId, skipped: true, reason: 'qa_limit_reached' });
+        
+        // Pause instance if it exists to save resources
+        const { data: maintInstances } = await supabaseAdmin
+          .from('remote_instances')
+          .select('id')
+          .eq('site_id', site_id)
+          .eq('name', `req-maint-${reqId}`)
+          .limit(1);
+          
+        if (maintInstances && maintInstances.length > 0) {
+          const maintId = maintInstances[0].id;
+          await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', maintId);
+          await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', maintId).in('status', ['pending', 'in_progress']);
+        }
+        
+        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        continue;
+      }
+
       console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
 
       // Find or create a dedicated remote_instance for maintenance
