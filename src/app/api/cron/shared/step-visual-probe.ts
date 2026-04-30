@@ -425,7 +425,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
       duration_ms: Date.now() - started,
       screenshots: [],
       console: { ok: true, entries: [], page_errors: [], failed_requests: [] },
-      visual_raw: { ok: false, pass: false, defects: [], screenshots: [] },
+      visual_raw: { ok: false, pass: false, error: `sandbox.domain(${port}) failed`, defects: [], screenshots: [] },
       base_url: '',
       error: `sandbox.domain(${port}) failed — port was not exposed at create time (${msg})`,
     };
@@ -475,7 +475,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
       duration_ms: Date.now() - started,
       screenshots,
       console: buildConsoleSignal(consoleEntries, pageErrors, failedRequests),
-      visual_raw: { ok: false, pass: false, defects: [], screenshots: [] },
+      visual_raw: { ok: false, pass: false, error: fullError, defects: [], screenshots: [] },
       base_url: baseUrl,
       error: fullError,
     };
@@ -490,6 +490,7 @@ export async function runVisualProbe(params: VisualProbeParams): Promise<VisualP
   const visualRaw: VisualSignal = {
     ok: screenshots.length > 0,
     pass: screenshots.length > 0 && !hasErrors,
+    error: screenshots.length === 0 ? `0 screenshots captured. Stderr: ${scriptStderr}` : undefined,
     defects: [],
     screenshots: screenshots.map((s) => ({ 
       route: s.route, 

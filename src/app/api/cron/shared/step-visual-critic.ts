@@ -264,6 +264,7 @@ export function mergeCriticIntoVisualSignal(
     ok: signal.ok,
     pass: critic.pass,
     summary: critic.summary,
+    error: signal.error,
     defects: critic.defects,
     screenshots: signal.screenshots,
   };

@@ -104,6 +104,7 @@ export type VisualSignal = {
   ok: boolean;
   pass: boolean;
   summary?: string;
+  error?: string;
   defects: VisualDefect[];
   screenshots: Array<{ route: string; viewport: string; url: string; dom_snippet?: string }>;
 };

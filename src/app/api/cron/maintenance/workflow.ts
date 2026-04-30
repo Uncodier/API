@@ -102,6 +102,25 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     sandboxId = probes.effectiveSandboxId;
 
     let qaContext = '';
+    if (!probes.ok && probes.error) {
+      qaContext += `\nCRITICAL PROBE ERROR:\n- ${probes.error}\n`;
+    }
+    if (probes.signals.runtime && !probes.signals.runtime.ok) {
+      qaContext += `\nRUNTIME ERRORS:\n`;
+      if (probes.signals.runtime.startup_error) {
+        qaContext += `- Startup Error: ${probes.signals.runtime.startup_error}\n`;
+      }
+      if (probes.signals.runtime.server_errors?.length) {
+        qaContext += `${probes.signals.runtime.server_errors.map(e => `- [${e.kind}] ${e.line}`).join('\n')}\n`;
+      }
+      const failedPages = probes.signals.runtime.pages?.filter(p => p.http_status >= 400 || p.http_status === 0);
+      if (failedPages?.length) {
+        qaContext += `Failed Pages: ${failedPages.map(p => `${p.path} (HTTP ${p.http_status})`).join(', ')}\n`;
+      }
+    }
+    if (probes.signals.visual?.error) {
+      qaContext += `\nVISUAL PROBE ERROR:\n- ${probes.signals.visual.error}\n`;
+    }
     if (probes.signals.visual?.defects?.length) {
       qaContext += `\nVISUAL DEFECTS FOUND:\n${probes.signals.visual.defects.map(d => `- [${d.severity}] ${d.route} (${d.viewport}): ${d.description} (Hint: ${d.fix_hint || 'N/A'})`).join('\n')}\n`;
     }

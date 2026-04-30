@@ -113,7 +113,6 @@ export async function checkInstanceAndPlanStatusStep(instanceId: string): Promis
 }
 
 export async function unblockRequirementStep(requirementId: string, forceStatusToInProgress = false): Promise<void> {
-
   'use step';
   try {
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
@@ -131,6 +130,14 @@ export async function unblockRequirementStep(requirementId: string, forceStatusT
     }
     
     await supabaseAdmin.from('requirements').update(updatePayload).eq('id', requirementId);
+    
+    // Also resume the instance and plan if they were paused
+    const { data: reqData } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    const instanceId = reqData?.metadata?.runner_instance_id;
+    if (instanceId) {
+      await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
+      await supabaseAdmin.from('instance_plans').update({ status: 'in_progress' }).eq('instance_id', instanceId).in('status', ['paused']);
+    }
     
     console.log(`[WorkflowDbStep] Successfully unblocked req ${requirementId} and reset cron_attempts`);
   } catch (e: unknown) {
