@@ -82,6 +82,7 @@ export async function runMaintenanceAgentStep(params: {
   let result: any;
   let messages: any[] = [{ role: 'user', content: initialMessage }];
 
+  const agentModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
   const globalStartTime = params.globalStartTime ?? Date.now();
   const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
   let timedOut = false;

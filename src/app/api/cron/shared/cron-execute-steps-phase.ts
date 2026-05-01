@@ -317,6 +317,7 @@ export async function executeStepsPhaseStep(params: {
           instance_id: instanceId,
           site_id,
           user_id,
+          ai_model: process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools',
         },
         initialMessage: 'Execute plan steps',
         imageAssets: [],

@@ -385,7 +385,7 @@ function logChatCompletionFailure(
 }
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
-  gemini: 'gemini-3.1-preview',
+  gemini: 'gemini-3.1-pro-preview',
   azure: 'gpt-4o',
   openai: 'gpt-4o',
 };
