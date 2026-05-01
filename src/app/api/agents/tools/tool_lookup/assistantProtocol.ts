@@ -149,7 +149,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
     'USAGE (strict order):',
     '  1. action="list" [+ optional category filter] → returns [{ name, description, category }] for every routed tool.',
     '  2. action="describe" with name=<tool_name> → returns the full description, parameters JSON schema, and expected_use hint.',
-    '  3. action="call" with name=<tool_name> and args=<object> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
+    '  3. action="call" with name=<tool_name> and args=<string> → executes the underlying tool and returns its result. If args are invalid the error payload includes the parameters schema so you can correct and retry.',
     '',
     `Categories available: ${categoriesAvailable.join(', ')}.`,
     'Core planning/sandbox/requirement tools (instance_plan, requirement_status, requirements, sandbox_*, skill_lookup) are NOT routed here — they are always directly available.',
@@ -178,10 +178,9 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
         // `execute()` (with a fallback to a raw object for OpenAI/Azure callers
         // that may still pass an inline object).
         args: {
-          type: 'object',
-          additionalProperties: true,
+          type: 'string',
           description:
-            'Object with the arguments to pass to the underlying tool (required for "call"). Use "describe" first if unsure of the schema.',
+            'JSON-encoded object with the arguments to pass to the underlying tool (required for "call"). Example: "{\\"prompt\\":\\"hello\\"}". Use "describe" first if unsure of the schema.',
         },
         category: {
           type: 'string',
@@ -198,18 +197,21 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
       // callers) so we don't break the existing surface.
       const parseCallArgs = (raw: any): { ok: true; value: any } | { ok: false; error: string } => {
         if (raw === undefined || raw === null) return { ok: true, value: {} };
-        if (typeof raw === 'string') {
-           try {
-             const parsed = JSON.parse(raw);
-             return { ok: true, value: typeof parsed === 'object' && parsed !== null ? parsed : {} };
-           } catch {
-             return { ok: false, error: 'If args is a string, it must be valid JSON.' };
-           }
+        if (typeof raw === 'object') return { ok: true, value: raw };
+        if (typeof raw !== 'string') {
+          return { ok: false, error: `"args" must be a JSON-encoded object string, got ${typeof raw}.` };
         }
-        if (typeof raw === 'object' && !Array.isArray(raw)) {
-          return { ok: true, value: raw };
+        const trimmed = raw.trim();
+        if (!trimmed) return { ok: true, value: {} };
+        try {
+          const parsed = JSON.parse(trimmed);
+          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+            return { ok: false, error: '"args" must decode to a JSON object (not array/null/primitive).' };
+          }
+          return { ok: true, value: parsed };
+        } catch (e: any) {
+          return { ok: false, error: `"args" is not valid JSON: ${e?.message || String(e)}` };
         }
-        return { ok: false, error: '"args" must be an object.' };
       };
 
       if (action === 'list') {

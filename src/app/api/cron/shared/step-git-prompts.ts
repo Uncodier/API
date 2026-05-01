@@ -23,7 +23,7 @@ export const TOOL_LOOKUP_HINT = [
   'TOOLS (beyond sandbox_*, instance_plan, requirement_status, requirements, skill_lookup):',
   '- Use `tool_lookup({ action: "list" })` to see every routed tool grouped by category (media, messaging, crm, social, content, infra, research).',
   '- Use `tool_lookup({ action: "describe", name: "<tool>" })` to get the exact parameters schema + expected_use for a specific tool before calling it.',
-  '- Use `tool_lookup({ action: "call", name: "<tool>", args: { ... } })` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
+  '- Use `tool_lookup({ action: "call", name: "<tool>", args: "{ ... }" })` to execute it (args must be a JSON string). If args are invalid the error includes the parameters schema so you can auto-correct and retry.',
   '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.',
 ].join('\n');
 
