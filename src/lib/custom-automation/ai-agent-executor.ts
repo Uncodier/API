@@ -867,6 +867,15 @@ export class AIAgentExecutor {
         parameters = tool.parameters as Record<string, any> || { type: 'object', properties: { _dummy: { type: 'string', description: 'Not used' } } };
       }
 
+      // 🚨 CRITICAL FIX FOR GEMINI 🚨
+      // Gemini API strictly rejects tool schemas where type is 'object' but properties is empty {}.
+      // If we find an empty properties object, we MUST inject a dummy property.
+      if (parameters && parameters.type === 'object') {
+        if (!parameters.properties || Object.keys(parameters.properties).length === 0) {
+          parameters.properties = { _dummy: { type: 'string', description: 'Not used' } };
+        }
+      }
+
       return {
         type: 'function' as const,
         function: {
