@@ -134,7 +134,7 @@ export async function prepareAssistantContext(
   let finalProvider = provider;
 
   if (useAssistantOnly) {
-     finalProvider = 'azure'; // Force Azure for assistant-only
+     // finalProvider = 'azure'; // Force Azure for assistant-only
      baseSystemPrompt =
         instance.status === 'paused' || instance.status === 'stopped'
           ? 'You are a helpful AI assistant. This instance is currently paused, so browser automation tools are not available.'
