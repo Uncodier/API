@@ -12,6 +12,8 @@ import { generateAudioTool } from '@/app/api/agents/tools/generateAudio/assistan
 import { instanceTool } from '@/app/api/agents/tools/instance/assistantProtocol';
 import { updateSiteSettingsTool } from '@/app/api/agents/tools/updateSiteSettings/assistantProtocol';
 import { webSearchTool } from '@/app/api/agents/tools/webSearch/assistantProtocol';
+import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
+import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol';
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
 import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
@@ -143,7 +145,7 @@ export async function generateAgentBackground(siteId: string): Promise<string> {
  * Must call getFinderCategoryIds BEFORE analyzeICPTotalCount or createIcpMining.
  */
 export const ICP_CATEGORY_IDS_INSTRUCTION = `
-🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call getFinderCategoryIds(category: "industries", q: "technology") → use returned id in the query.`;
+🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds (via tool_lookup) first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call tool_lookup(action: "call", name: "getFinderCategoryIds", args: {category: "industries", q: "technology"}) → use returned id in the query.`;
 
 /**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
@@ -265,6 +267,7 @@ export const getAssistantTools = (
     audienceTool(siteId, userId ?? '', instanceId),
     sendBulkMessagesTool(siteId),
     publishTool(siteId, userId ?? '', instanceId),
+    skillLookupTool(),
   ];
 
   if (agentType === 'gear') {
@@ -283,5 +286,5 @@ export const getAssistantTools = (
     );
   }
 
-  return tools;
+  return routeTools(tools as any[]);
 };

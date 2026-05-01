@@ -218,20 +218,29 @@ PLAN vs STEPS:
 
   const whatsappInstruction = `
 📱 WHATSAPP TOOLS (sendWhatsApp and whatsappTemplate):
-- To send a WhatsApp message: use sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id, lead_id for tracking, and media_urls (array of strings) if you want to attach images, videos, audio, or PDFs.
-- If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next:
-  1) Call whatsappTemplate with action "create_template", same phone_number and message (and conversation_id if available). The message MAY contain merge tokens (e.g. {{lead.name}}, {{site.name}}); they will be rewritten to numeric placeholders ({{1}}, {{2}}, ...) automatically and returned as \`placeholder_map\`. If the result includes template_id, then
-  2) Call whatsappTemplate with action "send_template", template_id from step 1, phone_number, and original_message. When \`has_variables\` is true (i.e. \`placeholder_map\` is non-empty), you MUST also pass either \`lead_id\` (preferred — variables are resolved automatically from the lead row + site name) or \`variables\` as a map like { "1": "Jane", "2": "Acme" }. Do NOT call send_template without variables when placeholder_map is non-empty.
+- To send a WhatsApp message: use tool_lookup to call sendWhatsApp with phone_number (international format, e.g. +34912345678, no spaces) and message. Optionally pass conversation_id, lead_id for tracking, and media_urls (array of strings) if you want to attach images, videos, audio, or PDFs.
+- If sendWhatsApp returns template_required: true (conversation is outside the 24h reply window), you MUST use whatsappTemplate next via tool_lookup:
+  1) Call tool_lookup with action "call", name "whatsappTemplate", and args { action: "create_template", phone_number, message } (and conversation_id if available). The message MAY contain merge tokens (e.g. {{lead.name}}, {{site.name}}); they will be rewritten to numeric placeholders ({{1}}, {{2}}, ...) automatically and returned as \`placeholder_map\`. If the result includes template_id, then
+  2) Call tool_lookup with action "call", name "whatsappTemplate", and args { action: "send_template", template_id, phone_number, original_message }. When \`has_variables\` is true (i.e. \`placeholder_map\` is non-empty), you MUST also pass either \`lead_id\` (preferred — variables are resolved automatically from the lead row + site name) or \`variables\` as a map like { "1": "Jane", "2": "Acme" }. Do NOT call send_template without variables when placeholder_map is non-empty.
 - If create_template returns template_required: false, the conversation is within 24h—use sendWhatsApp instead; do not use send_template.
-- For bulk/campaign sends, prefer \`publish\` (with audience_id + channel "whatsapp") or \`sendBulkMessages\`: they create a SINGLE template for the campaign and queue per-lead variables automatically. Do NOT create a new template per recipient.
+- For bulk/campaign sends, prefer \`publish\` (with audience_id + channel "whatsapp") or \`sendBulkMessages\` via tool_lookup: they create a SINGLE template for the campaign and queue per-lead variables automatically. Do NOT create a new template per recipient.
 - Always use international phone format (country code + number, e.g. +1..., +34..., +52...).`;
 
   const generationInstruction = `
 🎙️ MULTIMEDIA GENERATION:
-- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
-- When generating IMAGES, you MUST use the \`generate_image\` tool.
-- When generating VIDEO, you MUST use the \`generate_video\` tool.
+- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tool_lookup to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
+- When generating IMAGES, you MUST use the \`generate_image\` tool via tool_lookup.
+- When generating VIDEO, you MUST use the \`generate_video\` tool via tool_lookup.
 - CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
+
+  const toolLookupInstruction = `
+🧰 TOOL DISCOVERY & EXECUTION (tool_lookup):
+Most capabilities (media, messaging, CRM, social, content, infra, research) are hidden behind the \`tool_lookup\` router to save context.
+- Use \`tool_lookup({ action: "list" })\` to see every routed tool grouped by category.
+- Use \`tool_lookup({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
+- Use \`tool_lookup({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
+- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
+- Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
   const combinedSystemPrompt = [
     agentBackground,
@@ -239,6 +248,7 @@ PLAN vs STEPS:
     baseSystemPrompt,
     toolsContext,
     systemPrompt || '',
+    toolLookupInstruction,
     planModeInstruction,
     activePlanInstruction,
     whatsappInstruction,
