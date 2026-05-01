@@ -259,14 +259,7 @@ export async function GET(req: Request) {
               .limit(1)
               .single();
 
-            if (maintInstanceData?.status === 'paused' || maintActivePlan?.status === 'paused') {
-              console.log(`[Cron Apps] QA workflow for ${reqId} — maintenance instance or plan is paused, skipping.`);
-              await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
-              await releaseRunLock(reqId, runLock.runId);
-              results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker_qa_paused' });
-              continue;
-            }
-            
+            // Permitir que QA corra incluso si estaba pausado (lo reanudamos)
             if (maintInstanceData && maintInstanceData.status !== 'running') {
               await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', maintInstanceId);
             }

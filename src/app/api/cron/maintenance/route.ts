@@ -148,13 +148,7 @@ export async function GET(req: Request) {
         .limit(1)
         .single();
 
-      if (instanceData?.status === 'paused' || activePlan?.status === 'paused') {
-        console.log(`[Cron Maintenance] Skipping ${reqId} — instance or plan is paused`);
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
-        results.push({ reqId, skipped: true, reason: 'paused' });
-        continue;
-      }
-
+      // Permitir que QA corra incluso si estaba pausado (lo reanudamos)
       if (instanceData && instanceData.status !== 'running') {
         await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
       }
