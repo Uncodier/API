@@ -178,9 +178,10 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
         // `execute()` (with a fallback to a raw object for OpenAI/Azure callers
         // that may still pass an inline object).
         args: {
-          type: 'string',
+          type: 'object',
+          additionalProperties: true,
           description:
-            'JSON-encoded object with the arguments to pass to the underlying tool (required for "call"). Example: "{\\"prompt\\":\\"hello\\"}". Use "describe" first if unsure of the schema.',
+            'Object with the arguments to pass to the underlying tool (required for "call"). Use "describe" first if unsure of the schema.',
         },
         category: {
           type: 'string',
@@ -197,21 +198,18 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
       // callers) so we don't break the existing surface.
       const parseCallArgs = (raw: any): { ok: true; value: any } | { ok: false; error: string } => {
         if (raw === undefined || raw === null) return { ok: true, value: {} };
-        if (typeof raw === 'object') return { ok: true, value: raw };
-        if (typeof raw !== 'string') {
-          return { ok: false, error: `"args" must be a JSON-encoded object string, got ${typeof raw}.` };
+        if (typeof raw === 'string') {
+           try {
+             const parsed = JSON.parse(raw);
+             return { ok: true, value: typeof parsed === 'object' && parsed !== null ? parsed : {} };
+           } catch {
+             return { ok: false, error: 'If args is a string, it must be valid JSON.' };
+           }
         }
-        const trimmed = raw.trim();
-        if (!trimmed) return { ok: true, value: {} };
-        try {
-          const parsed = JSON.parse(trimmed);
-          if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
-            return { ok: false, error: '"args" must decode to a JSON object (not array/null/primitive).' };
-          }
-          return { ok: true, value: parsed };
-        } catch (e: any) {
-          return { ok: false, error: `"args" is not valid JSON: ${e?.message || String(e)}` };
+        if (typeof raw === 'object' && !Array.isArray(raw)) {
+          return { ok: true, value: raw };
         }
+        return { ok: false, error: '"args" must be an object.' };
       };
 
       if (action === 'list') {
