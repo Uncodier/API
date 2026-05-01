@@ -201,7 +201,6 @@ export async function runOrchestratorStep(params: {
           user_id,
           system_prompt: orchestratorPrompt,
           custom_tools: fullTools,
-          // Orchestrator drives the sandbox code assistant; mirror the code-model override.
           ai_model: orchestratorModel,
         },
       );

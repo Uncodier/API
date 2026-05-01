@@ -313,12 +313,10 @@ export async function executeStepsPhaseStep(params: {
         executionOptions: {
           use_sdk_tools: false,
           provider: 'gemini',
+          ai_provider: 'gemini',
           instance_id: instanceId,
           site_id,
           user_id,
-          // Sandbox code assistant: prefer the customtools Gemini variant unless AI_CODE_MODEL overrides it.
-          // ai_provider falls back to env AI_PROVIDER (default 'gemini').
-          ai_model: process.env.AI_CODE_MODEL || 'gemini-3.1-preview',
         },
         initialMessage: 'Execute plan steps',
         imageAssets: [],
