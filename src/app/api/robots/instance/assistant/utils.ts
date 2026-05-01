@@ -59,6 +59,7 @@ import { socialMediaPostsTool } from '@/app/api/agents/tools/socialMediaPosts/as
 import { audienceTool } from '@/app/api/agents/tools/audience/assistantProtocol';
 import { sendBulkMessagesTool } from '@/app/api/agents/tools/sendBulkMessages/assistantProtocol';
 import { publishTool } from '@/app/api/agents/tools/publish/assistantProtocol';
+import { activateCodingAgentsTool } from '@/app/api/agents/tools/activate_coding_agents/assistantProtocol';
 
 /**
  * Fetch relevant memories for assistant context (site_id, user_id, instance_id)
@@ -268,6 +269,7 @@ export const getAssistantTools = (
     sendBulkMessagesTool(siteId),
     publishTool(siteId, userId ?? '', instanceId),
     skillLookupTool(),
+    activateCodingAgentsTool(),
   ];
 
   if (agentType === 'gear') {

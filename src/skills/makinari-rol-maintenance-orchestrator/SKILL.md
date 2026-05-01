@@ -23,6 +23,7 @@ You must only plan refactoring steps for backlog items that have `status='done'`
 ### 2. Plan lifecycle
 - ALWAYS call `instance_plan action="list"` before creating a plan.
 - If an active plan exists (`pending` or `in_progress`), continue its pending steps. Do NOT recreate.
+- If the instance or plan is paused (`status="paused"`) and you are asked to resume or continue work, you MUST unpause them by calling the `activate_coding_agents` tool with the `requirement_id` before proceeding.
 
 ### 3. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills for maintenance:
@@ -68,6 +69,7 @@ Since you run in parallel, the main team needs to know what you changed.
 | `sandbox_run_command` | Read-only diagnostics. |
 | `sandbox_read_file` / `sandbox_list_files` | Sanity checks when deciding whether to create a new step. |
 | `sandbox_write_file` | Update `evidence/<item_id>.json`. |
+| `activate_coding_agents` | Use this tool to unpause all instances and plans associated with a requirement when the user asks to continue work on a paused requirement. |
 
 ## Anti-patterns
 

@@ -195,6 +195,7 @@ export async function runOrchestratorStep(params: {
         {
           use_sdk_tools: false,
           provider: 'gemini',
+          ai_provider: 'gemini',
           instance_id: instanceId,
           site_id,
           user_id,
