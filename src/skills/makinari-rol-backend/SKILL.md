@@ -113,10 +113,14 @@ return NextResponse.json({ ok: true, mode, data: result });
 - For **cron / infrastructure steps** that run inside `src/app/api/cron/**`, write events to the Supabase infrastructure log via [src/lib/services/cron-audit-log.ts](../../lib/services/cron-audit-log.ts) (`CronInfraEvent.*`). Do NOT invent new event names without adding them to the enum first.
 - Every error response MUST include `error.code` (stable, snake_case) and `error.message` (human). Do not leak stack traces in `prod` mode.
 
-### 6. DB changes
+### 6. DB changes and Supabase Schemas (CRITICAL ARCHITECTURE RULE)
 - SQL scripts go under `src/scripts/*.sql`. Prefer `ALTER ... IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` so the script is idempotent.
 - Document the rollback as a comment at the top of the script.
 - If the requirement declares new columns in section 6.2, create the migration BEFORE implementing the endpoint that reads them.
+- **CRITICAL: Supabase Schema Targeting (Multi-tenant Architecture)**: The database uses a schema-per-app architecture. Tables are NOT created in the default `public` schema. They are created in isolated schemas like `app_<id>`.
+  - When querying Supabase via the JS/TS client, you **MUST** explicitly specify the schema using `.schema(process.env.SUPABASE_SCHEMA || 'app_<id>')` BEFORE calling `.from()`.
+  - Example: `await supabase.schema(process.env.SUPABASE_SCHEMA).from('spaces').select('*')`
+  - Failing to specify the schema will result in the error: `"Could not find the table 'public.table_name' in the schema cache"`. NEVER query without `.schema()` when working with app-specific tables.
 
 ### 7. Environment variables
 - Declare every new env var in section 6.3 of the requirement first. If you need a var that is not declared, stop and update the requirement.
