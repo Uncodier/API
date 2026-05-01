@@ -8,7 +8,6 @@ import { Sandbox } from '@vercel/sandbox';
 import { SkillsService } from '@/lib/services/skills-service';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
-import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT } from './step-git-prompts';
@@ -356,9 +355,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   // `tool_lookup({ action: "list" })` and invocable via `tool_lookup({ action:
   // "call", name, args })`. Drastically shrinks the schema payload sent to
   // Gemini/GPT on every turn without removing any capability.
-  const fullTools = routeTools(
-    getAssistantTools(site_id, user_id, instance_id, context.customTools),
-  );
+  const fullTools = getAssistantTools(site_id, user_id, instance_id, context.customTools);
   
   // Añadir explícitamente instance_logs a las herramientas disponibles en el prompt
   const hasLogsTool = fullTools.some(t => t.name === 'tool_lookup' || t.name === 'instance_logs');

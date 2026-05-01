@@ -5,7 +5,6 @@ import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-ex
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
-import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 function getMaintenanceTools(
@@ -15,7 +14,7 @@ function getMaintenanceTools(
   userId: string,
 ): any[] {
   const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
-  return routeTools(allTools);
+  return allTools;
 }
 
 export async function runMaintenanceAgentStep(params: {

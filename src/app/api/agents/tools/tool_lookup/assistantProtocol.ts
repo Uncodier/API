@@ -304,6 +304,12 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
 
 function injectThoughtProcess(tool: RoutedTool): RoutedTool {
   if (!tool || !tool.parameters || !tool.parameters.properties) return tool;
+  
+  const currentRequired = tool.parameters.required || [];
+  const newRequired = currentRequired.includes('thought_process') 
+    ? currentRequired 
+    : [...currentRequired, 'thought_process'];
+    
   return {
     ...tool,
     parameters: {
@@ -315,7 +321,7 @@ function injectThoughtProcess(tool: RoutedTool): RoutedTool {
           description: 'Required. Explain step-by-step why you are calling this tool and what you expect to achieve based on your current objective.'
         }
       },
-      required: [...(tool.parameters.required || []), 'thought_process']
+      required: newRequired
     }
   };
 }

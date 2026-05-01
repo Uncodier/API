@@ -8,7 +8,6 @@ import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-ex
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
-import { routeTools } from '@/app/api/agents/tools/tool_lookup/assistantProtocol';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -74,7 +73,7 @@ function getCronOrchestratorTools(
   // here makes sure skill_lookup + sandbox_* stay in the always-on bucket
   // after partitioning.
   const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
-  return routeTools(allTools);
+  return allTools;
 }
 
 export async function runOrchestratorStep(params: {
@@ -318,7 +317,7 @@ export async function runOrchestratorStep(params: {
       'IMMEDIATE NEXT ACTIONS:',
       '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
       '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
-      '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
+      '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`. The LAST step MUST ALWAYS be to notify the team using the `system_notification` tool.',
       '  4. Call `requirement_status` with `stage="in-progress"`.',
       'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
     ].join('\n');
