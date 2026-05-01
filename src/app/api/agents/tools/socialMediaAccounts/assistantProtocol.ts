@@ -10,7 +10,9 @@ export function socialMediaAccountsTool(site_id: string) {
     description: 'Lista todas las cuentas de redes sociales (ej. Twitter, LinkedIn, Facebook) que tienes conectadas. Llama a esto para saber en qué cuentas puedes publicar o leer posts.',
     parameters: {
       type: 'object',
-      properties: {},
+      properties: {
+        _dummy: { type: 'string', description: 'Not used' }
+      },
       required: [],
     },
     execute: async (args: SocialMediaAccountsParams) => {

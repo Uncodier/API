@@ -385,7 +385,7 @@ function logChatCompletionFailure(
 }
 
 const DEFAULT_MODEL_BY_PROVIDER: Record<AIProvider, string> = {
-  gemini: 'gemini-3.1-pro-preview',
+  gemini: 'gemini-3.1-preview',
   azure: 'gpt-4o',
   openai: 'gpt-4o',
 };
@@ -864,7 +864,7 @@ export class AIAgentExecutor {
           $refStrategy: 'none',
         }) as Record<string, any>;
       } else {
-        parameters = tool.parameters as Record<string, any> || { type: 'object', properties: {} };
+        parameters = tool.parameters as Record<string, any> || { type: 'object', properties: { _dummy: { type: 'string', description: 'Not used' } } };
       }
 
       return {
