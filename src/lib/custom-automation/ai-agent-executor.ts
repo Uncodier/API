@@ -817,8 +817,18 @@ export class AIAgentExecutor {
       modelName.includes('o1') || modelName.includes('o3') || modelName.includes('gpt-5.4')
     );
 
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Initializing with ${tools.length} tool(s):`);
-    tools.forEach((tool, index) => {
+    const uniqueTools: any[] = [];
+    const seenToolNames = new Set<string>();
+    for (const tool of tools) {
+      if (!seenToolNames.has(tool.name)) {
+        uniqueTools.push(tool);
+        seenToolNames.add(tool.name);
+      }
+    }
+    const finalTools = uniqueTools;
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Initializing with ${finalTools.length} tool(s):`);
+    finalTools.forEach((tool, index) => {
       console.log(`  ${index + 1}. ${tool.name} - ${tool.description || 'No description'}`);
       if (tool.parameters) {
         const isZodSchema = typeof tool.parameters === 'object' && '_def' in tool.parameters;
@@ -855,7 +865,7 @@ export class AIAgentExecutor {
       messages.push({ role: 'user', content: prompt });
     }
 
-    const openaiTools = tools.map(tool => {
+    const openaiTools = finalTools.map(tool => {
       let parameters: Record<string, any>;
 
       if (tool.parameters && typeof tool.parameters === 'object' && '_def' in tool.parameters) {
@@ -1270,7 +1280,7 @@ export class AIAgentExecutor {
           for (const toolCall of toolCalls) {
             const toolStartTime = Date.now();
             console.log(`⏱️ [TOOL_START] ${toolCall.toolName} (${toolCall.toolCallId}) - Starting execution...`);
-            const tool = tools.find(t => t.name === toolCall.toolName);
+            const tool = finalTools.find(t => t.name === toolCall.toolName);
 
             if (!tool) {
               const errorMsg = `Error: Tool ${toolCall.toolName} not found`;
