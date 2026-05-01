@@ -864,7 +864,7 @@ export class AIAgentExecutor {
           $refStrategy: 'none',
         }) as Record<string, any>;
       } else {
-        parameters = tool.parameters as Record<string, any> || { type: 'object', properties: { _dummy: { type: 'string', description: 'Not used' } } };
+        parameters = tool.parameters as Record<string, any> || { type: 'object', properties: {} };
       }
 
       return {
