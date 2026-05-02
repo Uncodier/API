@@ -185,7 +185,7 @@ export async function processUnregisteredUserStep(
     return assistantResponse;
   } catch (error: any) {
     console.error('❌ Error in processUnregisteredUserStep:', error);
-    return null;
+    throw error;
   }
 }
 

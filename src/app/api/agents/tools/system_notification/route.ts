@@ -137,7 +137,8 @@ export async function notifySystemNotificationCore(params: {
       const emailResult = await AgentMailSendService.sendViaAgentMail({
         email: team_member_email,
         subject: title,
-        message: htmlContent, // Passed as HTML via the sendViaAgentMail service
+        message: message, // Pass the plain text message
+        html: htmlContent, // Pass the HTML layout explicitly
         site_id,
         username: 'gear',
         domain: 'makinari.email',

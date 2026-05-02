@@ -200,30 +200,30 @@ export function triageGitPushError(fullMessage: string): GitPushTriage {
   if (rebaseConflictLike) {
     const files = extractConflictFiles(fullMessage);
     const short = files.length
-      ? `Rebase/merge stopped on conflict in: ${files.slice(0, 8).join(', ')}${files.length > 8 ? '…' : ''}. Resolve conflicts, then continue rebase/merge and push, or align with origin (fetch + rebase/merge) before checkpointing.`
-      : 'Rebase/merge failed with conflicts. Resolve in the working tree, then continue the rebase/merge and push.';
+      ? `Rebase/merge stopped on conflict in: ${files.slice(0, 8).join(', ')}${files.length > 8 ? '…' : ''}. Manual resolution required.`
+      : 'Rebase/merge failed with conflicts. Manual resolution required.';
     return {
       failureKind: 'rebase_conflict',
-      agentActionable: true,
+      agentActionable: false,
       agentMessage: short,
       operatorMessage,
     };
   }
-  if (kindRaw === 'rebase_ops_only' || s.includes('manual resolution required')) {
-    return {
-      failureKind: 'rebase_ops_only',
-      agentActionable: true,
-      agentMessage:
-        'Push was rejected; automatic rebase could not be completed. Resolve git conflicts (see operator log for details), then push again.',
-      operatorMessage,
-    };
-  }
+      if (kindRaw === 'rebase_ops_only' || s.includes('manual resolution required')) {
+        return {
+          failureKind: 'rebase_ops_only',
+          agentActionable: false,
+          agentMessage:
+            'Push was rejected; automatic rebase could not be completed. Manual resolution required.',
+          operatorMessage,
+        };
+      }
   if (kindRaw === 'non_fast_forward' || s.includes('failed to push')) {
     return {
       failureKind: 'non_fast_forward',
-      agentActionable: true,
+      agentActionable: false,
       agentMessage:
-        'Remote advanced the branch. Fetch/rebase (or merge) with origin, resolve any conflicts, then push again. Prefer a single feature branch; avoid many diverging checkpoints on the same file.',
+        'Remote advanced the branch or push failed. Manual resolution required to avoid divergence.',
       operatorMessage,
     };
   }

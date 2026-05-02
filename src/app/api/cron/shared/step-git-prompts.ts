@@ -2,7 +2,7 @@
  * Prompt fragments only (no sandbox / assistant imports) — safe for workflow bundles.
  */
 
-export const MAX_PUSH_RECOVERY_TURNS = 3;
+export const MAX_PUSH_RECOVERY_TURNS = 2;
 
 export const ORCHESTRATOR_STEP_ORIGIN_RULE =
   'Every plan step must produce real repo changes that end up on origin: cron runs npm run build, then commit+push, then REACTIVE recovery if push fails — tell executors the step is not done until the platform has verified origin (they may need to push manually only in REACTIVE mode).';

@@ -159,7 +159,7 @@ export async function processUnregisteredUserEmailStep(
     return assistantResponse;
   } catch (error: any) {
     console.error('❌ Error in processUnregisteredUserEmailStep:', error);
-    return null;
+    throw error;
   }
 }
 

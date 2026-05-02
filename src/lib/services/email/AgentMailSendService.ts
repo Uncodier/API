@@ -8,6 +8,7 @@ export interface AgentMailSendParams {
   email: string;
   subject: string;
   message: string;
+  html?: string;
   signatureHtml?: string;
   agent_id?: string;
   conversation_id?: string;
@@ -25,6 +26,7 @@ export class AgentMailSendService {
       email,
       subject,
       message,
+      html,
       signatureHtml,
       agent_id,
       conversation_id,
@@ -40,7 +42,7 @@ export class AgentMailSendService {
     const targetEmail = email;
 
     // Prepare HTML content with signature
-    let htmlContent = EmailSendService.renderMessageWithLists(message);
+    let htmlContent = html || EmailSendService.renderMessageWithLists(message);
     if (signatureHtml) {
       htmlContent = `
         <div style="font-family: sans-serif; line-height: 1.5;">
