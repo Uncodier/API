@@ -11,7 +11,7 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
   // 1. Identificar al usuario basado en el email
   const { data: users, error: userError } = await supabaseAdmin
     .from('profiles')
-    .select('id, raw_user_meta_data')
+    .select('id')
     .eq('email', userEmail.toLowerCase().trim());
 
   if (userError) {
@@ -19,8 +19,7 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
   }
 
   const user = users && users.length > 0 ? {
-    id: users[0].id,
-    metadata: users[0].raw_user_meta_data
+    id: users[0].id
   } : null;
 
   let siteId: string | null = null;

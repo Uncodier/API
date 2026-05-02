@@ -129,6 +129,19 @@ export async function processUnregisteredUserEmailStep(
       content: msg.content
     }));
 
+    // Check if the current message is in pastMessages
+    // Note: since we don't have the inserted message ID, we just check if the content is there, 
+    // or better yet, since we just inserted it, we shouldn't push it again unless we didn't fetch it
+    // Wait, the past messages might have fetched it since it was inserted right before.
+    // Let's check by content to be safe.
+    const hasCurrentMessage = messages.some(m => m.content === messageContent && m.role === 'user');
+    if (!hasCurrentMessage) {
+      messages.push({
+        role: 'user',
+        content: messageContent
+      });
+    }
+
     // 2. Run the assistant using AIAgentExecutor
     const customTools = [createAccountTool(), verifyAccountTool()];
     if (userId) {
@@ -136,13 +149,23 @@ export async function processUnregisteredUserEmailStep(
     }
     const executor = new AIAgentExecutor();
     
+    console.log(`[GearAgent] Executing assistant for email unregistered user (history size: ${messages.length})`);
+    
     const executionResult = await executor.act({
       tools: customTools,
       system: systemPrompt,
       messages: messages as any[], // History included!
+      maxIterations: 5, // Avoid long loops for unregistered users
     });
 
     const assistantResponse = executionResult.text;
+    console.log(`[GearAgent] Assistant response generated (length: ${assistantResponse?.length || 0})`);
+    
+    // Si no hay respuesta, devolvemos un mensaje genérico por si acaso se quedó atrapado el agente
+    if (!assistantResponse) {
+       console.log(`[GearAgent] No text returned from agent executor, generating fallback message.`);
+       return "I couldn't process your request right now. Please try again later.";
+    }
 
     if (assistantResponse) {
       // Save assistant response

@@ -159,14 +159,24 @@ export async function processUnregisteredUserStep(
     }
     const executor = new AIAgentExecutor();
     
+    console.log(`[GearAgent] Executing assistant for whatsapp unregistered user (history size: ${messages.length})`);
+    
     const executionResult = await executor.act({
       tools: customTools,
       system: systemPrompt,
       messages: messages as any[], // History included!
+      maxIterations: 5, // Avoid long loops for unregistered users
       // No stream callbacks needed here for WhatsApp since it's asynchronous push
     });
 
     const assistantResponse = executionResult.text;
+    console.log(`[GearAgent] Assistant response generated (length: ${assistantResponse?.length || 0})`);
+
+    // Si no hay respuesta, devolvemos un mensaje genérico por si acaso se quedó atrapado el agente
+    if (!assistantResponse) {
+       console.log(`[GearAgent] No text returned from agent executor, generating fallback message.`);
+       return "I couldn't process your request right now. Please try again later.";
+    }
 
     if (assistantResponse) {
       // Save assistant response

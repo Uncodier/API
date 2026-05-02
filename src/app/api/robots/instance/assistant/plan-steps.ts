@@ -132,7 +132,7 @@ RULES:
 - Never use a top-level app/ folder for routes (e.g. app/src/app/prd breaks Vercel).
 - Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
 - Use sandbox_write_file to create new files, sandbox_edit_file to replace specific strings in existing files (prefer this over overwriting large files), sandbox_run_command, and sandbox_read_file to write and test code. You MUST call sandbox_push_checkpoint before stopping when you changed files (title_hint = step title; see CHECKPOINTS in prompt). Use sandbox_restore_checkpoint only if you need to rewind locally. Use sandbox_read_logs to read server and console logs.
-- After implementing, validate your work (run build, run tests if applicable).
+- After implementing, validate your work (run build, run tests if applicable). If writing tests, ALL test files MUST be placed inside the top-level \`tests/\` directory (e.g., \`tests/api\`, \`tests/components\`) to keep the repo clean.
 - When reporting status, use requirement_id="${requirementId}" and instance_id="${instance_id}".
 - The preview URL comes from the GitHub Deployments API post-push. Do NOT construct or guess it.
 - Be efficient — the sandbox has a limited lifetime.

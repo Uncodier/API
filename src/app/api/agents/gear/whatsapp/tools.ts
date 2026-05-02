@@ -6,6 +6,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 export function createAccountTool() {
   const execute = async (args: { email: string, password?: string, name?: string, phone?: string }) => {
     try {
+      console.log(`[GearAgent Tool: create_account] Executing with args: ${JSON.stringify(args)}`);
       // Create user in Supabase Auth
       const attributes: any = {
         email: args.email,
@@ -59,6 +60,7 @@ export function createAccountTool() {
 export function verifyAccountTool() {
     const execute = async (args: { email: string, phone: string }) => {
         try {
+            console.log(`[GearAgent Tool: verify_account] Executing with args: ${JSON.stringify(args)}`);
             // Attempt to find user by email in public.users or public.profiles
             // This assumes a public table exists that mirrors auth.users
             let userId: string | null = null;

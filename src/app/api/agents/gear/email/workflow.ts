@@ -108,6 +108,10 @@ export async function runUnregisteredGearEmailWorkflow({
     );
 
     if (assistantResponse) {
+      console.log(`[GearAgent] Assisant execution returned: `, { 
+        hasResponse: !!assistantResponse,
+        responseLength: assistantResponse?.length
+      });
       // Send the response back via step
       await sendEmailResponse(userEmail, assistantResponse, siteId);
     } else {

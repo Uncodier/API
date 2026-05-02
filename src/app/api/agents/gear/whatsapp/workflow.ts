@@ -121,6 +121,10 @@ export async function runUnregisteredGearAgentWorkflow({
     );
 
     if (assistantResponse) {
+      console.log(`[GearAgent] Assisant execution returned: `, { 
+        hasResponse: !!assistantResponse,
+        responseLength: assistantResponse?.length
+      });
       // Send the response back to WhatsApp via step
       await sendWhatsAppResponse(userPhone, assistantResponse, siteId);
     } else {
