@@ -79,11 +79,14 @@ create policy reservations_tenant on reservations
 
 3. Verify the table exists using the `sandbox_db_inspect` tool. Do NOT write custom Node.js scripts to test the connection.
 
-4. CRUD it from the SDK. RLS does the rest:
+4. CRUD it from the SDK. RLS does the rest. **CRITICAL RULE**: ALWAYS explicitly use `.schema()` before calling `.from()`. If you rely on the global client options, Supabase often defaults back to the `public` schema and throws `Could not find the table 'public.<table_name>' in the schema cache` (PGRST205 or PGRST106).
 
 ```ts
-await db.from('reservations').insert({ user_id, starts_at, ends_at });
-const { data } = await db.from('reservations').select('*').order('starts_at');
+// DO THIS: Always specify the schema explicitly
+const SCHEMA_NAME = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA;
+
+await db.schema(SCHEMA_NAME).from('reservations').insert({ user_id, starts_at, ends_at });
+const { data } = await db.schema(SCHEMA_NAME).from('reservations').select('*').order('starts_at');
 ```
 
 ## Auth recipes
@@ -100,6 +103,7 @@ const { data } = await db.from('reservations').select('*').order('starts_at');
 
 ## Anti-patterns
 
+- **Forgetting to call `.schema(SCHEMA_NAME)` before `.from()`**. The global client configuration `db: { schema }` is NOT reliable enough when using `@supabase/ssr` or `supabase-js`, and it will often lead to `public.table_name not found` errors. ALWAYS chain `.schema()` explicitly.
 - **Writing custom Node.js scripts (e.g. `test-api.js`) to test the database connection.** This often fails due to missing env vars or dependencies in the sandbox. INSTEAD, use the `sandbox_db_inspect` tool to verify if tables exist or to sample data.
 - Adding `@supabase/supabase-js` with a foreign URL or service key.
 - Writing migrations that touch `public.*`, `auth.*` or `storage.*`
