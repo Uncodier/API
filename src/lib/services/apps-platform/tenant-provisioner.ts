@@ -146,6 +146,27 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
     console.warn(
       `[tenant-provisioner] baseline migration skipped (${baseline.error}). Apply manually with create_apps_platform_tables.sql.`,
     );
+  } else {
+    // Automatically expose the new schema to PostgREST
+    const exposeSql = `
+      do $$
+      declare
+        current_schemas text;
+      begin
+        select string_agg(nspname, ',') into current_schemas
+        from pg_namespace
+        where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
+        
+        execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
+      end $$;
+      notify pgrst, 'reload config';
+    `;
+    const exposeResult = await execSql(exposeSql);
+    if (!exposeResult.ok) {
+      console.warn(`[tenant-provisioner] failed to auto-expose schema to PostgREST: ${exposeResult.error}`);
+    } else {
+      console.log(`[tenant-provisioner] auto-exposed schemas to PostgREST.`);
+    }
   }
 
   const { token, expires_at } = await issueTenantJWT({
@@ -176,6 +197,21 @@ export async function destroyTenant(requirement_id: string): Promise<{ ok: boole
 
   const drop = await execSql(`drop schema if exists "${row.schema}" cascade;`);
   if (!drop.ok) return { ok: false, error: drop.error };
+
+  // Update exposed schemas after dropping
+  await execSql(`
+    do $$
+    declare
+      current_schemas text;
+    begin
+      select string_agg(nspname, ',') into current_schemas
+      from pg_namespace
+      where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
+      
+      execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
+    end $$;
+    notify pgrst, 'reload config';
+  `);
 
   const { error } = await client.from('apps_tenants').delete().eq('requirement_id', requirement_id);
   if (error) return { ok: false, error: error.message };
