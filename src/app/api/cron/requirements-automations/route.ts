@@ -186,10 +186,34 @@ export async function GET(req: Request) {
               updated_at: new Date().toISOString()
             }).eq('id', reqId);
             
-            // Pause the main builder instance and plan so it doesn't consume resources
+            // Cancel or complete active instance plan
+            if (instanceId) {
+              const { data: activePlan } = await supabaseAdmin
+                .from('instance_plans')
+                .select('id, status, steps')
+                .eq('instance_id', instanceId)
+                .in('status', ['pending', 'in_progress', 'paused'])
+                .order('created_at', { ascending: false })
+                .limit(1)
+                .single();
+
+              if (activePlan) {
+                const steps = activePlan.steps || [];
+                const hasPendingSteps = steps.some((s: any) => s.status === 'pending' || s.status === 'in_progress');
+                
+                await supabaseAdmin
+                  .from('instance_plans')
+                  .update({ 
+                    status: hasPendingSteps ? 'cancelled' : 'completed',
+                    completed_at: new Date().toISOString()
+                  })
+                  .eq('id', activePlan.id);
+              }
+            }
+
+            // Pause the main builder instance so it doesn't consume resources
             if (instanceId) {
               await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
-              await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
             }
             
             await releaseRunLock(reqId, runLock.runId);
