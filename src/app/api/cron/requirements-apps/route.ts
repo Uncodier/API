@@ -450,6 +450,12 @@ export async function GET(req: Request) {
               updated_at: new Date().toISOString()
             }).eq('id', reqId);
             
+            // Pause the main builder instance and plan so it doesn't consume resources
+            if (instanceId) {
+              await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
+              await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
+            }
+            
             await releaseRunLock(reqId, runLock.runId);
             results.push({ reqId, skipped: true, reason: 'all_done_5_cycles' });
             continue;
