@@ -44,7 +44,11 @@ function buildPlanAdaptationUserMessage(
     gateError.slice(0, 12000),
     `---`,
     ``,
-    `Use instance_plan (list / update steps, or replace the plan if necessary) to adapt: clearer instructions, split work, add a recovery step, fix paths (src/app/…), or reorder dependencies.`,
+    `Use instance_plan (update) to adapt the CURRENT failing step: provide clearer instructions, fix paths (src/app/…), or inject a new step IMMEDIATELY AFTER the current one to handle the fix.`,
+    `CRITICAL RULES:`,
+    `- DO NOT use action="create" to replace the plan. Keep the existing plan.`,
+    `- DO NOT restart the plan from step 1. Preserve all already completed steps.`,
+    `- DO NOT add "Recover Git State" or similar workspace-cleaning steps. The infrastructure already guarantees a clean git state for every executor run.`,
     `Do not implement code yourself here — only update the plan. The workflow will run the executor again on the updated pending step.`,
   ].join('\n');
 }

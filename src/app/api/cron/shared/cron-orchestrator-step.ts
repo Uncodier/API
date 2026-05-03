@@ -73,6 +73,8 @@ function getCronOrchestratorTools(
   // here makes sure skill_lookup + sandbox_* stay in the always-on bucket
   // after partitioning.
   const allTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+  
+  // Also, instance_plan must be available so orchestrator can adapt plans when failing gate
   return allTools;
 }
 
@@ -326,11 +328,14 @@ export async function runOrchestratorStep(params: {
     // exploring (no instance_plan create yet), remind it that PLANNING is
     // its deliverable. Otherwise the cron loops forever producing no plan.
     if (!isDone && !createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
-      nudged = true;
-      console.log(
-        `[CronStep|orchestrator] Orchestrator nudge at turn ${turns}: still no instance_plan(create) — injecting reminder.`,
-      );
-      messages = [...messages, { role: 'user', content: noPlanReminder }];
+      const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
+      if (!isAdaptation) {
+        nudged = true;
+        console.log(
+          `[CronStep|orchestrator] Orchestrator nudge at turn ${turns}: still no instance_plan(create) — injecting reminder.`,
+        );
+        messages = [...messages, { role: 'user', content: noPlanReminder }];
+      }
     }
 
     // Force-continue: the model sometimes returns a plain-text assistant
@@ -341,17 +346,28 @@ export async function runOrchestratorStep(params: {
     // have budget, inject the same reminder and keep iterating. Capped by
     // MAX_NO_PLAN_OVERRIDES so a truly stuck model cannot burn the whole
     // turn budget on empty assistant messages.
+    // For adaptation runs, we don't care about `action="create"`, we just
+    // want it to update the plan.
+    const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
+    
+    // In adaptation mode, we consider it "created/updated" if it called instance_plan at all
+    const planUpdated = createdPlan || (isAdaptation && callSnapshots.some(s => s.name === 'instance_plan'));
+
     if (
       isDone &&
-      !createdPlan &&
+      !planUpdated &&
       noPlanOverrides < MAX_NO_PLAN_OVERRIDES &&
       turns < MAX_TURNS
     ) {
       noPlanOverrides++;
+      const reminderContent = isAdaptation 
+        ? 'REMINDER: You must update the plan using the `instance_plan` tool. Do not just reply with text.' 
+        : noPlanReminder;
+        
       console.warn(
-        `[CronStep|orchestrator] Orchestrator returned isDone=true at turn ${turns} without creating a plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
+        `[CronStep|orchestrator] Orchestrator returned isDone=true at turn ${turns} without calling instance_plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
       );
-      messages = [...messages, { role: 'user', content: noPlanReminder }];
+      messages = [...messages, { role: 'user', content: reminderContent }];
       isDone = false;
     }
   }
