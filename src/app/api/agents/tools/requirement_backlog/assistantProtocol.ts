@@ -23,8 +23,8 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
           ],
           description: 'Backlog operation to perform.',
         },
-        requirement_id: { type: 'string', description: 'Requirement UUID.' },
-        item_id: { type: 'string', description: 'Backlog item UUID (optional on upsert to create a new item).' },
+        requirement_id: { type: 'string', description: 'Requirement UUID (required).' },
+        item_id: { type: 'string', description: 'Backlog item UUID. Highly recommended to provide this explicitly for start, complete, downgrade, log_assumption, mark_needs_review, set_status actions.' },
         title: { type: 'string', description: 'Human-readable item title.' },
         kind: {
           type: 'string',
@@ -55,7 +55,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         reason: { type: 'string', description: 'Optional reason for set_status or mark_needs_review.' },
         assumption: { type: 'string', description: 'Assumption text for log_assumption.' },
       },
-      required: ['action'],
+      required: ['action', 'requirement_id'],
     },
     execute: async (args: Partial<BacklogCoreParams> & { action: BacklogAction }) => {
       const requirement_id = args.requirement_id || defaultRequirementId;
