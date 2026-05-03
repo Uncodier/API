@@ -33,7 +33,7 @@ Copy-paste the right block when seeding a repo manually.
 - `src/lib/supabase.ts` (client + server components, anon key, `db.schema = NEXT_PUBLIC_APPS_TENANT_SCHEMA`)
 - `src/lib/supabase-server.ts` (route handlers, tenant JWT — `APPS_TENANT_JWT`)
 - Migrations via `/api/platform/db/migrations` (scope `db.migrate`). Never hit Supabase directly with a service key.
-- Baseline migration creates an empty tenant schema with RLS on. Every `CREATE TABLE` must enable RLS and reference `auth.jwt()->>'tenant_id'`.
+- Baseline migration creates an empty tenant schema with RLS on. Every `CREATE TABLE` must enable RLS and use `auth.uid()` or local roles.
 
 ## Backlog rules
 - WIP=1 (enforced by `requirement_backlog`). Only ONE `in_progress` item at a time.

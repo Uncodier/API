@@ -87,8 +87,8 @@ alter table "${schema}"."_meta" enable row level security;
 
 drop policy if exists tenant_isolation on "${schema}"."_meta";
 create policy tenant_isolation on "${schema}"."_meta"
-  using (auth.jwt()->>'tenant_id' = '${tenantId}')
-  with check (auth.jwt()->>'tenant_id' = '${tenantId}');
+  using (false);
+
 
 insert into "${schema}"."_meta" (key, value)
 values ('provisioned', jsonb_build_object('at', now()::text, 'tenant_id', '${tenantId}'))
@@ -243,7 +243,7 @@ export async function bootstrapAuthForTenant(
     return {
       ok: true,
       instructions:
-        'Supabase Auth is the default. Ensure the project has the custom_access_token_hook configured to inject tenant_id by reading public.tenant_users.',
+        'Supabase Auth is the default. Ensure that upon sign-up, the user is immediately synchronized to the current tenant schema users table.',
     };
   }
   return {

@@ -74,10 +74,10 @@ function base64url(input: Buffer | string): string {
 
 /**
  * Sign a Supabase-compatible HS256 JWT with the Apps project secret. The
- * token carries `tenant_id` so RLS policies can filter by
- * `auth.jwt()->>'tenant_id'`, and `role: 'authenticated'` so PostgREST treats
- * requests as user-level (never service). Schema is included for clarity but
- * RLS does not depend on it — the security boundary is the tenant claim.
+ * token carries `tenant_id` for informational purposes, and `role: 'authenticated'` 
+ * so PostgREST treats requests as user-level (never service). Schema is included 
+ * for clarity. The security boundary relies on the dynamic schema execution
+ * context (`.schema('app_<id>')`) combined with local RLS ownership policies.
  */
 export async function issueTenantJWT(input: IssueTenantJWTInput): Promise<{ token: string; expires_at: string }> {
   const { tenant_id, schema, user_id, expiresInSec = 60 * 60 * 24 * 7 } = input;

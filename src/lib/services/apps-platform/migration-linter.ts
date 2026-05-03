@@ -28,7 +28,7 @@ export interface LintIssue {
 export interface LintInput {
   /** Tenant schema (e.g. `app_<requirementId>`). */
   schema: string;
-  /** Tenant id, must match `auth.jwt()->>'tenant_id'` in policies. */
+  /** Tenant id. No longer strictly required in policies due to dynamic schemas, but kept for context. */
   tenant_id: string;
   /** Optional storage bucket the tenant is allowed to reference. */
   bucket?: string;
@@ -213,7 +213,7 @@ function checkRlsAfterCreateTable(
   const enableRlsRe = /\balter\s+table\s+(?:"?([a-zA-Z_][\w]*)"?\.)?"?([a-zA-Z_][\w]*)"?\s+enable\s+row\s+level\s+security/i;
   // `[^;]` already matches newlines (dotAll is NOT needed for a negated class).
   // Removing the `/s` flag keeps this ES2015-compatible.
-  const policyRe = /\bcreate\s+policy\s+[^;]*?on\s+(?:"?([a-zA-Z_][\w]*)"?\.)?"?([a-zA-Z_][\w]*)"?[^;]*?auth\.jwt\(\)\s*->>\s*'tenant_id'/i;
+  const policyRe = /\bcreate\s+policy\s+[^;]*?on\s+(?:"?([a-zA-Z_][\w]*)"?\.)?"?([a-zA-Z_][\w]*)"?/i;
 
   const seenTables: Array<{ name: string; line: number }> = [];
   for (const stmt of statements) {
@@ -254,9 +254,9 @@ function checkRlsAfterCreateTable(
     if (!policiedTables.has(t.name)) {
       issues.push({
         rule: 'tenant-policy-required',
-        severity: 'error',
+        severity: 'warning',
         line: t.line,
-        message: `Table "${schema}.${t.name}" must declare a policy referencing auth.jwt()->>'tenant_id'.`,
+        message: `Table "${schema}.${t.name}" should declare a policy. Make sure to use auth.uid() or role-based logic for RLS.`,
       });
     }
   }

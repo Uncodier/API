@@ -217,8 +217,7 @@ const sendEmail: PlatformHandler = async (req, ctx): Promise<PlatformHandlerResu
  *   - tenant id in the JWT,
  *   - schema `app_<requirement_id>`,
  *   - linter ruleset (no public.*, no auth.*, no role/extension/grant, RLS
- *     required on every new table, tenant policy referencing
- *     auth.jwt()->>'tenant_id').
+ *     required on every new table.
  */
 const applyMigration: PlatformHandler = async (req, ctx): Promise<PlatformHandlerResult> => {
   const body = await jsonBody(req);

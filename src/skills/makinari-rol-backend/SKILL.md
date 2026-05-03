@@ -121,6 +121,24 @@ return NextResponse.json({ ok: true, mode, data: result });
   - The Supabase SSR client sometimes suffers from a bug where the global `options.db.schema` is ignored. 
   - To prevent `"Could not find the table 'public.table_name' in the schema cache"` errors, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
   - Example: `await supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public').from('spaces').select('*')`
+- **Dynamic Table Verification (Migraciones Multi-Schema)**: Si creas scripts `DO $$` que iteran sobre múltiples schemas (`app_%`) para propagar cambios en tablas existentes, **siempre valida la existencia de la tabla** antes de hacer `ALTER TABLE` o `CREATE POLICY` revisando `information_schema.tables`.
+  ```sql
+  DO $$
+  DECLARE
+    v_schema text;
+    v_has_users boolean;
+  BEGIN
+    FOR v_schema IN SELECT schema_name FROM information_schema.schemata WHERE schema_name LIKE 'app_%' LOOP
+      SELECT EXISTS (
+        SELECT 1 FROM information_schema.tables WHERE table_schema = v_schema AND table_name = 'users'
+      ) INTO v_has_users;
+      IF v_has_users THEN
+        EXECUTE format('ALTER TABLE %I.users ADD COLUMN IF NOT EXISTS new_col text;', v_schema);
+      END IF;
+    END LOOP;
+  END;
+  $$;
+  ```
 
 ### 7. Environment variables
 - Declare every new env var in section 6.3 of the requirement first. If you need a var that is not declared, stop and update the requirement.
