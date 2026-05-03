@@ -161,6 +161,46 @@ export async function GET(req: Request) {
         }
       }
 
+      let hasCompletedBacklog = requirement.metadata?.has_completed_backlog === true;
+      
+      if (requirement.backlog?.items) {
+        hasCompletedBacklog = requirement.backlog.items.some((i: any) => i.status === 'done');
+        if (hasCompletedBacklog && !requirement.metadata?.has_completed_backlog) {
+          // Save to metadata so we don't have to check the JSON array every time
+          await supabaseAdmin.from('requirements').update({
+            metadata: { ...requirement.metadata, has_completed_backlog: true }
+          }).eq('id', reqId);
+          requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
+        }
+
+        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.every((i: any) => i.status === 'done');
+        if (allBacklogDone) {
+          const allDoneCycles = (requirement.metadata?.all_done_cycles || 0) + 1;
+          const updatedMetadata = { ...requirement.metadata, all_done_cycles: allDoneCycles };
+          
+          if (allDoneCycles >= 5) {
+            console.log(`[Cron Auto] Skipping ${reqId} — all backlog items done for 5 cycles. Marking as on-review.`);
+            await supabaseAdmin.from('requirements').update({ 
+              status: 'on-review',
+              metadata: updatedMetadata,
+              updated_at: new Date().toISOString()
+            }).eq('id', reqId);
+            
+            await releaseRunLock(reqId, runLock.runId);
+            results.push({ reqId, skipped: true, reason: 'all_done_5_cycles' });
+            continue;
+          } else {
+            await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
+            requirement.metadata = updatedMetadata;
+          }
+        } else if (requirement.metadata?.all_done_cycles) {
+          // Reset if it's no longer all done
+          const updatedMetadata = { ...requirement.metadata, all_done_cycles: 0 };
+          await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
+          requirement.metadata = updatedMetadata;
+        }
+      }
+
       // Fetch statuses for context (previously done during instance lookup)
       const { data: prevStatuses } = await supabaseAdmin
         .from('requirement_status')

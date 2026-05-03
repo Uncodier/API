@@ -67,6 +67,16 @@ begin
   end if;
 end $$;
 
+-- Grant usage to API roles so PostgREST can access the schema
+grant usage on schema "${schema}" to anon, authenticated;
+grant all privileges on all tables in schema "${schema}" to anon, authenticated;
+grant all privileges on all routines in schema "${schema}" to anon, authenticated;
+grant all privileges on all sequences in schema "${schema}" to anon, authenticated;
+
+alter default privileges in schema "${schema}" grant all privileges on tables to anon, authenticated;
+alter default privileges in schema "${schema}" grant all privileges on routines to anon, authenticated;
+alter default privileges in schema "${schema}" grant all privileges on sequences to anon, authenticated;
+
 create table if not exists "${schema}"."_meta" (
   key text primary key,
   value jsonb not null,
