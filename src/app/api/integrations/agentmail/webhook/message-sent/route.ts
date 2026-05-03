@@ -68,9 +68,10 @@ export async function POST(request: NextRequest) {
 
     if (!foundMessage) {
       console.log(`⚠️ [AgentMail] Message not found: ${messageData.message_id}`);
+      // Return 200 instead of 404 to acknowledge the webhook and prevent Svix from retrying
       return NextResponse.json(
-        { success: false, error: 'Message not found', message_id: messageData.message_id },
-        { status: 404 }
+        { success: true, skipped: 'not_found', message_id: messageData.message_id },
+        { status: 200 }
       );
     }
 

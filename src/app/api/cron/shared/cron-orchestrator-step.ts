@@ -304,7 +304,7 @@ export async function runOrchestratorStep(params: {
         if (tc?.function?.name !== 'instance_plan') continue;
         try {
           const args = JSON.parse(tc.function.arguments || '{}');
-          if (args?.action === 'create') {
+          if (args?.action === 'create' || args?.action === 'update') {
             createdPlan = true;
           }
         } catch {
