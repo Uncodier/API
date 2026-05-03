@@ -452,10 +452,10 @@ export async function executeStepsPhaseStep(params: {
             const msg = err?.message || String(err);
             console.error(`[CronStep|${role}] Checkpoint failed for step ${workingStep.order}: ${msg}`);
             
-            // Si el error es un 410, el checkpoint plan iteration ya lo maneja silenciosamente,
+            // Si el error es un 410 o 404, el checkpoint plan iteration ya lo maneja silenciosamente,
             // pero si por alguna razón llega aquí, no debemos fallar el plan.
-            if (/\b410\b/.test(msg)) {
-              console.log(`[CronStep|${role}] Ignorando excepción 410 en checkpoint final para el paso ${workingStep.order}`);
+            if (/\b410\b/.test(msg) || /\b404\b/.test(msg)) {
+              console.log(`[CronStep|${role}] Ignorando excepción ${msg.match(/\b(410|404)\b/)?.[0] || 'sandbox expirado'} en checkpoint final para el paso ${workingStep.order}`);
               executed++;
               continue outer;
             }

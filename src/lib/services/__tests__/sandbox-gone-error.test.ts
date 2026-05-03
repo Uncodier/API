@@ -11,6 +11,11 @@ describe('isSandboxGoneError', () => {
     expect(isSandboxGoneError('Status code 410 is not ok')).toBe(true);
   });
 
+  it('detects 404 status code (sandbox missing)', () => {
+    expect(isSandboxGoneError('Status code 404 is not ok')).toBe(true);
+    expect(isSandboxGoneError('status code 404')).toBe(true);
+  });
+
   it('detects microVM unavailable wording', () => {
     expect(isSandboxGoneError('The sandbox microVM is unavailable. Please retry.')).toBe(true);
   });

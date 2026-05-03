@@ -297,11 +297,11 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       const msg = e instanceof Error ? e.message : String(e);
       console.warn('[Sandbox] post-push snapshot() failed:', msg);
       
-      // Si el snapshot falla porque el sandbox expiró (410 Gone),
+      // Si el snapshot falla porque el sandbox expiró (410 Gone o 404 Not Found),
       // no podemos retornar el mismo sandbox viejo porque está muerto.
       // Debemos forzar la creación de uno nuevo desde Git.
-      if (/\b410\b/.test(msg)) {
-        console.warn('[Sandbox] Sandbox is gone (410). Provisioning fresh git sandbox instead of reusing dead VM.');
+      if (/\b410\b/.test(msg) || /\b404\b/.test(msg)) {
+        console.warn(`[Sandbox] Sandbox is gone (${msg}). Provisioning fresh git sandbox instead of reusing dead VM.`);
         const recovered = await SandboxService.createRequirementSandbox(
           requirementId,
           instanceType,

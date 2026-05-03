@@ -58,10 +58,10 @@ export async function checkpointPlanIteration(
       e?.stack,
     );
     
-    // Si el sandbox murió (410), no es un error de código, es de infraestructura.
+    // Si el sandbox murió (410 o 404), no es un error de código, es de infraestructura.
     // Como el agente ya hizo su propio push (sandbox_push_checkpoint), este paso redundante
     // puede fallar silenciosamente si el contenedor expiró, sin ensuciar los logs de infra.
-    if (/\b410\b/.test(msg)) {
+    if (/\b410\b/.test(msg) || /\b404\b/.test(msg)) {
       console.log(`[CronPersist] Checkpoint redundante omitido para el paso ${planStep.order} (el sandbox expiró pero el agente ya había hecho push)`);
       return;
     }

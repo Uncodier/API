@@ -165,8 +165,8 @@ export async function cleanupNestedProjectsStep(
         removed.push(dir);
       }
     } catch (e: any) {
-      if (e?.message?.includes('422')) {
-        console.warn(`[Cleanup] Sandbox ${sandboxId} returned 422 (likely dead). Skipping cleanup; next step will recover it.`);
+      if (e?.message?.includes('422') || e?.message?.includes('410') || e?.message?.includes('404')) {
+        console.warn(`[Cleanup] Sandbox ${sandboxId} returned an error (${e.message}). Skipping cleanup; next step will recover it.`);
         return { removed, effectiveSandboxId };
       }
       throw e;
