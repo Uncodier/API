@@ -26,7 +26,10 @@ If you notice that the instance is paused (`status="paused"`) and the user is re
 - If an active plan exists (`pending` or `in_progress`), continue its pending steps. Do NOT recreate.
 - Only fail an old plan and create a new one when the client feedback introduces genuinely new instructions.
 
-### 3. Use sibling skills for the heavy lifting
+### 3. Backlog Item Iterations (Changes & Improvements)
+When a backlog item is already completed (marked as `done` or `ready`), and the client requests changes, fixes, or improvements to it, you MUST NOT reopen or modify the existing completed backlog item. Instead, you MUST always create a NEW backlog item specifically for these changes. This ensures a clean history and better control over iterations and versions.
+
+### 4. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
 
 | Skill | Role |
