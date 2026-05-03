@@ -179,6 +179,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     siteId: site_id,
     userId: user_id,
     instanceId,
+    branchName,
   });
 
   // Step 1d: Run the admin-loop detector against the recent git history. We

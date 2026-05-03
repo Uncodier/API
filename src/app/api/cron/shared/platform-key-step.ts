@@ -5,6 +5,7 @@ import { SandboxService } from '@/lib/services/sandbox-service';
 import { ensurePlatformKeyForRequirement } from '@/lib/services/platform-api/ensure-platform-key';
 import { ensureTenant, type AppsAuthProvider } from '@/lib/services/apps-platform/tenant-provisioner';
 import { getAppsPublicConfig } from '@/lib/database/apps-supabase';
+import { pushVercelBranchEnv } from '@/lib/services/vercel-env';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface ProvisionPlatformKeyStepInput {
@@ -13,6 +14,7 @@ export interface ProvisionPlatformKeyStepInput {
   siteId: string;
   userId: string;
   instanceId: string;
+  branchName?: string;
   apiBaseUrl?: string;
   /** Defaults to 'supabase'. Skips tenant provisioning when set to null. */
   authProvider?: AppsAuthProvider | null;
@@ -186,6 +188,17 @@ export async function provisionPlatformKeyStep(
         '[provisionPlatformKeyStep] failed to write .env.local (continuing):',
         e instanceof Error ? e.message : e,
       );
+    }
+
+    if (input.branchName) {
+      try {
+        await pushVercelBranchEnv(input.branchName, envBag, 'applications');
+      } catch (e: unknown) {
+        console.warn(
+          '[provisionPlatformKeyStep] failed to push Vercel branch env (continuing):',
+          e instanceof Error ? e.message : e,
+        );
+      }
     }
   }
 
