@@ -118,9 +118,9 @@ return NextResponse.json({ ok: true, mode, data: result });
 - Document the rollback as a comment at the top of the script.
 - If the requirement declares new columns in section 6.2, create the migration BEFORE implementing the endpoint that reads them.
 - **CRITICAL: Supabase Schema Targeting (Multi-tenant Architecture)**: The database uses a schema-per-app architecture. Tables are NOT created in the default `public` schema. They are created in isolated schemas like `app_<id>`.
-  - When querying Supabase via the JS/TS client, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
+  - The Supabase SSR client sometimes suffers from a bug where the global `options.db.schema` is ignored. 
+  - To prevent `"Could not find the table 'public.table_name' in the schema cache"` errors, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
   - Example: `await supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public').from('spaces').select('*')`
-  - Failing to specify the schema will result in the error: `"Could not find the table 'public.table_name' in the schema cache"`. NEVER query without `.schema()` when working with app-specific tables.
 
 ### 7. Environment variables
 - Declare every new env var in section 6.3 of the requirement first. If you need a var that is not declared, stop and update the requirement.

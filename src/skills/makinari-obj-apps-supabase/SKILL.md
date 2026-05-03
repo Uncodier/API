@@ -79,11 +79,11 @@ create policy reservations_tenant on reservations
 
 3. Verify the table exists using the `sandbox_db_inspect` tool. Do NOT write custom Node.js scripts to test the connection.
 
-4. CRUD it from the SDK. RLS does the rest. **CRITICAL RULE**: ALWAYS explicitly use `.schema()` before calling `.from()`. If you rely on the global client options, Supabase often defaults back to the `public` schema and throws `Could not find the table 'public.<table_name>' in the schema cache` (PGRST205 or PGRST106).
+4. CRUD it from the SDK. RLS does the rest. **CRITICAL RULE**: ALWAYS explicitly use `.schema()` before calling `.from()`. Due to a bug in `@supabase/ssr`, relying on the global client options often defaults back to the `public` schema and throws `Could not find the table 'public.<table_name>' in the schema cache` (PGRST205 or PGRST106).
 
 ```ts
 // DO THIS: Always specify the schema explicitly
-const SCHEMA_NAME = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA;
+const SCHEMA_NAME = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
 
 await db.schema(SCHEMA_NAME).from('reservations').insert({ user_id, starts_at, ends_at });
 const { data } = await db.schema(SCHEMA_NAME).from('reservations').select('*').order('starts_at');
