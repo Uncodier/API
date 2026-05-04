@@ -66,50 +66,6 @@ export async function GET(req: Request) {
         continue;
       }
 
-      // Verify QA execution limit
-      const doneItemsCount = requirement.backlog?.items?.filter((i: any) => i.status === 'done').length || 0;
-      const maxQaRuns = doneItemsCount * 6;
-      const currentQaRuns = requirement.metadata?.qa_successful_runs || 0;
-      
-      const currentAttempt = requirement.metadata?.cron_attempts || 0;
-      const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
-      
-      if (lastQaAttempt === currentAttempt) {
-        console.log(`[Cron Maintenance] Skipping ${reqId} — QA already ran for main builder attempt ${currentAttempt}`);
-        results.push({ reqId, skipped: true, reason: 'qa_already_run_for_attempt' });
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
-        continue;
-      }
-      
-      if (currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
-        console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items)`);
-        results.push({ reqId, skipped: true, reason: 'qa_limit_reached' });
-        
-        // Pause instance if it exists to save resources
-        const { data: maintInstances } = await supabaseAdmin
-          .from('remote_instances')
-          .select('id')
-          .eq('site_id', site_id)
-          .eq('name', `req-maint-${reqId}`)
-          .limit(1);
-          
-        if (maintInstances && maintInstances.length > 0) {
-          const maintId = maintInstances[0].id;
-          await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', maintId);
-          await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', maintId).in('status', ['pending', 'in_progress']);
-        }
-        
-        await releaseRunLock(maintenanceLockKey, runLock.runId);
-        continue;
-      }
-
-      console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
-
-      // Update the sync tracker so it doesn't run again for this main workflow cycle
-      const updatedMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
-      await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
-      requirement.metadata = updatedMetadata;
-
       // Find or create a dedicated remote_instance for maintenance
       let instanceId: string | undefined;
       const instanceName = `req-maint-${reqId}`;
@@ -123,7 +79,63 @@ export async function GET(req: Request) {
 
       if (instances && instances.length > 0) {
         instanceId = instances[0].id;
-      } else {
+      }
+
+      let hasActivePlan = false;
+      if (instanceId) {
+        const { data: activePlan } = await supabaseAdmin
+          .from('instance_plans')
+          .select('id')
+          .eq('instance_id', instanceId)
+          .in('status', ['pending', 'in_progress'])
+          .limit(1)
+          .single();
+        if (activePlan) {
+          hasActivePlan = true;
+        }
+      }
+
+      // Verify QA execution limit
+      const doneItemsCount = requirement.backlog?.items?.filter((i: any) => i.status === 'done').length || 0;
+      const maxQaRuns = doneItemsCount * 6;
+      const currentQaRuns = requirement.metadata?.qa_successful_runs || 0;
+      
+      const currentAttempt = requirement.metadata?.cron_attempts || 0;
+      const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
+      
+      if (!hasActivePlan && lastQaAttempt === currentAttempt) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — QA already ran for main builder attempt ${currentAttempt} and has no active plan`);
+        
+        if (instanceId) {
+          await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
+        }
+
+        results.push({ reqId, skipped: true, reason: 'qa_already_run_for_attempt_no_plan' });
+        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        continue;
+      }
+      
+      if (!hasActivePlan && currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items) and no active plan`);
+        results.push({ reqId, skipped: true, reason: 'qa_limit_reached' });
+        
+        if (instanceId) {
+          await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
+        }
+        
+        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        continue;
+      }
+
+      console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
+
+      // Update the sync tracker so it doesn't run again for this main workflow cycle
+      const updatedMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
+      await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
+      requirement.metadata = updatedMetadata;
+
+      // Create instance if not found
+      if (!instanceId) {
         const { data: newInstance, error: insertErr } = await supabaseAdmin
           .from('remote_instances')
           .insert(

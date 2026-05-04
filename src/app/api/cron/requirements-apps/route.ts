@@ -504,8 +504,40 @@ export async function GET(req: Request) {
         const currentAttempt = requirement.metadata?.cron_attempts || 0;
         const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
         
-        if (lastQaAttempt === currentAttempt) {
-          console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — QA already ran for main builder attempt ${currentAttempt}`);
+        let maintInstanceId: string | undefined;
+        const maintInstanceName = `req-maint-${reqId}`;
+        
+        const { data: maintInstances } = await supabaseAdmin
+          .from('remote_instances')
+          .select('id')
+          .eq('site_id', site_id)
+          .eq('name', maintInstanceName)
+          .limit(1);
+
+        if (maintInstances && maintInstances.length > 0) {
+          maintInstanceId = maintInstances[0].id;
+        }
+        
+        let hasActivePlan = false;
+        if (maintInstanceId) {
+          const { data: activePlan } = await supabaseAdmin
+            .from('instance_plans')
+            .select('id')
+            .eq('instance_id', maintInstanceId)
+            .in('status', ['pending', 'in_progress'])
+            .limit(1)
+            .single();
+          if (activePlan) {
+            hasActivePlan = true;
+          }
+        }
+        
+        if (!hasActivePlan && lastQaAttempt === currentAttempt) {
+          console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — QA already ran for main builder attempt ${currentAttempt} and has no active plan`);
+          
+          if (maintInstanceId) {
+            await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', maintInstanceId);
+          }
         } else {
           // Update the sync tracker
           const syncMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
@@ -519,20 +551,8 @@ export async function GET(req: Request) {
           if (maintRunLock) {
             console.log(`[Cron Apps] Starting PARALLEL maintenance workflow for req ${reqId}`);
             
-            // Find or create remote_instance for MAINTENANCE
-            let maintInstanceId: string | undefined;
-            const maintInstanceName = `req-maint-${reqId}`;
-            
-            const { data: maintInstances } = await supabaseAdmin
-              .from('remote_instances')
-              .select('id')
-              .eq('site_id', site_id)
-              .eq('name', maintInstanceName)
-              .limit(1);
-  
-            if (maintInstances && maintInstances.length > 0) {
-              maintInstanceId = maintInstances[0].id;
-            } else {
+            // Create remote_instance for MAINTENANCE if it doesn't exist
+            if (!maintInstanceId) {
               const { data: newMaintInstance, error: maintInsertErr } = await supabaseAdmin
                 .from('remote_instances')
                 .insert(

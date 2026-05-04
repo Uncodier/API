@@ -75,10 +75,11 @@ WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the backlog for \`done\` items.
 2. Pick the MOST RECENTLY COMPLETED \`done\` item (the last one in the list of done items) to audit. If you have already reviewed all of them, pick the one that requires the most work or review.
 3. QA Audit: Read the files related to that item. Run \`sandbox_run_command\` (e.g., \`npm run build\` or curl tests) to verify it actually works.
-4. Fix & Improve: If the feature is broken or missing pieces promised in the backlog item, write the code to fix it. Then, refactor the code to improve quality (split large files, remove mocks).
-5. Verify: Run \`sandbox_run_command\` with \`npm run build\` again to ensure your fixes didn't break the build.
-6. Report: Update \`evidence/<item_id>.json\` with your findings and fixes.
-7. Finish your turn. DO NOT CREATE AN \`instance_plan\`. Just complete the work.
+4. Planning: If you find issues to fix or improvements to make, you MUST use the \`instance_plan\` tool (action="create") to outline your execution steps before making code changes.
+5. Fix & Improve: Execute your plan step by step using \`instance_plan\` (action="execute_step"). Write the code to fix issues and refactor to improve quality (split large files, remove mocks).
+6. Verify: Run \`sandbox_run_command\` with \`npm run build\` again to ensure your fixes didn't break the build.
+7. Report: Update \`evidence/<item_id>.json\` with your findings and fixes.
+8. Finish your turn.
 
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning inside the \`thought_process\` parameter of every tool call.
