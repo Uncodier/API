@@ -310,6 +310,18 @@ export async function inlineExecutePlanStep(
     }
   }
 
+  let skillPromptText = '';
+  if (skillContext) {
+    skillPromptText = `\nIMPORTANT — You MUST follow the skill instructions below. They are mandatory.\n${skillContext}`;
+  } else {
+    skillPromptText = `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
+BEFORE starting to code or execute any commands, you MUST:
+1. Call \`skill_lookup\` tool with \`action="list"\` to see all available skills.
+2. Choose the appropriate skill based on this step's objective, instructions, and the current backlog item.
+3. Call \`skill_lookup\` tool with \`action="get"\` and the chosen \`skill_name\` to load its instructions.
+4. Follow those instructions strictly.`;
+  }
+
   const agentBackground = site_id ? await generateAgentBackground(site_id) : '';
   const memoriesContext = site_id ? await fetchMemoriesContext(site_id, user_id, instance_id) : '';
 
@@ -371,7 +383,7 @@ Title: ${step.title}
 Role: ${effectiveRole || 'general'}
 Instructions: ${step.instructions}
 Expected Output: ${step.expected_output || 'Complete the step successfully.'}
-${skillContext ? `\nIMPORTANT — You MUST follow the skill instructions below. They are mandatory.\n${skillContext}` : ''}
+${skillPromptText}
 SHELL LIMITATIONS:
 - The sandbox shell is /bin/sh (NOT bash). Brace expansion like {a,b,c} does NOT work.
 - WRONG: mkdir -p src/app/{community,guests,booking} — creates a LITERAL folder named "{community,guests,booking}".

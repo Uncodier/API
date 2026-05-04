@@ -98,6 +98,18 @@ export async function executePlanStep(
     }
   }
 
+  let skillPromptText = '';
+  if (skillContext) {
+    skillPromptText = `\nIMPORTANT — You MUST follow the skill instructions below. They define your procedures, validations, and deliverables for this role. Do NOT skip any step in the skill.\n${skillContext}`;
+  } else {
+    skillPromptText = `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
+BEFORE starting to code or execute any commands, you MUST:
+1. Call \`skill_lookup\` tool with \`action="list"\` to see all available skills.
+2. Choose the appropriate skill based on this step's objective, instructions, and the current backlog item.
+3. Call \`skill_lookup\` tool with \`action="get"\` and the chosen \`skill_name\` to load its instructions.
+4. Follow those instructions strictly.`;
+  }
+
   // 3. Build a dedicated system prompt for this sub-agent step
   const { instance_id, site_id } = context.executionOptions;
   const requirementId = context.instance?.requirement_id || '';
@@ -135,7 +147,7 @@ Title: ${step.title}
 Role: ${step.role || 'general'}
 Instructions: ${step.instructions}
 Expected Output: ${step.expected_output || 'Complete the step successfully.'}
-${skillContext ? `\nIMPORTANT — You MUST follow the skill instructions below. They define your procedures, validations, and deliverables for this role. Do NOT skip any step in the skill.\n${skillContext}` : ''}
+${skillPromptText}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}
 
 RULES:
@@ -144,8 +156,9 @@ RULES:
   1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
   2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
   3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
-  4. GENERIC STEP CANCELLATION: If the step title or instructions are generically named (e.g., 'Step 1' with 'Execute step 1') without any concrete actionable context or objective, you MUST CANCEL the current plan immediately using the \`instance_plan\` tool with action='update', plan_id='${plan.id}', and status='cancelled'.
-  5. DATABASE MIGRATIONS (CRITICAL):
+  4. GENERIC STEP CANCELLATION: If the step title or instructions are generic or not clear enough without any concrete actionable context or objective, you MUST CANCEL the current plan immediately using the \`instance_plan\` tool with action='update', plan_id='${plan.id}', and status='cancelled'.
+  5. DATABASE CRUDS AND MIGRATIONS ON APPS (CRITICAL):
+     - Never muck up data, always create a table first, then add data to it.
      - ALL database migrations MUST be written as plain \`.sql\` scripts located in \`migrations/*.sql\` (or \`supabase/migrations/\` / \`src/db/migrations/\`). NEVER create TypeScript classes, TypeORM models, or Prisma schemas.
      - Row Level Security (RLS) is MANDATORY for all new tables. You must include the \`ALTER TABLE ... ENABLE ROW LEVEL SECURITY;\` and the corresponding \`CREATE POLICY\` in the same SQL file.
      - When using the Supabase client, you MUST explicitly specify the schema before calling \`.from()\` to prevent 'public.table_name not found' errors. Example: \`supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || 'public').from('my_table')\`.
@@ -157,6 +170,9 @@ RULES:
 - When reporting status, use requirement_id="${requirementId}" and instance_id="${instance_id}".
 - The preview URL comes from the GitHub Deployments API post-push. Do NOT construct or guess it.
 - Be efficient — the sandbox has a limited lifetime.
+  6. USE MAKINARI SKILLS TOOLS FOR HEAVY LIFTING: Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
+  7. INTEGRATE MAKINARI API WHENEVER POSSIBLE TO A PROJECT:
+    - Use the https://docs.makinari.com/mcp-server and https://docs.makinari.com/rest-api API documentation to integrate the APIs and tools avialble into the project.
 `;
 
   const modifiedContext = {
