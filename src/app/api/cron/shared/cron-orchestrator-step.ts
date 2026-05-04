@@ -169,7 +169,7 @@ export async function runOrchestratorStep(params: {
   const orchestratorModel = process.env.AI_CODE_MODEL || 'gemini-3.1-pro-preview-customtools';
 
   const globalStartTime = params.globalStartTime ?? Date.now();
-  const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
+  const MAX_EXECUTION_TIME_MS = 12 * 60 * 1000; // 12 minutes
 
   let timedOut = false;
 

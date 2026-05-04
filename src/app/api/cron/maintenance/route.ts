@@ -22,7 +22,7 @@ function maintenanceRemoteInstancePayload(base: {
   };
 }
 
-export const maxDuration = 3600; // 1 hora en segundos
+export const maxDuration = 800; // Máximo permitido en plan pro (limitado por Vercel)
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {

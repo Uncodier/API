@@ -26,7 +26,7 @@ function cronRemoteInstancePayload(base: {
   };
 }
 
-export const maxDuration = 3600; // 1 hora en segundos
+export const maxDuration = 800; // 13 minutos aprox (Max for pro plan)
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
