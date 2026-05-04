@@ -75,7 +75,7 @@ WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the backlog for \`done\` items.
 2. Pick the MOST RECENTLY COMPLETED \`done\` item (the last one in the list of done items) to audit. If you have already reviewed all of them, pick the one that requires the most work or review.
 3. QA Audit: Read the files related to that item. Run \`sandbox_run_command\` (e.g., \`npm run build\` or curl tests) to verify it actually works.
-4. Planning: If you find issues to fix or improvements to make, you MUST FIRST use the \`instance_plan\` tool (action="create") to explicitly create an execution plan. Do not just outline it in your thoughts; you must call the tool.
+4. Planning: If you find issues to fix or improvements to make, you MUST FIRST use the \`instance_plan\` tool (action="create") to explicitly create an execution plan. Do not just outline it in your thoughts; you must call the tool. BREAK DOWN the item into specific, actionable execution steps. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step must have a clear objective and detailed instructions.
 5. Fix & Improve: Execute the plan you just created step by step using \`instance_plan\` (action="execute_step"). Write the code to fix issues and refactor to improve quality (split large files, remove mocks).
 6. Verify: Run \`sandbox_run_command\` with \`npm run build\` again to ensure your fixes didn't break the build.
 7. Report: Update \`evidence/<item_id>.json\` with your findings and fixes.

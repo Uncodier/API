@@ -173,6 +173,46 @@ export async function runOrchestratorStep(params: {
 
   let timedOut = false;
 
+  // Fetch last instance plan context to prevent agents from creating plans in the wrong instance or losing track
+  const { data: lastPlans } = await supabaseAdmin
+    .from('instance_plans')
+    .select('*')
+    .eq('instance_id', instanceId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  let instance_plan_id = null;
+  let activeStepContext = '';
+  let allStepsContext = '';
+  
+  if (lastPlans && lastPlans.length > 0) {
+    const activePlan = lastPlans[0];
+    instance_plan_id = activePlan.id;
+    
+    if (activePlan.steps && Array.isArray(activePlan.steps)) {
+      const stepsSummary = activePlan.steps.map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        order: s.order
+      }));
+      allStepsContext = `\n- Plan Steps: ${JSON.stringify(stepsSummary)}`;
+
+      const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
+      const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
+      const step = inProgressStep || pendingStep;
+      if (step) {
+        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
+      } else {
+        activeStepContext = `\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' from the 'Plan Steps' list above. DO NOT call action="list" to find the step ID.`;
+      }
+    }
+  }
+
+  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${site_id}\n- User ID: ${user_id}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}\n\n⚠️ CRITICAL: ALWAYS use instance_id="${instanceId}" when calling instance_plan. Do NOT use any other instance_id you might find in history.\n`;
+
+  const finalPrompt = orchestratorPrompt + instanceContext;
+
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
       console.log(`[CronStep|orchestrator] Orchestrator reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Saving WIP state and halting to prevent Vercel timeout.`);
@@ -202,7 +242,7 @@ export async function runOrchestratorStep(params: {
           instance_id: instanceId,
           site_id,
           user_id,
-          system_prompt: orchestratorPrompt,
+          system_prompt: finalPrompt,
           custom_tools: fullTools,
           ai_model: orchestratorModel,
         },
@@ -320,7 +360,7 @@ export async function runOrchestratorStep(params: {
       'IMMEDIATE NEXT ACTIONS:',
       '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
       '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
-      '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
+      '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST have specific, descriptive instructions and a clear objective. Do NOT create generic steps like "Step 1" with "Execute step 1". Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
       '  4. Call `requirement_status` with `stage="in-progress"`.',
       '  5. If ALL items in the backlog are completely done, call the `system_notification` tool directly to notify the team.',
       'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',

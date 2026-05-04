@@ -96,9 +96,16 @@ export async function createInstancePlanCore(params: any) {
     const seenTitles = new Set<string>();
     
     validatedData.steps.forEach((step, idx) => {
-      // Fallback if title is missing
-      const title = step.title || step.description || step.instructions || `Step ${idx + 1}`;
-      step.title = title; // ensure it is set for mapping later
+      if (!step.title) {
+        throw new Error(`Step at index ${idx} is missing a 'title'. Please provide a descriptive title.`);
+      }
+
+      const genericTitleRegex = /^step\s*\d+$/i;
+      if (genericTitleRegex.test(step.title.trim())) {
+        throw new Error(`Step title '${step.title}' is too generic. DO NOT use generic names like "Step 1". Provide a descriptive title (e.g. "Frontend UI - Dashboard").`);
+      }
+
+      const title = step.title;
       
       if (!seenTitles.has(title)) {
         seenTitles.add(title);

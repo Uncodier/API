@@ -92,6 +92,15 @@ export async function updateInstancePlanCore(params: any) {
         (incomingStep.id && currentStep.id === incomingStep.id) || 
         (incomingStep.order !== undefined && currentStep.order === incomingStep.order)
       )) {
+        if (!incomingStep.title) {
+          throw new Error(`A new step being added is missing a 'title'. Please provide a descriptive title.`);
+        }
+        
+        const genericTitleRegex = /^step\s*\d+$/i;
+        if (genericTitleRegex.test(incomingStep.title.trim())) {
+          throw new Error(`Step title '${incomingStep.title}' is too generic. DO NOT use generic names like "Step 1". Provide a descriptive title.`);
+        }
+
         // Deduplicate new steps by title to prevent LLM hallucinations
         if (incomingStep.title && !seenNewTitles.has(incomingStep.title)) {
           seenNewTitles.add(incomingStep.title);

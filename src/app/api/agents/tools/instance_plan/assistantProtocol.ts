@@ -202,7 +202,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
               type: 'object', 
               properties: {
                 id: { type: 'string', description: 'Unique ID for the step' },
-                title: { type: 'string', description: 'Title of the step' },
+                title: { type: 'string', description: 'Descriptive title of the step (e.g. "Frontend UI - Dashboard"). STRICTLY FORBIDDEN to use generic names like "Step 1" or "Execute step".' },
                 description: { type: 'string', description: 'Description of the step' },
                 order: { type: 'number', description: 'Order of execution' },
                 status: { type: 'string', enum: ['pending', 'in_progress', 'completed', 'failed'], description: 'Status of the step' },
@@ -222,7 +222,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
                 test_command: { type: 'string', description: 'Command to run automated tests for this step (e.g. "npm run test:backend"). If omitted, defaults to the standard test command.' },
               },
-              required: ['instructions'],
+              required: ['title', 'instructions', 'skill'],
             },
             description: 'Array of plan steps with detailed properties.' 
           },
