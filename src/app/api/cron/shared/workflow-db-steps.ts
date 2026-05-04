@@ -17,8 +17,36 @@ import { listBacklog } from '@/lib/services/requirement-backlog';
 import type { RequirementBacklog } from '@/lib/services/requirement-backlog-types';
 import { createRequirementStatusCore } from '@/lib/tools/requirement-status-core';
 
+import type { FullRequirementContext } from '@/lib/services/requirement-context-service';
+
+export async function getRequirementFullContextStep(
+  requirementId: string,
+  instanceId: string,
+  siteId: string,
+  userId: string
+): Promise<FullRequirementContext> {
+  'use step';
+  try {
+    const { RequirementContextService } = await import('@/lib/services/requirement-context-service');
+    return await RequirementContextService.getFullContext(requirementId, instanceId, siteId, userId);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[WorkflowDbStep] getRequirementFullContextStep failed for req ${requirementId}: ${msg}`);
+    return {
+      backlog: null,
+      progress: null,
+      previousWorkContext: '',
+      agentBackground: '',
+      memoriesContext: '',
+      historyContext: '',
+      instanceContext: `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}\n\n⚠️ CRITICAL: ALWAYS use instance_id="${instanceId}" when calling instance_plan. Do NOT use any other instance_id you might find in history.\n`,
+    };
+  }
+}
+
 export interface BacklogSnapshotStepResult {
   backlog: RequirementBacklog | null;
+  progress: string[] | null;
   error?: string;
 }
 
@@ -33,13 +61,27 @@ export async function getBacklogSnapshotStep(
   'use step';
   try {
     const snap = await listBacklog(requirementId);
-    return { backlog: snap.backlog };
+    
+    // Also fetch the progress field
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data: reqData } = await supabaseAdmin
+      .from('requirements')
+      .select('progress')
+      .eq('id', requirementId)
+      .single();
+      
+    let progress = null;
+    if (reqData && reqData.progress && Array.isArray(reqData.progress)) {
+      progress = reqData.progress;
+    }
+    
+    return { backlog: snap.backlog, progress };
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(
       `[WorkflowDbStep] backlog snapshot unavailable for req ${requirementId}: ${msg}`,
     );
-    return { backlog: null, error: msg };
+    return { backlog: null, progress: null, error: msg };
   }
 }
 

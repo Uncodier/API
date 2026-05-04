@@ -25,11 +25,10 @@ import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import { detectAdminLoopStep } from '../shared/admin-loop-step';
 import {
-  getBacklogSnapshotStep,
   recordRequirementBlockedStep,
   unblockRequirementStep,
   checkInstanceAndPlanStatusStep,
-  getInstanceBackgroundStep,
+  getRequirementFullContextStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -200,21 +199,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Pulled via a durable step because the workflow VM forbids direct `fetch`.
   // The step swallows transient errors and returns `backlog: null`, which the
   // prompt builder already handles as "empty backlog" guidance.
-  const backlogSnap = await getBacklogSnapshotStep(reqId);
-  if (backlogSnap.error) {
-    console.warn(`[CronAppsWorkflow] backlog snapshot unavailable: ${backlogSnap.error}`);
-  }
-  const backlogSnapshot = backlogSnap.backlog;
+  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
 
-  const bgStep = await getInstanceBackgroundStep(site_id, user_id, instanceId);
+  // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
+  const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
 
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
-    workDir, branchName, isNewBranch, previousWorkContext,
-    backlog: backlogSnapshot,
-    agentBackground: bgStep.agentBackground,
-    memoriesContext: bgStep.memoriesContext,
-    historyContext: bgStep.historyContext,
+    workDir, branchName, isNewBranch, 
+    previousWorkContext: finalPreviousWorkContext,
+    backlog: reqContext.backlog,
+    recentProgress: reqContext.progress || undefined,
+    agentBackground: reqContext.agentBackground,
+    memoriesContext: reqContext.memoriesContext,
+    historyContext: reqContext.historyContext,
   });
 
   // Step 4: Run orchestrator (if no pending plan)
@@ -234,6 +232,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       user_id,
       initialMessage: prompt,
       requirementTitle: title,
+      instanceContext: reqContext.instanceContext,
     });
     sandboxId = orch.effectiveSandboxId;
 

@@ -10,7 +10,6 @@ import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 /**
  * Tool set for the cron orchestrator — routed through `tool_lookup`.
@@ -88,6 +87,7 @@ export async function runOrchestratorStep(params: {
   site_id: string;
   user_id: string;
   initialMessage: string;
+  instanceContext?: string;
   git_repo_kind?: 'applications' | 'automation';
   /** Used when reprovisioning the VM (branch title) */
   requirementTitle?: string;
@@ -103,6 +103,7 @@ export async function runOrchestratorStep(params: {
     site_id,
     user_id,
     initialMessage,
+    instanceContext = '',
     git_repo_kind = 'applications',
     requirementTitle,
   } = params;
@@ -172,44 +173,6 @@ export async function runOrchestratorStep(params: {
   const MAX_EXECUTION_TIME_MS = 12 * 60 * 1000; // 12 minutes
 
   let timedOut = false;
-
-  // Fetch last instance plan context to prevent agents from creating plans in the wrong instance or losing track
-  const { data: lastPlans } = await supabaseAdmin
-    .from('instance_plans')
-    .select('*')
-    .eq('instance_id', instanceId)
-    .order('created_at', { ascending: false })
-    .limit(1);
-
-  let instance_plan_id = null;
-  let activeStepContext = '';
-  let allStepsContext = '';
-  
-  if (lastPlans && lastPlans.length > 0) {
-    const activePlan = lastPlans[0];
-    instance_plan_id = activePlan.id;
-    
-    if (activePlan.steps && Array.isArray(activePlan.steps)) {
-      const stepsSummary = activePlan.steps.map((s: any) => ({
-        id: s.id,
-        title: s.title,
-        status: s.status,
-        order: s.order
-      }));
-      allStepsContext = `\n- Plan Steps: ${JSON.stringify(stepsSummary)}`;
-
-      const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
-      const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
-      const step = inProgressStep || pendingStep;
-      if (step) {
-        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
-      } else {
-        activeStepContext = `\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' from the 'Plan Steps' list above. DO NOT call action="list" to find the step ID.`;
-      }
-    }
-  }
-
-  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${site_id}\n- User ID: ${user_id}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}\n\n⚠️ CRITICAL: ALWAYS use instance_id="${instanceId}" when calling instance_plan. Do NOT use any other instance_id you might find in history.\n`;
 
   const finalPrompt = orchestratorPrompt + instanceContext;
 

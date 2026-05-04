@@ -9,7 +9,7 @@ import {
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { runMaintenanceAgentStep } from './agent-step';
-import { getBacklogSnapshotStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep } from '../shared/workflow-db-steps';
+import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { sleep } from 'workflow';
@@ -72,13 +72,17 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     const cleanup = await cleanupNestedProjectsStep(sandboxId!, cronAudit);
     sandboxId = cleanup.effectiveSandboxId;
 
-    const backlogSnap = await getBacklogSnapshotStep(reqId);
-    const backlogSnapshot = backlogSnap.backlog;
+    const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+    const finalPreviousWorkContext = input.previousWorkContext || reqContext.previousWorkContext;
 
     const maintenancePrompt = buildMaintenancePromptForFlow({
       reqId, title, type, instanceId, site_id,
-      workDir, branchName, backlog: backlogSnapshot,
-      previousWorkContext: input.previousWorkContext,
+      workDir, branchName, backlog: reqContext.backlog,
+      previousWorkContext: finalPreviousWorkContext,
+      recentProgress: reqContext.progress || undefined,
+      agentBackground: reqContext.agentBackground,
+      memoriesContext: reqContext.memoriesContext,
+      historyContext: reqContext.historyContext,
     });
 
     console.log(`[QAWorkflow|qa] Running QA & Improvement agent directly (no steps/plans)`);
@@ -147,6 +151,7 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       user_id,
       initialMessage: prompt,
       requirementTitle: title,
+      instanceContext: reqContext.instanceContext,
     });
     sandboxId = agentRun.effectiveSandboxId;
 

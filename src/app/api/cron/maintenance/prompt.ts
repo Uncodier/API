@@ -21,6 +21,10 @@ export interface MaintenancePromptInput {
   branchName: string;
   backlog?: RequirementBacklog | null;
   previousWorkContext?: string;
+  recentProgress?: string[];
+  agentBackground?: string;
+  memoriesContext?: string;
+  historyContext?: string;
 }
 
 export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string {
@@ -32,7 +36,16 @@ export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string
     ? `\nCRITICAL CONTEXT FROM MAIN WORKFLOW:\n${p.previousWorkContext}\n` 
     : '';
 
+  const progress = p.recentProgress?.length
+    ? `\nRECENT PROGRESS (last 5 entries of progress.md, newest first):\n${p.recentProgress.slice(-5).reverse().map((l) => `  - ${l}`).join('\n')}`
+    : '';
+
   return `You are the QA AND IMPROVEMENT AGENT of a requirement workflow running inside a secure Vercel Sandbox.
+
+COMPANY BACKGROUND & MEMORIES:
+${p.agentBackground || ''}
+${p.memoriesContext || ''}
+${p.historyContext || ''}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 
@@ -52,7 +65,7 @@ INSTANCE:
 YOUR ROLE: QA AND IMPROVEMENT AGENT
 Your job is to audit backlog items that the main team has marked as \`done\`, verify they ACTUALLY work as specified in the contract, fix any missing functionality, and improve the code quality. You are the safety net.
 ${contextSection}
-${snapshot}
+${snapshot}${progress}
 
 HARD RULES:
 1. FOCUS ON DONE ITEMS: You must only audit and improve code belonging to backlog items that have \`status='done'\`. NEVER touch \`pending\` or \`in_progress\` items.
