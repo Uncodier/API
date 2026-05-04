@@ -175,12 +175,13 @@ export async function prepareAssistantContext(
     requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
   }
 
-  // Fetch requirement progress log if linked
+  // Fetch requirement progress log and backlog if linked
   let progressContext = '';
+  let backlogContext = '';
   if (activeRequirementId) {
     const { data: reqData } = await supabaseAdmin
       .from('requirements')
-      .select('progress')
+      .select('progress, backlog')
       .eq('id', activeRequirementId)
       .single();
       
@@ -189,6 +190,14 @@ export async function prepareAssistantContext(
       const recentProgress = reqData.progress.slice(-5);
       progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
       progressContext += JSON.stringify(recentProgress, null, 2);
+    }
+
+    if (reqData && reqData.backlog && reqData.backlog.items && Array.isArray(reqData.backlog.items)) {
+      const inProgressItem = reqData.backlog.items.find((item: any) => item.status === 'in_progress');
+      if (inProgressItem) {
+        backlogContext = '\n\n📋 CURRENT BACKLOG ITEM (IN_PROGRESS):\n';
+        backlogContext += JSON.stringify(inProgressItem, null, 2);
+      }
     }
   }
 
@@ -214,7 +223,8 @@ export async function prepareAssistantContext(
       const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
       const step = inProgressStep || pendingStep;
       if (step) {
-        activeStepContext = `\n- Current Step: ${JSON.stringify(step)}`;
+        // Provide the entire active step object to the agent
+        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above. Do NOT call action="list" to find the step ID if it is provided here.`;
       }
     }
   }
@@ -269,7 +279,10 @@ BREAKING DOWN THE PLAN:
 
 PLAN vs STEPS:
 - If the user's request describes a DIFFERENT plan (new objective, new scope, or different approach than the previous plan): use action "create" to create a NEW plan. Do not reuse or update the old plan.
-- If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.`
+- If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.
+
+EXECUTION:
+- To execute a step using action "execute_step", you NEED the step id. IF the 'Active Step Object' is provided in the INSTANCE CONTEXT above, use its 'id' directly. If it is NOT provided, use action "list" FIRST to retrieve the current plan and its steps, then use the appropriate step id.`
       : '';
 
   const activePlanInstruction = 
@@ -318,6 +331,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     historyContext,
     requirementStatusContext,
     progressContext,
+    backlogContext,
     getSandboxRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
