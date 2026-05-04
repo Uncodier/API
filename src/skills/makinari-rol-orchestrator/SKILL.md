@@ -133,68 +133,50 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
   "title": "Implement: <requirement_title>",
   "description": "End-to-end plan to deliver the backlog item.",
   "expected_output": "Working feature deployed to preview URL.",
-  "success_criteria": ["All acceptance criteria met", "QA scenarios pass", "Build succeeds"],
-  "validation_rules": ["No mocked data", "Must use Shadcn UI"],
+  "success_criteria": ["src/app/dashboard/page.tsx", "src/components/ui/button.tsx"],
+  "validation_rules": ["tests/dashboard.test.ts"],
   "steps": [
     { 
       "id": "step_base", 
       "order": 1, 
       "title": "Project base — Vitrina vs generic app", 
       "skill": "makinari-obj-template-selection", 
-      "instructions": "From req type and instructions, pick Vitrina or generic app. git fetch; checkout into feature branch; append BASE: ... to requirement.instructions.",
-      "expected_output": "Branch checked out and BASE appended to instructions.",
-      "success_criteria": ["git status shows clean working tree on feature branch"],
-      "validation_rules": ["Do not overwrite existing BASE if present"]
+      "instructions": "From req type and instructions, pick Vitrina or generic app. git fetch; checkout into feature branch; append BASE: ... to requirement.instructions."
     },
     { 
       "id": "step_invest", 
       "order": 2, 
       "title": "Investigation", 
       "skill": "makinari-fase-investigacion", 
-      "instructions": "Explore repo on the selected base, read existing code, check dependencies.",
-      "expected_output": "Investigation context gathered for downstream steps.",
-      "success_criteria": ["Dependencies verified"],
-      "validation_rules": ["Do not write code in this step"]
+      "instructions": "Explore repo on the selected base, read existing code, check dependencies."
     },
     { 
       "id": "step_dev", 
       "order": 3, 
       "title": "Development", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior.",
-      "expected_output": "UI components and pages created and wired to real endpoints.",
-      "success_criteria": ["Pages render without 500 errors", "Shadcn components used for layout", "Responsive on mobile"],
-      "validation_rules": ["No mocked data", "Must use Tailwind classes"]
+      "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior."
     },
     { 
       "id": "step_qa", 
       "order": 4, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
-      "instructions": "Author .qa/scenarios, triage gate signals, write qa_results.json.",
-      "expected_output": "qa_results.json written with passing scenarios.",
-      "success_criteria": ["All scenarios pass", "No 503 errors on boot"],
-      "validation_rules": ["Scenarios must target real DOM test-ids"]
+      "instructions": "Author .qa/scenarios, triage gate signals, write qa_results.json."
     },
     { 
       "id": "step_val", 
       "order": 5, 
       "title": "Validation", 
       "skill": "makinari-fase-validacion", 
-      "instructions": "npm run build, verify preview, write test_results.json.",
-      "expected_output": "test_results.json written with build success.",
-      "success_criteria": ["npm run build exits with 0"],
-      "validation_rules": ["Must not skip type checking"]
+      "instructions": "npm run build, verify preview, write test_results.json."
     },
     { 
       "id": "step_report", 
       "order": 6, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
-      "instructions": "Create requirement_status with preview URL.",
-      "expected_output": "requirement_status created in DB.",
-      "success_criteria": ["Preview URL is valid and reachable"],
-      "validation_rules": ["Do not report success if build failed"]
+      "instructions": "Create requirement_status with preview URL."
     }
   ]
 }
