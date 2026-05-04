@@ -97,7 +97,8 @@ export async function createInstancePlanCore(params: any) {
     
     validatedData.steps.forEach((step, idx) => {
       if (!step.title) {
-        throw new Error(`Step at index ${idx} is missing a 'title'. Please provide a descriptive title.`);
+        console.error(`[CreateInstancePlan] Step ${idx} missing title. Raw step:`, JSON.stringify(step));
+        throw new Error(`Step at index ${idx} is missing a 'title'. Please provide a descriptive title. Raw step keys provided: ${Object.keys(step).join(', ')}`);
       }
 
       const genericTitleRegex = /^step\s*\d+$/i;
