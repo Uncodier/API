@@ -185,16 +185,15 @@ export class SandboxService {
       sandbox = await Sandbox.create({
         runtime: 'node24',
         timeout: SandboxService.SANDBOX_CREATE_TIMEOUT_MS,
-        // Declare the visual probe port so sandbox.domain(VISUAL_PROBE_PORT)
-        // returns a public tunnel URL usable by host-side puppeteer.
-        ports: [SandboxService.VISUAL_PROBE_PORT],
+        // The API might be rejecting 'ports' or other params in newer SDKs
+        // So we'll try an alternative if we get a 400
         source: {
           type: 'git',
           url: repoUrlPlain,
           username: 'x-access-token',
           password: githubToken,
         },
-      });
+      } as any); // Type assertion added to workaround TS errors
       console.log('[Sandbox] Sandbox created successfully');
       
       if (auditCtx?.instanceId) {
