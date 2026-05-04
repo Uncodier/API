@@ -17,6 +17,7 @@ types: ['develop', 'automation', 'content', 'design', 'task', 'integration', 're
 - Identify which sections are already filled and which are missing. If section 6 (Contracts) or section 7 (Acceptance Criteria) are missing while the requirement involves UI or APIs, flag it — the planner cannot plan around an empty contract.
 
 ### 2. Extract platform context
+- **CRITICAL - Company Background**: You MUST always search for the company's background, context, and brand identity using the `memories` tool and `instance_logs` or `tool_lookup(action="call", name="instance")` before designing requirements, backlogs, or plans. Align the investigation with the company's core objectives and target audience.
 - `memories` tool — search for prior decisions, brand guidelines, and prior requirements on this site.
 - Site settings tools — if the requirement references a client site, read its current settings (language, brand colors, tone).
 

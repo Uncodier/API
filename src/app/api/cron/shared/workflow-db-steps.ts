@@ -172,3 +172,43 @@ export async function incrementQaSuccessfulRunsStep(requirementId: string): Prom
     console.warn(`[WorkflowDbStep] Failed to increment qa_successful_runs for req ${requirementId}:`, e);
   }
 }
+
+export async function getInstanceBackgroundStep(
+  siteId: string,
+  userId: string,
+  instanceId: string
+): Promise<{ agentBackground: string; memoriesContext: string; historyContext: string }> {
+  'use step';
+  try {
+    const { fetchMemoriesContext, generateAgentBackground } = await import('@/app/api/robots/instance/assistant/utils');
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+
+    const agentBackground = siteId ? await generateAgentBackground(siteId) : '';
+    const memoriesContext = siteId ? await fetchMemoriesContext(siteId, userId, instanceId) : '';
+
+    let historyContext = '';
+    if (instanceId) {
+      const { data: historicalLogs } = await supabaseAdmin
+        .from('instance_logs')
+        .select('log_type, message, created_at, tool_name, tool_result')
+        .eq('instance_id', instanceId)
+        .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
+        .order('created_at', { ascending: true })
+        .limit(50);
+
+      if (historicalLogs && historicalLogs.length > 0) {
+        historyContext = '\n\n📋 RECENT CONVERSATION HISTORY:\n';
+        historicalLogs.forEach((log: any) => {
+          const timestamp = new Date(log.created_at).toLocaleTimeString();
+          const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
+          historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+        });
+      }
+    }
+
+    return { agentBackground, memoriesContext, historyContext };
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to fetch instance background for site ${siteId}, instance ${instanceId}:`, e);
+    return { agentBackground: '', memoriesContext: '', historyContext: '' };
+  }
+}

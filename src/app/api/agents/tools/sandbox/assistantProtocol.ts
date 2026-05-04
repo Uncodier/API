@@ -141,8 +141,25 @@ export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
           exitCode: 1,
         };
       }
+
+      let cmdToRun = args.command;
+      let cmdArgs = args.args || [];
+
+      // Vercel Sandbox expects the cmd argument to be a single executable name.
+      // If the model passes a full string like "npm run build" into the command field,
+      // the Vercel API will throw a 400 "Status code 400 is not ok" error.
+      if (cmdToRun.includes(' ')) {
+        if (cmdArgs.length === 0) {
+          cmdArgs = ['-c', cmdToRun];
+          cmdToRun = 'sh';
+        } else {
+          cmdArgs = ['-c', fullCmd];
+          cmdToRun = 'sh';
+        }
+      }
+
       const s0 = liveSandbox(sandbox, toolsCtx);
-      return SandboxService.runCommandInSandbox(s0, args.command, args.args || [], resolvePath(args.cwd, WORK_DIR));
+      return SandboxService.runCommandInSandbox(s0, cmdToRun, cmdArgs, resolvePath(args.cwd, WORK_DIR));
     }
   };
 }

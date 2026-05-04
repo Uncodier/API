@@ -9,6 +9,8 @@ import { SkillsService } from '@/lib/services/skills-service';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
+import { fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
 import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT } from './step-git-prompts';
 import { runGateForFlow } from './gates';
@@ -293,6 +295,29 @@ export async function inlineExecutePlanStep(
     }
   }
 
+  const agentBackground = site_id ? await generateAgentBackground(site_id) : '';
+  const memoriesContext = site_id ? await fetchMemoriesContext(site_id, user_id, instance_id) : '';
+
+  let historyContext = '';
+  if (instance_id) {
+    const { data: historicalLogs } = await supabaseAdmin
+      .from('instance_logs')
+      .select('log_type, message, created_at, tool_name, tool_result')
+      .eq('instance_id', instance_id)
+      .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
+      .order('created_at', { ascending: true })
+      .limit(50);
+
+    if (historicalLogs && historicalLogs.length > 0) {
+      historyContext = '\n\n📋 RECENT CONVERSATION HISTORY:\n';
+      historicalLogs.forEach((log) => {
+        const timestamp = new Date(log.created_at).toLocaleTimeString();
+        const role = log.log_type === 'user_action' ? 'User' : 'Assistant';
+        historyContext += `[${timestamp}] ${role}: ${log.message.substring(0, 150)}${log.message.length > 150 ? '...' : ''}\n`;
+      });
+    }
+  }
+
   const stepPrompt = `You are an EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 
@@ -310,6 +335,11 @@ WORKSPACE — READ THIS CAREFULLY:
 - All relative paths in sandbox tools resolve from ${SandboxService.WORK_DIR}.
 - FIRST ACTIONS: (1) skill_lookup action=search with keywords from this step's objective, instructions, and stack; then skill_lookup action=get for each relevant playbook. (2) sandbox_list_files path="." to see the current project structure before writing code.
 - LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step's title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.
+
+COMPANY BACKGROUND & MEMORIES:
+${agentBackground}
+${memoriesContext}
+${historyContext}
 
 CONTEXT:
 - instance_id: ${instance_id}

@@ -29,7 +29,10 @@ If you notice that the instance is paused (`status="paused"`) and the user is re
 ### 3. Backlog Item Iterations (Changes & Improvements)
 When a backlog item is already completed (marked as `done` or `ready`), and the client requests changes, fixes, or improvements to it, you MUST NOT reopen or modify the existing completed backlog item. Instead, you MUST always create a NEW backlog item specifically for these changes. This ensures a clean history and better control over iterations and versions.
 
-### 4. Use sibling skills for the heavy lifting
+### 4. CRITICAL: Company Context First
+Before designing ANY requirements, backlog items, or instance plans, you MUST always search for the company's background, context, and brand identity. Use the `memories` tool and `instance_logs`, or `tool_lookup(action="call", name="instance")` to understand the business. Your requirements, backlog items, and plans MUST align with the company's core objectives, tone, and target audience. Never create generic features without tying them to the specific company context.
+
+### 5. Use sibling skills for the heavy lifting
 Each step MUST set **`skill`** (preferred) or **`role`** so the executor loads the right playbook. Available skills:
 
 | Skill | Role |

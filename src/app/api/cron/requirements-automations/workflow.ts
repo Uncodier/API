@@ -24,7 +24,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
-import { recordRequirementBlockedStep } from '../shared/workflow-db-steps';
+import { recordRequirementBlockedStep, getInstanceBackgroundStep } from '../shared/workflow-db-steps';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAutoWorkflowInput {
@@ -70,7 +70,14 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit);
   sandboxId = cleanup.effectiveSandboxId;
 
+  const bgStep = await getInstanceBackgroundStep(site_id, user_id, instanceId);
+
   const orchestratorPrompt = `You are an automation runner inside a Vercel Sandbox.
+
+COMPANY BACKGROUND & MEMORIES:
+${bgStep.agentBackground}
+${bgStep.memoriesContext}
+${bgStep.historyContext}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 

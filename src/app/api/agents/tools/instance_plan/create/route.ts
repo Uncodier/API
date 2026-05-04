@@ -17,7 +17,7 @@ const CreateInstancePlanSchema = z.object({
   agent_id: z.string().uuid('Invalid agent_id').optional(),
   steps: z.array(z.object({
     id: z.string().optional(),
-    title: z.string(),
+    title: z.string().optional(),
     description: z.string().optional(),
     order: z.number().int().optional(),
     status: z.enum(['pending', 'in_progress', 'completed', 'failed']).optional(),
@@ -91,16 +91,20 @@ export async function createInstancePlanCore(params: any) {
   // Prepare steps if provided
   let planSteps: any[] = [];
   if (validatedData.steps && validatedData.steps.length > 0) {
-    // Deduplicate steps by title to prevent LLM hallucinations from repeating steps
+    // Deduplicate steps by title or instructions to prevent LLM hallucinations from repeating steps
     const uniqueSteps: any[] = [];
     const seenTitles = new Set<string>();
     
-    for (const step of validatedData.steps) {
-      if (step.title && !seenTitles.has(step.title)) {
-        seenTitles.add(step.title);
+    validatedData.steps.forEach((step, idx) => {
+      // Fallback if title is missing
+      const title = step.title || step.description || step.instructions || `Step ${idx + 1}`;
+      step.title = title; // ensure it is set for mapping later
+      
+      if (!seenTitles.has(title)) {
+        seenTitles.add(title);
         uniqueSteps.push(step);
       }
-    }
+    });
 
     planSteps = uniqueSteps.map((step, index) => ({
       id: `step_${index + 1}`,

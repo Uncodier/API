@@ -46,6 +46,9 @@ export interface CoordinatorPromptInput {
   recentProgress?: string[];
   /** Relevant lines from `DECISIONS.md` (assumptions carried from prior cycles). */
   relevantDecisions?: string[];
+  agentBackground?: string;
+  memoriesContext?: string;
+  historyContext?: string;
 }
 
 /**
@@ -93,6 +96,11 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
     : '';
 
   return `You are the COORDINATOR of a requirement workflow running inside a secure Vercel Sandbox.
+
+COMPANY BACKGROUND & MEMORIES:
+${p.agentBackground || ''}
+${p.memoriesContext || ''}
+${p.historyContext || ''}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 

@@ -29,6 +29,7 @@ import {
   recordRequirementBlockedStep,
   unblockRequirementStep,
   checkInstanceAndPlanStatusStep,
+  getInstanceBackgroundStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -205,10 +206,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   }
   const backlogSnapshot = backlogSnap.backlog;
 
+  const bgStep = await getInstanceBackgroundStep(site_id, user_id, instanceId);
+
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
     workDir, branchName, isNewBranch, previousWorkContext,
     backlog: backlogSnapshot,
+    agentBackground: bgStep.agentBackground,
+    memoriesContext: bgStep.memoriesContext,
+    historyContext: bgStep.historyContext,
   });
 
   // Step 4: Run orchestrator (if no pending plan)

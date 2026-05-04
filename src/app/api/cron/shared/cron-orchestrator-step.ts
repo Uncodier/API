@@ -7,9 +7,10 @@ import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtoco
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { Sandbox } from '@vercel/sandbox';
-import { getAssistantTools } from '@/app/api/robots/instance/assistant/utils';
+import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { supabaseAdmin } from '@/lib/database/supabase-client';
 
 /**
  * Tool set for the cron orchestrator — routed through `tool_lookup`.

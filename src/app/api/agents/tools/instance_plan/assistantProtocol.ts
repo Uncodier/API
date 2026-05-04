@@ -222,7 +222,7 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
                 skill: { type: 'string', description: 'Preferred: explicit SKILL.md slug to inject (e.g. makinari-rol-frontend, makinari-rol-qa, makinari-obj-template-selection). Takes priority over role. One of skill or role must be set.' },
                 test_command: { type: 'string', description: 'Command to run automated tests for this step (e.g. "npm run test:backend"). If omitted, defaults to the standard test command.' },
               },
-              required: ['title', 'instructions'],
+              required: ['instructions'],
             },
             description: 'Array of plan steps with detailed properties.' 
           },

@@ -20,6 +20,7 @@ resume it instead of creating a new plan step. Plans that touch `done` items
 or items from future phases are rejected by the coordinator.
 
 ### 1. Read the remaining inputs
+- **CRITICAL - Company Background**: You MUST always search for the company's background, context, and brand identity using the `memories` tool and `instance_logs` or `tool_lookup(action="call", name="instance")` before designing requirements, backlogs, or plans. Align the plan with the company's core objectives and target audience.
 - `requirements action="read"` — load the immutable spec (`requirement.spec.md`
   in the repo, or the `instructions` field in DB). Do NOT rewrite the spec.
 - Read `progress.md` and the last entries of `DECISIONS.md` for assumptions
