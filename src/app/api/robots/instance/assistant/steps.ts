@@ -235,9 +235,11 @@ export async function prepareAssistantContext(
         // Provide the entire active step object to the agent
         activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
       } else {
-        activeStepContext = `\n\n⚠️ IMPORTANT: You MUST use the 'id' from the 'Plan Steps' list to call instance_plan with action="execute_step". DO NOT call action="list" to find the step ID.`;
+        activeStepContext = `\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' from the 'Plan Steps' list above. DO NOT call action="list" to find the step ID.`;
       }
     }
+  } else {
+    activeStepContext = `\n\n⚠️ IMPORTANT: There is NO ACTIVE PLAN. If you need a plan, you MUST call instance_plan with action="create". DO NOT call action="list" searching for a plan that doesn't exist.`;
   }
 
   // Fetch last completed plan title
