@@ -145,6 +145,10 @@ RULES:
   2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
   3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
   4. GENERIC STEP CANCELLATION: If the step title or instructions are generically named (e.g., 'Step 1' with 'Execute step 1') without any concrete actionable context or objective, you MUST CANCEL the current plan immediately using the \`instance_plan\` tool with action='update', plan_id='${plan.id}', and status='cancelled'.
+  5. DATABASE MIGRATIONS (CRITICAL):
+     - ALL database migrations MUST be written as plain \`.sql\` scripts located in \`migrations/*.sql\` (or \`supabase/migrations/\` / \`src/db/migrations/\`). NEVER create TypeScript classes, TypeORM models, or Prisma schemas.
+     - Row Level Security (RLS) is MANDATORY for all new tables. You must include the \`ALTER TABLE ... ENABLE ROW LEVEL SECURITY;\` and the corresponding \`CREATE POLICY\` in the same SQL file.
+     - When using the Supabase client, you MUST explicitly specify the schema before calling \`.from()\` to prevent 'public.table_name not found' errors. Example: \`supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || 'public').from('my_table')\`.
 - Next.js App Router in this repo: pages only under src/app/ (e.g. src/app/prd/page.tsx). Never create a root folder named "app/" or "app/src/app/" — the GitHub repo may be called "apps" but that is not a path to mirror in the filesystem.
 - Never use a top-level app/ folder for routes (e.g. app/src/app/prd breaks Vercel).
 - Use skill_lookup (search → get) for playbooks matching this step's objective before large edits; follow loaded SKILL.md together with any injected skill block above.
