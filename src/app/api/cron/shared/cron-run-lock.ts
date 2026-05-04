@@ -133,9 +133,24 @@ export async function acquireRunLock(
   
   // If this is a maintenance lock (ends with -maint), we use a different mechanism
   // since we can't use the same columns on the requirements table for parallel locks.
-  // For now, we'll just return a mock lock for maintenance to allow it to run in parallel
-  // without conflicting with the main builder lock on the requirements table.
   if (lockKey.endsWith('-maint')) {
+    const requirementId = lockKey.replace('-maint', '');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    const metadata = data?.metadata || {};
+    
+    const nowMs = Date.now();
+    const currentExpiry = metadata.maint_lock_expires_at ? new Date(metadata.maint_lock_expires_at).getTime() : 0;
+    
+    if (currentExpiry > nowMs) {
+      return null; // Locked by another maint run
+    }
+    
+    metadata.maint_lock_expires_at = expiresAt;
+    metadata.maint_lock_run_id = runId;
+    
+    const { error } = await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+    if (error) return null;
+    
     return { runId, expiresAt };
   }
 
@@ -196,7 +211,17 @@ export async function acquireRunLock(
  * Safe to call multiple times; never throws.
  */
 export async function releaseRunLock(lockKey: string, runId: string): Promise<void> {
-  if (lockKey.endsWith('-maint')) return; // Mock lock for maintenance
+  if (lockKey.endsWith('-maint')) {
+    const requirementId = lockKey.replace('-maint', '');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    if (data?.metadata?.maint_lock_run_id === runId) {
+      const metadata = { ...data.metadata };
+      delete metadata.maint_lock_expires_at;
+      delete metadata.maint_lock_run_id;
+      await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+    }
+    return;
+  }
   
   const requirementId = lockKey;
   try {
@@ -235,7 +260,16 @@ export async function extendRunLock(
   runId: string,
   ttlMs: number = CRON_RUN_LOCK_TTL_MS,
 ): Promise<void> {
-  if (lockKey.endsWith('-maint')) return; // Mock lock for maintenance
+  if (lockKey.endsWith('-maint')) {
+    const requirementId = lockKey.replace('-maint', '');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    if (data?.metadata?.maint_lock_run_id === runId) {
+      const metadata = { ...data.metadata };
+      metadata.maint_lock_expires_at = new Date(Date.now() + ttlMs).toISOString();
+      await supabaseAdmin.from('requirements').update({ metadata }).eq('id', requirementId);
+    }
+    return;
+  }
   
   const requirementId = lockKey;
   try {

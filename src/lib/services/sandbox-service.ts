@@ -47,9 +47,9 @@ export class SandboxService {
    */
   static readonly VISUAL_PROBE_PORT = 3000;
 
-  private static readonly SANDBOX_CREATE_TIMEOUT_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private static readonly SANDBOX_CREATE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
   /** Extends VM lifetime right after create, before fetch/npm install. */
-  private static readonly EXTEND_AFTER_CREATE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private static readonly EXTEND_AFTER_CREATE_MS = 10 * 60 * 1000; // 10 minutes
 
   /** runCommand with cwd (tuple overload in SDK .d.ts omits cwd). */
   private static runWithCwd(sandbox: Sandbox, command: string, args: string[], cwd: string) {
@@ -139,7 +139,7 @@ export class SandboxService {
       ? { ...audit, requirementId: audit.requirementId ?? requirementId }
       : undefined;
 
-    const githubToken = process.env.GITHUB_TOKEN;
+    const githubToken = process.env.GITHUB_TOKEN?.trim();
     if (!githubToken) {
       throw new Error('GITHUB_TOKEN environment variable is required.');
     }
@@ -203,7 +203,9 @@ export class SandboxService {
       }
     } catch (err: any) {
       console.error('[Sandbox] Sandbox.create() failed:', err?.message || err);
-      throw new Error(`Sandbox.create() failed: ${err?.message || 'Unknown error'}`);
+      if (err.json) console.error('[Sandbox] Sandbox.create() JSON detail:', err.json);
+      if (err.text) console.error('[Sandbox] Sandbox.create() text detail:', err.text);
+      throw new Error(`Sandbox.create() failed: ${err?.message || 'Unknown error'} ${err.text ? JSON.stringify(err.text) : ''}`);
     }
 
     try {

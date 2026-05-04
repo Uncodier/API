@@ -87,6 +87,8 @@ export async function runMaintenanceAgentStep(params: {
   const MAX_EXECUTION_TIME_MS = 12 * 60 * 1000; // 12 minutes
   let timedOut = false;
 
+  const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+
   while (!isDone && turns < MAX_TURNS) {
     if (Date.now() - globalStartTime > MAX_EXECUTION_TIME_MS) {
       console.log(`[MaintenanceStep] Agent reached max execution time (${MAX_EXECUTION_TIME_MS}ms). Halting to prevent Vercel timeout.`);
