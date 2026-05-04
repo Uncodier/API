@@ -211,6 +211,7 @@ export async function prepareAssistantContext(
 
   let instance_plan_id = null;
   let activeStepContext = '';
+  let allStepsContext = '';
   let lastCompletedPlanContext = '';
   
   if (lastPlans && lastPlans.length > 0) {
@@ -219,12 +220,22 @@ export async function prepareAssistantContext(
     
     // Determine active step
     if (activePlan.steps && Array.isArray(activePlan.steps)) {
+      const stepsSummary = activePlan.steps.map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        status: s.status,
+        order: s.order
+      }));
+      allStepsContext = `\n- Plan Steps: ${JSON.stringify(stepsSummary)}`;
+
       const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
       const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
       const step = inProgressStep || pendingStep;
       if (step) {
         // Provide the entire active step object to the agent
-        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above. Do NOT call action="list" to find the step ID if it is provided here.`;
+        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
+      } else {
+        activeStepContext = `\n\n⚠️ IMPORTANT: You MUST use the 'id' from the 'Plan Steps' list to call instance_plan with action="execute_step". DO NOT call action="list" to find the step ID.`;
       }
     }
   }
@@ -267,7 +278,7 @@ export async function prepareAssistantContext(
     ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the instance tool (with action="update") to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call the instance tool. Do this automatically without asking the user.`
     : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the instance tool (with action="update") to update it with a more descriptive name.`;
 
-  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
+  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
@@ -282,7 +293,7 @@ PLAN vs STEPS:
 - If the user only adds or requests NEW STEPS within the same plan (same objective/scope): use action "list" to get the current plan, then use action "update" to add or modify steps and set status to "in_progress" to reopen the plan. Do not create a new plan in this case.
 
 EXECUTION:
-- To execute a step using action "execute_step", you NEED the step id. IF the 'Active Step Object' is provided in the INSTANCE CONTEXT above, use its 'id' directly. If it is NOT provided, use action "list" FIRST to retrieve the current plan and its steps, then use the appropriate step id.`
+- To execute a step using action "execute_step", you NEED the step id. You MUST use the step IDs provided in the INSTANCE CONTEXT above. DO NOT use action "list" to search for step IDs.`
       : '';
 
   const activePlanInstruction = 

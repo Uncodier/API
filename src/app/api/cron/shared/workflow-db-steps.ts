@@ -83,7 +83,7 @@ export async function recordRequirementBlockedStep(
   }
 }
 
-export async function checkInstanceAndPlanStatusStep(instanceId: string): Promise<{ isPaused: boolean }> {
+export async function checkInstanceAndPlanStatusStep(instanceId: string): Promise<{ isPaused: boolean; hasActivePlan: boolean }> {
   'use step';
   try {
     const { supabaseAdmin } = await import('@/lib/database/supabase-client');
@@ -104,11 +104,12 @@ export async function checkInstanceAndPlanStatusStep(instanceId: string): Promis
       .single();
 
     return {
-      isPaused: instanceData?.status === 'paused' || activePlan?.status === 'paused'
+      isPaused: instanceData?.status === 'paused' || activePlan?.status === 'paused',
+      hasActivePlan: !!activePlan && activePlan.status !== 'paused'
     };
   } catch (e: unknown) {
     console.warn(`[WorkflowDbStep] Failed to check paused status for instance ${instanceId}:`, e);
-    return { isPaused: false };
+    return { isPaused: false, hasActivePlan: false };
   }
 }
 

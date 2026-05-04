@@ -131,7 +131,11 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
       qaContext += `\nFAILED E2E SCENARIOS:\n${probes.signals.scenarios.scenarios.filter(s => !s.pass).map(s => `- ${s.scenario}: ${s.steps.find(st => !st.ok)?.error || 'Unknown error'}`).join('\n')}\n`;
     }
 
-    const prompt = `Review the backlog for DONE items. Pick one to audit. If you have already reviewed all of them, pick the one that requires the most work or review. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. You MUST use the instance_plan tool to create an execution plan (action="create") to outline your fixes and execute them step by step. Finish your turn once the plan is fully completed.${qaContext ? `\n\nCRITICAL QA FEEDBACK TO FIX:\n${qaContext}` : ''}`;
+    const planInstruction = pausedCheck.hasActivePlan 
+      ? `You already have an active execution plan. Execute it step by step using the instance_plan tool (action="execute_step"). Finish your turn once the plan is fully completed.`
+      : `You MUST use the instance_plan tool to create an execution plan (action="create") to outline your fixes and execute them step by step. Finish your turn once the plan is fully completed.`;
+
+    const prompt = `Review the backlog for DONE items. Pick one to audit. If you have already reviewed all of them, pick the one that requires the most work or review. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. ${planInstruction}${qaContext ? `\n\nCRITICAL QA FEEDBACK TO FIX:\n${qaContext}` : ''}`;
 
     const agentRun = await runMaintenanceAgentStep({
       sandboxId: sandboxId!,
