@@ -300,13 +300,15 @@ export async function inlineExecutePlanStep(
 
   let historyContext = '';
   if (instance_id) {
-    const { data: historicalLogs } = await supabaseAdmin
+    const { data: rawHistoricalLogs } = await supabaseAdmin
       .from('instance_logs')
       .select('log_type, message, created_at, tool_name, tool_result')
       .eq('instance_id', instance_id)
       .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
-      .order('created_at', { ascending: true })
-      .limit(50);
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    const historicalLogs = rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : [];
 
     if (historicalLogs && historicalLogs.length > 0) {
       historyContext = '\n\n📋 RECENT CONVERSATION HISTORY:\n';

@@ -80,13 +80,15 @@ export async function prepareAssistantContext(
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);
 
   // Fetch historical logs
-  const { data: historicalLogs } = await supabaseAdmin
+  const { data: rawHistoricalLogs } = await supabaseAdmin
     .from('instance_logs')
     .select('log_type, message, created_at, tool_name, tool_result')
     .eq('instance_id', instanceId)
     .in('log_type', ['user_action', 'agent_action', 'execution_summary', 'tool_call'])
-    .order('created_at', { ascending: true })
-    .limit(500);
+    .order('created_at', { ascending: false })
+    .limit(50);
+
+  const historicalLogs = rawHistoricalLogs ? [...rawHistoricalLogs].reverse() : [];
 
   // Build history context
   let historyContext = '';

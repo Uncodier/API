@@ -1447,10 +1447,13 @@ export class AIAgentExecutor {
               const errorMessage = error.message || String(error);
               console.error(`⏱️ [TOOL_ERROR] ${toolCall.toolName} (${toolCall.toolCallId}) failed after ${toolDuration}ms (${(toolDuration/1000).toFixed(1)}s) - ${errorMessage.substring(0, 100)}`);
 
+              const toolToExecute = finalTools.find(t => t.name === toolCall.toolName);
+              const helpMessage = toolToExecute?.description ? `\n\nTool Help / Instructions:\n${toolToExecute.description}` : '';
+
               toolResults.push({
                 toolCallId: toolCall.toolCallId,
                 toolName: toolCall.toolName,
-                result: errorMessage,
+                result: errorMessage + helpMessage,
                 isError: true,
               });
 
@@ -1458,7 +1461,7 @@ export class AIAgentExecutor {
                 role: 'tool',
                 tool_call_id: toolCall.toolCallId,
                 name: toolCall.toolName,
-                content: `Error: ${errorMessage}`,
+                content: `Error: ${errorMessage}${helpMessage}`,
               });
 
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added error tool message for ${toolCall.toolCallId}`);
