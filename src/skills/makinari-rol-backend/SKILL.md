@@ -114,9 +114,25 @@ return NextResponse.json({ ok: true, mode, data: result });
 - Every error response MUST include `error.code` (stable, snake_case) and `error.message` (human). Do not leak stack traces in `prod` mode.
 
 ### 6. DB changes and Supabase Schemas (CRITICAL ARCHITECTURE RULE)
-- SQL scripts go under `src/scripts/*.sql`. Prefer `ALTER ... IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` so the script is idempotent.
+- **Migrations are plain SQL files ONLY:** Do NOT create TypeScript classes, TypeORM models, Prisma schemas, or any other ORM-based migration files. All database migrations MUST be written as plain `.sql` scripts located in `migrations/*.sql` (or `supabase/migrations/` / `src/db/migrations/`).
+- Prefer `ALTER ... IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` so the script is idempotent.
 - Document the rollback as a comment at the top of the script.
 - If the requirement declares new columns in section 6.2, create the migration BEFORE implementing the endpoint that reads them.
+- **RLS (Row Level Security) is MANDATORY:** When creating a new table, you MUST enable RLS and provide the corresponding policies in the same SQL file. Never leave a table without RLS.
+  ```sql
+  -- Example of a plain SQL migration with RLS
+  CREATE TABLE IF NOT EXISTS my_table (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id uuid NOT NULL,
+    data text
+  );
+  
+  ALTER TABLE my_table ENABLE ROW LEVEL SECURITY;
+  
+  -- Policy example
+  CREATE POLICY my_table_select_policy ON my_table
+    FOR SELECT USING (auth.uid() = user_id);
+  ```
 - **CRITICAL: Supabase Schema Targeting (Multi-tenant Architecture)**: The database uses a schema-per-app architecture. Tables are NOT created in the default `public` schema. They are created in isolated schemas like `app_<id>`.
   - The Supabase SSR client sometimes suffers from a bug where the global `options.db.schema` is ignored. 
   - To prevent `"Could not find the table 'public.table_name' in the schema cache"` errors, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
@@ -171,7 +187,7 @@ return NextResponse.json({ ok: true, mode, data: result });
 | Tool | When to use |
 | --- | --- |
 | `sandbox_run_command` | Run `npm run build`, `tsc --noEmit`, curl smoke tests, read-only git commands. |
-| `sandbox_write_file` | Create or update TypeScript files under `src/app/api/**` and SQL scripts under `src/scripts/`. |
+| `sandbox_write_file` | Create or update TypeScript files under `src/app/api/**` and SQL scripts under `migrations/`. |
 | `sandbox_read_file` | Read existing routes, services, and `src/lib/**` helpers before editing. |
 | `sandbox_list_files` | Explore the route tree to avoid duplicating endpoints. |
 | `requirements` | Read contract (section 6). Update `## Open Questions` if the contract is incomplete. |
@@ -181,7 +197,7 @@ Prefer `sandbox_run_command npm run build` over piecemeal `tsc` when in doubt; N
 
 ## Artifacts
 
-- **Produces**: API route files under `src/app/api/**`, SQL migrations under `src/scripts/*.sql`, test curl transcripts captured in `step_output`.
+- **Produces**: API route files under `src/app/api/**`, SQL migrations under `migrations/*.sql`, test curl transcripts captured in `step_output`.
 - **Consumes**: `requirement.instructions` sections 6.1, 6.2, 6.3, 7 (Acceptance Criteria). Verifies section 7 in step 8.
 
 ## Anti-patterns

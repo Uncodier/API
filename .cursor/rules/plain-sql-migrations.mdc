@@ -1,0 +1,34 @@
+---
+description: Ensure database migrations are created as plain SQL files (.sql) under migrations/ and include RLS policies, NEVER as ORM classes. And how to handle Supabase Schema Targeting (Multi-tenant Architecture).
+globs: **/*.sql, **/*.ts, **/*.js, **/*.md
+alwaysApply: true
+---
+
+# Plain SQL Migrations Rule
+
+When creating database migrations or applying schema changes:
+
+1. **Migrations are plain SQL files ONLY:** Do NOT create TypeScript classes, TypeORM models, Prisma schemas, or any other ORM-based migration files. All database migrations MUST be written as plain `.sql` scripts located in `migrations/*.sql` (or `supabase/migrations/` / `src/db/migrations/`).
+2. Prefer `ALTER ... IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS` so the script is idempotent.
+3. Document the rollback as a comment at the top of the script.
+4. **RLS (Row Level Security) is MANDATORY:** When creating a new table, you MUST enable RLS and provide the corresponding policies in the same SQL file. Never leave a table without RLS.
+
+```sql
+-- Example of a plain SQL migration with RLS
+CREATE TABLE IF NOT EXISTS my_table (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL,
+  data text
+);
+
+ALTER TABLE my_table ENABLE ROW LEVEL SECURITY;
+
+-- Policy example
+CREATE POLICY my_table_select_policy ON my_table
+  FOR SELECT USING (auth.uid() = user_id);
+```
+
+5. **CRITICAL: Supabase Schema Targeting (Multi-tenant Architecture)**: The database uses a schema-per-app architecture. Tables are NOT created in the default `public` schema. They are created in isolated schemas like `app_<id>`.
+  - The Supabase SSR client sometimes suffers from a bug where the global `options.db.schema` is ignored. 
+  - To prevent `"Could not find the table 'public.table_name' in the schema cache"` errors, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
+  - Example: `await supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public').from('spaces').select('*')`

@@ -94,7 +94,7 @@ If the active Backlog Item is: `[item-3] Member Portal - Spaces & Reservation Vi
 
 Your `instance_plan` should break this down into execution steps for specialized agents:
 - **Step 1 (Frontend):** `makinari-rol-frontend` -> "Create `src/app/dashboard/spaces/page.tsx` with a grid of spaces. Use Shadcn UI Cards for each space displaying image, title, and price. Add a 'Book Now' button that opens a Shadcn Dialog containing `src/components/BookingForm.tsx`. Ensure responsive layout (1 col mobile, 3 cols desktop)."
-- **Step 2 (Backend):** `makinari-rol-backend` -> "Create `src/app/api/bookings/route.ts` handling POST requests to insert into the database. Validate payload against Space schema."
+- **Step 2 (Backend):** `makinari-rol-backend` -> "Create `migrations/0001_bookings.sql` with RLS policies to insert into the database. Create `src/app/api/bookings/route.ts` handling POST requests. Validate payload against Space schema."
 - **Step 3 (QA):** `makinari-rol-qa` -> "Test the booking flow from the UI to the API."
 - **Step 4 (Validation):** `makinari-fase-validacion` -> "Build and verify."
 
@@ -158,22 +158,29 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "instructions": "<specific files + exact UI screens + navigation flows>. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior."
     },
     { 
-      "id": "step_qa", 
+      "id": "step_backend", 
       "order": 4, 
+      "title": "Backend Development", 
+      "skill": "makinari-rol-backend", 
+      "instructions": "Create plain SQL migration files (.sql) under migrations/ (NEVER use ORM classes) including RLS policies, and implement Next.js API routes with test/prod modes."
+    },
+    { 
+      "id": "step_qa", 
+      "order": 5, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
       "instructions": "Author .qa/scenarios, triage gate signals, write qa_results.json."
     },
     { 
       "id": "step_val", 
-      "order": 5, 
+      "order": 6, 
       "title": "Validation", 
       "skill": "makinari-fase-validacion", 
       "instructions": "npm run build, verify preview, write test_results.json."
     },
     { 
       "id": "step_report", 
-      "order": 6, 
+      "order": 7, 
       "title": "Report", 
       "skill": "makinari-fase-reporteado", 
       "instructions": "Create requirement_status with preview URL."
