@@ -258,6 +258,21 @@ export async function inlineExecutePlanStep(
   const { instance_id, site_id, user_id } = context.executionOptions;
   const requirementId = context.instance?.requirement_id || '';
 
+  let progressContext = '';
+  if (requirementId) {
+    const { data: reqData } = await supabaseAdmin
+      .from('requirements')
+      .select('progress')
+      .eq('id', requirementId)
+      .single();
+      
+    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
+      const recentProgress = reqData.progress.slice(-5);
+      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
+      progressContext += JSON.stringify(recentProgress, null, 2);
+    }
+  }
+
   const audit: CronAuditContext = {
     instanceId: instance_id,
     siteId: site_id,
@@ -348,6 +363,7 @@ CONTEXT:
 - site_id: ${site_id}
 ${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
 ${requirementId ? `- requirement_id: ${requirementId}` : ''}
+${progressContext}
 
 PLAN: "${plan.title || ''}"
 CURRENT STEP (Step ${step.order}):

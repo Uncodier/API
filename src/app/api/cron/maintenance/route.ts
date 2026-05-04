@@ -71,6 +71,16 @@ export async function GET(req: Request) {
       const maxQaRuns = doneItemsCount * 6;
       const currentQaRuns = requirement.metadata?.qa_successful_runs || 0;
       
+      const currentAttempt = requirement.metadata?.cron_attempts || 0;
+      const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
+      
+      if (lastQaAttempt === currentAttempt) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — QA already ran for main builder attempt ${currentAttempt}`);
+        results.push({ reqId, skipped: true, reason: 'qa_already_run_for_attempt' });
+        await releaseRunLock(maintenanceLockKey, runLock.runId);
+        continue;
+      }
+      
       if (currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
         console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items)`);
         results.push({ reqId, skipped: true, reason: 'qa_limit_reached' });
@@ -94,6 +104,11 @@ export async function GET(req: Request) {
       }
 
       console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
+
+      // Update the sync tracker so it doesn't run again for this main workflow cycle
+      const updatedMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
+      await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
+      requirement.metadata = updatedMetadata;
 
       // Find or create a dedicated remote_instance for maintenance
       let instanceId: string | undefined;

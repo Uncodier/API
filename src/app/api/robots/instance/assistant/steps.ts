@@ -175,6 +175,23 @@ export async function prepareAssistantContext(
     requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
   }
 
+  // Fetch requirement progress log if linked
+  let progressContext = '';
+  if (activeRequirementId) {
+    const { data: reqData } = await supabaseAdmin
+      .from('requirements')
+      .select('progress')
+      .eq('id', activeRequirementId)
+      .single();
+      
+    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
+      // Get the last 5 progress entries
+      const recentProgress = reqData.progress.slice(-5);
+      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
+      progressContext += JSON.stringify(recentProgress, null, 2);
+    }
+  }
+
   // Fetch last instance plan context
   const { data: lastPlans } = await supabaseAdmin
     .from('instance_plans')
@@ -300,6 +317,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     memoriesContext,
     historyContext,
     requirementStatusContext,
+    progressContext,
     getSandboxRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,

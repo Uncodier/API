@@ -102,6 +102,21 @@ export async function executePlanStep(
   const { instance_id, site_id } = context.executionOptions;
   const requirementId = context.instance?.requirement_id || '';
 
+  let progressContext = '';
+  if (requirementId) {
+    const { data: reqData } = await supabaseAdmin
+      .from('requirements')
+      .select('progress')
+      .eq('id', requirementId)
+      .single();
+      
+    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
+      const recentProgress = reqData.progress.slice(-5);
+      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
+      progressContext += JSON.stringify(recentProgress, null, 2);
+    }
+  }
+
   const stepSystemPrompt = `You are an EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 Working directory: ${SandboxService.WORK_DIR}
@@ -111,6 +126,7 @@ CONTEXT:
 - site_id: ${site_id}
 ${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
 ${requirementId ? `- requirement_id: ${requirementId}` : ''}
+${progressContext}
 
 PLAN: "${plan.title}"
 

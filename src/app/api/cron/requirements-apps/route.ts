@@ -498,9 +498,20 @@ export async function GET(req: Request) {
       if (!hasCompletedBacklog) {
         console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — no completed backlog items yet`);
       } else {
-        // We no longer limit QA runs. QA will continuously improve the app.
-        const maintenanceLockKey = `${reqId}-maint`;
-        const maintRunLock = await acquireRunLock(maintenanceLockKey);
+        const currentAttempt = requirement.metadata?.cron_attempts || 0;
+        const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
+        
+        if (lastQaAttempt === currentAttempt) {
+          console.log(`[Cron Apps] Skipping PARALLEL maintenance for ${reqId} — QA already ran for main builder attempt ${currentAttempt}`);
+        } else {
+          // Update the sync tracker
+          const syncMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
+          await supabaseAdmin.from('requirements').update({ metadata: syncMetadata }).eq('id', reqId);
+          requirement.metadata = syncMetadata;
+
+          // We no longer limit QA runs. QA will continuously improve the app.
+          const maintenanceLockKey = `${reqId}-maint`;
+          const maintRunLock = await acquireRunLock(maintenanceLockKey);
           
           if (maintRunLock) {
             console.log(`[Cron Apps] Starting PARALLEL maintenance workflow for req ${reqId}`);
