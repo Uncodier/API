@@ -157,6 +157,7 @@ export async function tryStartFromPersistedSnapshot(params: {
     sandbox = await Sandbox.create({
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
+      ports: [SandboxService.VISUAL_PROBE_PORT],
       source: { type: 'snapshot', snapshotId: row.snapshot_id },
     } as any); // We cast to any because the type definition for snapshot doesn't allow runtime or other fields
     
@@ -325,6 +326,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
     next = await Sandbox.create({
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
+      ports: [SandboxService.VISUAL_PROBE_PORT],
       source: { type: 'snapshot', snapshotId },
     } as any);
     

@@ -185,8 +185,7 @@ export class SandboxService {
       sandbox = await Sandbox.create({
         runtime: 'node24',
         timeout: SandboxService.SANDBOX_CREATE_TIMEOUT_MS,
-        // The API might be rejecting 'ports' or other params in newer SDKs
-        // So we'll try an alternative if we get a 400
+        ports: [SandboxService.VISUAL_PROBE_PORT],
         source: {
           type: 'git',
           url: repoUrlPlain,
