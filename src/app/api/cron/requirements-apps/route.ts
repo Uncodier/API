@@ -345,6 +345,9 @@ export async function GET(req: Request) {
           metadata: updatedMetadata
         }).eq('id', reqId);
       }
+      
+      // Update in-memory requirement for subsequent parallel block checks
+      requirement.metadata = updatedMetadata;
 
       if (instanceData && instanceData.status !== 'running') {
         await supabaseAdmin.from('remote_instances').update({ status: 'running' }).eq('id', instanceId);
@@ -603,6 +606,7 @@ export async function GET(req: Request) {
           } else {
             console.log(`[Cron Apps] Skipping parallel maintenance for ${reqId} — maintenance already running`);
           }
+        }
       }
     }
 
