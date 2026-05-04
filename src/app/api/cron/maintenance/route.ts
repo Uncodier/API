@@ -22,7 +22,7 @@ function maintenanceRemoteInstancePayload(base: {
   };
 }
 
-export const maxDuration = 300;
+export const maxDuration = 3600; // 1 hora en segundos
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {

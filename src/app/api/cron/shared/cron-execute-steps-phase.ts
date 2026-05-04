@@ -226,7 +226,7 @@ export async function executeStepsPhaseStep(params: {
 
   let workingPlanSteps: any[] = [...allSteps];
   const startTime = Date.now();
-  const MAX_EXECUTION_TIME_MS = 4 * 60 * 1000; // 4 minutes
+  const MAX_EXECUTION_TIME_MS = 58 * 60 * 1000; // 58 minutes
 
   try {
     outer: for (const planStep of stepsToRun) {
