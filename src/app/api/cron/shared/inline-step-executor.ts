@@ -346,7 +346,8 @@ ${historyContext}
 CONTEXT:
 - instance_id: ${instance_id}
 - site_id: ${site_id}
-- requirement_id: ${requirementId}
+${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
+${requirementId ? `- requirement_id: ${requirementId}` : ''}
 
 PLAN: "${plan.title || ''}"
 CURRENT STEP (Step ${step.order}):

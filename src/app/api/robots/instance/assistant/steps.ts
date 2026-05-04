@@ -183,13 +183,36 @@ export async function prepareAssistantContext(
     .order('created_at', { ascending: false })
     .limit(1);
 
-  let activePlanContext = '';
-  let activePlanId = null;
+  let instance_plan_id = null;
+  let activeStepContext = '';
+  let lastCompletedPlanContext = '';
+  
   if (lastPlans && lastPlans.length > 0) {
     const activePlan = lastPlans[0];
-    activePlanId = activePlan.id;
-    activePlanContext = '\n\n📋 LAST INSTANCE PLAN:\n';
-    activePlanContext += JSON.stringify(activePlan, null, 2);
+    instance_plan_id = activePlan.id;
+    
+    // Determine active step
+    if (activePlan.steps && Array.isArray(activePlan.steps)) {
+      const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
+      const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
+      const step = inProgressStep || pendingStep;
+      if (step) {
+        activeStepContext = `\n- Current Step: ${JSON.stringify(step)}`;
+      }
+    }
+  }
+
+  // Fetch last completed plan title
+  const { data: lastCompletedPlans } = await supabaseAdmin
+    .from('instance_plans')
+    .select('title')
+    .eq('instance_id', instanceId)
+    .eq('status', 'completed')
+    .order('completed_at', { ascending: false })
+    .limit(1);
+
+  if (lastCompletedPlans && lastCompletedPlans.length > 0) {
+    lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}"`;
   }
 
   const hasLinkedRequirement = !!(requirementStatuses && requirementStatuses.length > 0);
@@ -217,7 +240,7 @@ export async function prepareAssistantContext(
     ? `\n\n⚠️ IMPORTANT: The current instance name "${instanceName}" is generic and not descriptive. You MUST automatically call the instance tool (with action="update") to give this instance a descriptive name that reflects the user's objective and conversation context. Additionally, if the current name does not accurately summarize or reflect the conversation content, you should also call the instance tool. Do this automatically without asking the user.`
     : `\n\n💡 NOTE: If the current instance name "${instanceName}" does not accurately summarize or reflect the conversation/chat content, you should automatically call the instance tool (with action="update") to update it with a more descriptive name.`;
 
-  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${activePlanId ? `\n- Current Plan ID: ${activePlanId}` : ''}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
+  const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
@@ -277,7 +300,6 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     memoriesContext,
     historyContext,
     requirementStatusContext,
-    activePlanContext,
     getSandboxRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,

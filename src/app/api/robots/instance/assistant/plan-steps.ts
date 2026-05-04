@@ -109,10 +109,10 @@ Working directory: ${SandboxService.WORK_DIR}
 CONTEXT:
 - instance_id: ${instance_id}
 - site_id: ${site_id}
+${plan.id ? `- instance_plan_id: ${plan.id}` : ''}
 ${requirementId ? `- requirement_id: ${requirementId}` : ''}
 
 PLAN: "${plan.title}"
-${plan.description ? `Description: ${plan.description}` : ''}
 
 CURRENT STEP (Step ${step.order}):
 Title: ${step.title}

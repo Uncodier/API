@@ -1242,11 +1242,14 @@ export class AIAgentExecutor {
             // model can self-correct on the next iteration. The assistant
             // message already has its arguments sanitized to "{}" above.
             for (const bad of unparseable) {
+              const toolToExecute = finalTools.find(t => t.name === bad.name);
+              const helpMessage = toolToExecute?.description ? `\n\nTool Help / Instructions:\n${toolToExecute.description}` : '';
+
               messages.push({
                 role: 'tool',
                 tool_call_id: bad.id,
                 name: bad.name,
-                content: `Error parsing tool call arguments: ${bad.error}. The arguments string was not valid JSON. Re-issue the tool call with a single, well-formed JSON object.`,
+                content: `Error parsing tool call arguments: ${bad.error}. The arguments string was not valid JSON. Re-issue the tool call with a single, well-formed JSON object.${helpMessage}`,
               });
             }
 
