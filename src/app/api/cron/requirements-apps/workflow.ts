@@ -315,6 +315,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
+    
+    // DB Migrations still only run on full success to avoid breaking DB on incomplete state
     if (!anyFail) {
       const dbMig = await applyDatabaseMigrationsStep(sandboxId!, reqId, instanceType, title, cronAudit);
       sandboxId = dbMig.effectiveSandboxId;
@@ -323,17 +325,17 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       } else if (dbMig.applied.length > 0) {
          console.log(`[CronAppsWorkflow] Applied ${dbMig.applied.length} DB migrations.`);
       }
+    }
 
-      const pushed = await commitAndPushStep(sandboxId!, title, reqId, `Cron cycle complete: ${title}`, cronAudit, 'applications');
-      pushResult = pushed;
-      if (pushed?.effectiveSandboxId) {
-        sandboxId = pushed.effectiveSandboxId;
-      }
-    } else {
-      console.log(
-        '[CronAppsWorkflow] Skipping commitAndPushStep — anyStepFailed (policy: no forced platform push)',
-      );
-      pushResult = { branch: branchName, pushed: false, commitCount: 0 };
+    // Always push to origin to save WIP code/sandbox state, even if a step failed
+    const commitMsg = anyFail 
+      ? `Cron cycle complete (with failures): ${title}`
+      : `Cron cycle complete: ${title}`;
+      
+    const pushed = await commitAndPushStep(sandboxId!, title, reqId, commitMsg, cronAudit, 'applications');
+    pushResult = pushed;
+    if (pushed?.effectiveSandboxId) {
+      sandboxId = pushed.effectiveSandboxId;
     }
   }
 

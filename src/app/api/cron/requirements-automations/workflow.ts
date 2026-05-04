@@ -235,17 +235,16 @@ CRITICAL EXECUTION RULES:
     }
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;
-    if (!anyFail) {
-      const pushed = await commitAndPushStep(sandboxId, title, reqId, `Cron cycle complete: ${title}`, cronAudit, 'automation');
-      pushResult = pushed;
-      if (pushed?.effectiveSandboxId) {
-        sandboxId = pushed.effectiveSandboxId;
-      }
-    } else {
-      console.log(
-        '[CronAutoWorkflow] Skipping commitAndPushStep — anyStepFailed (policy: no forced platform push)',
-      );
-      pushResult = { branch: branchName, pushed: false, commitCount: 0 };
+    
+    // Always push to origin to save WIP code/sandbox state, even if a step failed
+    const commitMsg = anyFail 
+      ? `Cron cycle complete (with failures): ${title}`
+      : `Cron cycle complete: ${title}`;
+      
+    const pushed = await commitAndPushStep(sandboxId, title, reqId, commitMsg, cronAudit, 'automation');
+    pushResult = pushed;
+    if (pushed?.effectiveSandboxId) {
+      sandboxId = pushed.effectiveSandboxId;
     }
   }
 
