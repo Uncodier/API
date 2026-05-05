@@ -1,0 +1,189 @@
+import nextra from 'nextra'
+import pkg from 'workflow/next'
+const { withWorkflow } = pkg
+import { getNextJsCorsConfig } from './cors.config.js'
+import { createRequire } from 'module'
+const require = createRequire(import.meta.url)
+
+const withNextra = nextra({
+  contentDirBasePath: '/',
+  defaultShowCopyCode: true,
+  staticImage: true,
+  mdxOptions: {
+    remarkPlugins: [],
+    rehypePlugins: []
+  }
+})
+
+// Obtener la configuración CORS y loggear para depuración
+console.log('[NEXT-CONFIG] Cargando configuración CORS desde cors.config.js');
+const corsConfig = getNextJsCorsConfig();
+console.log(`[NEXT-CONFIG] Configuración CORS cargada con ${corsConfig.length} entradas`);
+
+// You can include other Next.js configuration options here, in addition to Nextra settings:
+const nextraConfig = withNextra({
+  reactStrictMode: true,
+  experimental: {
+    serverActions: {
+      allowedOrigins: ['localhost:3000', 'localhost:3001', '192.168.87.25:3001', '192.168.87.34:3001', '192.168.87.64:3001', '192.168.87.79:3001', '192.168.0.62:3000', '192.168.0.62:3001', '192.168.0.62:3456', '192.168.0.62:7233', 'localhost:3456']
+    }
+  },
+  // Force Vercel's file tracer to ship openai/zod/zod-to-json-schema (and companion deps) with any route that
+  // might transitively need them. We use a broad `**` glob because Vercel's build pipeline sometimes externalizes
+  // zod/openai at runtime in chunks (observed as `Cannot find module 'zod'` from `chunks/*.js` under
+  // `/.well-known/workflow/v1/step`) even when webpack bundles them locally. Including these modules via NFT
+  // guarantees they are shipped inside the lambda filesystem regardless of bundling decisions.
+  outputFileTracingIncludes: {
+    '**/.well-known/workflow/v1/step': [
+      './node_modules/openai/**/*',
+      './node_modules/zod/**/*',
+      './node_modules/zod-to-json-schema/**/*',
+      './node_modules/@vercel/sandbox/**/*',
+    ],
+    '**/.well-known/workflow/v1/flow': [
+      './node_modules/openai/**/*',
+      './node_modules/zod/**/*',
+      './node_modules/zod-to-json-schema/**/*',
+      './node_modules/@vercel/sandbox/**/*',
+    ],
+  },
+  typescript: {
+    // !! WARN !!
+    // Dangerously allow production builds to successfully complete even if
+    // your project has type errors. Temporarily disabled for build.
+    // !! WARN !!
+    ignoreBuildErrors: true,
+  },
+  // Configuración para imágenes optimizadas
+  images: {
+    // Desactivar la optimización de imágenes en desarrollo para evitar advertencias de Sharp
+    unoptimized: process.env.NODE_ENV === 'development',
+  },
+  // Exclude problematic packages from server bundle (Next.js 16 feature)
+  // This prevents Next.js from bundling these packages and their test files
+  serverExternalPackages: [
+    'why-is-node-running',
+    'thread-stream',
+    'imapflow',
+    'pino',
+    'composio-core',
+    '@vercel/sandbox',
+    '@supabase/supabase-js',
+  ],
+  
+  // Configuración adicional para CSS Modules
+  webpack: (config, { dev, isServer }) => {
+    // Solución para suprimir las advertencias de binarios precompilados
+    if (dev) {
+      // Configurar Webpack para mostrar solo errores, no advertencias
+      config.infrastructureLogging = {
+        level: 'error'
+      };
+    }
+    
+    // Exclude test files and problematic modules from node_modules
+    config.resolve = config.resolve || {};
+    config.resolve.alias = config.resolve.alias || {};
+    
+    // Ignore test files and development-only modules
+    config.resolve.alias['why-is-node-running'] = false;
+    
+    // Add IgnorePlugin to exclude test files from node_modules
+    config.plugins = config.plugins || [];
+    
+    // Ignore test files in thread-stream package
+    // webpack is available in the webpack config context
+    const { IgnorePlugin } = require('webpack');
+    config.plugins.push(
+      new IgnorePlugin({
+        resourceRegExp: /^\.\/test\//,
+        contextRegExp: /thread-stream/,
+      }),
+      new IgnorePlugin({
+        resourceRegExp: /why-is-node-running/,
+      }),
+      // Ignore all test files in node_modules
+      new IgnorePlugin({
+        checkResource(resource, context) {
+          // Ignore test files in node_modules
+          if (context.includes('node_modules')) {
+            if (resource.includes('.test.') || resource.includes('/test/')) {
+              return true;
+            }
+          }
+          return false;
+        },
+      })
+    );
+    
+    return config;
+  },
+  // Configuración de rutas de API
+  async rewrites() {
+    return [
+      {
+        source: '/api/:path*',
+        destination: '/api/:path*',
+      },
+    ]
+  },
+  // Ensure environment variables are available
+  env: {
+    COMPOSIO_PROJECT_API_KEY: process.env.COMPOSIO_PROJECT_API_KEY || 'du48sq2qy07vkyhm8v9v8g',
+    TEMPORAL_SERVER_URL: process.env.TEMPORAL_SERVER_URL,
+    TEMPORAL_CLOUD_API_KEY: process.env.TEMPORAL_CLOUD_API_KEY
+  },
+  async headers() {
+    console.log('[NEXT-CONFIG] Generando headers para Next.js');
+    
+    // Configuración para desarrollo y producción
+    const baseHeaders = [
+      {
+        // Aplicar estos encabezados a todas las rutas
+        source: '/(.*)',
+        headers: [
+          {
+            key: 'X-DNS-Prefetch-Control',
+            value: 'on',
+          },
+          {
+            key: 'Strict-Transport-Security',
+            value: 'max-age=63072000; includeSubDomains; preload',
+          }
+        ],
+      },
+      {
+        // Configuración CORS explícita para localhost:3456 (desarrollo local)
+        source: '/api/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: 'http://localhost:3456' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, POST, PUT, DELETE, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin, X-Requested-With' },
+          { key: 'Access-Control-Allow-Credentials', value: 'true' },
+          { key: 'Access-Control-Max-Age', value: '86400' },
+          { key: 'Vary', value: 'Origin' }
+        ]
+      },
+      {
+        // Configuración específica para la ruta WebSocket
+        source: '/api/agents/chat/websocket',
+        headers: [
+          { key: 'Connection', value: 'upgrade' },
+          { key: 'Upgrade', value: 'websocket' },
+          // Encabezados CORS para WebSockets
+          { key: 'Access-Control-Allow-Origin', value: '*' },
+          { key: 'Access-Control-Allow-Methods', value: 'GET, OPTIONS' },
+          { key: 'Access-Control-Allow-Headers', value: 'Content-Type, Authorization, X-SA-API-KEY, Accept, Origin' }
+        ]
+      }
+    ];
+    
+    // Añadir configuración CORS de cors.config.js
+    const allHeaders = [...baseHeaders, ...corsConfig];
+    console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
+    
+    return allHeaders;
+  }
+})
+
+export default withWorkflow(nextraConfig)
