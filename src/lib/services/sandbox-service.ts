@@ -280,8 +280,15 @@ export class SandboxService {
     // or a concurrent run that just created it). Always consult `origin` by name
     // before branching off main; otherwise we'd push a divergent history and hit
     // a non-fast-forward rejection.
-    const newBranch = SandboxService.buildBranchName(requirementId, title);
-    const remoteExists = await SandboxService.remoteBranchExists(sandbox, newBranch, workDir);
+    let newBranch = await SandboxService.findRemoteBranchByRequirementId(sandbox, requirementId, workDir);
+    let remoteExists = false;
+
+    if (newBranch) {
+      remoteExists = true;
+    } else {
+      newBranch = SandboxService.buildBranchName(requirementId, title);
+      remoteExists = await SandboxService.remoteBranchExists(sandbox, newBranch, workDir);
+    }
 
     if (remoteExists) {
       console.log(`[Sandbox] No branch in DB history but ${newBranch} exists on origin — tracking remote to avoid divergence`);
@@ -368,6 +375,40 @@ export class SandboxService {
         }
       }
     }
+  }
+
+  /**
+   * Finds any remote branch that matches the requirement ID.
+   * Useful to prevent creating multiple branches if the title changes slightly.
+   */
+  static async findRemoteBranchByRequirementId(
+    sandbox: Sandbox,
+    requirementId: string,
+    cwd: string = SandboxService.WORK_DIR,
+  ): Promise<string | null> {
+    const idStr = String(requirementId || '').trim().toLowerCase();
+    if (!idStr) return null;
+
+    const res = await this.runWithCwd(sandbox, 'git', ['ls-remote', '--heads', 'origin'], cwd);
+    if (res.exitCode !== 0) return null;
+
+    const output = await res.stdout();
+    const lines = output.split('\n').filter(Boolean);
+
+    for (const line of lines) {
+      const match = line.match(/refs\/heads\/(.*)$/);
+      if (match) {
+        const branchName = match[1];
+        if (
+          branchName.startsWith(`feature/req-${idStr}`) ||
+          branchName.startsWith(`req-${idStr}`)
+        ) {
+          return branchName;
+        }
+      }
+    }
+
+    return null;
   }
 
   /** True when `origin/<branch>` exists on the remote (uses `ls-remote --heads`). */
@@ -529,7 +570,11 @@ exit 0
       return;
     }
 
-    const featureBranch = SandboxService.buildBranchName(requirementId, title);
+    let featureBranch = await SandboxService.findRemoteBranchByRequirementId(sandbox, requirementId, cwd);
+    if (!featureBranch) {
+      featureBranch = SandboxService.buildBranchName(requirementId, title);
+    }
+
     console.log(
       `[Sandbox] HEAD is ${head} — switching to "${featureBranch}" before persisting changes (cron)`,
     );
@@ -655,7 +700,10 @@ exit 0
     // Cron: always attach the working tree to the canonical feature ref before measuring / pushing
     // so the local ref matches origin and we are never in a "named HEAD" / whitespace edge case.
     if (options.requirementId) {
-      const canPushName = SandboxService.buildBranchName(options.requirementId, safeTitle);
+      let canPushName = await SandboxService.findRemoteBranchByRequirementId(sandbox, options.requirementId, cwd);
+      if (!canPushName) {
+        canPushName = SandboxService.buildBranchName(options.requirementId, safeTitle);
+      }
       const att = await SandboxService.runWithCwd(sandbox, 'git', ['checkout', '-B', canPushName], cwd);
       if (att.exitCode !== 0) {
         throw new Error(
@@ -677,9 +725,11 @@ exit 0
       return { branch, pushed: false, commitCount: 0 };
     }
 
-    const pushName = options.requirementId
-      ? SandboxService.buildBranchName(options.requirementId, safeTitle)
-      : branch;
+    let pushName = branch;
+    if (options.requirementId) {
+      pushName = await SandboxService.findRemoteBranchByRequirementId(sandbox, options.requirementId, cwd) 
+        || SandboxService.buildBranchName(options.requirementId, safeTitle);
+    }
     if (SandboxService.isInvalidOriginBranchName(pushName)) {
       throw new Error(
         'Cannot push: invalid target branch name (empty, HEAD, or unknown). The workspace must be on a real branch for origin.',

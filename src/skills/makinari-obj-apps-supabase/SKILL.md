@@ -130,6 +130,7 @@ const { data } = await db.schema(SCHEMA_NAME).from('reservations').select('*').o
 ## Anti-patterns
 
 - **Forgetting to call `.schema(SCHEMA_NAME)` before `.from()`**. The global client configuration `db: { schema }` is NOT reliable enough when using `@supabase/ssr` or `supabase-js`, and it will often lead to `public.table_name not found` errors. ALWAYS chain `.schema()` explicitly.
+- **Overriding global fetch headers incorrectly**. Next.js discards headers passed as a plain object (`Record<string, string>`). If you override `global.fetch` in the Supabase client to inject `accept-profile` headers for schema isolation, you MUST initialize a native `Headers` object: `const newHeaders = new Headers(init?.headers); newHeaders.set('accept-profile', schema);` before passing it to `fetch`. DO NOT use `const newHeaders: Record<string, string> = {};`.
 - **Writing custom Node.js scripts (e.g. `test-api.js`) to test the database connection.** This often fails due to missing env vars or dependencies in the sandbox. INSTEAD, use the `sandbox_db_inspect` tool to verify if tables exist or to sample data.
 - Adding `@supabase/supabase-js` with a foreign URL or service key.
 - Writing migrations that touch `public.*`, `auth.*` or `storage.*`

@@ -68,8 +68,8 @@ describe('classifyGitRepoKind', () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  test('classifies by project id when VERCEL_PROJECT_ID_APPLICATIONS matches', () => {
-    process.env.VERCEL_PROJECT_ID_APPLICATIONS = 'prj_apps';
+  test('classifies by project id when VERCEL_PROJECT_ID matches', () => {
+    process.env.VERCEL_PROJECT_ID = 'prj_apps';
     const p = payloadWith({ projectId: 'prj_apps' });
     expect(classifyGitRepoKind(p)).toBe('applications');
   });
@@ -81,14 +81,14 @@ describe('classifyGitRepoKind', () => {
   });
 
   test('falls back to repo name when project id does not match', () => {
-    process.env.VERCEL_PROJECT_ID_APPLICATIONS = 'prj_apps';
+    process.env.VERCEL_PROJECT_ID = 'prj_apps';
     process.env.GIT_AUTOMATIONS_REPO = 'automations';
     const p = payloadWith({ projectId: 'prj_other' }, { githubRepo: 'automations' });
     expect(classifyGitRepoKind(p)).toBe('automation');
   });
 
   test('defaults to applications when nothing matches', () => {
-    delete process.env.VERCEL_PROJECT_ID_APPLICATIONS;
+    delete process.env.VERCEL_PROJECT_ID;
     delete process.env.VERCEL_PROJECT_ID_AUTOMATION;
     delete process.env.GIT_APPLICATIONS_REPO;
     delete process.env.GIT_AUTOMATIONS_REPO;

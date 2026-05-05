@@ -28,8 +28,9 @@ export function resolveVercelProjectId(kind: GitRepoKind): string | null {
     const p = process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim();
     return p || fallback || null;
   }
-  const p = process.env.VERCEL_PROJECT_ID_APPLICATIONS?.trim();
-  return p || fallback || null;
+  // User explicitly requested to use VERCEL_PROJECT_ID for applications
+  // as it is the standard one used across the project.
+  return fallback || null;
 }
 
 function eventsQueryString(): string {

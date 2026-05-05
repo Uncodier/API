@@ -43,6 +43,11 @@ export async function pushVercelBranchEnv(
       const existing = existingEnvs.find(e => e.key === key && e.gitBranch === branch);
 
       if (existing) {
+        if (existing.value === value) {
+          console.log(`[VercelEnv] Env var ${key} already exists with same value for branch ${branch}, skipping update.`);
+          continue;
+        }
+
         // Update
         const patchRes = await fetch(`${VERCEL_API}/v9/projects/${projectId}/env/${existing.id}${qs}`, {
           method: 'PATCH',

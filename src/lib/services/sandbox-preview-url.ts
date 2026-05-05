@@ -22,7 +22,7 @@ function resolveVercelProjectIdForPreview(kind: PreviewUrlGitRepoKind): string |
   if (kind === 'automation') {
     return process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim() || fallback || null;
   }
-  return process.env.VERCEL_PROJECT_ID_APPLICATIONS?.trim() || fallback || null;
+  return fallback || null;
 }
 
 /**

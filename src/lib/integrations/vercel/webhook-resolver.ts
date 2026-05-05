@@ -41,13 +41,13 @@ export function extractBranchFromPayload(payload: VercelWebhookPayloadBody | und
 
 /**
  * Classifies the deployment as `applications` or `automation` based on (in order):
- *   1. Project id match against `VERCEL_PROJECT_ID_APPLICATIONS` / `VERCEL_PROJECT_ID_AUTOMATION`
+ *   1. Project id match against `VERCEL_PROJECT_ID` (for applications) / `VERCEL_PROJECT_ID_AUTOMATION`
  *   2. GitHub repo name match against `GIT_APPLICATIONS_REPO` / `GIT_AUTOMATIONS_REPO`
  *   3. Fallback: `applications` (the default side of the product).
  */
 export function classifyGitRepoKind(payload: VercelWebhookPayloadBody | undefined): GitRepoKind {
   const projectId = payload?.projectId || payload?.project?.id || null;
-  const appsProject = process.env.VERCEL_PROJECT_ID_APPLICATIONS?.trim();
+  const appsProject = process.env.VERCEL_PROJECT_ID?.trim();
   const autoProject = process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim();
 
   if (projectId && appsProject && projectId === appsProject) return 'applications';
