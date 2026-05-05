@@ -3,7 +3,7 @@
  * Read-only tool to list company conversations (support, chat, email, etc.)
  */
 
-import { getConversationsCore } from '@/app/api/agents/customerSupport/conversations/route';
+import { getConversationsCore } from '@/app/api/agents/customerSupport/conversations/core';
 
 export interface ConversationsToolParams {
   action: 'list';

@@ -3,7 +3,7 @@
  * Unified tool for managing campaigns (create, list, update)
  */
 
-import { getCampaignCore } from './get/route';
+import { getCampaignCore } from './get/core';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 

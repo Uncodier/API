@@ -4,7 +4,7 @@
  * Sending emails is handled by the sendEmail tool.
  */
 
-import { configureEmailCore } from './route';
+import { configureEmailCore } from './core';
 import type { ConfigureEmailAction } from './route';
 
 export interface ConfigureEmailToolParams {

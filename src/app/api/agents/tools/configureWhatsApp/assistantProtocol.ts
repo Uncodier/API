@@ -4,7 +4,7 @@
  * Sending messages is handled by the sendWhatsApp and whatsappTemplate tools.
  */
 
-import { configureWhatsAppCore } from './route';
+import { configureWhatsAppCore } from './core';
 import type { ConfigureWhatsAppAction } from './route';
 
 export interface ConfigureWhatsAppToolParams {

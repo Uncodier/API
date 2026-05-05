@@ -1,4 +1,4 @@
-import { createContentCore } from '../content/create/route';
+import { createContentCore } from '../content/create/core';
 import { updateContentCore } from '../content/update/route';
 import { getOutstandClient } from '@/lib/integrations/outstand/client';
 import { sendBulkMessagesTool } from '../sendBulkMessages/assistantProtocol';

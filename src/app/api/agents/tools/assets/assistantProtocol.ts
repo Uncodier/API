@@ -3,9 +3,9 @@
  * Unified tool for managing assets (create, list, update)
  */
 
-import { getAssetCore } from './get/route';
-import { createAssetCore } from './create/route';
-import { updateAssetCore } from './update/route';
+import { getAssetCore } from './get/core';
+import { createAssetCore } from './create/core';
+import { updateAssetCore } from './update/core';
 
 export interface AssetsToolParams {
   action: 'create' | 'list' | 'update';

@@ -50,7 +50,7 @@ function isValidUUID(uuid: string): boolean {
 
 // Filtro comprehensivo ahora manejado por ComprehensiveEmailFilterService
 // (función mantenida para compatibilidad)
-export async function comprehensiveEmailFilter(
+async function comprehensiveEmailFilter(
   emails: any[], 
   siteId: string, 
   emailConfig: any

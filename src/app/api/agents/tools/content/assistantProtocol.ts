@@ -4,7 +4,7 @@
  */
 
 import { getContentCore } from './get/route';
-import { createContentCore } from './create/route';
+import { createContentCore } from './create/core';
 import { updateContentCore } from './update/route';
 
 

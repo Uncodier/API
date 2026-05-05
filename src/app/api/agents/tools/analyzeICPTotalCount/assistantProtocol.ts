@@ -3,7 +3,7 @@
  * Returns the total count of targets from Finder (Forager person_role_search totals)
  */
 
-import { analyzeICPTotalCountCore } from './route';
+import { analyzeICPTotalCountCore } from './core';
 
 export interface AnalyzeICPTotalCountToolParams {
   query?: Record<string, unknown>;

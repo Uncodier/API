@@ -3,7 +3,7 @@
  * Read-only tool to list messages, optionally filtered by conversation or site-wide.
  */
 
-import { getMessagesCore } from '@/app/api/agents/customerSupport/conversations/messages/route';
+import { getMessagesCore } from '@/app/api/agents/customerSupport/conversations/messages/core';
 
 export interface MessagesToolParams {
   action: 'list';
