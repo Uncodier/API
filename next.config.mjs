@@ -179,8 +179,7 @@ const nextraConfig = withNextra({
     ];
     
     // Añadir configuración CORS de cors.config.js
-    const allHeaders = [...baseHeaders, ...corsConfig];
-    console.log(`[NEXT-CONFIG] Total de configuraciones de headers: ${allHeaders.length}`);
+    const allHeaders = [...corsConfig, ...baseHeaders];
     
     return allHeaders;
   }
