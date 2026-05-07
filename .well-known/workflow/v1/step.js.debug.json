@@ -1,0 +1,39 @@
+{
+  "stepFiles": [
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/command.cjs",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/command.js",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/filesystem.cjs",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/filesystem.js",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/sandbox.cjs",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/sandbox.js",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/snapshot.cjs",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/@vercel/sandbox/dist/snapshot.js",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/node_modules/workflow/dist/stdlib.js",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/agents/gear/email/steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/agents/gear/whatsapp/steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/maintenance/agent-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/admin-loop-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/bootstrap-spec-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/cron-execute-steps-phase.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/cron-orchestrator-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/cron-steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/cron-workflow-finalize.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/platform-key-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/step-db-migrations.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/step-gate-probes-step.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/shared/workflow-db-steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/robots/instance/assistant/plan-steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/robots/instance/assistant/steps.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/workflows/outstand.ts"
+  ],
+  "workflowFiles": [
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/agents/gear/email/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/agents/gear/whatsapp/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/maintenance/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/requirements-apps/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/cron/requirements-automations/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/app/api/robots/instance/assistant/workflow.ts",
+    "/Users/prado/Desktop/Proyectos/Uncodie/Code/API/src/workflows/outstand.ts"
+  ],
+  "serdeOnlyFiles": []
+}
