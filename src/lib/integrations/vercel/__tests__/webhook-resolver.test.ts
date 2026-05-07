@@ -68,8 +68,8 @@ describe('classifyGitRepoKind', () => {
     process.env = { ...ORIGINAL_ENV };
   });
 
-  test('classifies by project id when VERCEL_PROJECT_ID matches', () => {
-    process.env.VERCEL_PROJECT_ID = 'prj_apps';
+  test('classifies by project id when APPS_VERCEL_PROJECT_ID matches', () => {
+    process.env.APPS_VERCEL_PROJECT_ID = 'prj_apps';
     const p = payloadWith({ projectId: 'prj_apps' });
     expect(classifyGitRepoKind(p)).toBe('applications');
   });
@@ -81,18 +81,29 @@ describe('classifyGitRepoKind', () => {
   });
 
   test('falls back to repo name when project id does not match', () => {
-    process.env.VERCEL_PROJECT_ID = 'prj_apps';
+    process.env.APPS_VERCEL_PROJECT_ID = 'prj_apps';
     process.env.GIT_AUTOMATIONS_REPO = 'automations';
     const p = payloadWith({ projectId: 'prj_other' }, { githubRepo: 'automations' });
     expect(classifyGitRepoKind(p)).toBe('automation');
   });
 
   test('defaults to applications when nothing matches', () => {
-    delete process.env.VERCEL_PROJECT_ID;
+    delete process.env.APPS_VERCEL_PROJECT_ID;
     delete process.env.VERCEL_PROJECT_ID_AUTOMATION;
     delete process.env.GIT_APPLICATIONS_REPO;
     delete process.env.GIT_AUTOMATIONS_REPO;
     const p = payloadWith({ projectId: 'prj_unknown' }, { githubRepo: 'unrelated' });
+    expect(classifyGitRepoKind(p)).toBe('applications');
+  });
+
+  test('ignores Vercel system VERCEL_PROJECT_ID (must use APPS_VERCEL_PROJECT_ID instead)', () => {
+    // Vercel auto-injects VERCEL_PROJECT_ID with the running project's id; we
+    // must not let that shadow our apps lookup or every cron-driven webhook
+    // from the apps project would be misclassified.
+    delete process.env.APPS_VERCEL_PROJECT_ID;
+    process.env.VERCEL_PROJECT_ID = 'prj_running_api';
+    process.env.GIT_APPLICATIONS_REPO = 'apps';
+    const p = payloadWith({ projectId: 'prj_apps' }, { githubRepo: 'apps' });
     expect(classifyGitRepoKind(p)).toBe('applications');
   });
 });

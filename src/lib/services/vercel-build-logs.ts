@@ -4,8 +4,11 @@
  * Env (optional — if missing, helpers no-op):
  * - VERCEL_TOKEN or VERCEL_ACCESS_TOKEN
  * - VERCEL_TEAM_ID — team scope (required for team-owned projects)
- * - VERCEL_PROJECT_ID — default project
- * - VERCEL_PROJECT_ID_APPLICATIONS / VERCEL_PROJECT_ID_AUTOMATION — override per repo kind
+ * - APPS_VERCEL_PROJECT_ID — id of the `apps` project (deliberately NOT named
+ *   `VERCEL_PROJECT_ID`: when this code runs inside a Vercel function, that key
+ *   is auto-injected as a System Environment Variable pointing to the running
+ *   project, which would silently shadow our value.)
+ * - VERCEL_PROJECT_ID_AUTOMATION — id of the automations project
  */
 
 import {
@@ -23,14 +26,13 @@ function getVercelToken(): string | null {
 }
 
 export function resolveVercelProjectId(kind: GitRepoKind): string | null {
-  const fallback = process.env.VERCEL_PROJECT_ID?.trim();
   if (kind === 'automation') {
-    const p = process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim();
-    return p || fallback || null;
+    return process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim() || null;
   }
-  // User explicitly requested to use VERCEL_PROJECT_ID for applications
-  // as it is the standard one used across the project.
-  return fallback || null;
+  // NOTE: do NOT fall back to process.env.VERCEL_PROJECT_ID — Vercel auto-injects
+  // it at runtime with the id of the *running* function's project (the API
+  // project), which would make us push branch envs to the wrong place.
+  return process.env.APPS_VERCEL_PROJECT_ID?.trim() || null;
 }
 
 function eventsQueryString(): string {

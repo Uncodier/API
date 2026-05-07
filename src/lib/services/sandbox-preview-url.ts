@@ -18,11 +18,13 @@ export {
 export type PreviewUrlGitRepoKind = 'applications' | 'automation';
 
 function resolveVercelProjectIdForPreview(kind: PreviewUrlGitRepoKind): string | null {
-  const fallback = process.env.VERCEL_PROJECT_ID?.trim();
   if (kind === 'automation') {
-    return process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim() || fallback || null;
+    return process.env.VERCEL_PROJECT_ID_AUTOMATION?.trim() || null;
   }
-  return fallback || null;
+  // NOTE: APPS_VERCEL_PROJECT_ID instead of VERCEL_PROJECT_ID because the latter
+  // is a Vercel System Environment Variable and gets auto-injected with the id
+  // of the running project (the API project) at runtime.
+  return process.env.APPS_VERCEL_PROJECT_ID?.trim() || null;
 }
 
 /**

@@ -16,7 +16,10 @@ export async function pushVercelBranchEnv(
   const projectId = resolveVercelProjectId(gitRepoKind);
 
   if (!token || !projectId) {
-    console.warn('[VercelEnv] Missing VERCEL_TOKEN or VERCEL_PROJECT_ID, skipping Vercel Env sync.');
+    console.warn(
+      `[VercelEnv] Missing required envs, skipping Vercel Env sync (token=${token ? 'set' : 'missing'}, projectId=${projectId ? projectId : 'missing'}, kind=${gitRepoKind}). ` +
+        `Set VERCEL_TOKEN, VERCEL_TEAM_ID, and ${gitRepoKind === 'automation' ? 'VERCEL_PROJECT_ID_AUTOMATION' : 'APPS_VERCEL_PROJECT_ID'} on the API project.`,
+    );
     return;
   }
 

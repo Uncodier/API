@@ -136,10 +136,22 @@ export async function provisionPlatformKeyStep(
   const envInjected = !!result.api_key;
   let tenant: ProvisionPlatformKeyStepResult['tenant'];
 
-  const envBag: Record<string, string> = {};
+  // Two bags:
+  //   - sandboxEnvBag: everything the generated app needs locally, written to
+  //     `.env.local` in the sandbox so `next dev` / `next build` see it.
+  //   - vercelBranchEnvBag: only the per-tenant secrets that *must* be scoped
+  //     to this branch on Vercel. Anything that is identical for every
+  //     requirement (Supabase URL, anon key, API base, auth provider) is
+  //     expected to be configured ONCE at the apps project level (Production
+  //     + Preview targets). Pushing them per-branch on every cron run wastes
+  //     API quota and clutters the project's env list.
+  const sandboxEnvBag: Record<string, string> = {};
+  const vercelBranchEnvBag: Record<string, string> = {};
+
   if (envInjected) {
-    envBag.UNCODIE_API_KEY = result.api_key;
-    envBag.UNCODIE_API_BASE = input.apiBaseUrl ?? defaultApiBase();
+    sandboxEnvBag.UNCODIE_API_KEY = result.api_key;
+    vercelBranchEnvBag.UNCODIE_API_KEY = result.api_key;
+    sandboxEnvBag.UNCODIE_API_BASE = input.apiBaseUrl ?? defaultApiBase();
   }
 
   if (input.authProvider !== null) {
@@ -160,17 +172,19 @@ export async function provisionPlatformKeyStep(
       };
       try {
         const apps = getAppsPublicConfig();
-        envBag.NEXT_PUBLIC_APPS_SUPABASE_URL = apps.url;
-        if (apps.anonKey) envBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
+        sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_URL = apps.url;
+        if (apps.anonKey) sandboxEnvBag.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY = apps.anonKey;
       } catch (e: unknown) {
         console.warn(
           '[provisionPlatformKeyStep] apps public config unavailable, skipping NEXT_PUBLIC_APPS_*:',
           e instanceof Error ? e.message : e,
         );
       }
-      envBag.NEXT_PUBLIC_APPS_TENANT_SCHEMA = ten.schema;
-      envBag.APPS_TENANT_JWT = ten.jwt;
-      envBag.APPS_AUTH_PROVIDER = ten.auth_provider;
+      sandboxEnvBag.NEXT_PUBLIC_APPS_TENANT_SCHEMA = ten.schema;
+      vercelBranchEnvBag.NEXT_PUBLIC_APPS_TENANT_SCHEMA = ten.schema;
+      sandboxEnvBag.APPS_TENANT_JWT = ten.jwt;
+      vercelBranchEnvBag.APPS_TENANT_JWT = ten.jwt;
+      sandboxEnvBag.APPS_AUTH_PROVIDER = ten.auth_provider;
     } catch (e: unknown) {
       console.warn(
         '[provisionPlatformKeyStep] tenant provisioning failed (continuing without DB envs):',
@@ -179,10 +193,10 @@ export async function provisionPlatformKeyStep(
     }
   }
 
-  if (Object.keys(envBag).length > 0) {
+  if (Object.keys(sandboxEnvBag).length > 0) {
     try {
       const sandbox = sandboxForProbe ?? (await Sandbox.get({ sandboxId }));
-      await mergeDotEnvLocal(sandbox, SandboxService.WORK_DIR, envBag);
+      await mergeDotEnvLocal(sandbox, SandboxService.WORK_DIR, sandboxEnvBag);
     } catch (e: unknown) {
       console.warn(
         '[provisionPlatformKeyStep] failed to write .env.local (continuing):',
@@ -190,9 +204,9 @@ export async function provisionPlatformKeyStep(
       );
     }
 
-    if (input.branchName) {
+    if (input.branchName && Object.keys(vercelBranchEnvBag).length > 0) {
       try {
-        await pushVercelBranchEnv(input.branchName, envBag, 'applications');
+        await pushVercelBranchEnv(input.branchName, vercelBranchEnvBag, 'applications');
       } catch (e: unknown) {
         console.warn(
           '[provisionPlatformKeyStep] failed to push Vercel branch env (continuing):',
