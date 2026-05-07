@@ -49,9 +49,9 @@ describe('requirement-branch: isUuid', () => {
 });
 
 describe('requirement-branch: buildRequirementBranchName', () => {
-  test('emits canonical format with slug', () => {
+  test('emits canonical format without slug even if title is provided', () => {
     expect(buildRequirementBranchName(REQ_ID, 'Landing Step 4')).toBe(
-      `${REQUIREMENT_BRANCH_PREFIX}${REQ_ID}--landing-step-4`,
+      `${REQUIREMENT_BRANCH_PREFIX}${REQ_ID}`,
     );
   });
 

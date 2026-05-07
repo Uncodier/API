@@ -60,10 +60,7 @@ export function buildRequirementBranchName(
       `buildRequirementBranchName: requirementId must be a valid UUID, received "${requirementId}"`,
     );
   }
-  const slug = slugifyRequirementTitle(title);
-  return slug
-    ? `${REQUIREMENT_BRANCH_PREFIX}${id}${REQUIREMENT_BRANCH_SLUG_SEP}${slug}`
-    : `${REQUIREMENT_BRANCH_PREFIX}${id}`;
+  return `${REQUIREMENT_BRANCH_PREFIX}${id}`;
 }
 
 /**
