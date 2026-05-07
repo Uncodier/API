@@ -29,7 +29,7 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
   return {
     name: 'skill_lookup',
     description:
-      'Browse and load Agent Skills (SKILL.md procedures) on demand. At the start of work, call action=search with keywords from your objective (or action=list). Use action=get with skill_name from results to read the full skill body before implementing. Searches are scoped to skills relevant to this requirement when requirement type is known.',
+      'Browse and load Agent Skills (SKILL.md procedures) on demand. Recommended flow: (1) action=search with 3-10 concise English keywords from objective, stack, domain, and deliverable. (2) action=get for top skill_name candidates. (3) action=list only when discovery is unclear. Current categories (frontmatter types): develop, automation, content, design, task, integration, planning, research, marketing_campaign, optimization, strategy. When requirement_type is known, list/search are automatically scoped to that type.',
     parameters: {
       type: 'object',
       properties: {
@@ -41,7 +41,8 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
         },
         query: {
           type: 'string',
-          description: 'Required for search: space-separated keywords (e.g. "next seo landing").',
+          description:
+            'Required for search. Space-separated keywords only (no full sentences), 3-10 terms recommended. Use English keywords from objective + tech stack + domain + expected output (e.g. "nextjs seo landing webhook conversion").',
         },
         skill_name: {
           type: 'string',
@@ -91,7 +92,10 @@ export function skillLookupTool(ctx?: SkillLookupToolContext) {
           requirement_type_filter: requirementType ?? null,
           count: matches.length,
           skills: summarizeForList(matches, limit),
-          hint: 'Call action=get with skill_name set to name or slug from skills[].',
+          hint:
+            matches.length > 0
+              ? 'Call action=get with skill_name set to name or slug from skills[].'
+              : 'No matches found. Retry action=search with broader English keywords, or call action=list to inspect available categories/types before selecting a skill.',
         };
       }
 

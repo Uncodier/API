@@ -79,7 +79,7 @@ app/site gate when an `@/components/ui/*` equivalent exists.
 ## 6. Uncodie Platform API (capability gateway)
 Pre-provisioned endpoints under `/api/platform/*` in the Uncodie API expose
 email, WhatsApp, leads, notifications, tracking and agents as authenticated
-HTTP capabilities. The API key is injected at runtime in `UNCODIE_API_KEY`;
+HTTP capabilities. The API key is injected at runtime in `API_KEY`;
 the SDK under `src/lib/uncodie/` wraps the fetches. Never provision third
 parties (Resend / Twilio / Stripe / Supabase ajenos) unless the requirement
 explicitly asks for it — default to the platform SDK.

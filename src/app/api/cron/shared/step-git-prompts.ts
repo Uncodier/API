@@ -9,7 +9,7 @@ export const ORCHESTRATOR_STEP_ORIGIN_RULE =
 
 /** Use in orchestrator system prompts (sandbox cron). */
 export const ORCHESTRATOR_SKILL_LOOKUP_HINT =
-  'SKILLS: Use the skill_lookup tool early — action=search with keywords from the requirement title, instructions, and domain; action=list to browse. Align plan steps (roles, deliverables) with relevant playbooks before delegating.';
+  'SKILLS: As the first step, use skill_lookup to find complementary playbooks for the current task — action=search with 3-10 English keywords from requirement title/instructions/objective/domain/tech stack. Prioritize categories (types) that match the requirement: develop, automation, content, design, task, integration, planning, research, marketing_campaign, optimization, strategy. Then action=get for each relevant skill_name (use action=list only if discovery is unclear or search returns no matches). Align plan steps (roles, deliverables) with those playbooks before delegating.';
 
 /**
  * Shared hint about `tool_lookup` for orchestrator + executor prompts.

@@ -1,6 +1,10 @@
-import { z } from 'zod';
-
-const BASE_URL = 'https://backend.makinari.com';
+function getBaseUrl(): string {
+  const baseUrl = process.env.NEXT_API_URL?.trim();
+  if (!baseUrl) {
+    throw new Error('NEXT_API_URL is not defined');
+  }
+  return baseUrl.replace(/\/$/, '');
+}
 
 export interface MakinariWebhook {
   id: string;
@@ -19,7 +23,7 @@ export class MakinariClient {
   }
 
   private async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-    const url = `${BASE_URL}${endpoint}`;
+    const url = `${getBaseUrl()}${endpoint}`;
     const headers = {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${this.apiKey}`,
@@ -103,9 +107,9 @@ export class MakinariClient {
 }
 
 export const getMakinariClient = () => {
-  const apiKey = process.env.MAKINARI_API_KEY;
+  const apiKey = process.env.API_KEY;
   if (!apiKey) {
-    throw new Error('MAKINARI_API_KEY is not defined');
+    throw new Error('API_KEY is not defined');
   }
   return new MakinariClient(apiKey);
 };

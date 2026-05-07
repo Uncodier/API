@@ -157,6 +157,109 @@ return NextResponse.json({ ok: true, mode, data: result });
   $$;
   ```
 
+### 6.1 RLS policy templates by table intent (mandatory for new or updated policies)
+Use this section whenever you create or update policies. Pick the closest table intent and adapt names/columns.
+
+**Mandatory migration pattern for policy updates on existing tables**
+```sql
+-- rollback hint:
+-- DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
+
+SET LOCAL search_path TO app_123;
+
+ALTER TABLE IF EXISTS app_123.my_table ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
+CREATE POLICY "Policy Name" ON app_123.my_table
+  FOR SELECT
+  USING (true);
+```
+
+**A) Public reference table (readable by everyone, writable by admin/system only)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.studios ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Everyone can view studios" ON app_123.studios;
+CREATE POLICY "Everyone can view studios" ON app_123.studios
+  FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Admins can manage studios" ON app_123.studios;
+CREATE POLICY "Admins can manage studios" ON app_123.studios
+  FOR ALL
+  USING (app_123.get_user_role(auth.uid()) = 'admin')
+  WITH CHECK (app_123.get_user_role(auth.uid()) = 'admin');
+```
+
+**B) Private user-owned table (strict ownership)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.reservations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users read own reservations" ON app_123.reservations;
+CREATE POLICY "Users read own reservations" ON app_123.reservations
+  FOR SELECT
+  USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users insert own reservations" ON app_123.reservations;
+CREATE POLICY "Users insert own reservations" ON app_123.reservations
+  FOR INSERT
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users update own reservations" ON app_123.reservations;
+CREATE POLICY "Users update own reservations" ON app_123.reservations
+  FOR UPDATE
+  USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users delete own reservations" ON app_123.reservations;
+CREATE POLICY "Users delete own reservations" ON app_123.reservations
+  FOR DELETE
+  USING (auth.uid() = user_id);
+```
+
+**C) Team/org-scoped table (membership-driven access)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.projects ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Members read org projects" ON app_123.projects;
+CREATE POLICY "Members read org projects" ON app_123.projects
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM app_123.organization_memberships m
+      WHERE m.organization_id = projects.organization_id
+        AND m.user_id = auth.uid()
+    )
+  );
+```
+
+**D) System/internal table (backend-only by service role)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.webhook_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "No direct user access to webhook_events" ON app_123.webhook_events;
+CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_events
+  FOR ALL
+  USING (false)
+  WITH CHECK (false);
+```
+
+**Control-table safeguard (`users`, `roles`, permissions tables)**
+- Never query `users` from a `FOR SELECT` policy on `users`.
+- Prefer `USING (id = auth.uid())` (or `USING (true)` for intentionally public reads).
+- Keep admin checks in `WITH CHECK` where possible to avoid recursive policy evaluation.
+
+**Post-migration verification checklist (required)**
+1. Verify policy names and table schema through `sandbox_db_inspect`.
+2. Verify read/write behavior for at least two roles (member and admin; plus anon if table is public).
+3. If table is `system/internal`, verify user JWT requests are denied and backend/service flow still works.
+4. Record the probe outcome in `step_output` with the exact table and policy names.
+
 ### 7. Environment variables
 - Declare every new env var in section 6.3 of the requirement first. If you need a var that is not declared, stop and update the requirement.
 - Read vars from `process.env` at the top of the module. Never hardcode.

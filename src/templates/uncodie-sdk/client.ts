@@ -1,7 +1,7 @@
 /**
  * Uncodie Platform SDK — minimal fetch wrapper shipped into every generated
- * app under `src/lib/uncodie/`. It reads the API key from `UNCODIE_API_KEY`
- * and the base URL from `UNCODIE_API_BASE` (defaults to the Uncodie
+ * app under `src/lib/uncodie/`. It reads the API key from `API_KEY`
+ * and the base URL from `NEXT_API_URL` (defaults to the Uncodie
  * production host) so the handlers from `src/lib/services/platform-api/`
  * can route every request to the right capability.
  */
@@ -33,14 +33,14 @@ export class UncodieClient {
   private readonly timeoutMs: number;
 
   constructor(options: UncodieClientOptions = {}) {
-    const apiKey = options.apiKey ?? (typeof process !== 'undefined' ? process.env?.UNCODIE_API_KEY : undefined);
+    const apiKey = options.apiKey ?? (typeof process !== 'undefined' ? process.env?.API_KEY : undefined);
     if (!apiKey) {
-      throw new Error('[uncodie] Missing UNCODIE_API_KEY — Platform SDK cannot authenticate.');
+      throw new Error('[uncodie] Missing API_KEY — Platform SDK cannot authenticate.');
     }
     this.apiKey = apiKey;
     this.baseUrl = (
       options.baseUrl ??
-      (typeof process !== 'undefined' ? process.env?.UNCODIE_API_BASE : undefined) ??
+      (typeof process !== 'undefined' ? process.env?.NEXT_API_URL : undefined) ??
       'https://api.uncodie.com'
     ).replace(/\/$/, '');
     this.fetchImpl = options.fetchImpl ?? fetch;

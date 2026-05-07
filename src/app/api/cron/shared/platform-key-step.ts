@@ -46,7 +46,7 @@ function defaultApiBase(): string {
 }
 
 /**
- * Probe the sandbox's `.env.local` for a non-empty `UNCODIE_API_KEY` entry.
+ * Probe the sandbox's `.env.local` for a non-empty `API_KEY` entry.
  * Returns `false` when the file is missing, the key is absent, or the value
  * is an empty string. Used to decide whether to reuse the prior active key
  * (still works since we only persist its id on remote_instances) or force a
@@ -58,7 +58,7 @@ async function sandboxHasApiKeyEnv(sandbox: Sandbox, cwd: string): Promise<boole
       cmd: 'sh',
       args: [
         '-c',
-        `[ -f "${cwd}/.env.local" ] && grep -E '^UNCODIE_API_KEY=.+' "${cwd}/.env.local" >/dev/null 2>&1 && echo YES || echo NO`,
+        `[ -f "${cwd}/.env.local" ] && grep -E '^API_KEY=.+' "${cwd}/.env.local" >/dev/null 2>&1 && echo YES || echo NO`,
       ],
     });
     const out = (await res.stdout()).toString().trim();
@@ -149,9 +149,10 @@ export async function provisionPlatformKeyStep(
   const vercelBranchEnvBag: Record<string, string> = {};
 
   if (envInjected) {
-    sandboxEnvBag.UNCODIE_API_KEY = result.api_key;
-    vercelBranchEnvBag.UNCODIE_API_KEY = result.api_key;
-    sandboxEnvBag.UNCODIE_API_BASE = input.apiBaseUrl ?? defaultApiBase();
+    sandboxEnvBag.API_KEY = result.api_key;
+    vercelBranchEnvBag.API_KEY = result.api_key;
+    sandboxEnvBag.NEXT_API_URL = input.apiBaseUrl ?? defaultApiBase();
+    vercelBranchEnvBag.NEXT_API_URL = input.apiBaseUrl ?? defaultApiBase();
   }
 
   if (input.authProvider !== null) {

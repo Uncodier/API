@@ -82,6 +82,6 @@ When the requirement asks for broader AI tool use, remember these map to `/api/a
 
 ## Implementation Steps
 1. **Identify the Scope**: Read the requirement. Determine which Makinari APIs are needed (Tracking, Leads, Content, etc.).
-2. **Setup Env Vars**: Ensure the app has access to `NEXT_PUBLIC_MAKINARI_SITE_ID` and (for server code) `MAKINARI_API_KEY`.
+2. **Setup Env Vars**: Ensure the app uses `NEXT_API_URL` and (for server code) `API_KEY`. Do NOT hardcode the API URL or guess it; always use `NEXT_API_URL` and `API_KEY` to authenticate and target endpoints.
 3. **Build the Integration**: Write the fetch calls or SDK wrappers. Implement the "Blog on Landing" rule if a landing page is present.
 4. **Test**: If possible, use `sandbox_run_command` with curl to verify the endpoints, passing the correct headers.

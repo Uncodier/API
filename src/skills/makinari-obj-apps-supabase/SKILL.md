@@ -107,6 +107,102 @@ await db.schema(SCHEMA_NAME).from('reservations').insert({ user_id, starts_at, e
 const { data } = await db.schema(SCHEMA_NAME).from('reservations').select('*').order('starts_at');
 ```
 
+## RLS policy templates by table type (copy/adapt in migrations)
+
+Use fully-qualified schema names in SQL (`app_<id>.<table>`) or set `SET LOCAL search_path` first.  
+For policy replacements on existing tables, always use `DROP POLICY IF EXISTS` before `CREATE POLICY`.
+
+```sql
+-- Policy replacement scaffold
+-- rollback hint:
+-- DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.my_table ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Policy Name" ON app_123.my_table;
+CREATE POLICY "Policy Name" ON app_123.my_table FOR SELECT USING (true);
+```
+
+**Public reference table (public read, admin manage)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.studios ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Everyone can view studios" ON app_123.studios;
+CREATE POLICY "Everyone can view studios" ON app_123.studios
+  FOR SELECT
+  USING (true);
+
+DROP POLICY IF EXISTS "Admins can manage studios" ON app_123.studios;
+CREATE POLICY "Admins can manage studios" ON app_123.studios
+  FOR ALL
+  USING (app_123.get_user_role(auth.uid()) = 'admin')
+  WITH CHECK (app_123.get_user_role(auth.uid()) = 'admin');
+```
+
+**Private user-owned table (auth user owns row)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.reservations ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Users read own reservations" ON app_123.reservations;
+CREATE POLICY "Users read own reservations" ON app_123.reservations
+  FOR SELECT USING (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users insert own reservations" ON app_123.reservations;
+CREATE POLICY "Users insert own reservations" ON app_123.reservations
+  FOR INSERT WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users update own reservations" ON app_123.reservations;
+CREATE POLICY "Users update own reservations" ON app_123.reservations
+  FOR UPDATE USING (auth.uid() = user_id)
+  WITH CHECK (auth.uid() = user_id);
+
+DROP POLICY IF EXISTS "Users delete own reservations" ON app_123.reservations;
+CREATE POLICY "Users delete own reservations" ON app_123.reservations
+  FOR DELETE USING (auth.uid() = user_id);
+```
+
+**Team/org-scoped table (membership-gated)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.projects ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Members read org projects" ON app_123.projects;
+CREATE POLICY "Members read org projects" ON app_123.projects
+  FOR SELECT
+  USING (
+    EXISTS (
+      SELECT 1
+      FROM app_123.organization_memberships m
+      WHERE m.organization_id = projects.organization_id
+        AND m.user_id = auth.uid()
+    )
+  );
+```
+
+**System/internal table (deny user JWT, backend/service only)**
+```sql
+SET LOCAL search_path TO app_123;
+ALTER TABLE IF EXISTS app_123.webhook_events ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "No direct user access to webhook_events" ON app_123.webhook_events;
+CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_events
+  FOR ALL
+  USING (false)
+  WITH CHECK (false);
+```
+
+**Control-table guardrails (`users`, `roles`, permissions)**
+- Never read `users` from a `FOR SELECT` policy on `users` itself (avoids recursion).
+- Prefer simple predicates (`id = auth.uid()`) for self-read/write.
+- Keep role escalation checks in `WITH CHECK` where possible.
+
+## Post-migration RLS validation (required)
+1. Verify policy existence and schema-qualified table names with `sandbox_db_inspect`.
+2. Probe role behavior: anon/member/admin (as applicable to table intent).
+3. Confirm system/internal tables deny user JWT calls while backend flows keep working.
+4. Document table + policy names and probe outcomes in `requirement_status` or `step_output`.
+
 ## Auth recipes
 
 - `APPS_AUTH_PROVIDER=supabase` (default). Wire `signInWithOtp` / `signInWithPassword` against the same Supabase client. **CRITICAL: Sincronización Inmediata en el Sign Up**: Después de usar `supabase.auth.signUp(...)` en un backend action o API route, debes hacer un insert inmediato a la tabla `users` del esquema actual (`NEXT_PUBLIC_APPS_TENANT_SCHEMA`).

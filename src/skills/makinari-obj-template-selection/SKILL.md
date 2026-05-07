@@ -97,7 +97,7 @@ Before provisioning any third-party service (Stripe, Resend, Twilio, Auth0,
 ajeno Supabase, etc.), check whether the capability is already covered by the
 Uncodie Platform SDK. The SDK lives under `src/lib/uncodie/` in the generated
 app and consumes `/api/platform/*` from the main Uncodie API using a
-test-only bearer key baked into `UNCODIE_API_KEY` + `UNCODIE_API_BASE`.
+test-only bearer key baked into `API_KEY` + `NEXT_API_URL`.
 
 Currently exposed: `email.send` (test-only), `leads.read|write`,
 `notifications.create`, `tracking.event.write`, `agents.invoke` and

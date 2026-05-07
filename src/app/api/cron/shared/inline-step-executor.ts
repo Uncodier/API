@@ -362,7 +362,7 @@ WORKSPACE — READ THIS CAREFULLY:
 - To add a new page, write files under src/app/<route>/page.tsx only.
 - To add components, write under src/components/.
 - All relative paths in sandbox tools resolve from ${SandboxService.WORK_DIR}.
-- FIRST ACTIONS: (1) skill_lookup action=search with keywords from this step's objective, instructions, and stack; then skill_lookup action=get for each relevant playbook. (2) sandbox_list_files path="." to see the current project structure before writing code.
+- FIRST ACTIONS (MANDATORY ORDER): (1) skill_lookup action=search to find complementary skills for this exact step using keywords from the objective, title, instructions, and tech stack; then skill_lookup action=get for each relevant playbook before any coding. (2) sandbox_list_files path="." to see the current project structure before writing code.
 - LAST ACTION BEFORE STOPPING: Call sandbox_push_checkpoint (title_hint = this step's title) after your work builds — mandatory if you modified files; see CHECKPOINTS section below.
 
 COMPANY BACKGROUND & MEMORIES:
