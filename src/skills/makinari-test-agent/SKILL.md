@@ -23,6 +23,7 @@ Before reporting completion:
 1. Run the build/test command: `sandbox_run_command npm run build` (or the stack's equivalent).
 2. Fix every error. Do NOT report success with a broken build.
 3. The system handles `git commit` and `git push` automatically after you finish. Never commit manually.
+4. **Inserción de Datos de Prueba (MANDATORY)**: Siempre que realices pruebas que involucren tablas en la base de datos, DEBES insertar elementos de prueba (dummy data) en dichas tablas. Esto es esencial para probar temas de políticas RLS (Row Level Security) y asegurar la visualización correcta de los datos en el frontend.
 
 ### 3. Emit `test_results.json`
 Generate this file at the repo root using `sandbox_write_file`. Use the canonical shape defined in `makinari-fase-validacion`:

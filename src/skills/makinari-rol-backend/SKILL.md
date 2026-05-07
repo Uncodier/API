@@ -138,6 +138,7 @@ return NextResponse.json({ ok: true, mode, data: result });
   - To prevent `"Could not find the table 'public.table_name' in the schema cache"` errors, you **MUST** explicitly specify the schema using `.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public')` BEFORE calling `.from()`.
   - Example: `await supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public').from('spaces').select('*')`
 - **Dynamic Table Verification (Migraciones Multi-Schema)**: Si creas scripts `DO $$` que iteran sobre múltiples schemas (`app_%`) para propagar cambios en tablas existentes, **siempre valida la existencia de la tabla** antes de hacer `ALTER TABLE` o `CREATE POLICY` revisando `information_schema.tables`.
+- **Inserción de Datos de Prueba (MANDATORY)**: Siempre que crees nuevas tablas o modifiques esquemas en el backend, DEBES insertar elementos de prueba (dummy data) en la base de datos. Esto es obligatorio para poder probar y verificar que las políticas RLS (Row Level Security) funcionan correctamente y para permitir la visualización de datos en el frontend.
   ```sql
   DO $$
   DECLARE

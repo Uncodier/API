@@ -15,7 +15,7 @@ You are the Orchestrator. This skill defines how you approve a worker step befor
 ### 1. Design plans with testing baked in
 When creating an `instance_plan`, include explicit testing instructions in each worker step:
 
-> "Develop the feature. Run `npm run build` to verify. Generate `test_results.json` per `makinari-fase-validacion` with `tests_failed: 0` before marking the step completed."
+> "Develop the feature. Run `npm run build` to verify. Generate `test_results.json` per `makinari-fase-validacion` with `tests_failed: 0` before marking the step completed. Siempre inserta datos de prueba (dummy data) en la BD para probar visualización de datos y políticas RLS."
 
 ### 2. Validate worker output after each step
 After a worker marks a step `completed`:

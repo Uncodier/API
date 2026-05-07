@@ -14,9 +14,10 @@ Act as a Senior QA Automation Engineer. Write comprehensive, readable, and maint
 2. **Readability & Clarity:** Use clear and descriptive names for `describe` and `it`/`test` blocks. The test name must clearly describe the expected behavior. Keep test code concise; avoid unnecessary complexity or duplication. Use the `expect` syntax for assertions.
 3. **Structure:** Organize tests logically using `describe` for classes/modules and nested blocks for different scenarios. ALL test files MUST be placed inside a top-level `tests/` directory (e.g., `tests/api`, `tests/utils`, `tests/db`) to keep the repository root and source folders clean. Use `beforeEach` and `afterEach` for setup and teardown to ensure a clean state for each test.
 4. **Test Data Management:** Define minimal and necessary test data. Prefer using factories or data generator functions over static fixtures.
-5. **Independence & Isolation:** Ensure each test is independent; avoid sharing state between tests. Use mocks (`jest.mock`, `jest.fn()`) to simulate calls to external services (APIs, databases) and stubs to return predefined values. Isolate the unit being tested, but avoid over-mocking; test real behavior when possible.
-6. **DRY Principle:** Extract reusable logic into helper functions. Refactor repetitive test code into helpers or custom matchers if necessary.
-7. **Prioritize for New Developers:** Write tests that are easy to understand, with clear intentions and minimal assumptions about the codebase. Include comments where the tested logic is complex.
+5. **Inserción de Datos de Prueba (MANDATORY)**: Siempre que escribas pruebas de integración que involucren tablas en la base de datos (backend/db), DEBES insertar elementos de prueba (dummy data) reales en dichas tablas. Esto es esencial para probar la correcta configuración de políticas RLS (Row Level Security) y facilitar la validación de visualización de datos.
+6. **Independence & Isolation:** Ensure each test is independent; avoid sharing state between tests. Use mocks (`jest.mock`, `jest.fn()`) to simulate calls to external services (APIs, databases) and stubs to return predefined values. Isolate the unit being tested, but avoid over-mocking; test real behavior when possible.
+7. **DRY Principle:** Extract reusable logic into helper functions. Refactor repetitive test code into helpers or custom matchers if necessary.
+8. **Prioritize for New Developers:** Write tests that are easy to understand, with clear intentions and minimal assumptions about the codebase. Include comments where the tested logic is complex.
 
 ## Tools
 | Tool | When to use |
