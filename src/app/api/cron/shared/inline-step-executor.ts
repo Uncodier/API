@@ -280,6 +280,55 @@ export async function inlineExecutePlanStep(
     requirementId: requirementId || undefined,
   };
 
+  // Stale-snapshot guard. `executeStepsPhaseStep` runs as a Vercel Workflow
+  // step function with `maxRetries=10`. When the workflow retries this step
+  // (sandbox 410 Gone, network blip, timeout, etc.) it re-invokes us with the
+  // ORIGINAL `steps` snapshot — meaning a step that already finished in a
+  // previous attempt is still labeled `pending` in our caller's array. Without
+  // this check we would `updateInstancePlanCore({status: 'in_progress'})` on
+  // top of the DB row that already says `completed`, downgrading it and
+  // making the cron re-run the same work in a loop (observed on plan
+  // 4d3795bf step 1: completed at 23:10:04, then re-marked in_progress at
+  // 23:13:19, 23:18:48 and 23:24:16 with no `instance_plan update` in
+  // between — pure workflow-retry stale-snapshot).
+  try {
+    const { data: planRow } = await supabaseAdmin
+      .from('instance_plans')
+      .select('steps, status')
+      .eq('id', plan.id)
+      .maybeSingle();
+    if (planRow?.status === 'cancelled' || planRow?.status === 'paused') {
+      console.log(
+        `[CronStep] Step ${step.order} (${step.title || step.id}) — owning plan is ${planRow.status}, skipping execution.`,
+      );
+      return { ok: true };
+    }
+    const freshStep = Array.isArray(planRow?.steps)
+      ? (planRow.steps as any[]).find((s) => s?.id === step.id)
+      : undefined;
+    if (freshStep && (freshStep.status === 'completed' || freshStep.status === 'cancelled')) {
+      console.log(
+        `[CronStep] Step ${step.order} (${step.title || step.id}) is already "${freshStep.status}" in DB — skipping (likely workflow retry with stale snapshot).`,
+      );
+      await logCronInfrastructureEvent(audit, {
+        event: CronInfraEvent.STEP_STATUS,
+        level: 'warn',
+        message: `Plan step ${step.order} skipped — already ${freshStep.status} in DB (stale workflow snapshot)`,
+        details: {
+          plan_id: plan.id,
+          step_id: step.id,
+          step_order: step.order,
+          status: freshStep.status,
+          phase: 'stale_snapshot_skip',
+        },
+      });
+      return { ok: true };
+    }
+  } catch (e) {
+    // Do not let the guard itself fail the step — fall through to normal flow.
+    console.warn(`[CronStep] Stale-snapshot guard failed for step ${step.id}:`, e);
+  }
+
   await updateInstancePlanCore({
     plan_id: plan.id, instance_id, site_id,
     steps: [{ id: step.id, status: 'in_progress', started_at: new Date().toISOString() }],

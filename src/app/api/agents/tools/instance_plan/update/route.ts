@@ -107,6 +107,46 @@ export async function updateInstancePlanCore(params: any) {
       return baseMetadata;
     };
 
+    // Status downgrade guard. An incoming partial-update can otherwise reset
+    // a `completed` step back to `pending`/`in_progress` and trigger
+    // re-execution. This bug bit us when:
+    //   1. The orchestrator (LLM) re-sends the existing steps array with
+    //      `status: 'pending'` because it thinks it's "redeclaring" the plan.
+    //   2. The cron's stale-snapshot retry path calls
+    //      `updateInstancePlanCore({ status: 'in_progress' })` for a step
+    //      that finished in a previous workflow attempt.
+    // Rule: once a step is `completed` or `cancelled` it is sticky. Only
+    // explicit retry paths that bump `retry_count` are allowed to demote a
+    // `failed` step back to `pending`.
+    const isTerminalSticky = (s: string | undefined) => s === 'completed' || s === 'cancelled';
+    const safeMergeStatus = (currentStep: any, incomingStep: any): {
+      status: string | undefined;
+      completed_at: string | null | undefined;
+      actual_output: string | null | undefined;
+      ignored: boolean;
+    } => {
+      let ignored = false;
+      let nextStatus = incomingStep.status !== undefined ? incomingStep.status : currentStep.status;
+      let nextCompletedAt =
+        incomingStep.completed_at !== undefined ? incomingStep.completed_at : currentStep.completed_at;
+      let nextActualOutput =
+        incomingStep.actual_output !== undefined ? incomingStep.actual_output : currentStep.actual_output;
+      if (
+        isTerminalSticky(currentStep.status) &&
+        incomingStep.status !== undefined &&
+        incomingStep.status !== currentStep.status
+      ) {
+        ignored = true;
+        nextStatus = currentStep.status;
+        nextCompletedAt = currentStep.completed_at ?? nextCompletedAt;
+        nextActualOutput = currentStep.actual_output ?? nextActualOutput;
+        console.warn(
+          `[UpdateInstancePlan] Refused to demote step "${currentStep.title || currentStep.id}" from "${currentStep.status}" → "${incomingStep.status}". Sticky terminal status preserved.`,
+        );
+      }
+      return { status: nextStatus, completed_at: nextCompletedAt, actual_output: nextActualOutput, ignored };
+    };
+
     const currentSteps = existingPlan.steps || [];
     const updatedSteps = currentSteps.map((currentStep: any) => {
       const incomingStep = updates.steps.find((s: any) =>
@@ -114,9 +154,13 @@ export async function updateInstancePlanCore(params: any) {
         (s.order !== undefined && s.order === currentStep.order)
       );
       if (!incomingStep) return currentStep;
+      const safe = safeMergeStatus(currentStep, incomingStep);
       return {
         ...currentStep,
         ...incomingStep,
+        status: safe.status,
+        completed_at: safe.completed_at,
+        actual_output: safe.actual_output,
         id: currentStep.id,
         metadata: mergeMetadata(currentStep, incomingStep),
         updated_at: new Date().toISOString(),
