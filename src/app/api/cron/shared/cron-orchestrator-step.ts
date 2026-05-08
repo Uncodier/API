@@ -10,7 +10,7 @@ import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
-import { escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
+import { ensureInProgressItem, escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
 
 /**
  * Tool set for the cron orchestrator — routed through `tool_lookup`.
@@ -114,13 +114,18 @@ export async function runOrchestratorStep(params: {
     ? { instanceId, siteId: site_id, userId: user_id, requirementId: reqId }
     : undefined;
 
-  // Phase-progress watchdog: before spending another cycle on this
-  // requirement, escalate any in_progress item that has been idle past the
-  // threshold or already burned its attempts envelope. needs_review is a
-  // phase-terminal status, so the deterministic flow advances on the next
-  // setItemStatus piggy-back. This guarantees no item can keep a phase
-  // pinned indefinitely just because the orchestrator never re-bound it
-  // to a plan step.
+  // Backlog watchdog (runs once per cycle, BEFORE the orchestrator turn loop):
+  //   1. Escalate any in_progress item that has been idle past the threshold
+  //      or burned its attempts envelope — needs_review is phase-terminal,
+  //      so the deterministic flow advances on the next setItemStatus
+  //      piggy-back. Guarantees no item can keep a phase pinned indefinitely
+  //      just because the orchestrator never re-bound it to a plan step.
+  //   2. Ensure WIP=1 from the backlog side: if there is no in_progress item
+  //      but unblocked pending items remain, auto-promote the next one to
+  //      in_progress server-side. This decouples cycle progress from the
+  //      orchestrator remembering to call `requirement_backlog action="start"`
+  //      and is what enables the auto-bind of `metadata.backlog_item_id` on
+  //      plan steps to work reliably.
   if (reqId) {
     try {
       const { escalated } = await escalateStaleInProgressItems({ requirementId: reqId });
@@ -145,6 +150,35 @@ export async function runOrchestratorStep(params: {
             },
           });
         }
+      }
+
+      const { promoted, reason: ensureReason } = await ensureInProgressItem({ requirementId: reqId });
+      if (promoted) {
+        console.log(
+          `[CronStep|orchestrator] Watchdog auto-started backlog item ${promoted.id.slice(0, 8)} "${promoted.title}" (phase=${promoted.phase_id}) — orchestrator skipped action='start'`,
+        );
+        if (audit) {
+          await logCronInfrastructureEvent(audit, {
+            event: CronInfraEvent.STEP_STATUS,
+            level: 'warn',
+            message: `Watchdog auto-started "${promoted.title}" — backlog had pending items but no in_progress`,
+            details: {
+              phase: 'watchdog_auto_start',
+              promoted_item: {
+                id: promoted.id,
+                title: promoted.title,
+                phase_id: promoted.phase_id,
+                tier: promoted.tier ?? 'core',
+                kind: promoted.kind,
+                attempts: promoted.attempts,
+              },
+            },
+          });
+        }
+      } else if (ensureReason === 'no_pending_unblocked') {
+        // Nothing to do — either everything is done/needs_review, or the
+        // pending queue is dependency-blocked. The orchestrator will decide
+        // whether to advance the phase or close the requirement.
       }
     } catch (e) {
       console.warn(`[CronStep|orchestrator] Watchdog failed (continuing):`, e);
