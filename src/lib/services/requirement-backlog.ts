@@ -31,6 +31,8 @@ import {
   toBacklog,
   writeBacklog,
 } from './requirement-backlog-store';
+import { validateAcceptance } from './requirement-acceptance';
+import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 
 export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope, BacklogItemTier, RequirementBacklog };
 
@@ -132,6 +134,34 @@ export async function upsertBacklogItem(params: {
   const next = ensureItemDefaults(
     idx >= 0 ? { ...backlog.items[idx], ...params.item } : params.item,
   );
+
+  // Hard rule (matches Phase 10 Judge contract): a `tier=core` item must have
+  // at least one *executable* acceptance entry — i.e. one that contains an
+  // HTTP verb (GET/POST/...), a route anchor (`/foo`), a status-code anchor
+  // (2xx/200/...) or an observable verb (returns/renders/inserts/...). If
+  // every entry is narrative, the Judge will reject every cycle forever (no
+  // amount of code can satisfy "Admin can configure max_capacity" because
+  // there is no anchor to match in evidence). Refusing the upsert here makes
+  // the orchestrator see a clear error in its tool result and forces it to
+  // rewrite the acceptance with a real anchor, which is the only way out of
+  // the loop. Existing items can still be updated as long as the post-merge
+  // acceptance is executable.
+  if ((next.tier ?? 'core') === 'core') {
+    const v = validateAcceptance(next.acceptance);
+    if (!v.has_any_executable) {
+      throw new Error(
+        `Backlog upsert rejected: tier=core item "${next.title}" has narrative-only acceptance. ` +
+          `Add at least one executable anchor per entry — HTTP verb (GET/POST/...), route ` +
+          `(/api/...), status code (2xx/200) or observable verb (returns, renders, inserts, ` +
+          `creates, updates, deletes, redirects, persists). Example BEFORE: ` +
+          `"Admin can configure max_capacity on studios". Example AFTER: ` +
+          `"PATCH /api/studios/:id with { max_capacity: number } returns 200 and persists the value, ` +
+          `and GET /api/studios returns it in the response payload". Or set tier=ornamental if this ` +
+          `is polish-only and should not block requirement closure.`,
+      );
+    }
+  }
+
   if (idx >= 0) {
     backlog.items[idx] = next;
   } else {
@@ -206,6 +236,29 @@ export async function setItemStatus(params: {
   const toWrite = advance ? advance.nextBacklog : backlog;
 
   await writeBacklog(params.requirementId, toWrite);
+
+  // Stop zombie plan loops: when the item leaves the actively-worked tier
+  // toward a non-success terminal (needs_review / rejected), any pending or
+  // in_progress plan steps still bound to it must be cancelled. Otherwise
+  // `cron-execute-steps-phase` keeps running the same subgoals every tick.
+  // (For `done` we leave the plan alone — its steps should already be
+  // completing naturally as the work lands.)
+  if (params.status === 'needs_review' || params.status === 'rejected') {
+    try {
+      const r = await cancelPlanStepsForBacklogItem({
+        itemId: params.itemId,
+        reason: `setItemStatus → ${params.status}: ${params.reason ?? 'no reason provided'}`.slice(0, 240),
+      });
+      if (r.stepsCancelled > 0) {
+        console.warn(
+          `[backlog] cancelled ${r.stepsCancelled} plan step(s) bound to item ${params.itemId} after status=${params.status} (plansTouched=${r.plansTouched}, plansCancelled=${r.plansCancelled})`,
+        );
+      }
+    } catch (e) {
+      console.warn(`[backlog] cancelPlanStepsForBacklogItem failed for ${params.itemId}:`, e);
+    }
+  }
+
   return toWrite.items[idx];
 }
 

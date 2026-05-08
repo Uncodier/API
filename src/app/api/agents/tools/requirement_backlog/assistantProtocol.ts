@@ -37,7 +37,17 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         acceptance: {
           type: 'array',
           items: { type: 'string' },
-          description: 'Observable acceptance statements. The Judge checks these against evidence/<item_id>.json.',
+          description:
+            'Observable acceptance statements the Judge checks against evidence. ' +
+            'For tier=core items, EVERY entry must contain at least one EXECUTABLE anchor — ' +
+            'otherwise the upsert is rejected (narrative-only acceptance is the #1 cause of ' +
+            'infinite Judge-reject loops). Anchors recognized: HTTP verb (GET/POST/PUT/PATCH/DELETE), ' +
+            'route starting with `/` (e.g. `/api/studios`), status code (`200`, `2xx`, `404`), ' +
+            'or observable verb (returns, renders, inserts, creates, updates, deletes, ' +
+            'redirects, persists, saves, responds, opens modal, shows the form/table/list). ' +
+            'BAD: "Admin can configure max_capacity on studios". ' +
+            'GOOD: "PATCH /api/studios/:id with { max_capacity: number } returns 200 and persists the value." ' +
+            'If the work is genuinely narrative (landing copy, marketing polish), set tier=ornamental.',
         },
         touches: { type: 'array', items: { type: 'string' }, description: 'Files or file globs this item is expected to touch.' },
         scope_level: { type: 'string', enum: ['full', 'mvp', 'minimal'], description: 'Requested scope. Default full.' },

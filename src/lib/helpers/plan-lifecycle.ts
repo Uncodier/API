@@ -273,6 +273,127 @@ export async function markRunningPlansAsFailed(
   }
 }
 
+export interface CancelPlanStepsForItemResult {
+  /** Number of plans whose JSON was rewritten (steps for the item cancelled). */
+  plansTouched: number;
+  /** Number of plans whose top-level status moved to 'cancelled' as a side effect. */
+  plansCancelled: number;
+  /** Number of individual plan steps moved to 'cancelled'. */
+  stepsCancelled: number;
+  /** Plan ids that were rewritten. */
+  planIds: string[];
+  errors: string[];
+}
+
+/**
+ * Cancel every pending/in_progress plan step bound (via
+ * `metadata.backlog_item_id` or root `backlog_item_id`) to a backlog item that
+ * just transitioned to a terminal-non-done status (needs_review / rejected).
+ *
+ * Why: when the backlog watchdog (or self-heal policy) escalates an item, the
+ * `instance_plans.steps` array still has the per-step subgoals that were
+ * originally drafted for it. Without cancelling them, `cron-execute-steps-phase`
+ * keeps running the same steps in the next cycle and the agent burns turns
+ * trying to "complete" a step whose acceptance is no longer reachable. That is
+ * exactly the loop pattern observed on item 8afbb973 (10 attempts, plan still
+ * in_progress).
+ *
+ * Behavior:
+ *  - If a plan has at least one pending/in_progress step bound to `itemId`,
+ *    those steps are flipped to `status='cancelled'` with a `cancellation_reason`.
+ *  - If, after that rewrite, the plan has no remaining pending/in_progress
+ *    steps and is not already terminal, the plan itself is marked
+ *    `status='cancelled'` so the cron skips it on the next tick.
+ *  - Plans already `completed`/`failed`/`cancelled`/`replaced` are left alone.
+ *  - Other backlog items in the same plan are untouched.
+ *
+ * Scope: optionally restrict the search to a single instance via
+ * `instanceId`; otherwise scans all plans (we still pre-filter by
+ * `requirementId` from the caller so this is safe in practice).
+ */
+export async function cancelPlanStepsForBacklogItem(params: {
+  itemId: string;
+  reason: string;
+  instanceId?: string;
+}): Promise<CancelPlanStepsForItemResult> {
+  const result: CancelPlanStepsForItemResult = {
+    plansTouched: 0,
+    plansCancelled: 0,
+    stepsCancelled: 0,
+    planIds: [],
+    errors: [],
+  };
+  if (!params.itemId) return result;
+
+  const ACTIVE_PLAN_STATUSES = ['in_progress', 'active', 'pending', 'paused'];
+  const ACTIVE_STEP_STATUSES = new Set(['pending', 'in_progress']);
+  const TERMINAL_STEP_STATUSES = new Set(['completed', 'failed', 'cancelled', 'skipped']);
+
+  let query = supabaseAdmin
+    .from('instance_plans')
+    .select('id, status, steps')
+    .in('status', ACTIVE_PLAN_STATUSES);
+  if (params.instanceId) query = query.eq('instance_id', params.instanceId);
+
+  const { data: plans, error } = await query;
+  if (error) {
+    result.errors.push(`fetch_active_plans: ${error.message}`);
+    return result;
+  }
+  if (!plans || plans.length === 0) return result;
+
+  const nowIso = new Date().toISOString();
+
+  for (const plan of plans) {
+    const steps = Array.isArray(plan.steps) ? (plan.steps as any[]) : [];
+    if (steps.length === 0) continue;
+
+    let stepsCancelledHere = 0;
+    const nextSteps = steps.map((s) => {
+      const meta = s?.metadata || {};
+      const boundId: string | undefined = meta.backlog_item_id || s?.backlog_item_id;
+      if (boundId !== params.itemId) return s;
+      if (!ACTIVE_STEP_STATUSES.has(s?.status)) return s;
+      stepsCancelledHere++;
+      return {
+        ...s,
+        status: 'cancelled',
+        cancellation_reason: params.reason,
+        cancelled_at: nowIso,
+      };
+    });
+    if (stepsCancelledHere === 0) continue;
+
+    const stillRunnable = nextSteps.some(
+      (s) => !TERMINAL_STEP_STATUSES.has(s?.status) && s?.status !== 'paused',
+    );
+    const updates: Record<string, any> = {
+      steps: nextSteps,
+      updated_at: nowIso,
+    };
+    if (!stillRunnable) {
+      updates.status = 'cancelled';
+      updates.completion_reason = `Backlog item ${params.itemId} reached terminal state — ${params.reason}`;
+      updates.completed_at = nowIso;
+    }
+
+    const { error: upErr } = await supabaseAdmin
+      .from('instance_plans')
+      .update(updates)
+      .eq('id', plan.id);
+    if (upErr) {
+      result.errors.push(`update_plan_${plan.id}: ${upErr.message}`);
+      continue;
+    }
+    result.plansTouched++;
+    result.stepsCancelled += stepsCancelledHere;
+    result.planIds.push(plan.id);
+    if (updates.status === 'cancelled') result.plansCancelled++;
+  }
+
+  return result;
+}
+
 /**
  * Get all active plans for an instance
  * 

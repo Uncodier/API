@@ -34,6 +34,7 @@ import {
   toBacklog,
   writeBacklog,
 } from './requirement-backlog-store';
+import { cancelPlanStepsForBacklogItem } from '@/lib/helpers/plan-lifecycle';
 
 export async function bumpItemAttempts(params: {
   requirementId: string;
@@ -98,6 +99,28 @@ export async function escalateStaleInProgressItems(params: {
   const advance = advancePhaseIfReadyInMemory(backlog, flow);
   const toWrite = advance ? advance.nextBacklog : backlog;
   await writeBacklog(params.requirementId, toWrite);
+
+  // Stop the zombie loop: when a backlog item is escalated to needs_review,
+  // any plan steps still pending/in_progress for that item must be cancelled.
+  // Otherwise `cron-execute-steps-phase` keeps running them in the next tick
+  // and the agent burns turns trying to finish work whose acceptance gate is
+  // no longer reachable (observed on item 8afbb973: 10 attempts, plan
+  // 031a9346 still in_progress after the watchdog escalated the item).
+  for (const it of escalated) {
+    try {
+      const r = await cancelPlanStepsForBacklogItem({
+        itemId: it.id,
+        reason: `watchdog escalated backlog item to needs_review (idle/attempts envelope exhausted)`,
+      });
+      if (r.stepsCancelled > 0) {
+        console.warn(
+          `[watchdog] cancelled ${r.stepsCancelled} plan step(s) across ${r.plansTouched} plan(s) bound to escalated item ${it.id} (plansCancelled=${r.plansCancelled})`,
+        );
+      }
+    } catch (e) {
+      console.warn(`[watchdog] cancelPlanStepsForBacklogItem failed for ${it.id}:`, e);
+    }
+  }
   return { escalated };
 }
 
