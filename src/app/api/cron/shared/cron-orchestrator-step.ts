@@ -9,7 +9,8 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import { detectPlanningLoop, type AssistantToolCallSnapshot } from './loop-detectors';
-import type { CronAuditContext } from '@/lib/services/cron-audit-log';
+import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
+import { escalateStaleInProgressItems } from '@/lib/services/requirement-backlog';
 
 /**
  * Tool set for the cron orchestrator — routed through `tool_lookup`.
@@ -112,7 +113,44 @@ export async function runOrchestratorStep(params: {
   const audit: CronAuditContext | undefined = site_id
     ? { instanceId, siteId: site_id, userId: user_id, requirementId: reqId }
     : undefined;
-    
+
+  // Phase-progress watchdog: before spending another cycle on this
+  // requirement, escalate any in_progress item that has been idle past the
+  // threshold or already burned its attempts envelope. needs_review is a
+  // phase-terminal status, so the deterministic flow advances on the next
+  // setItemStatus piggy-back. This guarantees no item can keep a phase
+  // pinned indefinitely just because the orchestrator never re-bound it
+  // to a plan step.
+  if (reqId) {
+    try {
+      const { escalated } = await escalateStaleInProgressItems({ requirementId: reqId });
+      if (escalated.length > 0) {
+        console.warn(
+          `[CronStep|orchestrator] Watchdog escalated ${escalated.length} stale in_progress item(s) → needs_review: ${escalated.map((i) => `${i.id.slice(0, 8)}(${i.title})`).join(', ')}`,
+        );
+        if (audit) {
+          await logCronInfrastructureEvent(audit, {
+            event: CronInfraEvent.STEP_STATUS,
+            level: 'warn',
+            message: `Watchdog auto-escalated ${escalated.length} stale in_progress item(s) to needs_review`,
+            details: {
+              phase: 'watchdog_stale_in_progress',
+              escalated_count: escalated.length,
+              escalated_items: escalated.map((i) => ({
+                id: i.id,
+                title: i.title,
+                phase_id: i.phase_id,
+                attempts: i.attempts,
+              })),
+            },
+          });
+        }
+      }
+    } catch (e) {
+      console.warn(`[CronStep|orchestrator] Watchdog failed (continuing):`, e);
+    }
+  }
+
   let effectiveSandboxId = sandboxId;
   let sandbox: Sandbox;
   

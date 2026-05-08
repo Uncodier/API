@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import { z } from 'zod';
 
 const UpdateInstancePlanSchema = z.object({
@@ -42,6 +43,11 @@ const UpdateInstancePlanSchema = z.object({
     vercel_deploy_state: z.string().optional().nullable(),
     vercel_deploy_checked_at: z.string().optional().nullable(),
     vercel_deploy_detail: z.string().optional().nullable(),
+    /** Free-form metadata; `backlog_item_id` links the step to a backlog
+     * item so the post-gate Judge can run for it. Auto-bound on the
+     * server side when missing (single in_progress item rule). */
+    metadata: z.record(z.any()).optional(),
+    backlog_item_id: z.string().optional(),
   })).optional(),
   progress_percentage: z.number().min(0).max(100).optional(),
 });
@@ -73,29 +79,62 @@ export async function updateInstancePlanCore(params: any) {
   }
 
   const updateData: any = { ...updates, updated_at: new Date().toISOString() };
-  
+
   if (updates.steps) {
+    // Resolve a fallback backlog binding once per update (cheap), used to
+    // auto-fill missing `metadata.backlog_item_id` on incoming steps.
+    const effectiveInstanceId = instance_id || (existingPlan as any).instance_id;
+    const fallbackCtx = effectiveInstanceId
+      ? await resolveBacklogContextForInstance(effectiveInstanceId)
+      : { requirementId: null, inProgressItemId: null };
+    const fallbackBacklogItemId = fallbackCtx.inProgressItemId;
+
+    const mergeMetadata = (currentStep: any, incomingStep: any): Record<string, any> => {
+      const baseMetadata = {
+        ...((currentStep && currentStep.metadata) || {}),
+        ...((incomingStep && incomingStep.metadata) || {}),
+      };
+      const explicitItemId =
+        (incomingStep && incomingStep.backlog_item_id) ||
+        (incomingStep && incomingStep.metadata && incomingStep.metadata.backlog_item_id) ||
+        baseMetadata.backlog_item_id ||
+        null;
+      const resolvedItemId = explicitItemId || fallbackBacklogItemId || null;
+      if (!explicitItemId && resolvedItemId) {
+        console.log(`[UpdateInstancePlan] step "${incomingStep?.title || currentStep?.title}" auto-bound to backlog_item_id=${resolvedItemId}`);
+      }
+      if (resolvedItemId) baseMetadata.backlog_item_id = resolvedItemId;
+      return baseMetadata;
+    };
+
     const currentSteps = existingPlan.steps || [];
     const updatedSteps = currentSteps.map((currentStep: any) => {
-      const incomingStep = updates.steps.find((s: any) => 
-        (s.id && s.id === currentStep.id) || 
+      const incomingStep = updates.steps.find((s: any) =>
+        (s.id && s.id === currentStep.id) ||
         (s.order !== undefined && s.order === currentStep.order)
       );
-      return incomingStep ? { ...currentStep, ...incomingStep, id: currentStep.id, updated_at: new Date().toISOString() } : currentStep;
+      if (!incomingStep) return currentStep;
+      return {
+        ...currentStep,
+        ...incomingStep,
+        id: currentStep.id,
+        metadata: mergeMetadata(currentStep, incomingStep),
+        updated_at: new Date().toISOString(),
+      };
     });
 
     // Add new steps that might be in updates.steps but not in currentSteps
     const seenNewTitles = new Set<string>();
-    
+
     updates.steps.forEach((incomingStep: any) => {
-      if (!currentSteps.some((currentStep: any) => 
-        (incomingStep.id && currentStep.id === incomingStep.id) || 
+      if (!currentSteps.some((currentStep: any) =>
+        (incomingStep.id && currentStep.id === incomingStep.id) ||
         (incomingStep.order !== undefined && currentStep.order === incomingStep.order)
       )) {
         if (!incomingStep.title) {
           throw new Error(`A new step being added is missing a 'title'. Please provide a descriptive title.`);
         }
-        
+
         const genericTitleRegex = /^step\s*\d+$/i;
         if (genericTitleRegex.test(incomingStep.title.trim())) {
           throw new Error(`Step title '${incomingStep.title}' is too generic. DO NOT use generic names like "Step 1". Provide a descriptive title.`);
@@ -104,12 +143,13 @@ export async function updateInstancePlanCore(params: any) {
         // Deduplicate new steps by title to prevent LLM hallucinations
         if (incomingStep.title && !seenNewTitles.has(incomingStep.title)) {
           seenNewTitles.add(incomingStep.title);
-          
-          updatedSteps.push({ 
-            ...incomingStep, 
+
+          updatedSteps.push({
+            ...incomingStep,
             id: incomingStep.id || `step_added_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-            created_at: new Date().toISOString(), 
-            updated_at: new Date().toISOString() 
+            metadata: mergeMetadata(null, incomingStep),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
           });
         }
       }

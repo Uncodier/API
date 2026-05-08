@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
+import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import { z } from 'zod';
 
 const CreateInstancePlanSchema = z.object({
@@ -36,6 +37,12 @@ const CreateInstancePlanSchema = z.object({
     role: z.string().optional(),
     skill: z.string().optional(),
     test_command: z.string().optional(),
+    /** Free-form metadata. The orchestrator MUST set
+     * `metadata.backlog_item_id` so the post-gate Judge can attribute the
+     * step to a backlog item. When missing, the server auto-binds it to
+     * the unique `in_progress` item of the requirement (if any). */
+    metadata: z.record(z.any()).optional(),
+    backlog_item_id: z.string().optional(),
   })).optional(),
 });
 
@@ -114,27 +121,54 @@ export async function createInstancePlanCore(params: any) {
       }
     });
 
-    planSteps = uniqueSteps.map((step, index) => ({
-      id: `step_${index + 1}`,
-      title: step.title,
-      description: step.description || step.title,
-      order: step.order ?? index + 1,
-      status: step.status || 'pending',
-      type: step.type || 'task',
-      instructions: step.instructions || step.description || step.title,
-      expected_output: step.expected_output || '',
-      success_criteria: step.success_criteria || [],
-      validation_rules: step.validation_rules || [],
-      actual_output: null,
-      started_at: null,
-      completed_at: null,
-      retry_count: 0,
-      error_message: null,
-      artifacts: [],
-      role: step.role || null,
-      skill: step.skill || null,
-      test_command: step.test_command || null,
-    }));
+    // Auto-bind `metadata.backlog_item_id` for steps that didn't carry one.
+    // The post-gate Judge skips items it can't link to a step, which used to
+    // leave items eternally `in_progress`. Resolving the unique in-progress
+    // item once per plan (cheap) covers the common WIP=1 case.
+    const fallbackBacklogCtx = await resolveBacklogContextForInstance(validatedData.instance_id);
+    const fallbackBacklogItemId = fallbackBacklogCtx.inProgressItemId;
+    if (fallbackBacklogItemId) {
+      console.log(`[CreateInstancePlan] Auto-bind candidate: backlog_item_id=${fallbackBacklogItemId} (req=${fallbackBacklogCtx.requirementId})`);
+    }
+
+    planSteps = uniqueSteps.map((step, index) => {
+      const explicitItemId =
+        (step as any).backlog_item_id ||
+        (step as any).metadata?.backlog_item_id ||
+        null;
+      const resolvedItemId = explicitItemId || fallbackBacklogItemId || null;
+      const stepMetadata = {
+        ...((step as any).metadata ?? {}),
+        ...(resolvedItemId ? { backlog_item_id: resolvedItemId } : {}),
+      };
+      if (!explicitItemId && resolvedItemId) {
+        console.log(`[CreateInstancePlan] step #${index + 1} "${step.title}" auto-bound to backlog_item_id=${resolvedItemId}`);
+      } else if (!resolvedItemId) {
+        console.warn(`[CreateInstancePlan] step #${index + 1} "${step.title}" has NO backlog_item_id (orchestrator omitted it and no unique in_progress item to bind). Judge will be skipped.`);
+      }
+      return {
+        id: `step_${index + 1}`,
+        title: step.title,
+        description: step.description || step.title,
+        order: step.order ?? index + 1,
+        status: step.status || 'pending',
+        type: step.type || 'task',
+        instructions: step.instructions || step.description || step.title,
+        expected_output: step.expected_output || '',
+        success_criteria: step.success_criteria || [],
+        validation_rules: step.validation_rules || [],
+        actual_output: null,
+        started_at: null,
+        completed_at: null,
+        retry_count: 0,
+        error_message: null,
+        artifacts: [],
+        role: step.role || null,
+        skill: step.skill || null,
+        test_command: step.test_command || null,
+        metadata: stepMetadata,
+      };
+    });
   }
 
   const planData = {

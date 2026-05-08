@@ -9,6 +9,7 @@ import {
   classifyRequirementType,
   getFlow,
   advancePhaseIfReadyInMemory,
+  type FlowDefinition,
   type RequirementKind,
 } from './requirement-flows';
 import {
@@ -174,9 +175,34 @@ export async function upsertBacklogItem(params: {
   } else {
     backlog.items.push(next);
   }
+  // When a new (or revived) item lands in a phase BEFORE the requirement's
+  // current phase, the orchestrator would otherwise keep evaluating the
+  // forward phase and never see the item — leaving it eternally
+  // in_progress / pending. Reconciliation rewinds current_phase_id to the
+  // earliest unfinished phase so the cron picks the item up next cycle.
+  reconcilePhaseForItem(backlog, flow, next);
   backlog.completion_ratio = computeRatio(backlog.items);
   await writeBacklog(params.requirementId, backlog);
   return next;
+}
+
+/**
+ * Rewind `current_phase_id` to the earliest phase that still has unfinished
+ * items when an upsert/start lands in a phase prior to the current one. No-op
+ * when phases are unknown or the item is already in/after the current phase.
+ */
+function reconcilePhaseForItem(
+  backlog: RequirementBacklog,
+  flow: FlowDefinition,
+  item: BacklogItem,
+): void {
+  if (!item.phase_id) return;
+  const itemIdx = flow.phases.findIndex((p) => p.id === item.phase_id);
+  const curIdx = flow.phases.findIndex((p) => p.id === backlog.current_phase_id);
+  if (itemIdx < 0 || curIdx < 0) return;
+  if (itemIdx >= curIdx) return;
+  if (item.status === 'done' || item.status === 'rejected' || item.status === 'needs_review') return;
+  backlog.current_phase_id = item.phase_id;
 }
 
 export async function markInProgress(params: { requirementId: string; itemId: string }): Promise<BacklogItem> {
@@ -294,4 +320,119 @@ export function pendingInPhase(backlog: RequirementBacklog, phaseId: string, lim
 
 export function currentInProgress(backlog: RequirementBacklog): BacklogItem | null {
   return backlog.items.find((i) => i.status === 'in_progress') ?? null;
+}
+
+/**
+ * Increment the `attempts` counter for a backlog item without changing its
+ * status. Called by the post-gate flow whenever the Judge emits a
+ * `rejected` / `escalate` verdict so the deterministic self-heal policy can
+ * see the real number of attempts (`markInProgress` only fires once per
+ * cycle per item under the WIP=1 "RESUME, don't re-open" rule).
+ */
+export async function bumpItemAttempts(params: {
+  requirementId: string;
+  itemId: string;
+  reason?: string;
+}): Promise<BacklogItem | null> {
+  const req = await loadRequirement(params.requirementId);
+  if (!req) return null;
+  const flow = getFlow(classifyRequirementType(req.type));
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
+  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
+  if (idx < 0) return null;
+  backlog.items[idx] = {
+    ...backlog.items[idx],
+    attempts: (backlog.items[idx].attempts || 0) + 1,
+    updated_at: new Date().toISOString(),
+  };
+  if (params.reason) {
+    const assumptions = backlog.items[idx].assumptions || [];
+    backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
+  }
+  await writeBacklog(params.requirementId, backlog);
+  return backlog.items[idx];
+}
+
+const DEFAULT_STALE_IN_PROGRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
+
+/**
+ * Watchdog: any `in_progress` item whose `updated_at` is older than
+ * `maxIdleMs` OR whose `attempts` already meets/exceeds
+ * `flow.cost_envelope.max_cycles_per_item` is auto-escalated to
+ * `needs_review` (a phase-terminal state). This unblocks the phase
+ * advance even when the orchestrator never re-binds a step to the item.
+ *
+ * Returns the items that were escalated (empty array on no-op).
+ */
+export async function escalateStaleInProgressItems(params: {
+  requirementId: string;
+  maxIdleMs?: number;
+  maxAttempts?: number;
+}): Promise<{ escalated: BacklogItem[] }> {
+  const req = await loadRequirement(params.requirementId);
+  if (!req) return { escalated: [] };
+  const flow = getFlow(classifyRequirementType(req.type));
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
+  const now = Date.now();
+  const idleMs = params.maxIdleMs ?? DEFAULT_STALE_IN_PROGRESS_MS;
+  const maxAttempts = params.maxAttempts ?? flow.cost_envelope.max_cycles_per_item;
+  const escalated: BacklogItem[] = [];
+
+  for (let i = 0; i < backlog.items.length; i++) {
+    const it = backlog.items[i];
+    if (it.status !== 'in_progress') continue;
+    const updatedMs = it.updated_at ? Date.parse(it.updated_at) : NaN;
+    const idle = Number.isFinite(updatedMs) ? now - updatedMs : Infinity;
+    const overAttempts = (it.attempts || 0) >= maxAttempts;
+    if (idle < idleMs && !overAttempts) continue;
+    const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${it.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
+    backlog.items[i] = {
+      ...it,
+      status: 'needs_review',
+      updated_at: new Date().toISOString(),
+      assumptions: [...(it.assumptions || []), note].slice(-20),
+    };
+    escalated.push(backlog.items[i]);
+  }
+
+  if (escalated.length === 0) return { escalated };
+
+  backlog.completion_ratio = computeRatio(backlog.items);
+  const advance = advancePhaseIfReadyInMemory(backlog, flow);
+  const toWrite = advance ? advance.nextBacklog : backlog;
+  await writeBacklog(params.requirementId, toWrite);
+  return { escalated };
+}
+
+/**
+ * Resolve the backlog context for an instance — used by the instance_plan
+ * tool to auto-bind `metadata.backlog_item_id` on steps when the
+ * orchestrator forgot to pass it. Looks up the most recent
+ * `requirement_status` row for this instance to find the requirement, then
+ * picks the unique `in_progress` backlog item (if any).
+ */
+export async function resolveBacklogContextForInstance(instanceId: string): Promise<{
+  requirementId: string | null;
+  inProgressItemId: string | null;
+}> {
+  if (!instanceId) return { requirementId: null, inProgressItemId: null };
+  const { data: row } = await supabaseAdmin
+    .from('requirement_status')
+    .select('requirement_id')
+    .eq('instance_id', instanceId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const requirementId = row?.requirement_id ?? null;
+  if (!requirementId) return { requirementId: null, inProgressItemId: null };
+  try {
+    const { backlog } = await listBacklog(requirementId);
+    const inProgress = backlog.items.filter((i) => i.status === 'in_progress');
+    return {
+      requirementId,
+      inProgressItemId: inProgress.length === 1 ? inProgress[0].id : null,
+    };
+  } catch {
+    return { requirementId, inProgressItemId: null };
+  }
 }

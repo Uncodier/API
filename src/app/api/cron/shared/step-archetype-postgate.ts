@@ -9,7 +9,7 @@
 import type { Sandbox } from '@vercel/sandbox';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runCritic, runJudge } from './archetype-runner';
-import { getBacklogItem, downgradeScope, logAssumption, markNeedsReview, setItemStatus } from '@/lib/services/requirement-backlog';
+import { bumpItemAttempts, getBacklogItem, downgradeScope, logAssumption, markNeedsReview, setItemStatus } from '@/lib/services/requirement-backlog';
 import { writeEvidence, type EvidenceRecord } from '@/lib/services/requirement-ground-truth';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { planNextHealingAction } from '@/lib/services/requirement-self-heal';
@@ -119,7 +119,17 @@ export async function runArchetypePostGate(
     if (judge.verdict === 'approved') {
       await setItemStatus({ requirementId: input.requirementId, itemId: item.id, status: 'done' });
     } else {
-      const action = planNextHealingAction({ item, verdict: judge, attempts: item.attempts });
+      // Bump attempts BEFORE planning the next heal so the deterministic
+      // policy sees the real number of attempts. `markInProgress` only fires
+      // once per item under the WIP=1 RESUME rule, so without this the
+      // counter freezes at 1 and `mark_needs_review` is never reached.
+      const bumped = await bumpItemAttempts({
+        requirementId: input.requirementId,
+        itemId: item.id,
+        reason: `judge_verdict=${judge.verdict}: ${(judge.reason || '').slice(0, 200)}`,
+      });
+      const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
+      const action = planNextHealingAction({ item, verdict: judge, attempts: attemptsForHeal });
       healingApplied = action.kind;
       switch (action.kind) {
         case 'rotate_strategy':
