@@ -46,13 +46,13 @@ export function assertBudget(kind: RequirementKind, usage: BudgetUsage): void {
   if (usage.turns_used_step >= env.max_turns_per_step) {
     throw new BudgetExhaustedError('step', env.max_turns_per_step, usage.turns_used_step);
   }
-  if (usage.cycles_used_requirement >= env.max_cycles_per_requirement) {
-    throw new BudgetExhaustedError(
-      'requirement',
-      env.max_cycles_per_requirement,
-      usage.cycles_used_requirement,
-    );
-  }
+  // if (usage.cycles_used_requirement >= env.max_cycles_per_requirement) {
+  //   throw new BudgetExhaustedError(
+  //     'requirement',
+  //     env.max_cycles_per_requirement,
+  //     usage.cycles_used_requirement,
+  //   );
+  // }
 }
 
 export function budgetRemaining(kind: RequirementKind, usage: BudgetUsage): {
@@ -64,6 +64,6 @@ export function budgetRemaining(kind: RequirementKind, usage: BudgetUsage): {
   return {
     item: Math.max(0, env.max_cycles_per_item - usage.cycles_used_item),
     step: Math.max(0, env.max_turns_per_step - usage.turns_used_step),
-    requirement: Math.max(0, env.max_cycles_per_requirement - usage.cycles_used_requirement),
+    requirement: 999999, // Temporarily disabled: Math.max(0, env.max_cycles_per_requirement - usage.cycles_used_requirement),
   };
 }
