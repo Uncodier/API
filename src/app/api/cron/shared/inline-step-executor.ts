@@ -483,7 +483,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
   let lastResult: any;
   const MAX_TURNS = 10;
   const globalStartTime = execOpts?.globalStartTime ?? Date.now();
-  const MAX_EXECUTION_TIME_MS = 58 * 60 * 1000; // 58 minutes
+  const MAX_EXECUTION_TIME_MS = 11 * 60 * 1000; // 11 minutes (to fit within 13.3m maxDuration)
 
   try {
     const used: Record<RetryBucket, number> = { build: 0, runtime: 0 };
