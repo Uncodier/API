@@ -201,6 +201,55 @@ export function sandboxWriteFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsCo
   };
 }
 
+export function sandboxReadLargeFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+  return {
+    name: 'sandbox_read_large_file',
+    description: 'Read the contents of a very large file from the Vercel Sandbox filesystem with pagination (by line numbers) to avoid crashing the context. Useful for large logs, error outputs, or massive code files.',
+    parameters: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: `Absolute path to the file, e.g. ${WORK_DIR}/error.log` },
+        start_line: { type: 'number', description: 'The 1-based line number to start reading from (inclusive).' },
+        limit_lines: { type: 'number', description: 'Maximum number of lines to return. Default is 500. Keep it reasonable (e.g. 200-1000) to avoid context bloat.' }
+      },
+      required: ['path', 'start_line']
+    },
+    execute: async (args: { path: string, start_line: number, limit_lines?: number }) => {
+      const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_read_large_file', args);
+      if (!creditCheck.success) {
+        throw new Error(creditCheck.error);
+      }
+
+      const resolved = normalizeSandboxFsPath(WORK_DIR, resolvePath(args.path, WORK_DIR));
+      const s0 = liveSandbox(sandbox, toolsCtx);
+      try {
+        const content = await s0.fs.readFile(resolved, 'utf8');
+        const lines = content.split('\n');
+        const totalLines = lines.length;
+        
+        const start = Math.max(1, args.start_line) - 1; // 0-indexed
+        const limit = args.limit_lines && args.limit_lines > 0 ? args.limit_lines : 500;
+        const end = Math.min(start + limit, totalLines);
+        
+        const slicedLines = lines.slice(start, end);
+        // Prepend line numbers so the agent knows where they are
+        const paginatedContent = slicedLines.map((line, idx) => `${start + idx + 1} | ${line}`).join('\n');
+        
+        return { 
+          file_path: resolved,
+          total_lines: totalLines,
+          showing_lines: `${start + 1} to ${end}`,
+          has_more: end < totalLines,
+          content: paginatedContent 
+        };
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Failed to read large file: ${msg}`);
+      }
+    }
+  };
+}
+
 export function sandboxReadFileTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_read_file',
@@ -628,6 +677,7 @@ export function getSandboxTools(
     sandboxEditFileTool(sandbox, toolsCtx),
     sandboxDeleteFileTool(sandbox, toolsCtx),
     sandboxReadFileTool(sandbox, toolsCtx),
+    sandboxReadLargeFileTool(sandbox, toolsCtx),
     sandboxListFilesTool(sandbox, toolsCtx),
     sandboxReadLintsTool(sandbox, toolsCtx),
     sandboxDbMigrateTool(sandbox, requirementId, toolsCtx),

@@ -47,6 +47,20 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
   switch (action) {
     case 'list': {
       const { kind, backlog } = await listBacklog(requirement_id);
+      
+      // TRUNCATE EVIDENCE TO AVOID CRASHING LLM CONTEXT
+      if (backlog && Array.isArray(backlog.items)) {
+        backlog.items = backlog.items.map((item: any) => {
+          const newItem = { ...item };
+          if (newItem.evidence) {
+             newItem.evidence = { 
+               _truncated: "Evidence data removed to save context window. Use other tools to inspect." 
+             };
+          }
+          return newItem;
+        });
+      }
+      
       return { action, requirement_id, kind, backlog };
     }
     case 'upsert': {
