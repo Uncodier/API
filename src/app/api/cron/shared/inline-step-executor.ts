@@ -94,8 +94,8 @@ export function inferRoleFromStep(step: any): string | null {
  * Retry budgets are split so subjective polish (visual) can't consume retries
  * reserved for hard failures. Categories are derived from signal state.
  */
-const MAX_BUILD_RETRIES = 6;
-const MAX_RUNTIME_RETRIES = 4;
+const MAX_BUILD_RETRIES = 2;
+const MAX_RUNTIME_RETRIES = 2;
 
 type RetryBucket = 'build' | 'runtime';
 
