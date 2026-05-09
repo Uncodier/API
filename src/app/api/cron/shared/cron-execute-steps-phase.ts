@@ -610,4 +610,4 @@ export async function executeStepsPhaseStep(params: {
 }
 
 /** Phase runs sandbox + LLM work; allow more than Workflow default (3) retries for cold VM / API flakes. */
-(executeStepsPhaseStep as typeof executeStepsPhaseStep & { maxRetries?: number }).maxRetries = 10;
+(executeStepsPhaseStep as typeof executeStepsPhaseStep & { maxRetries?: number }).maxRetries = 2;
