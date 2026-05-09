@@ -634,9 +634,7 @@ export class AIAgentExecutor {
       ...completionOptions,
       stream: true,
     };
-    const abortController = new AbortController();
-    const timeoutId = setTimeout(() => abortController.abort(), 4 * 60 * 1000);
-    const stream = await this.client.chat.completions.create({ ...opts, ...{ signal: abortController.signal } } as any).finally(() => clearTimeout(timeoutId)).catch(err => {
+    const stream = await this.client.chat.completions.create(opts as any).catch(err => {
       console.error(`❌ [AI STREAM INIT ERROR][${this.provider}]`, err.message);
       if (err.status) console.error(`   Status: ${err.status}`);
       if (err.headers) console.error(`   Headers:`, JSON.stringify(err.headers, null, 2));
