@@ -57,10 +57,10 @@ export async function GET(req: Request) {
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
-      .in('status', ['backlog', 'in-progress'])
+      .in('status', ['backlog', 'in-progress', 'done'])
       .or(`created_at.gte.${oneMonthAgo},updated_at.gte.${oneMonthAgo}`)
       .order('updated_at', { ascending: false })
-      .limit(3);
+      .limit(10);
 
     if (error) throw error;
     if (!requirements || requirements.length === 0) {
@@ -107,6 +107,37 @@ export async function GET(req: Request) {
       
       if (currentReq && ['cancelled', 'done'].includes(currentReq.status)) {
         console.log(`[Cron Apps] Skipping ${reqId} — requirement is ${currentReq.status}`);
+        
+        // Clean up remote instances and instance plans associated with this done requirement
+        if (currentReq.status === 'done') {
+          console.log(`[Cron Apps] Cleaning up instances for done requirement ${reqId}`);
+          
+          // Pause/pending any running instances
+          await supabaseAdmin
+            .from('remote_instances')
+            .update({ status: 'pending' })
+            .eq('site_id', site_id)
+            .like('name', `%req-%${reqId.substring(0, 8)}%`)
+            .in('status', ['running', 'starting']);
+            
+          // Cancel any active plans
+          // Note: instance_plans don't have requirement_id directly, they belong to the instance
+          const { data: instances } = await supabaseAdmin
+            .from('remote_instances')
+            .select('id')
+            .eq('site_id', site_id)
+            .like('name', `%req-%${reqId.substring(0, 8)}%`);
+            
+          if (instances && instances.length > 0) {
+            const instanceIds = instances.map((i) => i.id);
+            await supabaseAdmin
+              .from('instance_plans')
+              .update({ status: 'cancelled' })
+              .in('instance_id', instanceIds)
+              .in('status', ['pending', 'in_progress']);
+          }
+        }
+        
         await releaseRunLock(reqId, runLock.runId);
         results.push({ reqId, skipped: true, reason: currentReq.status });
         continue;
