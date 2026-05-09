@@ -481,7 +481,7 @@ ${getStepCheckpointPromptFragment(requirementId, instance_id)}`;
 
   let currentMessages: any[] = [initialUser];
   let lastResult: any;
-  const MAX_TURNS = 10;
+  const MAX_TURNS = 5;
   const globalStartTime = execOpts?.globalStartTime ?? Date.now();
   const MAX_EXECUTION_TIME_MS = 11 * 60 * 1000; // 11 minutes (to fit within 13.3m maxDuration)
 

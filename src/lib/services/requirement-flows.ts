@@ -73,9 +73,9 @@ export interface FlowDefinition {
 }
 
 const DEFAULT_ENVELOPE: CostEnvelope = {
-  max_cycles_per_item: 5,
-  max_turns_per_step: 10,
-  max_cycles_per_requirement: 30,
+  max_cycles_per_item: 50,
+  max_turns_per_step: 5,
+  max_cycles_per_requirement: 3000,
 };
 
 function appPhases(): FlowPhase[] {
