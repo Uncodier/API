@@ -52,6 +52,9 @@ export async function updatePlanStepStatusStep(planId: string, stepId: string, s
       steps[idx].started_at = steps[idx].started_at || new Date().toISOString();
     } else if (status === 'completed' || status === 'failed' || status === 'cancelled') {
       steps[idx].completed_at = new Date().toISOString();
+      if (status === 'failed') {
+        steps[idx].retry_count = (steps[idx].retry_count || 0) + 1;
+      }
     }
 
     await supabaseAdmin

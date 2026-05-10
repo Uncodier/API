@@ -26,7 +26,7 @@ export async function fetchStepLogHistoryText(instanceId: string, planId: string
   formatted.push('--- PREVIOUS ACTIONS IN THIS STEP ---');
   
   // To avoid extremely long texts, we will limit the length of tool outputs
-  const MAX_OUTPUT_LEN = 1500;
+  const MAX_OUTPUT_LEN = 30000;
 
   for (const log of logs) {
     if (log.log_type === 'thinking' && log.message) {
