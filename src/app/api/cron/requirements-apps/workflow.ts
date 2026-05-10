@@ -19,7 +19,14 @@ import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
 // lives in its own module.
 import { bootstrapRequirementSpecStep } from '../shared/bootstrap-spec-step';
-import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
+import { 
+  getPlanExecutionGateStep,
+  updatePlanStepStatusStep,
+  reconnectSandboxStep,
+  logCronInfrastructureEventStep,
+} from '../shared/cron-execute-steps-phase';
+import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
+import { runGateStep } from '../shared/gate-step-executor';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
@@ -280,27 +287,118 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   let smokeError: string | null = null;
   let pushResult: { branch: string; pushed: boolean; commitCount: number } | null = null;
-  let stepsPhase: ExecuteStepsPhaseResult | null = null;
+      let stepsPhase: any = null;
 
   try {
     if (activePlan?.steps) {
-      stepsPhase = await executeStepsPhaseStep({
-        sandboxId: sandboxId!,
-        title,
-        reqId,
-        requirementType: type,
-        orchestratorPrompt,
-        instanceId,
-        site_id,
-        user_id,
-        planId: activePlan.id,
-        planStatus: activePlan.status,
-        steps: activePlan.steps as any[],
-      });
-      smokeError = stepsPhase?.smokeError ?? null;
-      if (stepsPhase?.effectiveSandboxId) {
-        sandboxId = stepsPhase.effectiveSandboxId;
+      const allSteps = activePlan.steps as any[];
+      const pending = allSteps
+        .filter((s) => s.status === 'pending' || s.status === 'in_progress')
+        .sort((a, b) => (a.order || 0) - (b.order || 0));
+      const retries = allSteps.filter((s) => s.status === 'failed' && (s.retry_count ?? 0) < 2);
+      const stepsToRun = [...retries, ...pending];
+      
+      let executed = 0;
+      let anyStepFailed = false;
+      let lastTouchedStepId: string | null = null;
+      
+      outer: for (const planStep of stepsToRun) {
+         let stepCompleted = false;
+         let turnCount = 0;
+         const MAX_TURNS = 15;
+         let workingStep = planStep;
+         
+         while (!stepCompleted && turnCount < MAX_TURNS) {
+            turnCount++;
+            
+            // Check plan gate
+            const gate = await getPlanExecutionGateStep(activePlan.id);
+            if (!gate.runnable) {
+               console.log(`[CronAppsWorkflow] Plan execution halted (reason=${gate.reason})`);
+               await logCronInfrastructureEventStep(cronAudit, {
+                 event: 'cron_infra_plan_execution_halted',
+                 level: 'warn',
+                 message: `Plan step loop stopped — ${gate.reason}`,
+                 details: { plan_id: activePlan.id, halt_reason: gate.reason },
+               });
+               break outer;
+            }
+            
+            lastTouchedStepId = workingStep.id;
+            
+            const turnRes = await executeSingleTurnStep({
+               sandboxId: sandboxId!,
+               plan: activePlan,
+               step: workingStep,
+               requirementId: reqId,
+               instanceId,
+               siteId: site_id,
+               userId: user_id,
+               title,
+               gitRepoKind: 'applications',
+               requirementType: type
+            });
+            
+            if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
+            
+            if (!turnRes.ok) {
+               // Step failed
+               anyStepFailed = true;
+               console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
+               await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+               break outer;
+            }
+            
+            if (turnRes.isDone) {
+               // Step generation done, run the gate
+               const gateRes = await runGateStep({
+                  sandboxId: sandboxId!,
+                  plan: activePlan,
+                  step: workingStep,
+                  requirementId: reqId,
+                  instanceId,
+                  siteId: site_id,
+                  userId: user_id,
+                  title,
+                  instanceType,
+                  requirementType: type
+               });
+               
+               if (gateRes.effectiveSandboxId) sandboxId = gateRes.effectiveSandboxId;
+               
+               if (gateRes.passed) {
+                  stepCompleted = true;
+                  executed++;
+                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'completed');
+               } else {
+                  // Gate failed, do adaptation loop
+                  anyStepFailed = true;
+                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate failed`);
+                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+                  
+                  // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
+                  break outer;
+               }
+            }
+         }
+         
+         if (!stepCompleted && !anyStepFailed) {
+            // Max turns reached
+            console.warn(`[CronAppsWorkflow] Step ${workingStep.order} reached max turns (${MAX_TURNS})`);
+            anyStepFailed = true;
+            await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+            break outer;
+         }
       }
+      
+      stepsPhase = {
+         executed,
+         smokeError: null,
+         anyStepFailed,
+         lastTouchedStepId,
+         effectiveSandboxId: sandboxId!
+      };
+
       const reconciledStatus = await reconcilePlanStep(activePlan.id);
       planCompleted = reconciledStatus === 'completed';
     } else {

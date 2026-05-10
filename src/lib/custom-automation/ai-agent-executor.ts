@@ -184,6 +184,8 @@ export interface ActOptions {
   onThinkingStreamStart?: () => Promise<string>;
   onThinkingStreamChunk?: (logId: string, accumulatedText: string) => Promise<void>;
   onReasoningTokensUsed?: (reasoningTokensCount: number) => Promise<void>;
+  /** If strictly true, stops the LLM turn loop immediately after the first pass (even if tools are called) */
+  enforceSingleTurn?: boolean;
 }
 
 export interface ActResponse {
@@ -1559,9 +1561,10 @@ export class AIAgentExecutor {
 
         const shouldStop = (response as any).finish_reason === 'stop' ||
                           (schema && finalOutput !== undefined) ||
-                          !message.tool_calls;
+                          !message.tool_calls ||
+                          enforceSingleTurn;
 
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${response.finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${!!message.tool_calls})`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${response.finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${!!message.tool_calls}, enforceSingleTurn=${!!enforceSingleTurn})`);
 
         const iterationEndTime = Date.now();
         const iterationDuration = iterationEndTime - iterationStartTime;

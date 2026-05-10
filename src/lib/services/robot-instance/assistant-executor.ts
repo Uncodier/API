@@ -86,29 +86,22 @@ function buildContextContent(
   return parts;
 }
 
-export interface AssistantExecutionOptions {
-  use_sdk_tools?: boolean;
-  /**
-   * Label used for credits/logging (NOT the underlying LLM provider).
-   * Kept as 'azure' | 'openai' | 'gemini' for backwards-compatibility.
-   */
-  provider?: 'azure' | 'openai' | 'gemini';
-  system_prompt?: string;
-  custom_tools?: any[];
-  instance_id?: string;
-  site_id?: string;
-  user_id?: string;
-  instance_node_id?: string;
-  expected_results_amount?: number;
-  /**
-   * Override the LLM provider for this execution. Falls back to env AI_PROVIDER (default 'gemini').
-   */
-  ai_provider?: AIProvider;
-  /**
-   * Override the LLM model id for this execution. Falls back to env AI_MODEL / provider default.
-   */
-  ai_model?: string;
-}
+  export interface AssistantExecutionOptions {
+    use_sdk_tools?: boolean;
+    provider?: 'azure' | 'openai' | 'gemini';
+    system_prompt?: string;
+    custom_tools?: any[];
+    instance_id?: string;
+    site_id?: string;
+    user_id?: string;
+    instance_node_id?: string;
+    expected_results_amount?: number;
+    ai_provider?: AIProvider;
+    ai_model?: string;
+    plan_id?: string;
+    step_id?: string;
+    enforceSingleTurn?: boolean;
+  }
 
 export interface AssistantExecutionResult {
   text: string;
@@ -178,11 +171,11 @@ export async function executeAssistantStep(
       });
       
       const streamingCallbacks = instance_id && site_id
-          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider)
+          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id)
           : undefined;
       
       const thinkingStreamCallbacks = instance_id && site_id
-        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider)
+        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id)
         : undefined;
 
       // Instance Node handling
@@ -257,7 +250,7 @@ export async function executeAssistantStep(
               tools: prepared.tools,
               system: system_prompt,
               messages: [...messages],
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
+              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id),
               stream: true,
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
@@ -273,6 +266,7 @@ export async function executeAssistantStep(
                 }
               },
               maxIterations: nodeMaxIterations,
+              enforceSingleTurn: options.enforceSingleTurn
             });
 
             const nodeResult = buildNodeResult(result.text || accumulatedText, 'done', result.steps);
@@ -327,7 +321,7 @@ export async function executeAssistantStep(
                 tools: prepared.tools,
                 system: system_prompt,
                 messages: messages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id),
                 stream: !!streamingCallbacks,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
@@ -335,6 +329,7 @@ export async function executeAssistantStep(
                 onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
                 maxIterations: nodeMaxIterations,
+                enforceSingleTurn: options.enforceSingleTurn
             });
 
         // Finalize node — pack text + tool outputs into unified result
