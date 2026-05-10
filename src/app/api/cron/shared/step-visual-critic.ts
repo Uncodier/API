@@ -12,7 +12,7 @@ import type { VisualSignal, VisualDefect } from './step-iteration-signals';
 import { AIAgentExecutor } from '@/lib/custom-automation/ai-agent-executor';
 
 const DEFAULT_TIMEOUT_MS = 45_000;
-const MAX_SCREENSHOTS_PER_CALL = 6;
+const MAX_SCREENSHOTS_PER_CALL = 2; // Reduce from 6 to 2 to avoid Vercel 300s function timeouts when base64 sizes are massive
 
 export type VisualCriticInput = {
   screenshots: Array<{ route: string; viewport: string; url: string }>;
@@ -107,8 +107,10 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
       userBlocks.push({ type: 'text', text: `route="${s.route}" viewport="${s.viewport}"` });
       
       try {
-        const isSupabaseStorage = s.url.includes('/storage/v1/object/public/');
-        const fetchUrl = isSupabaseStorage ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') : s.url;
+        const isSupabaseStorage = s.url.includes('/storage/v1/object/public/') || s.url.includes('/storage/v1/object/authenticated/');
+        const fetchUrl = s.url.includes('/storage/v1/object/public/') 
+            ? s.url.replace('/storage/v1/object/public/', '/storage/v1/object/authenticated/') 
+            : s.url;
         
         const supabaseKey = 
           process.env.APPS_SUPABASE_SERVICE_KEY || 
@@ -118,6 +120,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
           '';
 
         const headers: Record<string, string> = {};
+        // Use Authorization bearer even if it's "public" if we have the key, just to be safe with Supabase
         if (isSupabaseStorage && supabaseKey) {
           headers['Authorization'] = `Bearer ${supabaseKey}`;
           headers['apikey'] = supabaseKey;
@@ -131,11 +134,11 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
           userBlocks.push({ type: 'image_url', image_url: { url: `data:${contentType};base64,${base64}` } });
         } else {
           console.warn(`[VisualCritic] Failed to fetch screenshot for base64 conversion: ${fetchUrl} - ${imgRes.status}`);
-          userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
+          // DO NOT fallback to URL for Gemini, it will throw 400 Bad Request if the URL is unreachable or protected
         }
       } catch (e) {
         console.warn(`[VisualCritic] Error fetching screenshot for base64 conversion: ${s.url}`, e);
-        userBlocks.push({ type: 'image_url', image_url: { url: s.url } });
+        // DO NOT fallback to URL for Gemini
       }
     }
 
@@ -150,6 +153,7 @@ export async function runVisualCritic(input: VisualCriticInput): Promise<VisualC
         system: systemPrompt,
         messages: [{ role: 'user', content: userBlocks as any }],
         temperature: 0.1,
+        maxIterations: 1, // enforce one turn for pure QA
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
