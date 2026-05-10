@@ -808,6 +808,7 @@ export class AIAgentExecutor {
       onThinkingStreamStart,
       onThinkingStreamChunk,
       onReasoningTokensUsed,
+      enforceSingleTurn = false,
     } = options;
 
     const modelName = model || this.model;
@@ -1562,7 +1563,7 @@ export class AIAgentExecutor {
         const shouldStop = (response as any).finish_reason === 'stop' ||
                           (schema && finalOutput !== undefined) ||
                           !message.tool_calls ||
-                          enforceSingleTurn;
+                          !!enforceSingleTurn;
 
         console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${response.finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${!!message.tool_calls}, enforceSingleTurn=${!!enforceSingleTurn})`);
 
