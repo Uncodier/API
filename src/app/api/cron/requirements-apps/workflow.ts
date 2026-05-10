@@ -301,14 +301,21 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       let executed = 0;
       let anyStepFailed = false;
       let lastTouchedStepId: string | null = null;
-      
+      const startTime = Date.now();
+      const MAX_EXECUTION_TIME_MS = 11 * 60 * 1000; // 11 minutes
+
       outer: for (const planStep of stepsToRun) {
          let stepCompleted = false;
          let turnCount = 0;
-         const MAX_TURNS = 15;
+         const MAX_TURNS = 30;
          let workingStep = planStep;
          
          while (!stepCompleted && turnCount < MAX_TURNS) {
+            if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+               console.log(`[CronAppsWorkflow] Approaching Vercel timeout (${MAX_EXECUTION_TIME_MS}ms). Pausing for next cycle.`);
+               break outer;
+            }
+
             turnCount++;
             
             // Check plan gate
@@ -384,9 +391,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
          
          if (!stepCompleted && !anyStepFailed) {
             // Max turns reached
-            console.warn(`[CronAppsWorkflow] Step ${workingStep.order} reached max turns (${MAX_TURNS})`);
-            anyStepFailed = true;
-            await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+            console.warn(`[CronAppsWorkflow] Step ${workingStep.order} reached max turns (${MAX_TURNS}) - pausing for next cycle`);
+            // Do NOT fail the step, leave it in_progress so the next cycle continues
             break outer;
          }
       }
