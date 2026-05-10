@@ -33,6 +33,26 @@ import {
   type CronAuditContext,
 } from '@/lib/services/cron-audit-log';
 
+// ─── Step: Check Background Command ─────────────────────────────────
+
+export async function checkBackgroundCommandStep(
+  sandboxId: string,
+  pid: string,
+  logFile: string,
+  audit?: CronAuditContext
+): Promise<{ isRunning: boolean; output: string }> {
+  'use step';
+  const sandbox = await Sandbox.get({ sandboxId });
+  const checkResult = await SandboxService.runCommandInSandbox(sandbox, 'sh', ['-c', `kill -0 ${pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`]);
+  const status = checkResult.stdout.trim();
+  const isRunning = status === 'RUNNING';
+  
+  // Always get the latest output to show progress or final result
+  const logResult = await SandboxService.runCommandInSandbox(sandbox, 'tail', ['-n', '200', logFile]);
+  
+  return { isRunning, output: logResult.stdout };
+}
+
 // Re-exports live in sibling modules — this file is 'use step' and may only export async step fns here.
 
 // ─── Serializable return types ───────────────────────────────────────

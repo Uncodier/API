@@ -112,7 +112,7 @@ export async function deductSandboxToolCredits(
 export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
   return {
     name: 'sandbox_run_command',
-    description: `Execute a shell command inside the Vercel Sandbox microVM. The default working directory is ${WORK_DIR} which contains the cloned repository.`,
+    description: `Execute a shell command inside the Vercel Sandbox microVM. The default working directory is ${WORK_DIR} which contains the cloned repository. DO NOT USE for long-running commands like 'npm run build' or tests—use sandbox_start_background_command instead to avoid timeouts.`,
     parameters: {
       type: 'object',
       properties: {
@@ -160,6 +160,76 @@ export function sandboxRunCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsC
 
       const s0 = liveSandbox(sandbox, toolsCtx);
       return SandboxService.runCommandInSandbox(s0, cmdToRun, cmdArgs, resolvePath(args.cwd, WORK_DIR));
+    }
+  };
+}
+
+export function sandboxStartBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+  return {
+    name: 'sandbox_start_background_command',
+    description: 'Start a long-running shell command in the background (like npm run build, npm test, etc) to avoid blocking the agent. Returns the PID and the log file path. You can check the status and output later using sandbox_check_background_command.',
+    parameters: {
+      type: 'object',
+      properties: {
+        command: { type: 'string', description: 'The command to run in the background' },
+        cwd: { type: 'string', description: `Optional working directory. Defaults to ${WORK_DIR}` }
+      },
+      required: ['command']
+    },
+    execute: async (args: { command: string, cwd?: string }) => {
+       const creditCheck = await deductSandboxToolCredits(toolsCtx, 'sandbox_start_background_command', args);
+       if (!creditCheck.success) {
+         return { error: creditCheck.error };
+       }
+       
+       const s0 = liveSandbox(sandbox, toolsCtx);
+       const logFile = `/tmp/bg_cmd_${Date.now()}.log`;
+       
+       // Run the command in the background via sh
+       const cmdStr = `nohup ${args.command} > ${logFile} 2>&1 & echo $!`;
+       const result = await SandboxService.runCommandInSandbox(s0, 'sh', ['-c', cmdStr], resolvePath(args.cwd, WORK_DIR));
+       
+       const pid = result.stdout.trim();
+       return {
+         success: true,
+         pid: pid,
+         log_file: logFile,
+         message: `Command started in background with PID ${pid}. Use sandbox_check_background_command to check status and read logs.`
+       };
+    }
+  };
+}
+
+export function sandboxCheckBackgroundCommandTool(sandbox: Sandbox, toolsCtx?: SandboxToolsContext) {
+  return {
+    name: 'sandbox_check_background_command',
+    description: 'Check the status of a background command and read the latest output from its log file.',
+    parameters: {
+      type: 'object',
+      properties: {
+        pid: { type: 'string', description: 'The PID returned by sandbox_start_background_command' },
+        log_file: { type: 'string', description: 'The log file path returned by sandbox_start_background_command' }
+      },
+      required: ['pid', 'log_file']
+    },
+    execute: async (args: { pid: string, log_file: string }) => {
+      const s0 = liveSandbox(sandbox, toolsCtx);
+      
+      // Check if process is running
+      const checkResult = await SandboxService.runCommandInSandbox(s0, 'sh', ['-c', `kill -0 ${args.pid} 2>/dev/null && echo "RUNNING" || echo "STOPPED"`]);
+      const status = checkResult.stdout.trim();
+      
+      // Read the last 200 lines of the log
+      const logResult = await SandboxService.runCommandInSandbox(s0, 'tail', ['-n', '200', args.log_file]);
+      
+      return {
+        status: status,
+        is_running: status === 'RUNNING',
+        recent_output: logResult.stdout,
+        message: status === 'RUNNING' 
+          ? `Process ${args.pid} is still running. You can check again later.`
+          : `Process ${args.pid} has stopped. Check recent_output for errors or success.`
+      };
     }
   };
 }
@@ -673,6 +743,8 @@ export function getSandboxTools(
     skillLookupTool({ requirement_type: toolsCtx?.requirement_type, toolsCtx }),
     sandboxCodeSearchTool(sandbox, toolsCtx),
     sandboxRunCommandTool(sandbox, toolsCtx),
+    sandboxStartBackgroundCommandTool(sandbox, toolsCtx),
+    sandboxCheckBackgroundCommandTool(sandbox, toolsCtx),
     sandboxWriteFileTool(sandbox, toolsCtx),
     sandboxEditFileTool(sandbox, toolsCtx),
     sandboxDeleteFileTool(sandbox, toolsCtx),

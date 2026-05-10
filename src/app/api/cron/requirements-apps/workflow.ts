@@ -14,6 +14,7 @@ import {
   stopSandboxStep,
   extendRunLockStep,
   releaseRunLockStep,
+  checkBackgroundCommandStep,
 } from '../shared/cron-steps';
 import { applyDatabaseMigrationsStep } from '../shared/step-db-migrations';
 // Import directly — the 'use step' plugin forbids re-exports, so the step
@@ -354,6 +355,37 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
                await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
                break outer;
+            }
+
+            if (turnRes.sleepRequested && !turnRes.backgroundTask) {
+               console.log(`[CronAppsWorkflow] Turn requested sleep for ${turnRes.sleepRequested}s (generic)`);
+               await sleep(turnRes.sleepRequested * 1000);
+            }
+
+            if (turnRes.backgroundTask) {
+               console.log(`[CronAppsWorkflow] Background task detected (PID: ${turnRes.backgroundTask.pid}). Workflow will poll until completion.`);
+               let isRunning = true;
+               while (isRunning) {
+                  // Check if we approach timeout before sleeping
+                  if (Date.now() - startTime > MAX_EXECUTION_TIME_MS) {
+                      console.log(`[CronAppsWorkflow] Approaching Vercel timeout while waiting for background task. Pausing for next cycle.`);
+                      break outer;
+                  }
+                  
+                  await sleep(15000);
+                  
+                  try {
+                     const checkRes = await checkBackgroundCommandStep(sandboxId!, turnRes.backgroundTask.pid, turnRes.backgroundTask.logFile, cronAudit);
+                     isRunning = checkRes.isRunning;
+                     if (!isRunning) {
+                         console.log(`[CronAppsWorkflow] Background task completed. Output length: ${checkRes.output.length}`);
+                     }
+                  } catch (e: unknown) {
+                     console.warn(`[CronAppsWorkflow] Failed to check background command:`, e instanceof Error ? e.message : e);
+                     // If it fails (e.g. sandbox gone), break the polling and let the LLM or outer loop handle it
+                     isRunning = false;
+                  }
+               }
             }
             
             if (turnRes.isDone) {

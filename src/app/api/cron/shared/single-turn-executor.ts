@@ -52,6 +52,12 @@ export interface SingleTurnResult {
   isDone: boolean;
   error?: string;
   effectiveSandboxId: string;
+  sleepRequested?: number;
+  backgroundTask?: {
+    pid: string;
+    logFile: string;
+    toolCallId: string;
+  };
 }
 
 export async function executeSingleTurnStep(params: {
@@ -96,61 +102,61 @@ export async function executeSingleTurnStep(params: {
 
   // 2. Mark step in_progress if pending
   try {
-    const { data: planRow } = await supabaseAdmin
-      .from('instance_plans')
-      .select('steps, status')
-      .eq('id', plan.id)
-      .maybeSingle();
-      
-    const freshStep = Array.isArray(planRow?.steps) ? planRow.steps.find((s: any) => s.id === step.id) : undefined;
-    if (freshStep && (freshStep.status === 'completed' || freshStep.status === 'cancelled')) {
-      console.log(`[SingleTurn] Step ${step.order} already ${freshStep.status}.`);
-      return { ok: true, isDone: true, effectiveSandboxId };
+    try {
+      const { data: planRow } = await supabaseAdmin
+        .from('instance_plans')
+        .select('steps, status')
+        .eq('id', plan.id)
+        .maybeSingle();
+        
+      const freshStep = Array.isArray(planRow?.steps) ? planRow.steps.find((s: any) => s.id === step.id) : undefined;
+      if (freshStep && (freshStep.status === 'completed' || freshStep.status === 'cancelled')) {
+        console.log(`[SingleTurn] Step ${step.order} already ${freshStep.status}.`);
+        return { ok: true, isDone: true, effectiveSandboxId };
+      }
+    } catch (e) {}
+
+    await updateInstancePlanCore({
+      plan_id: plan.id, instance_id: instanceId, site_id: siteId,
+      steps: [{ id: step.id, status: 'in_progress', started_at: new Date().toISOString() }],
+    });
+
+    // 3. Build Prompt & Context
+    const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
+    const skillName = step.skill || (effectiveRole && ROLE_TO_SKILL[effectiveRole]);
+    let skillContext = '';
+    if (skillName) {
+      const matched = SkillsService.getSkillBySlugOrName(skillName);
+      if (matched) skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
     }
-  } catch (e) {}
 
-  await updateInstancePlanCore({
-    plan_id: plan.id, instance_id: instanceId, site_id: siteId,
-    steps: [{ id: step.id, status: 'in_progress', started_at: new Date().toISOString() }],
-  });
-
-  // 3. Build Prompt & Context
-  const effectiveRole = step.role || inferRoleFromStep(step) || 'general';
-  const skillName = step.skill || (effectiveRole && ROLE_TO_SKILL[effectiveRole]);
-  let skillContext = '';
-  if (skillName) {
-    const matched = SkillsService.getSkillBySlugOrName(skillName);
-    if (matched) skillContext = `\n\n--- SKILL INSTRUCTIONS: ${matched.name} ---\n${matched.content}\n--- END SKILL ---\n`;
-  }
-
-  let progressContext = '';
-  if (requirementId) {
-    const { data: reqData } = await supabaseAdmin
-      .from('requirements')
-      .select('progress')
-      .eq('id', requirementId)
-      .single();
-      
-    if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
-      const recentProgress = reqData.progress.slice(-5);
-      progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
-      progressContext += JSON.stringify(recentProgress, null, 2);
+    let progressContext = '';
+    if (requirementId) {
+      const { data: reqData } = await supabaseAdmin
+        .from('requirements')
+        .select('progress')
+        .eq('id', requirementId)
+        .single();
+        
+      if (reqData && reqData.progress && Array.isArray(reqData.progress) && reqData.progress.length > 0) {
+        const recentProgress = reqData.progress.slice(-5);
+        progressContext = '\n\n📋 RECENT REQUIREMENT PROGRESS:\n';
+        progressContext += JSON.stringify(recentProgress, null, 2);
+      }
     }
-  }
 
-  // Get instance context for background/memories
-  const { data: instanceData } = await supabaseAdmin.from('instances').select('*').eq('id', instanceId).maybeSingle();
-  let agentBackground = '';
-  let memoriesContext = '';
-  let historyContext = '';
-  if (instanceData) {
-    agentBackground = generateAgentBackground(instanceData, { id: userId });
-    const mems = await fetchMemoriesContext(instanceId, siteId);
-    memoriesContext = mems.memoriesContext;
-    historyContext = mems.historyContext;
-  }
+    // Get instance context for background/memories
+    const { data: instanceData } = await supabaseAdmin.from('instances').select('*').eq('id', instanceId).maybeSingle();
+    let agentBackground = '';
+    let memoriesContext = '';
+    let historyContext = '';
+    if (instanceData) {
+      agentBackground = await generateAgentBackground(siteId);
+      const mems = await fetchMemoriesContext(siteId, userId, instanceId);
+      memoriesContext = mems; // fetchMemoriesContext returns a string
+    }
 
-  const systemPrompt = `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
+    const systemPrompt = `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 
 CRITICAL: YOU MUST EXECUTE EXACTLY ONE TOOL CALL PER RESPONSE.
@@ -202,36 +208,36 @@ SHELL LIMITATIONS:
 - The sandbox shell is /bin/sh (NOT bash). Brace expansion like {a,b,c} does NOT work.
 - WRONG: mkdir -p src/app/{community,guests,booking} — creates a LITERAL folder named "{community,guests,booking}".
 - RIGHT: mkdir -p src/app/community src/app/guests src/app/booking — list each path separately.
+- FOR LONG COMMANDS (like npm run build, tests, or servers), ALWAYS use sandbox_start_background_command. Never use sandbox_run_command for them.
 
 ${TOOL_LOOKUP_HINT}
 ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
 
-  // 4. Fetch History
-  const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
-  const messages = [
-    { role: 'user' as const, content: `Execute step ${step.order}: ${step.title}. ${step.instructions}` },
-  ];
+    // 4. Fetch History
+    const historyText = await fetchStepLogHistoryText(instanceId, plan.id, step.id);
+    const messages = [
+      { role: 'user' as const, content: `Execute step ${step.order}: ${step.title}. ${step.instructions}` },
+    ];
 
-  if (historyText) {
-    messages.push({
-      role: 'user' as const,
-      content: `${historyText}\n\nReview the previous actions including any gate failures. Decide the next single tool call to advance the step, or finish the step if completed. REMEMBER: MAXIMUM 1 TOOL CALL.`
+    if (historyText) {
+      messages.push({
+        role: 'user' as const,
+        content: `${historyText}\n\nReview the previous actions including any gate failures. Decide the next single tool call to advance the step, or finish the step if completed. REMEMBER: MAXIMUM 1 TOOL CALL.`
+      });
+    }
+
+    // 5. Call Executor (Max 1 turn)
+    const sandboxTools = getSandboxTools(sandbox, requirementId, {
+      site_id: siteId,
+      instance_id: instanceId,
+      git_repo_kind: gitRepoKind,
+      requirement_type: requirementType,
+      plan_id: plan.id,
+      active_step_id: step.id,
     });
-  }
-
-  // 5. Call Executor (Max 1 turn)
-  const sandboxTools = getSandboxTools(sandbox, requirementId, {
-    site_id: siteId,
-    instance_id: instanceId,
-    git_repo_kind: gitRepoKind,
-    requirement_type: requirementType,
-    plan_id: plan.id,
-    step_id: step.id,
-  });
-  
-  const fullTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
-  
-  try {
+    
+    const fullTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
+    
     const result = await executeAssistantStep(messages, { id: instanceId }, {
       instance_id: instanceId,
       site_id: siteId,
@@ -253,9 +259,47 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
        return { ok: false, isDone: false, error: 'Sandbox Gone 410', effectiveSandboxId };
     }
 
-    return { ok: true, isDone: result.isDone, effectiveSandboxId };
+    let sleepRequested: number | undefined;
+    let backgroundTask: { pid: string; logFile: string; toolCallId: string } | undefined;
+    const lastMessage = result.messages?.[result.messages.length - 1];
+
+    if (lastMessage?.role === 'tool') {
+      if (lastMessage.name === 'sandbox_check_background_command') {
+        try {
+          const contentStr = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
+          const parsed = JSON.parse(contentStr);
+          if (parsed.is_running === true) {
+            sleepRequested = 15; // default wait when process is still running
+            // Re-construct the backgroundTask so the workflow can poll it without the LLM
+            const toolCalls = result.steps?.[result.steps.length - 1]?.toolCalls;
+            const myCall = toolCalls?.find(tc => tc.toolCallId === lastMessage.tool_call_id);
+            if (myCall && myCall.args.pid && myCall.args.log_file) {
+               backgroundTask = {
+                 pid: String(myCall.args.pid),
+                 logFile: String(myCall.args.log_file),
+                 toolCallId: lastMessage.tool_call_id!
+               };
+            }
+          }
+        } catch (e) {}
+      } else if (lastMessage.name === 'sandbox_start_background_command') {
+        try {
+          const contentStr = typeof lastMessage.content === 'string' ? lastMessage.content : JSON.stringify(lastMessage.content);
+          const parsed = JSON.parse(contentStr);
+          if (parsed.success && parsed.pid && parsed.log_file) {
+            backgroundTask = {
+              pid: String(parsed.pid),
+              logFile: String(parsed.log_file),
+              toolCallId: lastMessage.tool_call_id!
+            };
+          }
+        } catch (e) {}
+      }
+    }
+
+    return { ok: true, isDone: result.isDone, effectiveSandboxId, sleepRequested, backgroundTask };
   } catch (e: any) {
-    console.error('[SingleTurn] Executor failed:', e);
+    console.error('[SingleTurn] Executor wrapper failed:', e);
     return { ok: false, isDone: false, error: e.message, effectiveSandboxId };
   }
 }
