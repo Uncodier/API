@@ -75,7 +75,9 @@ HARD RULES:
 3. THE 500-LINE RULE: If a file is over 500 lines, you MUST split it into smaller components/modules.
 4. ANTI-MOCK POLICY: If you find hardcoded mock data or fake authentication for a feature that should be real, replace it with real integrations (e.g., Supabase).
 5. ES MODULES: Ensure all files use ES Modules (import/export) and remove dead code.
-6. REPORT FINDINGS: The main team needs to know what you fixed. You MUST use \`sandbox_write_file\` to update \`evidence/<item_id>.json\` with a \`qa_and_improvement_notes\` field detailing your fixes and cleanups.
+6. ROOT CLEANUP & REPO HEALTH: You MUST always delete unnecessary files from the repository root (e.g., test.js, temp.json, dummy files) or move them to their correct locations. Maintain the repository in a pristine, professional state.
+7. NAMING & VARIABLES REVIEW: You MUST review variables, functions, and classes for clear, consistent, and descriptive English naming conventions. Rename them if they are ambiguous, misleading, or poorly named.
+8. REPORT FINDINGS: The main team needs to know what you fixed. You MUST use \`sandbox_write_file\` to update \`evidence/<item_id>.json\` with a \`qa_and_improvement_notes\` field detailing your fixes and cleanups.
 
 ENVIRONMENT:
 - Use sandbox tools to INVESTIGATE (sandbox_run_command, sandbox_read_file, sandbox_list_files).

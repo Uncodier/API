@@ -18,6 +18,8 @@ export interface ProvisionPlatformKeyStepInput {
   apiBaseUrl?: string;
   /** Defaults to 'supabase'. Skips tenant provisioning when set to null. */
   authProvider?: AppsAuthProvider | null;
+  /** Git repo kind for Vercel env provisioning. Defaults to 'applications'. */
+  gitRepoKind?: 'applications' | 'automation';
   audit?: CronAuditContext;
 }
 
@@ -207,7 +209,7 @@ export async function provisionPlatformKeyStep(
 
     if (input.branchName && Object.keys(vercelBranchEnvBag).length > 0) {
       try {
-        await pushVercelBranchEnv(input.branchName, vercelBranchEnvBag, 'applications');
+        await pushVercelBranchEnv(input.branchName, vercelBranchEnvBag, input.gitRepoKind ?? 'applications');
       } catch (e: unknown) {
         console.warn(
           '[provisionPlatformKeyStep] failed to push Vercel branch env (continuing):',

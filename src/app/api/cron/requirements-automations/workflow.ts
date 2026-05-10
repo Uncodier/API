@@ -26,6 +26,7 @@ import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/c
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { recordRequirementBlockedStep, getInstanceBackgroundStep } from '../shared/workflow-db-steps';
+import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
 export interface CronAutoWorkflowInput {
@@ -70,6 +71,21 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   // Step 1b: Remove any nested project directories left by previous agent cycles
   const cleanup = await cleanupNestedProjectsStep(sandboxId, cronAudit);
   sandboxId = cleanup.effectiveSandboxId;
+
+  // Step 1c: Provision the Uncodie Platform API key (test-only) for this
+  // requirement and inject it into the sandbox `.env.local` so the generated
+  // app can call `/api/platform/*` via the SDK without ever holding raw
+  // service credentials. Idempotent: reuses any active key already linked to
+  // the remote_instance.
+  await provisionPlatformKeyStep({
+    sandboxId: sandboxId!,
+    requirementId: reqId,
+    siteId: site_id,
+    userId: user_id,
+    instanceId,
+    branchName,
+    gitRepoKind: 'automation',
+  });
 
   const bgStep = await getInstanceBackgroundStep(site_id, user_id, instanceId);
 

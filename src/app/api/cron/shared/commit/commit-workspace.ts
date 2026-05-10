@@ -175,6 +175,23 @@ fi`,
     let snapshotId: string | undefined;
     const token = process.env.GITHUB_TOKEN;
     
+    // Upload the source code archive BEFORE recreating the sandbox from snapshot
+    // to ensure we capture the exact state the agent left (including untracked files like .env.local).
+    let source_code: string | undefined;
+    if (result) {
+      try {
+        const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
+        if (up.ok) {
+          source_code = up.public_url;
+          console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
+        } else {
+          console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
+        }
+      } catch (e: unknown) {
+        console.warn('[CronPersist] source archive upload failed:', e instanceof Error ? e.message : e);
+      }
+    }
+
     // We want to snapshot if we pushed successfully OR if we failed to push but have local commits (pushError is set).
     // This preserves the local workspace state (e.g. for rebase_conflict recovery).
     const shouldSnapshot = result && result.branch && token && audit?.siteId && (
@@ -200,21 +217,6 @@ fi`,
         snapshotId = recreated.snapshotId;
       } catch (e: unknown) {
         console.warn('[CronPersist] post-push snapshot/recreate failed:', e instanceof Error ? e.message : e);
-      }
-    }
-
-    let source_code: string | undefined;
-    if (result) {
-      try {
-        const up = await uploadSandboxSourceArchiveToRepository(activeSandbox, reqId);
-        if (up.ok) {
-          source_code = up.public_url;
-          console.log(`[CronPersist] source archive uploaded: ${up.file} (${up.size_bytes} bytes)`);
-        } else {
-          console.warn('[CronPersist] source archive upload skipped/failed:', up.error);
-        }
-      } catch (e: unknown) {
-        console.warn('[CronPersist] source archive upload failed:', e instanceof Error ? e.message : e);
       }
     }
 
