@@ -89,8 +89,9 @@ Always leave the code cleaner than you found it. Do this refactoring as part of 
 ### 5. Shift-left build
 Before reporting completion:
 1. `sandbox_run_command npm run build`.
-2. Fix every TypeScript, ESLint, and import error. Clean build is the floor, not the ceiling.
-3. Verify there are no hydration warnings or `window is not defined` at runtime.
+2. If running tests, always use `sandbox_run_command npm test -- --passWithNoTests --runInBand --testTimeout=10000` to prevent sandbox hanging ("Stream ended before command finished" error).
+3. Fix every TypeScript, ESLint, and import error. Clean build is the floor, not the ceiling.
+4. Verify there are no hydration warnings or `window is not defined` at runtime.
 
 ### 5. Visual + runtime quality gate (mandatory)
 After the build passes, the platform runs an automated gate that probes your step in the sandbox. A green build is NOT enough — you are blocked unless:

@@ -267,13 +267,14 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
 
 ### 8. Shift-left testing (before reporting completion)
 1. `sandbox_run_command` with `npm run build` (or `tsc --noEmit` if faster for your change). Fix every TypeScript, lint, and import error.
-2. `sandbox_run_command` with curl against `?mode=test`:
+2. If running jest tests, always use `sandbox_run_command npm test -- --passWithNoTests --runInBand --testTimeout=10000` to prevent sandbox hanging ("Stream ended before command finished").
+3. `sandbox_run_command` with curl against `?mode=test`:
    ```
    curl -s "http://localhost:3000/api/<path>?mode=test" -H "Content-Type: application/json" -d '{...}'
    ```
    Verify the canonical shape: `{ ok: true, mode: "test", data: ... }`.
-3. If the endpoint mutates DB, also verify no row was created in test mode.
-4. Only then mark the step completed.
+4. If the endpoint mutates DB, also verify no row was created in test mode.
+5. Only then mark the step completed.
 
 ### 9. Anti-mock policy (project rule)
 - **Never** return hardcoded fake payloads in `?mode=prod`. Test mode is the only place where static data is acceptable.

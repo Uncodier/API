@@ -22,6 +22,7 @@ This skill defines the worker-side discipline; the canonical shape of `test_resu
 Before reporting completion:
 1. Run the build/test command: `sandbox_run_command npm run build` (or the stack's equivalent).
 2. Fix every error. Do NOT report success with a broken build.
+2. **IMPORTANT: Safe Test Execution:** When executing test commands in the sandbox (like Jest), ALWAYS use flags to avoid hanging the sandbox ("Stream ended before command finished"): `npm test -- --passWithNoTests --runInBand --testTimeout=10000` or `npx jest --passWithNoTests --runInBand --testTimeout=10000`.
 3. The system handles `git commit` and `git push` automatically after you finish. Never commit manually.
 4. **Inserción de Datos de Prueba (MANDATORY)**: Siempre que realices pruebas que involucren tablas en la base de datos, DEBES insertar elementos de prueba (dummy data) en dichas tablas. Esto es esencial para probar temas de políticas RLS (Row Level Security) y asegurar la visualización correcta de los datos en el frontend.
 

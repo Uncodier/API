@@ -20,9 +20,10 @@ Starting with the harness refactor, `makinari-fase-validacion` is a **Consumer**
 
 ### 1. Validate the frontend (develop / apps)
 1. `sandbox_run_command npm run build`. Fix every TypeScript, ESLint, and import error.
-2. Check the permanent preview URL — it is extracted automatically from the GitHub Deployments API after push. Do NOT guess or construct it.
-3. After deployment: `sandbox_run_command curl -s <preview_url>` to confirm the deployment is alive. **CRITICAL: You MUST inspect the HTML response body. If the body contains "404", "This page could not be found", or "Application error", the deployment is broken. A 200 OK HTTP status is not enough if the page renders a Next.js error.**
-4. CRITICAL: For transactional features, you MUST verify that the frontend actually integrates with the backend and database. Do NOT accept mock data or hardcoded responses.
+2. If running test suites (e.g. jest) as part of validation, use flags to prevent sandbox hanging: `npm test -- --passWithNoTests --runInBand --testTimeout=10000`.
+3. Check the permanent preview URL — it is extracted automatically from the GitHub Deployments API after push. Do NOT guess or construct it.
+4. After deployment: `sandbox_run_command curl -s <preview_url>` to confirm the deployment is alive. **CRITICAL: You MUST inspect the HTML response body. If the body contains "404", "This page could not be found", or "Application error", the deployment is broken. A 200 OK HTTP status is not enough if the page renders a Next.js error.**
+5. CRITICAL: For transactional features, you MUST verify that the frontend actually integrates with the backend and database. Do NOT accept mock data or hardcoded responses.
 
 ### 2. Validate the backend (automations / endpoints)
 1. Every endpoint MUST accept `?mode=test`. Call it: `sandbox_run_command curl -s "<endpoint_url>?mode=test"`.
