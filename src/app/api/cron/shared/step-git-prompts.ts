@@ -27,6 +27,12 @@ export const TOOL_LOOKUP_HINT = [
   '- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.',
 ].join('\n');
 
+export const LANGUAGE_REQUIREMENT_PROMPT = `
+LANGUAGE REQUIREMENT (CRITICAL):
+- All code, variables, functions, classes, and code comments MUST be written in English.
+- Even if the application UI, requirement instructions, or the user's language is in Spanish or another language, the underlying codebase (code and comments) must remain strictly in English.
+`;
+
 /** Enforced in code: git + clone root must stay at /vercel/sandbox (never move .git or the repo under app/). */
 export const SANDBOX_REPO_ROOT_INVARIANT = [
   'SANDBOX GIT ROOT (mandatory): The Git clone and package.json live at WORKSPACE ROOT /vercel/sandbox — never under /vercel/sandbox/app.',

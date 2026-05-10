@@ -65,6 +65,21 @@ export async function runGateStep(params: {
 
     if (gateRes.ok) {
        console.log(`[GateStep] Gate PASSED for step ${step.order}`);
+       // Check if this is the last step in the plan.
+       // We should only run the strict Judge evaluation if there are no more steps pending
+       // for this plan, otherwise the Judge will reject the intermediate steps and burn
+       // the backlog item's attempts before the plan even finishes executing.
+       const pendingSteps = (plan?.steps || []).filter((s: any) => 
+         s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+       );
+       const isLastStep = pendingSteps.length === 0;
+
+       if (!isLastStep) {
+           console.log(`[GateStep] Step ${step.order} passed. Skipping Critic/Judge because there are ${pendingSteps.length} more steps pending in the plan.`);
+           return { ok: true, passed: true, effectiveSandboxId };
+       }
+
+       console.log(`[GateStep] Step ${step.order} is the final step. Running Post-Gate Archetypes (Critic/Judge)...`);
        // Trigger Post-Gate Archetypes (Critic/Judge)
        await runArchetypePostGate({
           flowKind: requirementType as RequirementKind,

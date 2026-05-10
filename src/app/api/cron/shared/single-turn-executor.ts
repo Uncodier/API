@@ -11,7 +11,7 @@ import type { GitRepoKind } from './cron-commit-helpers';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
-import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT } from './step-git-prompts';
+import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT } from './step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 
 export function inferRoleFromStep(step: any): string | null {
@@ -164,6 +164,7 @@ Wait for the environment to execute the tool and return the result before you de
 DO NOT output multiple tool calls in a single response.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
+${LANGUAGE_REQUIREMENT_PROMPT}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.

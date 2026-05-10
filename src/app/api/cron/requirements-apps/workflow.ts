@@ -212,12 +212,25 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
 
+  let relevantDecisions: string[] = [];
+  if (reqContext.backlog?.items) {
+    const activeItems = reqContext.backlog.items.filter(i => 
+      i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
+    );
+    activeItems.forEach(item => {
+      if (item.assumptions && item.assumptions.length > 0) {
+        relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
+      }
+    });
+  }
+
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
     workDir, branchName, isNewBranch, 
     previousWorkContext: finalPreviousWorkContext,
     backlog: reqContext.backlog,
     recentProgress: reqContext.progress || undefined,
+    relevantDecisions,
     agentBackground: reqContext.agentBackground,
     memoriesContext: reqContext.memoriesContext,
     historyContext: reqContext.historyContext,
