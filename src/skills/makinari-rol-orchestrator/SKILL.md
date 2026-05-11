@@ -169,7 +169,7 @@ You are responsible for delivering a working, high-quality feature. Do NOT write
       "order": 5, 
       "title": "QA", 
       "skill": "makinari-rol-qa", 
-      "instructions": "Perform static general repository health/integrity checks (structure, variables, tests review, QA test-ids/coverage check), author .qa/scenarios, triage gate signals, write qa_results.json."
+      "instructions": "Perform static general repository health/integrity checks (structure, variables, tests review), author .qa/scenarios, triage gate signals, write qa_results.json."
     },
     { 
       "id": "step_val", 

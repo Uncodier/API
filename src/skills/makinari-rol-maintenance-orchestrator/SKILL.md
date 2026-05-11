@@ -22,7 +22,6 @@ Before you focus on specific DONE backlog items, you MUST perform a general QA a
 - Checking the repository root for dummy files and cleaning them up.
 - Statically reviewing existing tests, project structure, and variable naming to ensure best practices are followed.
 - Reviewing environment variables to ensure no secrets are exposed.
-- Checking that the QA agent (`makinari-rol-qa`) guidelines for test coverage, test-ids, and scenarios are being respected.
 (Note: Do not run the project or test suite here; the main agent handles building and running. Focus on static code and structure integrity.)
 Do not tunnel-vision on the newly created backlog items until you have verified the repository's general health.
 
@@ -60,7 +59,7 @@ Since you run in parallel, the main team needs to know what you changed.
   "action": "create",
   "title": "Maintenance: Repository Health & <item_title>",
   "steps": [
-    { "id": "step_general_qa", "order": 1, "title": "General Repository QA", "skill": "makinari-fase-investigacion", "instructions": "Statically review the repository root for dummy files, inspect tests and project structure for health, verify environment variables, and ensure QA guidelines (test-ids, test coverage) are met. Do not run the app or test suite. Fix any static integrity issues before focusing on the specific backlog item." },
+    { "id": "step_general_qa", "order": 1, "title": "General Repository QA", "skill": "makinari-rol-refactor", "instructions": "Statically review the repository root for dummy files, inspect tests and project structure for health, and verify environment variables. Fix any static integrity issues, clean up the repository, and enforce naming conventions before focusing on the specific backlog item." },
     { "id": "step_invest", "order": 2, "title": "Audit Code", "skill": "makinari-fase-investigacion", "instructions": "Read the codebase related to <item_title>. Identify files >500 lines, mock data, or messy architecture." },
     { "id": "step_refactor", "order": 3, "title": "Refactor & Polish", "skill": "makinari-rol-refactor", "instructions": "Clean up the identified files. Split components. Do NOT change the UI or business logic." },
     { "id": "step_qa_regression", "order": 4, "title": "QA Regression", "skill": "makinari-rol-qa", "instructions": "Run tests and verify the feature still works exactly as before." },

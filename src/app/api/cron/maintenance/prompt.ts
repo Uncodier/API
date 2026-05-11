@@ -70,7 +70,7 @@ ${contextSection}
 ${snapshot}${progress}
 
 HARD RULES:
-1. FOCUS ON DONE ITEMS: You must only audit and improve code belonging to backlog items that have \`status='done'\`. NEVER touch \`pending\` or \`in_progress\` items.
+1. REPOSITORY HEALTH & DONE ITEMS: First, perform a general static integrity check of the entire repository. Then, when auditing specific features, you must ONLY audit and improve code belonging to backlog items that have \`status='done'\`. NEVER touch \`pending\` or \`in_progress\` feature items.
 2. ENFORCE THE CONTRACT, DO NOT INVENT FEATURES: If a "done" item says "Create a login page", but the route \`/login\` is missing or throws a 500 error, YOU MUST FIX IT or build it. However, if the contract never mentions "user roles", do NOT add a roles system. Only fulfill what was promised.
 3. THE 500-LINE RULE: If a file is over 500 lines, you MUST split it into smaller components/modules.
 4. ANTI-MOCK POLICY: If you find hardcoded mock data or fake authentication for a feature that should be real, replace it with real integrations (e.g., Supabase).
@@ -89,11 +89,11 @@ ENVIRONMENT:
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
 
 WORKFLOW (follow IN ORDER):
-1. FIRST: Perform GENERAL QA & INTEGRITY CHECK of the entire repository. Use `sandbox_read_file` or `sandbox_list_files` to statically review the repository root for dummy files, review environment variables, and verify that test files, naming conventions, and project structure are healthy. Check that QA guidelines (from `makinari-rol-qa`) regarding test-ids and coverage are respected. Do NOT run the project or test suite here (the main agent handles running/building). Do NOT tunnel-vision on the newest backlog item until this general static integrity check is complete.
+1. FIRST: Perform GENERAL QA & INTEGRITY CHECK of the entire repository. Use `sandbox_read_file` or `sandbox_list_files` to statically review the repository root for dummy files, review environment variables, and verify that test files, naming conventions, and project structure are healthy. Do NOT run the project or test suite here (the main agent handles running/building). Do NOT tunnel-vision on the newest backlog item until this general static integrity check is complete.
 2. SECOND tool call: `requirement_backlog` with `action='list'`, requirement_id="${p.reqId}" — inspect the backlog for `done` items.
 3. Pick the MOST RECENTLY COMPLETED `done` item (the LAST item in the list of done items) to audit. You MUST prioritize this item. If you have already fully reviewed it, pick the next most recent one.
-4. QA Audit: Read the files related to that item. Run `sandbox_run_command` (e.g., `npm run build` or curl tests) to verify it actually works.
-5. Planning: If you find issues to fix or improvements to make, you MUST FIRST use the `instance_plan` tool (action="create") to explicitly create an execution plan. Do not just outline it in your thoughts; you must call the tool. BREAK DOWN the item into specific, actionable execution steps. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step must have a descriptive `title`, a clear objective and detailed `instructions`.
+4. QA Audit: Read the files related to that specific done item. Run \`sandbox_run_command\` (e.g., \`npm run build\` or curl tests) to verify the item actually works.
+5. Planning: If you find general repository issues (Step 1) OR improvements to make in the done item (Step 4), you MUST FIRST use the \`instance_plan\` tool (action="create") to explicitly create an execution plan. Do not just outline it in your thoughts. BREAK DOWN the general fixes and the item-specific fixes into actionable execution steps. Every step must have a descriptive \`title\`, a clear objective, and detailed \`instructions\`.
 6. Fix & Improve: Execute the plan you just created step by step using `instance_plan` (action="execute_step"). Write the code to fix issues and refactor to improve quality (split large files, remove mocks).
 7. Verify: Run `sandbox_run_command` with `npm run build` again to ensure your fixes didn't break the build.
 8. Report: Update `evidence/<item_id>.json` with your findings and fixes.
