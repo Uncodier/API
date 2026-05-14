@@ -94,6 +94,7 @@ function buildContextContent(
     instance_id?: string;
     site_id?: string;
     user_id?: string;
+    requirement_id?: string;
     instance_node_id?: string;
     expected_results_amount?: number;
     ai_provider?: AIProvider;
@@ -171,11 +172,11 @@ export async function executeAssistantStep(
       });
       
       const streamingCallbacks = instance_id && site_id
-          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id)
+          ? createStreamingLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
           : undefined;
       
       const thinkingStreamCallbacks = instance_id && site_id
-        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id)
+        ? createThinkingStreamLogCallbacks(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id)
         : undefined;
 
       // Instance Node handling
@@ -250,7 +251,7 @@ export async function executeAssistantStep(
               tools: prepared.tools,
               system: system_prompt,
               messages: [...messages],
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id),
+              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
               stream: true,
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
@@ -321,7 +322,7 @@ export async function executeAssistantStep(
                 tools: prepared.tools,
                 system: system_prompt,
                 messages: messages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id),
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
                 stream: !!streamingCallbacks,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
@@ -464,7 +465,7 @@ export async function executeAssistant(
         tools: prepared.tools, // Use tools from prepared
         system: system_prompt,
         prompt: prompt,
-        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider),
+        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
         stream: !!streamingCallbacks,
         onStreamStart: streamingCallbacks?.onStreamStart,
         onStreamChunk: streamingCallbacks?.onStreamChunk,

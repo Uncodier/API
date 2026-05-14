@@ -12,7 +12,8 @@ export function createAssistantOnStepHandler(
   user_id: string | undefined,
   provider: string,
   plan_id?: string,
-  step_id?: string
+  step_id?: string,
+  requirement_id?: string
 ) {
   return async (step: any, meta?: { streamingLogId?: string }) => {
     // Log step information
@@ -41,6 +42,7 @@ export function createAssistantOnStepHandler(
         total_tool_calls: step.toolCalls?.length || 0,
         ...(plan_id ? { plan_id } : {}),
         ...(step_id ? { step_id } : {}),
+        ...(requirement_id ? { requirement_id } : {}),
       },
     };
 
@@ -99,6 +101,7 @@ export function createAssistantOnStepHandler(
               tool_call_id: toolCall.id || toolCall.toolCallId,
               ...(plan_id ? { plan_id } : {}),
               ...(step_id ? { step_id } : {}),
+              ...(requirement_id ? { requirement_id } : {}),
             },
             instance_id: instance_id,
             site_id: site_id,
@@ -166,6 +169,7 @@ export function createAssistantOnStepHandler(
             total_tool_calls: step.toolCalls.length,
             ...(plan_id ? { plan_id } : {}),
             ...(step_id ? { step_id } : {}),
+            ...(requirement_id ? { requirement_id } : {}),
           },
           instance_id: instance_id,
           site_id: site_id,
@@ -196,7 +200,8 @@ export function createStreamingLogCallbacks(
   user_id: string | undefined,
   provider: string,
   plan_id?: string,
-  step_id?: string
+  step_id?: string,
+  requirement_id?: string
 ): { onStreamStart: () => Promise<string>; onStreamChunk: (logId: string, accumulatedText: string) => Promise<void> } {
   return {
     onStreamStart: async () => {
@@ -212,6 +217,7 @@ export function createStreamingLogCallbacks(
             streaming: true,
             ...(plan_id ? { plan_id } : {}),
             ...(step_id ? { step_id } : {}),
+            ...(requirement_id ? { requirement_id } : {}),
           },
           instance_id,
           site_id,
@@ -474,7 +480,8 @@ export function createThinkingStreamLogCallbacks(
   user_id: string | undefined,
   provider: string,
   plan_id?: string,
-  step_id?: string
+  step_id?: string,
+  requirement_id?: string
 ): {
   onThinkingStreamStart: () => Promise<string>;
   onThinkingStreamChunk: (logId: string, accumulatedText: string) => Promise<void>;
@@ -494,6 +501,7 @@ export function createThinkingStreamLogCallbacks(
             streaming: true,
             ...(plan_id ? { plan_id } : {}),
             ...(step_id ? { step_id } : {}),
+            ...(requirement_id ? { requirement_id } : {}),
           },
           instance_id,
           site_id,
@@ -528,6 +536,7 @@ export function createThinkingStreamLogCallbacks(
           reasoning_tokens: reasoningTokensCount,
           ...(plan_id ? { plan_id } : {}),
           ...(step_id ? { step_id } : {}),
+          ...(requirement_id ? { requirement_id } : {}),
         },
         instance_id,
         site_id,

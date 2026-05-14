@@ -243,10 +243,11 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
     
     const fullTools = getAssistantTools(siteId, userId, instanceId, sandboxTools);
     
-    const result = await executeAssistantStep(messages, { id: instanceId }, {
+    const result = await executeAssistantStep(messages, { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId }, {
       instance_id: instanceId,
       site_id: siteId,
       user_id: userId,
+      requirement_id: requirementId,
       plan_id: plan.id,
       step_id: step.id,
       system_prompt: systemPrompt,

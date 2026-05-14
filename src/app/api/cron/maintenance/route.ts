@@ -41,7 +41,7 @@ export async function GET(req: Request) {
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
-      .in('status', ['in-progress', 'done'])
+      .in('status', ['in-progress', 'on-review'])
       .gte('updated_at', oneWeekAgo)
       .order('updated_at', { ascending: false })
       .limit(3);

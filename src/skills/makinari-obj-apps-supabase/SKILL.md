@@ -39,13 +39,52 @@ export const db = createClient(
 ```
 
 ```ts
-// src/lib/supabase-server.ts — Route handlers + Server Actions
-import { createClient } from '@supabase/supabase-js';
-export const dbServer = createClient(
-  process.env.NEXT_PUBLIC_APPS_SUPABASE_URL!,
-  process.env.APPS_TENANT_JWT!,
-  { db: { schema: process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA! } }
-);
+// src/utils/supabase/server.ts — Route handlers + Server Actions (RSC)
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+
+export async function createClient() {
+  const cookieStore = await cookies()
+  const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+
+  const options: any = {
+    db: { schema: schema as any },
+    cookies: {
+      getAll() {
+        return cookieStore.getAll()
+      },
+      setAll(cookiesToSet: any) {
+        try {
+          cookiesToSet.forEach(({ name, value, options }: any) => {
+            cookieStore.set(name, value, options)
+          })
+        } catch (error) {
+          // The `set` method was called from a Server Component.
+        }
+      },
+    },
+  };
+
+  if (schema && schema !== 'public') {
+    options.global = {
+      fetch: (input: RequestInfo | URL, init?: RequestInit) => {
+        const newHeaders = new Headers(init?.headers);
+        newHeaders.set('accept-profile', schema);
+        newHeaders.set('content-profile', schema);
+        return fetch(input, { ...init, headers: newHeaders });
+      }
+    };
+  }
+
+  const supabaseUrl = process.env.NEXT_PUBLIC_APPS_SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://dummy.supabase.co';
+  const supabaseKey = process.env.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'dummy_key_to_prevent_client_crash';
+
+  return createServerClient<any>(
+    supabaseUrl.trim() === '' ? 'https://dummy.supabase.co' : supabaseUrl,
+    supabaseKey.trim() === '' ? 'dummy_key_to_prevent_client_crash' : supabaseKey,
+    options
+  )
+}
 ```
 
 The browser client uses the anon key + tenant schema — RLS filters by row ownership (`auth.uid() = user_id`) and local roles within the schema (`users` table). The server client carries the tenant JWT directly so backend routes can read/write without a user session (e.g. cron, webhooks).
@@ -205,18 +244,38 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
 
 ## Auth recipes
 
-- `APPS_AUTH_PROVIDER=supabase` (default). Wire `signInWithOtp` / `signInWithPassword` against the same Supabase client. **CRITICAL: Sincronización Inmediata en el Sign Up**: Después de usar `supabase.auth.signUp(...)` en un backend action o API route, debes hacer un insert inmediato a la tabla `users` del esquema actual (`NEXT_PUBLIC_APPS_TENANT_SCHEMA`).
+- `APPS_AUTH_PROVIDER=supabase` (default). **CRITICAL PRACTICE**: All generated apps MUST use OTP (One-Time Password) via email for login/signup instead of traditional passwords. This validates the email and ties the user to the tenant correctly. Wire `signInWithOtp` and `verifyOtp` against the Supabase client.
+  
+  **Step 1: Request OTP**
   ```ts
-  const { data, error } = await supabase.auth.signUp({ email, password });
+  const { error } = await supabase.auth.signInWithOtp({ 
+    email, 
+    options: { shouldCreateUser: true } 
+  });
+  ```
+  
+  **Step 2: Verify OTP and Sync User (Sincronización Inmediata)**
+  Después de verificar el código OTP exitosamente, debes hacer un `upsert` (o insert inmediato) a la tabla `users` del esquema actual (`NEXT_PUBLIC_APPS_TENANT_SCHEMA`).
+  ```ts
+  const { data, error } = await supabase.auth.verifyOtp({ 
+    email, 
+    token: code, 
+    type: 'email' 
+  });
+  
   if (data.user) {
-    await supabase.schema(process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA!).from('users').insert({
+    // Asegurar que el usuario existe en el tenant actual
+    const schema = process.env.NEXT_PUBLIC_APPS_TENANT_SCHEMA || process.env.NEXT_PUBLIC_SUPABASE_SCHEMA || 'public';
+    await supabase.schema(schema as any).from('users').upsert({
       id: data.user.id,
       email: data.user.email,
       role: 'member' // Rol por defecto
-    });
+    }, { onConflict: 'id' });
   }
   ```
-  Asegúrate de que la política RLS en `users` permita este insert (ej. `with check (id = auth.uid())`). No confíes en custom claims en el JWT para aislar tenants, ya que la separación por esquema (`app_<id>`) provee el aislamiento necesario.
+  Asegúrate de que la política RLS en `users` permita este insert/upsert (ej. `with check (id = auth.uid())`). No confíes en custom claims en el JWT para aislar tenants, ya que la separación por esquema (`app_<id>`) provee el aislamiento necesario.
+
+  **Login UI**: Always use the existing `LoginOtp` component from the base repo (`src/components/auth/login-otp.tsx`) or adapt it as needed.
 
 - `APPS_AUTH_PROVIDER=auth0`. Use the Auth0 React SDK and exchange the
   Auth0 token for a tenant JWT via `/api/platform/auth/exchange`. The

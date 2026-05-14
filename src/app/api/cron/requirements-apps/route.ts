@@ -57,7 +57,7 @@ export async function GET(req: Request) {
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
-      .in('status', ['backlog', 'in-progress', 'done'])
+      .in('status', ['backlog', 'in-progress'])
       .or(`created_at.gte.${oneMonthAgo},updated_at.gte.${oneMonthAgo}`)
       .order('updated_at', { ascending: false })
       .limit(10);
@@ -471,7 +471,7 @@ export async function GET(req: Request) {
           requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
         }
 
-        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.every((i: any) => i.status === 'done');
+        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
         if (allBacklogDone) {
           const allDoneCycles = (requirement.metadata?.all_done_cycles || 0) + 1;
           const updatedMetadata = { ...requirement.metadata, all_done_cycles: allDoneCycles };

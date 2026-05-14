@@ -110,6 +110,7 @@ export async function runMaintenanceAgentStep(params: {
           instance_id: instanceId,
           site_id,
           user_id,
+          requirement_id: reqId,
           system_prompt: finalPrompt,
           custom_tools: fullTools,
           ai_model: agentModel,

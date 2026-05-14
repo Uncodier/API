@@ -49,7 +49,7 @@ When the requirement says "functionalize" or "wire", do NOT ship:
 Instead:
 - Connect to real backends (Supabase / project API) if available.
 - CRITICAL: For transactional features (forms, bookings, creation, updates), you MUST implement the full end-to-end flow. Do NOT mock the data in the frontend. If the backend API doesn't exist, **apply Contract Adequation**: assume the logical endpoint path, wire the form to it, and report the assumed endpoint in your `step_output` with the `[CONTRACT ADEQUATION]` flag so the Backend agent builds it next.
-- CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication (e.g., Supabase Auth, NextAuth, or custom JWT) and enforce it in the frontend.
+- CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication. **CRITICAL PRACTICE**: All apps MUST use OTP (One-Time Password) via email via Supabase Auth (`signInWithOtp` and `verifyOtp`). NEVER use traditional passwords. This ensures emails are validated and users are tied to the tenant correctly. Use or adapt the pre-built `src/components/auth/login-otp.tsx` available in the base repo.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
 

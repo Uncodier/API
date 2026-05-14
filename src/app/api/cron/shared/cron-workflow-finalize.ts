@@ -317,6 +317,36 @@ export async function createFinalStatusStep(params: {
       .eq('id', reqId);
     console.log(`[CronStep] Requirement ${reqId} → done`);
     
+    // Clean up instances when requirement is done
+    try {
+      console.log(`[CronStep] Cleaning up instances for done requirement ${reqId}`);
+      // Pause/pending any running instances
+      await supabaseAdmin
+        .from('remote_instances')
+        .update({ status: 'pending' })
+        .eq('site_id', site_id)
+        .like('name', `%req-%${reqId.substring(0, 8)}%`)
+        .in('status', ['running', 'starting']);
+        
+      // Cancel any active plans
+      const { data: instances } = await supabaseAdmin
+        .from('remote_instances')
+        .select('id')
+        .eq('site_id', site_id)
+        .like('name', `%req-%${reqId.substring(0, 8)}%`);
+        
+      if (instances && instances.length > 0) {
+        const instanceIds = instances.map((i) => i.id);
+        await supabaseAdmin
+          .from('instance_plans')
+          .update({ status: 'cancelled' })
+          .in('instance_id', instanceIds)
+          .in('status', ['pending', 'in_progress']);
+      }
+    } catch (cleanupErr) {
+      console.error(`[CronStep] Failed to clean up instances for done requirement ${reqId}:`, cleanupErr);
+    }
+    
     // Clean up the final snapshot since the requirement is done
     // and the code is safely in GitHub
     if (existing?.snapshot_id) {
