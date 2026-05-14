@@ -100,13 +100,14 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
   const isQaPhase = phaseId === 'qa';
 
   const breakdownInstruction = isQaPhase
-    ? `Since this is the QA phase, you MUST break down the instance_plan into exactly 5 strict execution steps in this specific order:
+    ? `Since this is the QA phase, you MUST break down the instance_plan into exactly 6 strict execution steps in this specific order:
       1. "Static Repository Integrity & Cleanup" (Clean dummy files, review variables/naming)
       2. "Dependency & Build Audit" (Verify npm build passes, check dependencies)
       3. "Linter & Static Analysis" (Run ESLint/Prettier, check code standards)
       4. "Unit & Integration Test Audit" (Verify existing tests pass)
-      5. "Feature E2E & Contract Validation" (Validate the specific backlog item, write scenarios, assert acceptance criteria).
-      Assign the \`makinari-rol-qa\` skill to ALL 5 steps.`
+      5. "Feature E2E & Contract Validation" (Validate the specific backlog item, write scenarios, assert acceptance criteria)
+      6. "Runtime Error & Log Audit" (Inspect server and browser logs for hidden exceptions, hydration errors, or unhandled promises after tests).
+      Assign the \`makinari-rol-qa\` skill to ALL 6 steps.`
     : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
 
   return `You are the COORDINATOR of a requirement workflow running inside a secure Vercel Sandbox.

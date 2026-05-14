@@ -432,6 +432,36 @@ export async function runBuildAndOriginGate(params: OriginGateParams): Promise<{
   let lastResult = initialLastResult;
   const signals: GateSignals = {};
 
+  const cwd = SandboxService.WORK_DIR;
+  try {
+    // Wrong LLM layout: duplicate or misplaced `app/src/app` — canonical routes are ONLY under repo `src/app/`.
+    // Run this BEFORE validateBuildForStep so the gate build tests the same file tree we will push.
+    const fixLayout = await sandbox.runCommand('sh', [
+      '-c',
+      `cd "${cwd}" || exit 0
+if [ -d src/app ] && [ -d app/src/app ] && [ ! -f app/package.json ]; then
+  rm -rf app
+  echo FIX_RM_DUP
+fi
+if [ -f package.json ] && [ ! -f app/package.json ] && [ -d app/src/app ] && [ ! -d src/app ]; then
+  mkdir -p src
+  mv app/src/app src/app
+  rm -rf app
+  echo FIX_MV_APP
+fi
+if [ -d src/app ] && [ -d app ] && [ ! -f app/package.json ] && [ ! -d app/src/app ]; then
+  rm -rf app
+  echo FIX_RM_ORPHAN
+fi`,
+    ]);
+    const fixMsg = (await fixLayout.stdout()).trim();
+    if (fixMsg.includes('FIX_RM_DUP')) console.log('[GateStep] Removed mistaken root app/ (duplicate app/src/app vs src/app)');
+    if (fixMsg.includes('FIX_MV_APP')) console.log('[GateStep] Moved app/src/app → src/app');
+    if (fixMsg.includes('FIX_RM_ORPHAN')) console.log('[GateStep] Removed orphan root app/ (routes live in src/app/ only)');
+  } catch (e: unknown) {
+    console.warn('[GateStep] layout fix script failed:', e instanceof Error ? e.message : e);
+  }
+
   const vercelLayoutErr = await validateNpmRepoForVercelDeploy(sandbox, gitRepoKind);
   if (vercelLayoutErr) {
     const msg = `Vercel/npm layout: ${vercelLayoutErr}`;

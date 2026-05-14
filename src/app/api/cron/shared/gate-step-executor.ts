@@ -59,7 +59,7 @@ export async function runGateStep(params: {
       flowKind: requirementType as RequirementKind,
       sandbox,
       cwd: SandboxService.WORK_DIR,
-      stepContext: { title: step.title, instructions: step.instructions, itemId: plan.metadata?.backlog_item_id },
+      stepContext: { title: step.title, instructions: step.instructions, itemId: step.metadata?.backlog_item_id || step.backlog_item_id },
       audit,
     });
 
@@ -82,16 +82,13 @@ export async function runGateStep(params: {
        console.log(`[GateStep] Step ${step.order} is the final step. Running Post-Gate Archetypes (Critic/Judge)...`);
        // Trigger Post-Gate Archetypes (Critic/Judge)
        await runArchetypePostGate({
-          flowKind: requirementType as RequirementKind,
           sandbox,
           requirementId,
-          instanceId,
-          siteId,
-          userId,
-          planId: plan.id,
+          backlogItemId: step.metadata?.backlog_item_id || step.backlog_item_id,
           stepId: step.id,
+          signals: gateRes.signals,
+          capturedAt: new Date().toISOString(),
           audit,
-          gateSignals: gateRes.signals,
        });
 
        return { ok: true, passed: true, effectiveSandboxId };
@@ -110,6 +107,68 @@ export async function runGateStep(params: {
             gate_signals: gateRes.signals,
          }
        });
+
+       // IMPORTANT: If the gate fails, the Judge is never reached. We must bump
+       // the backlog item's attempts so the self-healing policy can eventually
+       // trigger (e.g. rotate_strategy or downgrade_scope) instead of infinite loop.
+       const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
+       if (backlogItemId) {
+          const { bumpItemAttempts } = await import('@/lib/services/requirement-backlog');
+          const { planNextHealingAction, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-self-heal');
+          const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
+          
+          try {
+             const { item } = await getBacklogItem(requirementId, backlogItemId);
+             if (item) {
+                 const bumped = await bumpItemAttempts({
+                   requirementId,
+                   itemId: backlogItemId,
+                   reason: `gate_failed: ${(gateRes.error || '').slice(0, 200)}`,
+                 });
+                 
+                 const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
+                 const action = planNextHealingAction({ 
+                    item, 
+                    verdict: { verdict: 'rejected', reason: gateRes.error || 'Gate failed' }, 
+                    attempts: attemptsForHeal 
+                 });
+                 
+                 switch (action.kind) {
+                   case 'rotate_strategy':
+                     await logAssumption({
+                       requirementId,
+                       itemId: item.id,
+                       assumption: `[rotate] ${action.hint}`,
+                     });
+                     break;
+                   case 'downgrade_scope':
+                     await downgradeScope({ requirementId, itemId: item.id });
+                     await logAssumption({
+                       requirementId,
+                       itemId: item.id,
+                       assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}`,
+                     });
+                     break;
+                   case 'log_assumption_and_continue':
+                     await logAssumption({
+                       requirementId,
+                       itemId: item.id,
+                       assumption: action.assumption,
+                     });
+                     break;
+                   case 'mark_needs_review':
+                     await markNeedsReview({
+                       requirementId,
+                       itemId: item.id,
+                       reason: action.reason,
+                     });
+                     break;
+                 }
+             }
+          } catch (healErr) {
+             console.error(`[GateStep] Exception applying self-healing on gate failure:`, healErr);
+          }
+       }
        
        return { ok: true, passed: false, gateErrorExcerpt: gateRes.error, effectiveSandboxId };
     }

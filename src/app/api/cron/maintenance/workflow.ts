@@ -89,20 +89,31 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     
     // Ejecutar las sondas visuales y E2E para obtener feedback de QA
     const { runGateProbesStep } = await import('../shared/step-gate-probes-step');
-    const probes = await runGateProbesStep({
-      sandboxId: sandboxId!,
-      stepOrder: 0,
-      requirementId: reqId,
-      gitRepoKind: 'applications',
-      audit: cronAudit,
-      shouldRunVisual: true,
-      stepContext: {
-        title: 'QA Audit',
-        instructions: 'Audit the entire application for visual defects, runtime errors, and E2E scenario failures.',
-      },
-      instanceType: type,
-      title,
-    });
+    let probes;
+    try {
+      probes = await runGateProbesStep({
+        sandboxId: sandboxId!,
+        stepOrder: 0,
+        requirementId: reqId,
+        gitRepoKind: 'applications',
+        audit: cronAudit,
+        shouldRunVisual: true,
+        stepContext: {
+          title: 'QA Audit',
+          instructions: 'Audit the entire application for visual defects, runtime errors, and E2E scenario failures.',
+        },
+        instanceType: type,
+        title,
+      });
+    } catch (error: any) {
+      console.warn(`[QAWorkflow|qa] runGateProbesStep exceeded retries:`, error);
+      probes = {
+        ok: false,
+        error: `Gate probes step failed after retries: ${error instanceof Error ? error.message : String(error)}`,
+        signals: {},
+        effectiveSandboxId: sandboxId!,
+      };
+    }
     sandboxId = probes.effectiveSandboxId;
 
     let qaContext = '';
@@ -141,18 +152,27 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
 
     const prompt = `Review the backlog for DONE items. You MUST prioritize auditing the LAST (most recently completed) DONE item in the backlog. If you have already reviewed it, move to the next most recent one. Verify it ACTUALLY works as specified in the contract. If it's broken or missing pieces promised in the backlog item (e.g., a missing route), fix it. Then, refactor the code to improve quality (split files >500 lines, remove mocks). Update evidence/<item_id>.json with your fixes. ${planInstruction}${qaContext ? `\n\nCRITICAL QA FEEDBACK TO FIX:\n${qaContext}` : ''}`;
 
-    const agentRun = await runMaintenanceAgentStep({
-      sandboxId: sandboxId!,
-      reqId,
-      requirementType: type,
-      maintenancePrompt,
-      instanceId,
-      site_id,
-      user_id,
-      initialMessage: prompt,
-      requirementTitle: title,
-      instanceContext: reqContext.instanceContext,
-    });
+    let agentRun;
+    try {
+      agentRun = await runMaintenanceAgentStep({
+        sandboxId: sandboxId!,
+        reqId,
+        requirementType: type,
+        maintenancePrompt,
+        instanceId,
+        site_id,
+        user_id,
+        initialMessage: prompt,
+        requirementTitle: title,
+        instanceContext: reqContext.instanceContext,
+      });
+    } catch (error: any) {
+      console.warn(`[QAWorkflow|qa] runMaintenanceAgentStep exceeded retries:`, error);
+      agentRun = {
+        timedOut: true,
+        effectiveSandboxId: sandboxId!,
+      };
+    }
     sandboxId = agentRun.effectiveSandboxId;
 
     await extendRunLockStep(maintenanceLockKey, cronLockRunId);
