@@ -96,6 +96,19 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
     ? `\nASSUMPTIONS CARRIED (from DECISIONS.md):\n${p.relevantDecisions.slice(-5).map((d) => `  - ${d}`).join('\n')}`
     : '';
 
+  const phaseId = p.backlog?.current_phase_id || flow.phases[0]?.id;
+  const isQaPhase = phaseId === 'qa';
+
+  const breakdownInstruction = isQaPhase
+    ? `Since this is the QA phase, you MUST break down the instance_plan into exactly 5 strict execution steps in this specific order:
+      1. "Static Repository Integrity & Cleanup" (Clean dummy files, review variables/naming)
+      2. "Dependency & Build Audit" (Verify npm build passes, check dependencies)
+      3. "Linter & Static Analysis" (Run ESLint/Prettier, check code standards)
+      4. "Unit & Integration Test Audit" (Verify existing tests pass)
+      5. "Feature E2E & Contract Validation" (Validate the specific backlog item, write scenarios, assert acceptance criteria).
+      Assign the \`makinari-rol-qa\` skill to ALL 5 steps.`
+    : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
+
   return `You are the COORDINATOR of a requirement workflow running inside a secure Vercel Sandbox.
 
 COMPANY BACKGROUND & MEMORIES:
@@ -154,7 +167,7 @@ WORKFLOW (follow IN ORDER):
    a) Rewrite \`requirement.spec.md\` using \`sandbox_write_file\` to replace all "_To be refined..._" placeholders with a concrete architecture, exact navigation flows, data models, and acceptance criteria.
    b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
-4. Create the plan: \`instance_plan\` with \`action='create'\`. BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)). Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
+4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Report progress with \`requirement_status\` (stage='in-progress').
 6. If ALL items in the backlog are completely done, call the \`system_notification\` tool directly to notify the team.
 
