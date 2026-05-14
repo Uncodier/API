@@ -109,6 +109,8 @@ To clear the gate, your UI must:
 - Wire real event handlers with loading and error states.
 - Prefer semantic HTML (`<header>`, `<main>`, `<section>`, `<button>`).
 - Add every `data-testid` listed in section 6.4 of the requirement.
+- Apply Modern Elite Design (Linear/Stripe style) principles: avoid flat generic colors, use dark-mode-first or high-contrast styling with glassmorphism (`border-white/10`), implement bento grids where applicable, and add subtle motion (150ms ease-out transitions, active scale-down).
+- Use `shadcn/ui` for application UI, and consider `Magic UI` or `Aceternity UI` for high-polish marketing pages, avoiding "safe, flat 2020-era corporate UI".
 
 ### 6. Pre-completion checklist
 Copy/paste this and verify every box before marking the step completed:
@@ -121,6 +123,7 @@ Copy/paste this and verify every box before marking the step completed:
 - [ ] All interactive elements have accessible names
 - [ ] Real event handlers wired (no empty onClicks)
 - [ ] No placeholder / lorem ipsum copy
+- [ ] Design avoids generic corporate SaaS look (uses Modern Elite Design constraints)
 ```
 
 ### 7. Git and delivery
@@ -177,3 +180,4 @@ exception in `progress.md`.
 - Shipping a demo with empty buttons under the cover of "wireframe".
 - Creating a second Next.js project under a nested folder.
 - Catching and silencing hydration errors instead of fixing them.
+- Delivering generic, flat, "2020 corporate SaaS" UI with default Tailwind colors (e.g., `bg-blue-500`) instead of engineered, Modern Elite styles with proper tokens.

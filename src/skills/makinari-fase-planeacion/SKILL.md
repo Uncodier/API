@@ -84,10 +84,10 @@ Before calling `instance_plan action="create"`, verify:
       "order": 3, 
       "title": "Frontend", 
       "skill": "makinari-rol-frontend", 
-      "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior.",
+      "instructions": "Implement routes <list>, expose data-testids per req section 6.4, wire real handlers. explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Magic UI animations), and responsive behavior. Enforce Modern Elite Design aesthetics (dark-mode-first, glassmorphism, no flat generic corporate UI).",
       "expected_output": "UI components and pages created and wired to real endpoints.",
-      "success_criteria": ["Pages render without 500 errors", "Shadcn components used for layout", "Responsive on mobile"],
-      "validation_rules": ["No mocked data", "Must use Tailwind classes"]
+      "success_criteria": ["Pages render without 500 errors", "Shadcn/MagicUI components used for layout", "Responsive on mobile"],
+      "validation_rules": ["No mocked data", "Must use Tailwind classes", "No generic flat colors"]
     },
     { 
       "id": "step_qa", 

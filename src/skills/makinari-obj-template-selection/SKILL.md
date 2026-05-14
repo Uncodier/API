@@ -82,7 +82,7 @@ Pick Generic when the requirement is full product development, not a packaged Vi
 
 | Kind                | Standard library                                                                 | Bootstrap when missing |
 | ------------------- | -------------------------------------------------------------------------------- | ---------------------- |
-| `app` / `site`      | ShadCN + Tailwind + Radix + lucide-react (`@radix-ui/*`, `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react`) | `npx shadcn init` (use existing `components.json` if present); copy `@/components/ui/{button,input,select,dialog,form,table}` |
+| `app` / `site`      | ShadCN + Tailwind + Radix + lucide-react (`@radix-ui/*`, `class-variance-authority`, `clsx`, `tailwind-merge`, `lucide-react`) + (Optional) Magic UI / Aceternity UI for marketing | `npx shadcn init` (use existing `components.json` if present); copy `@/components/ui/{button,input,select,dialog,form,table}`. Apply Modern Elite Design (no generic flat themes). |
 | `doc` / `contract`  | MDX + remark (`@mdx-js/loader`, `@mdx-js/mdx`, `remark-parse`, `unified`)        | Already present in this repo's deps for the docs site; for generated apps, install `@mdx-js/loader` + `remark-parse` |
 | `presentation`      | reveal.js (or spectacle — pick one and document in `requirement.spec.md`)        | `npx --yes reveal-md@latest` smoke test; `npm i reveal.js` for a custom build |
 | `automation` / `task` | No UI kit. Produce artefacts under `artifacts/` / `reports/` / `outputs/` and a `run.sh` entrypoint | `mkdir -p artifacts && touch run.sh && chmod +x run.sh` |
