@@ -92,6 +92,7 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   instance: 'infra',
   instance_project: 'infra',
   instance_logs: 'infra',
+  update_repo: 'infra',
   createAccount: 'infra',
   verifyAccount: 'infra',
   memories: 'infra',
