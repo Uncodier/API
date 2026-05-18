@@ -3,7 +3,7 @@ import { listSystemNotificationCore, notifySystemNotificationCore } from './rout
 export function systemNotificationTool(site_id: string) {
   return {
     name: 'system_notification',
-    description: 'List team members or send a notification to a specific team member. Set action to "list" to list available team members. Set action to "notify" to send a notification (requires team_member_email, title, message; instance_id is optional but highly recommended). You can specify the channels to use as an array (e.g., ["email", "whatsapp", "in_app"]) and optionally provide a phone_number. Remember the WhatsApp template logic: free-form messages via WhatsApp can only be sent if the user has replied within the last 24 hours. Otherwise, standard WhatsApp messages will fail and you might need to rely on email/in-app or use the whatsappTemplate tool.',
+    description: 'List team members or send a notification to a specific team member. Set action to "list" to list available team members. Set action to "notify" to send a notification (requires team_member_email, title, message; instance_id is optional but highly recommended). Note: Notifications are rate-limited to 1 per instance per team member per hour. You can specify the channels to use as an array (e.g., ["email", "whatsapp", "in_app"]) and optionally provide a phone_number. Remember the WhatsApp template logic: free-form messages via WhatsApp can only be sent if the user has replied within the last 24 hours. Otherwise, standard WhatsApp messages will fail and you might need to rely on email/in-app or use the whatsappTemplate tool.',
     parameters: {
       type: 'object',
       properties: {

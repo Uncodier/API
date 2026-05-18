@@ -14,6 +14,8 @@ export async function listSystemNotificationCore(site_id: string) {
   return teamMembers;
 }
 
+import { getRedisClient } from '@/lib/utils/redis-client';
+
 export async function notifySystemNotificationCore(params: {
   site_id: string;
   team_member_email: string;
@@ -28,6 +30,37 @@ export async function notifySystemNotificationCore(params: {
   if (!site_id || !team_member_email || !message || !title) {
     throw new Error('site_id, team_member_email, message, and title are required for sending notifications');
   }
+
+  // --- RATE LIMITING LOGIC ---
+  const validInstanceIdForRateLimit = instance_id && /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(instance_id) ? instance_id : null;
+  const rateLimitKey = validInstanceIdForRateLimit 
+    ? `rate_limit:sys_notif:${validInstanceIdForRateLimit}:${team_member_email}`
+    : `rate_limit:sys_notif:site_${site_id}:${team_member_email}`; // fallback to site_id if no instance_id
+
+  try {
+    const redis = getRedisClient();
+    const isRateLimited = await redis.get(rateLimitKey);
+    
+    if (isRateLimited) {
+      console.log(`[System Notification] Rate limited for key: ${rateLimitKey}`);
+      return {
+        whatsapp_sent: false,
+        template_required: false,
+        email_sent: false,
+        notification_sent: false,
+        user_id: null,
+        instance_url: null,
+        rate_limited: true,
+        message: 'Notification skipped due to rate limit (once per hour per instance per user).'
+      };
+    }
+    
+    // Set the key to expire in 1 hour (3600 seconds)
+    await redis.set(rateLimitKey, '1', 'EX', 3600);
+  } catch (redisError) {
+    console.error('[System Notification] Redis rate limiting failed, proceeding with notification:', redisError);
+  }
+  // --- END RATE LIMITING LOGIC ---
 
   // Find the user by email using profiles table first
   const { data: profile } = await supabaseAdmin
