@@ -155,8 +155,8 @@ export const ICP_CATEGORY_IDS_INSTRUCTION = `
  */
 export function getSandboxRequirementWorkflowInstruction(hasLinkedRequirement: boolean): string {
   const linkage = hasLinkedRequirement
-    ? 'This instance already has requirement_status rows — treat them as authoritative context. Keep the requirement "instructions" field updated after every meaningful change, and use requirement_status to record progress or blockers.'
-    : 'If the user wants a new build (no requirement in context yet), create a requirement early with action "create": title, clear instructions (scope, deliverables, tech constraints, acceptance criteria), and set status to "in-progress" when you start execution.';
+    ? 'This instance already has requirement_status rows — treat them as authoritative context. Keep the requirement "instructions" field updated after every meaningful change, and use requirement_status to record progress or blockers. If the user asks for a SIMPLE code change directly on an existing repository (e.g. "add Events to the nav menu"), DO NOT create a backlog item and DO NOT generate a full instance_plan. Instead, use the `update_repo` tool immediately to execute the instruction.'
+    : 'If the user wants a new build (no requirement in context yet), create a requirement early with action "create": title, clear instructions (scope, deliverables, tech constraints, acceptance criteria), and set status to "in-progress" when you start execution. If the user asks for a simple fix on an existing requirement, use the `update_repo` tool instead of generating a full plan.';
 
   return `
 🏗️ SANDBOX DELIVERABLES & REQUIREMENTS (MANDATORY WORKFLOW):
@@ -165,7 +165,8 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 - Use the "requirements" tool as the durable backbone: instructions must stay a living README (what exists, architecture, file layout, what is left to do). Update it at the end of each substantive cycle.
 - Use the "requirement_status" tool to log milestones, reviews, or when work returns to in-progress after feedback.
 - If system/plan mode expects an "instance_plan", follow the existing PLAN MODE rules in addition — the requirement describes *what* we are building; the plan breaks down *steps* when that mode is active.
-- Prefer listing requirements (action "list") before creating duplicates for the same site or initiative.`;
+- Prefer listing requirements (action "list") before creating duplicates for the same site or initiative.
+- For QUICK, SIMPLE code modifications on an already-existing repository, bypass complex planning and use the \`update_repo\` tool to execute the instruction directly in the background.`;
 }
 
 /**

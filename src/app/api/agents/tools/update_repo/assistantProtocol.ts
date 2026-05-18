@@ -9,7 +9,7 @@ export interface UpdateRepoToolParams {
 export function updateRepoTool(site_id: string, instance_id: string, user_id?: string) {
   return {
     name: 'update_repo',
-    description: 'Execute a simple instruction directly on a requirement\'s repository without needing a complex instance_plan. Triggers a background workflow that creates a sandbox, executes the instruction, and pushes the changes. Use this when the request is straightforward and doesn\'t require multiple steps or deep planning.',
+    description: 'Execute a simple instruction directly on a requirement\'s repository without needing a complex instance_plan. Triggers a background workflow that creates a sandbox, executes the instruction, and pushes the changes. Use this when the request is straightforward, the repository already exists, and doesn\'t require multiple steps or deep planning (e.g. "add a button to the nav menu", "change the title text").',
     parameters: {
       type: 'object',
       properties: {
