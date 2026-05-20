@@ -87,16 +87,35 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
     gitRepoKind: 'automation',
   });
 
+  // Fetch full requirement context up-front so it is available to both the
+  // orchestrator prompt and the skip-cycle guard below.
+  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+
   // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
 
   let isAllBacklogDone = false;
+  const relevantDecisions: string[] = [];
   if (reqContext.backlog?.items) {
+    const activeItems = reqContext.backlog.items.filter(i =>
+      i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
+    );
+    activeItems.forEach(item => {
+      if (item.assumptions && item.assumptions.length > 0) {
+        relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
+      }
+    });
+
     const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
     if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
       isAllBacklogDone = true;
     }
   }
+
+  // To ensure the orchestrator runs if there are no backlog items yet or they are all done
+  // (so it can evaluate if new ones are needed based on recent instructions),
+  // we DO NOT skip the orchestrator if isAllBacklogDone is true OR if there are no items.
+  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
 
   const orchestratorPrompt = `You are an automation runner inside a Vercel Sandbox.
 
@@ -124,8 +143,8 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
 - Use sandbox tools to INVESTIGATE (sandbox_list_files path=".", sandbox_read_file).
 - Use instance_plan to create steps (each with role, title, instructions, expected_output, order). BREAK DOWN the automation into specific, actionable execution steps (e.g., 1. investigate/setup, 2. core logic, 3. tests). Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Do NOT add a step to notify the team in your plan.
-- Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using `requirement_backlog action='upsert'`.
-- ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions, call `requirement_status` with `stage='done'` and `message='Project complete'` to finalize the workflow, and DO NOT create an instance plan.
+- Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
+- ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions, call \`requirement_status\` with \`stage='done'\` and \`message='Project complete'\` to finalize the workflow, and DO NOT create an instance plan.
 - Automations MUST support ?mode=test and ?mode=prod.
 - NEVER run git commit or git push as orchestrator — the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
@@ -177,32 +196,6 @@ CRITICAL EXECUTION RULES:
   }
 
   const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
-
-  // Check if backlog is all done before checking skip conditions so we can finalize
-  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
-  
-  let isAllBacklogDone = false;
-  let relevantDecisions: string[] = [];
-  if (reqContext.backlog?.items) {
-    const activeItems = reqContext.backlog.items.filter(i => 
-      i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
-    );
-    activeItems.forEach(item => {
-      if (item.assumptions && item.assumptions.length > 0) {
-        relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
-      }
-    });
-
-    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
-    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
-      isAllBacklogDone = true;
-    }
-  }
-
-  // To ensure the orchestrator runs if there are no backlog items yet or they are all done
-  // (so it can evaluate if new ones are needed based on recent instructions),
-  // we DO NOT skip the orchestrator if isAllBacklogDone is true OR if there are no items.
-  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
 
   // Early exit if we are skipping the orchestrator AND there is no active plan.
   // This means we are in the cooldown period and there is no work to do.

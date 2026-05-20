@@ -141,7 +141,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
   
   let isAllBacklogDone = false;
-  let relevantDecisions: string[] = [];
+  const relevantDecisions: string[] = [];
   if (reqContext.backlog?.items) {
     const activeItems = reqContext.backlog.items.filter(i => 
       i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
@@ -157,6 +157,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       isAllBacklogDone = true;
     }
   }
+
+  // If the backlog is empty or fully done we still want the orchestrator to
+  // run so it can either seed the initial items or finalize the requirement.
+  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
 
   // Early exit if we are skipping the orchestrator AND there is no active plan.
   // This means we are in the cooldown period and there is no work to do.
@@ -233,29 +237,6 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
-
-  let isAllBacklogDone = false;
-  let relevantDecisions: string[] = [];
-  if (reqContext.backlog?.items) {
-    const activeItems = reqContext.backlog.items.filter(i => 
-      i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
-    );
-    activeItems.forEach(item => {
-      if (item.assumptions && item.assumptions.length > 0) {
-        relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
-      }
-    });
-
-    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
-    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
-      isAllBacklogDone = true;
-    }
-  }
-
-  // To ensure the orchestrator runs if there are no backlog items yet or they are all done
-  // (so it can evaluate if new ones are needed based on recent instructions),
-  // we DO NOT skip the orchestrator if isAllBacklogDone is true OR if there are no items.
-  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
 
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
