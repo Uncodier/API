@@ -170,14 +170,14 @@ WORKFLOW (follow IN ORDER):
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Report progress with \`requirement_status\` (stage='in-progress').
-6. If ALL items in the backlog are completely done, call the \`system_notification\` tool directly to notify the team.
+6. If ALL items in the backlog are completely done, call \`requirement_status\` with \`stage='done'\` and \`message='Project complete'\` to finalize the workflow, and DO NOT create an instance plan.
 
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
 2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
 3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
 
-HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created.
+HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created. EXCEPT if you just completed the final backlog item and there is no more work to do, in which case you may return a plain text response explaining the project is complete without creating a plan.
 
 HARD RULE ACCEPTANCE (Phase 10):
 - Every \`tier='core'\` item MUST have at least one acceptance entry containing a concrete anchor: an HTTP verb (GET/POST/PUT/DELETE), a route (starts with /), a status code, or an observable verb (returns/renders/inserts/redirects/creates/deletes). Narrative acceptance such as "home shows product vision" is REJECTED by the Judge.

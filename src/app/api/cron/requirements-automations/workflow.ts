@@ -25,7 +25,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
-import { recordRequirementBlockedStep, getInstanceBackgroundStep } from '../shared/workflow-db-steps';
+import { recordRequirementBlockedStep, getRequirementFullContextStep } from '../shared/workflow-db-steps';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -87,14 +87,25 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
     gitRepoKind: 'automation',
   });
 
-  const bgStep = await getInstanceBackgroundStep(site_id, user_id, instanceId);
+  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+
+  // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
+  const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
+
+  let isAllBacklogDone = false;
+  if (reqContext.backlog?.items) {
+    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
+    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
+      isAllBacklogDone = true;
+    }
+  }
 
   const orchestratorPrompt = `You are an automation runner inside a Vercel Sandbox.
 
 COMPANY BACKGROUND & MEMORIES:
-${bgStep.agentBackground}
-${bgStep.memoriesContext}
-${bgStep.historyContext}
+${reqContext.agentBackground}
+${reqContext.memoriesContext}
+${reqContext.historyContext}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
@@ -107,7 +118,7 @@ ${isNewBranch ? '- NEW branch — no prior code.' : '- Existing branch — revie
 AUTOMATION: ${reqId} — ${title}
 Instructions: ${instructions || 'None'}
 instance_id: ${instanceId} | site_id: ${site_id}
-${previousWorkContext}
+${finalPreviousWorkContext}
 INSTRUCTIONS AS LIVING README:
 requirement.instructions is the single source of truth. Update it every cycle.
 
@@ -115,7 +126,7 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 - ${ORCHESTRATOR_SKILL_LOOKUP_HINT}
 - Use sandbox tools to INVESTIGATE (sandbox_list_files path=".", sandbox_read_file).
 - Use instance_plan to create steps (each with role, title, instructions, expected_output, order). BREAK DOWN the automation into specific, actionable execution steps (e.g., 1. investigate/setup, 2. core logic, 3. tests). Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Do NOT add a step to notify the team in your plan.
-- If ALL items in the backlog are completely done, call the \`system_notification\` tool directly to notify the team.
+- If ALL items in the backlog are completely done, call \`requirement_status\` with \`stage='done'\` and \`message='Project complete'\` to finalize the workflow, and DO NOT create an instance plan.
 - Automations MUST support ?mode=test and ?mode=prod.
 - NEVER run git commit or git push as orchestrator — the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
@@ -169,7 +180,7 @@ CRITICAL EXECUTION RULES:
   const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
 
   // Step 3: Run orchestrator (if needed)
-  if (!skipOrchestrator) {
+  if (!skipOrchestrator && !isAllBacklogDone) {
     console.log(`[CronAutoWorkflow|orchestrator] PHASE 1: Orchestrator`);
     const prompt = isNewBranch
       ? `Process automation "${title}". Investigate, then create an instance_plan.`
@@ -231,7 +242,7 @@ CRITICAL EXECUTION RULES:
   try {
     if (activePlan?.steps) {
       stepsPhase = await executeStepsPhaseStep({
-        sandboxId,
+        sandboxId: sandboxId!,
         title,
         reqId,
         requirementType: type,
@@ -259,7 +270,7 @@ CRITICAL EXECUTION RULES:
       ? `Cron cycle complete (with failures): ${title}`
       : `Cron cycle complete: ${title}`;
       
-    const pushed = await commitAndPushStep(sandboxId, title, reqId, commitMsg, cronAudit, 'automation');
+    const pushed = await commitAndPushStep(sandboxId!, title, reqId, commitMsg, cronAudit, 'automation');
     pushResult = pushed;
     if (pushed?.effectiveSandboxId) {
       sandboxId = pushed.effectiveSandboxId;
@@ -270,7 +281,7 @@ CRITICAL EXECUTION RULES:
 
   let postFinallyBuildError: string | undefined;
   if (pushResult && !(stepsPhase?.anyStepFailed)) {
-    const pf = await postFinallyBuildStep(sandboxId, cronAudit, {
+    const pf = await postFinallyBuildStep(sandboxId!, cronAudit, {
       requirementId: reqId,
       title,
       instanceType: 'automation',

@@ -212,6 +212,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
 
+  let isAllBacklogDone = false;
   let relevantDecisions: string[] = [];
   if (reqContext.backlog?.items) {
     const activeItems = reqContext.backlog.items.filter(i => 
@@ -222,6 +223,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
       }
     });
+
+    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
+    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
+      isAllBacklogDone = true;
+    }
   }
 
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
@@ -237,7 +243,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 4: Run orchestrator (if no pending plan)
-  if (!skipOrchestrator) {
+  if (!skipOrchestrator && !isAllBacklogDone) {
     console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
     const prompt = isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`

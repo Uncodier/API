@@ -472,7 +472,58 @@ export async function GET(req: Request) {
         }
 
         const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        let shouldCountAsAllDone = allBacklogDone;
+
         if (allBacklogDone) {
+          // Check if there is manual intervention or feedback indicating it should be reopened.
+          const latestBacklogUpdate = requirement.backlog.items.reduce((latest: Date, item: any) => {
+             const itemDate = new Date(item.updated_at || 0);
+             return itemDate > latest ? itemDate : latest;
+          }, new Date(0));
+          
+          const reqUpdateDate = new Date(requirement.updated_at || 0);
+          
+          // If requirement updated at least 1 minute after backlog
+          if (reqUpdateDate.getTime() - latestBacklogUpdate.getTime() > 60000) {
+             console.log(`[Cron Apps] Requirement ${reqId} was updated after backlog completion. Resetting all_done_cycles.`);
+             shouldCountAsAllDone = false;
+          } else {
+             // Or if there are recent status updates indicating feedback (excluding repo_update and exit gracefully)
+             const { data: recentStatuses } = await supabaseAdmin
+               .from('requirement_status')
+               .select('id, message, created_at')
+               .eq('requirement_id', reqId)
+               .gt('created_at', latestBacklogUpdate.toISOString())
+               .not('message', 'ilike', '%repo_update%')
+               .not('message', 'ilike', '%Plan created to exit gracefully%')
+               .not('message', 'ilike', '%Cycle complete%')
+               .order('created_at', { ascending: false })
+               .limit(1);
+
+             if (recentStatuses && recentStatuses.length > 0) {
+               console.log(`[Cron Apps] Requirement ${reqId} has new status after backlog completion. Resetting all_done_cycles.`);
+               shouldCountAsAllDone = false;
+             } else if (instanceId) {
+               // Check if there are new instance logs from tools updating requirement/backlog (excluding repo_update)
+               const { data: recentLogs } = await supabaseAdmin
+                 .from('instance_logs')
+                 .select('id, message, created_at')
+                 .eq('instance_id', instanceId)
+                 .gt('created_at', latestBacklogUpdate.toISOString())
+                 .or('message.ilike.%updateRequirement%,message.ilike.%requirement_backlog%,message.ilike.%requirement_status%')
+                 .not('message', 'ilike', '%repo_update%')
+                 .order('created_at', { ascending: false })
+                 .limit(1);
+
+               if (recentLogs && recentLogs.length > 0) {
+                 console.log(`[Cron Apps] Requirement ${reqId} has new tool logs after backlog completion. Resetting all_done_cycles.`);
+                 shouldCountAsAllDone = false;
+               }
+             }
+          }
+        }
+
+        if (shouldCountAsAllDone) {
           const allDoneCycles = (requirement.metadata?.all_done_cycles || 0) + 1;
           const updatedMetadata = { ...requirement.metadata, all_done_cycles: allDoneCycles };
           
