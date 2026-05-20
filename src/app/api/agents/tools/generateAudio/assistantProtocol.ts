@@ -45,13 +45,28 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
         },
         model: {
           type: 'string',
-          description: 'The TTS model to use. E.g., "gpt-4o-mini-tts" or "tts-1".'
+          description: 'The TTS model to use. E.g., "tts-1" or "tts-1-hd".'
         }
       },
       required: ['text']
     },
     execute: async (args: GenerateAudioToolParams) => {
       try {
+        if (args.model === 'gpt-4o-mini-tts') {
+          args.model = 'tts-1';
+        }
+
+        let provider = args.provider;
+        
+        // Force provider to vercel if an OpenAI model is explicitly requested
+        if (args.model && (args.model.includes('gpt') || args.model.includes('tts'))) {
+          provider = 'vercel';
+        }
+        
+        if (!provider) {
+          provider = 'gemini';
+        }
+        
         console.log(`[GenerateAudioTool] 🎙️ Executing audio generation`);
         if (site_id) {
           // Estimate duration based on text length (approx 1000 chars per minute)
@@ -66,7 +81,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
 
         console.log(`[GenerateAudioTool] 📝 Text: ${args.text.substring(0, 100)}...`);
         console.log(`[GenerateAudioTool] 🏢 Site ID: ${site_id}`);
-        console.log(`[GenerateAudioTool] 🤖 Provider: ${args.provider || 'gemini'}`);
+        console.log(`[GenerateAudioTool] 🤖 Provider: ${provider}`);
 
         // Validate required parameters
         if (!args.text || typeof args.text !== 'string') {
@@ -81,7 +96,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
         
         const requestBody = {
           text: args.text,
-          provider: args.provider || 'gemini',
+          provider: provider,
           voice: args.voice,
           format: args.format,
           model: args.model
@@ -113,7 +128,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
         
         const { supabaseAdmin } = await import('@/lib/database/supabase-client');
         
-        const isGemini = (args.provider || 'gemini') === 'gemini';
+        const isGemini = provider === 'gemini';
         const fileExt = isGemini ? 'wav' : (args.format || 'mp3');
         const fileName = `generated_audio_${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
         const filePath = `${site_id}/${fileName}`;
@@ -153,7 +168,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
 
         return {
           success: true,
-          provider: args.provider || 'gemini',
+          provider: provider,
           audio_url: publicUrl,
           mimeType: `audio/${fileExt === 'mp3' ? 'mpeg' : fileExt === 'wav' ? 'wav' : fileExt}`,
           metadata: {
@@ -161,7 +176,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
             voice: args.voice,
             generated_at: new Date().toISOString()
           },
-          message: `Successfully generated audio using ${args.provider || 'gemini'}. Audio is saved and ready to use. URL: ${publicUrl}`
+          message: `Successfully generated audio using ${provider}. Audio is saved and ready to use. URL: ${publicUrl}`
         };
 
       } catch (error: any) {

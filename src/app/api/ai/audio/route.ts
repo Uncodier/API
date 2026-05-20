@@ -33,7 +33,7 @@ async function synthesizeWithVercel(text: string, voice?: string, format?: strin
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: model || 'gpt-4o-mini-tts',
+      model: model || 'tts-1',
       input: text,
       voice: voice || 'alloy',
       format: format || 'mp3',
@@ -113,7 +113,23 @@ async function synthesizeWithGemini(text: string, voice?: string, format?: strin
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as AudioRequestBody;
-    const { text, voice, format, provider = 'gemini', model } = body || {};
+    let { text, voice, format, provider, model } = body || {};
+
+    if (model === 'gpt-4o-mini-tts') {
+      model = 'tts-1';
+    }
+
+    // Force provider to vercel if an OpenAI model is passed
+    if (model && (model.includes('gpt') || model.includes('tts'))) {
+      provider = 'vercel';
+    } else if (!provider) {
+      provider = 'gemini';
+    }
+
+    // If Gemini is the provider but a non-gemini model was somehow passed, clear it so the default is used
+    if (provider === 'gemini' && model && !model.includes('gemini')) {
+      model = undefined;
+    }
 
     if (!text || typeof text !== 'string') {
       return NextResponse.json({ error: 'Parameter "text" is required' }, { status: 400 });
