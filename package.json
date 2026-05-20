@@ -24,6 +24,7 @@
     "test:content-extraction": "tsx src/app/api/agents/copywriter/content-calendar/tests/quick-test.ts",
     "test:calendar-jest": "jest --verbose src/app/api/agents/copywriter/content-calendar/__tests__",
     "test:chat-message": "jest --verbose src/tests/api/agents-chat-message.test.ts",
+    "status:probe": "tsx scripts/run-system-probes.ts",
     "mcp": "tsx mcp-server/index.ts"
   },
   "dependencies": {

@@ -144,7 +144,7 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 - Use sandbox tools to INVESTIGATE (sandbox_list_files path=".", sandbox_read_file).
 - Use instance_plan to create steps (each with role, title, instructions, expected_output, order). BREAK DOWN the automation into specific, actionable execution steps (e.g., 1. investigate/setup, 2. core logic, 3. tests). Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Do NOT add a step to notify the team in your plan.
 - Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
-- ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions, call \`requirement_status\` with \`stage='done'\` and \`message='Project complete'\` to finalize the workflow, and DO NOT create an instance plan.
+- ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response.
 - Automations MUST support ?mode=test and ?mode=prod.
 - NEVER run git commit or git push as orchestrator — the workflow checkpoints to origin after each plan step.
 - ${ORCHESTRATOR_STEP_ORIGIN_RULE}
@@ -153,7 +153,9 @@ YOUR ROLE: ORCHESTRATOR — PLAN and DELEGATE. Do NOT write code.
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
 2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
-3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).`;
+3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
+
+HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created. EXCEPT if you just completed the final backlog item and there is no more work to do: in that case, to finalize the work, simply send the requirement to on-review using \`requirement_status\` tool, and return a text response. DO NOT create a plan or a backlog item for this.`;
 
   // Step 2: Check for active plan
   const existingPlan = await getActiveInstancePlanStep(instanceId, site_id);

@@ -43,6 +43,20 @@ export default async function middleware(request) {
   const isVercelWebhook =
     request.nextUrl.pathname === '/api/integrations/vercel/webhook';
 
+  // Public status / AI health (GET-only routes; no secrets in response)
+  const path = request.nextUrl.pathname;
+  const isStatusHealthRoute =
+    path === '/api/status' ||
+    path.startsWith('/api/status/') ||
+    (path.startsWith('/api/ai/') && path.endsWith('/health'));
+
+  if (isStatusHealthRoute && request.method === 'GET') {
+    const response = NextResponse.next();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Status-Health', 'true');
+    return response;
+  }
+
   // Verificar si es una ruta pública explícita
   const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
   

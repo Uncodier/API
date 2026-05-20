@@ -1,0 +1,406 @@
+/* Status page — aligned with Nextra 4 (next-themes: html.dark, --nextra-bg) */
+
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+  font-family: inherit;
+  color: inherit;
+  background: transparent;
+}
+
+/* Surfaces: explicit light / dark (no broken --nextra-card-* fallbacks) */
+.slaCard,
+.overallRow,
+.systemRow,
+.card {
+  border-radius: 8px;
+  padding: 1rem 1.25rem;
+  border: 1px solid oklch(92.9% 0.013 255.508);
+  background: oklch(98.4% 0.003 247.858);
+}
+
+:global(html.dark) .slaCard,
+:global(html.dark) .overallRow,
+:global(html.dark) .systemRow,
+:global(html.dark) .card,
+:global(.dark) .slaCard,
+:global(.dark) .overallRow,
+:global(.dark) .systemRow,
+:global(.dark) .card {
+  border-color: oklch(37.1% 0 0);
+  background: oklch(26.9% 0.033 256.848);
+}
+
+.header {
+  margin-bottom: 2rem;
+}
+
+.header h1 {
+  font-size: 2rem;
+  margin: 0 0 0.25rem;
+  color: inherit;
+}
+
+.subtitle,
+.slaLabel,
+.overallLabel,
+.legend,
+.timelineAxis,
+.uptimeLabel,
+.meta,
+.empty,
+.emptyHint,
+.details summary,
+.noDataHint {
+  color: color-mix(in oklab, currentColor 58%, transparent);
+}
+
+.slaValue,
+.uptimeValue,
+.section h2,
+.systemRowTitle h3 {
+  color: inherit;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.35rem 0.85rem;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.9rem;
+  text-transform: capitalize;
+}
+
+/* Status chips — light */
+.badge.up,
+.statusDot.up,
+.providerPillUp {
+  background: oklch(96.2% 0.044 156.743);
+  color: oklch(39.3% 0.095 152.535);
+}
+
+.badge.degraded,
+.statusDot.degraded {
+  background: oklch(98.7% 0.026 102.212);
+  color: oklch(55.4% 0.135 66.442);
+}
+
+.badge.down,
+.statusDot.down,
+.providerPillDown {
+  background: oklch(93.6% 0.032 17.717);
+  color: oklch(39.6% 0.141 25.723);
+}
+
+.badge.skipped,
+.statusDot.skipped,
+.providerPillSkipped,
+.badge.none,
+.statusDot.none,
+.providerPill {
+  background: oklch(96.7% 0.003 264.542);
+  color: oklch(44.6% 0.03 256.802);
+}
+
+.statusDot.none,
+.badge.none {
+  border: 1px dashed oklch(87.2% 0.01 258.338);
+}
+
+:global(html.dark) .badge.up,
+:global(html.dark) .statusDot.up,
+:global(html.dark) .providerPillUp,
+:global(.dark) .badge.up,
+:global(.dark) .statusDot.up,
+:global(.dark) .providerPillUp {
+  background: oklch(39.3% 0.095 152.535);
+  color: oklch(96.2% 0.044 156.743);
+}
+
+:global(html.dark) .badge.degraded,
+:global(html.dark) .statusDot.degraded,
+:global(.dark) .badge.degraded,
+:global(.dark) .statusDot.degraded {
+  background: oklch(55.4% 0.135 66.442);
+  color: oklch(98.7% 0.026 102.212);
+}
+
+:global(html.dark) .badge.down,
+:global(html.dark) .statusDot.down,
+:global(html.dark) .providerPillDown,
+:global(.dark) .badge.down,
+:global(.dark) .statusDot.down,
+:global(.dark) .providerPillDown {
+  background: oklch(50.5% 0.213 27.518);
+  color: oklch(93.6% 0.032 17.717);
+}
+
+:global(html.dark) .badge.skipped,
+:global(html.dark) .statusDot.skipped,
+:global(html.dark) .providerPillSkipped,
+:global(html.dark) .badge.none,
+:global(html.dark) .statusDot.none,
+:global(html.dark) .providerPill,
+:global(.dark) .badge.skipped,
+:global(.dark) .statusDot.skipped,
+:global(.dark) .providerPillSkipped,
+:global(.dark) .badge.none,
+:global(.dark) .statusDot.none,
+:global(.dark) .providerPill {
+  background: oklch(37.3% 0.034 259.733);
+  color: oklch(92.9% 0.013 255.508);
+}
+
+:global(html.dark) .statusDot.none,
+:global(html.dark) .badge.none,
+:global(.dark) .statusDot.none,
+:global(.dark) .badge.none {
+  border-color: oklch(44.6% 0.03 256.802);
+}
+
+.slaRow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2.5rem;
+}
+
+.slaLabel,
+.overallLabel {
+  display: block;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.slaValue {
+  font-size: 1.25rem;
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.section h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.sectionHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.75rem;
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.legendSwatch {
+  width: 10px;
+  height: 16px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.overallRow {
+  margin-bottom: 2rem;
+}
+
+.overallLabel {
+  font-size: 0.8rem;
+  margin-bottom: 0.75rem;
+}
+
+.systemList {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.systemRowHead {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.systemRowTitle {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.systemRowTitle h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+
+.systemRowUptime {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.uptimeValue {
+  display: block;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.uptimeLabel {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+}
+
+.timelineWrap {
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.timelineBars {
+  display: flex;
+  gap: 2px;
+  height: 34px;
+  align-items: stretch;
+  width: 100%;
+}
+
+.timelineBar {
+  flex: 1;
+  min-width: 2px;
+  border-radius: 2px;
+  cursor: default;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.timelineBar:hover {
+  opacity: 0.85;
+  transform: scaleY(1.08);
+}
+
+.timelineBarUp {
+  background: #16a34a;
+}
+
+.timelineBarDegraded {
+  background: #ca8a04;
+}
+
+.timelineBarDown {
+  background: #dc2626;
+}
+
+.timelineBarSkipped {
+  background: #9ca3af;
+}
+
+.timelineBarNone {
+  background: oklch(92.9% 0.013 255.508);
+}
+
+:global(html.dark) .timelineBarNone,
+:global(.dark) .timelineBarNone {
+  background: oklch(44.6% 0.03 256.802);
+}
+
+.timelineAxis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.7rem;
+  margin-top: 0.35rem;
+}
+
+.providerPills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.providerPill {
+  font-size: 0.7rem;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+}
+
+.emptyHint {
+  font-size: 0.875rem;
+  margin: 0 0 1rem;
+}
+
+.emptyHint code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: color-mix(in oklab, currentColor 12%, transparent);
+  color: inherit;
+}
+
+.statusDot {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.summary {
+  font-size: 0.875rem;
+  margin: 0 0 0.35rem;
+  color: color-mix(in oklab, currentColor 72%, transparent);
+}
+
+.noDataHint {
+  font-size: 0.8rem;
+  margin: 0.5rem 0 0;
+  font-style: italic;
+}
+
+.footer {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  color: color-mix(in oklab, currentColor 58%, transparent);
+}
+
+.footer a {
+  color: hsl(
+    var(--nextra-primary-hue, 212deg) var(--nextra-primary-saturation, 100%)
+      var(--nextra-primary-lightness, 50%)
+  );
+}
+
+.footer a:hover {
+  text-decoration: underline;
+}
+
+.details pre {
+  font-size: 0.7rem;
+  overflow: auto;
+  max-height: 200px;
+  padding: 0.5rem;
+  border-radius: 4px;
+  margin-top: 0.5rem;
+  border: 1px solid oklch(92.9% 0.013 255.508);
+  background: oklch(96.8% 0.007 247.896);
+  color: inherit;
+}
+
+:global(html.dark) .details pre,
+:global(.dark) .details pre {
+  border-color: oklch(37.1% 0 0);
+  background: oklch(20.5% 0 0);
+}

@@ -1,0 +1,50 @@
+name: System Status Probes
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test
+
+  system-probes:
+    needs: test
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Run system health probes
+        run: npm run status:probe
+        env:
+          CI: 'true'
+          STATUS_PROBE_TRIGGER: github_push
+          STATUS_AI_PROBE_ENABLED: 'true'
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          SERVICE_API_KEY: ${{ secrets.SERVICE_API_KEY }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          STATUS_PROBE_BASE_URL: ${{ secrets.STATUS_PROBE_BASE_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          PORTKEY_API_KEY: ${{ secrets.PORTKEY_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
+          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          AZURE_OPENAI_CHAT_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          APPS_SUPABASE_URL: ${{ secrets.APPS_SUPABASE_URL }}
+          APPS_SUPABASE_SERVICE_KEY: ${{ secrets.APPS_SUPABASE_SERVICE_KEY }}

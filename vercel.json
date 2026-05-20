@@ -7,6 +7,7 @@
     "src/app/api/agents/email/deliveryStatus/route.ts": { "maxDuration": 300 },
     "src/app/api/ai/image/route.ts": { "maxDuration": 60 },
     "src/app/api/ai/video/route.ts": { "maxDuration": 300 },
+    "src/app/api/cron/system-status/route.ts": { "maxDuration": 60 },
     "src/app/api/robots/instance/assistant/route.ts": { "maxDuration": 800 },
     "src/app/.well-known/workflow/v1/step/route.js": {
       "maxDuration": 300,
@@ -26,6 +27,10 @@
     {
       "path": "/api/cron/requirements-automations",
       "schedule": "* * * * *"
+    },
+    {
+      "path": "/api/cron/system-status",
+      "schedule": "0 * * * *"
     }
   ]
 }
