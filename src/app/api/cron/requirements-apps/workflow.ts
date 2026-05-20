@@ -137,10 +137,32 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
   const skipOrchestrator = hasActivePlan || recentPlansGuard.shouldSkipOrchestrator;
 
+  // Check if backlog is all done before checking skip conditions so we can finalize
+  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+  
+  let isAllBacklogDone = false;
+  let relevantDecisions: string[] = [];
+  if (reqContext.backlog?.items) {
+    const activeItems = reqContext.backlog.items.filter(i => 
+      i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
+    );
+    activeItems.forEach(item => {
+      if (item.assumptions && item.assumptions.length > 0) {
+        relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
+      }
+    });
+
+    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
+    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done')) {
+      isAllBacklogDone = true;
+    }
+  }
+
   // Early exit if we are skipping the orchestrator AND there is no active plan.
   // This means we are in the cooldown period and there is no work to do.
   // We don't want to create a sandbox just to do nothing and push an empty commit.
-  if (skipOrchestrator && !hasActivePlan) {
+  // NOTE: If the backlog is all done or empty, we DO want to run so we can finalize the Cycle or create items.
+  if (skipOrchestrator && !hasActivePlan && !isBacklogEmptyOrDone) {
     console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute.`);
     return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
   }
@@ -207,7 +229,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Pulled via a durable step because the workflow VM forbids direct `fetch`.
   // The step swallows transient errors and returns `backlog: null`, which the
   // prompt builder already handles as "empty backlog" guidance.
-  const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+  // Note: reqContext is already populated above
 
   // Use the workflow-injected previousWorkContext from route.ts, or fallback to the one fetched from DB
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
@@ -230,6 +252,11 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     }
   }
 
+  // To ensure the orchestrator runs if there are no backlog items yet or they are all done
+  // (so it can evaluate if new ones are needed based on recent instructions),
+  // we DO NOT skip the orchestrator if isAllBacklogDone is true OR if there are no items.
+  const isBacklogEmptyOrDone = !reqContext.backlog?.items || reqContext.backlog.items.length === 0 || isAllBacklogDone;
+
   const orchestratorPrompt = buildCoordinatorPromptForFlow({
     reqId, title, type, instructions, instanceId, site_id,
     workDir, branchName, isNewBranch, 
@@ -243,7 +270,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 4: Run orchestrator (if no pending plan)
-  if (!skipOrchestrator && !isAllBacklogDone) {
+  if (!skipOrchestrator || isBacklogEmptyOrDone) {
     console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
     const prompt = isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`
