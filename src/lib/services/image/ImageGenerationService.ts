@@ -118,17 +118,19 @@ export class ImageGenerationService {
     console.log(`[ImageGenService] 🔑 API Key: ${process.env.SERVICE_API_KEY ? 'SET' : 'NOT_SET'}`);
     console.log(`[ImageGenService] 🤖 Provider: ${params.provider}`);
     
-    const requestBody = {
+    const requestBody: any = {
       prompt: params.prompt,
       site_id: params.site_id,
-      ...(params.instance_id && { instance_id: params.instance_id }),
       provider: params.provider,
       size: params.size,
       n: params.n,
-      ...(params.quality && { quality: params.quality }),
-      ...(params.ratio && { ratio: params.ratio }),
-      ...(params.reference_images && { reference_images: params.reference_images })
     };
+    
+    // Pass instance_id explicitly down to API payload if we have it
+    if (params.instance_id) requestBody.instance_id = params.instance_id;
+    if (params.quality) requestBody.quality = params.quality;
+    if (params.ratio) requestBody.ratio = params.ratio;
+    if (params.reference_images) requestBody.reference_images = params.reference_images;
 
     try {
       const response = await fetch(apiUrl, {

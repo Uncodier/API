@@ -123,17 +123,19 @@ export class VideoGenerationService {
     console.log(`[VideoGenService] 🔑 API Key: ${process.env.SERVICE_API_KEY ? 'SET' : 'NOT_SET'}`);
     console.log(`[VideoGenService] 🤖 Provider: ${params.provider}`);
     
-    const requestBody = {
+    const requestBody: any = {
       prompt: params.prompt,
       site_id: params.site_id,
-      ...(params.instance_id && { instance_id: params.instance_id }),
       provider: params.provider,
-      ...(params.duration_seconds !== undefined && { duration_seconds: params.duration_seconds }),
-      ...(params.aspect_ratio && { aspect_ratio: params.aspect_ratio }),
-      ...(params.reference_images && { reference_images: params.reference_images }),
-      ...(params.quality && { quality: params.quality }),
-      ...(params.model && { model: params.model })
     };
+    
+    // Pass instance_id explicitly down to API payload if we have it
+    if (params.instance_id) requestBody.instance_id = params.instance_id;
+    if (params.duration_seconds !== undefined) requestBody.duration_seconds = params.duration_seconds;
+    if (params.aspect_ratio) requestBody.aspect_ratio = params.aspect_ratio;
+    if (params.reference_images) requestBody.reference_images = params.reference_images;
+    if (params.quality) requestBody.quality = params.quality;
+    if (params.model) requestBody.model = params.model;
 
     try {
       const response = await fetch(apiUrl, {
