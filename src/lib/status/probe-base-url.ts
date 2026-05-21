@@ -10,25 +10,37 @@ export function getProbeBaseUrl(): string | null {
   return `https://${raw.replace(/\/$/, '')}`;
 }
 
+export type ProbeHttpOptions = RequestInit & {
+  /** When false, do not attach SERVICE_API_KEY (e.g. public /api/status). Default true. */
+  useServiceKey?: boolean;
+};
+
 export async function probeHttpRoute(
   path: string,
-  options: RequestInit = {},
+  options: ProbeHttpOptions = {},
 ): Promise<{ ok: boolean; status: number; latencyMs: number; error?: string }> {
   const base = getProbeBaseUrl();
   if (!base) {
     return { ok: false, status: 0, latencyMs: 0, error: 'STATUS_PROBE_BASE_URL not set' };
   }
   const start = Date.now();
+  const { useServiceKey = true, ...fetchOptions } = options;
   try {
     const headers: Record<string, string> = {
-      ...(options.headers as Record<string, string>),
+      ...(fetchOptions.headers as Record<string, string>),
     };
     const serviceKey = process.env.SERVICE_API_KEY?.trim();
-    if (serviceKey && !headers['x-api-key'] && !headers['Authorization']) {
+    const hasAuthHeader = !!(headers['Authorization'] || headers['authorization']);
+    if (
+      useServiceKey &&
+      serviceKey &&
+      !headers['x-api-key'] &&
+      !hasAuthHeader
+    ) {
       headers['x-api-key'] = serviceKey;
     }
     const resp = await fetch(`${base}${path}`, {
-      ...options,
+      ...fetchOptions,
       headers,
       signal: AbortSignal.timeout(12_000),
     });

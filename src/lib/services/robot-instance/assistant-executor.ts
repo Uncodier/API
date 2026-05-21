@@ -300,19 +300,28 @@ export async function executeAssistantStep(
 
         if (promptNode) {
           nodeCallbacks = createNodeStreamingCallbacks(instance_node_id!, promptNode, contextRefs);
+          // EAGERLY create the response node so it always exists, even if streaming is disabled
+          // or the LLM skips text generation.
+          try { 
+            nodeResponseId = await nodeCallbacks.onNodeStreamStart(); 
+          } catch (e) { 
+            console.error('[Node Executor] eager onNodeStreamStart error:', e); 
+          }
         }
 
-        // Wrap streaming callbacks to also update instance_nodes
-        const wrappedOnStreamStart = streamingCallbacks ? async () => {
-          const logId = await streamingCallbacks.onStreamStart();
-          if (nodeCallbacks) {
-            try { nodeResponseId = await nodeCallbacks.onNodeStreamStart(); } catch (e) { console.error('[Node Executor] onNodeStreamStart error:', e); }
+        // Wrap streaming callbacks to update instance_logs
+        const wrappedOnStreamStart = (streamingCallbacks || nodeCallbacks) ? async () => {
+          let logId = 'dummy-log-id';
+          if (streamingCallbacks) {
+            logId = await streamingCallbacks.onStreamStart();
           }
           return logId;
         } : undefined;
 
-        const wrappedOnStreamChunk = streamingCallbacks ? async (logId: string, accumulatedText: string) => {
-          await streamingCallbacks.onStreamChunk(logId, accumulatedText);
+        const wrappedOnStreamChunk = (streamingCallbacks || nodeCallbacks) ? async (logId: string, accumulatedText: string) => {
+          if (streamingCallbacks) {
+            await streamingCallbacks.onStreamChunk(logId, accumulatedText);
+          }
           if (nodeCallbacks && nodeResponseId) {
             try { await nodeCallbacks.onNodeStreamChunk(nodeResponseId, accumulatedText); } catch (e) { /* throttle errors */ }
           }
@@ -323,7 +332,7 @@ export async function executeAssistantStep(
                 system: system_prompt,
                 messages: messages,
                 onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
-                stream: !!streamingCallbacks,
+                stream: !!streamingCallbacks || !!nodeCallbacks,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
                 onThinkingStreamStart: thinkingStreamCallbacks?.onThinkingStreamStart,

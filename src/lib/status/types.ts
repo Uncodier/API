@@ -50,6 +50,8 @@ const SECRET_PATTERNS = [
   /bearer\s+/i,
   /sk-[a-zA-Z0-9]+/,
   /eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/,
+  /AIza[0-9A-Za-z_-]{20,}/g,
+  /Following keys are not valid:\s*[^\s"]+/gi,
 ];
 
 export function isAiProbeEnabled(): boolean {

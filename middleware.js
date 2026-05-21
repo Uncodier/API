@@ -54,6 +54,20 @@ export default async function middleware(request) {
     return response;
   }
 
+  // Cron routes: Bearer CRON_SECRET (do not treat as SERVICE_API_KEY in apiKeyAuth)
+  const cronSecret = process.env.CRON_SECRET?.trim();
+  const authHeader = request.headers.get('authorization');
+  if (
+    path.startsWith('/api/cron/') &&
+    request.method === 'GET' &&
+    cronSecret &&
+    authHeader === `Bearer ${cronSecret}`
+  ) {
+    const response = NextResponse.next();
+    response.headers.set('X-Cron-Auth', 'true');
+    return response;
+  }
+
   // Verificar si es una ruta pública explícita
   const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public/');
   

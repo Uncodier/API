@@ -47,7 +47,7 @@ async function generateWithAzure(options: {
   }
 
   const url = `${endpoint.replace(/\/$/, '')}/openai/deployments/${encodeURIComponent(deployment)}/chat/completions?api-version=${encodeURIComponent(apiVersion)}`;
-  const isReasoningModel = deployment && (deployment.includes('gpt-5.4') || deployment.includes('gpt-5.4') || deployment.includes('o1') || deployment.includes('o3') || deployment.includes('gpt-5'));
+  const isReasoningModel = deployment && (deployment.includes('gpt-5.5') || deployment.includes('o1') || deployment.includes('o3') || deployment.includes('gpt-5'));
 
   const bodyOptions: any = {
     messages: toAzureMessages(options.messages),

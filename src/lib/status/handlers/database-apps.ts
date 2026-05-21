@@ -22,7 +22,7 @@ export const databaseAppsHandler: SystemHealthHandler = {
     try {
       const { getAppsAdminClient } = await import('@/lib/database/apps-supabase');
       const client = getAppsAdminClient();
-      const { error } = await client.from('apps_tenants').select('id').limit(1);
+      const { error } = await client.from('apps_tenants').select('tenant_id').limit(1);
       const latencyMs = Date.now() - start;
       const ok = !error;
       return buildHealthResponse({

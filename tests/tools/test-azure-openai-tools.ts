@@ -19,7 +19,7 @@ async function main() {
 
   try {
     const response = await executor.act({
-      model: 'gpt-5.4', // that maps to deploymentName 'gpt-5.2' but skipping reasoning_effort
+      model: 'gpt-5.5', // that maps to deploymentName 'gpt-5.5' but skipping reasoning_effort
       system: 'You are a helpful assistant.',
       prompt: 'Please use tool_43',
       tools: tools,

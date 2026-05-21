@@ -71,7 +71,7 @@ export class SupervisorService {
     this.processorInitializer = ProcessorInitializer.getInstance();
     this.processorInitializer.initialize();
     this.commandService = this.processorInitializer.getCommandService();
-    // Initialize Portkey connector with GPT-5.2 configuration
+    // Initialize Portkey connector with GPT-5.5 configuration
     // Use same Azure configuration as other agents (ProcessorConfigurationService)
     const portkeyConfig: PortkeyConfig = {
       apiKey: process.env.PORTKEY_API_KEY || '',
@@ -85,9 +85,9 @@ export class SupervisorService {
 
     this.connector = new PortkeyConnector(portkeyConfig, {
       modelType: 'openai',
-      modelId: 'gpt-5.4',
+      modelId: 'gpt-5.5',
       maxTokens: 32768,
-      temperature: 1, // GPT-5.2 uses default temperature
+      temperature: 1, // GPT-5.5 uses default temperature
       reasoningEffort: 'high',
       verbosity: 'medium'
     });
@@ -298,7 +298,7 @@ export class SupervisorService {
         tools: command.tools || [],
         context: userPrompt, // Use formatted prompt as context
         systemPrompt: SUPERVISOR_SYSTEM_PROMPT, // Set supervisor system prompt
-        model: 'gpt-5.4',
+        model: 'gpt-5.5',
         modelType: 'openai',
         reasoningEffort: 'high',
         verbosity: 'medium',
@@ -410,7 +410,7 @@ export class SupervisorService {
         prompt_suggestions: analysis.prompt_suggestions.length
       });
 
-      // Filter suggestions using GPT-5.2 inference with memory context
+      // Filter suggestions using GPT-5.5 inference with memory context
       const filteredAnalysis = await this.filterSuggestionsWithGPT52(command, analysis);
 
       console.log(`[SupervisorService] After filtering:`, {
@@ -892,8 +892,8 @@ export class SupervisorService {
   }
 
   /**
-   * Filter suggestions using GPT-5.2 inference with memory context
-   * Retrieves existing suggestions from memory and uses GPT-5.2 to determine which new suggestions are truly unique
+   * Filter suggestions using GPT-5.5 inference with memory context
+   * Retrieves existing suggestions from memory and uses GPT-5.5 to determine which new suggestions are truly unique
    */
   private async filterSuggestionsWithGPT52(
     command: DbCommand,
@@ -915,7 +915,7 @@ export class SupervisorService {
         return analysis;
       }
 
-      // Call GPT-5.2 for similarity analysis
+      // Call GPT-5.5 for similarity analysis
       const userPrompt = formatSimilarityAnalysisPrompt(
         existingToolSuggestions,
         existingPromptSuggestions,
@@ -934,10 +934,10 @@ export class SupervisorService {
         }
       ];
 
-      console.log(`[SupervisorService] Calling GPT-5.2 for similarity analysis...`);
+      console.log(`[SupervisorService] Calling GPT-5.5 for similarity analysis...`);
       const response = await this.connector.callAgent(messages, {
         modelType: 'openai',
-        modelId: 'gpt-5.4',
+        modelId: 'gpt-5.5',
         maxTokens: 32768,
         responseFormat: 'json',
         reasoningEffort: 'high',
@@ -952,7 +952,7 @@ export class SupervisorService {
           const jsonContent = content.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
           similarityResult = JSON.parse(jsonContent);
         } catch (parseError) {
-          console.error('[SupervisorService] Error parsing GPT-5.2 similarity response:', parseError);
+          console.error('[SupervisorService] Error parsing GPT-5.5 similarity response:', parseError);
           // Fallback: keep all suggestions if parsing fails
           return analysis;
         }
@@ -960,14 +960,14 @@ export class SupervisorService {
         similarityResult = response.content;
       }
 
-      // Use filtered suggestions from GPT-5.2
+      // Use filtered suggestions from GPT-5.5
       const filteredAnalysis = {
         ...analysis,
         system_suggested_tools_for_development: similarityResult.new_suggestions?.system_suggested_tools_for_development || [],
         prompt_suggestions: similarityResult.new_suggestions?.prompt_suggestions || []
       };
 
-      console.log(`[SupervisorService] GPT-5.2 filtered suggestions:`, {
+      console.log(`[SupervisorService] GPT-5.5 filtered suggestions:`, {
         system_suggested_tools_for_development: `${analysis.system_suggested_tools_for_development.length} -> ${filteredAnalysis.system_suggested_tools_for_development.length}`,
         prompt_suggestions: `${analysis.prompt_suggestions.length} -> ${filteredAnalysis.prompt_suggestions.length}`,
         analysis: similarityResult.analysis
@@ -1117,7 +1117,7 @@ export class SupervisorService {
 
   /**
    * Save new suggestions to memory after sending (append-only approach)
-   * Only saves suggestions that passed GPT-5.2 filtering (truly new ones)
+   * Only saves suggestions that passed GPT-5.5 filtering (truly new ones)
    */
   private async saveNewSuggestionsToMemory(
     command: DbCommand,

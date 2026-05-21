@@ -4,9 +4,11 @@ import {
   type SystemHealthHandler,
 } from '@/lib/status/types';
 import {
+  isAzureConfigured,
   probeAzureText,
   probeGeminiText,
   probeMediaProvider,
+  skippedResult,
 } from '@/lib/status/handlers/ai/provider-probes';
 
 export const aiImageHandler: SystemHealthHandler = {
@@ -15,11 +17,7 @@ export const aiImageHandler: SystemHealthHandler = {
   probePath: '/api/ai/image',
   async runCheck() {
     const start = Date.now();
-    const azure = await probeMediaProvider(
-      'azure-image',
-      ['AZURE_OPENAI_ENDPOINT', 'AZURE_OPENAI_API_KEY'],
-      probeAzureText,
-    );
+    const azure = isAzureConfigured() ? await probeAzureText() : skippedResult('azure-image');
     const gemini = await probeMediaProvider('gemini-image', ['GEMINI_API_KEY'], probeGeminiText);
     const providers = { azure, gemini };
     const { status, degradedReasons } = evaluateAiProviders(providers, ['azure', 'gemini']);

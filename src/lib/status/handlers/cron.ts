@@ -10,10 +10,12 @@ export const cronHandler: SystemHealthHandler = {
     const headers = secret ? { Authorization: `Bearer ${secret}` } : {};
     const apps = await probeHttpRoute('/api/cron/requirements-apps', {
       method: 'GET',
+      useServiceKey: false,
       headers,
     });
     const automations = await probeHttpRoute('/api/cron/requirements-automations', {
       method: 'GET',
+      useServiceKey: false,
       headers,
     });
     const latencyMs = Date.now() - start;

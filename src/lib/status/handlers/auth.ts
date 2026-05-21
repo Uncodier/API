@@ -8,10 +8,19 @@ export const apiAuthHandler: SystemHealthHandler = {
   async runCheck() {
     const start = Date.now();
     const serviceKeySet = !!process.env.SERVICE_API_KEY?.trim();
-    const publicStatus = await probeHttpRoute('/api/status', { method: 'GET' });
-    const withKey = await probeHttpRoute('/api/agents/apps/list', { method: 'GET' });
+    const publicStatus = await probeHttpRoute('/api/status', {
+      method: 'GET',
+      useServiceKey: false,
+    });
+    const serviceKey = process.env.SERVICE_API_KEY?.trim();
+    const withKey = await probeHttpRoute('/api/agents/apps/list', {
+      method: 'GET',
+      useServiceKey: false,
+      headers: serviceKey ? { 'x-api-key': serviceKey } : {},
+    });
     const withoutKey = await probeHttpRoute('/api/agents/apps/list', {
       method: 'GET',
+      useServiceKey: false,
       headers: { 'x-api-key': 'invalid-probe-key' },
     });
     const latencyMs = Date.now() - start;

@@ -40,18 +40,18 @@ export type ToolLookupCategory =
 // fall back to "other".
 const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   // media
-  generateImage: 'media',
-  generateVideo: 'media',
-  generateAudio: 'media',
-  audioToText: 'media',
+  generate_image: 'media',
+  generate_video: 'media',
+  generate_audio: 'media',
+  audio_to_text: 'media',
 
   // messaging
   sendEmail: 'messaging',
   sendWhatsApp: 'messaging',
   whatsappTemplate: 'messaging',
   sendBulkMessages: 'messaging',
-  configureEmail: 'messaging',
-  configureWhatsApp: 'messaging',
+  configure_email: 'messaging',
+  configure_whatsapp: 'messaging',
   conversations: 'messaging',
   messages: 'messaging',
 
@@ -59,34 +59,34 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   leads: 'crm',
   sales: 'crm',
   deals: 'crm',
-  salesOrder: 'crm',
+  sales_order: 'crm',
   audience: 'crm',
   segments: 'crm',
   campaigns: 'crm',
   analyzeICPTotalCount: 'crm',
   createIcpMining: 'crm',
   getFinderCategoryIds: 'crm',
-  searchRegionVenues: 'crm',
+  search_region_venues: 'crm',
 
   // social
-  socialMediaAccounts: 'social',
-  socialMediaPublish: 'social',
-  socialMediaPosts: 'social',
+  social_media_accounts: 'social',
+  social_media_publish: 'social',
+  social_media_posts: 'social',
   publish: 'social',
 
   // content / assets
   content: 'content',
   copywriting: 'content',
   assets: 'content',
-  updateSiteSettings: 'content',
+  site_settings: 'content',
 
   // infra / ops
-  createProject: 'infra',
-  createSecret: 'infra',
+  create_project: 'infra',
+  create_secret: 'infra',
   webhooks: 'infra',
   workflows: 'infra',
   scheduling: 'infra',
-  systemNotification: 'infra',
+  system_notification: 'infra',
   tasks: 'infra',
   report: 'infra',
   instance: 'infra',
@@ -96,11 +96,13 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   createAccount: 'infra',
   verifyAccount: 'infra',
   memories: 'infra',
+  save_on_memory: 'infra',
+  get_memories: 'infra',
 
   // research
   webSearch: 'research',
   url_to_markdown: 'research',
-  urlToSitemap: 'research',
+  url_to_sitemap: 'research',
 };
 
 function categoryOf(name: string): ToolLookupCategory {

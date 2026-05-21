@@ -276,7 +276,7 @@ const executor = new OpenAIAgentExecutor({
   apiVersion: '2024-08-01-preview',
 });
 
-// Para modelos o-series (o1, o3, GPT-5.2), usa reasoning_effort y verbosity
+// Para modelos o-series (o1, o3, GPT-5.5), usa reasoning_effort y verbosity
 const result = await executor.act({
   tools,
   system: SYSTEM_PROMPT,
