@@ -133,6 +133,7 @@ export function sanitizePublicPayload<T>(value: T): T {
   return value;
 }
 
+/** Full production gate (cron + strict CI). */
 export const CRITICAL_SYSTEM_KEYS = [
   'database_main',
   'env_core',
@@ -145,8 +146,14 @@ export const CRITICAL_SYSTEM_KEYS = [
   'ai_audio',
 ] as const;
 
-export function isCriticalFailure(system: SystemHealthResponse): boolean {
-  if (!CRITICAL_SYSTEM_KEYS.includes(system.systemKey as (typeof CRITICAL_SYSTEM_KEYS)[number])) {
+/** CI deploy check — DB + env only; AI/http need prod secrets & live providers. */
+export const CRITICAL_CI_KEYS = ['database_main', 'env_core'] as const;
+
+export function isCriticalFailure(
+  system: SystemHealthResponse,
+  keys: readonly string[] = CRITICAL_SYSTEM_KEYS,
+): boolean {
+  if (!keys.includes(system.systemKey)) {
     return false;
   }
   return system.status === 'down' || system.status === 'degraded';

@@ -1,6 +1,8 @@
 import { getAllHealthHandlers } from '@/lib/status/handler-registry';
 import { persistProbeRun } from '@/lib/status/persist-status';
 import {
+  CRITICAL_CI_KEYS,
+  CRITICAL_SYSTEM_KEYS,
   isCriticalFailure,
   type ProbeRunResult,
   type ProbeTrigger,
@@ -26,7 +28,10 @@ async function runPool<T, R>(
   return results;
 }
 
-export async function runProbes(trigger: ProbeTrigger): Promise<ProbeRunResult> {
+export async function runChecksOnly(trigger: ProbeTrigger): Promise<{
+  systems: SystemHealthResponse[];
+  durationMs: number;
+}> {
   const start = Date.now();
   const handlers = getAllHealthHandlers();
 
@@ -50,16 +55,35 @@ export async function runProbes(trigger: ProbeTrigger): Promise<ProbeRunResult> 
     }
   }, CONCURRENCY);
 
-  const durationMs = Date.now() - start;
+  return { systems, durationMs: Date.now() - start };
+}
+
+export async function runProbes(trigger: ProbeTrigger): Promise<ProbeRunResult> {
+  const { systems, durationMs } = await runChecksOnly(trigger);
   return persistProbeRun(trigger, systems, durationMs);
 }
 
-export function validateCriticalSystems(result: ProbeRunResult): {
+export function validateCriticalSystems(
+  systems: SystemHealthResponse[],
+  options?: { ciLenient?: boolean },
+): {
   ok: boolean;
   failures: string[];
+  warnings: string[];
 } {
-  const failures = result.systems
-    .filter(isCriticalFailure)
-    .map((s) => `${s.systemKey}:${s.status}`);
-  return { ok: failures.length === 0, failures };
+  const strictKeys = CRITICAL_SYSTEM_KEYS;
+  const ciKeys = options?.ciLenient ? CRITICAL_CI_KEYS : strictKeys;
+
+  const failures = systems
+    .filter((s) => isCriticalFailure(s, ciKeys))
+    .map((s) => `${s.systemKey}:${s.status} — ${s.summary}`);
+
+  const warnings =
+    options?.ciLenient === true
+      ? systems
+          .filter((s) => isCriticalFailure(s, strictKeys) && !isCriticalFailure(s, ciKeys))
+          .map((s) => `${s.systemKey}:${s.status} — ${s.summary}`)
+      : [];
+
+  return { ok: failures.length === 0, failures, warnings };
 }
