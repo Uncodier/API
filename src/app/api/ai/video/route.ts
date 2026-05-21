@@ -13,6 +13,7 @@ type VideoQuality = 'preview' | 'standard' | 'pro';
 interface VideoRequestBody {
   prompt: string;
   site_id: string;
+  instance_id?: string;
   provider?: Provider;
   duration_seconds?: number;
   aspect_ratio?: AspectRatio;
@@ -114,7 +115,8 @@ async function saveFileRecord(
   prompt: string,
   model: string,
   metadata: Record<string, unknown>,
-  userId?: string
+  userId?: string,
+  instanceId?: string
 ) {
   try {
     let ownerUserId = userId;
@@ -155,6 +157,10 @@ async function saveFileRecord(
 
     if (ownerUserId) {
       insertData.user_id = ownerUserId;
+    }
+
+    if (instanceId) {
+      insertData.instance_id = instanceId;
     }
 
     const { error: insertError } = await supabaseAdmin.from('assets').insert(insertData);
@@ -264,6 +270,7 @@ function buildPrompt(prompt: string, aspectRatio?: AspectRatio, durationSeconds?
 async function generateWithGemini(options: {
   prompt: string;
   siteId: string;
+  instanceId?: string;
   aspectRatio?: AspectRatio;
   durationSeconds?: number;
   referenceImages?: string[];
@@ -482,7 +489,9 @@ async function generateWithGemini(options: {
         resolution: videoConfig.mappedResolution,
         original_duration_seconds: options.durationSeconds,
         original_aspect_ratio: options.aspectRatio,
-      }
+      },
+      undefined,
+      options.instanceId
     );
   } catch (error) {
     console.warn('[Gemini Video] Failed to save file record:', (error as Error).message);
@@ -527,6 +536,7 @@ export async function POST(request: NextRequest) {
     const {
       prompt,
       site_id,
+      instance_id,
       provider = 'gemini',
       duration_seconds,
       aspect_ratio,
@@ -604,6 +614,7 @@ export async function POST(request: NextRequest) {
     const result = await generateWithGemini({
       prompt,
       siteId: site_id,
+      instanceId: instance_id,
       aspectRatio: aspect_ratio,
       durationSeconds: duration_seconds,
       referenceImages: reference_images,
