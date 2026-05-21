@@ -263,6 +263,30 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
           // Format response for the assistant
           const videoUrls = result.videos.map(video => video.url);
           
+          if ((instance as any)?.id || site_id) {
+            // Note: instance_id is not passed to Scrapybara constructor, but might be accessible
+            const inst_id = (instance as any)?.id || 'unknown';
+            try {
+              const { createInstanceLogCore } = await import('@/app/api/agents/tools/instance_logs/route');
+              await createInstanceLogCore({
+                site_id,
+                instance_id: inst_id !== 'unknown' ? inst_id : undefined,
+                log_type: 'agent_action',
+                level: 'info',
+                message: `Video generated successfully: ${videoUrls.join(', ')}`,
+                details: {
+                  provider: result.provider,
+                  videos: result.videos,
+                  prompt: args.prompt,
+                  type: 'media_delivery',
+                  media_type: 'video'
+                }
+              });
+            } catch (e) {
+              console.error('[GenerateVideoTool-Scrapybara] Failed to log media delivery:', e);
+            }
+          }
+          
           return {
             success: true,
             provider: result.provider,

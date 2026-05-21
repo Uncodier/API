@@ -262,6 +262,29 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
           // Format response for the assistant
           const imageUrls = result.images.map(img => img.url);
           
+          if ((instance as any)?.id || site_id) {
+            const inst_id = (instance as any)?.id || 'unknown';
+            try {
+              const { createInstanceLogCore } = await import('@/app/api/agents/tools/instance_logs/route');
+              await createInstanceLogCore({
+                site_id,
+                instance_id: inst_id !== 'unknown' ? inst_id : undefined,
+                log_type: 'agent_action',
+                level: 'info',
+                message: `Image generated successfully: ${imageUrls.join(', ')}`,
+                details: {
+                  provider: result.provider,
+                  images: result.images,
+                  prompt: args.prompt,
+                  type: 'media_delivery',
+                  media_type: 'image'
+                }
+              });
+            } catch (e) {
+              console.error('[GenerateImageTool-Scrapybara] Failed to log media delivery:', e);
+            }
+          }
+
           return {
             success: true,
             provider: result.provider,
