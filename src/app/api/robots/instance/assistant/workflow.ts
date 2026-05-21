@@ -87,9 +87,10 @@ export async function runAssistantWorkflow(
 
   // Step 3: Check for active instance plan AFTER the agent conversation
   // The agent might have just created or updated an instance_plan during its turn
+  // If instanceNodeId is present, we SKIP auto-executing plans because Node (Imprenta) executions are single-shot and should not spawn ghost nodes.
   const activePlan = await getActiveInstancePlan(instanceId, siteId);
   
-  if (activePlan && !context.hasLinkedRequirement) {
+  if (activePlan && !context.hasLinkedRequirement && !instanceNodeId) {
     console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
     
     // Filter steps that need execution

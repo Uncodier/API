@@ -297,6 +297,10 @@ export async function prepareAssistantContext(
 
   const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
 
+  const nodeModeInstruction = instanceNodeId
+    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE generation results. DO NOT update or create \`instance_plan\` or \`requirements\`. You MUST execute the requested tools directly (e.g., via \`tool_lookup\`) in this single turn to generate the final asset (video, image, etc).`
+    : '';
+
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =
     systemPrompt?.toLowerCase().trim() === 'plan' && !hasLinkedRequirement
@@ -347,6 +351,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
   const combinedSystemPrompt = [
     agentBackground,
     instanceContext,
+    nodeModeInstruction,
     baseSystemPrompt,
     toolsContext,
     systemPrompt || '',
