@@ -203,8 +203,25 @@ export async function updateInstancePlanCore(params: any) {
     updateData.steps_total = updatedSteps.length;
     
     const completedSteps = updatedSteps.filter((step: any) => step.status === 'completed').length;
+    const allDone = updatedSteps.length > 0 && updatedSteps.every((s: any) => s.status === 'completed');
+    const anyFailed = updatedSteps.some((s: any) => s.status === 'failed');
+    const noPending = !updatedSteps.some((s: any) => s.status === 'pending' || s.status === 'in_progress');
+
     updateData.steps_completed = completedSteps;
     updateData.progress_percentage = updatedSteps.length > 0 ? Math.round((completedSteps / updatedSteps.length) * 100) : 0;
+
+    // Auto-reconcile plan status based on steps (only if not explicitly overridden by updates)
+    if (!updates.status && existingPlan.status !== 'paused' && existingPlan.status !== 'cancelled') {
+      if (allDone) {
+        updateData.status = 'completed';
+        updateData.completed_at = new Date().toISOString();
+      } else if (anyFailed && noPending) {
+        updateData.status = 'failed';
+        updateData.completed_at = new Date().toISOString();
+      } else if (updateData.progress_percentage > 0 && existingPlan.status === 'pending') {
+        updateData.status = 'in_progress';
+      }
+    }
   }
 
   const { data: updatedPlan, error } = await supabaseAdmin

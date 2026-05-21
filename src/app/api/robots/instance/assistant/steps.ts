@@ -217,26 +217,40 @@ export async function prepareAssistantContext(
   
   if (lastPlans && lastPlans.length > 0) {
     const activePlan = lastPlans[0];
-    instance_plan_id = activePlan.id;
     
-    // Determine active step
+    // Determine if we should consider this plan "active" based on its steps
+    let isPlanFullyDone = false;
     if (activePlan.steps && Array.isArray(activePlan.steps)) {
-      const stepsSummary = activePlan.steps.map((s: any) => ({
-        id: s.id,
-        title: s.title,
-        status: s.status,
-        order: s.order
-      }));
-      allStepsContext = `\n- Active Plan Steps: ${JSON.stringify(stepsSummary)}`;
+      isPlanFullyDone = activePlan.steps.length > 0 && activePlan.steps.every((s: any) => s.status === 'completed');
+    }
 
-      const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
-      const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
-      const step = inProgressStep || pendingStep;
-      if (step) {
-        // Provide the entire active step object to the agent
-        activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
-      } else {
-        activeStepContext = `\n\n⚠️ IMPORTANT: All steps in the active plan are completed, but the plan status is still open.`;
+    if (isPlanFullyDone) {
+      // Si el plan ya está todo completado, lo tratamos como "NO ACTIVE PLAN"
+      // y opcionalmente actualizamos su estado a completed de una vez para que no vuelva a salir.
+      console.log(`[AssistantContext] Plan ${activePlan.id} was returned as 'in_progress' or 'pending' but all steps are 'completed'. Treating as completed.`);
+      activeStepContext = `\n\n⚠️ IMPORTANT: There is NO ACTIVE PLAN (or the previous plan is already completed). If you need to execute a multi-step task, you MUST call instance_plan with action="create" to make a NEW plan. DO NOT call action="update" on a completed plan.`;
+    } else {
+      instance_plan_id = activePlan.id;
+      
+      // Determine active step
+      if (activePlan.steps && Array.isArray(activePlan.steps)) {
+        const stepsSummary = activePlan.steps.map((s: any) => ({
+          id: s.id,
+          title: s.title,
+          status: s.status,
+          order: s.order
+        }));
+        allStepsContext = `\n- Active Plan Steps: ${JSON.stringify(stepsSummary)}`;
+
+        const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
+        const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
+        const step = inProgressStep || pendingStep;
+        if (step) {
+          // Provide the entire active step object to the agent
+          activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
+        } else {
+          activeStepContext = `\n\n⚠️ IMPORTANT: All steps in the active plan are completed, but the plan status is still open.`;
+        }
       }
     }
   } else {
