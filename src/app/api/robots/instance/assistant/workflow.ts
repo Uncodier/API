@@ -42,53 +42,6 @@ export async function runAssistantWorkflow(
     steps: []
   };
 
-  // Step 1.5: Check for active instance plan
-  const activePlan = await getActiveInstancePlan(instanceId, siteId);
-  
-  if (activePlan && !context.hasLinkedRequirement) {
-    console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
-    
-    // Filter steps that need execution
-    const stepsToExecute = activePlan.steps
-      .sort((a: any, b: any) => a.order - b.order)
-      .filter((step: any) => step.status === 'pending' || step.status === 'in_progress');
-
-    if (stepsToExecute.length > 0) {
-      console.log(`[Workflow] Executing ${stepsToExecute.length} steps from plan`);
-      
-      for (const step of stepsToExecute) {
-        console.log(`[Workflow] processing plan step: ${step.title}`);
-        
-        // Execute the step
-        // Each step is a chat completion
-        const stepResult = await executePlanStep(context, activePlan, step);
-        
-        // Accumulate results
-        finalResult = stepResult;
-        
-        // If step failed, stop execution
-        // We catch errors inside executePlanStep but we should check here too if we want to break
-        // Actually executePlanStep throws on error, so workflow will fail/stop here which is correct.
-      }
-      
-      return {
-        instance_id: instanceId,
-        status: context.instance.status,
-        message: 'Plan execution completed successfully',
-        assistant_response: finalResult.text, // Last step response
-        output: finalResult.output,
-        usage: finalResult.usage,
-        plan_id: activePlan.id
-      };
-    } else {
-        console.log(`[Workflow] Active plan found but no pending steps.`);
-        // Fallback to normal chat if plan is done? or just return?
-        // Let's fallback to normal chat, maybe the user wants to discuss the plan.
-    }
-  } else if (activePlan && context.hasLinkedRequirement) {
-    console.log(`[Workflow] Active plan found but skipping auto-execution because there is a requirement_status linked.`);
-  }
-
   // Initialize messages with user prompt
   // Note: System prompt is handled separately in context
   let userContent: any = context.initialMessage;
@@ -115,7 +68,7 @@ export async function runAssistantWorkflow(
     }
   ];
 
-  // Step 2: Loop through turns
+  // Step 2: Loop through turns for the main agent conversation
   // Safety limit to prevent infinite loops
   const MAX_TURNS = 20;
   let turns = 0;
@@ -130,6 +83,47 @@ export async function runAssistantWorkflow(
     
     // Update final result
     finalResult = stepResult;
+  }
+
+  // Step 3: Check for active instance plan AFTER the agent conversation
+  // The agent might have just created or updated an instance_plan during its turn
+  const activePlan = await getActiveInstancePlan(instanceId, siteId);
+  
+  if (activePlan && !context.hasLinkedRequirement) {
+    console.log(`[Workflow] Found active plan: ${activePlan.title} (${activePlan.id})`);
+    
+    // Filter steps that need execution
+    const stepsToExecute = activePlan.steps
+      .sort((a: any, b: any) => a.order - b.order)
+      .filter((step: any) => step.status === 'pending' || step.status === 'in_progress');
+
+    if (stepsToExecute.length > 0) {
+      console.log(`[Workflow] Executing ${stepsToExecute.length} steps from plan`);
+      
+      for (const step of stepsToExecute) {
+        console.log(`[Workflow] processing plan step: ${step.title}`);
+        
+        // Execute the step
+        const stepResult = await executePlanStep(context, activePlan, step);
+        
+        // Accumulate results
+        finalResult = stepResult;
+      }
+      
+      return {
+        instance_id: instanceId,
+        status: context.instance.status,
+        message: 'Plan execution completed successfully',
+        assistant_response: finalResult.text, // Last step response
+        output: finalResult.output,
+        usage: finalResult.usage,
+        plan_id: activePlan.id
+      };
+    } else {
+        console.log(`[Workflow] Active plan found but no pending steps.`);
+    }
+  } else if (activePlan && context.hasLinkedRequirement) {
+    console.log(`[Workflow] Active plan found but skipping auto-execution because there is a requirement_status linked.`);
   }
 
   return {

@@ -102,6 +102,36 @@ async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
 }
 
 /**
+ * Fetches all previous snapshots for a requirement/instance so we can clean them up.
+ */
+export async function fetchAllRequirementSnapshotRows(
+  requirementId: string,
+  instanceId?: string | null,
+): Promise<PersistedSnapshotRow[]> {
+  const validInstance = instanceId && UUID_RE.test(instanceId) ? instanceId : null;
+  let query = supabaseAdmin
+    .from('requirement_status')
+    .select('snapshot_id, repo_url')
+    .eq('requirement_id', requirementId)
+    .not('snapshot_id', 'is', null)
+    .order('created_at', { ascending: false });
+
+  if (validInstance) {
+    query = query.eq('instance_id', validInstance);
+  }
+
+  const { data } = await query;
+  if (!data || data.length === 0) return [];
+
+  return data
+    .filter(row => row.snapshot_id?.trim())
+    .map(row => ({
+      snapshot_id: row.snapshot_id.trim(),
+      repo_url: row.repo_url ?? null
+    }));
+}
+
+/**
  * Attempts to delete a snapshot from Vercel by ID.
  * Does not throw on failure to avoid breaking the main flow.
  */
@@ -291,7 +321,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       } catch {
         /* ignore */
       }
-      const snap = await params.sandbox.snapshot({ expiration: 0 });
+      const snap = await params.sandbox.snapshot({ expiration: 14 * 24 * 60 * 60 * 1000 });
       snapshotId = snap.snapshotId;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -318,10 +348,10 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
 
   let next: Sandbox | undefined;
   try {
-    // Fetch the previous snapshot ID before creating a new one
-    // so we can delete it later to avoid billing leaks
-    const previousSnapshotRow = await fetchLatestRequirementSnapshotRow(requirementId, auditCtx?.instanceId);
-    const previousSnapshotId = previousSnapshotRow?.snapshot_id;
+    // Fetch ALL previous snapshots before creating a new one
+    // so we can delete them later to avoid billing leaks
+    const previousSnapshotRows = await fetchAllRequirementSnapshotRows(requirementId, auditCtx?.instanceId);
+    const previousSnapshotIds = previousSnapshotRows.map(r => r.snapshot_id).filter(id => id !== snapshotId);
 
     next = await Sandbox.create({
       runtime: 'node24',
@@ -348,12 +378,13 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
         console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
       });
       
-      // Delete the previous snapshot since we just created a new one
-      // This prevents Sandbox Storage billing accumulation
-      if (previousSnapshotId && previousSnapshotId !== snapshotId) {
-        deleteSnapshotQuiet(previousSnapshotId).catch(e => {
-          console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Failed to delete previous snapshot ${previousSnapshotId}:`, e);
-        });
+      // AWAIT the deletion of all previous snapshots 
+      // This prevents Sandbox Storage billing accumulation and race conditions where the process dies before deletion
+      if (previousSnapshotIds.length > 0) {
+        console.log(`[Sandbox] 🧹 CLEANUP: Attempting to delete ${previousSnapshotIds.length} old snapshots for requirement ${requirementId}...`);
+        await Promise.allSettled(
+          previousSnapshotIds.map(id => deleteSnapshotQuiet(id))
+        );
       }
     }
 
