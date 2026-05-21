@@ -77,9 +77,13 @@ function buildContextContent(
   }
 
   const parts: any[] = [];
-  if (text) {
-    parts.push({ type: 'text', text: `[Context from node ${label}]: ${text}` });
-  }
+  
+  // Include URLs in text so the LLM knows the actual strings to pass to tools
+  const urlText = imageUrls.length > 0 ? `\nImage URLs for reference:\n${imageUrls.join('\n')}` : '';
+  const combinedText = `[Context from node ${label}]: ${text}${urlText}`;
+  
+  parts.push({ type: 'text', text: combinedText });
+  
   for (const url of imageUrls) {
     parts.push({ type: 'image_url', image_url: { url } });
   }

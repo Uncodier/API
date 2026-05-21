@@ -40,9 +40,13 @@ function buildContextContent(
   }
 
   const parts: any[] = [];
-  if (text) {
-    parts.push({ type: 'text', text: `[Context from node ${label}]: ${text}` });
-  }
+  
+  // Include URLs in text so the LLM knows the actual strings to pass to tools
+  const urlText = imageUrls.length > 0 ? `\nImage URLs for reference:\n${imageUrls.join('\n')}` : '';
+  const combinedText = `[Context from node ${label}]: ${text}${urlText}`;
+  
+  parts.push({ type: 'text', text: combinedText });
+  
   for (const url of imageUrls) {
     parts.push({ type: 'image_url', image_url: { url } });
   }
@@ -119,9 +123,14 @@ async function buildMessagesForNode(promptNodeId: string, promptNode: any): Prom
     if ((resultText && resultText !== '{}') || resultImageUrls.length > 0) {
       if (resultImageUrls.length > 0) {
         const parts: any[] = [];
-        if (resultText && resultText !== '{}') {
-          parts.push({ type: 'text', text: resultText });
+        
+        const urlText = resultImageUrls.length > 0 ? `\nImage URLs for reference:\n${resultImageUrls.join('\n')}` : '';
+        const combinedText = resultText && resultText !== '{}' ? `${resultText}${urlText}` : urlText;
+        
+        if (combinedText) {
+          parts.push({ type: 'text', text: combinedText });
         }
+        
         for (const url of resultImageUrls) {
           parts.push({ type: 'image_url', image_url: { url } });
         }
