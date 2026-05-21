@@ -120,13 +120,21 @@ export function collectToolOutputs(steps: any[]): NodeToolOutput[] {
 
     for (const tr of step.toolResults) {
       if (tr.isError) continue;
-      const raw = tr.cleanedResult ?? tr.result;
+      let raw = tr.cleanedResult ?? tr.result;
       if (!raw || typeof raw !== 'object') continue;
 
-      const extractor = registry.get(tr.toolName);
+      let actualToolName = tr.toolName;
+      
+      // Unwrap tool_lookup results
+      if (actualToolName === 'tool_lookup' && raw.success === true && raw.name && raw.result) {
+        actualToolName = raw.name;
+        raw = raw.result;
+      }
+
+      const extractor = registry.get(actualToolName);
       if (!extractor) continue;
 
-      const extracted = extractor(raw, tr.toolName);
+      const extracted = extractor(raw, actualToolName);
       if (!extracted) continue;
 
       if (Array.isArray(extracted)) {

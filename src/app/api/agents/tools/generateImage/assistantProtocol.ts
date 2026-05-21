@@ -5,6 +5,7 @@ import { CreditService } from '@/lib/services/billing/CreditService';
  */
 
 import { ImageGenerationService, ImageGenerationParams } from '@/lib/services/image/ImageGenerationService';
+import { createInstanceLogCore } from '@/app/api/agents/tools/instance_logs/route';
 import { tool } from 'scrapybara/tools';
 import { z } from 'zod';
 import type { UbuntuInstance } from 'scrapybara';
@@ -128,6 +129,27 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           // CRITICAL: Do not return any base64 data to prevent OpenAI executor errors
           const imageUrls = result.images.map(img => img.url);
           
+          if (instance_id) {
+            try {
+              await createInstanceLogCore({
+                site_id,
+                instance_id,
+                log_type: 'agent_action',
+                level: 'info',
+                message: `Image generated successfully: ${imageUrls.join(', ')}`,
+                details: {
+                  provider: result.provider,
+                  images: result.images,
+                  prompt: args.prompt,
+                  type: 'media_delivery',
+                  media_type: 'image'
+                }
+              });
+            } catch (e) {
+              console.error('[GenerateImageTool] Failed to log media delivery:', e);
+            }
+          }
+
           return {
             success: true,
             provider: result.provider,

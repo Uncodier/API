@@ -127,6 +127,7 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
         const audioBlob = await response.blob();
         
         const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+        const { createInstanceLogCore } = await import('@/app/api/agents/tools/instance_logs/route');
         
         const isGemini = provider === 'gemini';
         const fileExt = isGemini ? 'wav' : (args.format || 'mp3');
@@ -159,8 +160,23 @@ export function generateAudioTool(site_id: string, instance_id?: string) {
               name: fileName,
               source: 'generated'
             });
+            
+            await createInstanceLogCore({
+              site_id,
+              instance_id,
+              log_type: 'agent_action',
+              level: 'info',
+              message: `Audio generated successfully: ${publicUrl}`,
+              details: {
+                provider: provider,
+                audio_url: publicUrl,
+                text: args.text,
+                type: 'media_delivery',
+                media_type: 'audio'
+              }
+            });
           } catch (assetErr) {
-            console.error(`[GenerateAudioTool] ⚠️ Failed to save to instance_assets:`, assetErr);
+            console.error(`[GenerateAudioTool] ⚠️ Failed to log media delivery:`, assetErr);
           }
         }
 
