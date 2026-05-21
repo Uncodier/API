@@ -201,11 +201,12 @@ export async function prepareAssistantContext(
     }
   }
 
-  // Fetch last instance plan context
+  // Fetch active instance plan context
   const { data: lastPlans } = await supabaseAdmin
     .from('instance_plans')
     .select('*')
     .eq('instance_id', instanceId)
+    .in('status', ['pending', 'in_progress'])
     .order('created_at', { ascending: false })
     .limit(1);
 
@@ -226,7 +227,7 @@ export async function prepareAssistantContext(
         status: s.status,
         order: s.order
       }));
-      allStepsContext = `\n- Plan Steps: ${JSON.stringify(stepsSummary)}`;
+      allStepsContext = `\n- Active Plan Steps: ${JSON.stringify(stepsSummary)}`;
 
       const inProgressStep = activePlan.steps.find((s: any) => s.status === 'in_progress');
       const pendingStep = activePlan.steps.find((s: any) => s.status === 'pending');
@@ -235,24 +236,24 @@ export async function prepareAssistantContext(
         // Provide the entire active step object to the agent
         activeStepContext = `\n- Active Step Object: ${JSON.stringify(step)}\n\n⚠️ IMPORTANT: If you need to call instance_plan with action="execute_step", you MUST use the 'id' field from the 'Active Step Object' above or from the 'Plan Steps' list. DO NOT call action="list" to find the step ID.`;
       } else {
-        activeStepContext = `\n\n⚠️ IMPORTANT: To call instance_plan with action="execute_step", you MUST use the 'id' from the 'Plan Steps' list above. DO NOT call action="list" to find the step ID.`;
+        activeStepContext = `\n\n⚠️ IMPORTANT: All steps in the active plan are completed, but the plan status is still open.`;
       }
     }
   } else {
-    activeStepContext = `\n\n⚠️ IMPORTANT: There is NO ACTIVE PLAN. If you need a plan, you MUST call instance_plan with action="create". DO NOT call action="list" searching for a plan that doesn't exist.`;
+    activeStepContext = `\n\n⚠️ IMPORTANT: There is NO ACTIVE PLAN (or the previous plan is already completed). If you need to execute a multi-step task, you MUST call instance_plan with action="create" to make a NEW plan. DO NOT call action="update" on a completed plan.`;
   }
 
   // Fetch last completed plan title
   const { data: lastCompletedPlans } = await supabaseAdmin
     .from('instance_plans')
-    .select('title')
+    .select('id, title, status')
     .eq('instance_id', instanceId)
     .eq('status', 'completed')
     .order('completed_at', { ascending: false })
     .limit(1);
 
   if (lastCompletedPlans && lastCompletedPlans.length > 0) {
-    lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}"`;
+    lastCompletedPlanContext = `\n- Last Completed Plan: "${lastCompletedPlans[0].title}" (ID: ${lastCompletedPlans[0].id})`;
   }
 
   const hasLinkedRequirement = !!(requirementStatuses && requirementStatuses.length > 0);

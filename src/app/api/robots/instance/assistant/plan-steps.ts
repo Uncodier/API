@@ -264,5 +264,11 @@ RULES:
     }]
   });
 
+  // Si hay instanceNodeId, actualizamos el nodo de respuesta con el resultado
+  if (context.instanceNodeId) {
+     // ya deberia estar en responseNodeIds, pero node_result_collector se encarga de updateNodeResult si le pasamos
+     // no lo pasamos directamente aca, lo hara el executor.
+  }
+
   return stepResult;
 }

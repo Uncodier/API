@@ -117,7 +117,8 @@ export async function runAssistantWorkflow(
         assistant_response: finalResult.text, // Last step response
         output: finalResult.output,
         usage: finalResult.usage,
-        plan_id: activePlan.id
+        plan_id: activePlan.id,
+        instance_node_id: instanceNodeId,
       };
     } else {
         console.log(`[Workflow] Active plan found but no pending steps.`);
@@ -133,5 +134,6 @@ export async function runAssistantWorkflow(
     assistant_response: finalResult.text,
     output: finalResult.output,
     usage: finalResult.usage,
+    instance_node_id: instanceNodeId,
   };
 }
