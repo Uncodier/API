@@ -9,7 +9,7 @@ import {
   getAssistantTools,
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
-  getSandboxRequirementWorkflowInstruction,
+  getRequirementWorkflowInstruction,
 } from './utils';
 
 export interface AssistantContext {
@@ -381,7 +381,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     requirementStatusContext,
     progressContext,
     backlogContext,
-    getSandboxRequirementWorkflowInstruction(hasLinkedRequirement),
+    getRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
     renameInstruction,
