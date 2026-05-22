@@ -182,7 +182,7 @@ async function saveFileRecord(
 function mapDurationToValidValue(
   seconds: number | undefined,
   hasReferenceImages: boolean
-): 4 | 6 | 8 | undefined {
+): number | undefined {
   if (seconds === undefined) {
     return undefined;
   }
@@ -192,14 +192,7 @@ function mapDurationToValidValue(
     return 8;
   }
 
-  // Round up to nearest valid value
-  if (seconds <= 4) {
-    return 4;
-  }
-  if (seconds <= 6) {
-    return 6;
-  }
-  return 8;
+  return seconds;
 }
 
 /**
@@ -210,7 +203,7 @@ function mapDurationToValidValue(
  */
 function mapQualityToResolution(
   quality: VideoQuality | undefined,
-  duration: 4 | 6 | 8 | undefined,
+  duration: number | undefined,
   aspectRatio: AspectRatio | undefined
 ): '720p' | '1080p' {
   if (quality === 'pro') {

@@ -14,6 +14,7 @@ export interface GenerateVideoToolParams {
   prompt: string;
   provider?: 'gemini';
   duration_seconds?: number;
+  duration?: number;
   aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
   reference_images?: string[];
   quality?: 'preview' | 'standard' | 'pro';
@@ -48,6 +49,12 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
           maximum: 60,
           description: 'Desired duration of the video in seconds. Will be mapped to valid values (4, 6, or 8 seconds) by the API. Defaults to 8 seconds.'
         },
+        duration: {
+          type: 'number',
+          minimum: 1,
+          maximum: 60,
+          description: 'Desired duration of the video in seconds.'
+        },
         aspect_ratio: {
           type: 'string',
           enum: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'],
@@ -76,7 +83,7 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
       try {
         console.log(`[GenerateVideoTool] 🎬 Executing video generation`);
         if (site_id) {
-          const duration = args.duration_seconds || 8;
+          const duration = args.duration !== undefined ? args.duration : (args.duration_seconds || 8);
           const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
           const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
           if (!hasCredits) {
@@ -100,12 +107,13 @@ export function generateVideoTool(site_id: string, instance_id?: string) {
         }
 
         // Prepare parameters for the service - only Gemini supported
+        const actualDuration = args.duration !== undefined ? args.duration : args.duration_seconds;
         const serviceParams: VideoGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
           instance_id: instance_id,
           provider: 'gemini', // Force Gemini only
-          duration_seconds: args.duration_seconds,
+          duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
           quality: args.quality,
@@ -219,6 +227,7 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
       prompt: z.string().describe('Detailed text description of the video to generate. Be specific about style, colors, composition, movement, and any important details.'),
       provider: z.enum(['gemini']).optional().describe('AI provider to use for generation. Only Gemini is currently supported.'),
       duration_seconds: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds. Will be mapped to valid values (4, 6, or 8 seconds) by the API. Defaults to 8 seconds.'),
+      duration: z.number().min(1).max(60).optional().describe('Desired duration of the video in seconds.'),
       aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated video. Note: Gemini only supports 16:9 and 9:16, other ratios will be mapped to 16:9. Defaults to 16:9.'),
       reference_images: z.array(z.string()).optional().describe('Array of image URLs (up to 3) to use as reference/context for generation. Images will be converted to base64 and sent as context to the AI model. When using reference images, duration must be 8 seconds.'),
       quality: z.enum(['preview', 'standard', 'pro']).optional().describe('Quality of the generated video. "preview" and "standard" use 720p. "pro" uses 1080p but requires duration=8 and aspect_ratio=16:9. Defaults to standard.'),
@@ -228,7 +237,7 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
       try {
         console.log(`[GenerateVideoTool-Scrapybara] 🎬 Executing video generation`);
         if (site_id) {
-          const duration = args.duration_seconds || 8;
+          const duration = args.duration !== undefined ? args.duration : (args.duration_seconds || 8);
           const requiredCredits = (duration / 60) * CreditService.PRICING.VIDEO_GENERATION_MINUTE;
           const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
           if (!hasCredits) {
@@ -252,11 +261,12 @@ export function generateVideoToolScrapybara(instance: UbuntuInstance, site_id: s
         }
 
         // Prepare parameters for the service - only Gemini supported
+        const actualDuration = args.duration !== undefined ? args.duration : args.duration_seconds;
         const serviceParams: VideoGenerationParams = {
           prompt: args.prompt,
           site_id: site_id,
           provider: 'gemini', // Force Gemini only
-          duration_seconds: args.duration_seconds,
+          duration_seconds: actualDuration,
           aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images,
           quality: args.quality,

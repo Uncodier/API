@@ -30,6 +30,7 @@ const AssistantSchema = z.object({
   tools: z.array(z.any()).optional().default([]),
   use_sdk_tools: z.boolean().optional().default(false),
   system_prompt: z.string().optional(),
+  context: z.string().optional(),
 });
 
 export async function POST(request: NextRequest) {
