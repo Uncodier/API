@@ -15,7 +15,8 @@ export async function runAssistantWorkflow(
   agentType?: string,
   userPhone?: string,
   instanceNodeId?: string,
-  expectedResultsAmount?: number
+  expectedResultsAmount?: number,
+  contextString?: string
 ) {
   'use workflow';
   
@@ -31,7 +32,8 @@ export async function runAssistantWorkflow(
     agentType,
     userPhone,
     instanceNodeId,
-    expectedResultsAmount
+    expectedResultsAmount,
+    contextString
   );
 
   let isDone = false;

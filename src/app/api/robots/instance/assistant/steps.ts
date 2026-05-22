@@ -49,7 +49,8 @@ export async function prepareAssistantContext(
   agentType?: string,
   userPhone?: string,
   instanceNodeId?: string,
-  expectedResultsAmount?: number
+  expectedResultsAmount?: number,
+  contextString?: string
 ): Promise<AssistantContext> {
   'use step';
   
@@ -297,9 +298,24 @@ export async function prepareAssistantContext(
 
   const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
 
+  let extraContextInstruction = '';
+  if (contextString) {
+    try {
+      const parsedContext = JSON.parse(contextString);
+      if (parsedContext.parameters) {
+        extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT PARAMETERS (YOU MUST RESPECT THESE IN YOUR TOOL CALLS):\n${JSON.stringify(parsedContext.parameters, null, 2)}\nIf you are generating media, YOU MUST use these exact parameters (duration, aspect_ratio, etc).`;
+      } else {
+        extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
+      }
+    } catch {
+      extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
+    }
+  }
+
   const nodeModeInstruction = instanceNodeId
-    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE generation results. DO NOT update or create \`instance_plan\` or \`requirements\`. You MUST execute the requested tools directly (e.g., via \`tool_lookup\`) in this single turn to generate the final asset (video, image, etc).`
-    : '';
+    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.
+CRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).${extraContextInstruction}`
+    : extraContextInstruction;
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
   const planModeInstruction =

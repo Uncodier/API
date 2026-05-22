@@ -149,7 +149,8 @@ export async function POST(request: NextRequest) {
         undefined,
         undefined,
         providedNodeId,
-        expectedResults
+        expectedResults,
+        parsedBody.context
       ]);
 
       // Return the run information. The frontend might need to poll or we stream.
@@ -210,19 +211,20 @@ export async function POST(request: NextRequest) {
     });
 
     // Start the workflow
-    const workflowRun = await start(runAssistantWorkflow, [
-        providedInstanceId,
-        message,
-        site_id,
-        user_id,
-        customTools,
-        use_sdk_tools,
-        system_prompt,
-        undefined,
-        undefined,
-        providedNodeId,
-        expectedResults
-    ]);
+  const workflowRun = await start(runAssistantWorkflow, [
+    providedInstanceId,
+    message,
+    site_id,
+    user_id,
+    customTools,
+    use_sdk_tools,
+    system_prompt,
+    undefined,
+    undefined,
+    providedNodeId,
+    expectedResults,
+    parsedBody.context
+  ]);
 
     // Return stream response compatible with Vercel Workflow result streaming
     return new Response(workflowRun.readable, {
