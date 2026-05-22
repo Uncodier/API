@@ -58,9 +58,12 @@ function extractNodeImageUrls(node: any): string[] {
 
   if (!parsed?.outputs || !Array.isArray(parsed.outputs)) return [];
 
-  return parsed.outputs
+  const urls = parsed.outputs
     .filter((o: any) => o.type === 'image' && o.data?.url)
     .map((o: any) => o.data.url as string);
+    
+  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node result outputs`);
+  return urls;
 }
 
 /**
@@ -79,7 +82,7 @@ function buildContextContent(
   const parts: any[] = [];
   
   // Include URLs in text so the LLM knows the actual strings to pass to tools
-  const urlText = imageUrls.length > 0 ? `\nImage URLs for reference:\n${imageUrls.join('\n')}` : '';
+  const urlText = imageUrls.length > 0 ? `\n\nCRITICAL - Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${imageUrls.join('\n')}` : '';
   const combinedText = `[Context from node ${label}]: ${text}${urlText}`;
   
   parts.push({ type: 'text', text: combinedText });

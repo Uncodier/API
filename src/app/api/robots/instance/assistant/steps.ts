@@ -336,7 +336,7 @@ EXECUTION:
 🎙️ MULTIMEDIA GENERATION:
 - When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tool_lookup to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
 - When generating IMAGES, you MUST use the \`generate_image\` tool via tool_lookup.
-- When generating VIDEO, you MUST use the \`generate_video\` tool via tool_lookup.
+- When generating VIDEO, you MUST use the \`generate_video\` tool via tool_lookup. If there are Image URLs for reference in the context or user messages, you MUST pass them to the \`reference_images\` parameter array.
 - CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
 
   const toolLookupInstruction = `

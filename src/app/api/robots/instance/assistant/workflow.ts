@@ -48,8 +48,10 @@ export async function runAssistantWorkflow(
   
   // If we have image assets, format as multimodal message
   if (context.imageAssets && context.imageAssets.length > 0) {
+    const assetUrlsText = `\n\nCRITICAL - Uploaded Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${context.imageAssets.map((img: any) => img.url).join('\n')}`;
+    
     userContent = [
-      { type: 'text', text: context.initialMessage }
+      { type: 'text', text: context.initialMessage + assetUrlsText }
     ];
     
     context.imageAssets.forEach((img: any) => {
