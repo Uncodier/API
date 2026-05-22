@@ -187,11 +187,8 @@ function mapDurationToValidValue(
     return undefined;
   }
 
-  // If reference images, must be 8
-  if (hasReferenceImages) {
-    return 8;
-  }
-
+  // Remove the strict 8 seconds constraint for reference images
+  // Let the Gemini API decide if it accepts other durations like 4 or 6.
   return seconds;
 }
 
