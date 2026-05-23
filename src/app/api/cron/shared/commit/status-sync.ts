@@ -239,6 +239,12 @@ export async function patchLatestRequirementStatusColumns(params: {
 
   const validInstance = instanceId && UUID_RE.test(instanceId) ? instanceId : null;
 
+  // Only consider rows scoped to the (requirement, instance) pair we are
+  // committing for. Falling back to "any row with this requirement_id" used to
+  // patch rows that belonged to a different instance/project, polluting their
+  // snapshot_id/preview_url and ultimately causing fresh requirements to boot
+  // with another project's filesystem. If no row exists for this pair we
+  // insert a brand new one below.
   let rowId: string | null = null;
   let existingPreviewUrl: string | null = null;
   if (validInstance) {
@@ -251,16 +257,18 @@ export async function patchLatestRequirementStatusColumns(params: {
       .limit(1);
     rowId = scoped?.[0]?.id ?? null;
     existingPreviewUrl = scoped?.[0]?.preview_url ?? null;
-  }
-  if (!rowId) {
-    const { data: anyRow } = await supabaseAdmin
+  } else {
+    // Legacy callers without an instance — still scope by requirement_id only,
+    // but only fall back to "latest row" when the caller could not provide a
+    // narrower scope. Same project at minimum.
+    const { data: scoped } = await supabaseAdmin
       .from('requirement_status')
       .select('id, preview_url')
       .eq('requirement_id', requirementId)
       .order('created_at', { ascending: false })
       .limit(1);
-    rowId = anyRow?.[0]?.id ?? null;
-    existingPreviewUrl = anyRow?.[0]?.preview_url ?? null;
+    rowId = scoped?.[0]?.id ?? null;
+    existingPreviewUrl = scoped?.[0]?.preview_url ?? null;
   }
 
   if (rowId) {
@@ -284,17 +292,24 @@ export async function patchLatestRequirementStatusColumns(params: {
   }
 
   try {
-    // Carry over active_sandbox_id if we are creating a new row
+    // Carry over active_sandbox_id only when it belongs to the SAME
+    // (requirement, instance) pair. Pulling it from any row of the same
+    // requirement used to attach a sandbox owned by a different project,
+    // which the next cycle then tried to reuse — feeding the cross-project
+    // contamination on freshly-started requirements.
     let active_sandbox_id: string | null = null;
-    const { data: anyRow } = await supabaseAdmin
-      .from('requirement_status')
-      .select('active_sandbox_id')
-      .eq('requirement_id', requirementId)
-      .not('active_sandbox_id', 'is', null)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .maybeSingle();
-    active_sandbox_id = anyRow?.active_sandbox_id || null;
+    if (validInstance) {
+      const { data: scopedRow } = await supabaseAdmin
+        .from('requirement_status')
+        .select('active_sandbox_id')
+        .eq('requirement_id', requirementId)
+        .eq('instance_id', validInstance)
+        .not('active_sandbox_id', 'is', null)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      active_sandbox_id = scopedRow?.active_sandbox_id || null;
+    }
 
     await createRequirementStatusCore({
       site_id: resolvedSiteId,

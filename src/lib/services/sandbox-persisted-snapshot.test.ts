@@ -12,8 +12,12 @@ const binding: GitBinding = {
 };
 
 describe('persistedSnapshotMatchesBinding', () => {
-  it('returns true when repo_url is null', () => {
-    expect(persistedSnapshotMatchesBinding(reqId, binding, null)).toBe(true);
+  it('returns false when repo_url is null (cannot prove ownership)', () => {
+    expect(persistedSnapshotMatchesBinding(reqId, binding, null)).toBe(false);
+  });
+
+  it('returns false when repo_url is empty', () => {
+    expect(persistedSnapshotMatchesBinding(reqId, binding, '   ')).toBe(false);
   });
 
   it('returns false when org mismatches', () => {

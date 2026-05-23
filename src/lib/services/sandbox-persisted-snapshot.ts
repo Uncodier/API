@@ -30,6 +30,12 @@ export async function fetchLatestRequirementSnapshotRow(
   instanceId?: string | null,
 ): Promise<PersistedSnapshotRow | null> {
   const validInstance = instanceId && UUID_RE.test(instanceId) ? instanceId : null;
+
+  // When we know the instance, scope the lookup strictly. The previous
+  // "any row" fallback let a snapshot persisted by a different instance
+  // (same requirement_id) leak into the new sandbox bootstrap, which was
+  // one of the vectors causing fresh requirements to boot with another
+  // project's filesystem. Requiring an exact match is the safe default.
   if (validInstance) {
     const { data } = await supabaseAdmin
       .from('requirement_status')
@@ -43,7 +49,11 @@ export async function fetchLatestRequirementSnapshotRow(
     if (data?.snapshot_id?.trim()) {
       return { snapshot_id: data.snapshot_id.trim(), repo_url: data.repo_url ?? null };
     }
+    return null;
   }
+
+  // No instance context (legacy callers). Still constrained to the exact
+  // requirement_id; if there are no rows, do not invent a snapshot.
   const { data: anyRow } = await supabaseAdmin
     .from('requirement_status')
     .select('snapshot_id, repo_url')
@@ -131,25 +141,35 @@ export async function fetchAllRequirementSnapshotRows(
     }));
 }
 
+const DELETE_SNAPSHOT_TIMEOUT_MS = 5000;
+
 /**
  * Attempts to delete a snapshot from Vercel by ID.
  * Does not throw on failure to avoid breaking the main flow.
  */
 export async function deleteSnapshotQuiet(snapshotId: string): Promise<void> {
   if (!snapshotId) return;
-  
-  try {
-    const token = process.env.VERCEL_TOKEN || process.env.VERCEL_API_TOKEN;
-    if (!token) {
-      console.warn(`[Sandbox] 🧹 CLEANUP: Cannot delete snapshot ${snapshotId} because VERCEL_TOKEN is not set.`);
-      return;
-    }
 
+  const token = process.env.VERCEL_TOKEN || process.env.VERCEL_API_TOKEN;
+  if (!token) {
+    console.warn(`[Sandbox] 🧹 CLEANUP: Cannot delete snapshot ${snapshotId} because VERCEL_TOKEN is not set.`);
+    return;
+  }
+
+  // Hard timeout: if the Vercel API is slow or unreachable we must not block
+  // the caller — a hanging DELETE used to eat the workflow's maxDuration and
+  // leak the freshly-created sandbox VM. Anything that times out here is
+  // cleaned up by the snapshot housekeeping cron on the next pass.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DELETE_SNAPSHOT_TIMEOUT_MS);
+
+  try {
     const res = await fetch(`https://api.vercel.com/v1/sandboxes/snapshots/${snapshotId}`, {
       method: 'DELETE',
       headers: {
-        Authorization: `Bearer ${token}`
-      }
+        Authorization: `Bearer ${token}`,
+      },
+      signal: controller.signal,
     });
 
     if (res.ok) {
@@ -158,7 +178,14 @@ export async function deleteSnapshotQuiet(snapshotId: string): Promise<void> {
       console.warn(`[Sandbox] 🧹 CLEANUP: Failed to delete snapshot ${snapshotId}: ${res.status} ${await res.text()}`);
     }
   } catch (e: unknown) {
-    console.error(`[Sandbox] 🧹 CLEANUP: Error deleting snapshot ${snapshotId}:`, e instanceof Error ? e.message : e);
+    const msg = e instanceof Error ? e.message : String(e);
+    if ((e as any)?.name === 'AbortError') {
+      console.warn(`[Sandbox] 🧹 CLEANUP: deleteSnapshotQuiet timed out after ${DELETE_SNAPSHOT_TIMEOUT_MS}ms for ${snapshotId}.`);
+    } else {
+      console.error(`[Sandbox] 🧹 CLEANUP: Error deleting snapshot ${snapshotId}:`, msg);
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -348,10 +375,18 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
 
   let next: Sandbox | undefined;
   try {
-    // Fetch ALL previous snapshots before creating a new one
-    // so we can delete them later to avoid billing leaks
+    // Fetch ALL previous snapshots before creating a new one so we can delete
+    // them later to avoid billing leaks. `requirement_status` is append-only, so
+    // the same `snapshot_id` may appear many times across rows — deduplicate to
+    // keep the cleanup HTTP traffic bounded.
     const previousSnapshotRows = await fetchAllRequirementSnapshotRows(requirementId, auditCtx?.instanceId);
-    const previousSnapshotIds = previousSnapshotRows.map(r => r.snapshot_id).filter(id => id !== snapshotId);
+    const previousSnapshotIds = Array.from(
+      new Set(
+        previousSnapshotRows
+          .map(r => r.snapshot_id)
+          .filter(id => id && id !== snapshotId),
+      ),
+    );
 
     next = await Sandbox.create({
       runtime: 'node24',
@@ -372,18 +407,25 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
           .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, e));
       }
 
-      // No hacemos await aquí para no bloquear el setup del nuevo sandbox, 
-      // pero aseguramos que el proceso de apagado comience.
+      // No bloqueamos el setup del nuevo sandbox esperando al apagado del viejo.
+      // `sandbox.stop({ blocking: false })` ya devuelve rápido, pero envolvemos
+      // todo en fire-and-forget para que cualquier latencia residual no consuma
+      // el `maxDuration` del workflow y deje el `next` huérfano.
       stopSandboxQuiet(params.sandbox).catch(e => {
         console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
       });
       
-      // AWAIT the deletion of all previous snapshots 
-      // This prevents Sandbox Storage billing accumulation and race conditions where the process dies before deletion
+      // Fire-and-forget snapshot cleanup. We do NOT await: awaiting tied us to
+      // the latency of the Vercel snapshots API (and a duplicated rows list
+      // could mean dozens of redundant DELETEs), which killed the function
+      // mid-flight and leaked the freshly-created `next` VM. A separate
+      // housekeeping cron is responsible for re-trying any leftovers.
       if (previousSnapshotIds.length > 0) {
-        console.log(`[Sandbox] 🧹 CLEANUP: Attempting to delete ${previousSnapshotIds.length} old snapshots for requirement ${requirementId}...`);
-        await Promise.allSettled(
-          previousSnapshotIds.map(id => deleteSnapshotQuiet(id))
+        console.log(`[Sandbox] 🧹 CLEANUP: Scheduling background deletion of ${previousSnapshotIds.length} old snapshots for requirement ${requirementId}.`);
+        Promise.allSettled(
+          previousSnapshotIds.map(id => deleteSnapshotQuiet(id)),
+        ).catch(e =>
+          console.error('[Sandbox] 🚨 background snapshot cleanup failed:', e),
         );
       }
     }

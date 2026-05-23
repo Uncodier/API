@@ -159,18 +159,52 @@ export async function prepareAssistantContext(
       }
   }
 
-  // Fetch requirement_status context
+  // Fetch requirement_status context.
+  //
+  // CRITICAL: `requirement_status` is append-only and shared across every
+  // requirement that ever ran in this instance. We used to pick the latest row
+  // blindly and tell the assistant "Current Requirement ID: <last>", which
+  // caused cross-project contamination — a fresh conversation in a reused
+  // instance would inherit the previous requirement (and, via the sandbox
+  // bootstrap, that requirement's snapshot/preview).
+  //
+  // Now we only treat a requirement as "active" when:
+  //   (a) the requirement row itself is still open
+  //       (`status` in 'pending' / 'in-progress' / 'blocked'), AND
+  //   (b) the latest status row for that requirement is non-terminal.
+  // Terminal requirements never leak into the new prompt.
   const { data: requirementStatuses } = await supabaseAdmin
     .from('requirement_status')
     .select('*')
     .eq('instance_id', instanceId)
     .order('created_at', { ascending: false })
     .limit(10);
-    
+
   let requirementStatusContext = '';
-  let activeRequirementId = null;
+  let activeRequirementId: string | null = null;
   if (requirementStatuses && requirementStatuses.length > 0) {
-    activeRequirementId = requirementStatuses[0].requirement_id;
+    const TERMINAL_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);
+    const candidateId = requirementStatuses[0].requirement_id;
+    const latestStage = String(requirementStatuses[0].stage || '').toLowerCase();
+
+    if (candidateId && !TERMINAL_STAGES.has(latestStage)) {
+      const { data: reqRow } = await supabaseAdmin
+        .from('requirements')
+        .select('status')
+        .eq('id', candidateId)
+        .maybeSingle();
+      const reqStatus = String(reqRow?.status || '').toLowerCase();
+      const isOpen =
+        !reqStatus || reqStatus === 'pending' || reqStatus === 'in-progress' || reqStatus === 'blocked';
+      if (isOpen) {
+        activeRequirementId = candidateId;
+      } else {
+        console.log(
+          `[AssistantContext] Skipping activeRequirementId=${candidateId}: requirement is terminal (${reqStatus}). Avoiding cross-project context leak.`,
+        );
+      }
+    }
+
     requirementStatusContext = '\n\n📋 REQUIREMENT STATUS CONTEXT:\n';
     requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
     requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
