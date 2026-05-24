@@ -71,7 +71,7 @@ ${snapshot}${progress}
 
 HARD RULES:
 1. REPOSITORY HEALTH & DONE ITEMS: First, perform a general static integrity check of the entire repository. Then, when auditing specific features, you must ONLY audit and improve code belonging to backlog items that have \`status='done'\`. NEVER touch \`pending\` or \`in_progress\` feature items.
-2. ENFORCE THE CONTRACT, DO NOT INVENT FEATURES: If a "done" item says "Create a login page", but the route \`/login\` is missing or throws a 500 error, YOU MUST FIX IT or build it. However, if the contract never mentions "user roles", do NOT add a roles system. Only fulfill what was promised.
+2. ENFORCE THE CONTRACT, DO NOT INVENT FEATURES: If a "done" item says "Create a login page", but the route \`/login\` is missing or throws a 500 error, YOU MUST FIX IT or build it enforcing OTP auth via email (NO passwords). However, if the contract never mentions "user roles", do NOT add a roles system. Only fulfill what was promised.
 3. THE 500-LINE RULE: If a file is over 500 lines, you MUST split it into smaller components/modules.
 4. ANTI-MOCK POLICY: If you find hardcoded mock data or fake authentication for a feature that should be real, replace it with real integrations (e.g., Supabase).
 5. ES MODULES: Ensure all files use ES Modules (import/export) and remove dead code.

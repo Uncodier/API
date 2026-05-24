@@ -215,7 +215,7 @@ function buildCoreAcceptance(title: string, kind: BacklogItemKind): string[] {
       out.push(`GET /api/${slugify(title)} returns 200`);
       break;
     case 'auth':
-      out.push(`/login accepts credentials and redirects on success`);
+      out.push(`/login accepts OTP via email (no passwords) and redirects on success`);
       break;
     case 'integration':
       out.push(`Integration endpoint responds 200 on a live probe`);

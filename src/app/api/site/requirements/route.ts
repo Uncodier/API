@@ -360,8 +360,7 @@ function generateFallbackResponse(params: z.infer<typeof RequestSchema>, process
         technologies: ['OAuth 2.0', 'JWT', 'HTTPS'],
         suggested_libraries: ['Auth0', 'Passport.js', 'NextAuth'],
         steps: [
-          'Implementar autenticación básica con email/password',
-          'Añadir soporte para autenticación de dos factores',
+          'Implementar autenticación básica con OTP vía email',
           'Configurar políticas de seguridad para sesiones',
           'Implementar recuperación de contraseñas segura'
         ]

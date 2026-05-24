@@ -103,8 +103,25 @@ export async function GET(req: Request) {
       const currentAttempt = requirement.metadata?.cron_attempts || 0;
       const lastQaAttempt = requirement.metadata?.qa_last_attempt_sync || -1;
       
-      if (!hasActivePlan && lastQaAttempt === currentAttempt) {
-        console.log(`[Cron Maintenance] Skipping ${reqId} — QA already ran for main builder attempt ${currentAttempt} and has no active plan`);
+      let mainInstanceActivityMs = 0;
+      const runnerInstanceId = requirement.metadata?.runner_instance_id;
+      if (runnerInstanceId) {
+        const { data: latestLog } = await supabaseAdmin
+          .from('instance_logs')
+          .select('created_at')
+          .eq('instance_id', runnerInstanceId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+        if (latestLog) {
+          mainInstanceActivityMs = new Date(latestLog.created_at).getTime();
+        }
+      }
+      
+      const lastQaActivitySync = requirement.metadata?.qa_last_activity_sync || 0;
+      
+      if (!hasActivePlan && lastQaAttempt === currentAttempt && lastQaActivitySync >= mainInstanceActivityMs) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — QA already ran for main builder attempt ${currentAttempt} and no recent activity. No active plan.`);
         
         if (instanceId) {
           await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
@@ -130,7 +147,11 @@ export async function GET(req: Request) {
       console.log(`[Cron Maintenance] Processing ${reqId}: ${title}`);
 
       // Update the sync tracker so it doesn't run again for this main workflow cycle
-      const updatedMetadata = { ...requirement.metadata, qa_last_attempt_sync: currentAttempt };
+      const updatedMetadata = { 
+        ...requirement.metadata, 
+        qa_last_attempt_sync: currentAttempt,
+        qa_last_activity_sync: mainInstanceActivityMs
+      };
       await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
       requirement.metadata = updatedMetadata;
 
