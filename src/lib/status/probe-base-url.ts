@@ -1,6 +1,7 @@
 export function getProbeBaseUrl(): string | null {
   const raw =
     process.env.STATUS_PROBE_BASE_URL?.trim() ||
+    (process.env.VERCEL_ENV === 'production' ? process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim() : null) ||
     process.env.VERCEL_URL?.trim() ||
     (process.env.NODE_ENV !== 'production' ? 'http://localhost:3001' : null);
   if (!raw) return null;
@@ -29,6 +30,12 @@ export async function probeHttpRoute(
     const headers: Record<string, string> = {
       ...(fetchOptions.headers as Record<string, string>),
     };
+    
+    // Add Vercel Protection Bypass for preview deployments
+    if (process.env.VERCEL_AUTOMATION_BYPASS_SECRET) {
+      headers['x-vercel-protection-bypass'] = process.env.VERCEL_AUTOMATION_BYPASS_SECRET;
+    }
+
     const serviceKey = process.env.SERVICE_API_KEY?.trim();
     const hasAuthHeader = !!(headers['Authorization'] || headers['authorization']);
     if (

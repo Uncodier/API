@@ -13,13 +13,12 @@ export const aiPortkeyHandler: SystemHealthHandler = {
   probePath: '/api/ai',
   async runCheck() {
     const start = Date.now();
-    const [anthropic, openai, gemini] = await Promise.all([
-      probePortkeyProvider('anthropic'),
+    const [openai, gemini] = await Promise.all([
       probePortkeyProvider('openai'),
       probePortkeyProvider('gemini'),
     ]);
-    const providers = { anthropic, openai, gemini };
-    const { status, degradedReasons } = evaluateAiProviders(providers, ['anthropic']);
+    const providers = { openai, gemini };
+    const { status, degradedReasons } = evaluateAiProviders(providers, ['openai']);
     const latencyMs = Date.now() - start;
     return buildHealthResponse({
       systemKey: 'ai_portkey',

@@ -43,7 +43,6 @@ jobs:
           STATUS_PROBE_BASE_URL: ${{ secrets.STATUS_PROBE_BASE_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
           PORTKEY_API_KEY: ${{ secrets.PORTKEY_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
           AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
           AZURE_OPENAI_CHAT_DEPLOYMENT: ${{ secrets.AZURE_OPENAI_CHAT_DEPLOYMENT }}

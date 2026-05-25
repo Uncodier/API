@@ -134,15 +134,13 @@ function notProbedResult(model: string, reason: string): ProviderProbeResult {
 }
 
 export async function probePortkeyProvider(
-  modelType: 'anthropic' | 'openai' | 'gemini',
+  modelType: 'openai' | 'gemini',
 ): Promise<ProviderProbeResult> {
   const virtualKeyMap: Record<string, string | undefined> = {
-    anthropic: getEnv('ANTHROPIC_API_KEY'),
     openai: getEnv('AZURE_OPENAI_API_KEY'),
     gemini: getEnv('GEMINI_API_KEY'),
   };
   const defaultModels: Record<string, string> = {
-    anthropic: 'claude-3-haiku-20240307',
     openai: 'gpt-5-nano',
     gemini: getGeminiProbeModel(),
   };
@@ -165,11 +163,9 @@ export async function probePortkeyProvider(
     });
     const requestOptions = getRequestOptions(modelType);
     const model =
-      modelType === 'anthropic'
-        ? requestOptions.anthropic.model
-        : modelType === 'openai'
-          ? requestOptions.openai.model
-          : requestOptions.gemini.model;
+      modelType === 'openai'
+        ? requestOptions.openai.model
+        : requestOptions.gemini.model;
 
     const completionBody: Record<string, unknown> = {
       messages: [{ role: 'user', content: PROBE_MESSAGE }],

@@ -63,7 +63,7 @@ export async function apiKeyAuth(req: NextRequest) {
     }
 
     // Primero verificar si es el SERVICE_API_KEY para servicios internos
-    const serviceApiKey = process.env.SERVICE_API_KEY;
+    const serviceApiKey = process.env.SERVICE_API_KEY?.trim();
     if (serviceApiKey && apiKey === serviceApiKey) {
       console.log('[API Key Auth] Valid SERVICE_API_KEY detected');
       // API key de servicio válida, dar acceso completo
