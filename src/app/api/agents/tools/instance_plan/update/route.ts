@@ -62,7 +62,7 @@ export async function updateInstancePlanCore(params: any) {
   // Verificar que el plan existe y pertenece al sitio
   const { data: existingPlan, error: fetchError } = await supabaseAdmin
     .from('instance_plans')
-    .select('site_id, steps') // Select steps as well
+    .select('site_id, steps, status, instance_id') // Select steps, status, instance_id as well
     .eq('id', plan_id)
     .single();
 
@@ -149,7 +149,7 @@ export async function updateInstancePlanCore(params: any) {
 
     const currentSteps = existingPlan.steps || [];
     const updatedSteps = currentSteps.map((currentStep: any) => {
-      const incomingStep = updates.steps.find((s: any) =>
+      const incomingStep = updates.steps!.find((s: any) =>
         (s.id && s.id === currentStep.id) ||
         (s.order !== undefined && s.order === currentStep.order)
       );
@@ -170,7 +170,7 @@ export async function updateInstancePlanCore(params: any) {
     // Add new steps that might be in updates.steps but not in currentSteps
     const seenNewTitles = new Set<string>();
 
-    updates.steps.forEach((incomingStep: any) => {
+    updates.steps!.forEach((incomingStep: any) => {
       if (!currentSteps.some((currentStep: any) =>
         (incomingStep.id && currentStep.id === incomingStep.id) ||
         (incomingStep.order !== undefined && currentStep.order === incomingStep.order)

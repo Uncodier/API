@@ -151,7 +151,7 @@ export async function executeAssistantStep(
     user_id,
   } = options || {};
   
-  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
+  const provider = options?.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
 
   if (site_id) {
     try {
@@ -234,6 +234,8 @@ export async function executeAssistantStep(
       // call tools, see results, and produce a final text — all in one shot.
       const nodeMaxIterations = instance_node_id ? 5 : 1;
 
+      let executionResult: any;
+
       // --- MULTI-OUTPUT: N > 1 -> fan-out parallel LLM calls ---
       if (promptNode && expectedResults > 1) {
         console.log(`[Node Executor] Multi-output: creating ${expectedResults} response nodes`);
@@ -245,8 +247,8 @@ export async function executeAssistantStep(
         // Run N independent LLM calls in parallel
         const initialOutputs = buildInitialNodeResult(promptNode).outputs;
         const parallelExecutor = new AIAgentExecutor({
-          provider: options.ai_provider,
-          model: options.ai_model,
+          provider: options?.ai_provider,
+          model: options?.ai_model,
         });
         const parallelPromises = responseNodeIds.map(async (nodeId: string, index: number) => {
           let accumulatedText = '';
@@ -258,7 +260,7 @@ export async function executeAssistantStep(
               tools: prepared.tools,
               system: system_prompt,
               messages: [...messages],
-              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
+              onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
               stream: true,
               onStreamStart: async () => {
                 return `node-stream-${nodeId}`;
@@ -298,7 +300,7 @@ export async function executeAssistantStep(
         }
 
         // Return the first valid result to maintain compatibility
-        var executionResult: any = firstValid || { text: '', output: null, usage: {}, steps: [], messages, isDone: true };
+        executionResult = firstValid || { text: '', output: null, usage: {}, steps: [], messages, isDone: true };
 
       // --- SINGLE OUTPUT: N = 1 -> original behavior ---
       } else {
@@ -334,11 +336,11 @@ export async function executeAssistantStep(
           }
         } : undefined;
 
-        var executionResult = await executor.act({
+        executionResult = await executor.act({
                 tools: prepared.tools,
                 system: system_prompt,
                 messages: messages,
-                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
+                onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
                 stream: !!streamingCallbacks || !!nodeCallbacks,
                 onStreamStart: wrappedOnStreamStart,
                 onStreamChunk: wrappedOnStreamChunk,
@@ -346,7 +348,7 @@ export async function executeAssistantStep(
                 onThinkingStreamChunk: thinkingStreamCallbacks?.onThinkingStreamChunk,
                 onReasoningTokensUsed: thinkingStreamCallbacks?.onReasoningTokensUsed,
                 maxIterations: nodeMaxIterations,
-                enforceSingleTurn: options.enforceSingleTurn
+                enforceSingleTurn: options?.enforceSingleTurn
             });
 
         // Finalize node — pack text + tool outputs into unified result
@@ -432,7 +434,7 @@ export async function executeAssistant(
     user_id,
   } = options || {};
   
-  const provider = options.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
+  const provider = options?.provider || process.env.ROBOT_SDK_PROVIDER || 'gemini';
 
   if (site_id) {
     try {
@@ -465,8 +467,8 @@ export async function executeAssistant(
     console.log(`₍ᐢ•(ܫ)•ᐢ₎ Using AI assistant without Scrapybara tools`);
 
     const executor = new AIAgentExecutor({
-      provider: options.ai_provider,
-      model: options.ai_model,
+      provider: options?.ai_provider,
+      model: options?.ai_model,
     });
     const streamingCallbacks =
       instance_id && site_id
@@ -481,7 +483,7 @@ export async function executeAssistant(
         tools: prepared.tools, // Use tools from prepared
         system: system_prompt,
         prompt: prompt,
-        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options.plan_id, options.step_id, options.requirement_id),
+        onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
         stream: !!streamingCallbacks,
         onStreamStart: streamingCallbacks?.onStreamStart,
         onStreamChunk: streamingCallbacks?.onStreamChunk,
