@@ -20,16 +20,8 @@ const corsConfig = {
       'https://docs.uncodie.com',
       'https://api.uncodie.com',
       "https://backend.uncodie.com",
-      // 'https://api.makinari.com', // Deprecated
       "https://app.makinari.com",
       'https://backend.makinari.com',
-      // También permitir orígenes de desarrollo en producción para pruebas
-      'http://localhost:3000',
-      'http://localhost:3456',
-      'http://localhost:3001',
-      'http://127.0.0.1:3456',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:3001',
       // Dominios de Twilio (para casos especiales, no típico para webhooks)
       'https://twilio.com',
       'https://www.twilio.com',

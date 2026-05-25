@@ -25,7 +25,9 @@ export async function apiKeyAuth(req: NextRequest) {
         reason: 'Has origin (browser request)',
         origin
       });
-      return NextResponse.next();
+      const safeHeaders = new Headers(req.headers);
+      safeHeaders.delete('x-api-key-data');
+      return NextResponse.next({ request: { headers: safeHeaders } });
     }
 
     console.log('[API Key Auth] Processing server-to-server request (no origin)');
@@ -72,8 +74,14 @@ export async function apiKeyAuth(req: NextRequest) {
         isService: true
       };
       
-      req.headers.set('x-api-key-data', JSON.stringify(serviceKeyData));
-      return NextResponse.next();
+      const requestHeaders = new Headers(req.headers);
+      requestHeaders.set('x-api-key-data', JSON.stringify(serviceKeyData));
+      
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      });
     }
 
     console.log('[API Key Auth] Validating API key against database');
@@ -120,10 +128,15 @@ export async function apiKeyAuth(req: NextRequest) {
     }
 
     // Añadir información de la API key a la request para uso posterior
-    req.headers.set('x-api-key-data', JSON.stringify(keyData));
+    const requestHeaders = new Headers(req.headers);
+    requestHeaders.set('x-api-key-data', JSON.stringify(keyData));
     
     console.log('[API Key Auth] API key validation successful');
-    return NextResponse.next();
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
   } catch (error) {
     console.error('[API Key Auth] Error in API key authentication:', error);
     return NextResponse.json(

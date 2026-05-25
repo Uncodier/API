@@ -20,6 +20,13 @@ import { apiKeyAuth } from './middleware/apiKeyAuth';
 export default async function middleware(request) {
   const isDevMode = process.env.NODE_ENV !== 'production';
   
+  // PREVENCIÓN CRÍTICA: Eliminar el header de datos de API key falsificado
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.delete('x-api-key-data');
+  
+  // Helper para preservar los headers seguros
+  const safeNext = () => NextResponse.next({ request: { headers: requestHeaders } });
+  
   // Check if it's a WhatsApp webhook route (they have their own Twilio validation)
   const wpWebhookPaths = [
     '/api/agents/whatsapp',
@@ -51,7 +58,7 @@ export default async function middleware(request) {
     (path.startsWith('/api/ai/') && path.endsWith('/health'));
 
   if (isStatusHealthRoute && request.method === 'GET') {
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Status-Health', 'true');
     return response;
@@ -65,8 +72,8 @@ export default async function middleware(request) {
     request.method === 'GET' &&
     cronSecret &&
     authHeader === `Bearer ${cronSecret}`
-  ) {
-    const response = NextResponse.next();
+    ) {
+    const response = safeNext();
     response.headers.set('X-Cron-Auth', 'true');
     return response;
   }
@@ -97,7 +104,7 @@ export default async function middleware(request) {
   // Para WhatsApp webhook, permitir sin validación (Twilio valida en la ruta)
   if (isWhatsAppWebhook) {
     console.log('[Middleware] WhatsApp webhook detected - skipping origin/API validation');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-WhatsApp-Webhook', 'true');
     return response;
@@ -106,7 +113,7 @@ export default async function middleware(request) {
   // Para Stripe webhook, permitir sin validación (Stripe valida con firma)
   if (isStripeWebhook) {
     console.log('[Middleware] Stripe webhook detected - skipping origin/API validation');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Stripe-Webhook', 'true');
     return response;
@@ -115,7 +122,7 @@ export default async function middleware(request) {
   // Para AgentMail webhooks, permitir sin validación (Svix valida con firma)
   if (isAgentMailWebhook) {
     console.log('[Middleware] AgentMail webhook detected - skipping origin/API validation');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-AgentMail-Webhook', 'true');
     return response;
@@ -124,7 +131,7 @@ export default async function middleware(request) {
   // Para Outstand webhooks, permitir sin API key (firma HMAC en la ruta)
   if (isOutstandWebhook) {
     console.log('[Middleware] Outstand webhook detected - skipping origin/API validation');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Outstand-Webhook', 'true');
     return response;
@@ -133,7 +140,7 @@ export default async function middleware(request) {
   // Para Vercel webhook, permitir sin API key (secret validado en la ruta)
   if (isVercelWebhook) {
     console.log('[Middleware] Vercel webhook detected - skipping origin/API validation');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Vercel-Webhook', 'true');
     return response;
@@ -148,7 +155,7 @@ export default async function middleware(request) {
       const isOriginAllowedCheck = await isOriginAllowed(origin);
       if (isOriginAllowedCheck || isDevMode) {
         console.log('[Middleware] Public route accessed from allowed origin');
-        const response = NextResponse.next();
+        const response = safeNext();
         response.headers.set('X-Middleware-Executed', 'true');
         response.headers.set('X-Public-Route', 'true');
         
@@ -174,7 +181,7 @@ export default async function middleware(request) {
       }
       
       console.log('[Middleware] Public route API key validation passed');
-      const response = NextResponse.next();
+      const response = apiKeyResponse;
       response.headers.set('X-Middleware-Executed', 'true');
       response.headers.set('X-Public-Route-Authenticated', 'true');
       return response;
@@ -225,7 +232,8 @@ export default async function middleware(request) {
   // Si no hay origin (petición machine-to-machine), validar API key
   if (!origin) {
     // En desarrollo local, permitir requests sin API key si vienen de localhost
-    const isLocalhost = request.url.includes('localhost') || request.url.includes('127.0.0.1') || request.url.includes('0.0.0.0');
+    const hostname = request.nextUrl.hostname;
+    const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
     
     if (isDevMode && isLocalhost) {
       console.log('[Middleware] Localhost request in dev mode - skipping API key validation');
@@ -244,7 +252,7 @@ export default async function middleware(request) {
   // En desarrollo, permitir todos los orígenes
   if (isDevMode && origin) {
     console.log('[Middleware] Dev mode with origin - allowing all origins');
-    const response = NextResponse.next();
+    const response = safeNext();
     response.headers.set('Access-Control-Allow-Origin', origin);
     response.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     response.headers.set('Access-Control-Allow-Headers', getAllowedHeaders());
@@ -265,7 +273,7 @@ export default async function middleware(request) {
   }
   
   // Para solicitudes normales
-  const response = NextResponse.next();
+  const response = safeNext();
   
   // Añadir encabezado Vary para controlar caché
   response.headers.set('Vary', 'Origin');

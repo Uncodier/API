@@ -148,16 +148,17 @@ function extractDomain(origin: string): string | null {
 export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
   // Handle null, undefined, 'null' string, or empty origins
   if (!origin || origin === 'null' || origin === 'undefined' || typeof origin !== 'string') {
-    console.warn('[CORS-DB] Invalid or missing origin, allowing request:', origin);
-    return true; // Allow requests without valid origin (like Postman, curl, etc.)
+    console.warn('[CORS-DB] Invalid or missing origin, denying request:', origin);
+    return false; // Prevent null origins and invalid origins from bypassing CORS
   }
 
   // Extract domain from origin
   const domain = extractDomain(origin);
   if (!domain) {
     console.error('[CORS-DB] Could not extract domain from origin:', origin);
-    // If we can't extract domain but it's a localhost origin, allow it
-    if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
+    // If we can't extract domain but it's a localhost origin, allow it securely
+    if (origin === 'http://localhost' || origin.startsWith('http://localhost:') || 
+        origin === 'http://127.0.0.1' || origin.startsWith('http://127.0.0.1:')) {
       console.info('[CORS-DB] Allowing localhost origin:', origin);
       return true;
     }
@@ -181,16 +182,14 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
     const { data: siteData, error: siteError } = await supabaseAdmin
       .from('sites')
       .select('url')
-      .ilike('url', `%${domain}%`)
-      .maybeSingle();
+      .ilike('url', `%${domain}%`);
 
     if (siteError) {
       console.error('[CORS-DB] Error checking sites table:', siteError);
-    } else if (siteData) {
-      // Verify the domain matches exactly
-      const siteUrl = siteData.url;
-      const siteDomain = extractDomain(siteUrl);
-      if (siteDomain === domain) {
+    } else if (siteData && siteData.length > 0) {
+      // Verify the domain matches exactly to avoid sub-domain poisoning
+      const hasExactMatch = siteData.some(site => extractDomain(site.url) === domain);
+      if (hasExactMatch) {
         domainCache.set(domain, true);
         return true;
       }
@@ -200,7 +199,7 @@ export async function isOriginAllowedInDb(origin: string): Promise<boolean> {
     const { data: domainData, error: domainError } = await supabaseAdmin
       .from('allowed_domains')
       .select('domain')
-      .ilike('domain', `%${domain}%`);
+      .eq('domain', domain);
 
     if (domainError) {
       console.error('[CORS-DB] Error checking allowed_domains table:', domainError);
