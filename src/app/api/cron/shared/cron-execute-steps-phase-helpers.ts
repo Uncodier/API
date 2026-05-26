@@ -34,7 +34,7 @@ export async function getPlanExecutionGateStep(planId: string): Promise<PlanGate
   return getPlanExecutionGateFromStatus(data.status);
 }
 
-export async function updatePlanStepStatusStep(planId: string, stepId: string, status: string): Promise<void> {
+export async function updatePlanStepStatusStep(planId: string, stepId: string, status: string, errorMessage?: string): Promise<void> {
   'use step';
   const { data } = await supabaseAdmin
     .from('instance_plans')
@@ -54,6 +54,9 @@ export async function updatePlanStepStatusStep(planId: string, stepId: string, s
       steps[idx].completed_at = new Date().toISOString();
       if (status === 'failed') {
         steps[idx].retry_count = (steps[idx].retry_count || 0) + 1;
+        if (errorMessage) {
+          steps[idx].error_message = errorMessage;
+        }
       }
     }
 

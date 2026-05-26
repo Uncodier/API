@@ -380,7 +380,13 @@ export async function reconcilePlanStep(planId: string): Promise<string> {
   const completedCount = steps.filter((s) => s.status === 'completed').length;
   const allDone = steps.every((s) => s.status === 'completed');
   const anyFailed = steps.some((s) => s.status === 'failed');
-  const noPending = !steps.some((s) => s.status === 'pending' || s.status === 'in_progress');
+
+  const MAX_RETRIES = 2; // matches the threshold in workflow.ts
+  const isStillRunnable = (s: any) =>
+    s.status === 'pending' ||
+    s.status === 'in_progress' ||
+    (s.status === 'failed' && (s.retry_count ?? 0) < MAX_RETRIES);
+  const noPending = !steps.some(isStillRunnable);
 
   let planStatus = 'in_progress';
   if (allDone) planStatus = 'completed';

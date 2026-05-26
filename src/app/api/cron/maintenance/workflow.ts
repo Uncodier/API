@@ -9,7 +9,7 @@ import {
   releaseRunLockStep,
 } from '../shared/cron-steps';
 import { runMaintenanceAgentStep } from './agent-step';
-import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep } from '../shared/workflow-db-steps';
+import { getRequirementFullContextStep, unblockRequirementStep, checkInstanceAndPlanStatusStep, incrementQaSuccessfulRunsStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { buildMaintenancePromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import { sleep } from 'workflow';
@@ -206,6 +206,14 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
     console.error(`[QAWorkflow] 🚨 CRITICAL ERROR in workflow for req ${reqId}:`, e);
     throw e;
   } finally {
+    if (instanceId) {
+      try {
+        await updateInstanceStatusStep(instanceId, 'pending');
+      } catch (e: unknown) {
+        console.warn('[QAWorkflow] Failed to reset instance status to pending:', e);
+      }
+    }
+    
     if (sandboxId) {
       try {
         await stopSandboxStep(sandboxId, cronAudit);

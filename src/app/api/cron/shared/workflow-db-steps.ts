@@ -216,6 +216,62 @@ export async function incrementQaSuccessfulRunsStep(requirementId: string): Prom
   }
 }
 
+export async function updateInstanceStatusStep(instanceId: string, status: 'pending' | 'running' | 'paused'): Promise<void> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    await supabaseAdmin.from('remote_instances').update({ status }).eq('id', instanceId);
+    console.log(`[WorkflowDbStep] Updated instance ${instanceId} to status: ${status}`);
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to update instance ${instanceId} status:`, e);
+  }
+}
+
+export async function incrementNoProgressCyclesStep(requirementId: string): Promise<number> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    
+    const current = data?.metadata?.no_progress_cycles || 0;
+    const next = current + 1;
+    const newMetadata = data?.metadata 
+      ? { ...data.metadata, no_progress_cycles: next } 
+      : { no_progress_cycles: next };
+    
+    await supabaseAdmin.from('requirements').update({
+      metadata: newMetadata,
+      updated_at: new Date().toISOString()
+    }).eq('id', requirementId);
+    
+    console.log(`[WorkflowDbStep] Incremented no_progress_cycles for req ${requirementId} to ${next}`);
+    return next;
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to increment no_progress_cycles for req ${requirementId}:`, e);
+    return 0;
+  }
+}
+
+export async function resetNoProgressCyclesStep(requirementId: string): Promise<void> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+    
+    if (data?.metadata && data.metadata.no_progress_cycles) {
+      const newMetadata = { ...data.metadata };
+      delete newMetadata.no_progress_cycles;
+      await supabaseAdmin.from('requirements').update({
+        metadata: newMetadata,
+        updated_at: new Date().toISOString()
+      }).eq('id', requirementId);
+      console.log(`[WorkflowDbStep] Reset no_progress_cycles for req ${requirementId}`);
+    }
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to reset no_progress_cycles for req ${requirementId}:`, e);
+  }
+}
+
 export async function getInstanceBackgroundStep(
   siteId: string,
   userId: string,

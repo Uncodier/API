@@ -37,6 +37,9 @@ import {
   unblockRequirementStep,
   checkInstanceAndPlanStatusStep,
   getRequirementFullContextStep,
+  updateInstanceStatusStep,
+  incrementNoProgressCyclesStep,
+  resetNoProgressCyclesStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -332,6 +335,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       const startTime = Date.now();
       const MAX_EXECUTION_TIME_MS = 11 * 60 * 1000; // 11 minutes
 
+      const completedStepsBefore = allSteps.filter((s) => s.status === 'completed').length;
+
       outer: for (const planStep of stepsToRun) {
          let stepCompleted = false;
          let turnCount = 0;
@@ -380,7 +385,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                // Step failed
                anyStepFailed = true;
                console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
-               await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+               await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.error);
                break outer;
             }
 
@@ -466,6 +471,28 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
       const reconciledStatus = await reconcilePlanStep(activePlan.id);
       planCompleted = reconciledStatus === 'completed';
+
+      // Re-fetch the final plan to count completed steps
+      const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      const completedStepsAfter = (finalPlan?.steps as any[] || []).filter((s) => s.status === 'completed').length;
+      const deltaCompleted = completedStepsAfter - completedStepsBefore;
+
+      if (deltaCompleted === 0 && executed > 0) {
+        const noProgressCount = await incrementNoProgressCyclesStep(reqId);
+        if (noProgressCount >= 3) {
+          console.warn(`[CronAppsWorkflow] No progress for ${noProgressCount} cycles. Marking requirement as blocked.`);
+          await recordRequirementBlockedStep({
+            site_id,
+            instance_id: instanceId,
+            requirement_id: reqId,
+            message: `The plan has failed to complete any new step for ${noProgressCount} consecutive cycles. Circuit breaker triggered to avoid infinite loop.`,
+          });
+          // Avoid triggering further things in this cycle
+          planCompleted = false;
+        }
+      } else if (deltaCompleted > 0) {
+        await resetNoProgressCyclesStep(reqId);
+      }
     } else {
       console.log(`[CronAppsWorkflow] No active plan found.`);
       // If there's no active plan, but we didn't skip the cycle, it means we
@@ -570,7 +597,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     audit: cronAudit,
   });
 
-  if (didPush || planCompleted) {
+  if (planCompleted) {
     await unblockRequirementStep(reqId);
   }
 
@@ -583,6 +610,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
     // Let the finally block handle the sandbox stop
     throw e;
   } finally {
+    if (instanceId) {
+      try {
+        await updateInstanceStatusStep(instanceId, 'pending');
+      } catch (e: unknown) {
+        console.warn('[CronAppsWorkflow] Failed to reset instance status to pending:', e);
+      }
+    }
+    
     if (sandboxId) {
       try {
         await stopSandboxStep(sandboxId, cronAudit);

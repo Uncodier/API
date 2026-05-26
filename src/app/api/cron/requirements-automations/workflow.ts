@@ -25,7 +25,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
-import { recordRequirementBlockedStep, getRequirementFullContextStep } from '../shared/workflow-db-steps';
+import { recordRequirementBlockedStep, getRequirementFullContextStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -377,6 +377,14 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
   // Sandbox stop happens in the outer `finally` — never in the happy path.
   return { reqId, branch: effectiveBranch, previewUrl, status: finalStatus };
   } finally {
+    if (instanceId) {
+      try {
+        await updateInstanceStatusStep(instanceId, 'pending');
+      } catch (e: unknown) {
+        console.warn('[CronAutoWorkflow] Failed to reset instance status to pending:', e);
+      }
+    }
+    
     if (sandboxId) {
       try {
         await stopSandboxStep(sandboxId, cronAudit);

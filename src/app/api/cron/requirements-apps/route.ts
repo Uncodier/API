@@ -49,6 +49,36 @@ export async function GET(req: Request) {
     });
 
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    
+    // Quick pass: find recently updated done/on-review/cancelled requirements to either clean up their instances or revert them to in-progress
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentCompletedReqs } = await supabaseAdmin
+      .from('requirements')
+      .select('id, status, backlog, metadata, site_id')
+      .in('status', ['done', 'on-review', 'cancelled'])
+      .gte('updated_at', oneDayAgo)
+      .limit(20);
+      
+    if (recentCompletedReqs && recentCompletedReqs.length > 0) {
+      for (const req of recentCompletedReqs) {
+        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        
+        // Revert to in-progress if new items were added
+        if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
+          console.log(`[Cron Apps] Requirement ${req.id} is ${req.status} but has incomplete backlog. Reverting to in-progress.`);
+          await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
+        } else {
+          // Clean up running instances to pending
+          await supabaseAdmin
+            .from('remote_instances')
+            .update({ status: 'pending' })
+            .eq('site_id', req.site_id)
+            .like('name', `%req-%${req.id.substring(0, 8)}%`)
+            .in('status', ['running', 'starting', 'paused']);
+        }
+      }
+    }
+
     // Flow-agnostic: the cron picks any requirement kind (app/site/doc/slides/
     // contract/automation/task/makinari). The orchestrator resolves the flow
     // from `requirement.type` via `requirement-flow-engine.ts` and drives the
@@ -105,20 +135,21 @@ export async function GET(req: Request) {
         .eq('id', reqId)
         .single();
       
-      if (currentReq && ['cancelled', 'done'].includes(currentReq.status)) {
-        console.log(`[Cron Apps] Skipping ${reqId} — requirement is ${currentReq.status}`);
-        
-        // Clean up remote instances and instance plans associated with this done requirement
-        if (currentReq.status === 'done') {
-          console.log(`[Cron Apps] Cleaning up instances for done requirement ${reqId}`);
+      if (currentReq) {
+        const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+
+        if (['cancelled', 'done'].includes(currentReq.status) || (currentReq.status === 'on-review' && allBacklogDone)) {
+          console.log(`[Cron Apps] Skipping ${reqId} — requirement is ${currentReq.status}`);
           
-          // Pause/pending any running instances
+          console.log(`[Cron Apps] Cleaning up instances for ${currentReq.status} requirement ${reqId}`);
+          
+          // Pending any running/paused instances
           await supabaseAdmin
             .from('remote_instances')
             .update({ status: 'pending' })
             .eq('site_id', site_id)
             .like('name', `%req-%${reqId.substring(0, 8)}%`)
-            .in('status', ['running', 'starting']);
+            .in('status', ['running', 'starting', 'paused']);
             
           // Cancel any active plans
           // Note: instance_plans don't have requirement_id directly, they belong to the instance
@@ -136,11 +167,19 @@ export async function GET(req: Request) {
               .in('instance_id', instanceIds)
               .in('status', ['pending', 'in_progress']);
           }
+          
+          await releaseRunLock(reqId, runLock.runId);
+          results.push({ reqId, skipped: true, reason: currentReq.status });
+          continue;
         }
-        
-        await releaseRunLock(reqId, runLock.runId);
-        results.push({ reqId, skipped: true, reason: currentReq.status });
-        continue;
+
+        // Si estaba en on-review o done, pero agregaron un nuevo item que no está completo, debe regresar a in-progress
+        if (['on-review', 'done'].includes(currentReq.status) && !allBacklogDone) {
+          console.log(`[Cron Apps] Requirement ${reqId} is ${currentReq.status} but has incomplete backlog. Reverting to in-progress.`);
+          await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', reqId);
+          requirement.status = 'in-progress';
+          currentReq.status = 'in-progress';
+        }
       }
 
       // Find or create remote_instance for MAIN BUILDER
@@ -232,7 +271,7 @@ export async function GET(req: Request) {
 
         // Pause the main builder instance and plan so it doesn't consume resources
         if (instanceId) {
-          await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
+          await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
           await supabaseAdmin.from('instance_plans').update({ status: 'paused' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
         }
         
@@ -562,7 +601,7 @@ export async function GET(req: Request) {
 
             // Pause the main builder instance so it doesn't consume resources
             if (instanceId) {
-              await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
+              await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
             }
             
             await releaseRunLock(reqId, runLock.runId);

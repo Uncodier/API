@@ -28,6 +28,37 @@ export async function GET(req: Request) {
     });
 
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    
+    // Quick pass: find recently updated done/on-review/cancelled automations to either clean up their instances or revert them to in-progress
+    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: recentCompletedReqs } = await supabaseAdmin
+      .from('requirements')
+      .select('id, status, backlog, metadata, site_id')
+      .eq('type', 'automation')
+      .in('status', ['done', 'on-review', 'cancelled'])
+      .gte('updated_at', oneDayAgo)
+      .limit(20);
+      
+    if (recentCompletedReqs && recentCompletedReqs.length > 0) {
+      for (const req of recentCompletedReqs) {
+        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        
+        // Revert to in-progress if new items were added
+        if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
+          console.log(`[Cron Auto] Requirement ${req.id} is ${req.status} but has incomplete backlog. Reverting to in-progress.`);
+          await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
+        } else {
+          // Clean up running instances to pending
+          await supabaseAdmin
+            .from('remote_instances')
+            .update({ status: 'pending' })
+            .eq('site_id', req.site_id)
+            .like('name', `%req-%${req.id.substring(0, 8)}%`)
+            .in('status', ['running', 'starting', 'paused']);
+        }
+      }
+    }
+
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
@@ -261,7 +292,7 @@ export async function GET(req: Request) {
 
             // Pause the main builder instance so it doesn't consume resources
             if (instanceId) {
-              await supabaseAdmin.from('remote_instances').update({ status: 'paused' }).eq('id', instanceId);
+              await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
             }
             
             await releaseRunLock(reqId, runLock.runId);
