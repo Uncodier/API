@@ -445,7 +445,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   // Gate failed, do adaptation loop
                   anyStepFailed = true;
                   console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate failed`);
-                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed');
+                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', gateRes.gateErrorExcerpt);
                   
                   // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
                   break outer;

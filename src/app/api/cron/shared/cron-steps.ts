@@ -341,8 +341,11 @@ export async function checkRecentPlansGuardStep(params: {
   const minutesSinceLatest =
     latestCompletedAtMs !== null ? (Date.now() - latestCompletedAtMs) / 60_000 : Infinity;
 
-  const shouldBlockRequirement = false; // Disabled by user request
-  const shouldSkipOrchestrator = false; // Disabled by user request
+  const threshold = parseInt(process.env.CRON_RECENT_PLANS_BLOCK_THRESHOLD || '0', 10);
+  
+  // Reactivated with safety threshold fallback. Set CRON_RECENT_PLANS_BLOCK_THRESHOLD=5 to enable.
+  const shouldBlockRequirement = threshold > 0 && recentCount >= threshold;
+  const shouldSkipOrchestrator = threshold > 0 && minutesSinceLatest < skipAfterMinutes;
 
   let reason: string | undefined;
   if (shouldBlockRequirement) {
