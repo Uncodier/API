@@ -51,13 +51,12 @@ export async function GET(req: Request) {
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     
     // Quick pass: find recently updated done/on-review/cancelled requirements to either clean up their instances or revert them to in-progress
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
     const { data: recentCompletedReqs } = await supabaseAdmin
       .from('requirements')
       .select('id, status, backlog, metadata, site_id')
       .in('status', ['done', 'on-review', 'cancelled'])
-      .gte('updated_at', oneDayAgo)
-      .limit(20);
+      .order('updated_at', { ascending: false })
+      .limit(100);
       
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
@@ -67,8 +66,9 @@ export async function GET(req: Request) {
         if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
           console.log(`[Cron Apps] Requirement ${req.id} is ${req.status} but has incomplete backlog. Reverting to in-progress.`);
           await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
-        } else {
-          // Clean up running instances to pending
+        } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (allBacklogDone || req.status === 'cancelled')) {
+          // Si el requerimiento está en review, done o cancelado y tiene todos los items completos (o está cancelado),
+          // regresamos la instancia a pending (inicializando)
           await supabaseAdmin
             .from('remote_instances')
             .update({ status: 'pending' })
