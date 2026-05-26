@@ -107,5 +107,28 @@ export async function applyPendingMigrations(
     applied.push(file);
   }
 
+  if (applied.length > 0) {
+    // Automatically expose schemas to PostgREST to ensure new tables/schemas are visible
+    // and reload the schema cache so introspection works immediately.
+    const exposeSql = `
+      do $$
+      declare
+        current_schemas text;
+      begin
+        select string_agg(nspname, ',') into current_schemas
+        from pg_namespace
+        where nspname like 'app_%' or nspname in ('public', 'graphql_public', 'storage');
+        
+        execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
+      end $$;
+      notify pgrst, 'reload config';
+      notify pgrst, 'reload schema';
+    `;
+    const { error: exposeError } = await client.rpc('apps_exec_sql', { sql: exposeSql });
+    if (exposeError) {
+      errors.push(`Failed to auto-expose schema to PostgREST: ${exposeError.message}`);
+    }
+  }
+
   return { applied, errors };
 }

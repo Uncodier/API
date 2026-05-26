@@ -170,6 +170,7 @@ export async function ensureTenant(input: EnsureTenantInput): Promise<EnsureTena
         execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
       end $$;
       notify pgrst, 'reload config';
+      notify pgrst, 'reload schema';
     `;
     const exposeResult = await execSql(exposeSql);
     if (!exposeResult.ok) {
@@ -221,6 +222,7 @@ export async function destroyTenant(requirement_id: string): Promise<{ ok: boole
       execute format('alter role authenticator set pgrst.db_schemas = %L', current_schemas);
     end $$;
     notify pgrst, 'reload config';
+    notify pgrst, 'reload schema';
   `);
 
   const { error } = await client.from('apps_tenants').delete().eq('requirement_id', requirement_id);
