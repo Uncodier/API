@@ -24,7 +24,7 @@ function readAppsEnv(): AppsSupabaseEnv {
   const url = process.env.APPS_SUPABASE_URL || process.env.REPOSITORY_SUPABASE_URL;
   const serviceKey =
     process.env.APPS_SUPABASE_SERVICE_KEY || process.env.REPOSITORY_SUPABASE_SERVICE_ROLE_KEY;
-  const jwtSecret = process.env.APPS_SUPABASE_JWT_SECRET;
+  const jwtSecret = process.env.APPS_SUPABASE_JWT_SECRET || process.env.REPOSITORY_SUPABASE_JWT_SECRET;
   const anonKey =
     process.env.APPS_SUPABASE_ANON_KEY ||
     process.env.NEXT_PUBLIC_APPS_SUPABASE_ANON_KEY ||
