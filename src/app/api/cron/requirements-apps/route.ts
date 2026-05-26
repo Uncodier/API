@@ -136,6 +136,35 @@ export async function GET(req: Request) {
         .single();
       
       if (currentReq) {
+        const coreItems = (requirement.backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
+        const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
+
+        if (allCoreDone) {
+          const lastCoreUpdate = Math.max(
+            ...coreItems.map((i: any) => new Date(i.updated_at || 0).getTime())
+          );
+          const minutesSinceCoreDone = (Date.now() - lastCoreUpdate) / 60_000;
+
+          const COOLDOWN_MIN = parseInt(process.env.CRON_BACKLOG_DONE_COOLDOWN_MIN || '15', 10);
+
+          if (minutesSinceCoreDone < COOLDOWN_MIN) {
+            console.log(`[Cron Apps] Skip ${reqId} — core backlog done ${minutesSinceCoreDone.toFixed(1)} min ago (cooldown ${COOLDOWN_MIN} min)`);
+            await releaseRunLock(reqId, runLock.runId);
+            results.push({ reqId, skipped: true, reason: 'backlog_cooldown' });
+            continue;
+          }
+
+          if (currentReq.status !== 'on-review' && currentReq.status !== 'done' && currentReq.status !== 'cancelled') {
+            console.log(`[Cron Apps] Requirement ${reqId} cooldown expired. Auto-promoting to on-review.`);
+            await supabaseAdmin
+              .from('requirements')
+              .update({ status: 'on-review', updated_at: new Date().toISOString() })
+              .eq('id', reqId);
+            currentReq.status = 'on-review';
+            requirement.status = 'on-review';
+          }
+        }
+
         const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
 
         if (['cancelled', 'done'].includes(currentReq.status) || (currentReq.status === 'on-review' && allBacklogDone)) {
@@ -508,114 +537,6 @@ export async function GET(req: Request) {
             metadata: { ...requirement.metadata, has_completed_backlog: true }
           }).eq('id', reqId);
           requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
-        }
-
-        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
-        let shouldCountAsAllDone = allBacklogDone;
-
-        if (allBacklogDone) {
-          // Check if there is manual intervention or feedback indicating it should be reopened.
-          const latestBacklogUpdate = requirement.backlog.items.reduce((latest: Date, item: any) => {
-             const itemDate = new Date(item.updated_at || 0);
-             return itemDate > latest ? itemDate : latest;
-          }, new Date(0));
-          
-          const reqUpdateDate = new Date(requirement.updated_at || 0);
-          
-          // If requirement updated at least 1 minute after backlog
-          if (reqUpdateDate.getTime() - latestBacklogUpdate.getTime() > 60000) {
-             console.log(`[Cron Apps] Requirement ${reqId} was updated after backlog completion. Resetting all_done_cycles.`);
-             shouldCountAsAllDone = false;
-          } else {
-             // Or if there are recent status updates indicating feedback (excluding repo_update and exit gracefully)
-             const { data: recentStatuses } = await supabaseAdmin
-               .from('requirement_status')
-               .select('id, message, created_at')
-               .eq('requirement_id', reqId)
-               .gt('created_at', latestBacklogUpdate.toISOString())
-               .not('message', 'ilike', '%repo_update%')
-               .not('message', 'ilike', '%Plan created to exit gracefully%')
-               .not('message', 'ilike', '%Cycle complete%')
-               .order('created_at', { ascending: false })
-               .limit(1);
-
-             if (recentStatuses && recentStatuses.length > 0) {
-               console.log(`[Cron Apps] Requirement ${reqId} has new status after backlog completion. Resetting all_done_cycles.`);
-               shouldCountAsAllDone = false;
-             } else if (instanceId) {
-               // Check if there are new instance logs from tools updating requirement/backlog (excluding repo_update)
-               const { data: recentLogs } = await supabaseAdmin
-                 .from('instance_logs')
-                 .select('id, message, created_at')
-                 .eq('instance_id', instanceId)
-                 .gt('created_at', latestBacklogUpdate.toISOString())
-                 .or('message.ilike.%updateRequirement%,message.ilike.%requirement_backlog%,message.ilike.%requirement_status%')
-                 .not('message', 'ilike', '%repo_update%')
-                 .order('created_at', { ascending: false })
-                 .limit(1);
-
-               if (recentLogs && recentLogs.length > 0) {
-                 console.log(`[Cron Apps] Requirement ${reqId} has new tool logs after backlog completion. Resetting all_done_cycles.`);
-                 shouldCountAsAllDone = false;
-               }
-             }
-          }
-        }
-
-        if (shouldCountAsAllDone) {
-          const allDoneCycles = (requirement.metadata?.all_done_cycles || 0) + 1;
-          const updatedMetadata = { ...requirement.metadata, all_done_cycles: allDoneCycles };
-          
-          if (allDoneCycles >= 5) {
-            console.log(`[Cron Apps] Skipping ${reqId} — all backlog items done for 5 cycles. Marking as on-review.`);
-            await supabaseAdmin.from('requirements').update({ 
-              status: 'on-review',
-              metadata: updatedMetadata,
-              updated_at: new Date().toISOString()
-            }).eq('id', reqId);
-            
-            // Cancel or complete active instance plan
-            if (instanceId) {
-              const { data: activePlan } = await supabaseAdmin
-                .from('instance_plans')
-                .select('id, status, steps')
-                .eq('instance_id', instanceId)
-                .in('status', ['pending', 'in_progress', 'paused'])
-                .order('created_at', { ascending: false })
-                .limit(1)
-                .single();
-
-              if (activePlan) {
-                const steps = activePlan.steps || [];
-                const hasPendingSteps = steps.some((s: any) => s.status === 'pending' || s.status === 'in_progress');
-                
-                await supabaseAdmin
-                  .from('instance_plans')
-                  .update({ 
-                    status: hasPendingSteps ? 'cancelled' : 'completed',
-                    completed_at: new Date().toISOString()
-                  })
-                  .eq('id', activePlan.id);
-              }
-            }
-
-            // Pause the main builder instance so it doesn't consume resources
-            if (instanceId) {
-              await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
-            }
-            
-            await releaseRunLock(reqId, runLock.runId);
-            results.push({ reqId, skipped: true, reason: 'all_done_5_cycles' });
-            continue;
-          } else {
-            await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
-            requirement.metadata = updatedMetadata;
-          }
-        } else if (requirement.metadata?.all_done_cycles) {
-          // Reset if it's no longer all done
-          const updatedMetadata = { ...requirement.metadata, all_done_cycles: 0 };
-          await supabaseAdmin.from('requirements').update({ metadata: updatedMetadata }).eq('id', reqId);
-          requirement.metadata = updatedMetadata;
         }
       }
 

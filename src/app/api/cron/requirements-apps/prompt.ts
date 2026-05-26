@@ -111,6 +111,17 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
       Assign the \`makinari-rol-qa\` skill to ALL 7 steps.`
     : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
 
+  const coreItems = p.backlog?.items?.filter(i => (i.tier ?? 'core') === 'core') || [];
+  const allCoreDone = coreItems.length > 0 && coreItems.every(i => i.status === 'done');
+
+  const closureBlock = allCoreDone
+    ? `BACKLOG CORE COMPLETO. Tu única acción válida este ciclo:
+- Llamar requirement_status stage='on-review' con message='Project complete'.
+- Responder texto plano "Project delivered."
+- NO crear items, NO crear planes, NO llamar requirement_backlog upsert.
+Cualquier otra herramienta será rechazada por el guard.`
+    : `HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created.`;
+
   return `You are the COORDINATOR of a requirement workflow running inside a secure Vercel Sandbox.
 
 COMPANY BACKGROUND & MEMORIES:
@@ -170,16 +181,15 @@ WORKFLOW (follow IN ORDER):
    b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
-5. Report progress with \`requirement_status\` (stage='in-progress').
-6. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
-7. ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response.
+5. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.
+6. ONLY if ALL items in the backlog are completely done AND there are no new requests in the instructions: to finalize the work, simply call \`requirement_status\` with \`stage='on-review'\` and \`message='Project complete'\`. DO NOT create an instance plan or a new backlog item to close the project. Just set the status to on-review and return a plain text response.
 
 CRITICAL EXECUTION RULES:
 1. ALWAYS THINK OUT LOUD: You MUST explain your reasoning and plan inside the \`thought_process\` parameter of every tool call.
 2. MAXIMIZE PARALLELISM: If you need to read multiple files, list multiple directories, or run independent commands, you MUST call multiple tools in parallel in a single response. Do not do things sequentially if they can be batched.
 3. AVOID LOOPS: If you find yourself reading the same files or running the same commands without making progress, STOP. Re-evaluate your approach and use a different tool (like sandbox_code_search instead of reading files blindly).
 
-HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has succeeded (or you confirmed an existing active plan via \`action='list'\`). Returning a plain text response before that point is considered an error — keep calling tools until the plan is created. EXCEPT if you just completed the final backlog item and there is no more work to do: in that case, to finalize the work, simply send the requirement to on-review using \`requirement_status\` tool, and return a text response. DO NOT create a plan or a backlog item for this.
+${closureBlock}
 
 HARD RULE ACCEPTANCE (Phase 10):
 - Every \`tier='core'\` item MUST have at least one acceptance entry containing a concrete anchor: an HTTP verb (GET/POST/PUT/DELETE), a route (starts with /), a status code, or an observable verb (returns/renders/inserts/redirects/creates/deletes). Narrative acceptance such as "home shows product vision" is REJECTED by the Judge.

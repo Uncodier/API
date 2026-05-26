@@ -341,17 +341,17 @@ export async function checkRecentPlansGuardStep(params: {
   const minutesSinceLatest =
     latestCompletedAtMs !== null ? (Date.now() - latestCompletedAtMs) / 60_000 : Infinity;
 
-  const threshold = parseInt(process.env.CRON_RECENT_PLANS_BLOCK_THRESHOLD || '0', 10);
+  const skipMin = parseInt(process.env.CRON_REPLAN_SKIP_MIN || skipAfterMinutes.toString(), 10);
+  const blockAfterParam = parseInt(process.env.CRON_REPLAN_BLOCK_AFTER || blockAfter.toString(), 10);
   
-  // Reactivated with safety threshold fallback. Set CRON_RECENT_PLANS_BLOCK_THRESHOLD=5 to enable.
-  const shouldBlockRequirement = threshold > 0 && recentCount >= threshold;
-  const shouldSkipOrchestrator = threshold > 0 && minutesSinceLatest < skipAfterMinutes;
+  const shouldBlockRequirement = blockAfterParam > 0 && recentCount >= blockAfterParam;
+  const shouldSkipOrchestrator = minutesSinceLatest < skipMin;
 
   let reason: string | undefined;
   if (shouldBlockRequirement) {
     reason = `${recentCount} plan(s) already completed/failed in the last ${windowMinutes} min for this instance — looks like a re-plan loop.`;
   } else if (shouldSkipOrchestrator) {
-    reason = `Last plan finished ${minutesSinceLatest.toFixed(1)} min ago (<${skipAfterMinutes} min). Skip orchestrator and let the cycle finalize instead of duplicating plans.`;
+    reason = `Last plan finished ${minutesSinceLatest.toFixed(1)} min ago (<${skipMin} min). Skip orchestrator and let the cycle finalize instead of duplicating plans.`;
   }
 
   return {

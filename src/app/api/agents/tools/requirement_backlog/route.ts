@@ -67,6 +67,13 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
       if (!params.title || !params.kind || !params.phase_id || !Array.isArray(params.acceptance) || params.acceptance.length === 0) {
         throw new Error('upsert requires title, kind, phase_id, acceptance[]');
       }
+      const { backlog } = await listBacklog(requirement_id);
+      const coreItems = (backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
+      const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
+      if (allCoreDone && params.tier === 'ornamental') {
+        throw new Error('Backlog cerrado: el requirement está en cooldown. NO crees items ornamentales de cierre. Llama requirement_status stage=\'on-review\' y termina el turno con texto plano.');
+      }
+      
       const item = await upsertBacklogItem({
         requirementId: requirement_id,
         item: {
