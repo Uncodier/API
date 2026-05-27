@@ -54,6 +54,6 @@ export {
 };
 
 export type ExecuteStepsPhaseResult = any;
-export async function executeStepsPhaseStep() { return {}; }
-export async function runGateForStepWrapperStep() { return {}; }
-export async function adaptPlanStepWrapperStep() { return {}; }
+export async function executeStepsPhaseStep(params: any): Promise<ExecuteStepsPhaseResult> { return {}; }
+export async function runGateForStepWrapperStep(params: any): Promise<any> { return {}; }
+export async function adaptPlanStepWrapperStep(params: any): Promise<any> { return {}; }

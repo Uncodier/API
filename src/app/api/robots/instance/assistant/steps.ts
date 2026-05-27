@@ -10,6 +10,7 @@ import {
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
   getRequirementWorkflowInstruction,
+  CALENDAR_AND_MEETINGS_INSTRUCTION,
 } from './utils';
 
 export interface AssistantContext {
@@ -418,6 +419,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     getRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
+    CALENDAR_AND_MEETINGS_INSTRUCTION,
     renameInstruction,
     toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
   ].filter(Boolean).join('\n');

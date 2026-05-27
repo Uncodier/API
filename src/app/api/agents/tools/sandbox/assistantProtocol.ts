@@ -602,8 +602,11 @@ export function sandboxPushCheckpointTool(
         
         // Update active_sandbox_id in DB if we got a replacement sandbox
         if (result.sandboxReplacement && toolsCtx?.instance_id && requirementId) {
-          persistActiveSandboxId(requirementId, toolsCtx.instance_id, result.sandboxReplacement.sandboxId, toolsCtx.site_id)
-            .catch(e => console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, e));
+          try {
+            await persistActiveSandboxId(requirementId, toolsCtx.instance_id, result.sandboxReplacement.sandboxId, toolsCtx.site_id);
+          } catch (e) {
+            console.error(`[sandbox_push_checkpoint] Failed to update active_sandbox_id to ${result.sandboxReplacement!.sandboxId}:`, e);
+          }
         }
 
         let sync: Awaited<ReturnType<typeof syncLatestRequirementStatusWithPreview>> | null =

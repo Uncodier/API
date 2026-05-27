@@ -17,6 +17,7 @@ import { snapshotAfterSuccessfulPushAndRecreate } from '@/lib/services/sandbox-p
 import {
   CommitPushTriageError,
   triageGitPushError,
+  type GitPushTriage,
 } from '@/lib/services/git-push-error-triage';
 import { uploadSandboxSourceArchiveToRepository } from '@/app/api/agents/tools/sandbox/sandbox-source-upload';
 
@@ -192,11 +193,19 @@ fi`,
       }
     }
 
-    // We want to snapshot if we pushed successfully OR if we failed to push but have local commits (pushError is set).
-    // This preserves the local workspace state (e.g. for rebase_conflict recovery).
-    const shouldSnapshot = result && result.branch && token && audit?.siteId && (
-      (result.pushed && result.commitCount > 0) || pushError
-    );
+    // We only take a snapshot on the hot commit path if we hit a rebase conflict.
+    // Otherwise, the cron workflow finalize step will take a single snapshot at the end
+    // of the entire execution. This stops the 1.6 VMs/commit leak.
+    let shouldSnapshot = false;
+    let pushTriage: GitPushTriage | undefined;
+
+    if (pushError) {
+      const errMsg = pushError?.message || String(pushError);
+      pushTriage = triageGitPushError(errMsg);
+      if (pushTriage.failureKind === 'rebase_conflict' && token && audit?.siteId) {
+        shouldSnapshot = true;
+      }
+    }
 
     if (shouldSnapshot) {
       try {
@@ -205,18 +214,18 @@ fi`,
         const instanceType = gitRepoKind === 'automation' ? 'automation' : 'applications';
         const recreated = await snapshotAfterSuccessfulPushAndRecreate({
           sandbox: activeSandbox,
-          branch: result.branch,
+          branch: result?.branch || '',
           authRepoUrl,
           requirementId: reqId,
           instanceType,
           title,
           auditCtx: audit,
-          isPushRecovery: !!pushError,
+          isPushRecovery: true,
         });
         activeSandbox = recreated.sandbox;
         snapshotId = recreated.snapshotId;
       } catch (e: unknown) {
-        console.warn('[CronPersist] post-push snapshot/recreate failed:', e instanceof Error ? e.message : e);
+        console.warn('[CronPersist] rebase-recovery snapshot/recreate failed:', e instanceof Error ? e.message : e);
       }
     }
 
@@ -243,7 +252,7 @@ fi`,
 
     if (pushError) {
       const errMsg = pushError?.message || String(pushError);
-      const tri = triageGitPushError(errMsg);
+      const tri = pushTriage || triageGitPushError(errMsg);
       const logSummary = tri.agentMessage.replace(/\s+/g, ' ').trim().slice(0, 500);
       await logCronInfrastructureEvent(audit, {
         event: CronInfraEvent.COMMIT_PUSH,

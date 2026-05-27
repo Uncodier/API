@@ -56,12 +56,17 @@ export async function runGateStep(params: {
   console.log(`[GateStep] Running gate for step ${step.order}`);
   try {
     const gateRes = await runGateForFlow({
-      flowKind: requirementType as RequirementKind,
+      flow: requirementType as RequirementKind,
       sandbox,
-      cwd: SandboxService.WORK_DIR,
-      stepContext: { title: step.title, instructions: step.instructions, itemId: step.metadata?.backlog_item_id || step.backlog_item_id },
+      workDir: SandboxService.WORK_DIR,
+      requirementId,
+      item: { id: step.id, title: step.title, order: step.order } as any,
       audit,
     });
+
+    if (gateRes.sandboxReplacement) {
+      effectiveSandboxId = gateRes.sandboxReplacement.sandboxId;
+    }
 
     if (gateRes.ok) {
        console.log(`[GateStep] Gate PASSED for step ${step.order}`);
@@ -82,11 +87,11 @@ export async function runGateStep(params: {
        console.log(`[GateStep] Step ${step.order} is the final step. Running Post-Gate Archetypes (Critic/Judge)...`);
        // Trigger Post-Gate Archetypes (Critic/Judge)
        await runArchetypePostGate({
-          sandbox,
+          sandbox: gateRes.sandboxReplacement || sandbox,
           requirementId,
           backlogItemId: step.metadata?.backlog_item_id || step.backlog_item_id,
           stepId: step.id,
-          signals: gateRes.signals,
+          signals: gateRes.richSignals as any,
           capturedAt: new Date().toISOString(),
           audit,
        });
@@ -103,7 +108,7 @@ export async function runGateStep(params: {
          details: { 
             step_id: step.id, 
             plan_id: plan.id,
-            error_excerpt: gateRes.error.slice(0, 500),
+            error_excerpt: gateRes.error?.slice(0, 500) || '',
             gate_signals: gateRes.signals,
          }
        });
@@ -113,8 +118,8 @@ export async function runGateStep(params: {
        // trigger (e.g. rotate_strategy or downgrade_scope) instead of infinite loop.
        const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
        if (backlogItemId) {
-          const { bumpItemAttempts } = await import('@/lib/services/requirement-backlog');
-          const { planNextHealingAction, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-self-heal');
+          const { bumpItemAttempts, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
+          const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
           const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
           
           try {
@@ -129,7 +134,7 @@ export async function runGateStep(params: {
                  const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
                  const action = planNextHealingAction({ 
                     item, 
-                    verdict: { verdict: 'rejected', reason: gateRes.error || 'Gate failed' }, 
+                    verdict: { verdict: 'rejected', reason: gateRes.error || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
                     attempts: attemptsForHeal 
                  });
                  

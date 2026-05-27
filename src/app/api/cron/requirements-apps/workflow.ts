@@ -584,7 +584,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Step 9: Final status — all gates must pass (including smoke test)
   const smokeOk = !smokeError;
   const { effectiveStatus: finalStatus } = await createFinalStatusStep({
-    site_id, instanceId, reqId,
+    site_id, instanceId, reqId, sandboxId: sandboxId || undefined,
     repoUrl,
     previewUrl: previewUrl || undefined,
     sourceCodeUrl: sourceCodeUrl || undefined,

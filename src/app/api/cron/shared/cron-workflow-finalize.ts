@@ -5,6 +5,7 @@
  */
 
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { Sandbox } from '@vercel/sandbox';
 // NOTE: Import from `@/lib/tools/...` (not the sibling route folder) so the
 // Vercel Workflow bundler doesn't co-bundle `requirement_status/route.ts`
 // (which imports `next/server` and crashes with `__dirname is not defined`).
@@ -145,6 +146,7 @@ export async function createFinalStatusStep(params: {
   site_id: string;
   instanceId: string;
   reqId: string;
+  sandboxId?: string;
   repoUrl?: string;
   previewUrl?: string;
   sourceCodeUrl?: string;
@@ -177,7 +179,7 @@ export async function createFinalStatusStep(params: {
 
   const { data: existing } = await supabaseAdmin
     .from('requirement_status')
-    .select('id, stage, message, repo_url, preview_url, source_code, updated_at')
+    .select('id, stage, message, repo_url, preview_url, source_code, updated_at, snapshot_id')
     .eq('requirement_id', reqId)
     .eq('instance_id', instanceId)
     .order('created_at', { ascending: false })
@@ -192,6 +194,7 @@ export async function createFinalStatusStep(params: {
     preview_url?: string | null;
     source_code?: string | null;
     updated_at?: string | null;
+    snapshot_id?: string | null;
   } | null;
 
   const row = existing as ExistingRow;
@@ -274,11 +277,25 @@ export async function createFinalStatusStep(params: {
 
   const mergedRepoUrl = didPush ? (repoUrl || null) : row?.repo_url ?? null;
 
+  let newSnapshotId: string | undefined;
+  if (!isComplete && params.sandboxId) {
+    try {
+      const liveSandbox = await Sandbox.get({ sandboxId: params.sandboxId });
+      // Keep it alive for max 48h until the next cron run resumes it.
+      const snap = await liveSandbox.snapshot({ expiration: 48 * 60 * 60 * 1000 });
+      newSnapshotId = snap.snapshotId;
+      console.log(`[CronStep] Took single end-of-workflow snapshot: ${newSnapshotId}`);
+    } catch (e: unknown) {
+      console.warn(`[CronStep] End-of-workflow snapshot failed for sandbox ${params.sandboxId}:`, e instanceof Error ? e.message : e);
+    }
+  }
+
   const statusPayload = {
     repo_url: mergedRepoUrl,
     preview_url: mergedPreviewUrl,
     source_code: mergedSourceCode,
     stage: effectiveStatus,
+    ...(newSnapshotId ? { snapshot_id: newSnapshotId } : {}),
     message: isComplete
       ? `Cycle complete. Repo: ${repoUrl} | Preview: ${mergedPreviewUrl} | Source: ${mergedSourceCode}`
       : `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,

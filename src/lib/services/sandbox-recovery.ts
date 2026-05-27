@@ -49,7 +49,10 @@ async function stopSandboxByIdQuiet(sandboxId: string): Promise<void> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await s.stop({ blocking: false });
+      await Promise.race([
+        s.stop({ blocking: false }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+      ]);
       return;
     } catch (e: unknown) {
       if (attempt < 2) {
@@ -129,7 +132,10 @@ export async function connectOrRecreateRequirementSandbox(params: {
     let delayMs = 1000;
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        await sandbox.stop();
+        await Promise.race([
+          sandbox.stop({ blocking: false }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+        ]);
         console.warn(`[Sandbox] 🧹 CLEANUP: Stopped sandbox after failed layout ping, before reprovision (${sandboxId})`);
         break;
       } catch (e: unknown) {

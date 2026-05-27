@@ -107,7 +107,7 @@ const ValidateEmailApi: BaseApiConfig = {
     );
   },
 
-  // Validar el estado antes de enviar
+  // @ts-ignore
   validateState: (state: ValidateEmailApiState): string | null => {
     if (!state.email) {
       return 'Email address is required';

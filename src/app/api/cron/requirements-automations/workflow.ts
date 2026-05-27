@@ -361,7 +361,7 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
   // Step 8: Final status — all gates must pass (including smoke test)
   const smokeOk = !smokeError;
   const { effectiveStatus: finalStatus } = await createFinalStatusStep({
-    site_id, instanceId, reqId,
+    site_id, instanceId, reqId, sandboxId: sandboxId || undefined,
     repoUrl,
     previewUrl: previewUrl || undefined,
     sourceCodeUrl: sourceCodeUrl || undefined,

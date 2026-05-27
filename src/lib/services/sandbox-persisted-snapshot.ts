@@ -17,8 +17,8 @@ export { persistedSnapshotMatchesBinding } from '@/lib/services/sandbox-persiste
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const SANDBOX_CREATE_TIMEOUT_MS = 15 * 60 * 1000;
-const EXTEND_AFTER_CREATE_MS = 10 * 60 * 1000;
+const SANDBOX_CREATE_TIMEOUT_MS = 7 * 60 * 1000;
+const EXTEND_AFTER_CREATE_MS = 4 * 60 * 1000;
 
 export type PersistedSnapshotRow = {
   snapshot_id: string;
@@ -97,7 +97,10 @@ async function stopSandboxQuiet(sandbox: Sandbox): Promise<void> {
   let delayMs = 1000;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await sandbox.stop({ blocking: false });
+      await Promise.race([
+        sandbox.stop({ blocking: false }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 3000))
+      ]);
       return;
     } catch (e: unknown) {
       if (attempt < 2) {
@@ -215,6 +218,7 @@ export async function tryStartFromPersistedSnapshot(params: {
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
       ports: [SandboxService.VISUAL_PROBE_PORT],
+      resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
       source: { type: 'snapshot', snapshotId: row.snapshot_id },
     } as any); // We cast to any because the type definition for snapshot doesn't allow runtime or other fields
     
@@ -348,7 +352,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       } catch {
         /* ignore */
       }
-      const snap = await params.sandbox.snapshot({ expiration: 14 * 24 * 60 * 60 * 1000 });
+      const snap = await params.sandbox.snapshot({ expiration: 48 * 60 * 60 * 1000 });
       snapshotId = snap.snapshotId;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -392,6 +396,7 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
       runtime: 'node24',
       timeout: SANDBOX_CREATE_TIMEOUT_MS,
       ports: [SandboxService.VISUAL_PROBE_PORT],
+      resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
       source: { type: 'snapshot', snapshotId },
     } as any);
     
@@ -407,13 +412,14 @@ export async function snapshotAfterSuccessfulPushAndRecreate(params: {
           .catch(e => console.error(`[Sandbox] Failed to update active_sandbox_id to ${next!.sandboxId}:`, e));
       }
 
-      // No bloqueamos el setup del nuevo sandbox esperando al apagado del viejo.
-      // `sandbox.stop({ blocking: false })` ya devuelve rápido, pero envolvemos
-      // todo en fire-and-forget para que cualquier latencia residual no consuma
-      // el `maxDuration` del workflow y deje el `next` huérfano.
-      stopSandboxQuiet(params.sandbox).catch(e => {
+      // Detenemos el sandbox de forma determinística (con timeout) en lugar de
+      // fire-and-forget, para asegurarnos de que la llamada de red se despache
+      // antes de que Vercel termine la ejecución.
+      try {
+        await stopSandboxQuiet(params.sandbox);
+      } catch (e) {
         console.error(`[Sandbox] 🚨 ZOMBIE ALERT: Background stop for ${params.sandbox.sandboxId} failed:`, e);
-      });
+      }
       
       // Fire-and-forget snapshot cleanup. We do NOT await: awaiting tied us to
       // the latency of the Vercel snapshots API (and a duplicated rows list

@@ -47,9 +47,9 @@ export class SandboxService {
    */
   static readonly VISUAL_PROBE_PORT = 3000;
 
-  private static readonly SANDBOX_CREATE_TIMEOUT_MS = 15 * 60 * 1000; // 15 minutes
+  private static readonly SANDBOX_CREATE_TIMEOUT_MS = 7 * 60 * 1000; // 7 minutes
   /** Extends VM lifetime right after create, before fetch/npm install. */
-  private static readonly EXTEND_AFTER_CREATE_MS = 10 * 60 * 1000; // 10 minutes
+  private static readonly EXTEND_AFTER_CREATE_MS = 4 * 60 * 1000; // 4 minutes
 
   /** runCommand with cwd (tuple overload in SDK .d.ts omits cwd). */
   private static runWithCwd(sandbox: Sandbox, command: string, args: string[], cwd: string) {
@@ -186,6 +186,7 @@ export class SandboxService {
         runtime: 'node24',
         timeout: SandboxService.SANDBOX_CREATE_TIMEOUT_MS,
         ports: [SandboxService.VISUAL_PROBE_PORT],
+        resources: { vcpus: Number(process.env.SANDBOX_VCPUS) || 1 },
         source: {
           type: 'git',
           url: repoUrlPlain,

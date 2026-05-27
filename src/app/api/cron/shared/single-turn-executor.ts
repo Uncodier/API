@@ -278,7 +278,7 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
             sleepRequested = 15; // default wait when process is still running
             // Re-construct the backgroundTask so the workflow can poll it without the LLM
             const toolCalls = result.steps?.[result.steps.length - 1]?.toolCalls;
-            const myCall = toolCalls?.find(tc => tc.toolCallId === lastMessage.tool_call_id);
+            const myCall = toolCalls?.find((tc: any) => tc.toolCallId === lastMessage.tool_call_id);
             if (myCall && myCall.args.pid && myCall.args.log_file) {
                backgroundTask = {
                  pid: String(myCall.args.pid),

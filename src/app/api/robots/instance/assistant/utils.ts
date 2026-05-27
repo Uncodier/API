@@ -151,6 +151,19 @@ export const ICP_CATEGORY_IDS_INSTRUCTION = `
 🔑 ICP/Finder category IDs: For analyzeICPTotalCount and createIcpMining, industries, locations, person_skills, organizations, organization_keywords, and web_technologies require IDs—NOT free text. You MUST call getFinderCategoryIds (via tool_lookup) first with the category and search term (q) to obtain the correct IDs, then pass those IDs in the query object. Example: user says "technology industry" → call tool_lookup(action: "call", name: "getFinderCategoryIds", args: {category: "industries", q: "technology"}) → use returned id in the query.`;
 
 /**
+ * Instruction for Calendar and Meeting structure in Market Fit.
+ */
+export const CALENDAR_AND_MEETINGS_INSTRUCTION = `
+📅 CALENDARS AND MEETINGS (MARKET FIT):
+- Individual Calendars: Stored in the \`profiles\` table under the \`settings\` JSON column (\`settings->calendar\`). Contains \`enabled\`, \`availability\`, \`timezone\`, and \`event_types\`.
+- Team Calendars (Round Robin): Stored in the \`settings\` table under the \`calendars\` JSON column. Contains an array of team calendars, each with \`id\`, \`name\`, \`slug\`, \`member_ids\`, \`duration\`, and \`buffer\`. They are associated with the client's \`site\`.
+- Appointments/Meetings (Bookings): There is NO separate \`events\` or \`bookings\` table. All appointments are injected directly into the \`tasks\` table with \`type: "meeting"\`.
+- When a booking is made:
+  1. The system creates/updates a \`leads\` record.
+  2. For Round Robin, it assigns to the member with the fewest tasks today.
+  3. A new row in \`tasks\` is inserted with: \`title\` ("Event with Lead"), \`status: "pending"\`, \`stage: "decision"\`, \`scheduled_date\`, \`lead_id\`, \`assignee\` (calendar owner), and \`description\` (notes/guests). This turns every event into an actionable CRM task.`;
+
+/**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
  * so scope and the "living README" survive ephemeral sandbox sessions.
  */
