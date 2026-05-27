@@ -33,6 +33,7 @@ export type ToolLookupCategory =
   | 'content'
   | 'infra'
   | 'research'
+  | 'ui'
   | 'other';
 
 // Category assignment is best-effort metadata for the `list` action so the
@@ -103,6 +104,9 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   webSearch: 'research',
   url_to_markdown: 'research',
   url_to_sitemap: 'research',
+
+  // ui
+  show_artifact: 'ui',
 };
 
 function categoryOf(name: string): ToolLookupCategory {
@@ -376,6 +380,9 @@ export const DEFAULT_ALWAYS_ON_TOOL_NAMES: ReadonlySet<string> = new Set([
   'requirement_status',
   'requirement_backlog',
   'requirements',
+  
+  // direct ui feedback surface
+  'show_artifact',
 ]);
 
 /**
