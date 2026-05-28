@@ -112,7 +112,7 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
     : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
 
   const coreItems = p.backlog?.items?.filter(i => (i.tier ?? 'core') === 'core') || [];
-  const allCoreDone = coreItems.length > 0 && coreItems.every(i => i.status === 'done');
+  const allCoreDone = coreItems.length > 0 && coreItems.every(i => i.status === 'done' || i.status === 'needs_review');
 
   const closureBlock = allCoreDone
     ? `BACKLOG CORE COMPLETO. Tu única acción válida este ciclo:

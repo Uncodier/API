@@ -46,18 +46,30 @@ export {
 } from './requirement-backlog-watchdog';
 
 /**
- * True when every `tier='core'` item is in a terminal, successful state.
- * Consumers (flow engine, close-requirement gates) should call this instead
- * of checking `completion_ratio === 1`.
+ * Statuses that count as terminal for a core backlog item when deciding
+ * whether a requirement can be closed. `needs_review` is included because
+ * the self-healing policy escalates persistently-failing items there as a
+ * non-blocking signal — treating it the same as `done` prevents infinite
+ * loops where an item that can never pass the gate keeps the requirement
+ * open forever.
+ */
+export function isItemTerminal(status: string): boolean {
+  return status === 'done' || status === 'needs_review';
+}
+
+/**
+ * True when every `tier='core'` item is in a terminal state (`done` or
+ * `needs_review`). Consumers (flow engine, close-requirement gates) should
+ * call this instead of checking `completion_ratio === 1`.
  */
 export function coreItemsAllDone(items: BacklogItem[]): boolean {
   const core = items.filter((i) => (i.tier ?? 'core') === 'core');
   if (core.length === 0) return false;
-  return core.every((i) => i.status === 'done');
+  return core.every((i) => isItemTerminal(i.status));
 }
 
 export function pendingCoreItems(items: BacklogItem[]): BacklogItem[] {
-  return items.filter((i) => (i.tier ?? 'core') === 'core' && i.status !== 'done' && i.status !== 'rejected');
+  return items.filter((i) => (i.tier ?? 'core') === 'core' && !isItemTerminal(i.status) && i.status !== 'rejected');
 }
 
 const TERMINAL_REQUIREMENT_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);

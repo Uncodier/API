@@ -60,7 +60,7 @@ export async function GET(req: Request) {
       
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
-        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
         
         // Only revert to in-progress if new items were added AFTER the requirement was closed
         // We detect this by checking if there's any item updated more recently than the last 'terminal' status
@@ -154,7 +154,7 @@ export async function GET(req: Request) {
       
       if (currentReq) {
         const coreItems = (requirement.backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
-        const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
+        const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done' || i.status === 'needs_review');
 
         if (allCoreDone) {
           const lastCoreUpdate = Math.max(
@@ -182,7 +182,7 @@ export async function GET(req: Request) {
           }
         }
 
-        const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
 
         if (['cancelled', 'done'].includes(currentReq.status) || (currentReq.status === 'on-review' && allBacklogDone)) {
           console.log(`[Cron Apps] Skipping ${reqId} — requirement is ${currentReq.status} and backlog is done`);

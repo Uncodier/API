@@ -40,7 +40,7 @@ export async function GET(req: Request) {
       
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
-        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
         
         // Revert to in-progress if new items were added
         if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
@@ -203,7 +203,7 @@ export async function GET(req: Request) {
           requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
         }
 
-        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.every((i: any) => i.status === 'done');
+        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.every((i: any) => i.status === 'done' || i.status === 'needs_review');
         let shouldCountAsAllDone = allBacklogDone;
 
         if (allBacklogDone) {

@@ -42,7 +42,7 @@ export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string
     : '';
 
   const coreItems = p.backlog?.items.filter((i) => (i.tier ?? 'core') === 'core') || [];
-  const allCoreDone = coreItems.length > 0 && coreItems.every((i) => i.status === 'done');
+  const allCoreDone = coreItems.length > 0 && coreItems.every((i) => i.status === 'done' || i.status === 'needs_review');
 
   const closureBlock = allCoreDone
     ? `BACKLOG CORE COMPLETO. Ya has revisado los items.

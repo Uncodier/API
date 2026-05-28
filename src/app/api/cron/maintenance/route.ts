@@ -56,7 +56,7 @@ export async function GET(req: Request) {
     for (const requirement of requirements) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
       
-      const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+      const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
       
       // If the requirement is on-review AND all core items are done, it means the main builder is cooling down.
       // QA should respect this cooldown so it doesn't run indefinitely.

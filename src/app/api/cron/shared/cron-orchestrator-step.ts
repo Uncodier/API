@@ -399,7 +399,7 @@ export async function runOrchestratorStep(params: {
         const { getRequirementFullContextStep } = await import('./workflow-db-steps');
         const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
         const coreItems = reqContext.backlog?.items?.filter((i: any) => (i.tier ?? 'core') === 'core') || [];
-        if (coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done')) {
+        if (coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done' || i.status === 'needs_review')) {
           coreDoneReminder = true;
         }
       } catch (e) {
