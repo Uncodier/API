@@ -213,23 +213,28 @@ export async function executeAssistantStep(
           // Prepend context nodes as messages (with multimodal image support)
           if (contextEntries.length > 0) {
             const contextMessages: any[] = [];
+            const referenceMessages: any[] = [];
             let hasReferenceNode = false;
 
             for (const entry of contextEntries) {
               const text = extractNodeText(entry.node, entry.type);
               const imageUrls = extractNodeImageUrls(entry.node);
               
-              // Determine if this is a reference node (parent node or explicitly marked as reference)
-              const isReference = entry.node?.id === promptNode.parent_node_id || entry.type === 'reference';
-              if (isReference && (text || imageUrls.length > 0)) {
-                hasReferenceNode = true;
-              }
+              // All explicitly linked nodes (via instance_node_contexts) are considered reference nodes
+              // This includes the parent node and any other explicit relations
+              const isReference = true;
 
               if (text || imageUrls.length > 0) {
-                contextMessages.push({
+                const msg = {
                   role: 'user',
                   content: buildContextContent(text, imageUrls, entry.type, isReference),
-                });
+                };
+                contextMessages.push(msg);
+                
+                if (isReference) {
+                  hasReferenceNode = true;
+                  referenceMessages.push(msg);
+                }
               }
             }
             if (contextMessages.length > 0) {
@@ -237,26 +242,14 @@ export async function executeAssistantStep(
               messages = [...contextMessages, ...messages];
             }
 
-            // If there is a reference node, append a strong reminder to the very last message
+            // Append the entire reference context again at the end
             // so the LLM doesn't get distracted by other assets in the chat history.
-            if (hasReferenceNode && messages.length > 0) {
-              const lastMsgIndex = messages.length - 1;
-              const lastMsg = messages[lastMsgIndex];
-              
-              if (lastMsg.role === 'user') {
-                const reminderText = `\n\n[SYSTEM REMINDER: Prioritize the assets (like images or text) from the Reference Context provided at the beginning. The current prompt specifically refers to THOSE reference assets, NOT to other assets that might appear later in the conversation history.]`;
-                
-                // Clone the message to avoid mutating the original reference if it's reused
-                const updatedMsg = { ...lastMsg };
-                
-                if (typeof updatedMsg.content === 'string') {
-                  updatedMsg.content += reminderText;
-                } else if (Array.isArray(updatedMsg.content)) {
-                  updatedMsg.content = [...updatedMsg.content, { type: 'text', text: reminderText }];
-                }
-                
-                messages[lastMsgIndex] = updatedMsg;
-              }
+            if (hasReferenceNode && referenceMessages.length > 0) {
+              messages.push({
+                role: 'user',
+                content: '[SYSTEM REMINDER: Below is the Reference Context again. You MUST prioritize these assets for the current request over any other previous assets in the conversation history.]'
+              });
+              messages = [...messages, ...referenceMessages];
             }
           }
         }
