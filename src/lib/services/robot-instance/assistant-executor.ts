@@ -194,7 +194,22 @@ export async function executeAssistantStep(
       let promptNode: any = null;
       let contextEntries: Awaited<ReturnType<typeof fetchNodeContexts>> = [];
 
+      let activeSystemPrompt = system_prompt;
+
       if (instance_node_id) {
+        // 1. Adapt System Prompt for Node Mode
+        activeSystemPrompt += `\n\n=== NODE EXECUTION MODE ===
+You are executing a specific Node in a visual Canvas workflow.
+Your action must be based EXCLUSIVELY on the 'Reference Context' explicitly provided to you right before the final prompt.
+Do NOT use general conversational history to infer which image/asset to edit. Use ONLY the URLs and text provided in the Reference Context.`;
+
+        // 2. Discard all previous conversation history to prevent hallucinating assets from previous turns.
+        // We ONLY keep the very last message (the user's current prompt).
+        if (messages.length > 0) {
+          const finalPrompt = messages[messages.length - 1];
+          messages = [finalPrompt];
+        }
+
         const { data } = await supabaseAdmin
           .from('instance_nodes')
           .select('*')
@@ -205,8 +220,7 @@ export async function executeAssistantStep(
         if (promptNode) {
           contextEntries = await fetchNodeContexts(instance_node_id);
 
-          // Inject context nodes right before the final user prompt
-          // so the LLM remembers them clearly, rather than burying them at the top.
+          // 3. Inject context nodes right before the final user prompt
           if (contextEntries.length > 0) {
             const contextMessages: any[] = [];
             
@@ -214,9 +228,6 @@ export async function executeAssistantStep(
               const text = extractNodeText(entry.node, entry.type);
               const imageUrls = extractNodeImageUrls(entry.node);
               
-              // All explicitly linked nodes are treated as primary references
-              const isReference = true;
-
               if (text || imageUrls.length > 0) {
                 // If there are images, format as a multimodal message
                 if (imageUrls.length > 0) {
@@ -225,7 +236,7 @@ export async function executeAssistantStep(
                   
                   parts.push({ 
                     type: 'text', 
-                    text: `[Reference Context from parent or related node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}${urlText}` 
+                    text: `[Reference Context from linked node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}${urlText}` 
                   });
                   
                   for (const url of imageUrls) {
@@ -240,7 +251,7 @@ export async function executeAssistantStep(
                   // Text only
                   contextMessages.push({
                     role: 'user',
-                    content: `[Reference Context from parent or related node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`
+                    content: `[Reference Context from linked node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`
                   });
                 }
               }
@@ -249,20 +260,13 @@ export async function executeAssistantStep(
             if (contextMessages.length > 0) {
               console.log(`[Node Executor] Injecting ${contextMessages.length} context messages just before final prompt`);
               
-              // When running a specific node with context references, we want to AVOID
-              // the distraction of the full conversation history (which might contain unrelated assets).
-              // We only keep the very last message (the current prompt) and the context messages.
+              // We already ensured messages only has the final prompt
               if (messages.length > 0) {
-                const finalPrompt = messages.pop(); // The current user prompt
-                // Discard all previous history to force strict focus on the node's references
+                const finalPrompt = messages.pop();
                 messages = [...contextMessages, finalPrompt];
               } else {
                 messages = [...contextMessages];
               }
-            } else if (messages.length > 0) {
-                // Even if there are no explicit context references, if we are executing a specific node,
-                // we might want to trim the history to prevent hallucinations from previous steps.
-                // For now, we only trim if there ARE context references to enforce strict asset scoping.
             }
           }
         }
@@ -301,7 +305,7 @@ export async function executeAssistantStep(
           try {
             const result = await parallelExecutor.act({
               tools: prepared.tools,
-              system: system_prompt,
+              system: activeSystemPrompt,
               messages: [...messages],
               onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
               stream: true,
@@ -381,7 +385,7 @@ export async function executeAssistantStep(
 
         executionResult = await executor.act({
                 tools: prepared.tools,
-                system: system_prompt,
+                system: activeSystemPrompt,
                 messages: messages,
                 onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
                 stream: !!streamingCallbacks || !!nodeCallbacks,
