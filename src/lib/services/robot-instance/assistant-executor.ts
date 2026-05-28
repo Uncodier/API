@@ -45,25 +45,42 @@ function extractNodeText(node: any, type: string): string {
 }
 
 /**
- * Extract image URLs from a node's result.outputs so they can be
+ * Extract image URLs from a node's result.outputs or prompt.outputs so they can be
  * injected as multimodal image_url parts in the next node's context.
  */
 function extractNodeImageUrls(node: any): string[] {
+  const urls: string[] = [];
+  
+  // Extraer de result.outputs (las imágenes generadas)
   const res = node?.result;
-  if (!res) return [];
+  if (res) {
+    const parsedRes = typeof res === 'string'
+      ? (() => { try { return JSON.parse(res); } catch { return null; } })()
+      : res;
 
-  const parsed = typeof res === 'string'
-    ? (() => { try { return JSON.parse(res); } catch { return null; } })()
-    : res;
+    if (parsedRes?.outputs && Array.isArray(parsedRes.outputs)) {
+      urls.push(...parsedRes.outputs
+        .filter((o: any) => o.type === 'image' && o.data?.url)
+        .map((o: any) => o.data.url as string));
+    }
+  }
 
-  if (!parsed?.outputs || !Array.isArray(parsed.outputs)) return [];
+  // Extraer también de prompt.outputs (imágenes subidas manualmente al nodo)
+  const prm = node?.prompt;
+  if (prm) {
+    const parsedPrm = typeof prm === 'string'
+      ? (() => { try { return JSON.parse(prm); } catch { return null; } })()
+      : prm;
 
-  const urls = parsed.outputs
-    .filter((o: any) => o.type === 'image' && o.data?.url)
-    .map((o: any) => o.data.url as string);
+    if (parsedPrm?.outputs && Array.isArray(parsedPrm.outputs)) {
+      urls.push(...parsedPrm.outputs
+        .filter((o: any) => o.type === 'image' && o.data?.url)
+        .map((o: any) => o.data.url as string));
+    }
+  }
     
-  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node result outputs`);
-  return urls;
+  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node`);
+  return [...new Set(urls)]; // Eliminar duplicados si los hubiera
 }
 
 /**

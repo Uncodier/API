@@ -60,7 +60,7 @@ export async function prepareAssistantContext(
   // If executing inside a visual node graph, use minimal context
   // ---------------------------------------------------------
   if (instanceNodeId) {
-    return buildNodeOnlyContext(
+    return await buildNodeOnlyContext(
       instance,
       message,
       siteId,
@@ -491,7 +491,7 @@ export async function processAssistantTurn(
 // Strict minimal context for visual node executions. Strips all history, plans,
 // and agent background. Preserves ONLY the node system prompt and the direct references.
 // ------------------------------------------------------------------------------------
-function buildNodeOnlyContext(
+async function buildNodeOnlyContext(
   instance: any,
   message: string,
   siteId: string,
@@ -503,7 +503,7 @@ function buildNodeOnlyContext(
   contextString?: string,
   agentType?: string,
   userPhone?: string
-): AssistantContext {
+): Promise<AssistantContext> {
   const NODE_DEFAULT_SYSTEM_PROMPT = "You are an AI assistant inside a visual node. Answer the user's prompt using the referenced node context. Do not invent state outside of what is provided.";
   
   let extraContextInstruction = '';
@@ -523,10 +523,28 @@ function buildNodeOnlyContext(
   const nodeModeInstruction = `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.
 CRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`;
 
+  const toolLookupInstruction = `
+🧰 TOOL DISCOVERY & EXECUTION (tool_lookup):
+Most capabilities (media, messaging, CRM, social, content, infra, research) are hidden behind the \`tool_lookup\` router to save context.
+- Use \`tool_lookup({ action: "list" })\` to see every routed tool grouped by category.
+- Use \`tool_lookup({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
+- Use \`tool_lookup({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
+- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
+- Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
+
+  const generationInstruction = `
+🎙️ MULTIMEDIA GENERATION:
+- When the user asks to generate AUDIO, a song, a rap, or a voiceover, you MUST call the \`generate_audio\` tool via tool_lookup to fulfill the request. If you are asked to write the lyrics/script, write them and immediately pass them into the \`generate_audio\` tool within the same response. Do NOT just output the text without calling the tool.
+- When generating IMAGES, you MUST use the \`generate_image\` tool via tool_lookup.
+- When generating VIDEO, you MUST use the \`generate_video\` tool via tool_lookup. If there are Image URLs for reference in the context or user messages, you MUST pass them to the \`reference_images\` parameter array.
+- CRITICAL: Never reply with just the lyrics or script if the user requested a song or audio. You MUST use the \`generate_audio\` tool and return the resulting URL.`;
+
   const combinedSystemPrompt = [
     systemPrompt || NODE_DEFAULT_SYSTEM_PROMPT,
     nodeModeInstruction,
-    extraContextInstruction
+    extraContextInstruction,
+    toolLookupInstruction,
+    generationInstruction
   ].filter(Boolean).join('\n');
 
   let finalSystemPrompt = combinedSystemPrompt;
@@ -544,6 +562,34 @@ CRITICAL: Even if the user asks you to "improve the prompt", "write a script", o
 
   const finalProvider = useAssistantOnly ? 'azure' : provider;
 
+  let nodeImages: { url: string; fileType: string }[] = [];
+  
+  if (instanceNodeId) {
+    try {
+      const { data: promptNode } = await supabaseAdmin
+        .from('instance_nodes')
+        .select('prompt')
+        .eq('id', instanceNodeId)
+        .single();
+        
+      if (promptNode && promptNode.prompt) {
+        const prm = typeof promptNode.prompt === 'string'
+          ? (() => { try { return JSON.parse(promptNode.prompt); } catch { return null; } })()
+          : promptNode.prompt;
+          
+        if (prm?.outputs && Array.isArray(prm.outputs)) {
+          const urls = prm.outputs
+            .filter((o: any) => o.type === 'image' && o.data?.url)
+            .map((o: any) => o.data.url as string);
+            
+          nodeImages = [...new Set(urls)].map((url: string) => ({ url, fileType: 'image' }));
+        }
+      }
+    } catch (e) {
+      console.error('[buildNodeOnlyContext] Error fetching node images:', e);
+    }
+  }
+
   return {
     instance,
     systemPrompt: finalSystemPrompt,
@@ -559,7 +605,7 @@ CRITICAL: Even if the user asks you to "improve the prompt", "write a script", o
       site_id: siteId,
       user_id: userId,
     },
-    imageAssets: [], // Strip instance-wide images to force reliance on context references only
+    imageAssets: nodeImages, // Only pass images explicitly attached to this specific node's prompt
     hasLinkedRequirement: false, // Disables requirement behaviors in workflow
     instanceNodeId,
     expectedResultsAmount: expectedResultsAmount || 1,

@@ -30,6 +30,13 @@ function extractImageUrls(field: any): string[] {
     .map((o: any) => o.data.url as string);
 }
 
+function extractAllImageUrlsFromNode(node: any): string[] {
+  const urls: string[] = [];
+  urls.push(...extractImageUrls(node?.result));
+  urls.push(...extractImageUrls(node?.prompt));
+  return [...new Set(urls)];
+}
+
 function buildContextContent(
   text: string,
   imageUrls: string[],
@@ -102,7 +109,7 @@ async function buildMessagesForNode(promptNodeId: string, promptNode: any): Prom
   for (const entry of contextEntries) {
     const raw = entry.type === 'prompt' ? entry.node.prompt : entry.node.result;
     const text = extractText(raw);
-    const imageUrls = entry.type !== 'prompt' ? extractImageUrls(entry.node.result) : [];
+    const imageUrls = extractAllImageUrlsFromNode(entry.node);
 
     if ((text && text !== '{}') || imageUrls.length > 0) {
       messages.push({
@@ -115,7 +122,23 @@ async function buildMessagesForNode(promptNodeId: string, promptNode: any): Prom
   // Inject ancestors as user/assistant pairs (with multimodal image support)
   for (const anc of trajectory) {
     const promptText = extractText(anc.prompt);
-    if (promptText) messages.push({ role: 'user', content: promptText });
+    const promptImageUrls = extractImageUrls(anc.prompt);
+
+    if (promptText || promptImageUrls.length > 0) {
+      if (promptImageUrls.length > 0) {
+        const parts: any[] = [];
+        const urlText = `\nImage URLs for reference:\n${promptImageUrls.join('\n')}`;
+        const combinedText = promptText ? `${promptText}${urlText}` : urlText;
+        
+        parts.push({ type: 'text', text: combinedText });
+        for (const url of promptImageUrls) {
+          parts.push({ type: 'image_url', image_url: { url } });
+        }
+        messages.push({ role: 'user', content: parts });
+      } else {
+        messages.push({ role: 'user', content: promptText });
+      }
+    }
 
     const resultText = extractText(anc.result);
     const resultImageUrls = extractImageUrls(anc.result);
