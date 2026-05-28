@@ -55,26 +55,6 @@ export async function prepareAssistantContext(
     throw new Error(`Instance not found: ${instanceId}`);
   }
 
-  // ---------------------------------------------------------
-  // NODE MODE SHORT-CIRCUIT
-  // If executing inside a visual node graph, use minimal context
-  // ---------------------------------------------------------
-  if (instanceNodeId) {
-    return buildNodeOnlyContext(
-      instance,
-      message,
-      siteId,
-      userId,
-      customTools,
-      systemPrompt,
-      instanceNodeId,
-      expectedResultsAmount,
-      contextString,
-      agentType,
-      userPhone
-    );
-  }
-
   // Log execution start
   console.log(`[Workflow] Starting assistant execution for instance: ${instanceId}`);
 
@@ -484,84 +464,4 @@ export async function processAssistantTurn(
   const result = await executeAssistantStep(messages, context.instance, options);
 
   return result;
-}
-
-// ------------------------------------------------------------------------------------
-// NODE MODE CONTEXT BUILDER
-// Strict minimal context for visual node executions. Strips all history, plans,
-// and agent background. Preserves ONLY the node system prompt and the direct references.
-// ------------------------------------------------------------------------------------
-function buildNodeOnlyContext(
-  instance: any,
-  message: string,
-  siteId: string,
-  userId: string,
-  customTools: any[],
-  systemPrompt?: string,
-  instanceNodeId?: string,
-  expectedResultsAmount?: number,
-  contextString?: string,
-  agentType?: string,
-  userPhone?: string
-): AssistantContext {
-  const NODE_DEFAULT_SYSTEM_PROMPT = "You are an AI assistant inside a visual node. Answer the user's prompt using the referenced node context. Do not invent state outside of what is provided.";
-  
-  let extraContextInstruction = '';
-  if (contextString) {
-    try {
-      const parsedContext = JSON.parse(contextString);
-      if (parsedContext.parameters) {
-        extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT PARAMETERS (YOU MUST RESPECT THESE IN YOUR TOOL CALLS):\n${JSON.stringify(parsedContext.parameters, null, 2)}\nIf you are generating media, YOU MUST use these exact parameters (duration, aspect_ratio, etc).`;
-      } else {
-        extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
-      }
-    } catch {
-      extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
-    }
-  }
-
-  const nodeModeInstruction = `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.
-CRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`;
-
-  const combinedSystemPrompt = [
-    systemPrompt || NODE_DEFAULT_SYSTEM_PROMPT,
-    nodeModeInstruction,
-    extraContextInstruction
-  ].filter(Boolean).join('\n');
-
-  let finalSystemPrompt = combinedSystemPrompt;
-  if (combinedSystemPrompt.includes('base64')) {
-    finalSystemPrompt = combinedSystemPrompt.replace(/data:image\/[^;]+;base64,[A-Za-z0-9+/=]+/g, '[IMAGE_DATA_REMOVED]');
-  }
-
-  const { provider } = determineInstanceCapabilities(instance, false);
-  const useAssistantOnly =
-    instance.status === 'uninstantiated' ||
-    instance.status === 'paused' ||
-    instance.status === 'stopped' ||
-    instance.status === 'error' ||
-    (instance.status === 'running' && !instance.provider_instance_id);
-
-  const finalProvider = useAssistantOnly ? 'azure' : provider;
-
-  return {
-    instance,
-    systemPrompt: finalSystemPrompt,
-    customTools,
-    agentType,
-    userPhone,
-    initialMessage: message,
-    executionOptions: {
-      use_sdk_tools: false,
-      provider: finalProvider,
-      ai_provider: finalProvider,
-      instance_id: instance.id,
-      site_id: siteId,
-      user_id: userId,
-    },
-    imageAssets: [], // Strip instance-wide images to force reliance on context references only
-    hasLinkedRequirement: false, // Disables requirement behaviors in workflow
-    instanceNodeId,
-    expectedResultsAmount: expectedResultsAmount || 1,
-  };
 }
