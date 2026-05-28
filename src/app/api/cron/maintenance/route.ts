@@ -40,11 +40,11 @@ export async function GET(req: Request) {
     // The maintenance orchestrator will specifically look for `done` items in their backlog.
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
-      .select('*')
+      .select('*, backlog')
       .in('status', ['in-progress', 'on-review'])
       .gte('updated_at', oneWeekAgo)
       .order('updated_at', { ascending: false })
-      .limit(3);
+      .limit(10); // increased limit since we'll filter some out
 
     if (error) throw error;
     if (!requirements || requirements.length === 0) {
@@ -55,6 +55,16 @@ export async function GET(req: Request) {
 
     for (const requirement of requirements) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
+      
+      const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done');
+      
+      // If the requirement is on-review AND all core items are done, it means the main builder is cooling down.
+      // QA should respect this cooldown so it doesn't run indefinitely.
+      if (requirement.status === 'on-review' && allBacklogDone) {
+         console.log(`[Cron Maintenance] Skipping ${reqId} — requirement is on-review and backlog is done (respecting cooldown)`);
+         results.push({ reqId, skipped: true, reason: 'on-review_cooldown' });
+         continue;
+      }
       
       // Use a distinct lock key so it doesn't block the main builder cron
       const maintenanceLockKey = `${reqId}-maint`;
@@ -97,7 +107,7 @@ export async function GET(req: Request) {
 
       // Verify QA execution limit
       const doneItemsCount = requirement.backlog?.items?.filter((i: any) => i.status === 'done').length || 0;
-      const maxQaRuns = doneItemsCount * 6;
+      const maxQaRuns = Math.max(2, doneItemsCount); // Max 2 runs if 0/1 items, else 1 run per done item
       const currentQaRuns = requirement.metadata?.qa_successful_runs || 0;
       
       const currentAttempt = requirement.metadata?.cron_attempts || 0;
@@ -132,12 +142,18 @@ export async function GET(req: Request) {
         continue;
       }
       
-      if (!hasActivePlan && currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
-        console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items) and no active plan`);
+      // Limit applies regardless of hasActivePlan to prevent perpetual plan loops in QA
+      if (currentQaRuns >= maxQaRuns && doneItemsCount > 0) {
+        console.log(`[Cron Maintenance] Skipping ${reqId} — reached limit of ${maxQaRuns} successful QA runs (${doneItemsCount} done items).`);
         results.push({ reqId, skipped: true, reason: 'qa_limit_reached' });
         
         if (instanceId) {
           await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
+        }
+        
+        // Also cancel any active plan since we hit the hard limit
+        if (hasActivePlan) {
+           await supabaseAdmin.from('instance_plans').update({ status: 'cancelled' }).eq('instance_id', instanceId).in('status', ['pending', 'in_progress']);
         }
         
         await releaseRunLock(maintenanceLockKey, runLock.runId);

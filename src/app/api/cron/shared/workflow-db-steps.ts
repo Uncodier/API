@@ -168,7 +168,7 @@ export async function unblockRequirementStep(requirementId: string, forceStatusT
       updated_at: new Date().toISOString()
     };
 
-    if (data?.status === 'cancelled' || data?.status === 'done') {
+    if (data?.status === 'cancelled' || data?.status === 'done' || data?.status === 'on-review') {
       // Never unblock a requirement that is already cancelled or done
       console.log(`[WorkflowDbStep] Skipping unblock for req ${requirementId} because it is ${data.status}`);
       return;

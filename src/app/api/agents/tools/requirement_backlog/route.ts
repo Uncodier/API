@@ -39,6 +39,7 @@ export interface BacklogCoreParams {
   status?: BacklogItemStatus;
   reason?: string;
   assumption?: string;
+  confirm_reopen?: boolean;
 }
 
 export async function executeBacklogCore(params: BacklogCoreParams) {
@@ -71,16 +72,16 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
       const { backlog } = await listBacklog(requirement_id);
       const coreItems = (backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
       const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
-      if (allCoreDone && params.tier === 'ornamental') {
+      if (allCoreDone) {
         const reopened = await isRequirementReopened(requirement_id);
         if (!reopened) {
           throw new Error(
             'Backlog cerrado: el requirement está en cooldown (todos los core items done y nunca fue reabierto). ' +
-            'NO crees items ornamentales de cierre. ' +
-            'Si necesitás agregar trabajo nuevo en este mismo requirement, reabrilo primero: ' +
+            'Llama `requirement_status stage=\'on-review\' message=\'Project complete\'` y termina el turno. ' +
+            'Si el usuario pidió trabajo extra, reabre explícitamente el proyecto usando: ' +
             'requirements.update(requirement_id=..., completion_status=\'pending\', status=\'in-progress\') + ' +
             'requirement_status(stage=\'in-progress\', message=\'reopen: <motivo>\'). ' +
-            'NO crees un requirement nuevo.'
+            'NO crees un requirement nuevo ni agregues items sin reabrir.'
           );
         }
       }
@@ -128,6 +129,19 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
     }
     case 'set_status': {
       if (!params.item_id || !params.status) throw new Error('set_status requires item_id + status');
+      
+      // Fix #4: Protect done items from silent reopens
+      const { backlog } = await listBacklog(requirement_id);
+      const existingItem = backlog?.items?.find((i: any) => i.id === params.item_id);
+      if (existingItem?.status === 'done' && params.status !== 'done' && !params.confirm_reopen) {
+        throw new Error(
+          'Reapertura bloqueada: este item está en estado "done". ' +
+          'Si realmente necesitas reabrirlo por un bug o cambio, debes reabrir explícitamente el requirement ' +
+          'usando requirements.update(completion_status=\'pending\', status=\'in-progress\') y luego ' +
+          'llamar a set_status pasando confirm_reopen=true y un reason detallado.'
+        );
+      }
+      
       const item = await setItemStatus({
         requirementId: requirement_id,
         itemId: params.item_id,

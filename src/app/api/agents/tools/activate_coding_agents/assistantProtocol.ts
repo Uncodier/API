@@ -67,7 +67,7 @@ export function activateCodingAgentsTool() {
         .single();
 
       let requirementUnblocked = false;
-      if (req && req.status === 'blocked') {
+      if (req && ['blocked', 'on-review', 'done'].includes(req.status)) {
         const { error: updateReqError } = await supabaseAdmin
           .from('requirements')
           .update({ status: 'in-progress' })

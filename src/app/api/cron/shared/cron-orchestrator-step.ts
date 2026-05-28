@@ -390,17 +390,41 @@ export async function runOrchestratorStep(params: {
       }
     }
 
-    const noPlanReminder = [
-      'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
-      'Stop running additional sandbox_* commands unless you are blocked.',
-      'IMMEDIATE NEXT ACTIONS:',
-      '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
-      '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
-      '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST have a descriptive `title`, specific, descriptive `instructions` and a clear objective. Do NOT create generic steps like "Step 1" with "Execute step 1". Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
-      '  4. Call `requirement_status` with `stage="in-progress"`.',
-      '  5. If ALL items in the backlog are completely done, call the `system_notification` tool directly to notify the team.',
-      'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
-    ].join('\n');
+    const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
+    
+    // Check if we are in core-done mode to adapt the reminder
+    let coreDoneReminder = false;
+    if (audit) {
+      try {
+        const { getRequirementFullContextStep } = await import('./workflow-db-steps');
+        const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
+        const coreItems = reqContext.backlog?.items?.filter((i: any) => (i.tier ?? 'core') === 'core') || [];
+        if (coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done')) {
+          coreDoneReminder = true;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+
+    const noPlanReminder = coreDoneReminder 
+      ? [
+          'REMINDER (system): The BACKLOG CORE is fully complete.',
+          'Your ONLY valid action is to finalize the requirement.',
+          'Call `requirement_status` with `stage="on-review"` and `message="Project complete"`.',
+          'Do NOT create plans. Do NOT read files. Do NOT create backlog items.'
+        ].join('\n')
+      : [
+          'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
+          'Stop running additional sandbox_* commands unless you are blocked.',
+          'IMMEDIATE NEXT ACTIONS:',
+          '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
+          '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',
+          '  3. Call `instance_plan` with `action="create"`. BREAK DOWN the item into specific execution steps. Do NOT just repeat the item title. Every step MUST have a descriptive `title`, specific, descriptive `instructions` and a clear objective. Do NOT create generic steps like "Step 1" with "Execute step 1". Every step MUST set `skill` AND `metadata.backlog_item_id=<id>`.',
+          '  4. Call `requirement_status` with `stage="in-progress"`.',
+          '  5. If ALL items in the backlog are completely done, call the `system_notification` tool directly to notify the team.',
+          'Do not stop with an assistant text message until the plan is created. Do not touch done items; do not open a second in_progress item.',
+        ].join('\n');
 
     // Nudge once: if after a couple of turns the orchestrator is still only
     // exploring (no instance_plan create yet), remind it that PLANNING is

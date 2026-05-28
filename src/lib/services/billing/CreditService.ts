@@ -78,7 +78,7 @@ export class CreditService {
     ASSISTANT_OUTPUT_TOKEN_MILLION: 20.0, // 20 credits per million output tokens
     SANDBOX_HOUR: 0.5, // 0.5 credits per hour of sandbox usage
     IMAGE_GENERATION: 0.1,
-    VIDEO_GENERATION_MINUTE: 20.0,
+    VIDEO_GENERATION_MINUTE: 24.0, // Veo 3.1 Standard: $0.40/sec = $24/min. (1 credit = $1)
     AUDIO_GENERATION_MINUTE: 2.0,
     AUDIO_TRANSCRIPTION: 0.1,
     FRAME_EXTRACTION: 0.1,

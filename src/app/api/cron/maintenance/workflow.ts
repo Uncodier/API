@@ -199,7 +199,11 @@ export async function runMaintenanceWorkflow(input: MaintenanceWorkflowInput) {
 
     // Unblock the requirement so the main builder can pick it up again
     // This is especially important if QA was triggered because the main builder was blocked
-    await unblockRequirementStep(reqId, true);
+    // Only unblock if it was explicitly blocked, otherwise we might undo an intentional on-review/done state
+    const { data: reqStatus } = await supabaseAdmin.from('requirements').select('status').eq('id', reqId).single();
+    if (reqStatus?.status === 'blocked') {
+      await unblockRequirementStep(reqId, true);
+    }
 
     return { reqId, status: 'qa_improvement_cycle_complete' };
   } catch (e: any) {

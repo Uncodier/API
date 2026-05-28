@@ -168,8 +168,9 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   // Early exit if we are skipping the orchestrator AND there is no active plan.
   // This means we are in the cooldown period and there is no work to do.
   // We don't want to create a sandbox just to do nothing and push an empty commit.
-  // NOTE: If the backlog is all done or empty, we DO want to run so we can finalize the Cycle or create items.
-  if (skipOrchestrator && !hasActivePlan && !isBacklogEmptyOrDone) {
+  // NOTE: If the backlog is empty, we DO want to run so we can finalize the Cycle or create items.
+  // If all backlog is done, we DO NOT run the orchestrator (it will just loop). We will emit the final status manually later.
+  if (skipOrchestrator && !hasActivePlan && !(!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) {
     console.log(`[CronAppsWorkflow] Skipping cycle: cooling down to avoid re-plan loop. No active plan to execute.`);
     return { reqId, branch: null, previewUrl: null, status: 'in-progress' as const };
   }
@@ -254,7 +255,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
   });
 
   // Step 4: Run orchestrator (if no pending plan)
-  if (!skipOrchestrator || isBacklogEmptyOrDone) {
+  if ((!skipOrchestrator || (!reqContext.backlog?.items || reqContext.backlog.items.length === 0)) && !isAllBacklogDone) {
     console.log(`[CronAppsWorkflow|orchestrator] PHASE 1: Running orchestrator`);
     const prompt = isNewBranch
       ? `Process requirement "${title}". Read instructions, investigate, then create an instance_plan with actionable steps (each with a role).`
@@ -498,8 +499,27 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       // If there's no active plan, but we didn't skip the cycle, it means we
       // either just finished a plan or we are finalizing a previous cycle.
       // We check the most recent plan to see if it was completed.
-      if (existingPlan?.status === 'completed') {
-        planCompleted = true;
+      if (planCompleted) {
+        // If we completed a plan AND all core items are now done, we can fast-track the requirement closure
+        // without waiting for the next cron cycle to wake up the orchestrator
+        if (isAllBacklogDone) {
+           console.log(`[CronAppsWorkflow] Plan completed and all backlog is done. Fast-tracking requirement to on-review.`);
+           try {
+             const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+             await supabaseAdmin.from('requirements').update({ status: 'on-review', updated_at: new Date().toISOString() }).eq('id', reqId);
+             
+             // Also add a requirement_status to make it visible in the UI
+             await supabaseAdmin.from('requirement_status').insert({
+               requirement_id: reqId,
+               instance_id: instanceId,
+               stage: 'on-review',
+               message: 'Project complete (all core backlog items done)',
+             });
+             
+           } catch (e) {
+             console.warn(`[CronAppsWorkflow] Failed to fast-track requirement to on-review:`, e);
+           }
+        }
       }
     }
   } finally {

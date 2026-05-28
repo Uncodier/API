@@ -64,6 +64,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         },
         reason: { type: 'string', description: 'Optional reason for set_status or mark_needs_review.' },
         assumption: { type: 'string', description: 'Assumption text for log_assumption.' },
+        confirm_reopen: { type: 'boolean', description: 'Must be true to set_status out of done.' },
       },
       required: ['action', 'requirement_id'],
     },
@@ -85,6 +86,7 @@ export function requirementBacklogTool(_siteId: string, defaultRequirementId?: s
         status: args.status as BacklogItemStatus | undefined,
         reason: args.reason,
         assumption: args.assumption,
+        confirm_reopen: args.confirm_reopen,
       };
       return executeBacklogCore(params);
     },
