@@ -239,17 +239,26 @@ export async function executeAssistantStep(
             }
             if (contextMessages.length > 0) {
               console.log(`[Node Executor] Injecting ${contextMessages.length} context messages from linked nodes`);
-              messages = [...contextMessages, ...messages];
-            }
+              
+              const originalMessages = [...messages];
+              messages = [...contextMessages, ...originalMessages];
 
-            // Append the entire reference context again at the end
-            // so the LLM doesn't get distracted by other assets in the chat history.
-            if (hasReferenceNode && referenceMessages.length > 0) {
-              messages.push({
-                role: 'user',
-                content: '[SYSTEM REMINDER: Below is the Reference Context again. You MUST prioritize these assets for the current request over any other previous assets in the conversation history.]'
-              });
-              messages = [...messages, ...referenceMessages];
+              // Append the entire reference context again at the end, BUT BEFORE the final user prompt.
+              // If we put it after the final prompt, the LLM forgets the actual instruction.
+              if (hasReferenceNode && referenceMessages.length > 0 && originalMessages.length > 0) {
+                const finalPrompt = messages.pop(); // Remove the user's actual prompt temporarily
+                
+                messages.push({
+                  role: 'user',
+                  content: '[SYSTEM REMINDER: Below is the Reference Context again. You MUST prioritize these assets for the current request over any other previous assets in the conversation history.]'
+                });
+                
+                messages = [...messages, ...referenceMessages]; // Add references
+                
+                if (finalPrompt) {
+                  messages.push(finalPrompt); // Put the user's prompt back at the very end
+                }
+              }
             }
           }
         }
