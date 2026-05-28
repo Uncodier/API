@@ -12,6 +12,7 @@ export interface ImageGenerationParams {
   n?: number;
   quality?: 'standard' | 'hd' | number;
   ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+  aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
   reference_images?: string[];
 }
 
@@ -48,6 +49,7 @@ export class ImageGenerationService {
       n = 1,
       quality = 'standard',
       ratio,
+      aspect_ratio,
       reference_images
     } = params;
 
@@ -68,6 +70,7 @@ export class ImageGenerationService {
           n,
           quality: typeof quality === 'number' ? quality.toString() : quality,
           ratio,
+          aspect_ratio,
           reference_images
         });
 
@@ -110,6 +113,7 @@ export class ImageGenerationService {
     n: number;
     quality?: string;
     ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+    aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
     reference_images?: string[];
   }): Promise<ImageGenerationResult> {
     const apiUrl = `${process.env.NEXT_PUBLIC_API_SERVER_URL || 'http://localhost:3000'}/api/ai/image`;
@@ -130,6 +134,7 @@ export class ImageGenerationService {
     if (params.instance_id) requestBody.instance_id = params.instance_id;
     if (params.quality) requestBody.quality = params.quality;
     if (params.ratio) requestBody.ratio = params.ratio;
+    if (params.aspect_ratio) requestBody.aspect_ratio = params.aspect_ratio;
     if (params.reference_images) requestBody.reference_images = params.reference_images;
 
     try {

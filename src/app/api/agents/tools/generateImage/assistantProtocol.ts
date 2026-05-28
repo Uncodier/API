@@ -16,8 +16,9 @@ export interface GenerateImageToolParams {
   size?: '256x256' | '512x512' | '1024x1024';
   n?: number;
   quality?: 'standard' | 'hd';
-  ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
-  reference_images?: string[];
+    ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+    aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+    reference_images?: string[];
 }
 
 /**
@@ -62,6 +63,11 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           type: 'string',
           enum: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'],
           description: 'Aspect ratio of the generated image. Defaults to 1:1 (square).'
+        },
+        aspect_ratio: {
+          type: 'string',
+          enum: ['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3'],
+          description: 'Aspect ratio of the generated image. Defaults to 1:1 (square). Use this instead of ratio for consistency.'
         },
         reference_images: {
           type: 'array',
@@ -109,6 +115,7 @@ export function generateImageTool(site_id: string, instance_id?: string) {
           n: args.n,
           quality: args.quality,
           ratio: args.ratio,
+          aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images
         };
         
@@ -222,6 +229,7 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
       n: z.number().min(1).max(4).optional().describe('Number of images to generate. Defaults to 1.'),
       quality: z.enum(['standard', 'hd']).optional().describe('Quality of the generated image. HD quality is higher resolution but may take longer. Defaults to standard.'),
       ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated image. Defaults to 1:1 (square).'),
+      aspect_ratio: z.enum(['1:1', '4:3', '3:4', '16:9', '9:16', '3:2', '2:3']).optional().describe('Aspect ratio of the generated image. Defaults to 1:1 (square). Use this instead of ratio for consistency.'),
       reference_images: z.array(z.string()).optional().describe('Array of image URLs to use as reference/context for generation. Images will be converted to base64 and sent as context to the AI model.')
     }),
     execute: async (args) => {
@@ -259,6 +267,7 @@ export function generateImageToolScrapybara(instance: UbuntuInstance, site_id: s
           n: args.n,
           quality: args.quality,
           ratio: args.ratio,
+          aspect_ratio: args.aspect_ratio,
           reference_images: args.reference_images
         };
 

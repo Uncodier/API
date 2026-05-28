@@ -14,6 +14,7 @@ interface ImageRequestBody {
   n?: number;
   quality?: 'standard' | 'hd' | number;
   ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
+  aspect_ratio?: '1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3';
   reference_images?: string[];
 }
 
@@ -754,7 +755,10 @@ async function generateWithVercelGateway(prompt: string, siteId: string, size?: 
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as ImageRequestBody;
-    const { prompt, site_id, instance_id, provider = 'gemini', size, n, quality, ratio, reference_images } = body || {};
+    const { prompt, site_id, instance_id, provider = 'gemini', size, n, quality, ratio, aspect_ratio, reference_images } = body || {};
+    
+    // Normalize aspect ratio to support both parameters (aspect_ratio takes precedence as it's the newer standard)
+    const finalRatio = aspect_ratio || ratio;
 
     if (!prompt || typeof prompt !== 'string') {
       return NextResponse.json({ error: 'Parameter "prompt" is required' }, { status: 400 });
@@ -803,11 +807,11 @@ export async function POST(request: NextRequest) {
         let result: any;
     if (provider === 'azure') {
       try {
-        result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
+        result = await generateWithAzure(prompt, site_id, size, n, quality, finalRatio, reference_images, instance_id);
       } catch (err) {
         console.warn('[image api] Azure provider failed, trying Gemini fallback...', err);
         try {
-          result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
+          result = await generateWithGemini(prompt, site_id, size, n, finalRatio, quality, reference_images, instance_id);
           result.fallbackFrom = 'azure';
         } catch (fallbackErr: any) {
           console.error('[image api] Gemini fallback also failed:', fallbackErr);
@@ -816,11 +820,11 @@ export async function POST(request: NextRequest) {
       }
     } else if (provider === 'gemini') {
       try {
-        result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
+        result = await generateWithGemini(prompt, site_id, size, n, finalRatio, quality, reference_images, instance_id);
       } catch (err) {
         console.warn('[image api] Gemini provider failed, trying Azure fallback...', err);
         try {
-          result = await generateWithAzure(prompt, site_id, size, n, quality, ratio, reference_images, instance_id);
+          result = await generateWithAzure(prompt, site_id, size, n, quality, finalRatio, reference_images, instance_id);
           result.fallbackFrom = 'gemini';
         } catch (fallbackErr: any) {
           console.error('[image api] Azure fallback also failed:', fallbackErr);
@@ -828,10 +832,10 @@ export async function POST(request: NextRequest) {
         }
       }
     } else if (provider === 'vercel') {
-      result = await generateWithVercelGateway(prompt, site_id, size, n, ratio, reference_images, instance_id);
+      result = await generateWithVercelGateway(prompt, site_id, size, n, finalRatio, reference_images, instance_id);
     } else {
       // Default to Gemini as it's the most capable currently
-      result = await generateWithGemini(prompt, site_id, size, n, ratio, quality, reference_images, instance_id);
+      result = await generateWithGemini(prompt, site_id, size, n, finalRatio, quality, reference_images, instance_id);
     }
 
     if (result && Array.isArray(result.images) && result.images.length > 0) {
@@ -867,10 +871,11 @@ export async function GET() {
       body: {
         prompt: 'string (required)',
         site_id: 'string (required) - UUID of the site',
-        provider: "'azure' | 'gemini' | 'vercel' (default: 'azure')",
+        provider: "'azure' | 'gemini' | 'vercel' (default: 'gemini')",
         size: "'256x256' | '512x512' | '1024x1024'",
         n: 'number',
         quality: "'standard' | 'hd'",
+        aspect_ratio: "'1:1' | '4:3' | '3:4' | '16:9' | '9:16' | '3:2' | '2:3' (or 'ratio')",
       },
     },
     providers: ['azure', 'gemini', 'vercel'],

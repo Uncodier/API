@@ -6,6 +6,7 @@ import { fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/
 export interface FullRequirementContext {
   backlog: RequirementBacklog | null;
   progress: string[] | null;
+  requirementDetailsContext: string;
   previousWorkContext: string;
   agentBackground: string;
   memoriesContext: string;
@@ -25,9 +26,11 @@ export class RequirementContextService {
     userId: string
   ): Promise<FullRequirementContext> {
     
-    // 1. Fetch Backlog & Progress
+    // 1. Fetch Backlog, Progress & Requirement Details
     let backlog: RequirementBacklog | null = null;
     let progress: string[] | null = null;
+    let requirementDetailsContext = '';
+    
     try {
       const snap = await listBacklog(reqId);
       backlog = snap.backlog;
@@ -38,12 +41,25 @@ export class RequirementContextService {
     try {
       const { data: reqData } = await supabaseAdmin
         .from('requirements')
-        .select('progress')
+        .select('id, title, description, instructions, type, priority, status, progress')
         .eq('id', reqId)
         .single();
         
-      if (reqData?.progress && Array.isArray(reqData.progress)) {
-        progress = reqData.progress;
+      if (reqData) {
+        if (reqData.progress && Array.isArray(reqData.progress)) {
+          progress = reqData.progress;
+        }
+        
+        requirementDetailsContext = '\n\n📋 CURRENT REQUIREMENT DETAILS:\n';
+        requirementDetailsContext += JSON.stringify({
+          id: reqData.id,
+          title: reqData.title,
+          description: reqData.description,
+          instructions: reqData.instructions,
+          type: reqData.type,
+          priority: reqData.priority,
+          status: reqData.status
+        }, null, 2);
       }
     } catch (e: unknown) {
       console.warn(`[RequirementContext] progress snapshot unavailable for req ${reqId}:`, e);
@@ -212,6 +228,7 @@ export class RequirementContextService {
     return {
       backlog,
       progress,
+      requirementDetailsContext,
       previousWorkContext,
       agentBackground,
       memoriesContext,

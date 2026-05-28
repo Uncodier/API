@@ -191,7 +191,7 @@ export async function prepareAssistantContext(
     if (candidateId && !TERMINAL_STAGES.has(latestStage)) {
       const { data: reqRow } = await supabaseAdmin
         .from('requirements')
-        .select('status')
+        .select('status, title, description, instructions, type, priority')
         .eq('id', candidateId)
         .maybeSingle();
       const reqStatus = String(reqRow?.status || '').toLowerCase();
@@ -199,6 +199,9 @@ export async function prepareAssistantContext(
         !reqStatus || reqStatus === 'pending' || reqStatus === 'in-progress' || reqStatus === 'blocked';
       if (isOpen) {
         activeRequirementId = candidateId;
+        
+        requirementStatusContext = '\n\n📋 CURRENT REQUIREMENT CONTEXT:\n';
+        requirementStatusContext += JSON.stringify(reqRow, null, 2);
       } else {
         console.log(
           `[AssistantContext] Skipping activeRequirementId=${candidateId}: requirement is terminal (${reqStatus}). Avoiding cross-project context leak.`,
@@ -206,10 +209,11 @@ export async function prepareAssistantContext(
       }
     }
 
-    requirementStatusContext = '\n\n📋 REQUIREMENT STATUS CONTEXT:\n';
-    requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
-    requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
-  }
+    if (activeRequirementId) {
+      requirementStatusContext += '\n\n📋 REQUIREMENT STATUS HISTORY:\n';
+      requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
+      requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
+    }
 
   // Fetch requirement progress log and backlog if linked
   let progressContext = '';
