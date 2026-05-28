@@ -5,7 +5,7 @@
 
 import type { Sandbox } from '@vercel/sandbox';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
-import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
+import type { AssistantContext } from '@/app/api/robots/instance/assistant/types';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import {
   commitWorkspaceToOrigin,

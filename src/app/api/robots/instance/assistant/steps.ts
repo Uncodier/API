@@ -13,30 +13,7 @@ import {
   CALENDAR_AND_MEETINGS_INSTRUCTION,
 } from './utils';
 
-export interface AssistantContext {
-  instance: any;
-  systemPrompt: string;
-  customTools: any[];
-  agentType?: string;
-  userPhone?: string;
-  executionOptions: {
-    use_sdk_tools: boolean;
-    /** Logging/credits label (NOT the underlying LLM provider). */
-    provider: 'azure' | 'openai' | 'gemini';
-    instance_id: string;
-    site_id: string;
-    user_id: string;
-    /** Optional LLM provider override (gemini | azure | openai). Defaults to env AI_PROVIDER. */
-    ai_provider?: 'gemini' | 'azure' | 'openai';
-    /** Optional LLM model override. Defaults to env AI_MODEL / provider default. */
-    ai_model?: string;
-  };
-  initialMessage: string;
-  imageAssets: { url: string; fileType: string }[];
-  hasLinkedRequirement: boolean;
-  instanceNodeId?: string;
-  expectedResultsAmount: number;
-}
+import type { AssistantContext } from './types';
 
 // Step 1: Prepare context (fetch data, build prompts)
 export async function prepareAssistantContext(
@@ -214,6 +191,7 @@ export async function prepareAssistantContext(
       requirementStatusContext += JSON.stringify(requirementStatuses, null, 2);
       requirementStatusContext += '\n\n💡 WHEN CHANGES ARE REQUESTED: If the user requests changes, you MUST use the requirements tool (action="update") to update the requirement instructions with the new requests and set its status to "in-progress". Then, use the requirement_status tool (action="create") to log that the requirement is back in progress.';
     }
+  }
 
   // Fetch requirement progress log and backlog if linked
   let progressContext = '';
@@ -460,7 +438,7 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
 export async function processAssistantTurn(
   context: AssistantContext,
   messages: any[]
-) {
+): Promise<any> {
   'use step';
   
   // Re-instantiate tools here inside the step where they will be used

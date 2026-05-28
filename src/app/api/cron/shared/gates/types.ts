@@ -19,7 +19,7 @@
 import type { Sandbox } from '@vercel/sandbox';
 import type { BacklogItem } from '@/lib/services/requirement-backlog-types';
 import type { RequirementKind } from '@/lib/services/requirement-flows';
-import type { AssistantContext } from '@/app/api/robots/instance/assistant/steps';
+import type { AssistantContext } from '@/app/api/robots/instance/assistant/types';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 import type { GitRepoKind } from '../cron-commit-helpers';
 import type {

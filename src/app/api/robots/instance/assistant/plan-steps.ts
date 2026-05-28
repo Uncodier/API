@@ -1,7 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getInstancePlansCore } from '@/app/api/agents/tools/instance_plan/get/route';
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
-import { AssistantContext, processAssistantTurn } from './steps';
+import { processAssistantTurn } from './steps';
+import { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
 import { getStepCheckpointPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
