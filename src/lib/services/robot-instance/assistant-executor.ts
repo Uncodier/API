@@ -25,6 +25,8 @@ import { buildNodeResult, buildInitialNodeResult } from './node-result-collector
  * anything else -> try result first, fallback to prompt
  */
 function extractNodeText(node: any, type: string): string {
+  if (!node) return '';
+  
   if (type === 'prompt') {
     if (!node.prompt) return '';
     if (typeof node.prompt === 'string') {
@@ -49,20 +51,44 @@ function extractNodeText(node: any, type: string): string {
  * injected as multimodal image_url parts in the next node's context.
  */
 function extractNodeImageUrls(node: any): string[] {
-  const res = node?.result;
-  if (!res) return [];
+  if (!node) return [];
+  
+  const urls: string[] = [];
+  
+  // 1. Try extracting from node.result.outputs
+  const res = node.result;
+  if (res) {
+    const parsed = typeof res === 'string'
+      ? (() => { try { return JSON.parse(res); } catch { return null; } })()
+      : res;
 
-  const parsed = typeof res === 'string'
-    ? (() => { try { return JSON.parse(res); } catch { return null; } })()
-    : res;
+    if (parsed?.outputs && Array.isArray(parsed.outputs)) {
+      const outputUrls = parsed.outputs
+        .filter((o: any) => o.type === 'image' && o.data?.url)
+        .map((o: any) => o.data.url as string);
+      urls.push(...outputUrls);
+    }
+  }
 
-  if (!parsed?.outputs || !Array.isArray(parsed.outputs)) return [];
-
-  const urls = parsed.outputs
-    .filter((o: any) => o.type === 'image' && o.data?.url)
-    .map((o: any) => o.data.url as string);
+  // 2. Try extracting from node.prompt if there are images uploaded there
+  const prompt = node.prompt;
+  if (prompt) {
+    const parsedPrompt = typeof prompt === 'string'
+      ? (() => { try { return JSON.parse(prompt); } catch { return null; } })()
+      : prompt;
+      
+    if (parsedPrompt?.attachments && Array.isArray(parsedPrompt.attachments)) {
+      const attachmentUrls = parsedPrompt.attachments
+        .filter((a: any) => typeof a === 'string' && (a.includes('http') || a.includes('data:image')))
+        .map((a: any) => a as string);
+      urls.push(...attachmentUrls);
+    }
     
-  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node result outputs`);
+    // Also check explicit image_url structures in prompt
+    if (parsedPrompt?.image_url) urls.push(parsedPrompt.image_url);
+  }
+    
+  console.log(`[extractNodeImageUrls] Extracted ${urls.length} images from node ${node.id}`);
   return urls;
 }
 
@@ -218,7 +244,27 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
         promptNode = data;
 
         if (promptNode) {
+          // If the node has a parent, explicitly add it to contextEntries if not already there
           contextEntries = await fetchNodeContexts(instance_node_id);
+          
+          if (promptNode.parent_node_id) {
+            const hasParent = contextEntries.some(e => e.context_node_id === promptNode.parent_node_id);
+            if (!hasParent) {
+              console.log(`[Node Executor] Parent node ${promptNode.parent_node_id} not in context entries, fetching explicitly`);
+              const { data: parentData } = await supabaseAdmin
+                .from('instance_nodes')
+                .select('*')
+                .eq('id', promptNode.parent_node_id)
+                .single();
+              if (parentData) {
+                contextEntries.unshift({
+                  context_node_id: parentData.id,
+                  type: 'parent_reference',
+                  node: parentData
+                });
+              }
+            }
+          }
 
           // 3. Inject context nodes right before the final user prompt
           if (contextEntries.length > 0) {
