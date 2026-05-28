@@ -113,6 +113,12 @@ Bullet list of ambiguities the human must resolve. Block Definition of Ready if 
 3. Append new sections or refine existing ones. Do not re-order required sections.
 4. If the client feedback changes the Contract (API shape, test-ids), add an entry to a `## Revisions` section at the bottom with date and summary so downstream skills can diff.
 
+### 4.1. Requirements and Repositories (1:1 Relationship)
+**CRITICAL:** Every requirement has its own unique, isolated repository.
+- **When to CREATE a new requirement:** Only when starting a completely new feature, isolated from previous work, or a macro-objective that doesn't belong to any existing requirement.
+- **When NOT to create a new requirement:** When doing updates, bug fixes, refactors, or iterative improvements on previous work.
+- **Updating existing work:** Since each requirement has its own repo, updates **MUST** be made on the original requirement's repo. If a requirement is in cooldown or closed and you need to add new work, **reopen the existing requirement** (e.g., via `requirements action="update"` with `completion_status='pending'`, `status='in-progress'`) rather than creating a new one. Do not create multiple requirements for the same context, as this duplicates repositories and breaks the workflow.
+
 ### 5. Handshake with downstream skills
 - `makinari-fase-investigacion` expects section 2 "Baseline" to be grounded in the actual repo.
 - `makinari-fase-planeacion` consumes sections 3, 4, 7, 8, 9 to build `instance_plan`.
