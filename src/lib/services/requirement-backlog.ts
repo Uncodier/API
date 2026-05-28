@@ -60,6 +60,25 @@ export function pendingCoreItems(items: BacklogItem[]): BacklogItem[] {
   return items.filter((i) => (i.tier ?? 'core') === 'core' && i.status !== 'done' && i.status !== 'rejected');
 }
 
+const TERMINAL_REQUIREMENT_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);
+
+export async function isRequirementReopened(requirementId: string): Promise<boolean> {
+  const { supabaseAdmin } = await import('@/lib/database/supabase-server');
+  const { data } = await supabaseAdmin
+    .from('requirement_status')
+    .select('stage, created_at')
+    .eq('requirement_id', requirementId)
+    .order('created_at', { ascending: false })
+    .limit(50);
+  if (!data || data.length === 0) return false;
+  const latest = String(data[0].stage || '').toLowerCase();
+  if (TERMINAL_REQUIREMENT_STAGES.has(latest)) return false;
+  for (let i = 1; i < data.length; i++) {
+    if (TERMINAL_REQUIREMENT_STAGES.has(String(data[i].stage || '').toLowerCase())) return true;
+  }
+  return false;
+}
+
 // Web Crypto UUID generator. Avoids importing the Node `crypto` module so this
 // file can be safely bundled inside workflow functions (useworkflow.dev), which
 // reject Node.js modules. `globalThis.crypto.randomUUID` is available in Node

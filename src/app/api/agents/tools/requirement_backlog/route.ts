@@ -8,6 +8,7 @@ import {
   markNeedsReview,
   setItemStatus,
   upsertBacklogItem,
+  isRequirementReopened,
   type BacklogItemStatus,
   type BacklogItemKind,
   type BacklogItemTier,
@@ -71,7 +72,17 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
       const coreItems = (backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
       const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
       if (allCoreDone && params.tier === 'ornamental') {
-        throw new Error('Backlog cerrado: el requirement está en cooldown. NO crees items ornamentales de cierre. Llama requirement_status stage=\'on-review\' y termina el turno con texto plano.');
+        const reopened = await isRequirementReopened(requirement_id);
+        if (!reopened) {
+          throw new Error(
+            'Backlog cerrado: el requirement está en cooldown (todos los core items done y nunca fue reabierto). ' +
+            'NO crees items ornamentales de cierre. ' +
+            'Si necesitás agregar trabajo nuevo en este mismo requirement, reabrilo primero: ' +
+            'requirements.update(requirement_id=..., completion_status=\'pending\', status=\'in-progress\') + ' +
+            'requirement_status(stage=\'in-progress\', message=\'reopen: <motivo>\'). ' +
+            'NO crees un requirement nuevo.'
+          );
+        }
       }
       
       const item = await upsertBacklogItem({
