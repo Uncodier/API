@@ -74,13 +74,8 @@ function buildContextContent(
   text: string,
   imageUrls: string[],
   label: string,
-  isReference: boolean = false
 ): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
-  let baseText = `[Context from node ${label}]: ${text}`;
-  
-  if (isReference) {
-    baseText = `[Reference Context from parent or related node ${label}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`;
-  }
+  const baseText = `[Context from node ${label}]: ${text}`;
 
   if (imageUrls.length === 0) {
     return baseText;
@@ -210,54 +205,57 @@ export async function executeAssistantStep(
         if (promptNode) {
           contextEntries = await fetchNodeContexts(instance_node_id);
 
-          // Prepend context nodes as messages (with multimodal image support)
+          // Inject context nodes right before the final user prompt
+          // so the LLM remembers them clearly, rather than burying them at the top.
           if (contextEntries.length > 0) {
             const contextMessages: any[] = [];
-            const referenceMessages: any[] = [];
-            let hasReferenceNode = false;
-
+            
             for (const entry of contextEntries) {
               const text = extractNodeText(entry.node, entry.type);
               const imageUrls = extractNodeImageUrls(entry.node);
               
-              // All explicitly linked nodes (via instance_node_contexts) are considered reference nodes
-              // This includes the parent node and any other explicit relations
+              // All explicitly linked nodes are treated as primary references
               const isReference = true;
 
               if (text || imageUrls.length > 0) {
-                const msg = {
-                  role: 'user',
-                  content: buildContextContent(text, imageUrls, entry.type, isReference),
-                };
-                contextMessages.push(msg);
-                
-                if (isReference) {
-                  hasReferenceNode = true;
-                  referenceMessages.push(msg);
+                // If there are images, format as a multimodal message
+                if (imageUrls.length > 0) {
+                  const parts: any[] = [];
+                  const urlText = `\n\nCRITICAL - Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${imageUrls.join('\n')}`;
+                  
+                  parts.push({ 
+                    type: 'text', 
+                    text: `[Reference Context from parent or related node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}${urlText}` 
+                  });
+                  
+                  for (const url of imageUrls) {
+                    parts.push({ type: 'image_url', image_url: { url } });
+                  }
+                  
+                  contextMessages.push({
+                    role: 'user',
+                    content: parts
+                  });
+                } else {
+                  // Text only
+                  contextMessages.push({
+                    role: 'user',
+                    content: `[Reference Context from parent or related node ${entry.type}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`
+                  });
                 }
               }
             }
+            
             if (contextMessages.length > 0) {
-              console.log(`[Node Executor] Injecting ${contextMessages.length} context messages from linked nodes`);
+              console.log(`[Node Executor] Injecting ${contextMessages.length} context messages just before final prompt`);
               
-              const originalMessages = [...messages];
-              messages = [...contextMessages, ...originalMessages];
-
-              // Append the entire reference context again at the end, BUT BEFORE the final user prompt.
-              // If we put it after the final prompt, the LLM forgets the actual instruction.
-              if (hasReferenceNode && referenceMessages.length > 0 && originalMessages.length > 0) {
-                const finalPrompt = messages.pop(); // Remove the user's actual prompt temporarily
-                
-                messages.push({
-                  role: 'user',
-                  content: '[SYSTEM REMINDER: Below is the Reference Context again. You MUST prioritize these assets for the current request over any other previous assets in the conversation history.]'
-                });
-                
-                messages = [...messages, ...referenceMessages]; // Add references
-                
-                if (finalPrompt) {
-                  messages.push(finalPrompt); // Put the user's prompt back at the very end
-                }
+              // If there are previous messages, pop the last one (the current user prompt)
+              // insert the context messages, and then push the user prompt back.
+              if (messages.length > 0) {
+                const finalPrompt = messages.pop();
+                messages = [...messages, ...contextMessages, finalPrompt];
+              } else {
+                messages = [...contextMessages];
               }
             }
           }
