@@ -430,7 +430,6 @@ export async function runOrchestratorStep(params: {
     // exploring (no instance_plan create yet), remind it that PLANNING is
     // its deliverable. Otherwise the cron loops forever producing no plan.
     if (!isDone && !createdPlan && !nudged && turns >= PLAN_NUDGE_AFTER_TURN) {
-      const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
       if (!isAdaptation) {
         nudged = true;
         console.log(
@@ -450,7 +449,6 @@ export async function runOrchestratorStep(params: {
     // turn budget on empty assistant messages.
     // For adaptation runs, we don't care about `action="create"`, we just
     // want it to update the plan.
-    const isAdaptation = initialMessage.includes('PLAN ADAPTATION REQUIRED');
     
     // In adaptation mode, we consider it "created/updated" if it called instance_plan at all
     const planUpdated = createdPlan || (isAdaptation && callSnapshots.some(s => s.name === 'instance_plan'));
@@ -461,16 +459,22 @@ export async function runOrchestratorStep(params: {
       noPlanOverrides < MAX_NO_PLAN_OVERRIDES &&
       turns < MAX_TURNS
     ) {
-      noPlanOverrides++;
-      const reminderContent = isAdaptation 
-        ? 'REMINDER: You must update the plan using the `instance_plan` tool. Do not just reply with text.' 
-        : noPlanReminder;
-        
-      console.warn(
-        `[CronStep|orchestrator] Orchestrator returned isDone=true at turn ${turns} without calling instance_plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
-      );
-      messages = [...messages, { role: 'user', content: reminderContent }];
-      isDone = false;
+      // If we are in core-done mode, we only expect the status update.
+      // Do not force-continue if the model returned plain text as requested by the closure block.
+      if (coreDoneReminder && messages.some(m => Array.isArray(m.tool_calls) && m.tool_calls.some((tc: any) => tc?.function?.name === 'requirement_status'))) {
+        console.log(`[CronStep|orchestrator] Orchestrator emitted requirement_status in core-done mode. Allowing exit.`);
+      } else {
+        noPlanOverrides++;
+        const reminderContent = isAdaptation 
+          ? 'REMINDER: You must update the plan using the `instance_plan` tool. Do not just reply with text.' 
+          : noPlanReminder;
+          
+        console.warn(
+          `[CronStep|orchestrator] Orchestrator returned isDone=true at turn ${turns} without calling instance_plan — overriding (${noPlanOverrides}/${MAX_NO_PLAN_OVERRIDES}) and re-prompting.`,
+        );
+        messages = [...messages, { role: 'user', content: reminderContent }];
+        isDone = false;
+      }
     }
   }
 
