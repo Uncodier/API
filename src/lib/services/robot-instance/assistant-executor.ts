@@ -74,16 +74,23 @@ function buildContextContent(
   text: string,
   imageUrls: string[],
   label: string,
+  isReference: boolean = false
 ): string | Array<{ type: string; text?: string; image_url?: { url: string } }> {
+  let baseText = `[Context from node ${label}]: ${text}`;
+  
+  if (isReference) {
+    baseText = `[Reference Context from parent or related node ${label}]:\nPRIORITY: Please prioritize the assets (like images or text) from this reference node. The main prompt refers to these assets.\n\n${text}`;
+  }
+
   if (imageUrls.length === 0) {
-    return `[Context from node ${label}]: ${text}`;
+    return baseText;
   }
 
   const parts: any[] = [];
   
   // Include URLs in text so the LLM knows the actual strings to pass to tools
   const urlText = imageUrls.length > 0 ? `\n\nCRITICAL - Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${imageUrls.join('\n')}` : '';
-  const combinedText = `[Context from node ${label}]: ${text}${urlText}`;
+  const combinedText = `${baseText}${urlText}`;
   
   parts.push({ type: 'text', text: combinedText });
   
@@ -209,11 +216,14 @@ export async function executeAssistantStep(
             for (const entry of contextEntries) {
               const text = extractNodeText(entry.node, entry.type);
               const imageUrls = extractNodeImageUrls(entry.node);
+              
+              // Determine if this is a reference node (parent node or explicitly marked as reference)
+              const isReference = entry.node?.id === promptNode.parent_node_id || entry.type === 'reference';
 
               if (text || imageUrls.length > 0) {
                 contextMessages.push({
                   role: 'user',
-                  content: buildContextContent(text, imageUrls, entry.type),
+                  content: buildContextContent(text, imageUrls, entry.type, isReference),
                 });
               }
             }
