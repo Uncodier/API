@@ -249,14 +249,20 @@ export async function executeAssistantStep(
             if (contextMessages.length > 0) {
               console.log(`[Node Executor] Injecting ${contextMessages.length} context messages just before final prompt`);
               
-              // If there are previous messages, pop the last one (the current user prompt)
-              // insert the context messages, and then push the user prompt back.
+              // When running a specific node with context references, we want to AVOID
+              // the distraction of the full conversation history (which might contain unrelated assets).
+              // We only keep the very last message (the current prompt) and the context messages.
               if (messages.length > 0) {
-                const finalPrompt = messages.pop();
-                messages = [...messages, ...contextMessages, finalPrompt];
+                const finalPrompt = messages.pop(); // The current user prompt
+                // Discard all previous history to force strict focus on the node's references
+                messages = [...contextMessages, finalPrompt];
               } else {
                 messages = [...contextMessages];
               }
+            } else if (messages.length > 0) {
+                // Even if there are no explicit context references, if we are executing a specific node,
+                // we might want to trim the history to prevent hallucinations from previous steps.
+                // For now, we only trim if there ARE context references to enforce strict asset scoping.
             }
           }
         }
