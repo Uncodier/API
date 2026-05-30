@@ -12,6 +12,7 @@ import {
   PartialRequirementMetadataSchema,
   verifyGitBindingReachable,
 } from '../git-binding-schema';
+import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
 
 const UpdateRequirementSchema = z.object({
   requirement_id: z.string().uuid('Requirement ID must be a valid UUID'),
@@ -89,6 +90,11 @@ export async function updateRequirementCore(params: any) {
   }
 
   const requirement = await updateRequirement(requirement_id, updateFields);
+
+  // Unblock if there was a recent user action
+  if (existing.metadata) {
+    await checkAndResetCronAttempts(requirement_id, existing.metadata);
+  }
 
   return {
     success: true,

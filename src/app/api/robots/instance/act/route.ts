@@ -6,6 +6,7 @@ import { executeUnifiedRobotActivityPlanning, decidePlanAction, formatPlanSteps,
 import { findGrowthRobotAgent } from '@/lib/helpers/agent-finder';
 import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { provisionScrapybaraInstance, needsProvisioning } from '@/lib/services/robot-instance/instance-provisioner';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 
 // ------------------------------------------------------------------------------------
 // Instance Act Specific Context (builds on the shared planning core)
@@ -256,6 +257,9 @@ export async function POST(request: NextRequest) {
       agent_id: instance.agent_id,
       command_id: instance.command_id,
     });
+    
+    // Async unblock the requirement
+    resetRequirementOnUserAction(instance_id).catch(console.error);
 
 
     let planResult = null;

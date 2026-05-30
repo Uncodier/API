@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearEmailWorkflow, runUnregisteredGearEmailWorkflow } from './workflow';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 
 export async function handleGearEmailWebhook(message: any, userEmail: string, profileName?: string) {
   console.log(`📩 Webhook de Email (Gear) recibido para ${userEmail}`);
@@ -266,6 +267,9 @@ export async function handleGearEmailWebhook(message: any, userEmail: string, pr
     user_id: userId,
   });
   console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
+  
+  // Async unblock the requirement
+  resetRequirementOnUserAction(instanceId).catch(console.error);
   
   // Trigger Workflow normal
   console.log(`🚀 Iniciando workflow GearAgent Email normal para ${userEmail}...`);

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runGearAgentWorkflow, runUnregisteredGearAgentWorkflow } from '../workflow';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
@@ -527,6 +528,9 @@ export async function POST(request: NextRequest) {
       user_id: userId,
     });
     console.log(`📝 Log de mensaje de usuario insertado en instance_logs para instancia ${instanceId}`);
+    
+    // Async unblock the requirement
+    resetRequirementOnUserAction(instanceId).catch(console.error);
     
     // Trigger Workflow normal
     console.log(`🚀 Iniciando workflow GearAgent normal para ${phoneNumber}...`);

@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { parseGithubTreeUrl, branchBelongsToRequirement } from '@/lib/services/requirement-branch';
 import { getRequirementGitBinding } from '@/lib/services/requirement-git-binding';
+import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
+import { getRequirementById } from '@/lib/database/requirement-db';
 
 /**
  * Pure (next/server-free) implementation of the requirement_status tool core.
@@ -111,6 +113,12 @@ export async function createRequirementStatusCore(params: {
   cycle?: string;
   endpoint_url?: string;
 }) {
+  // Async unblock if there was a recent user action
+  getRequirementById(params.requirement_id).then(req => {
+    if (req?.metadata) {
+      checkAndResetCronAttempts(params.requirement_id, req.metadata).catch(console.error);
+    }
+  }).catch(console.error);
   const {
     site_id,
     instance_id,

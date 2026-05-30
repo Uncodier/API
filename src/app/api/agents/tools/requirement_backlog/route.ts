@@ -13,6 +13,8 @@ import {
   type BacklogItemKind,
   type BacklogItemTier,
 } from '@/lib/services/requirement-backlog';
+import { checkAndResetCronAttempts } from '@/lib/services/requirement-cron-reset';
+import { getRequirementById } from '@/lib/database/requirement-db';
 
 export type BacklogAction =
   | 'list'
@@ -45,6 +47,13 @@ export interface BacklogCoreParams {
 export async function executeBacklogCore(params: BacklogCoreParams) {
   const { action, requirement_id } = params;
   if (!requirement_id) throw new Error('requirement_id is required');
+
+  // Async unblock if there was a recent user action
+  getRequirementById(requirement_id).then(req => {
+    if (req?.metadata) {
+      checkAndResetCronAttempts(requirement_id, req.metadata).catch(console.error);
+    }
+  }).catch(console.error);
 
   switch (action) {
     case 'list': {

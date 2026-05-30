@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runAssistantWorkflow } from './workflow';
+import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-reset';
 import {
   generateAgentBackground,
   getAssistantTools,
@@ -209,6 +210,9 @@ export async function POST(request: NextRequest) {
       site_id: site_id,
       user_id: user_id,
     });
+    
+    // Async unblock the requirement (reset cron_attempts and set to in-progress)
+    resetRequirementOnUserAction(providedInstanceId).catch(console.error);
 
     // Start the workflow
   const workflowRun = await start(runAssistantWorkflow, [
