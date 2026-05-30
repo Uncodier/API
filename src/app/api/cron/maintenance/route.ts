@@ -32,6 +32,10 @@ export async function GET(req: Request) {
   }
 
   try {
+    // QA CRON PAUSED PER USER REQUEST
+    console.log('[Cron Maintenance] Maintenance cycle paused per user request');
+    return NextResponse.json({ message: 'QA cron paused' });
+
     console.log('[Cron Maintenance] Starting maintenance cycle');
 
     const oneWeekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();

@@ -338,6 +338,8 @@ export async function GET(req: Request) {
         
         // We no longer limit QA runs. QA will continuously improve the app.
         // Trigger QA workflow before continuing
+        // QA CRON PAUSED PER USER REQUEST
+        /*
         const maintenanceLockKey = `${reqId}-maint`;
         const maintRunLock = await acquireRunLock(maintenanceLockKey);
         
@@ -422,6 +424,7 @@ export async function GET(req: Request) {
             await releaseRunLock(maintenanceLockKey, maintRunLock.runId);
           }
         }
+        */
 
         await releaseRunLock(reqId, runLock.runId);
         results.push({ reqId, skipped: true, reason: 'blocked_circuit_breaker_qa_triggered' });
@@ -558,6 +561,11 @@ export async function GET(req: Request) {
       // ======================================================================
       // We launch the maintenance workflow entirely in parallel, on the exact same cron tick.
       // It uses its own lock, its own remote_instance, and its own sandbox.
+      
+      // QA CRON PAUSED PER USER REQUEST
+      if (true) {
+        continue;
+      }
       
       let hasCompletedBacklog = requirement.metadata?.has_completed_backlog === true;
       
