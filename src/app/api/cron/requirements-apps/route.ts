@@ -517,7 +517,7 @@ export async function GET(req: Request) {
           blockers.push('WARNING: Last cycle produced no git push. The agent must write actual files, not just update metadata.');
         }
         if (latestStatus.message?.includes('plan not completed')) {
-          blockers.push('WARNING: Last plan did not complete all steps. Review failed steps and address root causes.');
+          blockers.push('WARNING: Last cycle failed because you did not call the `instance_plan` tool with action="create". You MUST use the `instance_plan` tool to create the execution plan for the current backlog item. Do not try to fix code; just create the plan.');
         }
         if (!latestStatus.preview_url) {
           blockers.push('No preview URL available yet. Ensure code changes are meaningful so the deployment works.');
