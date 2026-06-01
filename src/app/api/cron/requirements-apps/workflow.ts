@@ -25,6 +25,7 @@ import {
   updatePlanStepStatusStep,
   reconnectSandboxStep,
   logCronInfrastructureEventStep,
+  recordStepInfraTransientStep,
 } from '../shared/cron-execute-steps-phase';
 import { executeSingleTurnStep, type SingleTurnResult } from '../shared/single-turn-executor';
 import { runGateStep } from '../shared/gate-step-executor';
@@ -32,6 +33,7 @@ import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import { detectAdminLoopStep } from '../shared/admin-loop-step';
+import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import {
   recordRequirementBlockedStep,
   unblockRequirementStep,
@@ -383,11 +385,20 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
             
             if (!turnRes.ok) {
-               // Step failed
-               anyStepFailed = true;
-               console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
-               await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.error);
-               break outer;
+               if (turnRes.transient || isSandboxGoneError(turnRes.error)) {
+                 console.warn(`[CronAppsWorkflow] Step ${workingStep.order} transient infra error: ${turnRes.error}`);
+                 const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, turnRes.error);
+                 if (infra.exhausted) {
+                   anyStepFailed = true;
+                 }
+                 break outer;
+               } else {
+                 // Step failed genuinely
+                 anyStepFailed = true;
+                 console.warn(`[CronAppsWorkflow] Step ${workingStep.order} turn failed: ${turnRes.error}`);
+                 await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.error);
+                 break outer;
+               }
             }
 
             if (turnRes.sleepRequested && !turnRes.backgroundTask) {
@@ -442,6 +453,13 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   stepCompleted = true;
                   executed++;
                   await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'completed');
+               } else if (!gateRes.ok && isSandboxGoneError(gateRes.error)) {
+                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate hit transient infra error: ${gateRes.error}`);
+                  const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, gateRes.error);
+                  if (infra.exhausted) {
+                    anyStepFailed = true;
+                  }
+                  break outer;
                } else {
                   // Gate failed, do adaptation loop
                   anyStepFailed = true;

@@ -42,7 +42,8 @@ import {
   getPlanExecutionGateStep, 
   updatePlanStepStatusStep, 
   reconnectSandboxStep, 
-  logCronInfrastructureEventStep 
+  logCronInfrastructureEventStep,
+  recordStepInfraTransientStep
 } from './cron-execute-steps-phase-helpers';
 
 export {
@@ -50,7 +51,8 @@ export {
   getPlanExecutionGateStep, 
   updatePlanStepStatusStep, 
   reconnectSandboxStep, 
-  logCronInfrastructureEventStep
+  logCronInfrastructureEventStep,
+  recordStepInfraTransientStep
 };
 
 export type ExecuteStepsPhaseResult = any;

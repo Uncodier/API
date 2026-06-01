@@ -67,6 +67,46 @@ export async function updatePlanStepStatusStep(planId: string, stepId: string, s
   }
 }
 
+export const MAX_INFRA_RETRIES = 4;
+
+export async function recordStepInfraTransientStep(planId: string, stepId: string, errorMessage?: string): Promise<{ exhausted: boolean; infraCount: number }> {
+  'use step';
+  const { data } = await supabaseAdmin
+    .from('instance_plans')
+    .select('steps')
+    .eq('id', planId)
+    .single();
+
+  if (!data?.steps) return { exhausted: false, infraCount: 0 };
+
+  const steps = data.steps as any[];
+  const idx = steps.findIndex((s) => s.id === stepId);
+  if (idx === -1) return { exhausted: false, infraCount: 0 };
+
+  const infraCount = (steps[idx].infra_retry_count || 0) + 1;
+  steps[idx].infra_retry_count = infraCount;
+
+  let exhausted = false;
+  if (infraCount >= MAX_INFRA_RETRIES) {
+    exhausted = true;
+    steps[idx].status = 'failed';
+    steps[idx].completed_at = new Date().toISOString();
+    steps[idx].retry_count = 2; // MAX_RETRIES to ensure it's terminally failed in reconcilePlanStep
+    if (errorMessage) {
+      steps[idx].error_message = `Infra limit reached (${MAX_INFRA_RETRIES}): ` + errorMessage;
+    } else {
+      steps[idx].error_message = `Infra limit reached (${MAX_INFRA_RETRIES})`;
+    }
+  }
+
+  await supabaseAdmin
+    .from('instance_plans')
+    .update({ steps, updated_at: new Date().toISOString() })
+    .eq('id', planId);
+
+  return { exhausted, infraCount };
+}
+
 export async function reconnectSandboxStep(params: {
   sandboxId: string;
   requirementId: string;

@@ -50,6 +50,7 @@ const ROLE_TO_SKILL: Record<string, string> = {
 export interface SingleTurnResult {
   ok: boolean;
   isDone: boolean;
+  transient?: boolean;
   error?: string;
   effectiveSandboxId: string;
   sleepRequested?: number;
@@ -262,7 +263,7 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
     
     if (hasSandboxGoneError) {
        console.warn(`[SingleTurn] Sandbox gone detected. Will retry next workflow cycle.`);
-       return { ok: false, isDone: false, error: 'Sandbox Gone 410', effectiveSandboxId };
+       return { ok: false, isDone: false, transient: true, error: 'Sandbox Gone 410', effectiveSandboxId };
     }
 
     let sleepRequested: number | undefined;
@@ -306,6 +307,7 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
     return { ok: true, isDone: result.isDone, effectiveSandboxId, sleepRequested, backgroundTask };
   } catch (e: any) {
     console.error('[SingleTurn] Executor wrapper failed:', e);
-    return { ok: false, isDone: false, error: e.message, effectiveSandboxId };
+    const transient = isSandboxGoneError(e.message);
+    return { ok: false, isDone: false, transient, error: e.message, effectiveSandboxId };
   }
 }
