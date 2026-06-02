@@ -4,6 +4,7 @@ import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
 import cronParser from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
+import { isBacklogComplete, hasOutstandingWork } from '@/lib/services/requirement-backlog';
 
 export const maxDuration = 800; // 13 minutos aprox (Max for pro plan)
 export const dynamic = 'force-dynamic';
@@ -40,13 +41,13 @@ export async function GET(req: Request) {
       
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
-        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
+        const isComplete = isBacklogComplete(req.backlog?.items || []);
         
         // Revert to in-progress if new items were added
-        if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
+        if (['on-review', 'done'].includes(req.status) && hasOutstandingWork(req.backlog?.items || [])) {
           console.log(`[Cron Auto] Requirement ${req.id} is ${req.status} but has incomplete backlog. Reverting to in-progress.`);
           await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
-        } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (allBacklogDone || req.status === 'cancelled')) {
+        } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (isComplete || req.status === 'cancelled')) {
           // Clean up running instances to pending
           await supabaseAdmin
             .from('remote_instances')
@@ -203,10 +204,10 @@ export async function GET(req: Request) {
           requirement.metadata = { ...requirement.metadata, has_completed_backlog: true };
         }
 
-        const allBacklogDone = requirement.backlog.items.length > 0 && requirement.backlog.items.every((i: any) => i.status === 'done' || i.status === 'needs_review');
-        let shouldCountAsAllDone = allBacklogDone;
+        const isComplete = isBacklogComplete(requirement.backlog.items);
+        let shouldCountAsAllDone = isComplete;
 
-        if (allBacklogDone) {
+        if (isComplete) {
           // Check if there is manual intervention or feedback indicating it should be reopened.
           const latestBacklogUpdate = requirement.backlog.items.reduce((latest: Date, item: any) => {
              const itemDate = new Date(item.updated_at || 0);

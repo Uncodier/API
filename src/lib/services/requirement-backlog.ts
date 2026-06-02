@@ -45,31 +45,43 @@ export {
   resolveBacklogContextForInstance,
 } from './requirement-backlog-watchdog';
 
-/**
- * Statuses that count as terminal for a core backlog item when deciding
- * whether a requirement can be closed. `needs_review` is included because
- * the self-healing policy escalates persistently-failing items there as a
- * non-blocking signal — treating it the same as `done` prevents infinite
- * loops where an item that can never pass the gate keeps the requirement
- * open forever.
- */
 export function isItemTerminal(status: string): boolean {
   return status === 'done' || status === 'needs_review';
+}
+
+export function gatingItems(items: BacklogItem[]): BacklogItem[] {
+  const core = items.filter((i) => (i.tier ?? 'core') === 'core');
+  return core.length > 0 ? core : items;
+}
+
+export function isBacklogComplete(items: BacklogItem[]): boolean {
+  const gating = gatingItems(items);
+  return gating.length > 0 && gating.every((i) => isItemTerminal(i.status));
+}
+
+export function outstandingGatingItems(items: BacklogItem[]): BacklogItem[] {
+  return gatingItems(items).filter((i) => !isItemTerminal(i.status) && i.status !== 'rejected');
+}
+
+export function hasOutstandingWork(items: BacklogItem[]): boolean {
+  return items.some((i) => !isItemTerminal(i.status) && i.status !== 'rejected');
 }
 
 /**
  * True when every `tier='core'` item is in a terminal state (`done` or
  * `needs_review`). Consumers (flow engine, close-requirement gates) should
  * call this instead of checking `completion_ratio === 1`.
+ * @deprecated Use `isBacklogComplete(items)` instead.
  */
 export function coreItemsAllDone(items: BacklogItem[]): boolean {
-  const core = items.filter((i) => (i.tier ?? 'core') === 'core');
-  if (core.length === 0) return false;
-  return core.every((i) => isItemTerminal(i.status));
+  return isBacklogComplete(items);
 }
 
+/**
+ * @deprecated Use `outstandingGatingItems(items)` instead.
+ */
 export function pendingCoreItems(items: BacklogItem[]): BacklogItem[] {
-  return items.filter((i) => (i.tier ?? 'core') === 'core' && !isItemTerminal(i.status) && i.status !== 'rejected');
+  return outstandingGatingItems(items);
 }
 
 const TERMINAL_REQUIREMENT_STAGES = new Set(['done', 'completed', 'cancelled', 'failed']);

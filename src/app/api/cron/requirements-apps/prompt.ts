@@ -111,11 +111,11 @@ export function buildCoordinatorPromptForFlow(p: CoordinatorPromptInput): string
       Assign the \`makinari-rol-qa\` skill to ALL 7 steps.`
     : `BREAK DOWN the backlog item into specific, actionable execution steps (e.g., 1. investigate/setup, 2. backend API, 3. frontend UI, 4. integration/tests (ensure all tests go into the top-level \`tests/\` folder)).`;
 
-  const coreItems = p.backlog?.items?.filter(i => (i.tier ?? 'core') === 'core') || [];
-  const allCoreDone = coreItems.length > 0 && coreItems.every(i => i.status === 'done' || i.status === 'needs_review');
+  const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
+  const isComplete = p.backlog?.items && isBacklogComplete(p.backlog.items);
 
-  const closureBlock = allCoreDone
-    ? `BACKLOG CORE COMPLETO. Tu única acción válida este ciclo:
+  const closureBlock = isComplete
+    ? `BACKLOG COMPLETO. Tu única acción válida este ciclo:
 - Llamar requirement_status stage='on-review' con message='Project complete'.
 - Responder texto plano "Project delivered."
 - NO crear items, NO crear planes, NO llamar requirement_backlog upsert.

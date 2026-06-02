@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runMaintenanceWorkflow } from './workflow';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
+import { isBacklogComplete } from '@/lib/services/requirement-backlog';
 
 /** Instance type for maintenance runners to keep them separate from main builders */
 const REMOTE_INSTANCE_TYPE_MAINTENANCE = 'browser' as const;
@@ -60,11 +61,11 @@ export async function GET(req: Request) {
     for (const requirement of requirements) {
       const { id: reqId, title, instructions, type, site_id, user_id } = requirement;
       
-      const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
+      const isComplete = isBacklogComplete(requirement.backlog?.items || []);
       
       // If the requirement is on-review AND all core items are done, it means the main builder is cooling down.
       // QA should respect this cooldown so it doesn't run indefinitely.
-      if (requirement.status === 'on-review' && allBacklogDone) {
+      if (requirement.status === 'on-review' && isComplete) {
          console.log(`[Cron Maintenance] Skipping ${reqId} — requirement is on-review and backlog is done (respecting cooldown)`);
          results.push({ reqId, skipped: true, reason: 'on-review_cooldown' });
          continue;

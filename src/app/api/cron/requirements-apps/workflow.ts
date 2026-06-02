@@ -157,8 +157,8 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
       }
     });
 
-    const coreItems = reqContext.backlog.items.filter(i => (i.tier ?? 'core') === 'core');
-    if (coreItems.length > 0 && coreItems.every(i => i.status === 'done' || i.status === 'needs_review')) {
+    const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
+    if (isBacklogComplete(reqContext.backlog.items)) {
       isAllBacklogDone = true;
     }
   }

@@ -4,6 +4,7 @@ import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { runMaintenanceWorkflow } from '../maintenance/workflow';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
+import { isBacklogComplete, hasOutstandingWork, gatingItems } from '@/lib/services/requirement-backlog';
 
 /** Must match DB check `remote_instances_instance_type_check` (ubuntu | browser | windows). */
 const REMOTE_INSTANCE_TYPE_CRON_APPS = 'browser' as const;
@@ -60,11 +61,11 @@ export async function GET(req: Request) {
       
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
-        const allBacklogDone = req.backlog?.items?.length > 0 && req.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
+        const isComplete = isBacklogComplete(req.backlog?.items || []);
         
         // Only revert to in-progress if new items were added AFTER the requirement was closed
         // We detect this by checking if there's any item updated more recently than the last 'terminal' status
-        if (['on-review', 'done'].includes(req.status) && !allBacklogDone && req.backlog?.items?.length > 0) {
+        if (['on-review', 'done'].includes(req.status) && hasOutstandingWork(req.backlog?.items || [])) {
           const { data: lastStatus } = await supabaseAdmin
             .from('requirement_status')
             .select('created_at')
@@ -75,7 +76,7 @@ export async function GET(req: Request) {
             .single();
             
           const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : 0;
-          const newestItemUpdate = Math.max(...req.backlog.items.map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
+          const newestItemUpdate = Math.max(...(req.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
           
           if (newestItemUpdate > lastTerminalTime) {
             console.log(`[Cron Apps] Requirement ${req.id} is ${req.status} but has new items added after closure. Reverting to in-progress.`);
@@ -83,7 +84,7 @@ export async function GET(req: Request) {
           } else {
             console.log(`[Cron Apps] Requirement ${req.id} has incomplete items but they pre-date closure. Ignoring (might be ornamental/abandoned).`);
           }
-        } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (allBacklogDone || req.status === 'cancelled')) {
+        } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (isComplete || req.status === 'cancelled')) {
           // Si el requerimiento está en review, done o cancelado y tiene todos los items completos (o está cancelado),
           // regresamos la instancia a pending (inicializando)
           await supabaseAdmin
@@ -153,19 +154,19 @@ export async function GET(req: Request) {
         .single();
       
       if (currentReq) {
-        const coreItems = (requirement.backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
-        const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done' || i.status === 'needs_review');
+        const isComplete = isBacklogComplete(requirement.backlog?.items || []);
 
-        if (allCoreDone) {
+        if (isComplete) {
+          const gating = gatingItems(requirement.backlog?.items || []);
           const lastCoreUpdate = Math.max(
-            ...coreItems.map((i: any) => new Date(i.updated_at || 0).getTime())
+            ...gating.map((i: any) => new Date(i.updated_at || 0).getTime())
           );
           const minutesSinceCoreDone = (Date.now() - lastCoreUpdate) / 60_000;
 
           const COOLDOWN_MIN = parseInt(process.env.CRON_BACKLOG_DONE_COOLDOWN_MIN || '15', 10);
 
           if (minutesSinceCoreDone < COOLDOWN_MIN) {
-            console.log(`[Cron Apps] Skip ${reqId} — core backlog done ${minutesSinceCoreDone.toFixed(1)} min ago (cooldown ${COOLDOWN_MIN} min)`);
+            console.log(`[Cron Apps] Skip ${reqId} — gating backlog done ${minutesSinceCoreDone.toFixed(1)} min ago (cooldown ${COOLDOWN_MIN} min)`);
             await releaseRunLock(reqId, runLock.runId);
             results.push({ reqId, skipped: true, reason: 'backlog_cooldown' });
             continue;
@@ -182,9 +183,7 @@ export async function GET(req: Request) {
           }
         }
 
-        const allBacklogDone = requirement.backlog?.items?.length > 0 && requirement.backlog.items.filter((i: any) => (i.tier ?? 'core') === 'core').every((i: any) => i.status === 'done' || i.status === 'needs_review');
-
-        if (['cancelled', 'done'].includes(currentReq.status) || (currentReq.status === 'on-review' && allBacklogDone)) {
+        if (['cancelled', 'done'].includes(currentReq.status) || (currentReq.status === 'on-review' && isComplete)) {
           console.log(`[Cron Apps] Skipping ${reqId} — requirement is ${currentReq.status} and backlog is done`);
           
           console.log(`[Cron Apps] Cleaning up instances for ${currentReq.status} requirement ${reqId}`);
@@ -221,7 +220,7 @@ export async function GET(req: Request) {
 
         // Si estaba en on-review o done, pero agregaron un nuevo item que no está completo, debe regresar a in-progress
         // We now check if the item is actually NEW relative to the closure status.
-        if (['on-review', 'done'].includes(currentReq.status) && !allBacklogDone) {
+        if (['on-review', 'done'].includes(currentReq.status) && hasOutstandingWork(requirement.backlog?.items || [])) {
           const { data: lastStatus } = await supabaseAdmin
             .from('requirement_status')
             .select('created_at')

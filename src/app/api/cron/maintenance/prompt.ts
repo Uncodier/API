@@ -41,11 +41,11 @@ export function buildMaintenancePromptForFlow(p: MaintenancePromptInput): string
     ? `\nRECENT PROGRESS (last 5 entries of progress.md, newest first):\n${p.recentProgress.slice(-5).reverse().map((l) => `  - ${l}`).join('\n')}`
     : '';
 
-  const coreItems = p.backlog?.items.filter((i) => (i.tier ?? 'core') === 'core') || [];
-  const allCoreDone = coreItems.length > 0 && coreItems.every((i) => i.status === 'done' || i.status === 'needs_review');
+  const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
+  const isComplete = p.backlog?.items && isBacklogComplete(p.backlog.items);
 
-  const closureBlock = allCoreDone
-    ? `BACKLOG CORE COMPLETO. Ya has revisado los items.
+  const closureBlock = isComplete
+    ? `BACKLOG COMPLETO. Ya has revisado los items.
 Tu única acción válida este ciclo:
 - NO crear planes. NO escribir archivos.
 - Terminar tu turno inmediatamente.`

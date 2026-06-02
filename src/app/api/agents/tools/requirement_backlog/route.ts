@@ -9,6 +9,7 @@ import {
   setItemStatus,
   upsertBacklogItem,
   isRequirementReopened,
+  isBacklogComplete,
   type BacklogItemStatus,
   type BacklogItemKind,
   type BacklogItemTier,
@@ -79,13 +80,11 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
         throw new Error('upsert requires title, kind, phase_id, acceptance[]');
       }
       const { backlog } = await listBacklog(requirement_id);
-      const coreItems = (backlog?.items || []).filter((i: any) => (i.tier ?? 'core') === 'core');
-      const allCoreDone = coreItems.length > 0 && coreItems.every((i: any) => i.status === 'done');
-      if (allCoreDone) {
+      if (isBacklogComplete(backlog?.items || [])) {
         const reopened = await isRequirementReopened(requirement_id);
         if (!reopened) {
           throw new Error(
-            'Backlog cerrado: el requirement está en cooldown (todos los core items done y nunca fue reabierto). ' +
+            'Backlog cerrado: el requirement está en cooldown (todos los items entregables están completados y nunca fue reabierto). ' +
             'Llama `requirement_status stage=\'on-review\' message=\'Project complete\'` y termina el turno. ' +
             'Si el usuario pidió trabajo extra, reabre explícitamente el proyecto usando: ' +
             'requirements.update(requirement_id=..., completion_status=\'pending\', status=\'in-progress\') + ' +
