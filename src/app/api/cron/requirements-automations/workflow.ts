@@ -25,7 +25,7 @@ import {
 import { executeStepsPhaseStep, type ExecuteStepsPhaseResult } from '../shared/cron-execute-steps-phase';
 import { runOrchestratorStep } from '../shared/cron-orchestrator-step';
 import { validateDeliverablesStep, createFinalStatusStep } from '../shared/cron-workflow-finalize';
-import { recordRequirementBlockedStep, getRequirementFullContextStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
+import { recordRequirementBlockedStep, createFallbackInstancePlanStep, getRequirementFullContextStep, updateInstanceStatusStep } from '../shared/workflow-db-steps';
 import { provisionPlatformKeyStep } from '../shared/platform-key-step';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
 
@@ -237,18 +237,14 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
       const postOrchPlan = await getActiveInstancePlanStep(instanceId, site_id);
       if (!postOrchPlan) {
           console.warn(
-            `[CronAutoWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+            `[CronAutoWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — creating fallback plan.`,
           );
-        const rec = await recordRequirementBlockedStep({
-          site_id,
-          instance_id: instanceId,
-          requirement_id: reqId,
-          message:
-            'Orchestrator finished without producing an instance_plan (automation workflow). Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate if this repeats.',
+        await createFallbackInstancePlanStep({
+          instanceId,
+          siteId: site_id,
+          userId: user_id,
+          requirementId: reqId,
         });
-        if (!rec.ok) {
-          console.error(`[CronAutoWorkflow|orchestrator] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
-        }
       }
     }
   } else if (hasActivePlan) {

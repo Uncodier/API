@@ -39,6 +39,7 @@ export async function getRequirementFullContextStep(
       agentBackground: '',
       memoriesContext: '',
       historyContext: '',
+      requirementDetailsContext: '',
       instanceContext: `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}\n\n⚠️ CRITICAL: ALWAYS use instance_id="${instanceId}" when calling instance_plan. Do NOT use any other instance_id you might find in history.\n`,
     };
   }
@@ -344,5 +345,39 @@ export async function getInstanceBackgroundStep(
   } catch (e: unknown) {
     console.warn(`[WorkflowDbStep] Failed to fetch instance background for site ${siteId}, instance ${instanceId}:`, e);
     return { agentBackground: '', memoriesContext: '', historyContext: '' };
+  }
+}
+
+export async function createFallbackInstancePlanStep(params: {
+  instanceId: string;
+  siteId: string;
+  userId: string;
+  requirementId: string;
+}): Promise<void> {
+  'use step';
+  try {
+    const { createInstancePlanCore } = await import('@/app/api/agents/tools/instance_plan/create/route');
+    await createInstancePlanCore({
+      instance_id: params.instanceId,
+      site_id: params.siteId,
+      user_id: params.userId,
+      title: 'Fallback Assistant Execution',
+      expected_output: 'Resolve the requirement automatically as a fallback.',
+      steps: [
+        {
+          title: 'Resolve requirement',
+          instructions: 'Investigate the requirement, complete all necessary tasks, and verify the changes. The orchestrator failed to generate a plan, so you must resolve this requirement automatically.',
+          role: 'assistant',
+          skill: 'general',
+          metadata: {
+            is_fallback: true
+          }
+        }
+      ]
+    });
+    console.log(`[WorkflowDbStep] Fallback instance plan created for instance ${params.instanceId}`);
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`[WorkflowDbStep] Failed to create fallback instance plan for instance ${params.instanceId}: ${msg}`);
   }
 }

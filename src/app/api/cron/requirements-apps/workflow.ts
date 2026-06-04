@@ -36,6 +36,7 @@ import { detectAdminLoopStep } from '../shared/admin-loop-step';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import {
   recordRequirementBlockedStep,
+  createFallbackInstancePlanStep,
   unblockRequirementStep,
   checkInstanceAndPlanStatusStep,
   getRequirementFullContextStep,
@@ -291,18 +292,14 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
           );
         } else {
           console.warn(
-            `[CronAppsWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — recording blocker status.`,
+            `[CronAppsWorkflow|orchestrator] Orchestrator produced no instance_plan for req ${reqId} — creating fallback plan.`,
           );
-          const rec = await recordRequirementBlockedStep({
-            site_id,
-            instance_id: instanceId,
-            requirement_id: reqId,
-            message:
-              'Orchestrator finished without producing an instance_plan. Likely causes: tool schema rejection, model tool-call loop, or missing skills. Next cycle will retry; escalate to a human if this repeats.',
+          await createFallbackInstancePlanStep({
+            instanceId,
+            siteId: site_id,
+            userId: user_id,
+            requirementId: reqId,
           });
-          if (!rec.ok) {
-            console.error(`[CronAppsWorkflow|orchestrator] Failed to record orchestrator-no-plan blocker: ${rec.error}`);
-          }
         }
       }
     }
