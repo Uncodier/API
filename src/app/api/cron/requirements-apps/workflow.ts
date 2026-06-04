@@ -42,6 +42,7 @@ import {
   updateInstanceStatusStep,
   incrementNoProgressCyclesStep,
   resetNoProgressCyclesStep,
+  resetCronAttemptsStep,
 } from '../shared/workflow-db-steps';
 import { buildCoordinatorPromptForFlow } from './prompt';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
@@ -511,6 +512,10 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
         }
       } else if (deltaCompleted > 0) {
         await resetNoProgressCyclesStep(reqId);
+        // Real forward progress (a plan step completed this cycle) — reset the
+        // coarse `cron_attempts` circuit breaker too, otherwise a multi-step
+        // requirement that advances one step per cycle still trips at 10 ticks.
+        await resetCronAttemptsStep(reqId);
       }
     } else {
       console.log(`[CronAppsWorkflow] No active plan found.`);

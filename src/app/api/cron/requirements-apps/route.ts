@@ -329,6 +329,32 @@ export async function GET(req: Request) {
           updated_at: new Date().toISOString()
         }).eq('id', reqId);
 
+        // Visibility: QA is currently disabled, so without this the requirement
+        // would flip to `blocked` with no trace in the status timeline or logs
+        // (a silent death). Record an explicit blocked status + instance log so
+        // operators can see WHY the builder stopped.
+        const blockedMessage = `Auto-blocked: main builder hit ${currentAttempts} consecutive cycles without completing the backlog. Last error: ${errorMessage}. Resolve the blocker (often two agents racing on the same git branch → rebase conflicts) and reset metadata.cron_attempts to re-open.`;
+        try {
+          await supabaseAdmin.from('requirement_status').insert({
+            requirement_id: reqId,
+            instance_id: instanceId || null,
+            stage: 'blocked',
+            message: blockedMessage,
+          });
+        } catch (statusErr) {
+          console.error(`[Cron Apps] Failed to record blocked requirement_status for ${reqId}:`, statusErr);
+        }
+        if (instanceId) {
+          await supabaseAdmin.from('instance_logs').insert({
+            log_type: 'infrastructure',
+            level: 'error',
+            message: blockedMessage,
+            details: { event: 'cron_circuit_breaker', cron_attempts: currentAttempts, requirement_id: reqId },
+            instance_id: instanceId,
+            site_id,
+          }).then(undefined, (e) => console.error('[Cron Apps] Failed to insert circuit-breaker log:', e));
+        }
+
         // Pause the main builder instance and plan so it doesn't consume resources
         if (instanceId) {
           await supabaseAdmin.from('remote_instances').update({ status: 'pending' }).eq('id', instanceId);
@@ -457,6 +483,33 @@ export async function GET(req: Request) {
         console.log(`[Cron Apps] Skipping ${reqId} — instance or plan is paused.`);
         await releaseRunLock(reqId, runLock.runId);
         results.push({ reqId, skipped: true, reason: 'paused' });
+        continue;
+      }
+
+      // Concurrency guard: a requirement can be worked by more than one agent at
+      // once — e.g. a live assistant/chat session (its own remote_instance) that
+      // created the requirement AND this cron builder. When both push to the same
+      // `feature/req-<id>` branch they race on `git push` → repeated
+      // `rebase_conflict` → each cycle does `reset --hard`, makes no real progress,
+      // and `cron_attempts` climbs until the circuit breaker kills it. The cron
+      // run-lock only serializes cron ticks, not the other subsystem. So if a
+      // DIFFERENT instance reported activity on this requirement very recently,
+      // defer this build cycle and let that agent finish first.
+      const CONCURRENCY_WINDOW_MIN = parseInt(process.env.CRON_FOREIGN_AGENT_WINDOW_MIN || '5', 10);
+      const concurrencyCutoff = new Date(Date.now() - CONCURRENCY_WINDOW_MIN * 60 * 1000).toISOString();
+      const { data: foreignActivity } = await supabaseAdmin
+        .from('requirement_status')
+        .select('instance_id, created_at')
+        .eq('requirement_id', reqId)
+        .neq('instance_id', instanceId)
+        .gte('created_at', concurrencyCutoff)
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (foreignActivity && foreignActivity.length > 0) {
+        console.log(`[Cron Apps] Skipping ${reqId} — another instance (${foreignActivity[0].instance_id?.substring(0, 8)}) is actively working this requirement (last activity ${foreignActivity[0].created_at}). Deferring to avoid git branch collision.`);
+        await releaseRunLock(reqId, runLock.runId);
+        results.push({ reqId, skipped: true, reason: 'foreign_agent_active' });
         continue;
       }
 

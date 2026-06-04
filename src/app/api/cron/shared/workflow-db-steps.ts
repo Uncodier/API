@@ -194,6 +194,39 @@ export async function unblockRequirementStep(requirementId: string, forceStatusT
   }
 }
 
+/**
+ * Resets ONLY the `cron_attempts` circuit-breaker counter to 0.
+ *
+ * Unlike `unblockRequirementStep`, this does NOT touch the requirement status
+ * nor resume paused instances/plans — it is safe to call mid-cycle whenever the
+ * builder makes real forward progress (a plan step completed). Without this the
+ * counter only ever reset on FULL plan completion, so a multi-step requirement
+ * that advances one step per cycle would still trip the breaker at 10 ticks and
+ * die silently. Idempotent: no-op when the counter is already 0/undefined.
+ */
+export async function resetCronAttemptsStep(requirementId: string): Promise<void> {
+  'use step';
+  try {
+    const { supabaseAdmin } = await import('@/lib/database/supabase-client');
+    const { data } = await supabaseAdmin.from('requirements').select('metadata').eq('id', requirementId).single();
+
+    const attempts = data?.metadata?.cron_attempts;
+    if (attempts === undefined || attempts === 0) {
+      return;
+    }
+
+    const newMetadata = { ...(data?.metadata || {}), cron_attempts: 0 };
+    await supabaseAdmin.from('requirements').update({
+      metadata: newMetadata,
+      updated_at: new Date().toISOString(),
+    }).eq('id', requirementId);
+
+    console.log(`[WorkflowDbStep] Reset cron_attempts for req ${requirementId} after real progress`);
+  } catch (e: unknown) {
+    console.warn(`[WorkflowDbStep] Failed to reset cron_attempts for req ${requirementId}:`, e);
+  }
+}
+
 export async function incrementQaSuccessfulRunsStep(requirementId: string): Promise<void> {
   'use step';
   try {
