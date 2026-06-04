@@ -309,9 +309,19 @@ export async function GET(req: Request) {
         }
       }
 
+      // Circuit-breaker budget scales with backlog size. A whole backlog cannot
+      // be finished in a flat 10 cycles, and per-task "stuck" detection is now
+      // handled by the needs_review mechanism — so this counter is only a coarse
+      // runaway-cost guard. Allow ~100 cycles per backlog item (configurable).
+      // `cron_attempts` still resets to 0 whenever a plan step actually completes
+      // (see resetCronAttemptsStep in the workflow), so this cap is only reached
+      // when there is genuinely no forward progress for a very long time.
+      const PER_ITEM_CYCLE_BUDGET = parseInt(process.env.CRON_CYCLES_PER_BACKLOG_ITEM || '100', 10);
+      const backlogItemCount = requirement.backlog?.items?.length || 0;
+      const maxAttempts = PER_ITEM_CYCLE_BUDGET * Math.max(1, backlogItemCount);
       const currentAttempts = requirement.metadata?.cron_attempts || 0;
-      if (currentAttempts >= 10) {
-        console.log(`[Cron Apps] Skipping ${reqId} — blocked due to 10 consecutive failures without progress. Triggering QA.`);
+      if (currentAttempts >= maxAttempts) {
+        console.log(`[Cron Apps] Skipping ${reqId} — blocked: ${currentAttempts} cycles without progress (budget ${maxAttempts} = ${PER_ITEM_CYCLE_BUDGET}/item × ${Math.max(1, backlogItemCount)} item(s)).`);
         
         // We need to get the latest error/status to send to QA
         const { data: latestStatus } = await supabaseAdmin
@@ -321,8 +331,8 @@ export async function GET(req: Request) {
           .order('created_at', { ascending: false })
           .limit(1);
           
-        const errorMessage = latestStatus?.[0]?.message || 'Unknown error after 10 attempts';
-        const errorSummary = `The main builder failed 10 consecutive times. Last error: ${errorMessage}. YOUR PRIORITY IS TO FIX THIS ERROR. Ignore the "only audit done items" rule for this run and focus on unblocking the main builder by fixing the build/runtime error.`;
+        const errorMessage = latestStatus?.[0]?.message || `Unknown error after ${currentAttempts} attempts`;
+        const errorSummary = `The main builder failed ${currentAttempts} consecutive times. Last error: ${errorMessage}. YOUR PRIORITY IS TO FIX THIS ERROR. Ignore the "only audit done items" rule for this run and focus on unblocking the main builder by fixing the build/runtime error.`;
 
         await supabaseAdmin.from('requirements').update({ 
           status: 'blocked',
@@ -333,7 +343,7 @@ export async function GET(req: Request) {
         // would flip to `blocked` with no trace in the status timeline or logs
         // (a silent death). Record an explicit blocked status + instance log so
         // operators can see WHY the builder stopped.
-        const blockedMessage = `Auto-blocked: main builder hit ${currentAttempts} consecutive cycles without completing the backlog. Last error: ${errorMessage}. Resolve the blocker (often two agents racing on the same git branch → rebase conflicts) and reset metadata.cron_attempts to re-open.`;
+        const blockedMessage = `Auto-blocked: main builder hit ${currentAttempts} cycles without progress (budget ${maxAttempts} = ${PER_ITEM_CYCLE_BUDGET}/item × ${Math.max(1, backlogItemCount)} backlog item(s)). Last error: ${errorMessage}. Resolve the blocker (often two agents racing on the same git branch → rebase conflicts) and reset metadata.cron_attempts to re-open.`;
         try {
           await supabaseAdmin.from('requirement_status').insert({
             requirement_id: reqId,
@@ -349,7 +359,7 @@ export async function GET(req: Request) {
             log_type: 'infrastructure',
             level: 'error',
             message: blockedMessage,
-            details: { event: 'cron_circuit_breaker', cron_attempts: currentAttempts, requirement_id: reqId },
+            details: { event: 'cron_circuit_breaker', cron_attempts: currentAttempts, max_attempts: maxAttempts, per_item_budget: PER_ITEM_CYCLE_BUDGET, backlog_item_count: backlogItemCount, requirement_id: reqId },
             instance_id: instanceId,
             site_id,
           }).then(undefined, (e) => console.error('[Cron Apps] Failed to insert circuit-breaker log:', e));
