@@ -5,14 +5,17 @@ import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from
 import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/update/route';
 import { fetchStepLogHistoryText } from './step-history-builder';
 import { SkillsService } from '@/lib/services/skills-service';
+import type { GitRepoKind } from './cron-commit-helpers';
 import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-recovery';
 import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } from '@/lib/services/cron-audit-log';
-import type { GitRepoKind } from './cron-commit-helpers';
-import type { RequirementKind } from '@/lib/services/requirement-flows';
+import { classifyRequirementType, type RequirementKind } from '@/lib/services/requirement-flows';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
 import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT } from './step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
+import { runGateForFlow } from './gates';
+import type { AppGateContext } from './gates/types';
+import { runArchetypePostGate } from './step-archetype-postgate';
 
 export function inferRoleFromStep(step: any): string | null {
   const text = `${step.title || ''} ${step.instructions || ''}`.toLowerCase();
@@ -59,6 +62,8 @@ export interface SingleTurnResult {
     logFile: string;
     toolCallId: string;
   };
+  gatePassed?: boolean;
+  gateErrorExcerpt?: string;
 }
 
 export async function executeSingleTurnStep(params: {
@@ -302,6 +307,140 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
           }
         } catch (e) {}
       }
+    }
+
+    if (result.isDone) {
+      // 6. Run Gate right here because we have live sandbox and context
+      const flow = classifyRequirementType(requirementType);
+      
+      let appContext: AppGateContext | undefined;
+      if (flow === 'app' || flow === 'site') {
+         appContext = {
+            planTitle: plan.title,
+            stepOrder: step.order,
+            stepPrompt: systemPrompt,
+            stepContext: {
+              title: step.title,
+              instructions: step.instructions,
+              expected_output: step.expected_output
+            },
+            currentMessages: result.messages,
+            assistantContext: {
+              instance: { id: instanceId, site_id: siteId, user_id: userId, requirement_id: requirementId },
+              systemPrompt,
+              customTools: fullTools,
+              executionOptions: {
+                 instance_id: instanceId,
+                 site_id: siteId,
+                 user_id: userId,
+                 requirement_id: requirementId,
+                 plan_id: plan.id,
+                 step_id: step.id,
+                 system_prompt: systemPrompt,
+                 custom_tools: fullTools,
+              }
+            } as any,
+            fullTools,
+            lastResult: result,
+            gitRepoKind
+         };
+      }
+      
+      const gateRes = await runGateForFlow({
+         flow,
+         sandbox,
+         workDir: SandboxService.WORK_DIR,
+         requirementId,
+         item: { id: step.id, title: step.title, order: step.order } as any,
+         appContext,
+         audit
+      });
+      
+      if (gateRes.sandboxReplacement) {
+         effectiveSandboxId = gateRes.sandboxReplacement.sandboxId;
+         sandbox = gateRes.sandboxReplacement;
+      }
+      
+      if (gateRes.ok) {
+         console.log(`[SingleTurn] Gate PASSED for step ${step.order}`);
+         const pendingSteps = (plan?.steps || []).filter((s: any) => 
+           s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+         );
+         const isLastStep = pendingSteps.length === 0;
+         
+         if (isLastStep) {
+            console.log(`[SingleTurn] Step ${step.order} is final. Running Post-Gate Archetypes (Critic/Judge)...`);
+            await runArchetypePostGate({
+               sandbox,
+               requirementId,
+               backlogItemId: step.metadata?.backlog_item_id || step.backlog_item_id,
+               stepId: step.id,
+               signals: gateRes.richSignals as any,
+               capturedAt: new Date().toISOString(),
+               audit,
+            });
+         }
+      } else {
+         console.log(`[SingleTurn] Gate FAILED for step ${step.order}`);
+         await logCronInfrastructureEvent(audit, {
+           event: CronInfraEvent.STEP_STATUS,
+           level: 'warn',
+           message: `Plan step ${step.order} failed gate validation`,
+           details: { 
+              step_id: step.id, 
+              plan_id: plan.id,
+              error_excerpt: gateRes.error?.slice(0, 500) || '',
+              gate_signals: gateRes.signals,
+           }
+         });
+         
+         const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
+         if (backlogItemId) {
+            const { bumpItemAttempts, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
+            const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
+            const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
+            
+            try {
+               const { item } = await getBacklogItem(requirementId, backlogItemId);
+               if (item) {
+                   const bumped = await bumpItemAttempts({
+                     requirementId,
+                     itemId: backlogItemId,
+                     reason: `gate_failed: ${(gateRes.error || '').slice(0, 200)}`,
+                   });
+                   
+                   const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
+                   const action = planNextHealingAction({ 
+                      item, 
+                      verdict: { verdict: 'rejected', reason: gateRes.error || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
+                      attempts: attemptsForHeal 
+                   });
+                   
+                   switch (action.kind) {
+                     case 'rotate_strategy': await logAssumption({ requirementId, itemId: item.id, assumption: `[rotate] ${action.hint}` }); break;
+                     case 'downgrade_scope': 
+                       await downgradeScope({ requirementId, itemId: item.id });
+                       await logAssumption({ requirementId, itemId: item.id, assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}` }); 
+                       break;
+                     case 'log_assumption_and_continue': await logAssumption({ requirementId, itemId: item.id, assumption: action.assumption }); break;
+                     case 'mark_needs_review': await markNeedsReview({ requirementId, itemId: item.id, reason: action.reason }); break;
+                   }
+               }
+            } catch (healErr) {
+               console.error(`[SingleTurn] Exception applying self-healing on gate failure:`, healErr);
+            }
+         }
+      }
+      
+      return { 
+         ok: true, 
+         isDone: true, 
+         effectiveSandboxId, 
+         gatePassed: gateRes.ok, 
+         gateErrorExcerpt: gateRes.error,
+         sleepRequested,
+         backgroundTask
+      };
     }
 
     return { ok: true, isDone: result.isDone, effectiveSandboxId, sleepRequested, backgroundTask };

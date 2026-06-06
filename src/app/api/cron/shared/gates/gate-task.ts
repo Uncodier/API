@@ -13,10 +13,17 @@ export async function runTaskGate(input: FlowGateInput): Promise<FlowGateResult>
 
   const list = await runShell(
     input,
-    `find ./artifacts ./reports ./outputs -type f 2>/dev/null | head -20`,
+    `git status --porcelain 2>/dev/null | awk '{print $2}' | head -20; find ./artifacts ./reports ./outputs -type f 2>/dev/null | head -20`,
   );
   const files = list.stdout.split('\n').filter(Boolean);
-  signals.push({ name: 'has-artifacts', ok: files.length > 0, detail: `${files.length} files` });
+  
+  // Also check if any commits were made in this branch that differ from the remote tracking branch
+  const diffList = await runShell(input, `git diff --name-only @{upstream}...HEAD 2>/dev/null || git log --name-only -1 --pretty="" 2>/dev/null`);
+  const diffFiles = diffList.stdout.split('\n').filter(Boolean);
+  
+  const totalFiles = new Set([...files, ...diffFiles]);
+  
+  signals.push({ name: 'has-artifacts', ok: totalFiles.size > 0, detail: `${totalFiles.size} files` });
 
   // `run.sh` is optional for task/makinari flows — only syntax-check it when
   // the file actually exists. Absent file = no signal (neither pass nor fail).

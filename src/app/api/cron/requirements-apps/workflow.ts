@@ -431,29 +431,15 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
             }
             
             if (turnRes.isDone) {
-               // Step generation done, run the gate
-               const gateRes = await runGateStep({
-                  sandboxId: sandboxId!,
-                  plan: activePlan,
-                  step: workingStep,
-                  requirementId: reqId,
-                  instanceId,
-                  siteId: site_id,
-                  userId: user_id,
-                  title,
-                  instanceType,
-                  requirementType: type
-               });
+               if (turnRes.effectiveSandboxId) sandboxId = turnRes.effectiveSandboxId;
                
-               if (gateRes.effectiveSandboxId) sandboxId = gateRes.effectiveSandboxId;
-               
-               if (gateRes.passed) {
+               if (turnRes.gatePassed) {
                   stepCompleted = true;
                   executed++;
                   await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'completed');
-               } else if (!gateRes.ok && isSandboxGoneError(gateRes.error)) {
-                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate hit transient infra error: ${gateRes.error}`);
-                  const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, gateRes.error);
+               } else if (!turnRes.ok && isSandboxGoneError(turnRes.error)) {
+                  console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate hit transient infra error: ${turnRes.error}`);
+                  const infra = await recordStepInfraTransientStep(activePlan.id, workingStep.id, turnRes.error);
                   if (infra.exhausted) {
                     anyStepFailed = true;
                   }
@@ -462,7 +448,7 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
                   // Gate failed, do adaptation loop
                   anyStepFailed = true;
                   console.warn(`[CronAppsWorkflow] Step ${workingStep.order} gate failed`);
-                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', gateRes.gateErrorExcerpt);
+                  await updatePlanStepStatusStep(activePlan.id, workingStep.id, 'failed', turnRes.gateErrorExcerpt);
                   
                   // For now, if the gate fails, we mark the step failed and break to let the next cron orchestrate adaptation
                   break outer;

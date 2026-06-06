@@ -1560,12 +1560,12 @@ export class AIAgentExecutor {
           await onStep(step, streamingLogId ? { streamingLogId } : undefined);
         }
 
-        const shouldStop = (response as any).finish_reason === 'stop' ||
-                          (schema && finalOutput !== undefined) ||
-                          !message.tool_calls ||
+        const hasToolCalls = !!(message.tool_calls && message.tool_calls.length > 0);
+        const shouldStop = (schema && finalOutput !== undefined) ||
+                          !hasToolCalls ||
                           !!enforceSingleTurn;
 
-        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${response.finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${!!message.tool_calls}, enforceSingleTurn=${!!enforceSingleTurn})`);
+        console.log(`₍ᐢ•(ܫ)•ᐢ₎ [EXECUTOR] Should stop: ${shouldStop} (finish_reason=${(response as any).finish_reason}, hasSchema=${!!schema}, hasOutput=${finalOutput !== undefined}, hasToolCalls=${hasToolCalls}, enforceSingleTurn=${!!enforceSingleTurn})`);
 
         const iterationEndTime = Date.now();
         const iterationDuration = iterationEndTime - iterationStartTime;
