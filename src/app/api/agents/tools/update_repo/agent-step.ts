@@ -6,7 +6,7 @@ import { connectOrRecreateRequirementSandbox } from '@/lib/services/sandbox-reco
 import { Sandbox } from '@vercel/sandbox';
 import { getAssistantTools, fetchMemoriesContext, generateAgentBackground } from '@/app/api/robots/instance/assistant/utils';
 import type { CronAuditContext } from '@/lib/services/cron-audit-log';
-import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT } from '@/app/api/cron/shared/step-git-prompts';
+import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT, TEMPLATE_CUSTOMIZATION_PROMPT } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
@@ -84,6 +84,7 @@ DO NOT output multiple tool calls in a single response.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
+${TEMPLATE_CUSTOMIZATION_PROMPT}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.

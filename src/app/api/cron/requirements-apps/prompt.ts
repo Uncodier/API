@@ -22,6 +22,7 @@ import {
   SANDBOX_REPO_ROOT_INVARIANT,
   TOOL_LOOKUP_HINT,
   LANGUAGE_REQUIREMENT_PROMPT,
+  TEMPLATE_CUSTOMIZATION_PROMPT,
 } from '../shared/step-git-prompts';
 import {
   classifyRequirementType,
@@ -131,6 +132,7 @@ ${p.historyContext || ''}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
+${TEMPLATE_CUSTOMIZATION_PROMPT}
 
 WORKSPACE:
 - ${p.workDir} is the GIT REPOSITORY ROOT on branch "${p.branchName}".
@@ -178,7 +180,7 @@ WORKFLOW (follow IN ORDER):
 1. FIRST tool call: \`requirement_backlog\` with \`action='list'\`, requirement_id="${p.reqId}" — inspect the current phase and pending queue.
 2. If the backlog is empty, this is the FIRST cycle. You MUST do two things:
    a) Rewrite \`requirement.spec.md\` using \`sandbox_write_file\` to replace all "_To be refined..._" placeholders with a concrete architecture, exact navigation flows, data models, and acceptance criteria.
-   b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema.
+   b) Derive a COMPREHENSIVE list of items (as many as needed to fully cover the scope, typically 5-15) DIRECTLY FROM your newly fleshed-out contract and \`action='upsert'\` them. These items form the Backlog. Remember the hierarchy: A Requirement has many Backlog Items, and each Backlog Item will later be broken down into an \`instance_plan\` (a sequence of execution steps). Each item needs \`title\`, \`kind\`, \`phase_id\`, \`acceptance[]\`, and \`tier\` ('core' or 'ornamental'). CRITICAL: You MUST eliminate ambiguity. For UI features, explicitly list the exact routes (e.g., \`/dashboard/spaces\`), the navigation flow, and the required components in the acceptance criteria (e.g. "GET /dashboard renders a grid of Shadcn Cards"). For backend, list the exact API endpoints and data schema. CRITICAL: For specific app or site deliverables, you MUST explicitly include a backlog item to deeply restructure the home page to reflect the requested specific domain, removing any generic template content.
 3. Pick the single next item (WIP=1). Call \`action='start'\` to mark it in_progress.
 4. Create the plan: \`instance_plan\` with \`action='create'\`. ${breakdownInstruction} Do NOT just copy the item title into a single step. Do NOT create generic steps like "Step 1" with instructions "Execute step 1". Every step MUST have a descriptive \`title\`, specific, descriptive \`instructions\` and a clear objective. Every step MUST set \`skill\` and \`metadata.backlog_item_id=<id>\`. CRITICAL: Maximize the use of the plan schema. For the overall plan, you MUST provide \`expected_output\`, \`success_criteria\` (array of specific files created/modified), and \`validation_rules\` (array of specific test files passed) to enforce strict quality control. For frontend steps, you MUST explicitly describe the UI layout, components to use (e.g., Shadcn UI Cards, Dialogs, Tables), and responsive behavior in the step instructions. Do not leave UI execution up to interpretation. If this is a new branch, Step 1 MUST be \`makinari-obj-template-selection\`. Do NOT add a step to notify the team in your plan.
 5. Check if the INSTRUCTIONS ask for any new changes or features that are NOT covered by the existing backlog items. If there are new unhandled requests, you MUST create new backlog items to cover them using \`requirement_backlog action='upsert'\`.

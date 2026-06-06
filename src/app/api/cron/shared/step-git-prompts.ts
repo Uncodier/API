@@ -33,6 +33,11 @@ LANGUAGE REQUIREMENT (CRITICAL):
 - Even if the application UI, requirement instructions, or the user's language is in Spanish or another language, the underlying codebase (code and comments) must remain strictly in English.
 `;
 
+export const TEMPLATE_CUSTOMIZATION_PROMPT = `
+TEMPLATE CUSTOMIZATION (CRITICAL):
+- Whenever the requirement asks for a specific deliverable (such as a site, app, presentation, landing page, etc.), the home page of the base template MUST be completely restructured and customized to reflect what was specifically requested. Do not leave generic template content on the home page.
+`;
+
 /** Enforced in code: git + clone root must stay at /vercel/sandbox (never move .git or the repo under app/). */
 export const SANDBOX_REPO_ROOT_INVARIANT = [
   'SANDBOX GIT ROOT (mandatory): The Git clone and package.json live at WORKSPACE ROOT /vercel/sandbox — never under /vercel/sandbox/app.',

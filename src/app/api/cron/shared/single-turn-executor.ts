@@ -11,7 +11,7 @@ import { CronInfraEvent, logCronInfrastructureEvent, type CronAuditContext } fro
 import { classifyRequirementType, type RequirementKind } from '@/lib/services/requirement-flows';
 import { isSandboxGoneError } from '@/lib/services/sandbox-gone-error';
 import { getSandboxTools } from '@/app/api/agents/tools/sandbox/assistantProtocol';
-import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT } from './step-git-prompts';
+import { getStepCheckpointPromptFragment, SANDBOX_REPO_ROOT_INVARIANT, TOOL_LOOKUP_HINT, LANGUAGE_REQUIREMENT_PROMPT, TEMPLATE_CUSTOMIZATION_PROMPT } from './step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 import { runGateForFlow } from './gates';
 import type { AppGateContext } from './gates/types';
@@ -175,6 +175,7 @@ DO NOT output multiple tool calls in a single response.
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
+${TEMPLATE_CUSTOMIZATION_PROMPT}
 
 WORKSPACE — READ THIS CAREFULLY:
 - ${SandboxService.WORK_DIR} is the GIT REPOSITORY ROOT. This is where package.json, next.config.ts, tsconfig.json, src/, and public/ already exist.

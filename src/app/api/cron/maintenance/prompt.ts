@@ -4,6 +4,7 @@ import {
   SANDBOX_REPO_ROOT_INVARIANT,
   TOOL_LOOKUP_HINT,
   LANGUAGE_REQUIREMENT_PROMPT,
+  TEMPLATE_CUSTOMIZATION_PROMPT,
 } from '../shared/step-git-prompts';
 import {
   classifyRequirementType,
@@ -69,6 +70,7 @@ ${p.historyContext || ''}
 
 ${SANDBOX_REPO_ROOT_INVARIANT}
 ${LANGUAGE_REQUIREMENT_PROMPT}
+${TEMPLATE_CUSTOMIZATION_PROMPT}
 
 WORKSPACE:
 - ${p.workDir} is the GIT REPOSITORY ROOT on branch "${p.branchName}".
