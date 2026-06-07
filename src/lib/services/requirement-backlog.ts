@@ -360,3 +360,43 @@ export function pendingInPhase(backlog: RequirementBacklog, phaseId: string, lim
 export function currentInProgress(backlog: RequirementBacklog): BacklogItem | null {
   return backlog.items.find((i) => i.status === 'in_progress') ?? null;
 }
+
+/**
+ * True when a real user message (instance_logs.log_type='user_action') was
+ * recorded for this requirement's runner instance AFTER the gating backlog
+ * was completed. That user message is explicit permission to expand the
+ * backlog, so the upsert gate may let new items through. Without it, the
+ * agent could keep inventing items autonomously after closure (infinite
+ * backlog) — which is exactly what the gate must prevent.
+ */
+export async function hasUserRequestedMoreWork(requirementId: string): Promise<boolean> {
+  const { supabaseAdmin } = await import('@/lib/database/supabase-server');
+  const { data: req } = await supabaseAdmin
+    .from('requirements')
+    .select('metadata, backlog')
+    .eq('id', requirementId)
+    .single();
+
+  const instanceId = (req?.metadata as Record<string, any>)?.runner_instance_id as string | undefined;
+  if (!instanceId) return false;
+
+  const { data: ua } = await supabaseAdmin
+    .from('instance_logs')
+    .select('created_at')
+    .eq('instance_id', instanceId)
+    .eq('log_type', 'user_action')
+    .order('created_at', { ascending: false })
+    .limit(1);
+  if (!ua || ua.length === 0) return false;
+
+  const lastUserActionTime = new Date(ua[0].created_at).getTime();
+  const backlogData = req?.backlog as Record<string, any> | undefined;
+  const items = (backlogData?.items || []) as BacklogItem[];
+  const gating = gatingItems(items);
+  const completedTime = gating.length
+    ? Math.max(...gating.map((i: any) => new Date(i.updated_at || 0).getTime()))
+    : 0;
+
+  // The user asked for something after the backlog was already done.
+  return lastUserActionTime >= completedTime;
+}

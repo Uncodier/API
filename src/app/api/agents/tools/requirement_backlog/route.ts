@@ -10,6 +10,7 @@ import {
   upsertBacklogItem,
   isRequirementReopened,
   isBacklogComplete,
+  hasUserRequestedMoreWork,
   type BacklogItemStatus,
   type BacklogItemKind,
   type BacklogItemTier,
@@ -82,7 +83,8 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
       const { backlog } = await listBacklog(requirement_id);
       if (isBacklogComplete(backlog?.items || [])) {
         const reopened = await isRequirementReopened(requirement_id);
-        if (!reopened) {
+        const userRequested = await hasUserRequestedMoreWork(requirement_id);
+        if (!reopened && !userRequested) {
           throw new Error(
             'Backlog cerrado: el requirement está en cooldown (todos los items entregables están completados y nunca fue reabierto). ' +
             'Llama `requirement_status stage=\'on-review\' message=\'Project complete\'` y termina el turno. ' +
