@@ -135,7 +135,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const agentEmailConfig = siteSettings.channels?.agent_email;
+      const agentEmailConfig = siteSettings.channels?.agent_email || siteSettings.channels?.agent_mail || siteSettings.channels?.agent;
       
       if (!agentEmailConfig) {
         return NextResponse.json(
@@ -150,7 +150,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (agentEmailConfig.status !== 'active') {
+      if (String(agentEmailConfig.status) !== 'active' && String(agentEmailConfig.status) !== 'synced') {
         return NextResponse.json(
           {
             success: false,

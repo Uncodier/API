@@ -109,8 +109,8 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     };
   }
 
-  const agentEmailConfig = siteSettings.channels?.agent_email;
-  const isAgentEmailActive = agentEmailConfig && agentEmailConfig.status === 'active';
+  const agentEmailConfig = siteSettings.channels?.agent_email || siteSettings.channels?.agent_mail || siteSettings.channels?.agent;
+  const isAgentEmailActive = agentEmailConfig && (String(agentEmailConfig.status) === 'active' || String(agentEmailConfig.status) === 'synced') && agentEmailConfig.enabled !== false;
   const configuredEmail = siteSettings.channels?.email?.email;
 
   let trackingId: string | undefined;
@@ -167,6 +167,7 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
             error: { code: 'AGENTMAIL_FAILED', message: error.message },
           };
         }
+        console.warn(`[SEND_EMAIL] Falling back to standard SMTP due to AgentMail error`);
       }
     }
   }
