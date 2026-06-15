@@ -3,6 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { runMaintenanceWorkflow } from '../maintenance/workflow';
+import cronParser from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork, gatingItems } from '@/lib/services/requirement-backlog';
 
@@ -105,7 +106,7 @@ export async function GET(req: Request) {
     const { data: requirements, error } = await supabaseAdmin
       .from('requirements')
       .select('*')
-      .in('status', ['backlog', 'in-progress'])
+      .or(`status.in.(backlog,in-progress),and(status.in.(on-review,done,cancelled),cron.not.is.null)`)
       .or(`created_at.gte.${oneMonthAgo},updated_at.gte.${oneMonthAgo}`)
       .order('updated_at', { ascending: false })
       .limit(10);
@@ -156,7 +157,64 @@ export async function GET(req: Request) {
       if (currentReq) {
         const isComplete = isBacklogComplete(requirement.backlog?.items || []);
 
-        if (isComplete) {
+        // Evaluate cron schedule if applicable for terminal states
+        let reactivatedByCron = false;
+        if (requirement.cron && ['on-review', 'done', 'cancelled', 'blocked'].includes(currentReq.status)) {
+          try {
+            const interval = cronParser.parseExpression(requirement.cron);
+            const prev = interval.prev().toDate();
+            const lastTerminalTime = requirement.updated_at ? new Date(requirement.updated_at).getTime() : 0;
+            const nowTime = Date.now();
+            
+            // If the schedule triggered since the requirement reached terminal status
+            if (prev.getTime() > lastTerminalTime && nowTime - prev.getTime() < 120000) {
+              console.log(`[Cron Apps] Requirement ${reqId} cron triggered. Reactivating from ${currentReq.status} to in-progress.`);
+              
+              const newBacklogItem = {
+                id: crypto.randomUUID(),
+                title: 'Cron Iteration: Analyze state, implement improvements and continue',
+                kind: 'task',
+                phase_id: 'default',
+                status: 'pending',
+                acceptance: ['Analyze the current state of the application based on previous execution and instructions', 'Implement any missing or requested features from instructions', 'Push the changes to the repository'],
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString()
+              };
+
+              const newBacklog = requirement.backlog || { items: [] };
+              if (!newBacklog.items) newBacklog.items = [];
+              
+              // Reset any failed or blocked items to pending so the orchestrator can re-evaluate them
+              newBacklog.items = newBacklog.items.map((i: any) => {
+                if (i.status === 'failed' || i.status === 'blocked' || (i.status === 'in_progress' && nowTime - new Date(i.updated_at || 0).getTime() > 24 * 60 * 60 * 1000)) {
+                   return { ...i, status: 'pending', updated_at: new Date().toISOString() };
+                }
+                return i;
+              });
+
+              newBacklog.items.push(newBacklogItem);
+              
+              const updatedMetadata = { ...requirement.metadata, cron_attempts: 0, all_done_cycles: 0, has_completed_backlog: false };
+
+              await supabaseAdmin.from('requirements').update({ 
+                status: 'in-progress',
+                backlog: newBacklog,
+                metadata: updatedMetadata,
+                updated_at: new Date().toISOString()
+              }).eq('id', reqId);
+              
+              currentReq.status = 'in-progress';
+              requirement.status = 'in-progress';
+              requirement.backlog = newBacklog;
+              requirement.metadata = updatedMetadata;
+              reactivatedByCron = true;
+            }
+          } catch (err) {
+            console.error(`[Cron Apps] Invalid cron schedule for req ${reqId}: ${requirement.cron}`, err);
+          }
+        }
+
+        if (isComplete && !reactivatedByCron) {
           const gating = gatingItems(requirement.backlog?.items || []);
           const lastCoreUpdate = Math.max(
             ...gating.map((i: any) => new Date(i.updated_at || 0).getTime())

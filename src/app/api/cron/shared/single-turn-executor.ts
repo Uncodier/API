@@ -166,6 +166,11 @@ export async function executeSingleTurnStep(params: {
       memoriesContext = mems; // fetchMemoriesContext returns a string
     }
 
+    let retryContext = '';
+    if (step.error_message) {
+      retryContext = `\n\n🚨 PREVIOUS ATTEMPT FAILED 🚨\nThe previous execution of this step failed with the following error:\n\n${step.error_message}\n\nYou MUST fix this error during this execution attempt. Pay close attention to this validation failure.`;
+    }
+
     const systemPrompt = `You are an AI coding assistant and EXECUTOR agent running inside a Vercel Sandbox.
 Your job is to complete ONE specific step by writing code, running commands, and making real changes.
 
@@ -207,7 +212,7 @@ CURRENT STEP (Step ${step.order}):
 Title: ${step.title}
 Role: ${effectiveRole || 'general'}
 Instructions: ${step.instructions}
-Expected Output: ${step.expected_output || 'Complete the step successfully.'}
+Expected Output: ${step.expected_output || 'Complete the step successfully.'}${retryContext}
 
 ${skillContext ? skillContext : `\n🚨 MISSING SKILL INSTRUCTIONS: No specific skill or role was assigned to this step.
 BEFORE starting to code or execute any commands, you MUST:

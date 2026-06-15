@@ -64,7 +64,7 @@ export function requirementsTool(site_id: string, user_id?: string) {
         completion_status: { type: 'string', enum: ['pending', 'completed', 'rejected'], description: 'Completion status of the requirement. Valid values: pending, completed, rejected.' },
         type: { type: 'string', description: 'Type of requirement (e.g., content, design, task, develop, analytics, etc.). Default: task' },
         budget: { type: 'number', description: 'Budget amount (numeric)' },
-        cron: { type: 'string', description: 'Text to manage how often it should repeat' },
+        cron: { type: 'string', description: 'Valid Cron expression (e.g. "0 0 * * 0" for every Sunday) to manage how often this requirement should automatically repeat and iterate for continuous improvement. Only set this if the user explicitly asks for periodic, recurring, or continuous updates.' },
         cycle: { type: 'string', description: 'Specify the source of the work cycle. Set this to ensure an entire development cycle is performed for the requirement (can be null or a new numeric or text value)' },
         campaign_id: { type: 'string', description: 'Campaign UUID to link requirement' },
         metadata: { type: 'object', description: 'Additional metadata (json object)' },
