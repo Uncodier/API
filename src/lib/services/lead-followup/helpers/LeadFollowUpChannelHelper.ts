@@ -350,11 +350,15 @@ export async function triggerChannelsSetupNotification(siteId: string): Promise<
     console.log(`📧 CHANNELS SETUP: Triggering notification for site: ${siteId}`);
     
     // Make internal API call to channels setup notification endpoint
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json'
+    };
+    if (process.env.SERVICE_API_KEY) {
+      headers['x-api-key'] = process.env.SERVICE_API_KEY;
+    }
     const response = await fetch(`${process.env.NEXT_PUBLIC_BASE_URL || 'http://localhost:3000'}/api/notifications/channelsSetupRequired`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
+      headers,
       body: JSON.stringify({
         site_id: siteId
       })

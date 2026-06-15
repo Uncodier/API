@@ -42,11 +42,15 @@ function validateInput(body: any) {
 async function searchRegionBusinesses(region: string, businessType: string, keywords: string[], limit: number): Promise<{success: boolean, businesses?: Business[], error?: string}> {
   try {
     // Call the region search API
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (process.env.SERVICE_API_KEY) {
+      headers['x-api-key'] = process.env.SERVICE_API_KEY;
+    }
     const searchResponse = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/api/agents/sales/regionSearch`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers,
       body: JSON.stringify({
         siteId: process.env.INTERNAL_SITE_ID, // Use internal site ID for this search
         region,

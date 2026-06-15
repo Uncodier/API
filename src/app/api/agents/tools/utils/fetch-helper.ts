@@ -7,9 +7,14 @@ export function getApiBaseUrl(): string {
 export async function fetchApiTool(endpoint: string, body: any, errorMessage: string) {
   const url = `${getApiBaseUrl()}${endpoint}`;
   try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (process.env.SERVICE_API_KEY) {
+      headers['x-api-key'] = process.env.SERVICE_API_KEY;
+    }
+    
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
 
@@ -40,8 +45,14 @@ export async function fetchApiTool(endpoint: string, body: any, errorMessage: st
 export async function fetchApiToolGet(endpoint: string, errorMessage: string) {
   const url = `${getApiBaseUrl()}${endpoint}`;
   try {
+    const headers: Record<string, string> = {};
+    if (process.env.SERVICE_API_KEY) {
+      headers['x-api-key'] = process.env.SERVICE_API_KEY;
+    }
+
     const res = await fetch(url, {
       method: 'GET',
+      headers,
     });
 
     const text = await res.text();

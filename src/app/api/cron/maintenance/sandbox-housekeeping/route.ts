@@ -66,32 +66,33 @@ export async function GET(request: Request) {
     while (hasMore) {
       // Vercel SDK currently has limited pagination, we'll hit the API directly if needed,
       // but let's try the SDK first (it limits to ~100 by default or handles it internally)
-      let list;
+      let list: any;
       try {
-        list = await Sandbox.list();
+        list = await Sandbox.list({ projectId, teamId });
         hasMore = false; // The SDK list() might not paginate well, so we assume 1 page for now
       } catch (e: unknown) {
         console.error('[SandboxHousekeeping] Failed to list sandboxes:', e);
         break;
       }
       
-      for (const sb of (list as any).sandboxes || (list as any)) {
+      const sandboxesArray = list?.json?.sandboxes || list?.sandboxes || [];
+      for (const sb of sandboxesArray) {
         // Stop sandboxes that are NOT active in DB AND are older than 30 minutes
-        if (!activeSandboxIds.has(sb.sandboxId)) {
+        if (!activeSandboxIds.has(sb.id)) {
           // createdAt is usually a timestamp. If not available, we assume it's old enough
           // depending on Vercel Sandbox API
-          const createdAt = (sb as any).createdAt ? new Date((sb as any).createdAt).getTime() : 0;
+          const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
           if (createdAt < thirtyMinutesAgo) {
-            console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${sb.sandboxId} (created ${new Date(createdAt).toISOString()})`);
+            console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${sb.id} (created ${new Date(createdAt).toISOString()})`);
             try {
-              const sandboxInstance = await Sandbox.get({ sandboxId: sb.sandboxId });
+              const sandboxInstance = await Sandbox.get({ sandboxId: sb.id });
               await Promise.race([
                 sandboxInstance.stop({ blocking: false }),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
               ]);
               results.sandboxesStopped++;
             } catch (stopErr: unknown) {
-              console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${sb.sandboxId}:`, stopErr instanceof Error ? stopErr.message : stopErr);
+              console.warn(`[SandboxHousekeeping] Failed to stop sandbox ${sb.id}:`, stopErr instanceof Error ? stopErr.message : stopErr);
               results.sandboxErrors++;
             }
           }

@@ -59,11 +59,15 @@ export function createProjectTool(userId?: string | null) {
         // Trigger initializeProject / site setup automatically for the new site
         try {
           const baseUrl = process.env.API_URL || 'http://localhost:3000';
+          const headers: Record<string, string> = {
+            'Content-Type': 'application/json',
+          };
+          if (process.env.SERVICE_API_KEY) {
+            headers['x-api-key'] = process.env.SERVICE_API_KEY;
+          }
           await fetch(`${baseUrl}/api/site/setup`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
+            headers,
             body: JSON.stringify({ 
               site_id: siteId,
               user_id: userId,

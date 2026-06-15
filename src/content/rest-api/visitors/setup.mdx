@@ -1,10 +1,7 @@
 # Setup & Configuration
 
-## Endpoints
+## Schema Initialization
 
-The API includes utility endpoints for initializing the necessary database tables and constraints:
+*(Note: The legacy setup API endpoints (`/api/visitors/setup`, etc.) have been removed. The schema for `visitors`, `leads`, `visitor_sessions`, and `visitor_events` is now managed directly in the Supabase database.)*
 
-- `GET /api/visitors/setup`: Creates sites, visitors, sessions, and events tables.
-- `GET /api/visitors/identify/setup`: Creates leads table and adds identification columns.
-- `GET /api/visitors/session/setup`: Creates visitor_sessions table.
-- `GET /api/visitors/identify/setup-constraints`: Adds unique constraints for data integrity.
+
