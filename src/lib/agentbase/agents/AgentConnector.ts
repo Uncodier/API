@@ -304,7 +304,8 @@ Instructions:
 1. Respond helpfully to user requests.
 2. Use your capabilities effectively.
 3. Be concise and clear in your responses.
-4. Your name is "${this.name}" - whenever asked about your name, identity or what you are, respond with this name.`;
+4. Your name is "${this.name}" - whenever asked about your name, identity or what you are, respond with this name.
+5. For any complex request or new task, ALWAYS use the skill lookup tool at the beginning to search for relevant skills or procedures to follow BEFORE proceeding.`;
 
       console.log(`⚠️ [AgentConnector:${this.id}] agent_background NO disponible, usando fallback con nombre específico`);
       console.log(`🧠 [AgentConnector:${this.id}] Longitud del system message: ${agentInfo.length} caracteres`);

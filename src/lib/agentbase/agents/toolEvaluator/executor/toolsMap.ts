@@ -85,6 +85,14 @@ function extractToolImplementation(tool: any, toolName: string): ToolHandler | n
     console.log(`[ToolExecutor] Registrando handler para ${toolName}`);
     return tool.handler;
   }
+  else if (tool.execute && typeof tool.execute === 'function') {
+    console.log(`[ToolExecutor] Registrando execute para ${toolName}`);
+    return tool.execute;
+  }
+  else if (tool.function && tool.function.execute && typeof tool.function.execute === 'function') {
+    console.log(`[ToolExecutor] Registrando anidada execute para ${toolName}`);
+    return tool.function.execute;
+  }
   else if (tool.function && tool.function.implementation && typeof tool.function.implementation === 'function') {
     console.log(`[ToolExecutor] Registrando implementation anidada para ${toolName}`);
     return tool.function.implementation;

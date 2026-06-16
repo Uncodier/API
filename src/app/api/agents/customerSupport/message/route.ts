@@ -3,6 +3,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
@@ -1498,7 +1499,7 @@ export async function POST(request: Request) {
       ...(effectiveSiteId ? { site_id: effectiveSiteId } : {}),
       // Add lead_id as a basic property if it exists
       ...(effectiveLeadId ? { lead_id: effectiveLeadId } : {}),
-      description: 'Respond helpfully to the customer inquiries about your business.',
+      description: 'Respond helpfully to the customer inquiries about your business. For any complex request, ALWAYS use the skill lookup tool at the beginning to search for relevant skills or procedures to follow BEFORE proceeding.',
       // Set the target as a message with content
       targets: [
         {
@@ -1520,6 +1521,10 @@ export async function POST(request: Request) {
       ],
       // Define the tools as specified in the documentation
       tools: [
+        {
+          type: "function",
+          function: skillLookupTool()
+        },
         {
           type: "function",
           async: true,

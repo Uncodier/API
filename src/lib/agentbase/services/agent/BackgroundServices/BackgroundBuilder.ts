@@ -947,7 +947,8 @@ export class BackgroundBuilder {
 2. Use your capabilities effectively.
 3. Be concise and clear in your responses.
 4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.
-5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.`;
+5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.
+6. For any complex request or new task, ALWAYS use the skill lookup tool at the beginning to search for relevant skills or procedures to follow BEFORE proceeding.`;
   }
   
   /**
@@ -1219,7 +1220,8 @@ Your capabilities include: ${Array.isArray(fallbackCapabilities) ? fallbackCapab
 2. Use your capabilities effectively.
 3. Be concise and clear in your responses.
 4. Your name is "${name}" - whenever asked about your name, identity or what you are, respond with this name.
-5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.`;
+5. Whenever there is a requirement and the user requests changes, these changes must be applied to the requirement/plan. DO NOT attempt to execute the steps directly. You can make changes to the plan (as the orchestrator listens to this), but never try to execute the steps directly if there is an active requirement.
+6. For any complex request or new task, ALWAYS use the skill lookup tool at the beginning to search for relevant skills or procedures to follow BEFORE proceeding.`;
     
     console.log(`⚠️ [BackgroundBuilder] Background de emergencia generado (${emergencyBackground.length} caracteres)`);
     return emergencyBackground;

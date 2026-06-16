@@ -3,6 +3,7 @@ import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -703,6 +704,10 @@ export async function POST(request: Request) {
     const defaultTools: any[] = [
       {
         "type": "function",
+        "function": skillLookupTool()
+      },
+      {
+        "type": "function",
         "function": {
           "name": "GET_LEAD_DETAILS",
           "description": "Get details about a lead by providing name, email, company, or phone",
@@ -805,9 +810,24 @@ export async function POST(request: Request) {
     ];
     
     // Use agent tools if available, otherwise use default tools
-    const tools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0 
+    let tools = agentInfo.tools && Array.isArray(agentInfo.tools) && agentInfo.tools.length > 0 
       ? agentInfo.tools 
       : defaultTools;
+      
+    // Always inject skill_lookup if it's not present, so the agent can discover skills
+    const hasSkillLookup = tools.some(t => {
+      if (t.type === 'function') {
+        return t.function?.name === 'skill_lookup';
+      }
+      return t.name === 'skill_lookup';
+    });
+    
+    if (!hasSkillLookup) {
+      tools = [...tools, {
+        type: "function",
+        function: skillLookupTool()
+      }];
+    }
       
     // Check if agent has activities
     const hasActivities = agentInfo.activities && Array.isArray(agentInfo.activities) && agentInfo.activities.length > 0;
@@ -825,7 +845,7 @@ export async function POST(request: Request) {
       agentId,
       // Add site_id as a basic property if it exists
       ...(site_id ? { site_id } : {}),
-      description: 'Respond helpfully to the user\'s inquiry, provide relevant insights, and assist with the requested task using available tools and knowledge.',
+      description: 'Respond helpfully to the user\'s inquiry, provide relevant insights, and assist with the requested task using available tools and knowledge. For any complex request, ALWAYS use the skill lookup tool at the beginning to search for relevant skills or procedures to follow BEFORE proceeding.',
       // Set the target as a message with content
       targets: [
         {
