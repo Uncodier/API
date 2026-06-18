@@ -3,7 +3,7 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAppsWorkflow } from './workflow';
 import { runMaintenanceWorkflow } from '../maintenance/workflow';
-import cronParser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork, gatingItems } from '@/lib/services/requirement-backlog';
 
@@ -161,7 +161,7 @@ export async function GET(req: Request) {
         let reactivatedByCron = false;
         if (requirement.cron && ['on-review', 'done', 'cancelled', 'blocked'].includes(currentReq.status)) {
           try {
-            const interval = cronParser.parseExpression(requirement.cron);
+            const interval = CronExpressionParser.parse(requirement.cron);
             const prev = interval.prev().toDate();
             const lastTerminalTime = requirement.updated_at ? new Date(requirement.updated_at).getTime() : 0;
             const nowTime = Date.now();

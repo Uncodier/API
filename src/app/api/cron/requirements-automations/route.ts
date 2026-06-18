@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
-import cronParser from 'cron-parser';
+import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
 import { isBacklogComplete, hasOutstandingWork } from '@/lib/services/requirement-backlog';
 
@@ -78,7 +78,7 @@ export async function GET(req: Request) {
     for (const r of requirements) {
       try {
         if (!r.cron) continue;
-        const interval = cronParser.parseExpression(r.cron);
+        const interval = CronExpressionParser.parse(r.cron);
         const prev = interval.prev().toDate();
         if (now.getTime() - prev.getTime() < 120000) {
           dueRequirements.push(r);
