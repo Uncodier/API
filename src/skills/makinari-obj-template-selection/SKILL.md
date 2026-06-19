@@ -30,12 +30,14 @@ Pick Vitrina when the client wants a **fixed format** (articles, gallery, slides
 | Data / analytics (heavy tables, CSV/JSON) | `feature/6e819746-5da2-4e3a-8192-0a592dff99cc` |
 | Automation runner / webhook tester UI | `feature/c3dcbbab-585a-46e9-b320-19b149a24aa0` |
 
-### B — Generic application (custom SaaS, dashboards, clones, platforms)
+> **Repository Mapping Note:** To understand how requirements are routed to `GIT_APPLICATIONS_REPO` vs `GIT_AUTOMATIONS_REPO` based on their `kind` and why certain default repositories are chosen, refer to `REQUIREMENT_MAPPINGS.md` at the root of the API repository.
 
-Pick Generic when the requirement is full product development, not a packaged Vitrina shell.
+### B — Generic application (custom SaaS, dashboards, clones, platforms, research)
 
-- Prefer an **existing app baseline**: check out `main`, or a team baseline such as `core-infrastructure`.
-- **For complex apps with Auth/DB**: If the requirement needs login, users, or database, check out the `core-infrastructure-supabase` branch (based on the official Vercel Next.js + Supabase starter) instead of `main`. The branch already exists in the repo.
+Pick Generic when the requirement is full product development, a platform blueprint, research of the app, and not a packaged Vitrina shell.
+
+- **Always check out `main`** for any generic application, platform, or task requirement. This branch serves as the central "repository intelligence base" with the customized home/docs.
+- Do NOT use `core-infrastructure-supabase` or other baselines unless explicitly requested by the user. `main` is the definitive starting point.
 - Do NOT create a second Next.js project under a nested folder. The platform expects ONE repo root at `/vercel/sandbox` with `package.json` at the root and routes under `src/app/`.
 - Do NOT run `npx create-next-app` unless `instructions` explicitly require a greenfield AND the repo is empty. The default is to extend the checked-out baseline.
 
@@ -45,9 +47,7 @@ Pick Generic when the requirement is full product development, not a packaged Vi
 2. Run Git in `/vercel/sandbox`:
    - `git fetch origin`
    - **For A**: `git checkout -B feature/<requirement_short_id> origin/<vitrina_branch>` (use the established naming convention for feature branches in this repo).
-   - **For B**: `git checkout <baseline>` (e.g. `main` / `core-infrastructure` / `core-infrastructure-supabase`).
-     - *Self-healing*: If `core-infrastructure-supabase` does not exist on origin, you MUST bootstrap it: `git checkout -b core-infrastructure-supabase`, run `rm -rf * && rm -rf .gitignore` to ensure the directory is empty, run `npx create-next-app@latest -e with-supabase . --yes`, **verify `.gitignore` contains `node_modules` and `.next`** (create it if missing), run `git add . && git commit -m "chore: setup supabase base"`, and push it (`sandbox_run_command` with `git push -u origin core-infrastructure-supabase`).
-     - **CRITICAL**: Before pushing any new Next.js project, you MUST verify that `node_modules` and `.next` are in `.gitignore` AND that they are NOT in the git cache. If they are in the cache, run `git rm -r --cached node_modules .next` before committing.
+   - **For B**: `git checkout main` (always use main for generic applications).
      - Then create / switch to the feature branch for this requirement (`git checkout -b feature/<requirement_short_id>`).
 3. Confirm the tree: `sandbox_list_files .` — expect `package.json` at the root and `src/app/` layout consistent with the choice.
 4. **Persist the decision** via `requirements action="update"` — append a bullet to `instructions`:

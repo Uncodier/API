@@ -82,6 +82,7 @@ Suggest which base branch the orchestrator should pick in `makinari-obj-template
 - **Vitrina**: which one (text, gallery, slides, pdf, data, automation).
 - **Generic app**: which baseline branch (`main`, `core-infrastructure`, etc.).
 - Rationale: 1 line.
+> **Note**: For clarity on how `RequirementKind` impacts repository routing (`GIT_APPLICATIONS_REPO` vs `GIT_AUTOMATIONS_REPO`) and base branch logic, see `REQUIREMENT_MAPPINGS.md` in the API repo root.
 
 ## 9. Execution Plan (checklist)
 Granular checklist the planner will turn into `instance_plan` steps. Preserve `[x]` checks across updates.

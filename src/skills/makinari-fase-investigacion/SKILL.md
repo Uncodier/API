@@ -27,6 +27,7 @@ Before editing any file:
 - `sandbox_read_file` on files likely to change. Build on what exists — do NOT overwrite blindly.
 - `sandbox_run_command git log --oneline -20` to see recent history and prior cycles.
 - `sandbox_read_file package.json` to confirm dependencies and scripts.
+- **Note on Repositories**: Read `REQUIREMENT_MAPPINGS.md` at the root of the API repo if you need to understand how the system routes the current requirement type to the underlying repository (`GIT_APPLICATIONS_REPO` vs `GIT_AUTOMATIONS_REPO`) and the corresponding branch.
 
 ### 4. Zero hallucinations
 - Never guess file paths, table names, or env vars. Verify them first.
