@@ -10,6 +10,7 @@ import { createToolsMap, ToolsMap } from './toolsMap';
 import { updateFunctionStatuses } from '../updater/functionStatusUpdater';
 import { updateCommandStatus } from '../updater/commandStatusUpdater';
 import { updateCommandContext } from '../updater/contextUpdater';
+import { coerceToolArgs } from '@/lib/custom-automation/coerce-tool-args';
 
 /**
  * Main function to execute tools from the tool evaluator
@@ -34,30 +35,20 @@ export async function runToolExecution(
   
   // Coerce tool arguments before execution to fix LLM serialization bugs (e.g. Gemini)
   if (functionCalls.length > 0 && tools && tools.length > 0) {
-    // Only import coerceToolArgs when needed to avoid circular dependency issues
-    let coerceToolArgs: any;
-    try {
-      coerceToolArgs = require('@/lib/custom-automation/coerce-tool-args').coerceToolArgs;
-    } catch (err) {
-      console.warn('[ToolExecutor] Could not load coerceToolArgs helper, skipping argument coercion', err);
-    }
-
-    if (coerceToolArgs) {
-      for (const call of functionCalls) {
-        if (!call.name) continue;
-        const toolDef = tools.find(t => t.name === call.name);
-        if (toolDef && toolDef.parameters && typeof call.arguments === 'string') {
-          try {
-            const parsedOuter = JSON.parse(call.arguments);
-            const coerced = coerceToolArgs(toolDef.parameters, parsedOuter);
-            const reserialized = JSON.stringify(coerced);
-            if (reserialized !== call.arguments) {
-              console.log(`[ToolExecutor] Coerced stringified nested arrays/objects for tool: ${call.name}`);
-              call.arguments = reserialized;
-            }
-          } catch (e) {
-            // Leave arguments intact if outer JSON fails to parse
+    for (const call of functionCalls) {
+      if (!call.name) continue;
+      const toolDef = tools.find(t => t.name === call.name);
+      if (toolDef && toolDef.parameters && typeof call.arguments === 'string') {
+        try {
+          const parsedOuter = JSON.parse(call.arguments);
+          const coerced = coerceToolArgs(toolDef.parameters, parsedOuter);
+          const reserialized = JSON.stringify(coerced);
+          if (reserialized !== call.arguments) {
+            console.log(`[ToolExecutor] Coerced stringified nested arrays/objects for tool: ${call.name}`);
+            call.arguments = reserialized;
           }
+        } catch (e) {
+          // Leave arguments intact if outer JSON fails to parse
         }
       }
     }

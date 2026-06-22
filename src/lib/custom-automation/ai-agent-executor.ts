@@ -41,6 +41,7 @@ import {
   sanitizeMessagesForAzureVisionImages,
 } from './azure-vision-message-sanitize';
 import { sanitizeMessagesForGemini } from './gemini-message-sanitize';
+import { coerceToolArgs } from './coerce-tool-args';
 
 /**
  * Detects whether a string looks like a raw base64 encoded raster image (PNG, JPEG, GIF, WEBP)
@@ -1226,8 +1227,6 @@ export class AIAgentExecutor {
               const toolDef = finalTools.find(t => t.name === tc.function.name);
               let finalArgs = parsed.value;
               if (toolDef && toolDef.parameters) {
-                // Must use require to avoid messing with top-level imports in a large file
-                const { coerceToolArgs } = require('./coerce-tool-args');
                 finalArgs = coerceToolArgs(toolDef.parameters, finalArgs);
                 
                 // Re-serialize back to arguments to keep history consistent with coerced state
