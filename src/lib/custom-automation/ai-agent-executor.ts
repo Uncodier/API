@@ -1223,10 +1223,24 @@ export class AIAgentExecutor {
             }
 
             if (parsed.ok) {
+              const toolDef = finalTools.find(t => t.name === tc.function.name);
+              let finalArgs = parsed.value;
+              if (toolDef && toolDef.parameters) {
+                // Must use require to avoid messing with top-level imports in a large file
+                const { coerceToolArgs } = require('./coerce-tool-args');
+                finalArgs = coerceToolArgs(toolDef.parameters, finalArgs);
+                
+                // Re-serialize back to arguments to keep history consistent with coerced state
+                const stringified = JSON.stringify(finalArgs);
+                if (tc.function.arguments !== stringified) {
+                  tc.function.arguments = stringified;
+                }
+              }
+
               toolCalls.push({
                 toolCallId: tc.id,
                 toolName: tc.function.name,
-                args: parsed.value,
+                args: finalArgs,
               });
             } else {
               console.error(
@@ -1332,7 +1346,24 @@ export class AIAgentExecutor {
                   console.log(`₍ᐢ•(ܫ)•ᐢ₎ [LOCAL] Executing ${toolCall.toolName}.execute() locally...`);
                 }
 
-                result = await tool.execute(toolCall.args);
+                let executeAttempts = 0;
+                const maxExecuteAttempts = 2;
+                while (executeAttempts < maxExecuteAttempts) {
+                  try {
+                    result = await tool.execute(toolCall.args);
+                    break;
+                  } catch (e: any) {
+                    executeAttempts++;
+                    const msg = e.message || '';
+                    const isTransient = msg.includes('410') || msg.includes('422') || msg.includes('sandbox_stopping') || msg.includes('timeout') || msg.includes('socket');
+                    if (isTransient && executeAttempts < maxExecuteAttempts) {
+                      console.warn(`⚠️ [TOOL_RETRY] ${toolCall.toolName} transient error: ${msg}. Retrying (${executeAttempts}/${maxExecuteAttempts})...`);
+                      await new Promise(res => setTimeout(res, 2000 * executeAttempts));
+                    } else {
+                      throw e;
+                    }
+                  }
+                }
 
                 if (result === undefined || result === null) {
                   const logPrefix = isScrapybaraTool ? '[SCRAPYBARA]' : '[LOCAL]';
@@ -1456,10 +1487,25 @@ export class AIAgentExecutor {
               const toolToExecute = finalTools.find(t => t.name === toolCall.toolName);
               const helpMessage = toolToExecute?.description ? `\n\nTool Help / Instructions:\n${toolToExecute.description}` : '';
 
+              // Estandarizar errores de tool (ZodError o similares)
+              let structuredError: any = {
+                success: false,
+                error: errorMessage,
+              };
+
+              if (error.errors || error.issues) {
+                const issues = error.errors || error.issues;
+                structuredError.code = 'VALIDATION_ERROR';
+                structuredError.details = issues;
+                structuredError.hint = `Verifica los tipos de datos enviados. Los arrays no deben ir como strings anidados. Parámetros de la tool:\n${JSON.stringify(toolToExecute?.parameters || {}, null, 2)}`;
+              }
+
+              const errorContent = JSON.stringify(structuredError, null, 2) + helpMessage;
+
               toolResults.push({
                 toolCallId: toolCall.toolCallId,
                 toolName: toolCall.toolName,
-                result: errorMessage + helpMessage,
+                result: errorContent,
                 isError: true,
               });
 
@@ -1467,7 +1513,7 @@ export class AIAgentExecutor {
                 role: 'tool',
                 tool_call_id: toolCall.toolCallId,
                 name: toolCall.toolName,
-                content: `Error: ${errorMessage}${helpMessage}`,
+                content: errorContent,
               });
 
               console.log(`₍ᐢ•(ܫ)•ᐢ₎ [TOOL_MSG] ✅ Added error tool message for ${toolCall.toolCallId}`);

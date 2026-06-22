@@ -4,6 +4,8 @@ import { completeInProgressPlans } from '@/lib/helpers/plan-lifecycle';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import { z } from 'zod';
 
+const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
+
 const CreateInstancePlanSchema = z.object({
   instance_id: z.string().uuid('Invalid instance_id'),
   title: z.string().optional().default('Agent Generated Plan'),
@@ -11,12 +13,12 @@ const CreateInstancePlanSchema = z.object({
   plan_type: z.enum(['objective', 'task']).optional().default('objective'),
   instructions: z.string().optional(),
   expected_output: z.string().optional(),
-  success_criteria: z.array(z.any()).optional().default([]),
-  validation_rules: z.array(z.any()).optional().default([]),
+  success_criteria: z.preprocess(parseIfString, z.array(z.any())).optional().default([]),
+  validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional().default([]),
   site_id: z.string().uuid('Site ID is required'),
   user_id: z.string().uuid('User ID is required'),
   agent_id: z.string().uuid('Invalid agent_id').optional(),
-  steps: z.array(z.object({
+  steps: z.preprocess(parseIfString, z.array(z.object({
     id: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
@@ -25,15 +27,15 @@ const CreateInstancePlanSchema = z.object({
     type: z.string().optional(),
     instructions: z.string().optional(),
     expected_output: z.string().optional(),
-    success_criteria: z.array(z.any()).optional(),
-    validation_rules: z.array(z.any()).optional(),
+    success_criteria: z.preprocess(parseIfString, z.array(z.any())).optional(),
+    validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional(),
     actual_output: z.string().optional().nullable(),
     started_at: z.string().datetime().optional().nullable(),
     completed_at: z.string().datetime().optional().nullable(),
     duration_seconds: z.number().optional().nullable(),
     retry_count: z.number().int().optional(),
     error_message: z.string().optional().nullable(),
-    artifacts: z.array(z.any()).optional().nullable(),
+    artifacts: z.preprocess(parseIfString, z.array(z.any())).optional().nullable(),
     role: z.string().optional(),
     skill: z.string().optional(),
     test_command: z.string().optional(),
@@ -41,9 +43,9 @@ const CreateInstancePlanSchema = z.object({
      * `metadata.backlog_item_id` so the post-gate Judge can attribute the
      * step to a backlog item. When missing, the server auto-binds it to
      * the unique `in_progress` item of the requirement (if any). */
-    metadata: z.record(z.any()).optional(),
+    metadata: z.preprocess(parseIfString, z.record(z.any())).optional(),
     backlog_item_id: z.string().optional(),
-  })).optional(),
+  }))).optional(),
 });
 
 /**

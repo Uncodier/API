@@ -402,34 +402,52 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
          
          const backlogItemId = step.metadata?.backlog_item_id || step.backlog_item_id;
          if (backlogItemId) {
-            const { bumpItemAttempts, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
+            const { bumpItemAttempts, recordToolFailure, logAssumption, downgradeScope, markNeedsReview } = await import('@/lib/services/requirement-backlog');
             const { planNextHealingAction } = await import('@/lib/services/requirement-self-heal');
             const { getBacklogItem } = await import('@/lib/services/requirement-backlog');
+            const { classifyFailure } = await import('@/lib/services/failure-classification');
             
             try {
                const { item } = await getBacklogItem(requirementId, backlogItemId);
                if (item) {
-                   const bumped = await bumpItemAttempts({
-                     requirementId,
-                     itemId: backlogItemId,
-                     reason: `gate_failed: ${(gateRes.error || '').slice(0, 200)}`,
-                   });
+                   const errorMsg = gateRes.error || '';
+                   const classified = classifyFailure(errorMsg, gateRes.signals?.categories_failed || []);
                    
-                   const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
-                   const action = planNextHealingAction({ 
-                      item, 
-                      verdict: { verdict: 'rejected', reason: gateRes.error || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
-                      attempts: attemptsForHeal 
-                   });
-                   
-                   switch (action.kind) {
-                     case 'rotate_strategy': await logAssumption({ requirementId, itemId: item.id, assumption: `[rotate] ${action.hint}` }); break;
-                     case 'downgrade_scope': 
-                       await downgradeScope({ requirementId, itemId: item.id });
-                       await logAssumption({ requirementId, itemId: item.id, assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}` }); 
-                       break;
-                     case 'log_assumption_and_continue': await logAssumption({ requirementId, itemId: item.id, assumption: action.assumption }); break;
-                     case 'mark_needs_review': await markNeedsReview({ requirementId, itemId: item.id, reason: action.reason }); break;
+                   if (classified.failureClass === 'plumbing') {
+                     // Plumbing failure (e.g. tool crashed, sandbox lost, API schema mismatch)
+                     // Does NOT consume product attempt budget
+                     const toolName = classified.toolName || 'unknown';
+                     console.log(`[SingleTurn] Plumbing failure detected for tool ${toolName}, logging without attempt bump.`);
+                     await recordToolFailure({
+                       requirementId,
+                       itemId: backlogItemId,
+                       toolName,
+                       reason: `[plumbing] Tool ${toolName} failed: ${errorMsg.slice(0, 150)}`
+                     });
+                   } else {
+                     // Product/Judge failure -> consumes attempt and triggers self-heal
+                     const bumped = await bumpItemAttempts({
+                       requirementId,
+                       itemId: backlogItemId,
+                       reason: `gate_failed: ${errorMsg.slice(0, 200)}`,
+                     });
+                     
+                     const attemptsForHeal = (bumped?.attempts ?? (item.attempts ?? 0) + 1);
+                     const action = planNextHealingAction({ 
+                        item, 
+                        verdict: { verdict: 'rejected', reason: errorMsg || 'Gate failed', matched_acceptance: [], unmatched_acceptance: [] }, 
+                        attempts: attemptsForHeal 
+                     });
+                     
+                     switch (action.kind) {
+                       case 'rotate_strategy': await logAssumption({ requirementId, itemId: item.id, assumption: `[rotate] ${action.hint}` }); break;
+                       case 'downgrade_scope': 
+                         await downgradeScope({ requirementId, itemId: item.id });
+                         await logAssumption({ requirementId, itemId: item.id, assumption: `[downgrade ${action.from}→${action.to}] ${action.reason}` }); 
+                         break;
+                       case 'log_assumption_and_continue': await logAssumption({ requirementId, itemId: item.id, assumption: action.assumption }); break;
+                       case 'mark_needs_review': await markNeedsReview({ requirementId, itemId: item.id, reason: action.reason }); break;
+                     }
                    }
                }
             } catch (healErr) {

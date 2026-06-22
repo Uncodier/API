@@ -32,6 +32,37 @@ export async function runToolExecution(
     .map(call => call.name || null)
     .filter((name): name is string => name !== null && name !== 'unknown_function');
   
+  // Coerce tool arguments before execution to fix LLM serialization bugs (e.g. Gemini)
+  if (functionCalls.length > 0 && tools && tools.length > 0) {
+    // Only import coerceToolArgs when needed to avoid circular dependency issues
+    let coerceToolArgs: any;
+    try {
+      coerceToolArgs = require('@/lib/custom-automation/coerce-tool-args').coerceToolArgs;
+    } catch (err) {
+      console.warn('[ToolExecutor] Could not load coerceToolArgs helper, skipping argument coercion', err);
+    }
+
+    if (coerceToolArgs) {
+      for (const call of functionCalls) {
+        if (!call.name) continue;
+        const toolDef = tools.find(t => t.name === call.name);
+        if (toolDef && toolDef.parameters && typeof call.arguments === 'string') {
+          try {
+            const parsedOuter = JSON.parse(call.arguments);
+            const coerced = coerceToolArgs(toolDef.parameters, parsedOuter);
+            const reserialized = JSON.stringify(coerced);
+            if (reserialized !== call.arguments) {
+              console.log(`[ToolExecutor] Coerced stringified nested arrays/objects for tool: ${call.name}`);
+              call.arguments = reserialized;
+            }
+          } catch (e) {
+            // Leave arguments intact if outer JSON fails to parse
+          }
+        }
+      }
+    }
+  }
+
   // Crear el mapa solo con las herramientas requeridas, no todas las disponibles
   const toolsMap = createToolsMap(tools, requiredToolNames);
   

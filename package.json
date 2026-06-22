@@ -13,7 +13,7 @@
     "lint": "next lint",
     "test": "jest",
     "test:target-processor": "jest --verbose src/lib/agentbase/agents/tests/TargetProcessorAgent.test.ts",
-    "test:array-fix": "node ./scripts/test-array-fix.js",
+    "test:array-fix": "tsx ./scripts/test-array-fix.ts",
     "test:contents-structure": "jest --verbose -t \"should maintain array structure for single-object targets\"",
     "validate-format": "node ./scripts/validate-format.js",
     "test:target-array-fix": "npm run validate-format && echo '✅ Format validation passed. Full test suite requires Jest.'",

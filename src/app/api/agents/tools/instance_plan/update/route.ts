@@ -3,6 +3,8 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveBacklogContextForInstance } from '@/lib/services/requirement-backlog';
 import { z } from 'zod';
 
+const parseIfString = (val: any) => typeof val === 'string' ? (() => { try { return JSON.parse(val); } catch { return val; } })() : val;
+
 const UpdateInstancePlanSchema = z.object({
   plan_id: z.string().uuid('Invalid plan_id'),
   instance_id: z.string().uuid('Invalid instance_id').optional(), // Added for execute_step in protocol
@@ -12,10 +14,10 @@ const UpdateInstancePlanSchema = z.object({
   plan_type: z.enum(['objective', 'task']).optional(),
   instructions: z.string().optional(),
   expected_output: z.string().optional(),
-  success_criteria: z.array(z.any()).optional(),
-  validation_rules: z.array(z.any()).optional(),
+  success_criteria: z.preprocess(parseIfString, z.array(z.any())).optional(),
+  validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional(),
   status: z.enum(['pending', 'completed', 'failed', 'cancelled', 'paused', 'in_progress']).optional(),
-  steps: z.array(z.object({
+  steps: z.preprocess(parseIfString, z.array(z.object({
     id: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
@@ -24,15 +26,15 @@ const UpdateInstancePlanSchema = z.object({
     type: z.string().optional(),
     instructions: z.string().optional(),
     expected_output: z.string().optional(),
-    success_criteria: z.array(z.any()).optional(),
-    validation_rules: z.array(z.any()).optional(),
+    success_criteria: z.preprocess(parseIfString, z.array(z.any())).optional(),
+    validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional(),
     actual_output: z.string().optional().nullable(),
     started_at: z.string().datetime().optional().nullable(),
     completed_at: z.string().datetime().optional().nullable(),
     duration_seconds: z.number().optional().nullable(),
     retry_count: z.number().int().optional(),
     error_message: z.string().optional().nullable(),
-    artifacts: z.array(z.any()).optional().nullable(),
+    artifacts: z.preprocess(parseIfString, z.array(z.any())).optional().nullable(),
     role: z.string().optional(),
     skill: z.string().optional(),
     test_command: z.string().optional(),
@@ -46,9 +48,9 @@ const UpdateInstancePlanSchema = z.object({
     /** Free-form metadata; `backlog_item_id` links the step to a backlog
      * item so the post-gate Judge can run for it. Auto-bound on the
      * server side when missing (single in_progress item rule). */
-    metadata: z.record(z.any()).optional(),
+    metadata: z.preprocess(parseIfString, z.record(z.any())).optional(),
     backlog_item_id: z.string().optional(),
-  })).optional(),
+  }))).optional(),
   progress_percentage: z.number().min(0).max(100).optional(),
 });
 

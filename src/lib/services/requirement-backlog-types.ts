@@ -50,7 +50,10 @@ export interface BacklogItem {
   acceptance: string[];
   touches?: string[];
   status: BacklogItemStatus;
+  /** Number of product verification / judge failures. */
   attempts: number;
+  /** Counter of plumbing failures by tool name. Informational, does not scale to needs_review. */
+  tool_failures?: Record<string, number>;
   assumptions?: string[];
   scope_level: BacklogItemScope;
   tier?: BacklogItemTier;

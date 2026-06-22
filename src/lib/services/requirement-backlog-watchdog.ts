@@ -60,6 +60,50 @@ export async function bumpItemAttempts(params: {
   return backlog.items[idx];
 }
 
+export async function recordToolFailure(params: {
+  requirementId: string;
+  itemId: string;
+  toolName: string;
+  reason?: string;
+}): Promise<BacklogItem | null> {
+  const req = await loadRequirement(params.requirementId);
+  if (!req) return null;
+  const flow = getFlow(classifyRequirementType(req.type));
+  const backlog = toBacklog(req.backlog, flow.phases[0]?.id || 'default');
+  const idx = backlog.items.findIndex((i) => i.id === params.itemId);
+  if (idx < 0) return null;
+  
+  const failures = backlog.items[idx].tool_failures || {};
+  failures[params.toolName] = (failures[params.toolName] || 0) + 1;
+  
+  backlog.items[idx] = {
+    ...backlog.items[idx],
+    tool_failures: failures,
+    updated_at: new Date().toISOString(),
+  };
+  
+  if (params.reason) {
+    const assumptions = backlog.items[idx].assumptions || [];
+    backlog.items[idx].assumptions = [...assumptions, params.reason].slice(-20);
+  }
+  
+  await writeBacklog(params.requirementId, backlog);
+
+  // Telemetry: aggregate tool failures in requirement.metadata.tool_health
+  try {
+    const metadata = req.metadata || {};
+    const toolHealth = metadata.tool_health || {};
+    toolHealth[params.toolName] = (toolHealth[params.toolName] || 0) + 1;
+    await supabaseAdmin.from('requirements').update({
+      metadata: { ...metadata, tool_health: toolHealth }
+    }).eq('id', params.requirementId);
+  } catch (err) {
+    console.error(`[Watchdog] Failed to update tool_health telemetry:`, err);
+  }
+
+  return backlog.items[idx];
+}
+
 const DEFAULT_STALE_IN_PROGRESS_MS = 6 * 60 * 60 * 1000; // 6 hours
 
 export async function escalateStaleInProgressItems(params: {
@@ -79,10 +123,23 @@ export async function escalateStaleInProgressItems(params: {
   for (let i = 0; i < backlog.items.length; i++) {
     const it = backlog.items[i];
     if (it.status !== 'in_progress') continue;
+    
+    // Guard against escalating due to plumbing failures
+    const lastAssumption = it.assumptions && it.assumptions.length > 0 ? it.assumptions[it.assumptions.length - 1] : '';
+    const isIdleDueToPlumbing = lastAssumption.includes('[plumbing]');
+    
     const updatedMs = it.updated_at ? Date.parse(it.updated_at) : NaN;
     const idle = Number.isFinite(updatedMs) ? now - updatedMs : Infinity;
     const overAttempts = (it.attempts || 0) >= maxAttempts;
+    
     if (idle < idleMs && !overAttempts) continue;
+    
+    if (!overAttempts && isIdleDueToPlumbing) {
+      console.log(`[Watchdog] Item ${it.id} is idle (${Math.round(idle / 60000)}m) but last assumption was plumbing. Skipping escalation.`);
+      // We don't escalate, it stays in_progress so tools can keep retrying.
+      continue;
+    }
+    
     const note = `[watchdog] auto-escalated to needs_review after idle=${Math.round(idle / 60000)}m attempts=${it.attempts ?? 0} (thresholds idle_min=${Math.round(idleMs / 60000)} max_attempts=${maxAttempts})`;
     backlog.items[i] = {
       ...it,

@@ -40,6 +40,7 @@ export type { BacklogItem, BacklogItemStatus, BacklogItemKind, BacklogItemScope,
 // so existing callers keep their import path stable after the refactor.
 export {
   bumpItemAttempts,
+  recordToolFailure,
   ensureInProgressItem,
   escalateStaleInProgressItems,
   resolveBacklogContextForInstance,

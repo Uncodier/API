@@ -50,6 +50,17 @@ export async function executeBacklogCore(params: BacklogCoreParams) {
   const { action, requirement_id } = params;
   if (!requirement_id) throw new Error('requirement_id is required');
 
+  // Coerce arrays in case stringified JSON bypassed the adapter
+  if (typeof params.acceptance === 'string') {
+    try { params.acceptance = JSON.parse(params.acceptance); } catch {}
+  }
+  if (typeof params.touches === 'string') {
+    try { params.touches = JSON.parse(params.touches); } catch {}
+  }
+  if (typeof params.depends_on === 'string') {
+    try { params.depends_on = JSON.parse(params.depends_on); } catch {}
+  }
+
   // Async unblock if there was a recent user action
   getRequirementById(requirement_id).then(req => {
     if (req?.metadata) {
