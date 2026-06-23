@@ -52,6 +52,18 @@ export async function GET(req: Request) {
 
     const oneMonthAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     
+    // Auto-sanitization pass: detects and repairs requirements that were marked 'on-review' 
+    // due to fake-done items or plumbing stalls.
+    try {
+      const { runOnReviewSanitization } = await import('@/lib/services/requirement-onreview-sanitizer');
+      const sanResult = await runOnReviewSanitization();
+      if (sanResult.requirementsSanitized > 0) {
+        console.log(`[Cron Apps] Auto-sanitization recovered ${sanResult.requirementsSanitized} requirements (reopened ${sanResult.itemsReopened} items).`);
+      }
+    } catch (sanErr) {
+      console.error(`[Cron Apps] Error during auto-sanitization pass:`, sanErr);
+    }
+    
     // Quick pass: find recently updated done/on-review/cancelled requirements to either clean up their instances or revert them to in-progress
     const { data: recentCompletedReqs } = await supabaseAdmin
       .from('requirements')
