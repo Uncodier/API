@@ -12,6 +12,7 @@ export interface SanitizationItem {
   reason: string;
   isFakeDone: boolean;
   isPlumbingStuck: boolean;
+  targetStatus: 'pending' | 'needs_review';
 }
 
 export interface SanitizationPlan {
@@ -37,18 +38,42 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
     return plan;
   }
 
+  const maxReopens = parseInt(process.env.ONREVIEW_SANITIZE_MAX_REOPENS || '2', 10);
+
   for (const item of req.backlog.items as BacklogItem[]) {
     const isCore = (item.tier ?? 'core') === 'core';
     const hasToolFailures = item.tool_failures && Object.keys(item.tool_failures).length > 0;
     
-    // Check recent assumptions for plumbing keywords
-    const recentAssumptions = (item.assumptions || []).slice(-3).join(' ').toLowerCase();
+    // Check recent assumptions for plumbing and infra keywords
+    const recentAssumptions = (item.assumptions || []).slice(-5).join(' ').toLowerCase();
+    
+    const hasInfraAssumption = recentAssumptions.includes('insufficient credits') ||
+                               recentAssumptions.includes('sandbox vm crashed') ||
+                               recentAssumptions.includes('vm has crashed') ||
+                               recentAssumptions.includes('http 422') ||
+                               recentAssumptions.includes('410 gone');
+
     const hasPlumbingAssumption = recentAssumptions.includes('[plumbing]') || 
                                  recentAssumptions.includes('serialization') ||
                                  recentAssumptions.includes('empty plan') ||
                                  recentAssumptions.includes('reverting');
 
-    const hasPlumbingSignal = hasToolFailures || hasPlumbingAssumption;
+    const hasPlumbingSignal = hasToolFailures || hasPlumbingAssumption || hasInfraAssumption;
+    
+    // Count previous sanitizations
+    const reopenCount = (item.assumptions || []).filter(a => a.includes('[auto-saneo]')).length;
+
+    // Determine target status
+    let targetStatus: 'pending' | 'needs_review' = 'pending';
+    let targetReason = '';
+
+    if (hasInfraAssumption) {
+      targetStatus = 'needs_review';
+      targetReason = `[auto-saneo] escalated to needs_review: stuck with sandbox infra errors (not agent-fixable)`;
+    } else if (reopenCount >= maxReopens) {
+      targetStatus = 'needs_review';
+      targetReason = `[auto-saneo] escalated to needs_review: reached max reopens (${reopenCount}/${maxReopens}) without progress`;
+    }
 
     // 1. Detect Fake-done (Core only)
     if (item.status === 'done' && isCore) {
@@ -61,9 +86,10 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
           id: item.id,
           title: item.title,
           previousStatus: item.status,
-          reason: `[auto-saneo] Reverted fake-done: item marked done without valid evidence while showing plumbing errors`,
+          reason: targetStatus === 'needs_review' ? targetReason : `[auto-saneo] Reverted fake-done: item marked done without valid evidence while showing plumbing errors`,
           isFakeDone: true,
-          isPlumbingStuck: false
+          isPlumbingStuck: false,
+          targetStatus
         });
       }
     }
@@ -74,9 +100,10 @@ export function detectUnhealthyOnReview(req: any): SanitizationPlan {
         id: item.id,
         title: item.title,
         previousStatus: item.status,
-        reason: `[auto-saneo] Freed stuck item: stuck in_progress with plumbing errors`,
+        reason: targetStatus === 'needs_review' ? targetReason : `[auto-saneo] Freed stuck item: stuck in_progress with plumbing errors`,
         isFakeDone: false,
-        isPlumbingStuck: true
+        isPlumbingStuck: true,
+        targetStatus
       });
     }
   }
@@ -110,8 +137,9 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
       const item = backlog.items[idx];
       backlog.items[idx] = {
         ...item,
-        status: 'pending',
-        attempts: 0,
+        status: sanitization.targetStatus,
+        // PRESERVE attempts instead of resetting to 0
+        attempts: item.attempts || 0,
         assumptions: [...(item.assumptions || []), sanitization.reason].slice(-20),
         updated_at: new Date().toISOString()
       };
@@ -121,7 +149,7 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
       try {
         await cancelPlanStepsForBacklogItem({
           itemId: item.id,
-          reason: `[auto-saneo] Cancelling plans for unhealthy item ${item.id}`
+          reason: `[auto-saneo] Cancelling plans for unhealthy item ${item.id} (transitioning to ${sanitization.targetStatus})`
         });
       } catch (e) {
         console.warn(`[AutoSaneo] Failed to cancel plans for item ${item.id}`, e);
@@ -149,11 +177,17 @@ export async function applyOnReviewSanitization(reqId: string, plan: Sanitizatio
     }).eq('id', reqId);
 
     // Record the sanitization event
-    await supabaseAdmin.from('requirement_status').insert({
-      requirement_id: reqId,
-      stage: 'in-progress',
-      message: `[auto-saneo] Reverted requirement to in-progress. Sanitized ${itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
-    });
+    try {
+      await supabaseAdmin.from('requirement_status').insert({
+        requirement_id: reqId,
+        site_id: req.site_id || null,
+        instance_id: req.metadata?.runner_instance_id || null,
+        stage: 'in-progress',
+        message: `[auto-saneo] Reverted requirement to in-progress. Sanitized ${itemsChanged} unhealthy items (fake-done or plumbing-stalled).`
+      });
+    } catch (err) {
+      console.error(`[AutoSaneo] Failed to record requirement_status for ${reqId}:`, err);
+    }
 
     console.log(`[AutoSaneo] Successfully sanitized requirement ${reqId}, reopened ${itemsChanged} items.`);
   }
@@ -175,7 +209,7 @@ export async function runOnReviewSanitization(): Promise<SanitizationSummary> {
 
   const { data: reqs, error } = await supabaseAdmin
     .from('requirements')
-    .select('id, backlog')
+    .select('id, site_id, metadata, backlog')
     .eq('status', 'on-review')
     .gte('updated_at', cutoffDate.toISOString())
     .order('updated_at', { ascending: false })

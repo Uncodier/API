@@ -16,6 +16,7 @@ import type { FlowDefinition } from './requirement-flows';
 
 export interface RequirementRow {
   id: string;
+  site_id?: string | null;
   type: string | null;
   metadata: Record<string, any> | null;
   backlog: Record<string, any> | null;
@@ -28,7 +29,7 @@ export async function loadRequirement(requirementId: string): Promise<Requiremen
   // `Requirement <id> not found`, masking the real problem at the caller.
   const { data, error } = await supabaseAdmin
     .from('requirements')
-    .select('id, type, metadata, backlog')
+    .select('id, site_id, type, metadata, backlog')
     .eq('id', requirementId)
     .maybeSingle();
   if (error) {
