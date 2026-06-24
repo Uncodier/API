@@ -45,7 +45,7 @@ const CreateInstancePlanSchema = z.object({
      * the unique `in_progress` item of the requirement (if any). */
     metadata: z.preprocess(parseIfString, z.record(z.any())).optional(),
     backlog_item_id: z.string().optional(),
-  }))).optional(),
+  })))).optional(),
 });
 
 /**
