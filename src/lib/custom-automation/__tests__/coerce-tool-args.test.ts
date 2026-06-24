@@ -98,4 +98,19 @@ describe('coerceToolArgs', () => {
     expect(typeof coerced.steps[0].metadata).toBe('object');
     expect(coerced.steps[0].metadata.foo).toBe('bar');
   });
+
+  it('parses array elements that are themselves stringified objects (Gemini behavior)', () => {
+    const args = {
+      steps: [
+        '{"metadata":{"foo":"bar"}}',
+        '{"artifacts":["1","2"]}'
+      ]
+    };
+    const coerced = coerceToolArgs(complexSchema, args);
+    expect(Array.isArray(coerced.steps)).toBe(true);
+    expect(typeof coerced.steps[0]).toBe('object');
+    expect(coerced.steps[0].metadata.foo).toBe('bar');
+    expect(Array.isArray(coerced.steps[1].artifacts)).toBe(true);
+    expect(coerced.steps[1].artifacts[1]).toBe('2');
+  });
 });

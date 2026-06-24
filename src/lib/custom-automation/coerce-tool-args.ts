@@ -44,9 +44,20 @@ export function coerceToolArgs(schema: any, args: any): any {
 
     // Now recurse if we successfully parsed (or it was already) an object/array
     if (propSchema.type === 'array' && Array.isArray(currentValue) && propSchema.items?.type === 'object') {
-      currentValue = currentValue.map((item: any) => 
-        (typeof item === 'object' && item !== null) ? coerceToolArgs(propSchema.items, item) : item
-      );
+      currentValue = currentValue.map((item: any) => {
+        let it = item;
+        // The array might contain stringified objects (e.g. Gemini returned ["{\\"foo\\":\\"bar\\"}"])
+        if (typeof it === 'string') {
+          try {
+            let parsed = JSON.parse(it);
+            if (typeof parsed === 'string') parsed = JSON.parse(parsed); // double-stringify
+            it = parsed;
+          } catch {
+            return item; // leave as-is if not JSON
+          }
+        }
+        return (it && typeof it === 'object' && !Array.isArray(it)) ? coerceToolArgs(propSchema.items, it) : it;
+      });
     } else if (propSchema.type === 'object' && typeof currentValue === 'object' && currentValue !== null && !Array.isArray(currentValue)) {
       currentValue = coerceToolArgs(propSchema, currentValue);
     }

@@ -17,7 +17,7 @@ const UpdateInstancePlanSchema = z.object({
   success_criteria: z.preprocess(parseIfString, z.array(z.any())).optional(),
   validation_rules: z.preprocess(parseIfString, z.array(z.any())).optional(),
   status: z.enum(['pending', 'completed', 'failed', 'cancelled', 'paused', 'in_progress']).optional(),
-  steps: z.preprocess(parseIfString, z.array(z.object({
+  steps: z.preprocess(parseIfString, z.array(z.preprocess(parseIfString, z.object({
     id: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),

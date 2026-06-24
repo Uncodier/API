@@ -18,7 +18,7 @@ const CreateInstancePlanSchema = z.object({
   site_id: z.string().uuid('Site ID is required'),
   user_id: z.string().uuid('User ID is required'),
   agent_id: z.string().uuid('Invalid agent_id').optional(),
-  steps: z.preprocess(parseIfString, z.array(z.object({
+  steps: z.preprocess(parseIfString, z.array(z.preprocess(parseIfString, z.object({
     id: z.string().optional(),
     title: z.string().optional(),
     description: z.string().optional(),
