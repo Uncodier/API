@@ -311,13 +311,13 @@ export async function checkRecentPlansGuardStep(params: {
 
   const { data, error } = await supabaseAdmin
     .from('instance_plans')
-    .select('id, status, created_at, completed_at')
+    .select('id, status, created_at, completed_at, steps_total')
     .eq('instance_id', instanceId)
     .eq('site_id', siteId)
     .in('status', ['completed', 'failed'])
     .gte('created_at', windowStart)
     .order('created_at', { ascending: false })
-    .limit(10);
+    .limit(20);
 
   if (error) {
     console.warn('[CronStep] checkRecentPlansGuardStep query failed:', error.message);
@@ -329,7 +329,8 @@ export async function checkRecentPlansGuardStep(params: {
     };
   }
 
-  const rows = (data ?? []) as Array<{ status: string; created_at: string; completed_at: string | null }>;
+  // Filter out empty placeholder plans so they don't trigger the anti-loop guard
+  const rows = (data ?? []).filter((row: any) => row.steps_total !== 0) as Array<{ status: string; created_at: string; completed_at: string | null }>;
   const recentCount = rows.length;
   const latest = rows[0];
   const latestCompletedAtMs = latest?.completed_at

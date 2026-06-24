@@ -99,6 +99,29 @@ export async function createInstancePlanCore(params: any) {
 
   // Prepare steps if provided
   let planSteps: any[] = [];
+  
+  // Anti-loop Guard: Reject empty plans if there is still outstanding work
+  const fallbackBacklogCtx = await resolveBacklogContextForInstance(validatedData.instance_id);
+  const fallbackBacklogItemId = fallbackBacklogCtx.inProgressItemId;
+  
+  if (!validatedData.steps || validatedData.steps.length === 0) {
+    if (fallbackBacklogCtx.requirementId) {
+      const { outstandingGatingItems, loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog');
+      const req = await loadRequirement(fallbackBacklogCtx.requirementId);
+      if (req) {
+        // We do a cheap check for pending work
+        const b = toBacklog(req.backlog, 'default');
+        const pending = outstandingGatingItems(b.items);
+        if (pending.length > 0) {
+           throw new Error(
+             `Empty plans are not allowed while there is outstanding backlog work (${pending.length} item(s) left). ` +
+             `Provide steps as a proper JSON array. The array-serialization issue is fixed; if a step fails to serialize, retry with a smaller array or simpler structure. Do NOT create placeholder or empty plans.`
+           );
+        }
+      }
+    }
+  }
+
   if (validatedData.steps && validatedData.steps.length > 0) {
     // Deduplicate steps by title or instructions to prevent LLM hallucinations from repeating steps
     const uniqueSteps: any[] = [];
@@ -127,8 +150,6 @@ export async function createInstancePlanCore(params: any) {
     // The post-gate Judge skips items it can't link to a step, which used to
     // leave items eternally `in_progress`. Resolving the unique in-progress
     // item once per plan (cheap) covers the common WIP=1 case.
-    const fallbackBacklogCtx = await resolveBacklogContextForInstance(validatedData.instance_id);
-    const fallbackBacklogItemId = fallbackBacklogCtx.inProgressItemId;
     if (fallbackBacklogItemId) {
       console.log(`[CreateInstancePlan] Auto-bind candidate: backlog_item_id=${fallbackBacklogItemId} (req=${fallbackBacklogCtx.requirementId})`);
     }
