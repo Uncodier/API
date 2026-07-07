@@ -105,35 +105,58 @@ export async function GET(request: Request) {
     const twentyFourHoursAgo = Date.now() - 24 * 60 * 60 * 1000;
     
     try {
-      const url = new URL(`https://api.vercel.com/v1/sandboxes/snapshots`);
-      url.searchParams.append('projectId', projectId);
-      if (teamId) url.searchParams.append('teamId', teamId);
-      
-      const snapRes = await fetch(url.toString(), {
-        headers: { Authorization: `Bearer ${vercelToken}` },
-      });
-      
-      if (snapRes.ok) {
-        const snapshotsResult = await snapRes.json();
-        const snapshots = snapshotsResult.snapshots || [];
+      let next: string | undefined = undefined;
+      let hasMoreSnapshots = true;
+      let pages = 0;
+
+      while (hasMoreSnapshots && pages < 100) {
+        pages++;
+        const url = new URL(`https://api.vercel.com/v1/sandboxes/snapshots`);
+        // The API parameter is 'project', not 'projectId'
+        url.searchParams.append('project', projectId);
+        if (teamId) url.searchParams.append('teamId', teamId);
+        if (next) url.searchParams.append('until', next);
         
-        for (const snap of snapshots) {
-          if (!activeSnapshotIds.has(snap.id)) {
-            const createdAt = new Date(snap.createdAt).getTime();
-            if (createdAt < twentyFourHoursAgo) {
-              console.log(`[SandboxHousekeeping] Deleting orphaned snapshot ${snap.id} (created ${new Date(createdAt).toISOString()})`);
-              try {
-                await deleteSnapshotQuiet(snap.id);
-                results.snapshotsDeleted++;
-              } catch (delErr: unknown) {
-                console.warn(`[SandboxHousekeeping] Failed to delete snapshot ${snap.id}:`, delErr instanceof Error ? delErr.message : delErr);
-                results.snapshotErrors++;
+        const snapRes = await fetch(url.toString(), {
+          headers: { Authorization: `Bearer ${vercelToken}` },
+        });
+        
+        if (snapRes.ok) {
+          const snapshotsResult = await snapRes.json();
+          const snapshots = snapshotsResult.snapshots || [];
+          
+          if (!snapshots.length) break;
+          
+          let added = 0;
+          for (const snap of snapshots) {
+            added++;
+            // Skip already deleted snapshots
+            if (snap.status === 'deleted') continue;
+
+            if (!activeSnapshotIds.has(snap.id)) {
+              const createdAt = new Date(snap.createdAt).getTime();
+              if (createdAt < twentyFourHoursAgo) {
+                console.log(`[SandboxHousekeeping] Deleting orphaned snapshot ${snap.id} (created ${new Date(createdAt).toISOString()})`);
+                try {
+                  await deleteSnapshotQuiet(snap.id);
+                  results.snapshotsDeleted++;
+                } catch (delErr: unknown) {
+                  console.warn(`[SandboxHousekeeping] Failed to delete snapshot ${snap.id}:`, delErr instanceof Error ? delErr.message : delErr);
+                  results.snapshotErrors++;
+                }
               }
             }
           }
+          
+          if (!snapshotsResult.pagination?.next || added === 0) {
+            hasMoreSnapshots = false;
+          } else {
+            next = String(snapshotsResult.pagination.next);
+          }
+        } else {
+          console.warn(`[SandboxHousekeeping] Failed to list snapshots from Vercel API: ${snapRes.status} ${await snapRes.text()}`);
+          break;
         }
-      } else {
-        console.warn(`[SandboxHousekeeping] Failed to list snapshots from Vercel API: ${snapRes.status} ${await snapRes.text()}`);
       }
     } catch (e: unknown) {
       console.error('[SandboxHousekeeping] Error processing snapshots:', e);
