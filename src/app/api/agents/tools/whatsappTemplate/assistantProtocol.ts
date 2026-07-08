@@ -54,13 +54,13 @@ async function formatMessageForTemplate(
   try {
     const { data: site } = await supabaseAdmin
       .from('sites')
-      .select('business_name, business_website')
+      .select('name, url')
       .eq('id', siteId)
       .single();
-    if (!site?.business_name) return message;
-    if (message.includes(site.business_name)) return message;
-    let out = message + `\n\n---\n${site.business_name}`;
-    if (site.business_website) out += `\n${site.business_website}`;
+    if (!site?.name) return message;
+    if (message.includes(site.name)) return message;
+    let out = message + `\n\n---\n${site.name}`;
+    if (site.url) out += `\n${site.url}`;
     return out;
   } catch {
     return message;

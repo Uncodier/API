@@ -304,10 +304,18 @@ export async function POST(request: NextRequest) {
     // Incrementar contador de uso de la plantilla
     if (sendResult.success) {
       try {
+        const { data: currentTemplate } = await supabaseAdmin
+          .from('whatsapp_templates')
+          .select('usage_count')
+          .eq('template_sid', template_id)
+          .single();
+
+        const currentCount = currentTemplate?.usage_count || 0;
+
         await supabaseAdmin
           .from('whatsapp_templates')
           .update({ 
-            usage_count: supabaseAdmin.rpc('increment_usage_count'),
+            usage_count: currentCount + 1,
             last_used: new Date().toISOString()
           })
           .eq('template_sid', template_id);

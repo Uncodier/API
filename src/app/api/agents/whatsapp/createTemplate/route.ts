@@ -48,7 +48,7 @@ async function formatMessageForTemplate(message: string, siteId: string, from?: 
     // Obtener información básica del sitio
     const { data: site, error } = await supabaseAdmin
       .from('sites')
-      .select('business_name, business_website, business_description')
+      .select('name, url, description')
       .eq('id', siteId)
       .single();
 
@@ -61,12 +61,12 @@ async function formatMessageForTemplate(message: string, siteId: string, from?: 
     let formattedMessage = message;
     
     // Agregar firma si tenemos información del negocio
-    if (site.business_name) {
-      if (!message.includes(site.business_name)) {
-        formattedMessage += `\n\n---\n${site.business_name}`;
+    if (site.name) {
+      if (!message.includes(site.name)) {
+        formattedMessage += `\n\n---\n${site.name}`;
         
-        if (site.business_website) {
-          formattedMessage += `\n${site.business_website}`;
+        if (site.url) {
+          formattedMessage += `\n${site.url}`;
         }
       }
     }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { getSchemaCore } from '../schema/route';
 
 // Tables the agent is allowed to query
 const ALLOWED_TABLES = [
@@ -76,14 +77,31 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
 
   // Validate column names
   const selectColumns = columns && columns.length > 0 ? columns : ['*'];
+  
+  // Get schema to validate columns
+  const schemaResult = getSchemaCore(site_id, user_id);
+  const tableSchema = schemaResult.tables?.find(t => t.table_name === table);
+  const validColumns = tableSchema ? new Set(tableSchema.columns.map(c => c.column_name)) : null;
+
   for (const col of selectColumns) {
-    if (col !== '*' && !isSimpleColumn(col)) {
-      return { success: false, error: `Invalid column name: "${col}"` };
+    if (col !== '*') {
+      if (!isSimpleColumn(col)) {
+        return { success: false, error: `Invalid column name: "${col}"` };
+      }
+      if (validColumns && !validColumns.has(col)) {
+        return { 
+          success: false, 
+          error: `Column "${col}" does not exist in table "${table}". Available columns: ${Array.from(validColumns).join(', ')}` 
+        };
+      }
     }
   }
 
   if (!isSimpleColumn(order_by)) {
     return { success: false, error: `Invalid order_by column: "${order_by}"` };
+  }
+  if (validColumns && !validColumns.has(order_by)) {
+    return { success: false, error: `Order by column "${order_by}" does not exist in table "${table}".` };
   }
 
   const safeLimit = Math.min(Math.max(1, limit), 100);
@@ -113,6 +131,9 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
     for (const f of filters) {
       if (!isSimpleColumn(f.column)) {
         return { success: false, error: `Invalid filter column: "${f.column}"` };
+      }
+      if (validColumns && !validColumns.has(f.column)) {
+        return { success: false, error: `Filter column "${f.column}" does not exist in table "${table}".` };
       }
       switch (f.operator) {
         case 'eq':    query = query.eq(f.column, f.value); break;
