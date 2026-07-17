@@ -57,3 +57,4 @@ node_modules[\ ]*
 fix_imports.js
 generate_endpoints.js
 test_db.ts
+/.swc
