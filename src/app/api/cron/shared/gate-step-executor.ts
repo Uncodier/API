@@ -74,13 +74,39 @@ export async function runGateStep(params: {
        // We should only run the strict Judge evaluation if there are no more steps pending
        // for this plan, otherwise the Judge will reject the intermediate steps and burn
        // the backlog item's attempts before the plan even finishes executing.
-       const pendingSteps = (plan?.steps || []).filter((s: any) => 
-         s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
-       );
-       const isLastStep = pendingSteps.length === 0;
+       let isLastStep = false;
+       let pendingStepsCount = 0;
+       try {
+         const { data: latestPlan } = await supabaseAdmin
+           .from('instance_plans')
+           .select('steps')
+           .eq('id', plan.id)
+           .single();
+         
+         if (latestPlan && Array.isArray(latestPlan.steps)) {
+           const pendingSteps = latestPlan.steps.filter((s: any) => 
+             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+           );
+           pendingStepsCount = pendingSteps.length;
+           isLastStep = pendingSteps.length === 0;
+         } else {
+           const pendingSteps = (plan?.steps || []).filter((s: any) => 
+             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+           );
+           pendingStepsCount = pendingSteps.length;
+           isLastStep = pendingSteps.length === 0;
+         }
+       } catch (e) {
+         console.warn(`[GateStep] Error checking isLastStep, falling back to in-memory`, e);
+         const pendingSteps = (plan?.steps || []).filter((s: any) => 
+           s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+         );
+         pendingStepsCount = pendingSteps.length;
+         isLastStep = pendingSteps.length === 0;
+       }
 
        if (!isLastStep) {
-           console.log(`[GateStep] Step ${step.order} passed. Skipping Critic/Judge because there are ${pendingSteps.length} more steps pending in the plan.`);
+           console.log(`[GateStep] Step ${step.order} passed. Skipping Critic/Judge because there are ${pendingStepsCount} more steps pending in the plan.`);
            return { ok: true, passed: true, effectiveSandboxId };
        }
 
@@ -127,7 +153,9 @@ export async function runGateStep(params: {
              const { item } = await getBacklogItem(requirementId, backlogItemId);
              if (item) {
                  const errorMsg = gateRes.error || '';
-                 const classified = classifyFailure(errorMsg, gateRes.signals?.categories_failed || []);
+                 const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
+                 const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
+                 const classified = classifyFailure(errorMsg, categories);
                  
                  if (classified.failureClass === 'plumbing') {
                    const toolName = classified.toolName || 'unknown';

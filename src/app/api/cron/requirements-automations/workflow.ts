@@ -289,6 +289,34 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
       }
       const reconciledStatus = await reconcilePlanStep(activePlan.id);
       planCompleted = reconciledStatus === 'completed';
+      
+      const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+      if (planCompleted && finalPlan) {
+        const { syncBacklogAfterPlanCompleted } = await import('../shared/plan-backlog-sync');
+        const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
+        let connectedSandbox;
+        try {
+          if (sandboxId) {
+            const connected = await connectOrRecreateRequirementSandbox({
+              sandboxId,
+              requirementId: reqId,
+              instanceType: type,
+              title,
+              audit: cronAudit,
+            });
+            connectedSandbox = connected.sandbox;
+          }
+        } catch (e) {
+          console.warn(`[CronAutomationsWorkflow] Could not reconnect sandbox for post-plan evaluation:`, e);
+        }
+
+        await syncBacklogAfterPlanCompleted({
+          requirementId: reqId,
+          plan: finalPlan,
+          sandbox: connectedSandbox,
+          audit: cronAudit
+        });
+      }
     }
   } finally {
     const anyFail = stepsPhase?.anyStepFailed ?? false;

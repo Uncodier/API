@@ -477,6 +477,34 @@ export async function runCronAppsWorkflow(input: CronAppsWorkflowInput) {
 
       // Re-fetch the final plan to count completed steps
       const finalPlan = await getActiveInstancePlanStep(instanceId, site_id);
+
+      if (planCompleted && finalPlan) {
+        const { syncBacklogAfterPlanCompleted } = await import('../shared/plan-backlog-sync');
+        const { connectOrRecreateRequirementSandbox } = await import('@/lib/services/sandbox-recovery');
+        let connectedSandbox;
+        try {
+          if (sandboxId) {
+            const connected = await connectOrRecreateRequirementSandbox({
+              sandboxId,
+              requirementId: reqId,
+              instanceType: type,
+              title,
+              audit: cronAudit,
+            });
+            connectedSandbox = connected.sandbox;
+          }
+        } catch (e) {
+          console.warn(`[CronAppsWorkflow] Could not reconnect sandbox for post-plan evaluation:`, e);
+        }
+
+        await syncBacklogAfterPlanCompleted({
+          requirementId: reqId,
+          plan: finalPlan,
+          sandbox: connectedSandbox,
+          audit: cronAudit
+        });
+      }
+
       const completedStepsAfter = (finalPlan?.steps as any[] || []).filter((s) => s.status === 'completed').length;
       const deltaCompleted = completedStepsAfter - completedStepsBefore;
 

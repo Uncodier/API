@@ -195,7 +195,12 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 - Use the "requirement_status" tool to log milestones, reviews, or when work returns to in-progress after feedback.
 - If system/plan mode expects an "instance_plan", follow the existing PLAN MODE rules in addition — the requirement describes *what* we are building; the plan breaks down *steps* when that mode is active.
 - Prefer listing requirements (action "list") before creating duplicates for the same site or initiative.
-- For QUICK, SIMPLE code modifications on an already-existing repository, bypass complex planning and use the \`update_repo\` tool to execute the instruction directly in the background.`;
+- For QUICK, SIMPLE code modifications on an already-existing repository, bypass complex planning and use the \`update_repo\` tool to execute the instruction directly in the background.
+
+📋 BACKLOG MANAGEMENT (CRITICAL FOR PLANS):
+- Before creating or executing an \`instance_plan\`, you MUST use the \`requirement_backlog\` tool to check the status of items.
+- Plans linked to \`done\` backlog items will be AUTOMATICALLY CANCELLED by the system.
+- If you need to rework or rewrite something that is already "done", you MUST either reopen the existing item (\`set_status\` to \`in_progress\` with \`confirm_reopen: true\`) or \`upsert\` a new \`core\` tier item. Only then can you create a new \`instance_plan\` for it.`;
 }
 
 /**

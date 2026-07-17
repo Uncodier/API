@@ -369,10 +369,36 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
       
       if (gateRes.ok) {
          console.log(`[SingleTurn] Gate PASSED for step ${step.order}`);
-         const pendingSteps = (plan?.steps || []).filter((s: any) => 
-           s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
-         );
-         const isLastStep = pendingSteps.length === 0;
+         let isLastStep = false;
+         let pendingStepsCount = 0;
+         try {
+           const { data: latestPlan } = await supabaseAdmin
+             .from('instance_plans')
+             .select('steps')
+             .eq('id', plan.id)
+             .single();
+           
+           if (latestPlan && Array.isArray(latestPlan.steps)) {
+             const pendingSteps = latestPlan.steps.filter((s: any) => 
+               s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+             );
+             pendingStepsCount = pendingSteps.length;
+             isLastStep = pendingSteps.length === 0;
+           } else {
+             const pendingSteps = (plan?.steps || []).filter((s: any) => 
+               s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+             );
+             pendingStepsCount = pendingSteps.length;
+             isLastStep = pendingSteps.length === 0;
+           }
+         } catch (e) {
+           console.warn(`[SingleTurn] Error checking isLastStep, falling back to in-memory`, e);
+           const pendingSteps = (plan?.steps || []).filter((s: any) => 
+             s.id !== step.id && (s.status === 'pending' || s.status === 'in_progress')
+           );
+           pendingStepsCount = pendingSteps.length;
+           isLastStep = pendingSteps.length === 0;
+         }
          
          if (isLastStep) {
             console.log(`[SingleTurn] Step ${step.order} is final. Running Post-Gate Archetypes (Critic/Judge)...`);
@@ -411,7 +437,9 @@ ${getStepCheckpointPromptFragment(requirementId, instanceId)}`;
                const { item } = await getBacklogItem(requirementId, backlogItemId);
                if (item) {
                    const errorMsg = gateRes.error || '';
-                   const classified = classifyFailure(errorMsg, gateRes.signals?.categories_failed || []);
+                   const { deriveCategoriesFailed } = await import('@/app/api/cron/shared/step-iteration-signals');
+                   const categories = gateRes.richSignals ? deriveCategoriesFailed(gateRes.richSignals as any) : [];
+                   const classified = classifyFailure(errorMsg, categories);
                    
                    if (classified.failureClass === 'plumbing') {
                      // Plumbing failure (e.g. tool crashed, sandbox lost, API schema mismatch)

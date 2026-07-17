@@ -59,8 +59,9 @@ Pendiente (si aplica):
 ### 5. Archive
 The workspace archive is uploaded automatically on each `sandbox_push_checkpoint` (and after `sandbox_restore_checkpoint`). You do NOT need to call these manually.
 
-### 6. Update the requirement
-- If fully complete: `requirements action="update" status="done"`.
+### 6. Update the requirement and backlog
+- IMPORTANT: Use `requirement_backlog action="complete"` passing the `item_id` to mark the current backlog item as done/in review. This is CRITICAL so the system knows the work is finished.
+- If fully complete (all items done): `requirements action="update" status="done"`.
 - If more cycles are needed: keep as `"in-progress"` and leave the message flagged with pending work.
 
 ## Tools
@@ -69,6 +70,7 @@ The workspace archive is uploaded automatically on each `sandbox_push_checkpoint
 | --- | --- |
 | `instance_plan` | `action="execute_step"` to mark the reporting step complete. |
 | `requirement_status` | `action="create"` with final URLs and client message. |
+| `requirement_backlog` | `action="complete"` to mark the current backlog item as finished. |
 | `requirements` | `action="update"` to flip the requirement `status` when fully delivered. |
 | `sandbox_read_file` | Read `test_results.json` and `qa_results.json` to ground the message in real outcomes. |
 
