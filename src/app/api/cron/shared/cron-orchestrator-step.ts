@@ -203,11 +203,14 @@ export async function runOrchestratorStep(params: {
     throw err; // Re-throw so the outer workflow catches it and can clean up if needed
   }
 
+  // Baseline for file freshness tags: when this orchestrator run started.
+  const cycleBaselineAt = new Date(params.globalStartTime ?? Date.now()).toISOString();
   const sandboxTools = getSandboxTools(sandbox, reqId, {
     site_id,
     instance_id: instanceId,
     git_repo_kind,
     requirement_type: requirementType,
+    cycle_baseline_at: cycleBaselineAt,
   });
 
   const fullTools = getCronOrchestratorTools(sandboxTools, site_id, instanceId, user_id);

@@ -66,6 +66,17 @@ export const SANDBOX_REPO_ROOT_INVARIANT = [
   '  - `/migrations/`, `/supabase/migrations/` or `/src/db/migrations/`: Plain SQL database migrations with RLS policies.',
 ].join('\n');
 
+export function getFileFreshnessPromptFragment(cycleBaselineAt?: string): string {
+  if (!cycleBaselineAt) return '';
+  return `
+ANTI_ACCEPT_AS_IS RULE (CRITICAL):
+- File tools tag \`updated_this_cycle\` relative to this step's baseline (cycle_baseline_at=${cycleBaselineAt}).
+- A file without that tag (or with \`updated_this_cycle=false\`) is PRE-EXISTING / NOT YET EDITED THIS STEP. Do not conclude the objective is satisfied just because content "looks acceptable."
+- If the step asks to create/improve/deliver work, you must edit or create the target file(s) so they become \`updated_this_cycle\` (or appear dirty in git), then checkpoint.
+- Investigation-only steps still must persist findings under \`docs/\` (already in SANDBOX_REPO_ROOT_INVARIANT) — notes left only in chat do not count.
+`;
+}
+
 export function getStepCheckpointPromptFragment(requirementId: string, instanceId: string): string {
   const ridHint = requirementId
     ? `requirement_id="${requirementId}"`
@@ -77,7 +88,7 @@ export function getStepCheckpointPromptFragment(requirementId: string, instanceI
 ${SANDBOX_REPO_ROOT_INVARIANT}
 
 CHECKPOINTS & RECOVERY (read this):
-- MANDATORY TOOL — sandbox_push_checkpoint: If you changed any files or created commits locally, you MUST call sandbox_push_checkpoint at least once before you stop working on this step (typically after npm run build succeeds). Use title_hint = this step's title. If the tool reports nothing to push because the tree is already synced with origin, that counts — but you must still have invoked it. Never skip it to "save time". skill_lookup and SKILL.md playbooks do NOT replace this — checkpoints are separate.
+- MANDATORY TOOL — sandbox_push_checkpoint: If you changed any files or created commits locally, you MUST call sandbox_push_checkpoint at least once before you stop working on this step (typically after npm run build succeeds). Use title_hint = this step's title. If the tool reports nothing to push because the tree is already synced with origin, that counts ONLY AFTER you made changes this step; a clean tree with no \`updated_this_cycle\` targets is not completion. Never skip it to "save time". skill_lookup and SKILL.md playbooks do NOT replace this — checkpoints are separate.
 - CRITICAL: Before calling sandbox_push_checkpoint on a new Next.js project, you MUST verify that node_modules and .next are NOT in the git cache. If they are, run \`git rm -r --cached node_modules .next\` first.
 - You must NOT consider the step finished until your repo changes are on the remote feature branch (origin). Automated cron workflows verify npm run build and commit+push before marking the step complete; if push fails, you get a REACTIVE TASK and must commit/push yourself until origin is updated.
 - Until origin is verified, the step does not complete. Do not use raw "git commit" or "git push" via sandbox_run_command during normal execution — EXCEPT: (1) call sandbox_push_checkpoint as above; (2) when you receive "REACTIVE TASK" / "PUSH RECOVERY", fix the repo and then use sandbox_push_checkpoint or follow the recovery git steps.

@@ -4,7 +4,7 @@ import { updateInstancePlanCore } from '@/app/api/agents/tools/instance_plan/upd
 import { processAssistantTurn } from './steps';
 import { AssistantContext } from './types';
 import { SkillsService } from '@/lib/services/skills-service';
-import { getStepCheckpointPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
+import { getStepCheckpointPromptFragment, getFileFreshnessPromptFragment } from '@/app/api/cron/shared/step-git-prompts';
 import { SandboxService } from '@/lib/services/sandbox-service';
 
 const ROLE_TO_SKILL: Record<string, string> = {
@@ -74,17 +74,21 @@ export async function executePlanStep(
   'use step';
   console.log(`[PlanSteps] Executing step ${step.order}: ${step.title}`);
 
-  // 1. Update step status to in_progress
-  await updateInstancePlanCore({
-    plan_id: plan.id,
-    instance_id: context.executionOptions.instance_id,
-    site_id: context.executionOptions.site_id,
-    steps: [{
-      id: step.id,
-      status: 'in_progress',
-      started_at: new Date().toISOString(),
-    }]
-  });
+    // 1. Update step status to in_progress
+    // Baseline = first time THIS step started (not plan.created_at).
+    const now = new Date().toISOString();
+    const cycleBaselineAt = step.started_at || now;
+
+    await updateInstancePlanCore({
+      plan_id: plan.id,
+      instance_id: context.executionOptions.instance_id,
+      site_id: context.executionOptions.site_id,
+      steps: [{
+        id: step.id,
+        status: 'in_progress',
+        ...(step.started_at ? {} : { started_at: cycleBaselineAt }),
+      }]
+    });
 
   // 2. Load skill content for this step (if declared)
   let skillContext = '';
@@ -148,7 +152,12 @@ Title: ${step.title}
 Role: ${step.role || 'general'}
 Instructions: ${step.instructions}
 Expected Output: ${step.expected_output || 'Complete the step successfully.'}
+
+Cycle baseline: ${cycleBaselineAt || 'unknown'}
+File freshness: sandbox_list_files / sandbox_read_file report updated_this_cycle vs this baseline.
+
 ${skillPromptText}
+${getFileFreshnessPromptFragment(cycleBaselineAt)}
 ${getStepCheckpointPromptFragment(requirementId, instance_id)}
 
 RULES:
@@ -179,6 +188,10 @@ RULES:
   const modifiedContext = {
     ...context,
     systemPrompt: stepSystemPrompt,
+    executionOptions: {
+      ...context.executionOptions,
+      cycle_baseline_at: cycleBaselineAt,
+    },
   };
 
   let userContent: any = `Execute step ${step.order}: ${step.title}. ${step.instructions}`;

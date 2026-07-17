@@ -58,11 +58,14 @@ export async function runUpdateRepoAgentStep(params: {
     throw err;
   }
 
+  // Baseline for file freshness tags: when this agent run started.
+  const cycleBaselineAt = new Date(params.globalStartTime ?? Date.now()).toISOString();
   const sandboxTools = getSandboxTools(sandbox, reqId, {
     site_id,
     instance_id: instanceId,
     git_repo_kind,
     requirement_type: requirementType,
+    cycle_baseline_at: cycleBaselineAt,
   });
 
   const fullTools = getAssistantTools(site_id, user_id, instanceId, sandboxTools);

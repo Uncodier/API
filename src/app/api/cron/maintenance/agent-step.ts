@@ -69,11 +69,14 @@ export async function runMaintenanceAgentStep(params: {
     throw err;
   }
 
+  // Baseline for file freshness tags: when this maintenance run started.
+  const cycleBaselineAt = new Date(params.globalStartTime ?? Date.now()).toISOString();
   const sandboxTools = getSandboxTools(sandbox, reqId, {
     site_id,
     instance_id: instanceId,
     git_repo_kind,
     requirement_type: requirementType,
+    cycle_baseline_at: cycleBaselineAt,
   });
 
   const fullTools = getMaintenanceTools(sandboxTools, site_id, instanceId, user_id);

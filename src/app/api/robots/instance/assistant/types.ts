@@ -15,6 +15,8 @@ export interface AssistantContext {
     ai_provider?: 'gemini' | 'azure' | 'openai';
     /** Optional LLM model override. Defaults to env AI_MODEL / provider default. */
     ai_model?: string;
+    // Inherited baseline time to determine if a sandbox file was modified this cycle.
+    cycle_baseline_at?: string;
   };
   initialMessage: string;
   imageAssets: { url: string; fileType: string }[];
