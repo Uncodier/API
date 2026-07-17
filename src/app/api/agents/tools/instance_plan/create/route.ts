@@ -106,15 +106,15 @@ export async function createInstancePlanCore(params: any) {
   
   if (!validatedData.steps || validatedData.steps.length === 0) {
     if (fallbackBacklogCtx.requirementId) {
-      const { outstandingGatingItems, loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog');
+      const { hasOutstandingWork, loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog');
       const req = await loadRequirement(fallbackBacklogCtx.requirementId);
       if (req) {
         // We do a cheap check for pending work
         const b = toBacklog(req.backlog, 'default');
-        const pending = outstandingGatingItems(b.items);
-        if (pending.length > 0) {
+        const hasPending = hasOutstandingWork(b.items);
+        if (hasPending) {
            throw new Error(
-             `Empty plans are not allowed while there is outstanding backlog work (${pending.length} item(s) left). ` +
+             `Empty plans are not allowed while there is outstanding backlog work. ` +
              `Provide steps as a proper JSON array. The array-serialization issue is fixed; if a step fails to serialize, retry with a smaller array or simpler structure. Do NOT create placeholder or empty plans.`
            );
         }

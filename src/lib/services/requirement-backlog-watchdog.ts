@@ -204,7 +204,17 @@ export async function ensureInProgressItem(params: {
   };
   const candidates = backlog.items
     .map((it, idx) => ({ it, idx }))
-    .filter(({ it }) => it.status === 'pending' && isUnblocked(it));
+    .filter(({ it }) => {
+      if (it.status !== 'pending' || !isUnblocked(it)) return false;
+      const tier = it.tier ?? 'core';
+      if (tier === 'ornamental') {
+        const maxAttempts = parseInt(process.env.CRON_ORNAMENTAL_MAX_ATTEMPTS || '2', 10);
+        if ((it.attempts || 0) >= maxAttempts) {
+          return false;
+        }
+      }
+      return true;
+    });
 
   if (candidates.length === 0) {
     return { promoted: null, reason: 'no_pending_unblocked' };

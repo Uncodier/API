@@ -394,13 +394,21 @@ export async function runOrchestratorStep(params: {
     
     // Check if we are in core-done mode to adapt the reminder
     let coreDoneReminder = false;
+    let onlyOrnamentalPending = false;
     if (audit) {
       try {
         const { getRequirementFullContextStep } = await import('./workflow-db-steps');
         const reqContext = await getRequirementFullContextStep(reqId, instanceId, site_id, user_id);
-        const { isBacklogComplete } = await import('@/lib/services/requirement-backlog');
-        if (reqContext.backlog?.items && isBacklogComplete(reqContext.backlog.items)) {
-          coreDoneReminder = true;
+        const { isBacklogComplete, hasOutstandingWork } = await import('@/lib/services/requirement-backlog');
+        if (reqContext.backlog?.items) {
+          const isComplete = isBacklogComplete(reqContext.backlog.items);
+          const hasWork = hasOutstandingWork(reqContext.backlog.items);
+          
+          if (isComplete && !hasWork) {
+            coreDoneReminder = true;
+          } else if (isComplete && hasWork) {
+            onlyOrnamentalPending = true;
+          }
         }
       } catch (e) {
         // ignore
@@ -416,7 +424,9 @@ export async function runOrchestratorStep(params: {
         ].join('\n')
       : [
           'REMINDER (system): Your deliverable is an `instance_plan` tied to the CURRENT PHASE and ONE backlog item (WIP=1).',
-          'Stop running additional sandbox_* commands unless you are blocked.',
+          onlyOrnamentalPending 
+            ? 'The core backlog is done, but there are pending ornamental items. Stop running additional sandbox_* commands unless you are blocked.'
+            : 'Stop running additional sandbox_* commands unless you are blocked.',
           'IMMEDIATE NEXT ACTIONS:',
           '  1. Call `requirement_backlog` with `action="list"` to see the current phase and pending queue. If empty, `action="upsert"` 3-8 items derived from the INSTRUCTIONS block (do NOT read `requirement.spec.md` first).',
           '  2. Pick the single next pending item and call `action="start"` to mark it in_progress (WIP=1 is enforced).',

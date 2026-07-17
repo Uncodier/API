@@ -96,21 +96,21 @@ export async function runCronAutoWorkflow(input: CronAutoWorkflowInput) {
   const finalPreviousWorkContext = previousWorkContext || reqContext.previousWorkContext;
 
   let isAllBacklogDone = false;
+  let isOrnamentalOnly = false;
   const relevantDecisions: string[] = [];
   if (reqContext.backlog?.items) {
-    const activeItems = reqContext.backlog.items.filter(i =>
+    const { isBacklogComplete, isOrnamentalOnlyOutstanding } = require('@/lib/services/requirement-backlog');
+    isAllBacklogDone = isBacklogComplete(reqContext.backlog.items);
+    isOrnamentalOnly = isOrnamentalOnlyOutstanding(reqContext.backlog.items);
+
+    const activeItems = reqContext.backlog.items.filter((i: any) =>
       i.status === 'in_progress' || i.status === 'needs_review' || i.status === 'pending'
     );
-    activeItems.forEach(item => {
+    activeItems.forEach((item: any) => {
       if (item.assumptions && item.assumptions.length > 0) {
         relevantDecisions.push(...item.assumptions.map((a: string) => `[${item.title}] ${a}`));
       }
     });
-
-    const { isBacklogComplete } = require('@/lib/services/requirement-backlog');
-    if (isBacklogComplete(reqContext.backlog.items)) {
-      isAllBacklogDone = true;
-    }
   }
 
   // To ensure the orchestrator runs if there are no backlog items yet or they are all done
@@ -179,9 +179,14 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
     shouldBlockRequirement: false,
   };
   if (!hasActivePlan) {
-    recentPlansGuard = await checkRecentPlansGuardStep({ instanceId, siteId: site_id });
+    const guardParams: Parameters<typeof checkRecentPlansGuardStep>[0] = { instanceId, siteId: site_id };
+    if (isOrnamentalOnly) {
+      guardParams.blockAfter = parseInt(process.env.CRON_ORNAMENTAL_REPLAN_BLOCK_AFTER || '1', 10);
+      guardParams.skipAfterMinutes = parseInt(process.env.CRON_ORNAMENTAL_REPLAN_SKIP_MIN || '30', 10);
+    }
+    recentPlansGuard = await checkRecentPlansGuardStep(guardParams);
     if (recentPlansGuard.reason) {
-      console.log(`[CronAutoWorkflow] Recent-plans guard: ${recentPlansGuard.reason}`);
+      console.log(`[CronAutoWorkflow] Recent-plans guard: ${recentPlansGuard.reason} (ornamentalOnly: ${isOrnamentalOnly})`);
     }
   }
 

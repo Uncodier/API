@@ -68,6 +68,12 @@ export function hasOutstandingWork(items: BacklogItem[]): boolean {
   return items.some((i) => !isItemTerminal(i.status) && i.status !== 'rejected');
 }
 
+export function isOrnamentalOnlyOutstanding(items: BacklogItem[]): boolean {
+  const hasWork = hasOutstandingWork(items);
+  const coreHasWork = outstandingGatingItems(items).length > 0;
+  return hasWork && !coreHasWork;
+}
+
 /**
  * True when every `tier='core'` item is in a terminal state (`done` or
  * `needs_review`). Consumers (flow engine, close-requirement gates) should

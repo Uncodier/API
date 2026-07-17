@@ -4,7 +4,7 @@ import { start } from 'workflow/api';
 import { runCronAutoWorkflow } from './workflow';
 import { CronExpressionParser } from 'cron-parser';
 import { acquireRunLock, getSupabaseUrlHostForLogs, releaseRunLock } from '../shared/cron-run-lock';
-import { isBacklogComplete, hasOutstandingWork } from '@/lib/services/requirement-backlog';
+import { isBacklogComplete, hasOutstandingWork, outstandingGatingItems } from '@/lib/services/requirement-backlog';
 
 export const maxDuration = 800; // 13 minutos aprox (Max for pro plan)
 export const dynamic = 'force-dynamic';
@@ -42,11 +42,35 @@ export async function GET(req: Request) {
     if (recentCompletedReqs && recentCompletedReqs.length > 0) {
       for (const req of recentCompletedReqs) {
         const isComplete = isBacklogComplete(req.backlog?.items || []);
+        const hasCoreOutstanding = outstandingGatingItems(req.backlog?.items || []).length > 0;
         
-        // Revert to in-progress if new items were added
+        // Revert to in-progress if there is outstanding core work OR if ornamental items were added AFTER closure
         if (['on-review', 'done'].includes(req.status) && hasOutstandingWork(req.backlog?.items || [])) {
-          console.log(`[Cron Auto] Requirement ${req.id} is ${req.status} but has incomplete backlog. Reverting to in-progress.`);
-          await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
+          let shouldRevert = hasCoreOutstanding;
+          
+          if (!shouldRevert) {
+            const { data: lastStatus } = await supabaseAdmin
+              .from('requirement_status')
+              .select('created_at')
+              .eq('requirement_id', req.id)
+              .in('stage', ['on-review', 'done'])
+              .order('created_at', { ascending: false })
+              .limit(1)
+              .single();
+              
+            const lastTerminalTime = lastStatus ? new Date(lastStatus.created_at).getTime() : 0;
+            const newestItemUpdate = Math.max(...(req.backlog?.items || []).map((i: any) => new Date(i.updated_at || i.created_at || 0).getTime()));
+            
+            shouldRevert = newestItemUpdate > lastTerminalTime;
+          }
+          
+          if (shouldRevert) {
+            const reason = hasCoreOutstanding ? 'outstanding core items' : 'incomplete ornamental items added after closure';
+            console.log(`[Cron Auto] Requirement ${req.id} is ${req.status} but has ${reason}. Reverting to in-progress.`);
+            await supabaseAdmin.from('requirements').update({ status: 'in-progress' }).eq('id', req.id);
+          } else {
+            console.log(`[Cron Auto] Requirement ${req.id} has incomplete ornamental items but they pre-date closure. Ignoring.`);
+          }
         } else if (['on-review', 'done', 'cancelled'].includes(req.status) && (isComplete || req.status === 'cancelled')) {
           // Clean up running instances to pending
           await supabaseAdmin

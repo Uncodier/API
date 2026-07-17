@@ -4,6 +4,7 @@ import {
   isBacklogComplete,
   outstandingGatingItems,
   hasOutstandingWork,
+  isOrnamentalOnlyOutstanding,
   type BacklogItem
 } from '../requirement-backlog';
 
@@ -135,6 +136,32 @@ describe('Requirement Backlog Helpers', () => {
         createItem('3', 'ornamental', 'rejected'),
       ];
       expect(hasOutstandingWork(items)).toBe(false);
+    });
+  });
+
+  describe('isOrnamentalOnlyOutstanding', () => {
+    it('returns false if there is outstanding core work', () => {
+      const items = [
+        createItem('1', 'core', 'pending'),
+        createItem('2', 'ornamental', 'pending'),
+      ];
+      expect(isOrnamentalOnlyOutstanding(items)).toBe(false);
+    });
+
+    it('returns true if there is outstanding work but no outstanding core work', () => {
+      const items = [
+        createItem('1', 'core', 'done'),
+        createItem('2', 'ornamental', 'pending'),
+      ];
+      expect(isOrnamentalOnlyOutstanding(items)).toBe(true);
+    });
+
+    it('returns false if there is no outstanding work at all', () => {
+      const items = [
+        createItem('1', 'core', 'done'),
+        createItem('2', 'ornamental', 'done'),
+      ];
+      expect(isOrnamentalOnlyOutstanding(items)).toBe(false);
     });
   });
 });
