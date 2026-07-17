@@ -43,22 +43,58 @@ function nextScope(current: BacklogItemScope): BacklogItemScope | null {
  */
 export function planNextHealingAction(ctx: HealingContext): HealingAction {
   const attempts = ctx.attempts;
+  const reason = ctx.verdict.reason || 'Unknown reason';
+  
+  // Extract a single clear next action if the judge provided one (often prefixed by "Next:")
+  // Otherwise default to the generic rotate advice.
+  let nextAction = 'switch approach — different library primitive, different data shape, or different route layout. Do not retry the exact same commands.';
+  
+  // If the reason already embeds the next action, we can strip it from the base reason 
+  // to avoid duplication in the hint.
+  let baseReason = reason;
+  
+  if (reason.includes('Next:')) {
+    const parts = reason.split('Next:');
+    baseReason = parts[0].trim();
+    nextAction = parts[1].trim();
+  } else if (reason.includes('Fix the')) {
+    const fixMatch = reason.match(/Fix the[^.]+\./);
+    if (fixMatch) {
+      nextAction = fixMatch[0];
+      baseReason = reason.replace(fixMatch[0], '').trim();
+    }
+  } else if (reason.includes('Produce evidence')) {
+    const prodMatch = reason.match(/Produce evidence[^.]+\./);
+    if (prodMatch) {
+      nextAction = prodMatch[0];
+      baseReason = reason.replace(prodMatch[0], '').trim();
+    }
+  }
+
+  // Clean up trailing dots/spaces from stripping
+  baseReason = baseReason.replace(/\.+$/, '').trim();
+
+  // Include top unmatched item to help focus the next attempt
+  const unmatched = ctx.verdict.unmatched_acceptance?.[0];
+  const unmatchedContext = unmatched ? ` Missing evidence for e.g. "${unmatched}".` : '';
 
   if (attempts <= 1) {
+    const hint = `Previous attempt rejected: ${baseReason}.${unmatchedContext} Keep scope (${ctx.item.scope_level}). ${nextAction}`;
     return {
       kind: 'rotate_strategy',
-      hint: `Previous attempt rejected: ${ctx.verdict.reason}. Keep the same scope (${ctx.item.scope_level}) but switch approach — different library primitive, different data shape, or different route layout. Do not retry the exact same commands.`,
+      hint: hint.length > 800 ? hint.slice(0, 797) + '...' : hint,
     };
   }
 
   if (attempts === 2) {
     const next = nextScope(ctx.item.scope_level);
     if (next) {
+      const hintReason = `Two attempts failed at scope=${ctx.item.scope_level} (Last: ${baseReason}).${unmatchedContext} Downgrading to ${next}. Focus ONLY on the critical path; defer polish to unblock the phase.`;
       return {
         kind: 'downgrade_scope',
         from: ctx.item.scope_level,
         to: next,
-        reason: `Two attempts failed at scope=${ctx.item.scope_level}. Downgrading to ${next} to unblock the phase. Reduce acceptance criteria by keeping only the critical path; defer polish/variants to a follow-up item.`,
+        reason: hintReason.length > 800 ? hintReason.slice(0, 797) + '...' : hintReason,
       };
     }
     // Already minimal → fall through to assumption path.

@@ -98,15 +98,38 @@ function hasToolCall(evidence: EvidenceRecord, predicate: (c: ToolCallSummary) =
   return toolCalls(evidence).some(predicate);
 }
 
-function gateSignals(evidence: EvidenceRecord): {
-  build?: { ok: boolean };
-  runtime?: { ok: boolean };
-  scenarios?: { ok: boolean };
+export function gateSignals(evidence: EvidenceRecord): {
+  build?: { ok: boolean; detail?: string };
+  runtime?: { ok: boolean; detail?: string };
+  scenarios?: { ok: boolean; detail?: string };
 } {
-  const out: { build?: { ok: boolean }; runtime?: { ok: boolean }; scenarios?: { ok: boolean } } = {};
-  if (evidence.build) out.build = { ok: evidence.build.exit_code === 0 };
-  if (evidence.runtime) out.runtime = { ok: evidence.runtime.http_status >= 200 && evidence.runtime.http_status < 400 };
-  if (evidence.scenarios?.length) out.scenarios = { ok: evidence.scenarios.every((s) => s.pass) };
+  const out: { build?: { ok: boolean; detail?: string }; runtime?: { ok: boolean; detail?: string }; scenarios?: { ok: boolean; detail?: string } } = {};
+  
+  if (evidence.build) {
+    const ok = evidence.build.exit_code === 0;
+    out.build = { 
+      ok, 
+      detail: !ok ? `command="${evidence.build.command}" exit_code=${evidence.build.exit_code}` : undefined 
+    };
+  }
+  
+  if (evidence.runtime) {
+    const ok = evidence.runtime.http_status >= 200 && evidence.runtime.http_status < 400;
+    out.runtime = { 
+      ok, 
+      detail: !ok ? `route="${evidence.runtime.route}" http_status=${evidence.runtime.http_status}` : undefined 
+    };
+  }
+  
+  if (evidence.scenarios?.length) {
+    const failed = evidence.scenarios.filter(s => !s.pass).map(s => s.name);
+    const ok = failed.length === 0;
+    out.scenarios = { 
+      ok, 
+      detail: !ok ? `failed=[${failed.slice(0, 3).join(', ')}${failed.length > 3 ? '...' : ''}]` : undefined 
+    };
+  }
+  
   return out;
 }
 
@@ -359,9 +382,21 @@ function evidenceHaystack(evidence: EvidenceRecord): string[] {
 
 function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const sig = gateSignals(evidence);
-  if (sig.build && !sig.build.ok) return rejected(item, 'build gate failed');
-  if (sig.runtime && sig.runtime.ok === false) return rejected(item, 'runtime gate failed');
-  if (sig.scenarios && sig.scenarios.ok === false) return rejected(item, 'scenario gate failed');
+  
+  if (sig.build && !sig.build.ok) {
+    const detail = sig.build.detail ? `: ${sig.build.detail}` : '';
+    return rejected(item, `build gate failed${detail}. Fix the build errors before re-claiming done.`);
+  }
+  
+  if (sig.runtime && sig.runtime.ok === false) {
+    const detail = sig.runtime.detail ? `: ${sig.runtime.detail}` : '';
+    return rejected(item, `runtime gate failed${detail}. Fix the failing route/response before re-claiming done.`);
+  }
+  
+  if (sig.scenarios && sig.scenarios.ok === false) {
+    const detail = sig.scenarios.detail ? `: ${sig.scenarios.detail}` : '';
+    return rejected(item, `scenario gate failed${detail}. Fix the failing scenarios before re-claiming done.`);
+  }
 
   // Phase 10: hard contracts for core items.
   if (isTier(item, 'core')) {
@@ -408,7 +443,7 @@ function judgeApp(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
 function judgeDoc(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const calls = toolCalls(evidence);
   if (!calls.some((c) => /lint|markdown|remark/i.test(c.name))) {
-    return rejected(item, 'doc judge requires a lint/markdown tool call in evidence');
+    return rejected(item, 'doc judge requires a lint/markdown tool call in evidence. Next: run a markdown/lint tool and keep the call in evidence.');
   }
   return matchOrEscalate(item, evidence);
 }
@@ -416,7 +451,7 @@ function judgeDoc(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
 function judgeSlides(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   const calls = toolCalls(evidence);
   if (!calls.some((c) => /screenshot|capture|reveal|spectacle/i.test(c.name))) {
-    return rejected(item, 'slides judge requires per-slide screenshot evidence');
+    return rejected(item, 'slides judge requires per-slide screenshot evidence. Next: capture per-slide screenshots and keep them in evidence.');
   }
   return matchOrEscalate(item, evidence);
 }
@@ -431,7 +466,7 @@ function judgeContract(item: BacklogItem, evidence: EvidenceRecord): JudgeResult
 
 function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (!hasToolCall(evidence, (c) => /curl|fetch|http|test/i.test(c.name))) {
-    return rejected(item, 'backend judge requires an HTTP probe or test run');
+    return rejected(item, 'backend judge requires an HTTP probe or test run. Next: curl/fetch the shipped route and keep a successful probe in evidence.');
   }
   if (isTier(item, 'core')) {
     if (!validateAcceptance(item.acceptance).has_any_executable) {
@@ -471,14 +506,14 @@ function judgeBackend(item: BacklogItem, evidence: EvidenceRecord): JudgeResult 
 
 function judgeTask(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (toolCalls(evidence).length === 0) {
-    return rejected(item, 'task judge requires at least one tool-call');
+    return rejected(item, 'task judge requires at least one tool-call. Next: invoke at least one relevant tool and leave it in evidence.');
   }
   return matchOrEscalate(item, evidence);
 }
 
 function judgeAutomation(item: BacklogItem, evidence: EvidenceRecord): JudgeResult {
   if (!hasToolCall(evidence, (c) => /run|execute|cron|schedule|webhook/i.test(c.name))) {
-    return rejected(item, 'automation judge requires a runtime invocation');
+    return rejected(item, 'automation judge requires a runtime invocation. Next: execute the automation (run/cron/webhook) once and record the call.');
   }
   return matchOrEscalate(item, evidence);
 }
@@ -497,17 +532,28 @@ function matchOrEscalate(item: BacklogItem, evidence: EvidenceRecord): JudgeResu
   if (unmatched.length === 0) {
     return { verdict: 'approved', reason: 'all acceptance entries matched in evidence', matched_acceptance: matched, unmatched_acceptance: [] };
   }
+  
+  // Create a sample of unmatched criteria for the reason string (max 3, truncated)
+  const totalAcceptance = item.acceptance?.length ?? 0;
+  const sampleUnmatched = unmatched.slice(0, 3).map(u => {
+    const text = u.length > 120 ? u.slice(0, 117) + '...' : u;
+    return `"${text}"`;
+  });
+  const unmatchedSampleStr = sampleUnmatched.length > 0 
+    ? ` Unmatched: ${sampleUnmatched.join('; ')}${unmatched.length > 3 ? ' (and more)' : ''}. Produce evidence (tool call / route / test) that proves those criteria.` 
+    : '';
+
   if ((item.attempts ?? 0) >= 3) {
     return {
       verdict: 'escalate',
-      reason: `attempts=${item.attempts ?? 0} with ${unmatched.length} unmatched acceptance — escalating to self-heal/needs_review`,
+      reason: `attempts=${item.attempts ?? 0} with ${unmatched.length}/${totalAcceptance} unmatched acceptance — escalating to self-heal/needs_review.${unmatchedSampleStr}`,
       matched_acceptance: matched,
       unmatched_acceptance: unmatched,
     };
   }
   return {
     verdict: 'rejected',
-    reason: `${unmatched.length}/${item.acceptance?.length ?? 0} acceptance entries lack matching evidence`,
+    reason: `${unmatched.length}/${totalAcceptance} acceptance entries lack matching evidence.${unmatchedSampleStr}`,
     matched_acceptance: matched,
     unmatched_acceptance: unmatched,
   };
