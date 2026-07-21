@@ -173,6 +173,16 @@ export default async function middleware(request) {
     } 
     // Si no hay origen (M2M) o si es origin no permitido, debe tener API key
     else {
+      const pathname = request.nextUrl.pathname;
+      const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
+      if (isPromptImage && request.method === 'GET') {
+        console.log('[Middleware] Prompt image GET without origin - allowing for <img> compat');
+        const response = safeNext();
+        response.headers.set('X-Middleware-Executed', 'true');
+        response.headers.set('X-Public-Image-Prompt', 'true');
+        return response;
+      }
+      
       console.log('[Middleware] Public route accessed without origin (M2M) - checking API key');
       const apiKeyResponse = await apiKeyAuth(request);
       if (apiKeyResponse.status && apiKeyResponse.status !== 200) {

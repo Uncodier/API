@@ -1,5 +1,6 @@
 {
   "functions": {
+    "src/app/api/public/image/prompt/[...prompt]/route.ts": { "maxDuration": 300 },
     "src/app/api/agents/growth/segments/route.ts": { "maxDuration": 60 },
     "src/app/api/site/segments/route.ts": { "maxDuration": 60 },
     "src/app/api/agents/chat/websocket/route.ts": { "maxDuration": 300 },
