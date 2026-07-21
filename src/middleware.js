@@ -241,6 +241,16 @@ export default async function middleware(request) {
   
   // Si no hay origin (petición machine-to-machine), validar API key
   if (!origin) {
+    const pathname = request.nextUrl.pathname;
+    const isPromptImage = pathname.startsWith('/api/public/image/prompt/');
+    if (isPromptImage && request.method === 'GET') {
+      console.log('[Middleware] Prompt image GET without origin - allowing for <img> compat');
+      const response = safeNext();
+      response.headers.set('X-Middleware-Executed', 'true');
+      response.headers.set('X-Public-Image-Prompt', 'true');
+      return response;
+    }
+
     // En desarrollo local, permitir requests sin API key si vienen de localhost
     const hostname = request.nextUrl.hostname;
     const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '0.0.0.0' || hostname === '::1';
