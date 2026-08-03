@@ -17,14 +17,40 @@ function jsonError(error: string, status: number, details?: string) {
   );
 }
 
+function safeDecode(str: string): string {
+  try {
+    return decodeURIComponent(str);
+  } catch {
+    try {
+      // Replace % not followed by 2 hex digits with %25
+      return decodeURIComponent(str.replace(/%(?![0-9a-fA-F]{2})/g, '%25'));
+    } catch {
+      return str;
+    }
+  }
+}
+
 export async function GET(
   request: NextRequest,
   context: { params: Promise<{ prompt: string[] }> }
 ) {
   try {
-    const params = await context.params;
-    const promptParts = params.prompt || [];
-    const promptStr = decodeURIComponent(promptParts.join('/'));
+    let rawPrompt = '';
+    const prefix = '/api/public/image/prompt/';
+    
+    if (request.nextUrl.pathname.startsWith(prefix)) {
+      rawPrompt = request.nextUrl.pathname.slice(prefix.length);
+    } else {
+      try {
+        const params = await context.params;
+        const promptParts = params.prompt || [];
+        rawPrompt = promptParts.join('/');
+      } catch (e) {
+        // Ignore params decoding errors, fallback is empty string which will return 400
+      }
+    }
+
+    const promptStr = safeDecode(rawPrompt);
 
     if (!promptStr || promptStr.trim() === '') {
       return jsonError('Prompt is required', 400);
@@ -56,7 +82,7 @@ export async function GET(
     // 1. Cache hit → return image bytes
     const cached = await downloadFromCache(hash);
     if (cached) {
-      return new NextResponse(cached.buffer, {
+      return new NextResponse(cached.buffer as unknown as BodyInit, {
         headers: {
           'Content-Type': cached.mimeType,
           'Cache-Control': 'public, max-age=31536000, immutable',
@@ -73,7 +99,24 @@ export async function GET(
       return jsonError('Missing Origin or Referer to resolve requirement', 403);
     }
 
-    const siteId = await resolveSiteFromRequirementUrl(originOrReferer);
+    let isOfficialApp = false;
+    try {
+      const hn = !originOrReferer.startsWith('http') 
+        ? new URL(`https://${originOrReferer}`).hostname 
+        : new URL(originOrReferer).hostname;
+        
+      if (hn === 'app.makinari.com' || hn === 'localhost' || hn === '127.0.0.1') {
+        isOfficialApp = true;
+      }
+    } catch(e) {}
+
+    let siteId: string | null = null;
+    if (isOfficialApp) {
+      siteId = '00000000-0000-0000-0000-000000000000'; // System site ID for official app
+    } else {
+      siteId = await resolveSiteFromRequirementUrl(originOrReferer);
+    }
+
     if (!siteId) {
       return jsonError('Domain not authorized for prompt generation', 403);
     }
@@ -88,7 +131,7 @@ export async function GET(
     };
 
     const runId = `img-prompt-${hash}`;
-    const run = await start(generatePromptImageWorkflow, [workflowInput], { workflowId: runId });
+    const run = await start(generatePromptImageWorkflow, [workflowInput]);
 
     try {
       await run.returnValue;
@@ -104,7 +147,7 @@ export async function GET(
     // 4. Return cached image after successful generation
     const finalCached = await downloadFromCache(hash);
     if (finalCached) {
-      return new NextResponse(finalCached.buffer, {
+      return new NextResponse(finalCached.buffer as unknown as BodyInit, {
         headers: {
           'Content-Type': finalCached.mimeType,
           'Cache-Control': 'public, max-age=31536000, immutable',
