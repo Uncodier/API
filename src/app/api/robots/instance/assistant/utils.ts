@@ -18,6 +18,14 @@ import { memoriesTool } from '@/app/api/agents/tools/memories/assistantProtocol'
 import { tasksTool } from '@/app/api/agents/tools/tasks/assistantProtocol';
 import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantProtocol';
 import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
+import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
+import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
+import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantProtocol';
+import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
+import { entitlementsTool } from '@/app/api/agents/tools/entitlements/assistantProtocol';
+import { quotationItemsTool } from '@/app/api/agents/tools/quotation_items/assistantProtocol';
+import { quotationsTool } from '@/app/api/agents/tools/quotations/assistantProtocol';
+import { subscriptionPlanItemsTool } from '@/app/api/agents/tools/subscription_plan_items/assistantProtocol';
 import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
 import { sendEmailTool } from '@/app/api/agents/tools/sendEmail/assistantProtocol';
 import { configureEmailTool } from '@/app/api/agents/tools/configureEmail/assistantProtocol';
@@ -272,6 +280,14 @@ export const getAssistantTools = (
     salesOrderTool(siteId),
     salesTool(siteId),
     dealsTool(siteId),
+    catalogCommerceTool(siteId),
+    reservationSchedulesTool(siteId),
+    reservationsTool(siteId),
+    checkoutTool(siteId),
+    entitlementsTool(siteId),
+    quotationsTool(siteId),
+    quotationItemsTool(siteId),
+    subscriptionPlanItemsTool(siteId),
     schedulingTool(siteId, instanceId),
     getFinderCategoryIdsTool(siteId),
     analyzeICPTotalCountTool(siteId),

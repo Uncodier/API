@@ -23,6 +23,7 @@ export interface SalesOrderToolParams {
   tax?: number;
   shipping_address?: Record<string, unknown>;
   order_details?: Record<string, unknown>;
+  location_id?: string;
 
   // Update/Delete params
   order_id?: string;
@@ -43,8 +44,7 @@ export interface SalesOrderToolParams {
 export function salesOrderTool(current_site_id?: string) {
   return {
     name: 'sales_order',
-    description:
-      'Manage sales orders. Use action="create" to create a sales record and optionally an order. Use action="update" to update an order. Use action="list" to search orders. Use action="delete" to remove an order.',
+    description: 'Legacy CRM transaction recording tool. Do not use for checkouts, Stripe payment links, catalog purchases, or new commerce flows. For creating orders with payment links, use the `checkout` tool instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -68,6 +68,7 @@ export function salesOrderTool(current_site_id?: string) {
         tax: { type: 'number', description: 'Tax amount' },
         shipping_address: { type: 'string', description: 'Shipping address (JSON string)' },
         order_details: { type: 'string', description: 'Additional order details (JSON string)' },
+        location_id: { type: 'string', description: 'Location UUID for inventory' },
         delivery_date: { type: 'string', description: 'Delivery date (for update)' },
         shipping_method: { type: 'string', description: 'Shipping method (for update)' },
         priority: { type: 'string', description: 'Priority: low, medium, high (for update)' },

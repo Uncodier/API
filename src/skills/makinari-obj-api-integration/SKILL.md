@@ -48,23 +48,11 @@ Manage leads automatically from forms or sign-ups.
   }
   ```
 
-### Sales & Transactions (MCP/REST Tool)
-Record purchases or subscription events.
-- **Endpoints**: `POST /api/agents/tools/sales/[action]` (Actions: `create`, `get`, `update`, `delete`)
-- **Create Sale Example**:
-  ```http
-  POST /api/agents/tools/sales/create
-  Authorization: Bearer YOUR_API_KEY
-  
-  {
-    "site_id": "SITE_ID",
-    "customer_id": "CUSTOMER_UUID",
-    "product_ids": ["PRODUCT_UUID"],
-    "total_amount": 99.00,
-    "payment_method": "card",
-    "status": "completed"
-  }
-  ```
+### Sales & Transactions (Commerce Flow)
+For recording purchases, quotes, or generating payment links, refer to the `makinari-commerce` skill. 
+Use the `checkout` tool to create orders and payment links. Do NOT use the legacy `sales` tool for active commerce integration unless specifically maintaining older transaction dumps.
+
+- **Endpoints**: `POST /api/agents/tools/checkout/[action]` (Actions: `create_order`, `create_payment_link`, etc.)
 
 ### Blog / Content API
 Fetch public blog content to render inside the app/landing page.
@@ -75,7 +63,8 @@ Fetch public blog content to render inside the app/landing page.
 ## Available MCP Tools reference
 When the requirement asks for broader AI tool use, remember these map to `/api/agents/tools/{toolName}/{action}`:
 - `leads` (create, get, update, qualify, identify)
-- `sales` (create, get, update, delete)
+- `checkout` (create_order, create_payment_link, get_order)
+- `catalog_commerce` (list, get, update)
 - `conversations` (manage chat threads)
 - `messages` (send emails, internal notifications)
 - `workflows` (trigger automations)

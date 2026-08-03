@@ -1,0 +1,30 @@
+---
+title: Subscription Plan Items
+description: Manage mappings between a subscription plan and its included digital assets.
+---
+
+# Subscription Plan Items
+
+Manage mappings between a subscription plan and its included digital assets. Use action="create" to map a digital asset to a plan. Use action="list" to read existing mappings. Use action="delete" to remove a mapping.
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | Action to perform: list, create, delete |
+| id | string | Item UUID (required for delete) |
+| site_id | string | Seller site UUID |
+| plan_catalog_item_id | string | The plan catalog item UUID |
+| digital_catalog_item_id | string | The digital catalog item UUID included in the plan |
+| limit | number | Limit results for list |
+| offset | number | Offset results for list |
+
+## Example
+
+```json
+{
+  "action": "create",
+  "plan_catalog_item_id": "PLAN_ITEM_ID",
+  "digital_catalog_item_id": "DIGITAL_ITEM_ID"
+}
+```

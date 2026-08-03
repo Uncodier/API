@@ -1,0 +1,7 @@
+import { NextRequest } from 'next/server.js';
+try {
+  const req = new NextRequest('https://backend.makinari.com/api/public/image/prompt/Plan%20Plus%20Anual%20Recibe%2C%20cobra%20e%20imprime%20tus%20pedidos%2080%25%20m%C3%A1s%20f%C3%A1cil%20y%20sin%20comisiones.%20Hasta%20300%20pedidos%20al%20mes.%20*Costo%20pedido%20adicional%20%241.99%20MXN%0ACaracter%C3%ADsticas%3A%0ALink%20con%20ubicaci%C3%B3n%20del%20cliente.%0APanel%20de%20control%20e%20historial%20de%20pedidos.%0AAlerta%20de%20pedidos.%0AComanda%20digital%20por%20WhatsApp.%0AConfigurador%20de%20tarifas%20y%20entregas%20estandar.%0AConfigurador%20de%20env%C3%ADo%20gratis%20con%20compra%20m%C3%ADnima.%0AAnuncios%20programables%20dentro%20del%20men%C3%BA%20de%20tu%20restaurante.%0AProgramaci%C3%B3n%20de%20productos%20y%20categor%C3%ADas.%0AAplicaci%C3%B3n%20para%20escritorio%20Windows%2011.%0AIntegraci%C3%B3n%20con%20pasarelas%20de%20pagos%20en%20l%C3%ADnea.%0AControl%20de%20Mesas.%0AComandero.%0ACorte%20de%20Caja.%0AAplicaci%C3%B3n%20para%20escritorio%20(Windows%2010%20o%20posterior)%0AEstad%C3%ADsticas%20b%C3%A1sicas%0AConfigurador%20de%20tarifas%20y%20entregas%20estandar%0AProgramaci%C3%B3n%20de%20productos%20por%20horario%0AHerramienta%20de%20anuncios%2C%20programables%20por%20d%C3%ADa%20y%20hora%0A15%25%20de%20descuento%20por%20pago%20anual%20anticipado?width=1024&height=1024');
+  console.log(req.nextUrl.pathname);
+} catch (e) {
+  console.log("Error:", e.stack);
+}

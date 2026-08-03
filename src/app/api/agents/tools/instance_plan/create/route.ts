@@ -106,7 +106,8 @@ export async function createInstancePlanCore(params: any) {
   
   if (!validatedData.steps || validatedData.steps.length === 0) {
     if (fallbackBacklogCtx.requirementId) {
-      const { hasOutstandingWork, loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog');
+      const { hasOutstandingWork } = await import('@/lib/services/requirement-backlog');
+      const { loadRequirement, toBacklog } = await import('@/lib/services/requirement-backlog-store');
       const req = await loadRequirement(fallbackBacklogCtx.requirementId);
       if (req) {
         // We do a cheap check for pending work

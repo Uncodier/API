@@ -14,6 +14,7 @@ const CreateSaleSchema = z.object({
   tax: z.number().optional(),
   shipping_address: z.record(z.unknown()).optional(),
   site_id: z.string().uuid('Site ID is required'),
+  location_id: z.string().uuid().optional(),
 });
 
 export async function POST(request: NextRequest) {

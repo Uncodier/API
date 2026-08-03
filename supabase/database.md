@@ -2116,3 +2116,33 @@ with check (true);
 - `icp_hash` evita minados simultáneos duplicados por `role_query_id` + ICP.
 - `progress_percent` refleja avance con base en `processed_targets / total_targets`.
 - `anon` puede leer únicamente corridas completadas; `service_role` tiene acceso total.
+## Commercial Platform
+
+The commercial platform provides a structured way to handle quotations, marketplace visibility, entitlements, and subscriptions. It extends the core sales and catalog modules.
+
+### Key Concepts & Ownership
+
+- **`site_id`**: The seller's site (the organization selling the item).
+- **`buyer_user_id`**: The user who is buying or receiving the item. This is required to grant digital entitlements.
+- **`owner_site_id`**: The destination site for the purchase (used in B2B scenarios where the buyer purchases on behalf of a site they are an owner/member of). If `null`, it's a personal/B2C purchase.
+- **`source_id`**: In `entitlements`, when `source_type` is `purchase`, `source_id` maps to `sale_orders.id` (not `sale_order_items.id`).
+
+### Enums & Validations
+
+- **`catalog_items.kind`**: Includes `digital_asset` (along with `product` and `service`).
+- **`catalog_items.digital_subtype`**: Defines what the digital asset represents: `ticket`, `course`, `file`, `pass`, `license`.
+- **`catalog_items.is_reservation`**: A boolean flag. If `true`, the item requires a reservation schedule and a slot booking before checkout.
+- **`catalog_items.is_marketplace_listed`**: A boolean flag. A catalog item is only visible in the marketplace if `is_marketplace_listed = true` AND `status = 'active'` AND `availability_status = 'available'`.
+- **`reservation_schedules`**: Configures duration, capacity, and weekly active hours (`days`) for reservable items.
+- **`reservations`**: Holds the booked capacity slot, linked to `catalog_item_id`, `lead_id`, and `sale_order_item_id`.
+- **`quotations.status`**: `draft`, `sent`, `accepted`, `rejected`, `expired`.
+- **`entitlements.source_type`**: `purchase` (from a one-off sale order) or `subscription` (granted via an active subscription plan).
+- **`entitlements.status`**: `active`, `revoked`, `expired`, `used`.
+
+### Core Data Flow
+
+1. **Lead & Deal**: A `lead` (with `buyer_user_id`) is connected to a `deal`.
+2. **Quotation**: A seller creates a `draft` quotation from the deal/lead. They add `quotation_items` and then change the status to `sent`.
+3. **Acceptance & Checkout**: The buyer accepts the quotation. This process automatically triggers the creation of a `sale_order` (status `pending`). Alternatively, an order can be created directly from the catalog.
+4. **Payment**: The buyer pays via Stripe Checkout. The resulting Stripe webhook completes the `sale_order`.
+5. **Entitlement Granting**: Upon order completion, `grantFromOrder` automatically provisions `entitlements` for any purchased `digital_asset`. If a subscription was purchased, `syncSubscriptionEntitlements` grants entitlements based on `subscription_plan_items`.

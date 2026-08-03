@@ -42,23 +42,29 @@ export async function generateAndCacheImageStep(
   const cacheResult = await uploadToCache(hash, buffer, mimeType);
 
   // 4. Create an asset record mapping the public prompt
-  await supabaseAdmin.from('assets').insert({
-    site_id: siteId,
-    name: `prompt_${hash}`,
-    file_path: cacheResult.url,
-    file_type: mimeType,
-    file_size: buffer.length,
-    metadata: {
-      provider: 'gemini',
-      prompt,
-      prompt_hash: hash,
-      source: 'public_prompt',
-      generated_at: new Date().toISOString(),
-      storage_path: cacheResult.path,
-      bucket: 'generative_images'
-    },
-    is_public: true
-  });
+  try {
+    if (siteId !== '00000000-0000-0000-0000-000000000000') {
+      await supabaseAdmin.from('assets').insert({
+        site_id: siteId,
+        name: `prompt_${hash}`,
+        file_path: cacheResult.url,
+        file_type: mimeType,
+        file_size: buffer.length,
+        metadata: {
+          provider: 'gemini',
+          prompt,
+          prompt_hash: hash,
+          source: 'public_prompt',
+          generated_at: new Date().toISOString(),
+          storage_path: cacheResult.path,
+          bucket: 'generative_images'
+        },
+        is_public: true
+      });
+    }
+  } catch (dbError) {
+    console.warn('[PublicPromptImage] Asset insert failed, but image was cached', dbError);
+  }
 
   return { success: true };
 }

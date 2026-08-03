@@ -31,7 +31,8 @@ export async function POST(request: NextRequest) {
       discount,
       tax,
       shipping_address,
-      order_details
+      order_details,
+      location_id
     } = body;
     
     // Validar parámetros requeridos
@@ -179,6 +180,7 @@ export async function POST(request: NextRequest) {
       discount,
       tax,
       shipping_address,
+      location_id,
       created_at: now,
       updated_at: now,
       site_id: customerData.site_id

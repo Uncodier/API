@@ -9,6 +9,7 @@ const UpdateSaleSchema = z.object({
   notes: z.string().optional(),
   payment_method: z.string().optional(),
   total_amount: z.number().positive().optional(),
+  location_id: z.string().uuid().optional(),
 });
 
 export async function POST(request: NextRequest) {

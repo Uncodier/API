@@ -22,6 +22,7 @@ export interface SalesToolParams {
   tax?: number;
   shipping_address?: Record<string, unknown>;
   site_id?: string;
+  location_id?: string;
 
   // Update/Delete params
   sale_id?: string;
@@ -37,8 +38,7 @@ export interface SalesToolParams {
 export function salesTool(current_site_id?: string) {
   return {
     name: 'sales',
-    description:
-      'Manage sales transactions. Use action="create" to record a new sale. Use action="update" to modify a sale record. Use action="list" to search sales history. Use action="delete" to remove a sale record.',
+    description: 'Legacy CRM transaction recording tool. Do not use for checkouts, Stripe payment links, catalog purchases, or new commerce flows. For creating orders with payment links, use the `checkout` tool instead.',
     parameters: {
       type: 'object',
       properties: {
@@ -61,6 +61,7 @@ export function salesTool(current_site_id?: string) {
         tax: { type: 'number', description: 'Tax amount' },
         shipping_address: { type: 'string', description: 'Shipping address (JSON string)' },
         site_id: { type: 'string', description: 'Site UUID' },
+        location_id: { type: 'string', description: 'Location UUID for inventory/stock' },
         limit: { type: 'number', description: 'Limit results' },
         offset: { type: 'number', description: 'Offset results' },
       },

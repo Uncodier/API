@@ -30,9 +30,10 @@ Apply expert UI/UX design principles to prevent "generic, sterile, 2020-era corp
 - **Standard Transitions:** Use 150–200ms ease-out transitions for hover states (`transition-all duration-200 ease-in-out`).
 - **Press Effects:** Use a subtle scale down for buttons on active state (e.g., `active:scale-95` or `scale(0.98)`).
 
-### 4. Component Libraries
+### 4. Component Libraries & Media
 - **Application UI:** Strongly prefer **shadcn/ui** for accessible, clean, and consistent application components.
 - **Marketing / Landing Pages:** Use **Magic UI** or **Aceternity UI** for high-polish marketing components (animated beams, glowing cards, neon gradients) to stand out.
+- **Dynamic Images:** Prefer the absolute Makinari endpoint `https://backend.makinari.com/api/public/image/prompt/[url_encoded_prompt]?width=800&height=600` (never a relative `/api/...` path on the app).
 
 ### 5. Accessibility (A11y) & Responsive
 - **WCAG 2.1 AA:** Follow guidelines. Ensure sufficient contrast. Use semantic HTML (`<nav>`, `<main>`, `<article>`) and appropriate ARIA attributes.

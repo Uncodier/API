@@ -1,0 +1,36 @@
+---
+title: Catalog Commerce
+description: Search and manage commercial settings for catalog items.
+---
+
+# Catalog Commerce
+
+Search and manage commercial settings for catalog items. Use action="list" to search items (you can filter by is_marketplace_listed=true or digital_subtype). Use action="update" to change listing visibility (is_marketplace_listed), status, digital_subtype, or is_reservation. Note: an item marked `is_reservation = true` must have a valid schedule configured via the `reservation_schedules` tool before it can be sold or booked. Use action="get" to read an item.
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | Action to perform: list, get, update |
+| id | string | Catalog Item UUID (required for get, update) |
+| site_id | string | Seller site UUID |
+| kind | string | Kind: product, service, digital_asset |
+| digital_subtype | string | Subtype: ticket, course, file, pass, license |
+| is_marketplace_listed | boolean | True if visible in the marketplace |
+| is_reservation | boolean | True if the item requires a schedule/slot to be booked before checkout |
+| status | string | Status: active, draft, archived |
+| availability_status | string | Availability: available, unavailable |
+| search | string | Search term for name/description |
+| limit | number | Limit results for list |
+| offset | number | Offset results for list |
+
+## Example
+
+```json
+{
+  "action": "update",
+  "id": "CATALOG_ITEM_ID",
+  "is_marketplace_listed": true,
+  "digital_subtype": "course"
+}
+```

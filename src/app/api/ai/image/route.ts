@@ -160,6 +160,11 @@ async function saveFileRecord(
   userId?: string,
   instanceId?: string
 ): Promise<any> {
+  // If it's the system site ID, we skip saving file records
+  if (siteId === '00000000-0000-0000-0000-000000000000') {
+    return null;
+  }
+
   try {
     const timestamp = Date.now();
     const filename = `${provider}_image_${timestamp}.${mimeType.split('/')[1]}`;
@@ -768,8 +773,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Parameter "site_id" is required' }, { status: 400 });
     }
 
-    // Validate site_id is a valid UUID
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+    // Validate site_id is a valid UUID (including the system nil UUID)
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     if (!uuidRegex.test(site_id)) {
       return NextResponse.json({ error: 'Parameter "site_id" must be a valid UUID' }, { status: 400 });
     }
@@ -789,19 +794,23 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Validate credits for Image Generation
+    // Validate credits for Image Generation (skip for system/official app)
+    const isSystemRequest = site_id === '00000000-0000-0000-0000-000000000000';
     const numImages = Number(n) || 1;
     const requiredCredits = CreditService.PRICING.IMAGE_GENERATION * numImages;
-    try {
-      const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
-      if (!hasCredits) {
-        return NextResponse.json(
-          { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for image generation' } },
-          { status: 402 }
-        );
+    
+    if (!isSystemRequest) {
+      try {
+        const hasCredits = await CreditService.validateCredits(site_id, requiredCredits);
+        if (!hasCredits) {
+          return NextResponse.json(
+            { success: false, error: { code: 'INSUFFICIENT_CREDITS', message: 'Insufficient credits for image generation' } },
+            { status: 402 }
+          );
+        }
+      } catch (e: any) {
+        return NextResponse.json({ error: e.message }, { status: 402 });
       }
-    } catch (e: any) {
-      return NextResponse.json({ error: e.message }, { status: 402 });
     }
 
         let result: any;
@@ -838,7 +847,7 @@ export async function POST(request: NextRequest) {
       result = await generateWithGemini(prompt, site_id, size, n, finalRatio, quality, reference_images, instance_id);
     }
 
-    if (result && Array.isArray(result.images) && result.images.length > 0) {
+    if (!isSystemRequest && result && Array.isArray(result.images) && result.images.length > 0) {
       try {
         await CreditService.deductCredits(
           site_id, 

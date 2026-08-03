@@ -20,6 +20,17 @@ Document the migration from the deprecated `mcporter` CLI to the assistant's bui
 | `mcporter call makinari.instance_plan action="execute_step"` | `instance_plan` tool with `action="execute_step"` |
 | `mcporter call makinari.site_settings` | Site settings tool or `memories` |
 | `mcporter call makinari.content` | `content` tool |
+| `mcporter call makinari.quotations` | `quotations` tool |
+| `mcporter call makinari.quotation_items` | `quotation_items` tool |
+| `mcporter call makinari.entitlements` | `entitlements` tool |
+| `mcporter call makinari.checkout` | `checkout` tool |
+| `mcporter call makinari.catalog_commerce` | `catalog_commerce` tool |
+| `mcporter call makinari.reservation_schedules` | `reservation_schedules` tool |
+| `mcporter call makinari.reservations` | `reservations` tool |
+| `mcporter call makinari.subscription_plan_items` | `subscription_plan_items` tool |
+| `mcporter call makinari.subscriptions` | `subscriptions` tool |
+| `mcporter call makinari.price_lists` | `price_lists` tool |
+| `mcporter call makinari.pass_redeemable_items` | `pass_redeemable_items` tool |
 
 All interactions with the Makinari platform now happen through the assistant's native tools. No CLI or MCP configuration is required.
 
@@ -31,6 +42,16 @@ All interactions with the Makinari platform now happen through the assistant's n
 | `requirement_status` | Replacement for `mcporter call makinari.requirement_status`. |
 | `instance_plan` | Replacement for `mcporter call makinari.instance_plan`. |
 | `content` | Replacement for `mcporter call makinari.content`. |
+| `quotations` | Replacement for `mcporter call makinari.quotations`. |
+| `checkout` | Replacement for `mcporter call makinari.checkout`. |
+| `catalog_commerce` | Replacement for `mcporter call makinari.catalog_commerce`. |
+| `reservation_schedules` | Replacement for `mcporter call makinari.reservation_schedules`. |
+| `reservations` | Replacement for `mcporter call makinari.reservations`. |
+| `entitlements` | Replacement for `mcporter call makinari.entitlements`. |
+| `subscription_plan_items` | Replacement for `mcporter call makinari.subscription_plan_items`. |
+| `subscriptions` | Replacement for `mcporter call makinari.subscriptions`. |
+| `price_lists` | Replacement for `mcporter call makinari.price_lists`. |
+| `pass_redeemable_items` | Replacement for `mcporter call makinari.pass_redeemable_items`. |
 | `memories` | Replacement for site settings / history queries. |
 
 ## Artifacts

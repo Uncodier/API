@@ -52,6 +52,7 @@ Instead:
 - CRITICAL: For authentication and user management (login, signup, roles, protected routes), you MUST implement real authentication. **CRITICAL PRACTICE**: All apps MUST use OTP (One-Time Password) via email via Supabase Auth (`signInWithOtp` and `verifyOtp`). NEVER use traditional passwords. This ensures emails are validated and users are tied to the tenant correctly. Use or adapt the pre-built `src/components/auth/login-otp.tsx` available in the base repo.
 - Implement `onClick`, `onSubmit`, loading states, and error states.
 - Provide realistic empty states that match the requirement's copy/tone.
+- If dynamic images or thematic visuals are needed, prefer the absolute Makinari endpoint (not a relative path on this app): `<img src="https://backend.makinari.com/api/public/image/prompt/[encoded_prompt]?width=800&height=600" alt="..." />`.
 
 ### 3.1 Internal taxonomy is INVISIBLE to the user (gate-blocking)
 The orchestrator state — backlog item ids, requirement ids, scope levels, phase ids, tier flags, file names like `requirement.spec.md` / `progress.md` / `feature_list.json` / `evidence/` — MUST NEVER appear in rendered HTML. The runtime probe scans every page body and the gate hard-rejects the step (failure category `copy`) when any of these surface in the user-facing copy:

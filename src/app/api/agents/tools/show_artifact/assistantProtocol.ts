@@ -1,4 +1,4 @@
-import { createInstanceArtifactCore, SCREEN_MAP, ScreenKey } from './route';
+import { createInstanceArtifactCore, SCREEN_MAP, ScreenKey } from './core';
 
 export function showArtifactTool(site_id: string, instance_id: string, user_id?: string) {
   return {
@@ -19,8 +19,15 @@ Available screens and their primary front-end actions (TopBar/Toolbar):
 - sales: 📥 Export, ➕ Register Sale, 🔍 Search, Filters, Sort, View (Table/Kanban).
 - leads: 📤 Import, 📥 Export, 🔍 Search, Filters (Status, Segments, Origin), Sort, Bulk actions (Cancel, Assign to me, Change Status, Delete).
 - deals: ➕ Create Deal, 🔍 Search, Sort, View (Table/Kanban).
+- quotations: seller quotes list/detail
 - chat: 🔍 Search conversations/contacts.
 - people: 🔍 Search, ➕ Enrich Leads, ➕ Enrich & prospect selected.
+
+### Buyer & Commerce
+- buyer_quotes: portal buyer quotes
+- buyer_library: portal buyer entitlements
+- buyer_orders: portal buyer orders
+- catalog: shop catalog with plan items
 
 ### Automation
 - context: 📑 Context tabs (General, Knowledge, Docs).
@@ -74,13 +81,13 @@ Available screens and their primary front-end actions (TopBar/Toolbar):
       should_reload?: boolean;
     }) => {
       try {
-        const data = await createInstanceArtifactCore({
+        // createInstanceArtifactCore already returns { success, data }
+        return await createInstanceArtifactCore({
           site_id,
           instance_id,
           user_id,
           ...args
         });
-        return { success: true, data };
       } catch (error: any) {
         throw new Error(error.message || 'Failed to execute show_artifact tool');
       }
