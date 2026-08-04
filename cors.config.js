@@ -21,6 +21,8 @@ const corsConfig = {
       'https://api.uncodie.com',
       "https://backend.uncodie.com",
       "https://app.makinari.com",
+      "https://www.makinari.com",
+      "https://makinari.com",
       'https://backend.makinari.com',
       // Dominios de Twilio (para casos especiales, no típico para webhooks)
       'https://twilio.com',

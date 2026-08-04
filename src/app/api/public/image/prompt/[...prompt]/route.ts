@@ -105,7 +105,13 @@ export async function GET(
         ? new URL(`https://${originOrReferer}`).hostname 
         : new URL(originOrReferer).hostname;
         
-      if (hn === 'app.makinari.com' || hn === 'localhost' || hn === '127.0.0.1') {
+      if (
+        hn === 'app.makinari.com' ||
+        hn === 'www.makinari.com' ||
+        hn === 'makinari.com' ||
+        hn === 'localhost' ||
+        hn === '127.0.0.1'
+      ) {
         isOfficialApp = true;
       }
     } catch(e) {}
