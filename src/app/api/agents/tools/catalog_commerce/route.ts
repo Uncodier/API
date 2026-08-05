@@ -1,6 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 
+const CONTENT_FIELDS = [
+  'name',
+  'description',
+  'sku',
+  'image_url',
+  'cost',
+  'lowest_sale_price',
+  'target_sale_price',
+  'currency',
+  'category_id',
+  'parent_id',
+] as const;
+
+const COMMERCE_FIELDS = [
+  'kind',
+  'digital_subtype',
+  'is_marketplace_listed',
+  'is_reservation',
+  'is_purchasable',
+  'is_recurring',
+  'is_pos_available',
+  'status',
+  'availability_status',
+  'pass_uses',
+  'pass_validity_days',
+] as const;
+
+function pickDefined(source: Record<string, unknown>, keys: readonly string[]) {
+  const payload: Record<string, unknown> = {};
+  for (const key of keys) {
+    if (source[key] !== undefined) payload[key] = source[key];
+  }
+  return payload;
+}
+
+async function reservationHint(itemId: string, isReservation?: boolean) {
+  if (!isReservation) return undefined;
+  const { count } = await supabaseAdmin
+    .from('reservation_schedules')
+    .select('id', { count: 'exact', head: true })
+    .eq('catalog_item_id', itemId);
+  if (count === 0) {
+    return 'Item marked as reservable but has no schedule. Use reservation_schedules tool to create one.';
+  }
+  return undefined;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -10,21 +57,40 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
     }
 
+    if (action === 'create') {
+      if (!site_id) {
+        return NextResponse.json({ success: false, error: 'Missing site_id' }, { status: 400 });
+      }
+      if (!updates.name || typeof updates.name !== 'string' || !updates.name.trim()) {
+        return NextResponse.json({ success: false, error: 'Missing name' }, { status: 400 });
+      }
+
+      const payload: Record<string, unknown> = {
+        site_id,
+        name: updates.name.trim(),
+        kind: updates.kind || 'product',
+        status: updates.status || 'active',
+        availability_status: updates.availability_status || 'available',
+        is_purchasable: updates.is_purchasable !== undefined ? updates.is_purchasable : true,
+        ...pickDefined(updates, [...CONTENT_FIELDS.filter((k) => k !== 'name'), ...COMMERCE_FIELDS]),
+      };
+
+      const { data, error } = await supabaseAdmin
+        .from('catalog_items')
+        .insert(payload)
+        .select()
+        .single();
+
+      if (error) throw new Error(error.message);
+
+      const hint = await reservationHint(data.id, Boolean(payload.is_reservation));
+      return NextResponse.json({ success: true, item: data, hint });
+    }
+
     if (action === 'update') {
-      const payload: any = {};
-      if (updates.is_marketplace_listed !== undefined) payload.is_marketplace_listed = updates.is_marketplace_listed;
-      if (updates.is_reservation !== undefined) payload.is_reservation = updates.is_reservation;
-      if (updates.is_purchasable !== undefined) payload.is_purchasable = updates.is_purchasable;
-      if (updates.is_recurring !== undefined) payload.is_recurring = updates.is_recurring;
-      if (updates.is_pos_available !== undefined) payload.is_pos_available = updates.is_pos_available;
-      if (updates.digital_subtype !== undefined) payload.digital_subtype = updates.digital_subtype;
-      if (updates.status !== undefined) payload.status = updates.status;
-      if (updates.kind !== undefined) payload.kind = updates.kind;
-      if (updates.availability_status !== undefined) payload.availability_status = updates.availability_status;
-      if (updates.currency !== undefined) payload.currency = updates.currency;
-      if (updates.category_id !== undefined) payload.category_id = updates.category_id;
-      if (updates.pass_uses !== undefined) payload.pass_uses = updates.pass_uses;
-      if (updates.pass_validity_days !== undefined) payload.pass_validity_days = updates.pass_validity_days;
+      const payload = {
+        ...pickDefined(updates, [...CONTENT_FIELDS, ...COMMERCE_FIELDS]),
+      };
 
       if (Object.keys(payload).length > 0) {
         payload.updated_at = new Date().toISOString();
@@ -39,15 +105,8 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
-      
-      let hint: string | undefined;
-      if (payload.is_reservation) {
-        const { count } = await supabaseAdmin.from('reservation_schedules').select('id', { count: 'exact', head: true }).eq('catalog_item_id', id);
-        if (count === 0) {
-          hint = 'Item marked as reservable but has no schedule. Use reservation_schedules tool to create one.';
-        }
-      }
 
+      const hint = await reservationHint(id, Boolean(payload.is_reservation));
       return NextResponse.json({ success: true, item: data, hint });
     }
 
@@ -64,9 +123,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'list') {
-      let query = supabaseAdmin
-        .from('catalog_items')
-        .select('*', { count: 'exact' });
+      let query = supabaseAdmin.from('catalog_items').select('*', { count: 'exact' });
 
       if (site_id) query = query.eq('site_id', site_id);
       if (updates.kind) query = query.eq('kind', updates.kind);
@@ -75,12 +132,15 @@ export async function POST(request: NextRequest) {
       if (updates.availability_status) query = query.eq('availability_status', updates.availability_status);
       if (updates.currency) query = query.eq('currency', updates.currency);
       if (updates.category_id) query = query.eq('category_id', updates.category_id);
+      if (updates.parent_id) query = query.eq('parent_id', updates.parent_id);
       if (updates.is_reservation !== undefined) query = query.eq('is_reservation', updates.is_reservation);
       if (updates.is_purchasable !== undefined) query = query.eq('is_purchasable', updates.is_purchasable);
       if (updates.is_recurring !== undefined) query = query.eq('is_recurring', updates.is_recurring);
       if (updates.is_pos_available !== undefined) query = query.eq('is_pos_available', updates.is_pos_available);
-      if (updates.is_marketplace_listed !== undefined) query = query.eq('is_marketplace_listed', updates.is_marketplace_listed);
-      
+      if (updates.is_marketplace_listed !== undefined) {
+        query = query.eq('is_marketplace_listed', updates.is_marketplace_listed);
+      }
+
       if (updates.search) {
         query = query.or(`name.ilike.%${updates.search}%,description.ilike.%${updates.search}%`);
       }

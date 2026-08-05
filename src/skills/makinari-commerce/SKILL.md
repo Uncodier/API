@@ -13,10 +13,12 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 ## Instructions
 
 1. **Marketplace & Catalog Management**
+   - Create products with `catalog_commerce` `action="create"` (requires `name`; set `target_sale_price`, `currency`, `kind`, and `is_purchasable=true` for sellable items). Use `image_url` for product photos (HTTP URLs from uploaded assets).
    - Products are only visible in the marketplace if `is_marketplace_listed = true` AND `status = 'active'` AND `availability_status = 'available'`.
-   - Use `catalog_commerce` to toggle `is_marketplace_listed`, `is_purchasable`, or check items.
+   - Use `catalog_commerce` `action="update"` to change name/pricing/listing flags, or `list`/`get` to inspect items.
    - For recurring plans, ensure `is_recurring = true`.
    - **Pricing:** Before using default `target_sale_price`, check if the lead/deal has an applicable price list via `price_lists`.
+   - Do NOT seed catalog rows via `update_repo` or raw SQL — always use `catalog_commerce`.
 
 2. **Quotation Workflow**
    - **Draft:** Create a quote tied to a `lead_id` (and optionally `price_list_id`). Status is initially `draft`.
@@ -53,7 +55,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 | Tool | Usage |
 | --- | --- |
-| `catalog_commerce` | List items, toggle marketplace listing, `is_reservation`, `is_purchasable`, `is_recurring`, or read pass configurations. |
+| `catalog_commerce` | Create items, list/get, update name/pricing/listing flags (`is_marketplace_listed`, `is_reservation`, `is_purchasable`, `is_recurring`), or read pass configurations. |
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |
 | `reservations` | Find available slots (`get_available_slots`), or book admin slots consuming `entitlement_id`. |

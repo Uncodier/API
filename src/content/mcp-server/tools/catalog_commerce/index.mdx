@@ -1,30 +1,58 @@
 ---
 title: Catalog Commerce
-description: Search and manage commercial settings for catalog items.
+description: Create, search, and manage catalog items and their commercial settings.
 ---
 
 # Catalog Commerce
 
-Search and manage commercial settings for catalog items. Use action="list" to search items (you can filter by is_marketplace_listed=true or digital_subtype). Use action="update" to change listing visibility (is_marketplace_listed), status, digital_subtype, or is_reservation. Note: an item marked `is_reservation = true` must have a valid schedule configured via the `reservation_schedules` tool before it can be sold or booked. Use action="get" to read an item.
+Create, search, and manage catalog items. Use action="create" to add a new product/service/digital_asset (requires name; set target_sale_price and is_purchasable for sellable items). Use action="list" to search items (you can filter by is_marketplace_listed=true or digital_subtype). Use action="update" to change name, pricing, listing visibility (is_marketplace_listed), status, digital_subtype, or is_reservation. Note: an item marked `is_reservation = true` must have a valid schedule configured via the `reservation_schedules` tool before it can be sold or booked. Use action="get" to read an item.
 
 ## Input Schema
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| action | string | Action to perform: list, get, update |
+| action | string | Action to perform: create, list, get, update |
 | id | string | Catalog Item UUID (required for get, update) |
 | site_id | string | Seller site UUID |
+| name | string | Item name (required for create) |
+| description | string | Item description |
+| sku | string | SKU code (unique per site) |
+| image_url | string | Public HTTP URL for the product image |
+| cost | number | Cost / COGS |
+| lowest_sale_price | number | Minimum allowed sale price |
+| target_sale_price | number | Default sale price used by checkout/quotes |
 | kind | string | Kind: product, service, digital_asset |
 | digital_subtype | string | Subtype: ticket, course, file, pass, license |
 | is_marketplace_listed | boolean | True if visible in the marketplace |
 | is_reservation | boolean | True if the item requires a schedule/slot to be booked before checkout |
-| status | string | Status: active, draft, archived |
-| availability_status | string | Availability: available, unavailable |
+| is_purchasable | boolean | True if item can be bought |
+| is_recurring | boolean | True if item is a subscription plan |
+| is_pos_available | boolean | True if item is available in Point of Sale |
+| status | string | Status: active, archived |
+| availability_status | string | Availability: available, unavailable, sold_out |
+| currency | string | Currency code (e.g. USD, MXN) |
+| category_id | string | Category UUID |
+| parent_id | string | Parent catalog item UUID (for variants) |
 | search | string | Search term for name/description |
 | limit | number | Limit results for list |
 | offset | number | Offset results for list |
 
-## Example
+## Example — Create
+
+```json
+{
+  "action": "create",
+  "name": "Cold Brew",
+  "kind": "product",
+  "target_sale_price": 45,
+  "currency": "MXN",
+  "is_purchasable": true,
+  "is_pos_available": true,
+  "image_url": "https://example.com/cold-brew.jpg"
+}
+```
+
+## Example — Update listing
 
 ```json
 {
