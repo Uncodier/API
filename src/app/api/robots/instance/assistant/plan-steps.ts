@@ -196,16 +196,25 @@ RULES:
 
   let userContent: any = `Execute step ${step.order}: ${step.title}. ${step.instructions}`;
   
-  // If we have image assets, format as multimodal message for the plan step too
+  // Short HTTP refs only — processAssistantTurn hydrates to data URLs for vision
   if (context.imageAssets && context.imageAssets.length > 0) {
+    const refUrls = context.imageAssets
+      .map((img: any) => img.publicUrl || (!String(img.url || '').startsWith('data:') ? img.url : null))
+      .filter(Boolean);
+    const assetUrlsText = refUrls.length
+      ? `\n\nCRITICAL - Uploaded Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${refUrls.join('\n')}`
+      : '';
+
     userContent = [
-      { type: 'text', text: `Execute step ${step.order}: ${step.title}. ${step.instructions}` }
+      { type: 'text', text: `Execute step ${step.order}: ${step.title}. ${step.instructions}${assetUrlsText}` }
     ];
-    
+
     context.imageAssets.forEach((img: any) => {
+      const visionUrl = img.publicUrl || img.url;
+      if (!visionUrl || String(visionUrl).startsWith('data:')) return;
       userContent.push({
         type: 'image_url',
-        image_url: { url: img.url }
+        image_url: { url: visionUrl }
       });
     });
   }

@@ -29,6 +29,7 @@ export type ToolLookupCategory =
   | 'media'
   | 'messaging'
   | 'crm'
+  | 'commerce'
   | 'social'
   | 'content'
   | 'infra'
@@ -162,7 +163,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
   const categoriesAvailable = Array.from(new Set(toolIndex.map((t) => t.category))).sort();
 
   const description = [
-    'Discover and invoke specialized tools (media, messaging, CRM, social, content, infra, research) without every schema being loaded upfront.',
+    'Discover and invoke specialized tools (media, messaging, CRM, commerce, social, content, infra, research, ui) without every schema being loaded upfront.',
     '',
     'USAGE (strict order):',
     '  1. action="list" [+ optional category filter] → returns [{ name, description, category }] for every routed tool.',
@@ -202,7 +203,7 @@ export function toolLookupTool(routedTools: RoutedTool[]) {
         },
         category: {
           type: 'string',
-          description: 'Optional. Filter the "list" action by category (e.g. "media", "messaging", "crm", "social", "content", "infra", "research").',
+          description: 'Optional. Filter the "list" action by category (e.g. "media", "messaging", "crm", "commerce", "social", "content", "infra", "research", "ui").',
         },
       },
       required: ['action'],

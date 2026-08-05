@@ -19,7 +19,7 @@ export interface AssistantContext {
     cycle_baseline_at?: string;
   };
   initialMessage: string;
-  imageAssets: { url: string; fileType: string }[];
+  imageAssets: { url: string; fileType: string; publicUrl?: string }[];
   hasLinkedRequirement: boolean;
   instanceNodeId?: string;
   expectedResultsAmount: number;

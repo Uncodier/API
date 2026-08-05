@@ -4,6 +4,10 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { executeAssistantStep } from '@/lib/services/robot-instance/assistant-executor';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import {
+  dehydrateMessageImages,
+  hydrateMessageImages,
+} from '@/lib/services/robot-instance/vision-message-images';
+import {
   fetchMemoriesContext,
   generateAgentBackground,
   getAssistantTools,
@@ -374,12 +378,24 @@ EXECUTION:
 
   const toolLookupInstruction = `
 🧰 TOOL DISCOVERY & EXECUTION (tool_lookup):
-Most capabilities (media, messaging, CRM, social, content, infra, research) are hidden behind the \`tool_lookup\` router to save context.
+Most capabilities (media, messaging, CRM, commerce, social, content, infra, research, ui) are hidden behind the \`tool_lookup\` router to save context.
 - Use \`tool_lookup({ action: "list" })\` to see every routed tool grouped by category.
 - Use \`tool_lookup({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
 - Use \`tool_lookup({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
-- Examples: generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
+- Examples: catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
+
+  const skillLookupInstruction = `
+🧠 SKILL DISCOVERY (skill_lookup):
+For any non-trivial request (especially catalog, commerce, products, quotes, checkout), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce"), then \`action="get"\` for matches such as "makinari-commerce".
+Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \`skill_lookup\` is directly available (not routed).`;
+
+  const commerceInstruction = `
+🛒 COMMERCE & CATALOG:
+- Create/update catalog items via \`tool_lookup\` → \`catalog_commerce\` (not free-text product lists).
+- Prefer skill \`makinari-commerce\` for the full protocol.
+- Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
+- When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
   const combinedSystemPrompt = [
     agentBackground,
@@ -389,6 +405,8 @@ Most capabilities (media, messaging, CRM, social, content, infra, research) are 
     toolsContext,
     systemPrompt || '',
     toolLookupInstruction,
+    skillLookupInstruction,
+    commerceInstruction,
     planModeInstruction,
     activePlanInstruction,
     whatsappInstruction,
@@ -440,7 +458,7 @@ export async function processAssistantTurn(
   messages: any[]
 ): Promise<any> {
   'use step';
-  
+
   // Re-instantiate tools here inside the step where they will be used
   const fullTools = getAssistantTools(
     context.executionOptions.site_id,
@@ -450,7 +468,7 @@ export async function processAssistantTurn(
     context.agentType,
     context.userPhone
   );
-  
+
   // Re-assemble execution options
   const options = {
     ...context.executionOptions,
@@ -460,8 +478,16 @@ export async function processAssistantTurn(
     expected_results_amount: context.expectedResultsAmount,
   };
 
-  // Execute one step
-  const result = await executeAssistantStep(messages, context.instance, options);
+  // Hydrate HTTP image_url → data URLs inside THIS step (same process as the LLM).
+  // Large base64 must not cross Vercel Workflow step boundaries.
+  const hydratedMessages = await hydrateMessageImages(messages);
+
+  const result = await executeAssistantStep(hydratedMessages, context.instance, options);
+
+  // Shrink payload before returning across the workflow step boundary
+  if (result?.messages) {
+    result.messages = dehydrateMessageImages(result.messages);
+  }
 
   return result;
 }

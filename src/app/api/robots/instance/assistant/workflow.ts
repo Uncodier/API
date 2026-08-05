@@ -48,21 +48,29 @@ export async function runAssistantWorkflow(
   // Note: System prompt is handled separately in context
   let userContent: any = context.initialMessage;
   
-  // If we have image assets, format as multimodal message
+  // Attach image assets as short HTTP URLs only. processAssistantTurn hydrates
+  // them to data:image inside the LLM step (avoids huge workflow payloads).
   if (context.imageAssets && context.imageAssets.length > 0) {
-    const assetUrlsText = `\n\nCRITICAL - Uploaded Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${context.imageAssets.map((img: any) => img.url).join('\n')}`;
-    
+    const refUrls = context.imageAssets
+      .map((img: any) => img.publicUrl || (!String(img.url || '').startsWith('data:') ? img.url : null))
+      .filter(Boolean);
+    const assetUrlsText = refUrls.length
+      ? `\n\nCRITICAL - Uploaded Image URLs for reference (YOU MUST PASS THESE URLS EXACTLY AS THEY ARE TO THE APPROPRIATE TOOL PARAMETER, e.g. reference_images):\n${refUrls.join('\n')}`
+      : '';
+
     userContent = [
       { type: 'text', text: context.initialMessage + assetUrlsText }
     ];
-    
+
     context.imageAssets.forEach((img: any) => {
+      const visionUrl = img.publicUrl || img.url;
+      if (!visionUrl || String(visionUrl).startsWith('data:')) return;
       userContent.push({
         type: 'image_url',
-        image_url: { url: img.url }
+        image_url: { url: visionUrl }
       });
     });
-    console.log(`[Workflow] Attached ${context.imageAssets.length} image assets to user message`);
+    console.log(`[Workflow] Attached ${context.imageAssets.length} image asset ref(s) to user message (hydrate in LLM step)`);
   }
 
   let messages = [
