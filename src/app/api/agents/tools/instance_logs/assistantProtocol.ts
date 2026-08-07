@@ -1,4 +1,8 @@
-import { createInstanceLogCore, listInstanceLogsCore, type CreateInstanceLogParams } from './route';
+import {
+  createInstanceLogCore,
+  listInstanceLogsCore,
+  type CreateInstanceLogParams,
+} from '@/lib/tools/instance-log-core';
 
 function parseDetailsField(details: CreateInstanceLogParams['details']) {
   if (details === undefined || details === null) return details;

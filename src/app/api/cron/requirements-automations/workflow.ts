@@ -389,6 +389,37 @@ HARD RULE: Your turn is NOT done until \`instance_plan action='create'\` has suc
     audit: cronAudit,
   });
 
+  // Step 7.5: Emit Docs Digest and Cycle Wrap-Up
+  let digest = null;
+  if (sandboxId) {
+    const { emitDocsDigestStep } = await import('../shared/docs-digest-step');
+    digest = await emitDocsDigestStep({
+      sandboxId,
+      siteId: site_id,
+      instanceId,
+      userId: user_id,
+      requirementId: reqId,
+      audit: cronAudit,
+    });
+    
+    // Wrap-up skips itself when both digest and user_action history are empty
+    const { emitCycleWrapUpStep } = await import('../shared/cycle-wrapup-step');
+    await emitCycleWrapUpStep({
+      sandboxId,
+      siteId: site_id,
+      instanceId,
+      userId: user_id,
+      requirementId: reqId,
+      title,
+      instructions,
+      digest,
+      planCompleted,
+      previewUrl,
+      repoUrl,
+      audit: cronAudit,
+    });
+  }
+
   // Step 8: Final status — all gates must pass (including smoke test)
   const smokeOk = !smokeError;
   const { effectiveStatus: finalStatus } = await createFinalStatusStep({

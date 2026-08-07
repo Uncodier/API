@@ -157,7 +157,7 @@ export async function createFinalStatusStep(params: {
   smokeError?: string;
   postFinallyBuildError?: string;
   audit?: CronAuditContext;
-}): Promise<{ effectiveStatus: 'done' | 'in-progress' | 'blocked' }> {
+}): Promise<{ effectiveStatus: 'done' | 'in-progress' | 'blocked' | 'on-review' }> {
   'use step';
   const {
     site_id,
@@ -179,7 +179,7 @@ export async function createFinalStatusStep(params: {
 
   const { data: existing } = await supabaseAdmin
     .from('requirement_status')
-    .select('id, stage, message, repo_url, preview_url, source_code, updated_at, snapshot_id')
+    .select('id, stage, message, repo_url, preview_url, source_code, updated_at, created_at, snapshot_id')
     .eq('requirement_id', reqId)
     .eq('instance_id', instanceId)
     .order('created_at', { ascending: false })
@@ -194,6 +194,7 @@ export async function createFinalStatusStep(params: {
     preview_url?: string | null;
     source_code?: string | null;
     updated_at?: string | null;
+    created_at?: string | null;
     snapshot_id?: string | null;
   } | null;
 
@@ -206,12 +207,14 @@ export async function createFinalStatusStep(params: {
   // defeating the blocker and re-entering the same failure loop. We use a
   // short recency window so an older 'blocked' row from a previous day does
   // not permanently freeze the requirement — only this-cycle blockers win.
+  // Prefer updated_at; fall back to created_at because createRequirementStatusCore
+  // inserts often set only created_at (wrap-up on-review rows).
   const BLOCKED_WINDOW_MS = 10 * 60 * 1000; // 10 minutes
-  const existingUpdatedAtMs = row?.updated_at ? Date.parse(row.updated_at) : NaN;
+  const existingFreshMs = Date.parse(row?.updated_at || row?.created_at || '');
   const existingIsFreshBlocked =
     row?.stage === 'blocked' &&
-    Number.isFinite(existingUpdatedAtMs) &&
-    Date.now() - existingUpdatedAtMs < BLOCKED_WINDOW_MS;
+    Number.isFinite(existingFreshMs) &&
+    Date.now() - existingFreshMs < BLOCKED_WINDOW_MS;
 
   if (existingIsFreshBlocked) {
     console.log(
@@ -273,7 +276,27 @@ export async function createFinalStatusStep(params: {
     }
   }
 
-  const effectiveStatus = isComplete ? 'done' : 'in-progress';
+  // Cycle wrap-up may have just written stage='on-review' (delivered or
+  // awaiting user permission for another iteration). Do not clobber that with
+  // a generic in-progress finalize — only supersede when the requirement is
+  // truly complete (done) or the on-review row is stale.
+  const existingIsFreshOnReview =
+    row?.stage === 'on-review' &&
+    Number.isFinite(existingFreshMs) &&
+    Date.now() - existingFreshMs < BLOCKED_WINDOW_MS;
+
+  let effectiveStatus: 'done' | 'in-progress' | 'blocked' | 'on-review' = isComplete
+    ? 'done'
+    : 'in-progress';
+  let preserveWrapUpMessage: string | null = null;
+
+  if (!isComplete && existingIsFreshOnReview) {
+    effectiveStatus = 'on-review';
+    preserveWrapUpMessage = row?.message?.trim() || null;
+    console.log(
+      `[CronStep] Preserving fresh 'on-review' stage on requirement_status ${row!.id} from cycle wrap-up.`,
+    );
+  }
 
   const mergedRepoUrl = didPush ? (repoUrl || null) : row?.repo_url ?? null;
 
@@ -298,7 +321,9 @@ export async function createFinalStatusStep(params: {
     ...(newSnapshotId ? { snapshot_id: newSnapshotId } : {}),
     message: isComplete
       ? `Cycle complete. Repo: ${repoUrl} | Preview: ${mergedPreviewUrl} | Source: ${mergedSourceCode}`
-      : `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,
+      : preserveWrapUpMessage
+        ? preserveWrapUpMessage
+        : `In progress — missing: ${missingParts.join(', ')}. Will retry next cycle.`,
   };
 
   if (existing?.id) {
@@ -325,6 +350,15 @@ export async function createFinalStatusStep(params: {
     console.log(
       `[CronStep] Created requirement_status → ${effectiveStatus} | preview: ${mergedPreviewUrl || 'none'} | source: ${mergedSourceCode ? 'yes' : 'no'}`,
     );
+  }
+
+  if (!isComplete && effectiveStatus === 'on-review') {
+    // Sync parent requirement so cron respects wrap-up / user-approval cooldown
+    await supabaseAdmin
+      .from('requirements')
+      .update({ status: 'on-review', updated_at: new Date().toISOString() })
+      .eq('id', reqId);
+    console.log(`[CronStep] Requirement ${reqId} → on-review (preserved wrap-up)`);
   }
 
   if (isComplete) {
