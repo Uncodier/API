@@ -25,6 +25,8 @@ import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol'
 import { entitlementsTool } from '@/app/api/agents/tools/entitlements/assistantProtocol';
 import { quotationItemsTool } from '@/app/api/agents/tools/quotation_items/assistantProtocol';
 import { quotationsTool } from '@/app/api/agents/tools/quotations/assistantProtocol';
+import { purchasesTool } from '@/app/api/agents/tools/purchases/assistantProtocol';
+import { purchaseItemsTool } from '@/app/api/agents/tools/purchase_items/assistantProtocol';
 import { subscriptionPlanItemsTool } from '@/app/api/agents/tools/subscription_plan_items/assistantProtocol';
 import { contentTool } from '@/app/api/agents/tools/content/assistantProtocol';
 import { sendEmailTool } from '@/app/api/agents/tools/sendEmail/assistantProtocol';
@@ -287,6 +289,8 @@ export const getAssistantTools = (
     entitlementsTool(siteId),
     quotationsTool(siteId),
     quotationItemsTool(siteId),
+    purchasesTool(siteId),
+    purchaseItemsTool(siteId),
     subscriptionPlanItemsTool(siteId),
     schedulingTool(siteId, instanceId),
     getFinderCategoryIdsTool(siteId),

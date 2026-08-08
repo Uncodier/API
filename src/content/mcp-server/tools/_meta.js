@@ -31,6 +31,8 @@ export default {
   deals: { title: withPost('Deals') },
   quotations: { title: withPost('Quotations') },
   quotation_items: { title: withPost('Quotation Items') },
+  purchases: { title: withPost('Purchases') },
+  purchase_items: { title: withPost('Purchase Items') },
   entitlements: { title: withPost('Entitlements') },
   subscription_plan_items: { title: withPost('Subscription Plan Items') },
   catalog_commerce: { title: withPost('Catalog Commerce') },
