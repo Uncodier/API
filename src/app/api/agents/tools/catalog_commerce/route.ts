@@ -12,6 +12,7 @@ const CONTENT_FIELDS = [
   'currency',
   'category_id',
   'parent_id',
+  'sort_order',
 ] as const;
 
 const COMMERCE_FIELDS = [

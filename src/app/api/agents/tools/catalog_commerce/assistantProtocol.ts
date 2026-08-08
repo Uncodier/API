@@ -30,6 +30,7 @@ export interface CatalogCommerceToolParams {
   pass_uses?: number;
   pass_validity_days?: number;
   search?: string;
+  sort_order?: number;
 
   limit?: number;
   offset?: number;
@@ -76,6 +77,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         pass_uses: { type: 'number', description: 'Number of uses if this is a pass (null = unlimited)' },
         pass_validity_days: { type: 'number', description: 'Days the pass is valid for' },
         search: { type: 'string', description: 'Search term for name/description' },
+        sort_order: { type: 'number', description: 'Sort order for display' },
         limit: { type: 'number', description: 'Limit results for list' },
         offset: { type: 'number', description: 'Offset results for list' },
       },
