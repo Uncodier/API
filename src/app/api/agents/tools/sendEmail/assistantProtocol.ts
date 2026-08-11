@@ -34,6 +34,8 @@ export function sendEmailTool(site_id: string) {
 
 Merge fields (use exactly this syntax for best compatibility): {{lead.name}}, {{lead.first_name}}, {{lead.email}}, {{lead.phone}}, {{lead.position}}, {{lead.company}}, {{lead.notes}}, {{lead.metadata.<key>}} (dot path under lead.metadata), {{site.name}}. Common aliases (e.g. {{lead.full_name}}, {{lead.correo}}) are normalized to canonical keys. Do not use [Name], {name}, or single braces.
 
+When composing subject and message, write them in the site default language (settings.default_locale) or the lead language when lead_id is set. Do not mix languages.
+
 When lead_id is set, subject and message are personalized. Unknown tokens: strip_tokens (default) removes them; skip_recipient aborts the send when unresolved tokens remain.`,
     parameters: {
       type: 'object',

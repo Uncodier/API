@@ -20,6 +20,7 @@ interface SiteSetupWorkflowArgs {
     enable_email_tracking?: boolean;
     default_timezone?: string;
     default_language?: string;
+    default_locale?: string;
   };
 }
 
@@ -75,6 +76,43 @@ export async function POST(request: NextRequest) {
     console.log(`🏗️ Iniciando setup del sitio: ${site_id}`);
     console.log(`👤 Usuario: ${user_id || 'N/A'}`);
     console.log(`🔧 Tipo de setup: ${setup_type || 'basic'}`);
+
+    const defaultLocaleRaw = options?.default_language || options?.default_locale || 'en';
+    const defaultLocale = ['en', 'es', 'fr', 'de', 'ja'].includes(defaultLocaleRaw)
+      ? defaultLocaleRaw
+      : 'en';
+
+    // Persist site default locale on settings (create or update)
+    try {
+      const { data: existingSettings } = await supabaseAdmin
+        .from('settings')
+        .select('id')
+        .eq('site_id', site_id)
+        .maybeSingle();
+
+      if (!existingSettings) {
+        const { error: settingsInsertError } = await supabaseAdmin
+          .from('settings')
+          .insert({ site_id, default_locale: defaultLocale });
+        if (settingsInsertError) {
+          console.error(`❌ Error creating settings.default_locale for site ${site_id}:`, settingsInsertError);
+        } else {
+          console.log(`✅ Settings created with default_locale=${defaultLocale}`);
+        }
+      } else {
+        const { error: settingsUpdateError } = await supabaseAdmin
+          .from('settings')
+          .update({ default_locale: defaultLocale })
+          .eq('site_id', site_id);
+        if (settingsUpdateError) {
+          console.error(`❌ Error updating settings.default_locale for site ${site_id}:`, settingsUpdateError);
+        } else {
+          console.log(`✅ Settings default_locale set to ${defaultLocale}`);
+        }
+      }
+    } catch (settingsErr) {
+      console.error(`❌ Exception persisting default_locale:`, settingsErr);
+    }
     
     // Crear registro de billing inicial con 30 créditos
     try {
@@ -121,7 +159,7 @@ export async function POST(request: NextRequest) {
         enable_leads: options?.enable_leads !== false, // default true
         enable_email_tracking: options?.enable_email_tracking !== false, // default true
         default_timezone: options?.default_timezone || 'UTC',
-        default_language: options?.default_language || 'es',
+        default_language: defaultLocale,
         ...options
       }
     };

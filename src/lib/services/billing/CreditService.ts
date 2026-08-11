@@ -1,5 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { resolveEmailLocale } from '@/lib/i18n/email-locale';
+import { platformT } from '@/lib/i18n/email-messages/platform';
+import { EmailSendService } from '@/lib/services/email/EmailSendService';
 
 export class InsufficientCreditsError extends Error {
   constructor(message: string) {
@@ -63,43 +66,477 @@ export class CreditService {
       const ownerEmail = userData.user.email;
       const ownerName = userData.user.user_metadata?.name || userData.user.user_metadata?.full_name || 'Site Owner';
       const siteName = site.name || 'Your Site';
+      const locale = await resolveEmailLocale({ siteId, userId: site.user_id });
 
       // 3. Construct the HTML email
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
       const billingUrl = `${baseUrl}/billing`;
+      const title = platformT(locale, 'billing.insufficient_credits.title');
+      const body = platformT(locale, 'billing.insufficient_credits.body', {
+        required,
+        available,
+      });
+      const subject = platformT(locale, 'billing.insufficient_credits.subject', { siteName });
+      const hello = platformT(locale, 'common.hello', { name: ownerName });
       
       const emailHtml = `
       <!DOCTYPE html>
-      <html>
+      <html lang="${locale}">
       <head>
         <meta charset="utf-8">
         <style>
+        :root { color-scheme: light dark; }
+
+    .email-header {
+      background-color: #1e1e2d !important;
+      background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+    }
+    .email-card {
+      background-color: #fafafa !important;
+      background-image: linear-gradient(#fafafa, #fafafa) !important;
+    }
+    .email-panel {
+      background-color: #f0f0f5 !important;
+      background-image: linear-gradient(#f0f0f5, #f0f0f5) !important;
+      border: 1px solid #e4e4e7 !important;
+    }
+    .email-code-box {
+      background-color: #f4ffe5 !important;
+      background-image: linear-gradient(#f4ffe5, #f4ffe5) !important;
+      border: 1px solid #c6f08a !important;
+    }
+
+    /* Chips: brand lime + black text (same accent as app primary-button) */
+    .email-badge {
+      display: inline-block !important;
+      background-color: #90ff17 !important;
+      background-image: linear-gradient(#90ff17, #90ff17) !important;
+      box-shadow: inset 0 0 0 999px #90ff17 !important;
+      color: #000000 !important;
+      -webkit-text-fill-color: #000000 !important;
+      border: 0 !important;
+    }
+    .email-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+      font-weight: 600 !important;
+    }
+
+    .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+
+    .email-cta-td {
+      background-color: #000000 !important;
+      background-image: linear-gradient(#000000, #000000) !important;
+      box-shadow: inset 0 0 0 999px #000000 !important;
+    }
+    .email-cta {
+      background-color: #000000 !important;
+      background-image: linear-gradient(#000000, #000000) !important;
+      box-shadow: inset 0 0 0 999px #000000 !important;
+      color: #ffffff !important;
+      -webkit-text-fill-color: #ffffff !important;
+      border: 0 !important;
+    }
+    .email-cta-label {
+      color: #ffffff !important;
+      -webkit-text-fill-color: #ffffff !important;
+    }
+
+    @media (prefers-color-scheme: light) {
+      .email-header-title { color: #f0f0f5 !important; -webkit-text-fill-color: #f0f0f5 !important; }
+      .email-header-sub { color: #a1a1aa !important; -webkit-text-fill-color: #a1a1aa !important; }
+      .email-heading { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
+      .email-text { color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
+      .email-muted { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
+      .email-subtle { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
+      .email-panel,
+      .email-panel .email-text,
+      .email-panel div,
+      .email-panel strong,
+      .email-panel p {
+        color: #1e1e2d !important;
+        -webkit-text-fill-color: #1e1e2d !important;
+      }
+      .email-code-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
+      .email-code-value { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
+      .email-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
+      .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .email-header {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+      }
+      .email-header-title,
+      .email-header h1,
+      .email-header p,
+      .email-header span,
+      .email-header div {
+        color: #f0f0f5 !important;
+        -webkit-text-fill-color: #f0f0f5 !important;
+      }
+      .email-header-sub {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+
+      .email-card {
+        background-color: #15151b !important;
+        background-image: linear-gradient(#15151b, #15151b) !important;
+        color: #e2e8f0 !important;
+      }
+
+      .email-heading,
+      .email-text,
+      .email-card h1:not(.email-header-title),
+      .email-card h2,
+      .email-card h3,
+      .email-card h4,
+      .email-card p,
+      .email-card li,
+      .email-card td,
+      .email-card th,
+      .email-card strong,
+      .email-card label,
+      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+
+      .email-muted,
+      .email-subtle {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+
+      .email-panel {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #2d2d3d !important;
+      }
+      .email-panel,
+      .email-panel .email-text,
+      .email-panel .email-muted,
+      .email-panel .email-label,
+      .email-panel div:not(.email-badge),
+      .email-panel p,
+      .email-panel strong,
+      .email-panel span:not(.email-badge):not(.email-cta-label) {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+      .email-panel a.email-link {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+      }
+
+      .email-code-box {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #3f6212 !important;
+      }
+      .email-code-label {
+        color: #bef264 !important;
+        -webkit-text-fill-color: #bef264 !important;
+      }
+      .email-code-value {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+
+      .email-link {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+      }
+
+      /* Lime badge stays brand accent in dark (black text on lime) */
+      .email-badge,
+      .email-card .email-badge,
+      .email-panel .email-badge {
+        background-color: #90ff17 !important;
+        background-image: linear-gradient(#90ff17, #90ff17) !important;
+        box-shadow: inset 0 0 0 999px #90ff17 !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+      }
+      .email-label {
+        color: #bef264 !important;
+        -webkit-text-fill-color: #bef264 !important;
+      }
+
+      .email-cta-td {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+      }
+      .email-cta {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        border: 0 !important;
+      }
+      .email-cta-label,
+      .email-cta span {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+      }
+    }
+      .email-header-title,
+      .email-header h1,
+      .email-header p,
+      .email-header span,
+      .email-header div {
+        color: #f0f0f5 !important;
+        -webkit-text-fill-color: #f0f0f5 !important;
+      }
+      .email-header-sub {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+
+      .email-card {
+        background-color: #15151b !important;
+        background-image: linear-gradient(#15151b, #15151b) !important;
+        color: #e2e8f0 !important;
+      }
+
+      .email-heading,
+      .email-text,
+      .email-card h1:not(.email-header-title),
+      .email-card h2,
+      .email-card h3,
+      .email-card h4,
+      .email-card p,
+      .email-card li,
+      .email-card td,
+      .email-card th,
+      .email-card strong,
+      .email-card label,
+      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+
+      .email-muted,
+      .email-subtle {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+
+      .email-panel {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #2d2d3d !important;
+      }
+      .email-panel,
+      .email-panel .email-text,
+      .email-panel div:not(.email-badge),
+      .email-panel p,
+      .email-panel strong,
+      .email-panel span:not(.email-badge):not(.email-cta-label) {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+
+      .email-code-box {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #2d2d3d !important;
+      }
+      .email-code-label {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+      .email-code-value {
+        color: #e2e8f0 !important;
+        -webkit-text-fill-color: #e2e8f0 !important;
+      }
+
+      .email-link {
+        color: #ffffff !important;
+        -webkit-text-fill-color: #ffffff !important;
+      }
+
+      /* Badges stay saturated accent (do not get washed out by card text rules) */
+      .email-badge,
+      .email-card .email-badge,
+      .email-panel .email-badge {
+        background-color: #90ff17 !important;
+        background-image: linear-gradient(#90ff17, #90ff17) !important;
+        box-shadow: inset 0 0 0 999px #90ff17 !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+      }
+      .email-label {
+        color: #a1a1aa !important;
+        -webkit-text-fill-color: #a1a1aa !important;
+      }
+
+      .email-cta-td {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+      }
+      .email-cta {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+        border: 0 !important;
+      }
+      .email-cta-label,
+      .email-cta span {
+        color: #000000 !important;
+        -webkit-text-fill-color: #000000 !important;
+      }
+    }
+      .email-header-title { color: #f0f0f5 !important; }
+      .email-header-sub { color: #a1a1aa !important; }
+
+      .email-card {
+        background-color: #15151b !important;
+        background-image: linear-gradient(#15151b, #15151b) !important;
+        color: #e2e8f0 !important;
+      }
+
+      /* Readable copy when Mail inverts the card */
+      .email-heading,
+      .email-text,
+      .email-card h1:not(.email-header-title),
+      .email-card h2,
+      .email-card h3,
+      .email-card h4,
+      .email-card p,
+      .email-card li,
+      .email-card td,
+      .email-card th,
+      .email-card strong,
+      .email-card label,
+      .email-card span:not(.email-cta-label):not(.email-header-sub) {
+        color: #e2e8f0 !important;
+      }
+
+      .email-muted,
+      .email-subtle,
+      .email-card .email-muted,
+      .email-card .email-subtle {
+        color: #a1a1aa !important;
+      }
+
+      .email-panel {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #2d2d3d !important;
+        color: #e2e8f0 !important;
+      }
+      .email-panel,
+      .email-panel div,
+      .email-panel p,
+      .email-panel strong,
+      .email-panel span:not(.email-cta-label) {
+        color: #e2e8f0 !important;
+      }
+
+      .email-badge {
+        background-color: #2d2d3d !important;
+        background-image: linear-gradient(#2d2d3d, #2d2d3d) !important;
+        color: #a1a1aa !important;
+      }
+
+      .email-link { color: #ffffff !important; }
+
+      .email-cta-td {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+      }
+      .email-cta {
+        background-color: #ffffff !important;
+        background-image: linear-gradient(#ffffff, #ffffff) !important;
+        box-shadow: inset 0 0 0 999px #ffffff !important;
+        color: #000000 !important;
+        border: 0 !important;
+      }
+      .email-cta-label,
+      .email-cta span {
+        color: #000000 !important;
+      }
+
+      .email-code-box {
+        background-color: #1e1e2d !important;
+        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+        border: 1px solid #2d2d3d !important;
+      }
+      .email-code-label { color: #a1a1aa !important; }
+      .email-code-value { color: #e2e8f0 !important; }
+
+      /* Keep header children light even if nested rules race */
+      .email-header,
+      .email-header h1,
+      .email-header p,
+      .email-header span,
+      .email-header div {
+        color: #f0f0f5 !important;
+      }
+      .email-header .email-header-sub { color: #a1a1aa !important; }
+    }
+          .email-header-title { color: #e2e8f0 !important; }
+          .email-header-sub { color: #a1a1aa !important; }
+          .email-panel {
+            background-color: #1e1e2d !important;
+            background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
+            border-color: #2d2d3d !important;
+          }
+          .email-card {
+            background-color: #15151b !important;
+            background-image: linear-gradient(#15151b, #15151b) !important;
+          }
+          .email-link { color: #ffffff !important; }
+          .email-cta-td {
+            background-color: #ffffff !important;
+            background-image: linear-gradient(#ffffff, #ffffff) !important;
+            box-shadow: inset 0 0 0 999px #ffffff !important;
+          }
+          .email-cta {
+            background-color: #ffffff !important;
+            background-image: linear-gradient(#ffffff, #ffffff) !important;
+            box-shadow: inset 0 0 0 999px #ffffff !important;
+            color: #000000 !important;
+            border: 0 !important;
+          }
+          .email-cta-label { color: #000000 !important; }
+        }
+          .email-cta-label { color: #000000 !important; }
+        }
+        }
+        }
+
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; }
           .container { max-width: 600px; margin: 0 auto; padding: 20px; }
           .header { background-color: #fef2f2; border-left: 4px solid #ef4444; padding: 15px; margin-bottom: 20px; }
           .content { background-color: #ffffff; padding: 20px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
-          .button { display: inline-block; background-color: #3b82f6; color: #ffffff !important; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
+          .button { display: inline-block; background-color: #000000; font-weight: 600; color: #ffffff !important; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; margin-top: 20px; }
           .stats { background-color: #f3f4f6; padding: 15px; border-radius: 6px; margin: 15px 0; }
         </style>
       </head>
       <body>
         <div class="container">
           <div class="header">
-            <h2 style="margin: 0; color: #991b1b;">Action Blocked: Insufficient Credits</h2>
+            <h2 style="margin: 0; color: #991b1b;">${EmailSendService.escapeHtml(title)}</h2>
           </div>
           <div class="content">
-            <p>Hello ${ownerName},</p>
-            <p>An operation on your site <strong>${siteName}</strong> could not be completed because your account does not have enough credits.</p>
-            
+            <p>${EmailSendService.escapeHtml(hello)}</p>
+            <p>${EmailSendService.escapeHtml(body)}</p>
+            <p><strong>${EmailSendService.escapeHtml(siteName)}</strong></p>
             <div class="stats">
-              <p style="margin: 5px 0;"><strong>Required Credits:</strong> ${required}</p>
-              <p style="margin: 5px 0;"><strong>Available Credits:</strong> ${available}</p>
+              <p style="margin: 5px 0;"><strong>${required}</strong> / ${available}</p>
             </div>
-            
-            <p>To ensure your automated processes continue to run smoothly, please add more credits to your account.</p>
-            
             <div style="text-align: center;">
-              <a href="${billingUrl}" class="button">Go to Billing</a>
+              <a href="${EmailSendService.escapeAttr(billingUrl)}" class="button">Billing</a>
             </div>
           </div>
         </div>
@@ -111,10 +548,10 @@ export class CreditService {
       console.log(`[CreditService] Sending insufficient credits email to ${ownerEmail} for site ${siteId}`);
       const emailResult = await sendGridService.sendEmail({
         to: ownerEmail,
-        subject: `Action Blocked: Insufficient Credits for ${siteName}`,
+        subject,
         html: emailHtml,
         categories: ['billing', 'system-notification', 'insufficient-credits'],
-        customArgs: { siteId, notificationType: 'insufficient_credits' }
+        customArgs: { siteId, notificationType: 'insufficient_credits', locale }
       });
 
       if (!emailResult.success) {
@@ -127,7 +564,7 @@ export class CreditService {
         site_id: siteId,
         user_id: site.user_id,
         title: 'Insufficient Credits',
-        message: `An operation was blocked due to insufficient credits. Required: ${required}, Available: ${available}.`,
+        message: body,
         type: 'error',
         severity: 3,
         action_url: '/billing',

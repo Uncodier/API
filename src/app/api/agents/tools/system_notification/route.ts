@@ -157,7 +157,7 @@ export async function notifySystemNotificationCore(params: {
         </div>
         <div style="text-align: center; margin: 30px 0;">
           <a href="${EmailSendService.escapeAttr(instanceUrl)}" 
-             style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+             class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; font-weight: 600; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
             Ver Instancia
           </a>
         </div>

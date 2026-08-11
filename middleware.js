@@ -50,6 +50,10 @@ export default async function middleware(request) {
   const isVercelWebhook =
     request.nextUrl.pathname === '/api/integrations/vercel/webhook';
 
+  // Supabase Auth Send Email Hook: Standard Webhooks signature verified in route
+  const isSupabaseAuthEmailHook =
+    request.nextUrl.pathname === '/api/auth/send-email-hook';
+
   // Public status / AI health (GET-only routes; no secrets in response)
   const path = request.nextUrl.pathname;
   const isStatusHealthRoute =
@@ -94,6 +98,7 @@ export default async function middleware(request) {
     isAgentMailWebhook,
     isOutstandWebhook,
     isVercelWebhook,
+    isSupabaseAuthEmailHook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
       'authorization': request.headers.get('authorization') ? 'PRESENT' : 'ABSENT',
@@ -143,6 +148,15 @@ export default async function middleware(request) {
     const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Vercel-Webhook', 'true');
+    return response;
+  }
+
+  // Supabase Auth Send Email Hook (signature verified in route)
+  if (isSupabaseAuthEmailHook) {
+    console.log('[Middleware] Supabase Auth email hook - skipping origin/API validation');
+    const response = safeNext();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Supabase-Auth-Email-Hook', 'true');
     return response;
   }
 

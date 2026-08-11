@@ -247,10 +247,17 @@ CREATE POLICY "No direct user access to webhook_events" ON app_123.webhook_event
 - `APPS_AUTH_PROVIDER=supabase` (default). **CRITICAL PRACTICE**: All generated apps MUST use OTP (One-Time Password) via email for login/signup instead of traditional passwords. This validates the email and ties the user to the tenant correctly. Wire `signInWithOtp` and `verifyOtp` against the Supabase client.
   
   **Step 1: Request OTP**
+  Pass `options.data.locale` (and `site_id` when known) so Auth emails use the correct language. Auth emails include both a magic link and a visible OTP code — support verifying via link or `verifyOtp`.
   ```ts
   const { error } = await supabase.auth.signInWithOtp({ 
     email, 
-    options: { shouldCreateUser: true } 
+    options: {
+      shouldCreateUser: true,
+      data: {
+        locale: 'es', // or site default_locale / user preference
+        site_id: process.env.NEXT_PUBLIC_SITE_ID,
+      },
+    },
   });
   ```
   

@@ -32,7 +32,7 @@ export function schedulingTool(site_id: string, instance_id?: string) {
   return {
     name: 'scheduling',
     description:
-      'Manage scheduling. Use action="check_availability" to get available slots (requires date, duration, timezone, team_id). Use action="schedule" to schedule an appointment (requires title, start_datetime, duration, timezone, context_id).',
+      'Manage scheduling (team/person appointments only; not for catalog inventory or reservable products/services). Use action="check_availability" to get available slots (requires date, duration, timezone, team_id). Use action="schedule" to schedule an appointment (requires title, start_datetime, duration, timezone, context_id).',
     parameters: {
       type: 'object',
       properties: {

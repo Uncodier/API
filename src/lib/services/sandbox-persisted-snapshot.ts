@@ -74,7 +74,7 @@ async function installGitIdentity(sandbox: Sandbox, authRepoUrl: string): Promis
   });
   await sandbox.runCommand({
     cmd: 'git',
-    args: ['config', '--global', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'assistant@uncodie.com'],
+    args: ['config', '--global', 'user.email', process.env.GIT_AUTHOR_EMAIL || 'assistant@makinari.com'],
   });
   const setRemote = await sandbox.runCommand({
     cmd: 'git',

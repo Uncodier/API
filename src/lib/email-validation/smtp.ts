@@ -3,8 +3,8 @@ import { MXRecord, createSocketWithTimeout, readSMTPResponse, sendSMTPCommand, e
 import { checkDomainReputation } from './reputation';
 
 // Configurable SMTP handshake parameters
-const EHLO_DOMAIN = process.env.EMAIL_VALIDATOR_EHLO_DOMAIN || 'validator.uncodie.com';
-const MAIL_FROM_ADDRESS = process.env.EMAIL_VALIDATOR_MAIL_FROM || 'validate@uncodie.com';
+const EHLO_DOMAIN = process.env.EMAIL_VALIDATOR_EHLO_DOMAIN || 'validator.makinari.com';
+const MAIL_FROM_ADDRESS = process.env.EMAIL_VALIDATOR_MAIL_FROM || 'validate@makinari.com';
 const CONNECT_TIMEOUT_MS = process.env.EMAIL_VALIDATOR_CONNECT_TIMEOUT_MS ? Number(process.env.EMAIL_VALIDATOR_CONNECT_TIMEOUT_MS) : 20000;
 const TLS_HANDSHAKE_TIMEOUT_MS = process.env.EMAIL_VALIDATOR_TLS_TIMEOUT_MS ? Number(process.env.EMAIL_VALIDATOR_TLS_TIMEOUT_MS) : 8000;
 

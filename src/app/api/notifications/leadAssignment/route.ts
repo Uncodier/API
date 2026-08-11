@@ -5,6 +5,8 @@ import { TeamNotificationService } from '@/lib/services/team-notification-servic
 import { NotificationType } from '@/lib/services/notification-service';
 import { generateAssigneeNotificationHtml, generateTeamNotificationHtml, formatLeadOrigin } from '@/lib/emails/lead-assignment';
 import { z } from 'zod';
+import { resolveEmailLocale } from '@/lib/i18n/email-locale';
+import { platformT } from '@/lib/i18n/email-messages/platform';
 
 // Configurar timeout máximo a 2 minutos
 export const maxDuration = 120;
@@ -211,11 +213,11 @@ async function updateLeadAssignee(leadId: string, assigneeId: string): Promise<b
 
 // Funciones de branding consistentes
 function getBrandingText(): string {
-  return process.env.UNCODIE_BRANDING_TEXT || 'Uncodie, your AI Sales Team';
+  return process.env.UNCODIE_BRANDING_TEXT || 'Makinari, your AI Sales Team';
 }
 
 function getCompanyName(): string {
-  return process.env.UNCODIE_COMPANY_NAME || 'Uncodie';
+  return process.env.UNCODIE_COMPANY_NAME || 'Makinari';
 }
 
 export async function POST(request: NextRequest) {
@@ -356,11 +358,21 @@ export async function POST(request: NextRequest) {
 
     // 1. Notificar al vendedor asignado
     console.log(`📧 [LeadAssignment] Enviando notificación al vendedor: ${assigneeInfo.email}`);
+
+    const assigneeLocale = await resolveEmailLocale({
+      siteId: leadInfo.site_id,
+      userId: assignee_id,
+    });
+    const siteNameForEmail = siteInfo.name || 'Lead Assignment';
+    const assigneeSubject = platformT(assigneeLocale, 'lead_assign.subject', {
+      leadName: leadInfo.name,
+      siteName: siteNameForEmail,
+    });
     
     try {
       const assigneeEmailResult = await sendGridService.sendEmail({
         to: assigneeInfo.email,
-        subject: `New Lead Assignment: ${leadInfo.name} - ${siteInfo.name || 'Lead Assignment'}`,
+        subject: assigneeSubject,
         html: generateAssigneeNotificationHtml({
           assigneeName: assigneeInfo.name || assigneeInfo.email,
           leadName: leadInfo.name,
@@ -375,11 +387,12 @@ export async function POST(request: NextRequest) {
           priority,
           dueDate: due_date,
           additionalContext: additional_context,
-          siteName: siteInfo.name || 'Lead Assignment',
+          siteName: siteNameForEmail,
           siteUrl,
           leadUrl,
           logoUrl: siteInfo.logo_url,
-          replyEmail: replyEmail || undefined
+          replyEmail: replyEmail || undefined,
+          locale: assigneeLocale
         }),
         categories: ['lead-assignment', 'assignee-notification', 'transactional'],
         customArgs: {
@@ -388,6 +401,7 @@ export async function POST(request: NextRequest) {
           assigneeId: assignee_id,
           notificationType: 'lead_assignment',
           priority,
+          locale: assigneeLocale,
           metadata: metadata ? JSON.stringify(metadata) : ''
         }
       });
@@ -415,29 +429,32 @@ export async function POST(request: NextRequest) {
           siteId: leadInfo.site_id,
           title: `Lead Assignment: ${leadInfo.name} assigned to ${assigneeInfo.name}`,
           message: `New lead assignment: ${leadInfo.name} has been assigned to ${assigneeInfo.name || assigneeInfo.email}`,
-          htmlContent: generateTeamNotificationHtml({
-            leadName: leadInfo.name,
-            leadEmail: leadInfo.email,
-            assigneeName: assigneeInfo.name || assigneeInfo.email,
-            assigneeEmail: assigneeInfo.email,
-            brief,
-            nextSteps: next_steps,
-            priority,
-            siteName: siteInfo.name || 'Lead Assignment',
-            dueDate: due_date,
-            leadUrl,
-            logoUrl: siteInfo.logo_url
+          buildEmail: (locale) => ({
+            subject: platformT(locale, 'lead_assign.team_title') + `: ${leadInfo.name}`,
+            html: generateTeamNotificationHtml({
+              leadName: leadInfo.name,
+              leadEmail: leadInfo.email,
+              assigneeName: assigneeInfo.name || assigneeInfo.email,
+              assigneeEmail: assigneeInfo.email,
+              brief,
+              nextSteps: next_steps,
+              priority,
+              siteName: siteInfo.name || 'Lead Assignment',
+              dueDate: due_date,
+              leadUrl,
+              logoUrl: siteInfo.logo_url,
+              locale
+            }),
           }),
-          priority: priority as any,
+          priority,
           type: NotificationType.INFO,
           categories: ['lead-assignment', 'team-notification'],
           customArgs: {
             leadId: lead_id,
             assigneeId: assignee_id,
-            notificationType: 'lead_assignment'
           },
           relatedEntityType: 'lead',
-          relatedEntityId: lead_id
+          relatedEntityId: lead_id,
         });
         
         if (teamNotificationResult.success) {

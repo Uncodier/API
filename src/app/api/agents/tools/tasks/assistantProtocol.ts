@@ -46,7 +46,7 @@ export function tasksTool(site_id: string, user_id?: string) {
   return {
     name: 'tasks',
     description:
-      'Manage tasks. Use action="create" to create a new task (requires title, type, lead_id). Use action="update" to update an existing task (requires task_id). Use action="list" to get tasks with filters.',
+      'Manage CRM tasks. Use action="create" to create a new task (requires title, type, lead_id). Use action="update" to update an existing task (requires task_id). Use action="list" to get tasks with filters. Note that type: "meeting" is for CRM/team appointments, not catalog capacity reservations.',
     parameters: {
       type: 'object',
       properties: {

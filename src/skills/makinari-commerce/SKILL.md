@@ -27,11 +27,11 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - **Never auto-accept:** Do NOT change the status directly to `accepted`. 
    - **Convert to Order:** To let a client pay for a sent quote, use `checkout` with `action="create_order_from_quotation"`, then generate a payment link.
 
-3. **Reservation Schedules & Slots**
-   - **Reservable catalog**: Mark an item as reservable via `catalog_commerce` (`is_reservation=true`).
-   - Before a reservable item can be sold, it MUST have a schedule configured via `reservation_schedules` with at least one enabled day. Keys must be lowercase english days.
-   - **Slot checkout**: To book, first query `reservations` (`action="get_available_slots"`). Then call `checkout` with the slot ISO times (`reservationStart`, `reservationEnd`) on the line item. You must also provide `customer_email` or `lead_id`.
-   - Do NOT confuse this with the `scheduling` tool (which is for team meetings, not product inventory).
+3. **Reservation Schedules & Slots (Catalog Capacity)**
+   - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to book a meeting, consultation, or demo with a **team member**, do NOT use these tools—use the \`scheduling\` tool instead. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`scheduling\`.
+   - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`).
+   - Before a reservable item can be sold, it MUST have a schedule configured via \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
+   - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
 
 4. **Passes & Subscriptions**
    - **Passes:** A catalog item with `digital_subtype="pass"` grants uses. Map what it can book using `pass_redeemable_items`. When a buyer books using a pass, provide the `entitlement_id` to `reservations` `create` to consume a use.

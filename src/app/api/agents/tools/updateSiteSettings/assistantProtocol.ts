@@ -34,6 +34,7 @@ export interface SiteSettingsToolParams {
   competitor_info?: any;
   diversity_info?: any;
   office_locations?: any[];
+  default_locale?: 'en' | 'es' | 'fr' | 'de' | 'ja';
 }
 
 /**
@@ -160,6 +161,11 @@ export function updateSiteSettingsTool(site_id: string) {
           description: 'Detailed office location information.',
           items: { type: 'object' }
         },
+        default_locale: {
+          type: 'string',
+          enum: ['en', 'es', 'fr', 'de', 'ja'],
+          description: 'Default site language for outbound emails, quotes, and PDFs.',
+        },
       },
       required: ['action'],
     },
@@ -211,6 +217,7 @@ export function updateSiteSettingsToolScrapybara(instance: UbuntuInstance, site_
       competitor_info: z.any().optional().describe('Detailed competitive intelligence.'),
       diversity_info: z.any().optional().describe('Diversity and inclusion information.'),
       office_locations: z.array(z.any()).optional().describe('Detailed office location information.'),
+      default_locale: z.enum(['en', 'es', 'fr', 'de', 'ja']).optional().describe('Default site language for outbound emails, quotes, and PDFs.'),
     }),
     execute: async (args) => {
       try {

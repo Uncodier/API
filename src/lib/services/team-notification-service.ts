@@ -2,6 +2,13 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from './sendgrid-service';
 import { NotificationService, NotificationType, NotificationPriority } from './notification-service';
 import { EmailSendService } from './email/EmailSendService';
+import {
+  type EmailLocale,
+  DEFAULT_EMAIL_LOCALE,
+  resolveEmailLocale,
+  tryNormalizeEmailLocale,
+} from '@/lib/i18n/email-locale';
+import { platformT } from '@/lib/i18n/email-messages/platform';
 
 /**
  * Interfaz para los datos del miembro del equipo
@@ -11,11 +18,17 @@ export interface TeamMember {
   email: string;
   name?: string;
   role: string;
+  language?: string | null;
   notifications?: {
     email?: boolean;
     [key: string]: any;
   };
 }
+
+export type BuildTeamEmailFn = (locale: EmailLocale, members: TeamMember[]) => {
+  subject: string;
+  html: string;
+};
 
 /**
  * Parámetros para notificar al equipo
@@ -25,6 +38,8 @@ export interface NotifyTeamParams {
   title: string;
   message: string;
   htmlContent?: string;
+  /** When set, emails are rendered per recipient locale group */
+  buildEmail?: BuildTeamEmailFn;
   priority?: 'low' | 'normal' | 'high' | 'urgent';
   type?: NotificationType;
   categories?: string[];
@@ -140,7 +155,7 @@ export class TeamNotificationService {
       // Obtener perfiles de estos usuarios para acceder a las notificaciones
       const { data: profiles, error: profilesError } = await supabaseAdmin
         .from('profiles')
-        .select('id, email, name, notifications')
+        .select('id, email, name, notifications, language')
         .in('id', userIds);
       
       if (profilesError) {
@@ -176,6 +191,7 @@ export class TeamNotificationService {
             email: authUser.email,
             name: profile?.name || authUser.user_metadata?.name || authUser.email,
             role: userInfo.role,
+            language: profile?.language ?? null,
             notifications: notifications
           });
         } else {
@@ -201,6 +217,7 @@ export class TeamNotificationService {
       title,
       message,
       htmlContent,
+      buildEmail,
       priority = 'normal',
       type = NotificationType.WARNING,
       categories = ['team-notification'],
@@ -221,7 +238,6 @@ export class TeamNotificationService {
     try {
       console.log(`📢 Iniciando notificación al equipo del sitio: ${siteId}`);
       
-      // Obtener miembros del equipo con notificaciones habilitadas
       const teamMembers = await this.getTeamMembersWithEmailNotifications(siteId);
       
       result.totalMembers = teamMembers.length;
@@ -229,11 +245,10 @@ export class TeamNotificationService {
       
       if (teamMembers.length === 0) {
         console.warn('No hay miembros con notificaciones por email habilitadas');
-        result.success = true; // No es un error, simplemente no hay destinatarios
+        result.success = true;
         return result;
       }
       
-      // Convertir prioridad a enum
       let notificationPriority: NotificationPriority;
       switch (priority) {
         case 'high':
@@ -249,7 +264,6 @@ export class TeamNotificationService {
           notificationPriority = NotificationPriority.NORMAL;
       }
       
-      // Crear notificaciones en el sistema para cada miembro
       const notificationPromises = teamMembers.map(member =>
         NotificationService.createNotification({
           user_id: member.user_id,
@@ -263,15 +277,12 @@ export class TeamNotificationService {
         })
       );
       
-      // Ejecutar todas las notificaciones
       const notificationResults = await Promise.allSettled(notificationPromises);
       
-      // Contar notificaciones exitosas
       result.notificationsSent = notificationResults.filter(
-        result => result.status === 'fulfilled' && result.value !== null
+        r => r.status === 'fulfilled' && r.value !== null
       ).length;
       
-      // Recopilar errores de notificaciones
       notificationResults.forEach((notifResult, index) => {
         if (notifResult.status === 'rejected') {
           const error = `Error en notificación para ${teamMembers[index].email}: ${notifResult.reason}`;
@@ -280,40 +291,52 @@ export class TeamNotificationService {
         }
       });
       
-      // Enviar emails si hay contenido HTML o se especifica
-      if (htmlContent || result.notificationsSent > 0) {
-        const emails = teamMembers.map(member => member.email);
-        
-        console.log(`📧 Enviando email a ${emails.length} direcciones:`, emails);
-        console.log(`📝 Contenido HTML: ${htmlContent ? 'Personalizado' : 'Generado automáticamente'}`);
-        
-        const emailResult = await sendGridService.sendEmail({
-          to: emails,
-          subject: title,
-          html: htmlContent || this.generateDefaultHtmlContent(title, message, siteId),
-          categories: categories,
-          customArgs: {
-            siteId,
-            notificationType: type,
-            priority,
-            ...customArgs
+      if (htmlContent || buildEmail || result.notificationsSent > 0) {
+        const siteLocale = await resolveEmailLocale({ siteId });
+        const groups = new Map<EmailLocale, TeamMember[]>();
+
+        for (const member of teamMembers) {
+          const memberLocale =
+            tryNormalizeEmailLocale(member.language) ?? siteLocale ?? DEFAULT_EMAIL_LOCALE;
+          const list = groups.get(memberLocale) || [];
+          list.push(member);
+          groups.set(memberLocale, list);
+        }
+
+        for (const [locale, members] of Array.from(groups.entries())) {
+          const emails = members.map(m => m.email);
+          let subject = title;
+          let html = htmlContent || this.generateDefaultHtmlContent(title, message, siteId, locale);
+
+          if (buildEmail) {
+            const built = buildEmail(locale, members);
+            subject = built.subject;
+            html = built.html;
           }
-        });
-        
-        console.log(`📊 Resultado de SendGrid:`, {
-          success: emailResult.success,
-          messageId: emailResult.messageId,
-          statusCode: emailResult.statusCode,
-          error: emailResult.error
-        });
-        
-        if (emailResult.success) {
-          result.emailsSent = emails.length;
-          console.log(`📧 ${emails.length} emails enviados exitosamente`);
-        } else {
-          const error = `Error al enviar emails: ${emailResult.error}`;
-          console.error(error);
-          result.errors?.push(error);
+
+          console.log(`📧 Sending team email (${locale}) to ${emails.length} recipients`);
+
+          const emailResult = await sendGridService.sendEmail({
+            to: emails,
+            subject,
+            html,
+            categories,
+            customArgs: {
+              siteId,
+              notificationType: type,
+              priority,
+              locale,
+              ...customArgs
+            }
+          });
+
+          if (emailResult.success) {
+            result.emailsSent += emails.length;
+          } else {
+            const error = `Error sending emails (${locale}): ${emailResult.error}`;
+            console.error(error);
+            result.errors?.push(error);
+          }
         }
       }
       
@@ -333,9 +356,26 @@ export class TeamNotificationService {
   /**
    * Genera contenido HTML por defecto para las notificaciones
    */
-  private static generateDefaultHtmlContent(title: string, message: string, siteId: string): string {
+  private static generateDefaultHtmlContent(
+    title: string,
+    message: string,
+    siteId: string,
+    locale: EmailLocale = DEFAULT_EMAIL_LOCALE
+  ): string {
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
     const siteUrl = `${baseUrl}/sites/${siteId}`;
+    const goToSite =
+      locale === 'es' ? 'Ir al sitio' :
+      locale === 'fr' ? 'Aller au site' :
+      locale === 'de' ? 'Zur Website' :
+      locale === 'ja' ? 'サイトを開く' :
+      'Go to site';
+    const autoGen =
+      locale === 'es' ? 'Este correo fue generado automáticamente por el sistema de notificaciones.' :
+      locale === 'fr' ? 'Cet e-mail a été généré automatiquement par le système de notifications.' :
+      locale === 'de' ? 'Diese E-Mail wurde automatisch vom Benachrichtigungssystem erstellt.' :
+      locale === 'ja' ? 'このメールは通知システムにより自動送信されました。' :
+      'This email was generated automatically by the notification system.';
     
     return `
       <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
@@ -347,13 +387,13 @@ export class TeamNotificationService {
         
         <div style="text-align: center; margin: 30px 0;">
           <a href="${EmailSendService.escapeAttr(siteUrl)}" 
-             style="display: inline-block; background-color: #6366f1; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-            Ir al sitio
+             class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; font-weight: 600; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
+            ${EmailSendService.escapeHtml(goToSite)}
           </a>
         </div>
         
         <p style="color: #777; font-size: 14px; margin-top: 40px;">
-          Este correo fue generado automáticamente por el sistema de notificaciones de Uncodie.
+          ${EmailSendService.escapeHtml(autoGen)}
         </p>
       </div>
     `;
@@ -378,23 +418,19 @@ export class TeamNotificationService {
     const title = `Human intervention requested${params.agentName ? ` by ${params.agentName}` : ''}`;
     const notificationMessage = `Human intervention is required in a conversation. Message: "${params.message}"`;
     
-    // Usar el método del servicio SendGrid para generar el HTML
-    const htmlContent = await this.generateHumanInterventionHtml({
-      conversationId: params.conversationId,
-      message: params.message,
-      priority: params.priority,
-      agentName: params.agentName,
-      summary: params.summary,
-      contactName: params.contactName,
-      contactEmail: params.contactEmail,
-      conversationUrl
-    });
-    
     return this.notifyTeam({
       siteId: params.siteId,
       title,
       message: notificationMessage,
-      htmlContent,
+      buildEmail: (locale) => {
+        const byAgent = params.agentName ? ` by ${params.agentName}` : '';
+        const subject = platformT(locale, 'human_intervention.subject', { byAgent });
+        return {
+          subject,
+          html: this.generateDefaultHtmlContent(subject, notificationMessage, params.siteId, locale)
+            .replace(EmailSendService.escapeAttr(`${baseUrl}/sites/${params.siteId}`), EmailSendService.escapeAttr(conversationUrl)),
+        };
+      },
       priority: params.priority as any,
       type: NotificationType.WARNING,
       categories: ['human-intervention', 'team-notification'],
@@ -405,28 +441,6 @@ export class TeamNotificationService {
       relatedEntityType: 'conversation',
       relatedEntityId: params.conversationId
     });
-  }
-  
-  /**
-   * Genera HTML específico para intervención humana
-   */
-  private static async generateHumanInterventionHtml(data: {
-    conversationId: string;
-    message: string;
-    priority: string;
-    agentName?: string;
-    summary?: string;
-    contactName?: string;
-    contactEmail?: string;
-    conversationUrl: string;
-  }): Promise<string> {
-    // Reutilizar la lógica del servicio SendGrid para consistencia
-    return sendGridService['generateHumanInterventionEmailHtml']?.(data) || 
-           this.generateDefaultHtmlContent(
-             `Intervención humana solicitada${data.agentName ? ` por ${data.agentName}` : ''}`,
-             `Se requiere intervención humana: "${data.message}"`,
-             data.conversationId
-           );
   }
 }
 

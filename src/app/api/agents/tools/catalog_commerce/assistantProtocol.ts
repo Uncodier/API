@@ -61,7 +61,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         kind: { type: 'string', enum: ['product', 'service', 'digital_asset'], description: 'Kind: product, service, digital_asset' },
         digital_subtype: { type: 'string', description: 'Subtype: ticket, course, file, pass, license' },
         is_marketplace_listed: { type: 'boolean', description: 'True if visible in the marketplace' },
-        is_reservation: { type: 'boolean', description: 'True if item requires scheduling/booking before checkout' },
+        is_reservation: { type: 'boolean', description: 'True if item requires a capacity slot via reservations/checkout (not the scheduling tool)' },
         is_purchasable: { type: 'boolean', description: 'True if item can be bought' },
         is_recurring: { type: 'boolean', description: 'True if item is a subscription plan' },
         is_pos_available: { type: 'boolean', description: 'True if item is available in Point of Sale' },

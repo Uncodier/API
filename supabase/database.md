@@ -600,7 +600,7 @@ CREATE TABLE public.profiles (
   command_id uuid,
   bio text,
   role text CHECK (role = ANY (ARRAY['Product Manager'::text, 'Designer'::text, 'Developer'::text, 'Marketing'::text, 'Sales'::text, 'CEO'::text, 'Other'::text])),
-  language text DEFAULT 'es'::text CHECK (language = ANY (ARRAY['es'::text, 'en'::text, 'fr'::text, 'de'::text])),
+  language text DEFAULT 'es'::text CHECK (language = ANY (ARRAY['es'::text, 'en'::text, 'fr'::text, 'de'::text, 'ja'::text])),
   timezone text DEFAULT 'America/Mexico_City'::text,
   notifications jsonb DEFAULT '{"push": true, "email": true}'::jsonb CHECK (validate_notifications(notifications)),
   settings jsonb DEFAULT '{}'::jsonb,
@@ -854,6 +854,7 @@ CREATE TABLE public.settings (
   branding jsonb DEFAULT NULL,
   customer_journey jsonb DEFAULT '{"awareness": {"metrics": [], "actions": [], "tactics": []}, "consideration": {"metrics": [], "actions": [], "tactics": []}, "decision": {"metrics": [], "actions": [], "tactics": []}, "purchase": {"metrics": [], "actions": [], "tactics": []}, "retention": {"metrics": [], "actions": [], "tactics": []}, "referral": {"metrics": [], "actions": [], "tactics": []}}'::jsonb,
   activities jsonb DEFAULT '{"daily_resume_and_stand_up": {"status": "default"}, "local_lead_generation": {"status": "default"}, "icp_lead_generation": {"status": "default"}, "leads_initial_cold_outreach": {"status": "default"}, "leads_follow_up": {"status": "default"}, "email_sync": {"status": "default"}, "assign_leads_to_team": {"status": "inactive"}, "notify_team_on_inbound_conversations": {"status": "default"}, "supervise_conversations": {"status": "inactive"}}'::jsonb,
+  default_locale text NOT NULL DEFAULT 'en'::text CHECK (default_locale = ANY (ARRAY['en'::text, 'es'::text, 'fr'::text, 'de'::text, 'ja'::text])),
   CONSTRAINT settings_pkey PRIMARY KEY (id),
   CONSTRAINT fk_command_settings FOREIGN KEY (command_id) REFERENCES public.commands(id),
   CONSTRAINT settings_site_id_fkey FOREIGN KEY (site_id) REFERENCES public.sites(id)
@@ -862,6 +863,7 @@ CREATE TABLE public.settings (
 -- Comments on columns
 COMMENT ON COLUMN public.settings.branding IS 'Brand identity information including: brand pyramid (essence, personality, benefits, attributes, values, promise), color palette, typography, voice/tone, communication style, brand assets, and guidelines';
 COMMENT ON COLUMN public.settings.customer_journey IS 'Customer journey configuration with metrics, actions, and tactics for each stage: awareness, interest, consideration, purchase, retention, and advocacy';
+COMMENT ON COLUMN public.settings.default_locale IS 'Default site language for outbound documents (quotes, emails, PDFs). Values: en, es, fr, de, ja';
 
 -- Lead Analysis Collection for ROI Calculator
 CREATE TABLE public.lead_analysis (

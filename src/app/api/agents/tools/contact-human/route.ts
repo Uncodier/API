@@ -242,7 +242,7 @@ async function sendEmailAutoResponse(
       message: `Hemos recibido tu solicitud: "${message}". Un miembro de nuestro equipo se pondrá en contacto contigo pronto.`,
       agentName: 'Sistema de Soporte',
       summary: 'Solicitud de ayuda humana recibida y en proceso',
-      supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
+      supportEmail: process.env.SUPPORT_EMAIL || 'support@makinari.com'
     });
     
     if (result.success) {
@@ -540,7 +540,7 @@ export async function POST(request: NextRequest) {
             message,
             agentName: agentData?.name,
             summary,
-            supportEmail: process.env.SUPPORT_EMAIL || 'support@uncodie.com'
+            supportEmail: process.env.SUPPORT_EMAIL || 'support@makinari.com'
           });
           
           if (visitorNotificationResult.success) {

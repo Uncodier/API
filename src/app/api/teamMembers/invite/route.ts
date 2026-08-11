@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sendGridService } from '@/lib/services/sendgrid-service';
-import { generateTeamInviteHtml } from '@/lib/templates/team-invite-email';
+import { generateTeamInviteHtml, getTeamInviteSubject } from '@/lib/templates/team-invite-email';
 import { validateApiKey } from '@/lib/api-keys';
+import { resolveEmailLocale } from '@/lib/i18n/email-locale';
 
 /**
  * Interfaz para los miembros del equipo a invitar
@@ -18,6 +19,7 @@ interface TeamMemberInvite {
  */
 interface InviteTeamMembersRequest {
   siteName: string;
+  siteId?: string;
   teamMembers: TeamMemberInvite[];
 }
 
@@ -178,6 +180,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`📧 Procesando invitaciones para ${body.teamMembers.length} miembros del equipo (Site: ${body.siteName})`);
 
+    const locale = await resolveEmailLocale({ siteId: body.siteId });
+
     // Enviar invitaciones por email
     const inviteResults: InviteResult[] = [];
     
@@ -187,19 +191,21 @@ export async function POST(request: NextRequest) {
       try {
         const emailResult = await sendGridService.sendEmail({
           to: member.email,
-          subject: `You're invited to join ${body.siteName} on ${getCompanyName()}`,
+          subject: getTeamInviteSubject(body.siteName, locale),
           html: generateTeamInviteHtml({
             memberName: member.name,
             memberEmail: member.email,
             role: member.role,
             position: member.position,
-            siteName: body.siteName
+            siteName: body.siteName,
+            locale,
           }),
           categories: ['team-invitation', 'transactional'],
           customArgs: {
-            siteId: body.siteName,
+            siteId: body.siteId || body.siteName,
             memberRole: member.role,
-            invitationType: 'team-member'
+            invitationType: 'team-member',
+            locale,
           }
         });
 
@@ -298,18 +304,4 @@ function isValidEmail(email: string): boolean {
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return emailRegex.test(email);
 }
-
-/**
- * Obtiene la URL de sign up
- */
-function getSignUpUrl(): string {
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://app.uncodie.com';
-  return `${baseUrl}/signup`;
-}
-
-/**
- * Obtiene el nombre de la compañía desde variables de entorno
- */
-function getCompanyName(): string {
-  return process.env.UNCODIE_COMPANY_NAME || 'Uncodie';
-} 
+ 

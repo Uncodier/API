@@ -21,7 +21,7 @@ export function reservationSchedulesTool(current_site_id?: string) {
   return {
     name: 'reservation_schedules',
     description:
-      'Manage reservation schedules for catalog items. Use action="upsert" to configure a schedule for an item (requires catalog_item_id, timezone, days, and optionally duration_minutes, capacity). Use action="list" or "get" to read schedules. Use action="delete" to remove a schedule.',
+      'Manage reservation schedules (weekly windows for catalog items only, not for team meetings). Use action="upsert" to configure a schedule for an item (requires catalog_item_id, timezone, days, and optionally duration_minutes, capacity). Use action="list" or "get" to read schedules. Use action="delete" to remove a schedule.',
     parameters: {
       type: 'object',
       properties: {

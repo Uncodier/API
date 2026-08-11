@@ -14,7 +14,7 @@ import {
   determineInstanceCapabilities,
   ICP_CATEGORY_IDS_INSTRUCTION,
   getRequirementWorkflowInstruction,
-  CALENDAR_AND_MEETINGS_INSTRUCTION,
+  BOOKING_ROUTING_INSTRUCTION,
 } from './utils';
 
 import type { AssistantContext } from './types';
@@ -387,13 +387,13 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 
   const skillLookupInstruction = `
 🧠 SKILL DISCOVERY (skill_lookup):
-For any non-trivial request (especially catalog, commerce, products, quotes, checkout), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce"), then \`action="get"\` for matches such as "makinari-commerce".
+For any non-trivial request (especially catalog, commerce, products, quotes, checkout, reservations, slots), you MUST call \`skill_lookup\` with \`action="search"\` using English keywords (e.g. "catalog products marketplace commerce reservations slots checkout"), then \`action="get"\` for matches such as "makinari-commerce".
 Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \`skill_lookup\` is directly available (not routed).`;
 
   const commerceInstruction = `
 🛒 COMMERCE & CATALOG:
 - Create/update catalog items via \`tool_lookup\` → \`catalog_commerce\` (not free-text product lists).
-- Prefer skill \`makinari-commerce\` for the full protocol.
+- Prefer skill \`makinari-commerce\` for the full protocol, including catalog capacity slots (reservations).
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
@@ -419,7 +419,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \
     getRequirementWorkflowInstruction(hasLinkedRequirement),
     assetsContext,
     ICP_CATEGORY_IDS_INSTRUCTION,
-    CALENDAR_AND_MEETINGS_INSTRUCTION,
+    BOOKING_ROUTING_INSTRUCTION,
     renameInstruction,
     toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
   ].filter(Boolean).join('\n');

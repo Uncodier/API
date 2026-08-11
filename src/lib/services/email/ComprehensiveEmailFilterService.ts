@@ -60,8 +60,8 @@ export class ComprehensiveEmailFilterService {
       process.env.EMAIL_FROM,
       process.env.SENDGRID_FROM_EMAIL,
       process.env.NO_REPLY_EMAILS,
-      'no-reply@uncodie.com',
-      'noreply@uncodie.com',
+      'no-reply@makinari.com',
+      'no-reply@makinari.com',
       // Customer-provided explicit no-reply senders
       'messages-noreply@linkedin.com',
       'notifications-noreply@linkedin.com',

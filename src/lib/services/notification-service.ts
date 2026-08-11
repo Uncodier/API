@@ -81,7 +81,7 @@ export class NotificationService {
     const port = process.env.EMAIL_PORT ? parseInt(process.env.EMAIL_PORT, 10) : 587;
     const user = process.env.EMAIL_USER;
     const pass = process.env.EMAIL_PASSWORD;
-    const from = process.env.EMAIL_FROM || 'no-reply@uncodie.com';
+    const from = process.env.EMAIL_FROM || 'no-reply@makinari.com';
 
     if (!host || !user || !pass) {
       throw new Error('SMTP configuration not found in environment variables');
@@ -155,7 +155,7 @@ export class NotificationService {
     try {
       const transporter = this.initEmailTransporter();
       
-      const from = params.from || process.env.EMAIL_FROM || 'no-reply@uncodie.com';
+      const from = params.from || process.env.EMAIL_FROM || 'no-reply@makinari.com';
       
       // Opciones de envío
       const mailOptions: nodemailer.SendMailOptions = {

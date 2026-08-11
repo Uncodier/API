@@ -27,6 +27,8 @@ export interface SiteSettingsParams {
   competitor_info?: any;
   diversity_info?: any;
   office_locations?: any[];
+  /** Default site language for emails/docs: en | es | fr | de | ja */
+  default_locale?: 'en' | 'es' | 'fr' | 'de' | 'ja';
 }
 
 /**
@@ -70,6 +72,17 @@ export async function siteSettingsCore(site_id: string, params: SiteSettingsPara
           updates[key] = (updatesParams as any)[key];
         }
       });
+
+      if (updates.default_locale !== undefined) {
+        const allowed = ['en', 'es', 'fr', 'de', 'ja'];
+        if (!allowed.includes(updates.default_locale)) {
+          return {
+            success: false,
+            message: `Invalid default_locale. Allowed: ${allowed.join(', ')}`,
+            updated: false
+          };
+        }
+      }
 
       if (Object.keys(updates).length === 0) {
         return {

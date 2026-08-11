@@ -28,7 +28,7 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity reservations and find available slots for reservable items. Use action="get_available_slots" to query inventory for a date range (requires catalog_item_id, from_date, to_date). Use action="create" for manual admin bookings (requires catalog_item_id, lead_id, start_time, end_time, and quantity). Use action="update" to change a reservation status (e.g. to cancelled). Note: checkout flow normally creates pending reservations automatically.',
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). Use action="get_available_slots" to query inventory for a date range (requires catalog_item_id, from_date, to_date). Use action="create" for manual admin bookings (requires catalog_item_id, lead_id, start_time, end_time, and quantity). Use action="update" to change a reservation status (e.g. to cancelled). Note: checkout flow normally creates pending reservations automatically.',
     parameters: {
       type: 'object',
       properties: {

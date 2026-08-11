@@ -61,6 +61,14 @@ export async function sendEmailCore(params: SendEmailCoreParams): Promise<SendEm
     };
   }
 
+  try {
+    const { resolveEmailLocale, buildComposeLanguageInstruction } = await import('@/lib/i18n/email-locale');
+    const locale = await resolveEmailLocale({ siteId: site_id, leadId: lead_id });
+    console.log(`[sendEmail] Outbound locale=${locale}. ${buildComposeLanguageInstruction(locale)}`);
+  } catch (err) {
+    console.warn('[sendEmail] Could not resolve email locale:', err);
+  }
+
   if (email !== 'no-email@example.com' && !EmailSendService.isValidEmail(email)) {
     return {
       success: false,

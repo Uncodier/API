@@ -226,7 +226,7 @@ export class SandboxService {
     ]);
     await sandbox.runCommand('git', [
       'config', '--global', 'user.email',
-      process.env.GIT_AUTHOR_EMAIL || 'assistant@uncodie.com',
+      process.env.GIT_AUTHOR_EMAIL || 'assistant@makinari.com',
     ]);
 
     const setRemote = await SandboxService.runWithCwd(sandbox, 'git', ['remote', 'set-url', 'origin', authRepoUrl], workDir);
