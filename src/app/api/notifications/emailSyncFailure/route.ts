@@ -134,28 +134,80 @@ function generateEmailSyncFailureHtml(data: {
     <meta name="format-detection" content="telephone=no, date=no, email=no, address=no">
     <title>Email Sync Failure - ${data.siteName}</title>
     <style>
-        :root { color-scheme: light dark; }
+        :root { color-scheme: light only; }
 
     .email-header {
       background-color: #1e1e2d !important;
       background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
     }
-    .email-card {
-      background-color: #fafafa !important;
-      background-image: linear-gradient(#fafafa, #fafafa) !important;
+    .email-header-title,
+    .email-header h1 {
+      color: #f0f0f5 !important;
+      -webkit-text-fill-color: #f0f0f5 !important;
     }
+    .email-header-sub,
+    .email-header p {
+      color: #a1a1aa !important;
+      -webkit-text-fill-color: #a1a1aa !important;
+    }
+
+    .email-card {
+      background-color: #ffffff !important;
+      background-image: linear-gradient(#ffffff, #ffffff) !important;
+      color: #111111 !important;
+    }
+
+    .email-heading {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-text {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-muted,
+    .email-subtle {
+      color: #52525b !important;
+      -webkit-text-fill-color: #52525b !important;
+    }
+
     .email-panel {
       background-color: #f0f0f5 !important;
       background-image: linear-gradient(#f0f0f5, #f0f0f5) !important;
       border: 1px solid #e4e4e7 !important;
+      color: #111111 !important;
     }
+    .email-panel,
+    .email-panel .email-text,
+    .email-panel .email-heading,
+    .email-panel div,
+    .email-panel p,
+    .email-panel span:not(.email-badge):not(.email-cta-label),
+    .email-panel strong {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+
     .email-code-box {
       background-color: #f4ffe5 !important;
       background-image: linear-gradient(#f4ffe5, #f4ffe5) !important;
       border: 1px solid #c6f08a !important;
     }
+    .email-code-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+    }
+    .email-code-value {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
 
-    /* Chips: brand lime + black text (same accent as app primary-button) */
+    .email-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+      font-weight: 600 !important;
+    }
+
     .email-badge {
       display: inline-block !important;
       background-color: #90ff17 !important;
@@ -165,13 +217,11 @@ function generateEmailSyncFailureHtml(data: {
       -webkit-text-fill-color: #000000 !important;
       border: 0 !important;
     }
-    .email-label {
-      color: #3f6212 !important;
-      -webkit-text-fill-color: #3f6212 !important;
-      font-weight: 600 !important;
-    }
 
-    .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+    .email-link {
+      color: #000000 !important;
+      -webkit-text-fill-color: #000000 !important;
+    }
 
     .email-cta-td {
       background-color: #000000 !important;
@@ -186,454 +236,12 @@ function generateEmailSyncFailureHtml(data: {
       -webkit-text-fill-color: #ffffff !important;
       border: 0 !important;
     }
-    .email-cta-label {
+    .email-cta-label,
+    .email-cta span {
       color: #ffffff !important;
       -webkit-text-fill-color: #ffffff !important;
     }
-
-    @media (prefers-color-scheme: light) {
-      .email-header-title { color: #f0f0f5 !important; -webkit-text-fill-color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; -webkit-text-fill-color: #a1a1aa !important; }
-      .email-heading { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-text { color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
-      .email-muted { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-subtle { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div,
-      .email-panel strong,
-      .email-panel p {
-        color: #1e1e2d !important;
-        -webkit-text-fill-color: #1e1e2d !important;
-      }
-      .email-code-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-code-value { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .email-header {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-      }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel .email-muted,
-      .email-panel .email-label,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-      .email-panel a.email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #3f6212 !important;
-      }
-      .email-code-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Lime badge stays brand accent in dark (black text on lime) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Badges stay saturated accent (do not get washed out by card text rules) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title { color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      /* Readable copy when Mail inverts the card */
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card span:not(.email-cta-label):not(.email-header-sub) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle,
-      .email-card .email-muted,
-      .email-card .email-subtle {
-        color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-        color: #e2e8f0 !important;
-      }
-      .email-panel,
-      .email-panel div,
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-cta-label) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-badge {
-        background-color: #2d2d3d !important;
-        background-image: linear-gradient(#2d2d3d, #2d2d3d) !important;
-        color: #a1a1aa !important;
-      }
-
-      .email-link { color: #ffffff !important; }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label { color: #a1a1aa !important; }
-      .email-code-value { color: #e2e8f0 !important; }
-
-      /* Keep header children light even if nested rules race */
-      .email-header,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-      }
-      .email-header .email-header-sub { color: #a1a1aa !important; }
-    }
-          .email-header-title { color: #e2e8f0 !important; }
-          .email-header-sub { color: #a1a1aa !important; }
-          .email-panel {
-            background-color: #1e1e2d !important;
-            background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-            border-color: #2d2d3d !important;
-          }
-          .email-card {
-            background-color: #15151b !important;
-            background-image: linear-gradient(#15151b, #15151b) !important;
-          }
-          .email-link { color: #ffffff !important; }
-          .email-cta-td {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-          }
-          .email-cta {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-            color: #000000 !important;
-            border: 0 !important;
-          }
-          .email-cta-label { color: #000000 !important; }
-        }
-          .email-cta-label { color: #000000 !important; }
-        }
-        }
-        }
-
-        /* Mobile-first responsive design */
-        @media screen and (max-width: 600px) {
-            .container {
-                margin: 10px !important;
-                border-radius: 8px !important;
-            }
-            .header {
-                padding: 24px 20px !important;
-            }
-            .content {
-                padding: 24px 20px !important;
-            }
-            .footer {
-                padding: 20px !important;
-            }
-            .section-spacing {
-                margin-bottom: 20px !important;
-            }
-            .card-padding {
-                padding: 16px 18px !important;
-            }
-            .button {
-                padding: 14px 20px !important;
-                font-size: 15px !important;
-                min-height: 44px !important;
-                width: auto !important;
-                display: block !important;
-                max-width: 280px !important;
-                margin: 0 auto 12px !important;
-                box-sizing: border-box !important;
-            }
-            .logo-container {
-                width: 80px !important;
-                height: 80px !important;
-                padding: 12px !important;
-            }
-            .logo-image {
-                width: 56px !important;
-                height: 56px !important;
-            }
-            .main-title {
-                font-size: 22px !important;
-                line-height: 1.3 !important;
-            }
-            .section-title {
-                font-size: 16px !important;
-                line-height: 1.4 !important;
-            }
-            .error-icon {
-                width: 20px !important;
-                height: 20px !important;
-                margin-right: 8px !important;
-            }
-            .error-title {
-                font-size: 16px !important;
-            }
-            .button-container {
-                text-align: center !important;
-            }
-        }
         
-        /* Dark mode support */
-        @media (prefers-color-scheme: dark) {
-            .dark-mode-bg {
-                background-color: #1f2937 !important;
-            }
-            .dark-mode-text {
-                color: #f9fafb !important;
-            }
-        }
     </style>
 </head>
 <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
@@ -735,7 +343,7 @@ function generateEmailSyncFailureHtml(data: {
             
             <!-- Explanation -->
             <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
-                <p class="email-muted" style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+                <p class="email-muted" style="margin: 0; color: #52525b; font-size: 14px; line-height: 1.5;">
                     This email synchronization failure was automatically detected and reported.<br>
                     Please resolve the issue as soon as possible to resume email operations.
                 </p>
@@ -745,7 +353,7 @@ function generateEmailSyncFailureHtml(data: {
         
         <!-- Footer -->
         <div class="footer" style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
-            <p class="email-muted" style="margin: 0 0 12px; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
+            <p class="email-muted" style="margin: 0 0 12px; color: #52525b; font-size: 14px; text-align: center; line-height: 1.5;">
                 <strong>Failure Time:</strong> ${new Date(data.failureTimestamp).toLocaleString(data.locale === 'es' ? 'es-ES' : data.locale === 'fr' ? 'fr-FR' : data.locale === 'de' ? 'de-DE' : data.locale === 'ja' ? 'ja-JP' : 'en-US', { 
                     year: 'numeric', 
                     month: 'long', 
@@ -755,7 +363,7 @@ function generateEmailSyncFailureHtml(data: {
                     timeZoneName: 'short'
                 })}
             </p>
-            <p class="email-muted" style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
+            <p class="email-muted" style="margin: 0; color: #52525b; font-size: 14px; text-align: center; line-height: 1.5;">
                 This notification was automatically generated by ${getCompanyName()}.<br>
                 If you need assistance, please contact our support team.
             </p>
@@ -765,7 +373,7 @@ function generateEmailSyncFailureHtml(data: {
     
     <!-- Powered by -->
     <div style="text-align: center; margin: 24px 0;">
-        <p class="email-subtle" style="margin: 0; color: #94a3b8; font-size: 12px;">
+        <p class="email-subtle" style="margin: 0; color: #71717a; font-size: 12px;">
             Powered by <strong style="color: #000000;">${getBrandingText()}</strong>
         </p>
     </div>

@@ -135,8 +135,7 @@ describe('auth email template', () => {
     expect(html).toContain('#f0f0f5');
     expect(html).toContain('linear-gradient');
     expect(html).toContain('box-shadow:inset 0 0 0 999px');
-    expect(html).toContain('prefers-color-scheme: dark');
-    expect(html).toContain('prefers-color-scheme: light');
+    expect(html).toContain('color-scheme: light only');
     expect(html).toContain('-webkit-text-fill-color');
   });
 

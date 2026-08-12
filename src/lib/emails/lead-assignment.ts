@@ -67,31 +67,83 @@ export function generateAssigneeNotificationHtml(data: {
     <!DOCTYPE html>
     <html lang="${data.locale || 'en'}">
     <head>
-  <meta name="color-scheme" content="light dark" />
-  <meta name="supported-color-schemes" content="light dark" />
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light" />
 <style type="text/css">
-        :root { color-scheme: light dark; }
+        :root { color-scheme: light only; }
 
     .email-header {
       background-color: #1e1e2d !important;
       background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
     }
-    .email-card {
-      background-color: #fafafa !important;
-      background-image: linear-gradient(#fafafa, #fafafa) !important;
+    .email-header-title,
+    .email-header h1 {
+      color: #f0f0f5 !important;
+      -webkit-text-fill-color: #f0f0f5 !important;
     }
+    .email-header-sub,
+    .email-header p {
+      color: #a1a1aa !important;
+      -webkit-text-fill-color: #a1a1aa !important;
+    }
+
+    .email-card {
+      background-color: #ffffff !important;
+      background-image: linear-gradient(#ffffff, #ffffff) !important;
+      color: #111111 !important;
+    }
+
+    .email-heading {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-text {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-muted,
+    .email-subtle {
+      color: #52525b !important;
+      -webkit-text-fill-color: #52525b !important;
+    }
+
     .email-panel {
       background-color: #f0f0f5 !important;
       background-image: linear-gradient(#f0f0f5, #f0f0f5) !important;
       border: 1px solid #e4e4e7 !important;
+      color: #111111 !important;
     }
+    .email-panel,
+    .email-panel .email-text,
+    .email-panel .email-heading,
+    .email-panel div,
+    .email-panel p,
+    .email-panel span:not(.email-badge):not(.email-cta-label),
+    .email-panel strong {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+
     .email-code-box {
       background-color: #f4ffe5 !important;
       background-image: linear-gradient(#f4ffe5, #f4ffe5) !important;
       border: 1px solid #c6f08a !important;
     }
+    .email-code-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+    }
+    .email-code-value {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
 
-    /* Chips: brand lime + black text (same accent as app primary-button) */
+    .email-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+      font-weight: 600 !important;
+    }
+
     .email-badge {
       display: inline-block !important;
       background-color: #90ff17 !important;
@@ -101,13 +153,11 @@ export function generateAssigneeNotificationHtml(data: {
       -webkit-text-fill-color: #000000 !important;
       border: 0 !important;
     }
-    .email-label {
-      color: #3f6212 !important;
-      -webkit-text-fill-color: #3f6212 !important;
-      font-weight: 600 !important;
-    }
 
-    .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+    .email-link {
+      color: #000000 !important;
+      -webkit-text-fill-color: #000000 !important;
+    }
 
     .email-cta-td {
       background-color: #000000 !important;
@@ -122,383 +172,12 @@ export function generateAssigneeNotificationHtml(data: {
       -webkit-text-fill-color: #ffffff !important;
       border: 0 !important;
     }
-    .email-cta-label {
+    .email-cta-label,
+    .email-cta span {
       color: #ffffff !important;
       -webkit-text-fill-color: #ffffff !important;
     }
-
-    @media (prefers-color-scheme: light) {
-      .email-header-title { color: #f0f0f5 !important; -webkit-text-fill-color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; -webkit-text-fill-color: #a1a1aa !important; }
-      .email-heading { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-text { color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
-      .email-muted { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-subtle { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div,
-      .email-panel strong,
-      .email-panel p {
-        color: #1e1e2d !important;
-        -webkit-text-fill-color: #1e1e2d !important;
-      }
-      .email-code-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-code-value { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .email-header {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-      }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel .email-muted,
-      .email-panel .email-label,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-      .email-panel a.email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #3f6212 !important;
-      }
-      .email-code-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Lime badge stays brand accent in dark (black text on lime) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Badges stay saturated accent (do not get washed out by card text rules) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title { color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      /* Readable copy when Mail inverts the card */
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card span:not(.email-cta-label):not(.email-header-sub) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle,
-      .email-card .email-muted,
-      .email-card .email-subtle {
-        color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-        color: #e2e8f0 !important;
-      }
-      .email-panel,
-      .email-panel div,
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-cta-label) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-badge {
-        background-color: #2d2d3d !important;
-        background-image: linear-gradient(#2d2d3d, #2d2d3d) !important;
-        color: #a1a1aa !important;
-      }
-
-      .email-link { color: #ffffff !important; }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label { color: #a1a1aa !important; }
-      .email-code-value { color: #e2e8f0 !important; }
-
-      /* Keep header children light even if nested rules race */
-      .email-header,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-      }
-      .email-header .email-header-sub { color: #a1a1aa !important; }
-    }
-          .email-header-title { color: #e2e8f0 !important; }
-          .email-header-sub { color: #a1a1aa !important; }
-          .email-panel {
-            background-color: #1e1e2d !important;
-            background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-            border-color: #2d2d3d !important;
-          }
-          .email-card {
-            background-color: #15151b !important;
-            background-image: linear-gradient(#15151b, #15151b) !important;
-          }
-          .email-link { color: #ffffff !important; }
-          .email-cta-td {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-          }
-          .email-cta {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-            color: #000000 !important;
-            border: 0 !important;
-          }
-          .email-cta-label { color: #000000 !important; }
-        }
-          .email-cta-label { color: #000000 !important; }
-        }
-        }
-        }
+        
 </style>
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -523,19 +202,19 @@ export function generateAssigneeNotificationHtml(data: {
         </div>
         <div style="padding: 40px;">
           <div style="margin-bottom: 32px;">
-            <h2 class="email-heading" style="margin: 0 0 16px; font-size: 20px; color: #1e293b; font-weight: 600;">Hello ${data.assigneeName}</h2>
-            <p class="email-text" style="margin: 0; font-size: 16px; color: #475569; line-height: 1.7;">You have been assigned a new lead from ${data.siteName}. Please review the information below and take the necessary next steps.</p>
+            <h2 class="email-heading" style="margin: 0 0 16px; font-size: 20px; color: #111111; font-weight: 600;">Hello ${data.assigneeName}</h2>
+            <p class="email-text" style="margin: 0; font-size: 16px; color: #111111; line-height: 1.7;">You have been assigned a new lead from ${data.siteName}. Please review the information below and take the necessary next steps.</p>
           </div>
           <div style="margin-bottom: 32px; text-align: center;">
             <div class="email-badge" style="display: inline-block; background-color: ${priorityColor.bg}; color: ${priorityColor.color}; border: 1px solid ${priorityColor.border}; padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">${data.priority} Priority</div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Lead Information</h3>
-            <div style="background-color: #f8fafc; padding: 24px; border-radius: 8px; border-left: 4px solid #90ff17;">
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Lead Information</h3>
+            <div class="email-panel" style="background-color: #f0f0f5; padding: 24px; border-radius: 8px; border-left: 4px solid #90ff17;">
               <div style="display: grid; gap: 12px;">
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #000000; font-weight: 600; min-width: 80px;">Name:</span>
-                  <span class="email-text" style="color: #1e293b; font-size: 15px;">${data.leadName}</span>
+                  <span class="email-text" style="color: #111111; font-size: 15px;">${data.leadName}</span>
                 </div>
                 ${data.leadEmail ? `
                 <div>
@@ -552,43 +231,43 @@ export function generateAssigneeNotificationHtml(data: {
                 ${data.leadPosition ? `
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #000000; font-weight: 600; min-width: 80px;">Position:</span>
-                  <span class="email-text" style="color: #1e293b; font-size: 15px;">${data.leadPosition}</span>
+                  <span class="email-text" style="color: #111111; font-size: 15px;">${data.leadPosition}</span>
                 </div>
                 ` : ''}
                 ${data.leadCompany ? `
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #000000; font-weight: 600; min-width: 80px;">Company:</span>
-                  <span class="email-text" style="color: #1e293b; font-size: 15px;">${data.leadCompany}</span>
+                  <span class="email-text" style="color: #111111; font-size: 15px;">${data.leadCompany}</span>
                 </div>
                 ` : ''}
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #000000; font-weight: 600; min-width: 80px;">Status:</span>
-                  <span class="email-text" style="color: #1e293b; font-size: 15px; text-transform: capitalize;">${data.leadStatus}</span>
+                  <span class="email-text" style="color: #111111; font-size: 15px; text-transform: capitalize;">${data.leadStatus}</span>
                 </div>
                 ${data.leadOrigin ? `
                 <div>
                   <span style="display: inline-block; font-weight: 600; color: #000000; font-weight: 600; min-width: 80px;">Origin:</span>
-                  <span class="email-text" style="color: #1e293b; font-size: 15px;">${formatLeadOrigin(data.leadOrigin)}</span>
+                  <span class="email-text" style="color: #111111; font-size: 15px;">${formatLeadOrigin(data.leadOrigin)}</span>
                 </div>
                 ` : ''}
               </div>
             </div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Brief</h3>
-            <div style="background-color: #eff6ff; padding: 24px; border-radius: 8px; border: 1px solid #bfdbfe;">
-              <div class="email-text" style="color: #1e293b; font-size: 16px; line-height: 1.7;">${data.brief}</div>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Brief</h3>
+            <div class="email-panel" style="background-color: #f0f0f5; padding: 24px; border-radius: 8px; border: 1px solid #e4e4e7;">
+              <div class="email-text" style="color: #111111; font-size: 16px; line-height: 1.7;">${data.brief}</div>
             </div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Next Steps</h3>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Next Steps</h3>
             <div style="background-color: #f0fdf4; padding: 24px; border-radius: 8px; border: 1px solid #bbf7d0;">
-              <ul style="margin: 0; padding: 0 0 0 20px; color: #1e293b; font-size: 15px; line-height: 1.7;">${data.nextSteps.map(step => `<li style="margin-bottom: 8px;">${step}</li>`).join('')}</ul>
+              <ul style="margin: 0; padding: 0 0 0 20px; color: #111111; font-size: 15px; line-height: 1.7;">${data.nextSteps.map(step => `<li style="margin-bottom: 8px;">${step}</li>`).join('')}</ul>
             </div>
           </div>
           ${data.dueDate ? `
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Due Date</h3>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Due Date</h3>
             <div style="background-color: #fef3c7; padding: 20px 24px; border-radius: 8px; border: 1px solid #fde047;">
               <div style="color: #92400e; font-size: 16px; font-weight: 600;">📅 ${new Date(data.dueDate).toLocaleDateString((data as any).locale === 'es' ? 'es-ES' : (data as any).locale === 'fr' ? 'fr-FR' : (data as any).locale === 'de' ? 'de-DE' : (data as any).locale === 'ja' ? 'ja-JP' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
             </div>
@@ -607,11 +286,11 @@ export function generateAssigneeNotificationHtml(data: {
           </div>
         </div>
         <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
-          <p class="email-muted" style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">This lead assignment was automatically generated by ${getCompanyName()}.<br>Please contact your manager if you have any questions about this assignment.</p>
+          <p class="email-muted" style="margin: 0; color: #52525b; font-size: 14px; text-align: center; line-height: 1.5;">This lead assignment was automatically generated by ${getCompanyName()}.<br>Please contact your manager if you have any questions about this assignment.</p>
         </div>
       </div>
       <div style="text-align: center; margin: 24px 0;">
-        <p class="email-subtle" style="margin: 0; color: #94a3b8; font-size: 12px;">Powered by <strong style="color: #000000;">${getBrandingText()}</strong></p>
+        <p class="email-subtle" style="margin: 0; color: #71717a; font-size: 12px;">Powered by <strong style="color: #000000;">${getBrandingText()}</strong></p>
       </div>
     </body>
     </html>
@@ -671,35 +350,35 @@ export function generateTeamNotificationHtml(data: {
             <div class="email-badge" style="display: inline-block; background-color: ${priorityColor.bg}; color: ${priorityColor.color}; border: 1px solid ${priorityColor.border}; padding: 8px 16px; border-radius: 20px; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">${data.priority} Priority</div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Assignment Details</h3>
-            <div style="background-color: #eff6ff; padding: 20px 24px; border-radius: 8px; border: 1px solid #bfdbfe;">
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Assignment Details</h3>
+            <div class="email-panel" style="background-color: #f0f0f5; padding: 20px 24px; border-radius: 8px; border: 1px solid #e4e4e7;">
               <div style="margin-bottom: 12px;">
-                <span class="email-label" style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 80px;">Lead:</span>
-                <span class="email-text" style="color: #1e293b; font-size: 15px;">${data.leadName}</span>
-                ${data.leadEmail ? `<span style=\"color: #64748b; font-size: 14px; margin-left: 8px;\">(${data.leadEmail})</span>` : ''}
+                <span class="email-label" style="display: inline-block; font-weight: 600; color: #3f6212; min-width: 80px;">Lead:</span>
+                <span class="email-text" style="color: #111111; font-size: 15px;">${data.leadName}</span>
+                ${data.leadEmail ? `<span style=\"color: #52525b; font-size: 14px; margin-left: 8px;\">(${data.leadEmail})</span>` : ''}
               </div>
               <div>
-                <span class="email-label" style="display: inline-block; font-weight: 600; color: #1e40af; min-width: 80px;">Assigned to:</span>
-                <span class="email-text" style="color: #1e293b; font-size: 15px;">${data.assigneeName}</span>
-                <span class="email-muted" style="color: #64748b; font-size: 14px; margin-left: 8px;">(${data.assigneeEmail})</span>
+                <span class="email-label" style="display: inline-block; font-weight: 600; color: #3f6212; min-width: 80px;">Assigned to:</span>
+                <span class="email-text" style="color: #111111; font-size: 15px;">${data.assigneeName}</span>
+                <span class="email-muted" style="color: #52525b; font-size: 14px; margin-left: 8px;">(${data.assigneeEmail})</span>
               </div>
             </div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Brief</h3>
-            <div style="background-color: #f1f5f9; padding: 24px; border-radius: 8px; border: 1px solid #e2e8f0;">
-              <div class="email-text" style="color: #1e293b; font-size: 16px; line-height: 1.7;">${data.brief}</div>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Brief</h3>
+            <div class="email-panel" style="background-color: #f0f0f5; padding: 24px; border-radius: 8px; border: 1px solid #e4e4e7;">
+              <div class="email-text" style="color: #111111; font-size: 16px; line-height: 1.7;">${data.brief}</div>
             </div>
           </div>
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Next Steps</h3>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Next Steps</h3>
             <div style="background-color: #f0fdf4; padding: 24px; border-radius: 8px; border: 1px solid #bbf7d0;">
-              <ul style="margin: 0; padding: 0 0 0 20px; color: #1e293b; font-size: 15px; line-height: 1.7;">${data.nextSteps.map(step => `<li style=\"margin-bottom: 8px;\">${step}</li>`).join('')}</ul>
+              <ul style="margin: 0; padding: 0 0 0 20px; color: #111111; font-size: 15px; line-height: 1.7;">${data.nextSteps.map(step => `<li style=\"margin-bottom: 8px;\">${step}</li>`).join('')}</ul>
             </div>
           </div>
           ${data.dueDate ? `
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #1e293b; font-weight: 600;">Due Date</h3>
+            <h3 class="email-heading" style="margin: 0 0 16px; font-size: 18px; color: #111111; font-weight: 600;">Due Date</h3>
             <div style="background-color: #fef3c7; padding: 20px 24px; border-radius: 8px; border: 1px solid #fde047;">
               <div style="color: #92400e; font-size: 16px; font-weight: 600;">📅 ${new Date(data.dueDate).toLocaleDateString((data as any).locale === 'es' ? 'es-ES' : (data as any).locale === 'fr' ? 'fr-FR' : (data as any).locale === 'de' ? 'de-DE' : (data as any).locale === 'ja' ? 'ja-JP' : 'en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</div>
             </div>
@@ -712,11 +391,11 @@ export function generateTeamNotificationHtml(data: {
           ` : ''}
         </div>
         <div style="background-color: #f8fafc; padding: 24px 40px; border-top: 1px solid #e2e8f0;">
-          <p class="email-muted" style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">This notification was automatically generated by ${getCompanyName()}.<br>Manage your notification preferences in your account settings.</p>
+          <p class="email-muted" style="margin: 0; color: #52525b; font-size: 14px; text-align: center; line-height: 1.5;">This notification was automatically generated by ${getCompanyName()}.<br>Manage your notification preferences in your account settings.</p>
         </div>
       </div>
       <div style="text-align: center; margin: 24px 0;">
-        <p class="email-subtle" style="margin: 0; color: #94a3b8; font-size: 12px;">Powered by <strong style="color: #000000;">${getBrandingText()}</strong></p>
+        <p class="email-subtle" style="margin: 0; color: #71717a; font-size: 12px;">Powered by <strong style="color: #000000;">${getBrandingText()}</strong></p>
       </div>
     </body>
     </html>

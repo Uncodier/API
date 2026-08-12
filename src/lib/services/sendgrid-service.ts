@@ -4,6 +4,7 @@ import { EmailSendService } from './email/EmailSendService';
 import { formatEmailDate, normalizeEmailLocale, type EmailLocale } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 import { generateHumanInterventionEmailHtml } from '@/lib/emails/human-intervention';
+import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
 
 /**
  * Configuración de SendGrid
@@ -375,23 +376,30 @@ export class SendGridService {
     const hello = EmailSendService.escapeHtml(platformT(locale, 'common.hello', { name: userData.name }));
     
     return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-        <div style="text-align: center; margin-bottom: 30px;">
-          <h1 style="color: #000000; font-weight: 600; margin: 0;">${title}</h1>
+      <!DOCTYPE html>
+      <html lang="${locale}">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        ${emailBrandHeadTags()}
+      </head>
+      <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:${EMAIL_BRAND.bodyBg};">
+        <div class="email-card" style="max-width:600px;margin:40px auto;background-color:${EMAIL_BRAND.cardBg};border-radius:12px;overflow:hidden;">
+          <div class="email-header" style="background:${EMAIL_BRAND.headerBg};padding:28px 32px;text-align:center;">
+            <h1 class="email-header-title" style="margin:0;color:${EMAIL_BRAND.headerText};font-size:22px;font-weight:600;">${title}</h1>
+          </div>
+          <div style="padding:32px;">
+            <p class="email-text" style="font-size:16px;margin:0 0 16px;color:${EMAIL_BRAND.text};">${hello}</p>
+            <p class="email-text" style="font-size:16px;margin:0 0 16px;color:${EMAIL_BRAND.text};">${body}</p>
+            <p class="email-text" style="font-size:16px;margin:0 0 8px;color:${EMAIL_BRAND.text};"><strong>${escapedEmail}</strong> · ${companyName}</p>
+            ${emailCtaButton(this.getAppUrl(), cta)}
+            <p class="email-muted" style="color:${EMAIL_BRAND.muted};font-size:14px;margin:24px 0 0;text-align:center;">
+              ${EmailSendService.escapeHtml(platformT(locale, 'common.support'))}
+            </p>
+          </div>
         </div>
-        <p style="font-size: 16px; margin-bottom: 20px;">${hello}</p>
-        <p style="font-size: 16px; margin-bottom: 20px;">${body}</p>
-        <p style="font-size: 16px; margin-bottom: 20px;"><strong>${escapedEmail}</strong> · ${companyName}</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${EmailSendService.escapeAttr(this.getAppUrl())}" 
-             class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; font-weight: 600; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-            ${cta}
-          </a>
-        </div>
-        <p style="color: #777; font-size: 14px; margin-top: 40px; text-align: center;">
-          ${EmailSendService.escapeHtml(platformT(locale, 'common.support'))}
-        </p>
-      </div>
+      </body>
+      </html>
     `;
   }
 
@@ -417,21 +425,30 @@ export class SendGridService {
     const companyName = EmailSendService.escapeHtml(companyNameRaw);
     
     return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-        <h2 style="color: #333; text-align: center; margin-bottom: 30px;">${title}</h2>
-        <p style="font-size: 16px; margin-bottom: 20px;">${hello}</p>
-        <p style="font-size: 16px; margin-bottom: 20px;">${body}</p>
-        <p style="font-size: 14px; color: #666;">${companyName}</p>
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${EmailSendService.escapeAttr(resetData.resetUrl)}" 
-             class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-            ${cta}
-          </a>
+      <!DOCTYPE html>
+      <html lang="${locale}">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        ${emailBrandHeadTags()}
+      </head>
+      <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:${EMAIL_BRAND.bodyBg};">
+        <div class="email-card" style="max-width:600px;margin:40px auto;background-color:${EMAIL_BRAND.cardBg};border-radius:12px;overflow:hidden;">
+          <div class="email-header" style="background:${EMAIL_BRAND.headerBg};padding:28px 32px;text-align:center;">
+            <h1 class="email-header-title" style="margin:0;color:${EMAIL_BRAND.headerText};font-size:22px;font-weight:600;">${title}</h1>
+          </div>
+          <div style="padding:32px;">
+            <p class="email-text" style="font-size:16px;margin:0 0 16px;color:${EMAIL_BRAND.text};">${hello}</p>
+            <p class="email-text" style="font-size:16px;margin:0 0 16px;color:${EMAIL_BRAND.text};">${body}</p>
+            <p class="email-muted" style="font-size:14px;margin:0;color:${EMAIL_BRAND.muted};">${companyName}</p>
+            ${emailCtaButton(resetData.resetUrl, cta)}
+            <p class="email-muted" style="color:${EMAIL_BRAND.muted};font-size:14px;margin:24px 0 0;">
+              ${EmailSendService.escapeHtml(platformT(locale, 'common.support'))}
+            </p>
+          </div>
         </div>
-        <p style="color: #777; font-size: 14px; margin-top: 40px;">
-          ${EmailSendService.escapeHtml(platformT(locale, 'common.support'))}
-        </p>
-      </div>
+      </body>
+      </html>
     `;
   }
 

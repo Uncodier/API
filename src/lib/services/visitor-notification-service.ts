@@ -2,6 +2,7 @@ import { sendGridService } from './sendgrid-service';
 import { EmailSendService } from './email/EmailSendService';
 import { resolveEmailLocale, type EmailLocale, DEFAULT_EMAIL_LOCALE } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
+import { EMAIL_BRAND, emailBrandHeadTags } from '@/lib/emails/brand';
 
 /**
  * Parámetros para notificar al visitante
@@ -118,35 +119,34 @@ export class VisitorNotificationService {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>${EmailSendService.escapeHtml(title)}</title>
+        ${emailBrandHeadTags()}
       </head>
-      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
-        <div class="email-card" style="max-width: 600px; margin: 40px auto; background-color: #fafafa; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); overflow: hidden;">
-          <div class="email-header" style="background: #1e1e2d; padding: 32px 40px; text-align: center;">
-            <h1 style="margin: 0; color: #f0f0f5; font-size: 24px; font-weight: 600;">${EmailSendService.escapeHtml(title)}</h1>
+      <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: ${EMAIL_BRAND.bodyBg}; line-height: 1.6;">
+        <div class="email-card" style="max-width: 600px; margin: 40px auto; background-color: ${EMAIL_BRAND.cardBg}; border-radius: 12px; overflow: hidden;">
+          <div class="email-header" style="background: ${EMAIL_BRAND.headerBg}; padding: 32px 40px; text-align: center;">
+            <h1 class="email-header-title" style="margin: 0; color: ${EMAIL_BRAND.headerText}; font-size: 24px; font-weight: 600;">${EmailSendService.escapeHtml(title)}</h1>
           </div>
           <div style="padding: 40px;">
-            <p class="email-text" style="margin: 0 0 16px; font-size: 16px; color: #475569; line-height: 1.7;">
+            <p class="email-text" style="margin: 0 0 16px; font-size: 16px; color: ${EMAIL_BRAND.text}; line-height: 1.7;">
               ${EmailSendService.escapeHtml(body)}
             </p>
-            <div style="margin-bottom: 32px;">
-              <div style="background-color: #f8fafc; border-left: 4px solid #90ff17; padding: 20px 24px; border-radius: 0 8px 8px 0;">
-                <p class="email-text" style="margin: 0; font-size: 16px; color: #475569; font-style: italic; line-height: 1.7;">
-                  "${EmailSendService.escapeHtml(params.message)}"
-                </p>
-              </div>
+            <div class="email-panel" style="margin-bottom: 32px; background-color: ${EMAIL_BRAND.panelBg}; border-left: 4px solid ${EMAIL_BRAND.accent}; padding: 20px 24px; border-radius: 0 8px 8px 0; border: 1px solid ${EMAIL_BRAND.panelBorder};">
+              <p class="email-text" style="margin: 0; font-size: 16px; color: ${EMAIL_BRAND.text}; font-style: italic; line-height: 1.7;">
+                "${EmailSendService.escapeHtml(params.message)}"
+              </p>
             </div>
             <div style="margin-bottom: 16px;">
-              <a href="mailto:${attrSupportEmail}" style="color: #000000; font-weight: 600; text-decoration: none; font-size: 15px;">
+              <a class="email-link" href="mailto:${attrSupportEmail}" style="color: ${EMAIL_BRAND.link}; font-weight: 600; text-decoration: none; font-size: 15px;">
                 ${escapedSupportEmail}
               </a>
             </div>
-            <p class="email-muted" style="margin: 0; color: #64748b; font-size: 14px;">
+            <p class="email-muted" style="margin: 0; color: ${EMAIL_BRAND.muted}; font-size: 14px;">
               ${companyName}
             </p>
           </div>
         </div>
         <div style="text-align: center; margin: 24px 0;">
-          <p class="email-subtle" style="margin: 0; color: #94a3b8; font-size: 12px;">
+          <p class="email-subtle" style="margin: 0; color: ${EMAIL_BRAND.subtle}; font-size: 12px;">
             ${brandingText}
           </p>
         </div>

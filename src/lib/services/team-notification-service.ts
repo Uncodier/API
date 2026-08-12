@@ -9,6 +9,7 @@ import {
   tryNormalizeEmailLocale,
 } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
+import { EMAIL_BRAND, emailBrandHeadTags, emailCtaButton } from '@/lib/emails/brand';
 
 /**
  * Interfaz para los datos del miembro del equipo
@@ -378,24 +379,30 @@ export class TeamNotificationService {
       'This email was generated automatically by the notification system.';
     
     return `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #e0e0e0; border-radius: 5px;">
-        <h2 style="color: #333; border-bottom: 1px solid #eee; padding-bottom: 10px;">${EmailSendService.escapeHtml(title)}</h2>
-        
-        <div style="font-size: 16px; line-height: 1.6; margin: 20px 0;">
-          ${EmailSendService.renderMessageWithLists(message)}
+      <!DOCTYPE html>
+      <html lang="${locale}">
+      <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        ${emailBrandHeadTags()}
+      </head>
+      <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;background-color:${EMAIL_BRAND.bodyBg};">
+        <div class="email-card" style="max-width:600px;margin:40px auto;background-color:${EMAIL_BRAND.cardBg};border-radius:12px;overflow:hidden;">
+          <div class="email-header" style="background:${EMAIL_BRAND.headerBg};padding:28px 32px;text-align:center;">
+            <h1 class="email-header-title" style="margin:0;color:${EMAIL_BRAND.headerText};font-size:22px;font-weight:600;">${EmailSendService.escapeHtml(title)}</h1>
+          </div>
+          <div style="padding:32px;">
+            <div class="email-text" style="font-size:16px;line-height:1.6;margin:0 0 8px;color:${EMAIL_BRAND.text};">
+              ${EmailSendService.renderMessageWithLists(message)}
+            </div>
+            ${emailCtaButton(siteUrl, goToSite)}
+            <p class="email-muted" style="color:${EMAIL_BRAND.muted};font-size:14px;margin:24px 0 0;">
+              ${EmailSendService.escapeHtml(autoGen)}
+            </p>
+          </div>
         </div>
-        
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${EmailSendService.escapeAttr(siteUrl)}" 
-             class="email-cta" style="background: #000000; background-color: #000000; background-image: linear-gradient(#000000, #000000); box-shadow: inset 0 0 0 999px #000000; color: #ffffff; border: 0; display: inline-block; font-weight: 600; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">
-            ${EmailSendService.escapeHtml(goToSite)}
-          </a>
-        </div>
-        
-        <p style="color: #777; font-size: 14px; margin-top: 40px;">
-          ${EmailSendService.escapeHtml(autoGen)}
-        </p>
-      </div>
+      </body>
+      </html>
     `;
   }
   

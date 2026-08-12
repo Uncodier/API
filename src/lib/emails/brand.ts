@@ -1,17 +1,17 @@
 /**
- * Makinari email brand tokens (from market-fit).
+ * Makinari email brand tokens (market-fit).
  *
- * App accents:
- * - CTAs / selected chips: black ↔ white by theme
- * - Accent / badges / alerts: lime #90ff17 (hover #ffdc24)
- * - Surfaces: neutral grays (#f0f0f5, #1e1e2d, #2d2d3d) — not purple
+ * Design rules (minimize client contrast bugs):
+ * - color-scheme: light only — Apple/Gmail dark mode was leaving light text on light boxes
+ * - Few surfaces: header dark, card light, one optional panel gray
+ * - Body text always near-black on light surfaces (inline + CSS)
+ * - CTAs: solid black; badges: lime + black
  */
 
 export const EMAIL_BRAND = {
   black: '#000000',
   white: '#ffffff',
 
-  /** Brand accent (tailwind primary-button) */
   accent: '#90ff17',
   accentHover: '#ffdc24',
   accentText: '#000000',
@@ -23,19 +23,17 @@ export const EMAIL_BRAND = {
   headerText: '#f0f0f5',
   headerMuted: '#a1a1aa',
   bodyBg: '#f5f5f7',
-  cardBg: '#fafafa',
-  text: '#334155',
-  muted: '#64748b',
-  subtle: '#94a3b8',
+  cardBg: '#ffffff',
+  text: '#111111',
+  muted: '#52525b',
+  subtle: '#71717a',
   surface: '#f0f0f5',
   surfaceBorder: '#e4e4e7',
-  surfaceText: '#1e1e2d',
+  surfaceText: '#111111',
 
-  /** Soft panel (light) / dark panel — app grays, not violet */
   panelBg: '#f0f0f5',
   panelBorder: '#e4e4e7',
 
-  /** Chips: lime + black (readable in light + dark Mail) */
   badgeBg: '#90ff17',
   badgeText: '#000000',
 
@@ -43,9 +41,9 @@ export const EMAIL_BRAND = {
   darkSurfaceBorder: '#2d2d3d',
   darkSurfaceText: '#e2e8f0',
   link: '#000000',
-  linkDark: '#ffffff',
+  linkDark: '#000000',
 
-  // Back-compat aliases (point to gray/lime, not purple)
+  // Back-compat aliases
   purple: '#90ff17',
   purpleSoft: '#f0f0f5',
   purpleBorder: '#e4e4e7',
@@ -53,32 +51,84 @@ export const EMAIL_BRAND = {
 } as const;
 
 /**
- * Light text colors live ONLY inside prefers-color-scheme: light so they cannot
- * override dark-mode rules (Apple Mail was keeping dark labels on dark cards).
+ * Light-only stylesheet. Avoids prefers-color-scheme dark overrides that
+ * paint #e2e8f0 text onto nested light boxes Mail leaves un-inverted.
  */
 export const EMAIL_BRAND_STYLE = `
-    :root { color-scheme: light dark; }
+    :root { color-scheme: light only; }
 
     .email-header {
       background-color: #1e1e2d !important;
       background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
     }
-    .email-card {
-      background-color: #fafafa !important;
-      background-image: linear-gradient(#fafafa, #fafafa) !important;
+    .email-header-title,
+    .email-header h1 {
+      color: #f0f0f5 !important;
+      -webkit-text-fill-color: #f0f0f5 !important;
     }
+    .email-header-sub,
+    .email-header p {
+      color: #a1a1aa !important;
+      -webkit-text-fill-color: #a1a1aa !important;
+    }
+
+    .email-card {
+      background-color: #ffffff !important;
+      background-image: linear-gradient(#ffffff, #ffffff) !important;
+      color: #111111 !important;
+    }
+
+    .email-heading {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-text {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-muted,
+    .email-subtle {
+      color: #52525b !important;
+      -webkit-text-fill-color: #52525b !important;
+    }
+
     .email-panel {
       background-color: #f0f0f5 !important;
       background-image: linear-gradient(#f0f0f5, #f0f0f5) !important;
       border: 1px solid #e4e4e7 !important;
+      color: #111111 !important;
     }
+    .email-panel,
+    .email-panel .email-text,
+    .email-panel .email-heading,
+    .email-panel div,
+    .email-panel p,
+    .email-panel span:not(.email-badge):not(.email-cta-label),
+    .email-panel strong {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+
     .email-code-box {
       background-color: #f4ffe5 !important;
       background-image: linear-gradient(#f4ffe5, #f4ffe5) !important;
       border: 1px solid #c6f08a !important;
     }
+    .email-code-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+    }
+    .email-code-value {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
 
-    /* Chips: brand lime + black text (same accent as app primary-button) */
+    .email-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+      font-weight: 600 !important;
+    }
+
     .email-badge {
       display: inline-block !important;
       background-color: #90ff17 !important;
@@ -88,13 +138,11 @@ export const EMAIL_BRAND_STYLE = `
       -webkit-text-fill-color: #000000 !important;
       border: 0 !important;
     }
-    .email-label {
-      color: #3f6212 !important;
-      -webkit-text-fill-color: #3f6212 !important;
-      font-weight: 600 !important;
-    }
 
-    .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+    .email-link {
+      color: #000000 !important;
+      -webkit-text-fill-color: #000000 !important;
+    }
 
     .email-cta-td {
       background-color: #000000 !important;
@@ -109,159 +157,17 @@ export const EMAIL_BRAND_STYLE = `
       -webkit-text-fill-color: #ffffff !important;
       border: 0 !important;
     }
-    .email-cta-label {
+    .email-cta-label,
+    .email-cta span {
       color: #ffffff !important;
       -webkit-text-fill-color: #ffffff !important;
-    }
-
-    @media (prefers-color-scheme: light) {
-      .email-header-title { color: #f0f0f5 !important; -webkit-text-fill-color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; -webkit-text-fill-color: #a1a1aa !important; }
-      .email-heading { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-text { color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
-      .email-muted { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-subtle { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div,
-      .email-panel strong,
-      .email-panel p {
-        color: #1e1e2d !important;
-        -webkit-text-fill-color: #1e1e2d !important;
-      }
-      .email-code-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-code-value { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .email-header {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-      }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel .email-muted,
-      .email-panel .email-label,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-      .email-panel a.email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #3f6212 !important;
-      }
-      .email-code-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Lime badge stays brand accent in dark (black text on lime) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
     }
 `;
 
 export function emailBrandHeadTags(): string {
   return `
-  <meta name="color-scheme" content="light dark" />
-  <meta name="supported-color-schemes" content="light dark" />
+  <meta name="color-scheme" content="light only" />
+  <meta name="supported-color-schemes" content="light" />
   <style type="text/css">${EMAIL_BRAND_STYLE}</style>`;
 }
 
@@ -269,10 +175,18 @@ export const EMAIL_CTA_STYLE_SNIPPET = EMAIL_BRAND_STYLE;
 
 /**
  * Status / role / priority chip only (not for freeform meta like job title).
- * Brand lime + black text — matches app primary-button accent.
  */
 export function emailBadge(labelHtml: string): string {
   return `<span class="email-badge" style="display:inline-block;padding:8px 16px;border-radius:20px;font-size:13px;font-weight:600;letter-spacing:0.04em;text-transform:uppercase;background-color:${EMAIL_BRAND.badgeBg};background-image:linear-gradient(${EMAIL_BRAND.badgeBg},${EMAIL_BRAND.badgeBg});box-shadow:inset 0 0 0 999px ${EMAIL_BRAND.badgeBg};color:${EMAIL_BRAND.badgeText};-webkit-text-fill-color:${EMAIL_BRAND.badgeText};">${labelHtml}</span>`;
+}
+
+/** Simple gray content panel — always dark text on light gray. */
+export function emailPanelOpen(extraStyle = ''): string {
+  return `<div class="email-panel" style="background-color:${EMAIL_BRAND.panelBg};background-image:linear-gradient(${EMAIL_BRAND.panelBg},${EMAIL_BRAND.panelBg});padding:20px 24px;border-radius:8px;border:1px solid ${EMAIL_BRAND.panelBorder};color:${EMAIL_BRAND.text};${extraStyle}">`;
+}
+
+export function emailPanelClose(): string {
+  return `</div>`;
 }
 
 export interface EmailCtaOptions {

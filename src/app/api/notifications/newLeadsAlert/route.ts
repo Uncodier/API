@@ -176,28 +176,80 @@ function generateNewLeadsAlertHtml(data: {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>New Leads Alert - ${data.siteName}</title>
       <style>
-        :root { color-scheme: light dark; }
+        :root { color-scheme: light only; }
 
     .email-header {
       background-color: #1e1e2d !important;
       background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
     }
-    .email-card {
-      background-color: #fafafa !important;
-      background-image: linear-gradient(#fafafa, #fafafa) !important;
+    .email-header-title,
+    .email-header h1 {
+      color: #f0f0f5 !important;
+      -webkit-text-fill-color: #f0f0f5 !important;
     }
+    .email-header-sub,
+    .email-header p {
+      color: #a1a1aa !important;
+      -webkit-text-fill-color: #a1a1aa !important;
+    }
+
+    .email-card {
+      background-color: #ffffff !important;
+      background-image: linear-gradient(#ffffff, #ffffff) !important;
+      color: #111111 !important;
+    }
+
+    .email-heading {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-text {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+    .email-muted,
+    .email-subtle {
+      color: #52525b !important;
+      -webkit-text-fill-color: #52525b !important;
+    }
+
     .email-panel {
       background-color: #f0f0f5 !important;
       background-image: linear-gradient(#f0f0f5, #f0f0f5) !important;
       border: 1px solid #e4e4e7 !important;
+      color: #111111 !important;
     }
+    .email-panel,
+    .email-panel .email-text,
+    .email-panel .email-heading,
+    .email-panel div,
+    .email-panel p,
+    .email-panel span:not(.email-badge):not(.email-cta-label),
+    .email-panel strong {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
+
     .email-code-box {
       background-color: #f4ffe5 !important;
       background-image: linear-gradient(#f4ffe5, #f4ffe5) !important;
       border: 1px solid #c6f08a !important;
     }
+    .email-code-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+    }
+    .email-code-value {
+      color: #111111 !important;
+      -webkit-text-fill-color: #111111 !important;
+    }
 
-    /* Chips: brand lime + black text (same accent as app primary-button) */
+    .email-label {
+      color: #3f6212 !important;
+      -webkit-text-fill-color: #3f6212 !important;
+      font-weight: 600 !important;
+    }
+
     .email-badge {
       display: inline-block !important;
       background-color: #90ff17 !important;
@@ -207,13 +259,11 @@ function generateNewLeadsAlertHtml(data: {
       -webkit-text-fill-color: #000000 !important;
       border: 0 !important;
     }
-    .email-label {
-      color: #3f6212 !important;
-      -webkit-text-fill-color: #3f6212 !important;
-      font-weight: 600 !important;
-    }
 
-    .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
+    .email-link {
+      color: #000000 !important;
+      -webkit-text-fill-color: #000000 !important;
+    }
 
     .email-cta-td {
       background-color: #000000 !important;
@@ -228,393 +278,12 @@ function generateNewLeadsAlertHtml(data: {
       -webkit-text-fill-color: #ffffff !important;
       border: 0 !important;
     }
-    .email-cta-label {
+    .email-cta-label,
+    .email-cta span {
       color: #ffffff !important;
       -webkit-text-fill-color: #ffffff !important;
     }
-
-    @media (prefers-color-scheme: light) {
-      .email-header-title { color: #f0f0f5 !important; -webkit-text-fill-color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; -webkit-text-fill-color: #a1a1aa !important; }
-      .email-heading { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-text { color: #334155 !important; -webkit-text-fill-color: #334155 !important; }
-      .email-muted { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-subtle { color: #64748b !important; -webkit-text-fill-color: #64748b !important; }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div,
-      .email-panel strong,
-      .email-panel p {
-        color: #1e1e2d !important;
-        -webkit-text-fill-color: #1e1e2d !important;
-      }
-      .email-code-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-code-value { color: #1e1e2d !important; -webkit-text-fill-color: #1e1e2d !important; }
-      .email-label { color: #3f6212 !important; -webkit-text-fill-color: #3f6212 !important; }
-      .email-link { color: #000000 !important; -webkit-text-fill-color: #000000 !important; }
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .email-header {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-      }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel .email-muted,
-      .email-panel .email-label,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-      .email-panel a.email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #3f6212 !important;
-      }
-      .email-code-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Lime badge stays brand accent in dark (black text on lime) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #bef264 !important;
-        -webkit-text-fill-color: #bef264 !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-        -webkit-text-fill-color: #f0f0f5 !important;
-      }
-      .email-header-sub {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card div:not(.email-badge):not(.email-cta):not(.email-header):not(.email-cta-td) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-panel,
-      .email-panel .email-text,
-      .email-panel div:not(.email-badge),
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-badge):not(.email-cta-label) {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-      .email-code-value {
-        color: #e2e8f0 !important;
-        -webkit-text-fill-color: #e2e8f0 !important;
-      }
-
-      .email-link {
-        color: #ffffff !important;
-        -webkit-text-fill-color: #ffffff !important;
-      }
-
-      /* Badges stay saturated accent (do not get washed out by card text rules) */
-      .email-badge,
-      .email-card .email-badge,
-      .email-panel .email-badge {
-        background-color: #90ff17 !important;
-        background-image: linear-gradient(#90ff17, #90ff17) !important;
-        box-shadow: inset 0 0 0 999px #90ff17 !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-      .email-label {
-        color: #a1a1aa !important;
-        -webkit-text-fill-color: #a1a1aa !important;
-      }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-        -webkit-text-fill-color: #000000 !important;
-      }
-    }
-      .email-header-title { color: #f0f0f5 !important; }
-      .email-header-sub { color: #a1a1aa !important; }
-
-      .email-card {
-        background-color: #15151b !important;
-        background-image: linear-gradient(#15151b, #15151b) !important;
-        color: #e2e8f0 !important;
-      }
-
-      /* Readable copy when Mail inverts the card */
-      .email-heading,
-      .email-text,
-      .email-card h1:not(.email-header-title),
-      .email-card h2,
-      .email-card h3,
-      .email-card h4,
-      .email-card p,
-      .email-card li,
-      .email-card td,
-      .email-card th,
-      .email-card strong,
-      .email-card label,
-      .email-card span:not(.email-cta-label):not(.email-header-sub) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-muted,
-      .email-subtle,
-      .email-card .email-muted,
-      .email-card .email-subtle {
-        color: #a1a1aa !important;
-      }
-
-      .email-panel {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-        color: #e2e8f0 !important;
-      }
-      .email-panel,
-      .email-panel div,
-      .email-panel p,
-      .email-panel strong,
-      .email-panel span:not(.email-cta-label) {
-        color: #e2e8f0 !important;
-      }
-
-      .email-badge {
-        background-color: #2d2d3d !important;
-        background-image: linear-gradient(#2d2d3d, #2d2d3d) !important;
-        color: #a1a1aa !important;
-      }
-
-      .email-link { color: #ffffff !important; }
-
-      .email-cta-td {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-      }
-      .email-cta {
-        background-color: #ffffff !important;
-        background-image: linear-gradient(#ffffff, #ffffff) !important;
-        box-shadow: inset 0 0 0 999px #ffffff !important;
-        color: #000000 !important;
-        border: 0 !important;
-      }
-      .email-cta-label,
-      .email-cta span {
-        color: #000000 !important;
-      }
-
-      .email-code-box {
-        background-color: #1e1e2d !important;
-        background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-        border: 1px solid #2d2d3d !important;
-      }
-      .email-code-label { color: #a1a1aa !important; }
-      .email-code-value { color: #e2e8f0 !important; }
-
-      /* Keep header children light even if nested rules race */
-      .email-header,
-      .email-header h1,
-      .email-header p,
-      .email-header span,
-      .email-header div {
-        color: #f0f0f5 !important;
-      }
-      .email-header .email-header-sub { color: #a1a1aa !important; }
-    }
-          .email-header-title { color: #e2e8f0 !important; }
-          .email-header-sub { color: #a1a1aa !important; }
-          .email-panel {
-            background-color: #1e1e2d !important;
-            background-image: linear-gradient(#1e1e2d, #1e1e2d) !important;
-            border-color: #2d2d3d !important;
-          }
-          .email-card {
-            background-color: #15151b !important;
-            background-image: linear-gradient(#15151b, #15151b) !important;
-          }
-          .email-link { color: #ffffff !important; }
-          .email-cta-td {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-          }
-          .email-cta {
-            background-color: #ffffff !important;
-            background-image: linear-gradient(#ffffff, #ffffff) !important;
-            box-shadow: inset 0 0 0 999px #ffffff !important;
-            color: #000000 !important;
-            border: 0 !important;
-          }
-          .email-cta-label { color: #000000 !important; }
-        }
-          .email-cta-label { color: #000000 !important; }
-        }
-        }
-        }
-
-        @media screen and (max-width: 600px) {
-          .mobile-padding { padding: 20px !important; }
-          .mobile-text-sm { font-size: 14px !important; }
-          .mobile-text-xs { font-size: 12px !important; }
-          .mobile-stack { display: block !important; width: 100% !important; margin-bottom: 16px !important; }
-          .mobile-button { display: block !important; width: 100% !important; margin: 8px 0 !important; }
-          .mobile-small-padding { padding: 12px 16px !important; }
-          .mobile-hide-break { display: none !important; }
-        }
+        
       </style>
     </head>
     <body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f8fafc; line-height: 1.6;">
@@ -646,10 +315,10 @@ function generateNewLeadsAlertHtml(data: {
           
           <!-- Summary -->
           <div style="margin-bottom: 32px; text-align: center;">
-            <h2 class="email-heading" style="margin: 0 0 16px; font-size: 20px; color: #1e293b; font-weight: 600;">
+            <h2 class="email-heading" style="margin: 0 0 16px; font-size: 20px; color: #111111; font-weight: 600;">
               Action Required: Assign Your Leads
             </h2>
-            <p class="email-text" style="margin: 0; font-size: 16px; color: #475569; line-height: 1.7;">
+            <p class="email-text" style="margin: 0; font-size: 16px; color: #111111; line-height: 1.7;">
               You have <strong>${data.totalUnassignedLeads} new lead${data.totalUnassignedLeads !== 1 ? 's' : ''} from the last 24 hours</strong> that need${data.totalUnassignedLeads === 1 ? 's' : ''} to be assigned to team members.
               ${data.hoursUntilAutoProspect > 0 ? `<span class="mobile-hide-break"><br></span><strong>In ${data.hoursUntilAutoProspect} hours</strong>, unassigned leads will automatically begin receiving personalized outreach from our sales team.` : ''}
             </p>
@@ -668,8 +337,8 @@ function generateNewLeadsAlertHtml(data: {
             <table style="width: 100%; border-collapse: collapse;">
               <tr>
                 <td style="width: 50%; padding: 0 8px 16px 0; vertical-align: top;">
-                  <div style="background-color: #eff6ff; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #bfdbfe;">
-                    <div style="font-size: 28px; font-weight: 700; color: #1e40af; margin-bottom: 4px;">${data.totalUnassignedLeads.toString()}</div>
+                  <div class="email-panel" style="background-color: #f0f0f5; padding: 20px; border-radius: 8px; text-align: center; border: 1px solid #e4e4e7;">
+                    <div style="font-size: 28px; font-weight: 700; color: #3f6212; margin-bottom: 4px;">${data.totalUnassignedLeads.toString()}</div>
                     <div style="font-size: 14px; color: #3730a3; font-weight: 500;">Unassigned Leads</div>
                   </div>
                 </td>
@@ -686,18 +355,18 @@ function generateNewLeadsAlertHtml(data: {
           ${data.includeLeadDetails && data.leads.length > 0 ? `
           <!-- Leads List -->
           <div style="margin-bottom: 32px;">
-            <h3 class="email-heading" style="margin: 0 0 20px; font-size: 18px; color: #1e293b; font-weight: 600;">Unassigned Leads (Last 24 Hours)</h3>
-            <div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+            <h3 class="email-heading" style="margin: 0 0 20px; font-size: 18px; color: #111111; font-weight: 600;">Unassigned Leads (Last 24 Hours)</h3>
+            <div style="border: 1px solid #e4e4e7; border-radius: 8px; overflow: hidden;">
               ${data.leads.slice(0, 10).map((lead, index) => `
               <div class="mobile-small-padding" style="padding: 20px 16px; border-bottom: ${index < Math.min(data.leads.length, 10) - 1 ? '1px solid #e2e8f0' : 'none'}; ${index % 2 === 0 ? 'background-color: #f8fafc;' : 'background-color: #fafafa;'}">
                 <!-- Mobile-friendly lead layout -->
                 <div style="margin-bottom: 8px;">
-                  <div class="email-text" style="font-weight: 600; color: #1e293b; font-size: 16px; margin-bottom: 8px;">
+                  <div class="email-text" style="font-weight: 600; color: #111111; font-size: 16px; margin-bottom: 8px;">
                     ${lead.name || 'Unknown Lead'}
                   </div>
                   
                   <!-- Contact Info -->
-                  <div class="email-muted" style="color: #64748b; font-size: 14px; margin-bottom: 8px; line-height: 1.5;">
+                  <div class="email-muted" style="color: #52525b; font-size: 14px; margin-bottom: 8px; line-height: 1.5;">
                     <div style="margin-bottom: 4px;">📧 ${lead.email || 'No email'}</div>
                     ${lead.phone ? `<div style="margin-bottom: 4px;">📞 ${lead.phone}</div>` : ''}
                     ${lead.company?.name ? `<div style="margin-bottom: 4px;">🏢 ${lead.company.name}</div>` : ''}
@@ -706,7 +375,7 @@ function generateNewLeadsAlertHtml(data: {
                   <!-- Tags and Meta -->
                   <div style="margin-bottom: 8px;">
                     ${lead.segments?.name ? `
-                    <span style="display: inline-block; background-color: #dbeafe; color: #1e40af; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; margin-right: 8px; margin-bottom: 4px;">
+                    <span style="display: inline-block; background-color: #dbeafe; color: #3f6212; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: 500; margin-right: 8px; margin-bottom: 4px;">
                       ${lead.segments.name}
                     </span>
                     ` : ''}
@@ -718,14 +387,14 @@ function generateNewLeadsAlertHtml(data: {
                   </div>
                   
                   <!-- Time -->
-                  <div class="email-muted" style="color: #94a3b8; font-size: 12px;">
+                  <div class="email-muted" style="color: #71717a; font-size: 12px;">
                     ${getRelativeTime(lead.created_at)}
                   </div>
                 </div>
               </div>
               `).join('')}
               ${data.totalUnassignedLeads > 10 ? `
-              <div class="email-muted" style="padding: 16px; background-color: #f1f5f9; text-align: center; color: #64748b; font-size: 14px;">
+              <div class="email-muted" style="padding: 16px; background-color: #f0f0f5; text-align: center; color: #52525b; font-size: 14px;">
                 And ${data.totalUnassignedLeads - 10} more lead${data.totalUnassignedLeads - 10 !== 1 ? 's' : ''} awaiting assignment...
               </div>
               ` : ''}
@@ -766,7 +435,7 @@ function generateNewLeadsAlertHtml(data: {
           
           <!-- Explanation -->
           <div style="margin-top: 32px; padding-top: 24px; border-top: 1px solid #e2e8f0; text-align: center;">
-            <p class="mobile-text-sm" style="margin: 0; color: #64748b; font-size: 14px; line-height: 1.5;">
+            <p class="mobile-text-sm" style="margin: 0; color: #52525b; font-size: 14px; line-height: 1.5;">
               This notification was automatically generated when new leads were detected.<span class="mobile-hide-break"><br></span>
               Manage your notification preferences in your account settings.
             </p>
@@ -776,7 +445,7 @@ function generateNewLeadsAlertHtml(data: {
         
         <!-- Footer -->
         <div class="mobile-padding" style="background-color: #f8fafc; padding: 24px 20px; border-top: 1px solid #e2e8f0;">
-          <p class="mobile-text-sm" style="margin: 0; color: #64748b; font-size: 14px; text-align: center; line-height: 1.5;">
+          <p class="mobile-text-sm" style="margin: 0; color: #52525b; font-size: 14px; text-align: center; line-height: 1.5;">
             This notification was automatically generated by ${getCompanyName()}.<span class="mobile-hide-break"><br></span>
             Manage your notification preferences in your account settings.
           </p>
@@ -786,7 +455,7 @@ function generateNewLeadsAlertHtml(data: {
       
       <!-- Powered by -->
       <div style="text-align: center; margin: 24px 0;">
-        <p class="email-subtle" style="margin: 0; color: #94a3b8; font-size: 12px;">
+        <p class="email-subtle" style="margin: 0; color: #71717a; font-size: 12px;">
           Powered by <strong style="color: #000000;">${getBrandingText()}</strong>
         </p>
       </div>
