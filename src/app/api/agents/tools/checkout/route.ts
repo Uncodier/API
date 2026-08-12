@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { assertReservationSlot } from '@/lib/reservations/availability';
-
-type CheckoutLine = {
-  catalogItemId: string;
-  quantity?: number;
-  unitPriceOverride?: number;
-  reservationStart?: string; // ISO
-  reservationEnd?: string;   // ISO
-};
+import {
+  buildOrderItemsJson,
+  insertOrderItemsWithModifiers,
+  processCheckoutLines,
+  type CheckoutLine,
+} from './process-lines';
 
 async function resolveSiteUserId(siteId: string): Promise<string> {
   const { data: site, error } = await supabaseAdmin
@@ -93,14 +90,13 @@ export async function POST(request: NextRequest) {
       const { quotation_id } = params as { quotation_id: string };
       if (!site_id) throw new Error('site_id is required');
 
-      // 1. Fetch quotation
       const { data: quote, error: quoteErr } = await supabaseAdmin
         .from('quotations')
         .select('*, items:quotation_items(*)')
         .eq('id', quotation_id)
         .eq('site_id', site_id)
         .single();
-        
+
       if (quoteErr || !quote) throw new Error('Quotation not found');
       if (quote.status === 'draft' || quote.status === 'rejected' || quote.status === 'expired') {
         throw new Error(`Cannot convert quotation with status: ${quote.status}`);
@@ -112,14 +108,10 @@ export async function POST(request: NextRequest) {
         unitPriceOverride: qi.unit_price,
       }));
 
-      // Map back to internal create_order flow
-      body.action = 'create_order';
       params.lines = linesToPass;
       params.lead_id = quote.lead_id;
       params.buyer_user_id = quote.buyer_user_id || undefined;
-      params.source = 'online'; // "quote" not reliably in sales.source constraint
-
-      // Fall through to create_order block
+      params.source = 'online';
       body.action = 'create_order';
     }
 
@@ -129,7 +121,7 @@ export async function POST(request: NextRequest) {
         buyer_user_id,
         customer_email,
         owner_site_id,
-        source = 'online', // Default to a known DB allowed value
+        source = 'online',
         lead_id,
         location_id,
       } = params as {
@@ -156,75 +148,19 @@ export async function POST(request: NextRequest) {
         buyerUserId: buyer_user_id,
       });
 
-      let subtotal = 0;
-      const processedLines: Array<{
-        site_id: string;
-        catalog_item_id: string;
-        name: string;
-        description?: string | null;
-        quantity: number;
-        unit_price: number;
-        subtotal: number;
-        reservationStart?: string;
-        reservationEnd?: string;
-      }> = [];
-
-      for (const line of lines) {
-        if (!line?.catalogItemId) throw new Error('Each line requires catalogItemId');
-        const quantity = Number(line.quantity || 1);
-        if (!Number.isFinite(quantity) || quantity <= 0) {
-          throw new Error(`Invalid quantity for catalogItemId=${line.catalogItemId}`);
-        }
-
-        const { data: catItem, error: catErr } = await supabaseAdmin
-          .from('catalog_items')
-          .select('id, name, description, target_sale_price, site_id, is_reservation, currency')
-          .eq('id', line.catalogItemId)
-          .single();
-
-        if (catErr || !catItem) {
-          throw new Error(`Catalog item not found: ${line.catalogItemId}`);
-        }
-        if (catItem.site_id !== site_id) {
-          throw new Error(`Catalog item ${line.catalogItemId} does not belong to site ${site_id}`);
-        }
-
-        if (catItem.is_reservation) {
-          if (!line.reservationStart || !line.reservationEnd) {
-            throw new Error(`Item ${line.catalogItemId} is a reservation. reservationStart and reservationEnd are required.`);
-          }
-          if (!finalLeadId) {
-            throw new Error('lead_id or customer_email is required for reservable items');
-          }
-          // Validate slot availability (isAdmin = true to bypass past date checks if agent is orchestrating)
-          await assertReservationSlot(site_id, line.catalogItemId, line.reservationStart, line.reservationEnd, quantity, true);
-        }
-
-        const unitPrice =
-          line.unitPriceOverride !== undefined
-            ? Number(line.unitPriceOverride)
-            : Number(catItem.target_sale_price || 0);
-        const lineSubtotal = unitPrice * quantity;
-        subtotal += lineSubtotal;
-
-        processedLines.push({
-          site_id,
-          catalog_item_id: line.catalogItemId,
-          name: catItem.name,
-          description: catItem.description,
-          quantity,
-          unit_price: unitPrice,
-          subtotal: lineSubtotal,
-          reservationStart: line.reservationStart,
-          reservationEnd: line.reservationEnd,
-          currency: catItem.currency || 'USD',
-        });
-      }
+      const { processedLines, subtotal } = await processCheckoutLines({
+        siteId: site_id,
+        lines,
+        finalLeadId,
+      });
 
       const saleDate = new Date().toISOString().split('T')[0];
       const primaryCurrency = processedLines[0]?.currency || 'USD';
-      const orderNotes = body.action === 'create_order_from_quotation' ? `Created from quotation ${params.quotation_id}` : null;
-      
+      const orderNotes =
+        action === 'create_order_from_quotation'
+          ? `Created from quotation ${params.quotation_id}`
+          : null;
+
       const { data: sale, error: saleErr } = await supabaseAdmin
         .from('sales')
         .insert({
@@ -247,13 +183,7 @@ export async function POST(request: NextRequest) {
         .single();
       if (saleErr) throw new Error(`Sale creation failed: ${saleErr.message}`);
 
-      const orderItemsJson = processedLines.map((pl) => ({
-        id: pl.catalog_item_id,
-        name: pl.name,
-        quantity: pl.quantity,
-        unitPrice: pl.unit_price,
-        subtotal: pl.subtotal,
-      }));
+      const orderItemsJson = buildOrderItemsJson(processedLines);
 
       const { data: order, error: orderErr } = await supabaseAdmin
         .from('sale_orders')
@@ -276,28 +206,12 @@ export async function POST(request: NextRequest) {
         .single();
       if (orderErr) throw new Error(`Order creation failed: ${orderErr.message}`);
 
-      const orderItemsToInsert = processedLines.map((pl) => ({
-        site_id: pl.site_id,
-        catalog_item_id: pl.catalog_item_id,
-        name: pl.name,
-        description: pl.description,
-        quantity: pl.quantity,
-        unit_price: pl.unit_price,
-        subtotal: pl.subtotal,
-        sale_order_id: order.id,
-      }));
+      const insertedHosts = await insertOrderItemsWithModifiers(order.id, processedLines);
 
-      const { data: insertedItems, error: itemsErr } = await supabaseAdmin
-        .from('sale_order_items')
-        .insert(orderItemsToInsert)
-        .select();
-      if (itemsErr) throw new Error(`Order items creation failed: ${itemsErr.message}`);
-
-      // Insert reservations if applicable
       const reservationsToInsert = processedLines
         .map((pl, idx) => {
           if (!pl.reservationStart || !pl.reservationEnd) return null;
-          const insertedItem = insertedItems?.[idx];
+          const insertedItem = insertedHosts[idx];
           return {
             site_id: pl.site_id,
             catalog_item_id: pl.catalog_item_id,
@@ -370,9 +284,9 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // Prefer relational sale_order_items; fall back to JSONB items column.
+      // Prefer relational sale_order_items (includes modifier children as separate priced lines).
       let lineSource: any[] = Array.isArray(order.items) ? order.items : [];
-      const looksRelational = lineSource.length > 0 && ('unit_price' in (lineSource[0] || {}));
+      const looksRelational = lineSource.length > 0 && 'unit_price' in (lineSource[0] || {});
       if (!looksRelational) {
         const { data: rawOrder } = await supabaseAdmin
           .from('sale_orders')
@@ -380,7 +294,14 @@ export async function POST(request: NextRequest) {
           .eq('id', order_id)
           .single();
         if (Array.isArray(rawOrder?.items) && rawOrder.items.length > 0) {
-          lineSource = rawOrder.items;
+          // Flatten JSONB nested modifiers into separate Stripe lines
+          lineSource = [];
+          for (const item of rawOrder.items) {
+            lineSource.push(item);
+            for (const mod of item.modifiers || []) {
+              lineSource.push(mod);
+            }
+          }
         }
       }
 
@@ -390,7 +311,7 @@ export async function POST(request: NextRequest) {
 
       const lineItems = lineSource.map((item: any) => ({
         price_data: {
-          currency: 'usd',
+          currency: (order.currency || 'usd').toLowerCase(),
           product_data: {
             name: item.name || 'Item',
             description: item.description || undefined,

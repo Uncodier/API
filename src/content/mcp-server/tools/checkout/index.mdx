@@ -18,13 +18,23 @@ Manage checkouts. Use action="create_order" to create a pending sale_order with 
 | lead_id | string | Lead UUID to attach to the sale |
 | owner_site_id | string | Owner site UUID (for B2B destination) |
 | source | string | Source of the order: quote, marketplace, shop, sales |
-| lines | string | JSON string of order lines. Each line needs: `catalogItemId`, `quantity`. For reservable items, include `reservationStart` and `reservationEnd` (ISO datetimes). |
+| lines | string | JSON string of order lines. Each line needs: `catalogItemId`, `quantity`. Optional `modifiers: [{ catalogItemId, quantity, unitPriceOverride? }]` for nested extras. For reservable items, include `reservationStart` and `reservationEnd` (ISO datetimes). |
 | order_id | string | Order UUID (required for create_payment_link, get_order) |
 | return_url | string | Optional URL to redirect buyer after payment (defaults to commerce app `/buyer/orders`) |
 
 **Note:** Stripe payment completion and entitlement grants are handled by the commerce (market-fit) Stripe webhook when `metadata.type = sale_order`. This tool only creates pending orders and payment URLs.
 
-## Example
+## Example — Order with modifiers
+
+```json
+{
+  "action": "create_order",
+  "customer_email": "buyer@example.com",
+  "lines": "[{\"catalogItemId\":\"HOST_ID\",\"quantity\":1,\"modifiers\":[{\"catalogItemId\":\"OAT_MILK_ID\",\"quantity\":1}]}]"
+}
+```
+
+## Example — Payment link
 
 ```json
 {

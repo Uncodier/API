@@ -58,6 +58,26 @@ describe('Checkout Tool Route Handlers', () => {
     });
 
     let reservationsInserted: any = null;
+    let hostInsertCount = 0;
+
+    const catalogById: Record<string, any> = {
+      'cat-product': {
+        id: 'cat-product',
+        name: 'Product',
+        target_sale_price: 10,
+        site_id: siteId,
+        is_reservation: false,
+        currency: 'USD',
+      },
+      'cat-reservable': {
+        id: 'cat-reservable',
+        name: 'Reservable',
+        target_sale_price: 10,
+        site_id: siteId,
+        is_reservation: true,
+        currency: 'USD',
+      },
+    };
 
     (supabaseAdmin.from as jest.Mock).mockImplementation((table) => {
       const chain = mockSupabaseQuery(table);
@@ -68,25 +88,33 @@ describe('Checkout Tool Route Handlers', () => {
         chain.maybeSingle.mockResolvedValueOnce({ data: null }); // no lead
         chain.single.mockResolvedValueOnce({ data: { id: 'lead-123' } }); // insert lead
       } else if (table === 'catalog_items') {
-        chain.single.mockImplementation(async () => {
-          // Keep state between mock calls to return non-reservable first, reservable second
-          return { data: { id: 'dummy', name: 'Item', target_sale_price: 10, site_id: siteId, is_reservation: false, currency: 'USD' } };
-        }).mockImplementationOnce(async () => {
-          return { data: { id: 'dummy', name: 'Product', target_sale_price: 10, site_id: siteId, is_reservation: false, currency: 'USD' } };
-        }).mockImplementationOnce(async () => {
-          return { data: { id: 'dummy', name: 'Reservable', target_sale_price: 10, site_id: siteId, is_reservation: true, currency: 'USD' } };
+        let lookupId = '';
+        chain.eq = jest.fn().mockImplementation((col: string, val: string) => {
+          if (col === 'id') lookupId = val;
+          return chain;
         });
+        chain.single.mockImplementation(async () => ({
+          data: catalogById[lookupId] || {
+            id: lookupId,
+            name: 'Item',
+            target_sale_price: 10,
+            site_id: siteId,
+            is_reservation: false,
+            currency: 'USD',
+          },
+        }));
       } else if (table === 'sales') {
         chain.single.mockResolvedValueOnce({ data: { id: 'sale-123' } });
       } else if (table === 'sale_orders') {
         chain.single.mockResolvedValueOnce({ data: { id: 'order-123' } });
       } else if (table === 'sale_order_items') {
-        // Return 2 inserted items
-        chain.select = jest.fn().mockResolvedValueOnce({
-          data: [
-            { id: 'soi-prod' },
-            { id: 'soi-res' }
-          ]
+        // Hosts are inserted one-by-one via .insert().select().single()
+        chain.single.mockImplementation(async () => {
+          hostInsertCount += 1;
+          if (hostInsertCount === 1) {
+            return { data: { id: 'soi-prod', catalog_item_id: 'cat-product' } };
+          }
+          return { data: { id: 'soi-res', catalog_item_id: 'cat-reservable' } };
         });
       } else if (table === 'reservations') {
         chain.insert = jest.fn().mockImplementation((data) => {
@@ -160,7 +188,7 @@ describe('Checkout Tool Route Handlers', () => {
       } else if (table === 'sales' || table === 'sale_orders') {
         chain.single.mockResolvedValueOnce({ data: { id: 'obj-123' } });
       } else if (table === 'sale_order_items') {
-        chain.select = jest.fn().mockResolvedValueOnce({ data: [{ id: 'soi-1' }] });
+        chain.single.mockResolvedValueOnce({ data: { id: 'soi-1', catalog_item_id: 'cat-1' } });
       }
       
       return chain;

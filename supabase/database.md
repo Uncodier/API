@@ -2135,6 +2135,11 @@ The commercial platform provides a structured way to handle quotations, marketpl
 - **`catalog_items.digital_subtype`**: Defines what the digital asset represents: `ticket`, `course`, `file`, `pass`, `license`.
 - **`catalog_items.is_reservation`**: A boolean flag. If `true`, the item requires a reservation schedule and a slot booking before checkout.
 - **`catalog_items.is_marketplace_listed`**: A boolean flag. A catalog item is only visible in the marketplace if `is_marketplace_listed = true` AND `status = 'active'` AND `availability_status = 'available'`.
+- **Product modifiers**: Reusable groups of catalog items attachable to host products.
+  - **`modifier_groups`**: Named selection rules (`min_select`, `max_select`, `sort_order`) scoped by `site_id`.
+  - **`modifier_group_items`**: Options inside a group — each row links a `catalog_item_id` used as an extra (unique per group).
+  - **`catalog_item_modifier_groups`**: Attaches a modifier group to a host `catalog_item_id` (unique pair).
+  - **`sale_order_items.parent_sale_order_item_id`**: Nested order lines — modifier children point at the host line.
 - **`reservation_schedules`**: Configures duration, capacity, and weekly active hours (`days`) for reservable items.
 - **`reservations`**: Holds the booked capacity slot, linked to `catalog_item_id`, `lead_id`, and `sale_order_item_id`.
 - **`quotations.status`**: `draft`, `sent`, `accepted`, `rejected`, `expired`.

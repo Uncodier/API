@@ -19,6 +19,11 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - For recurring plans, ensure `is_recurring = true`.
    - **Pricing:** Before using default `target_sale_price`, check if the lead/deal has an applicable price list via `price_lists`.
    - Do NOT seed catalog rows via `update_repo` or raw SQL — always use `catalog_commerce`.
+   - **Modifiers (extras):** Create options as normal catalog items (priced via `target_sale_price`). Then:
+     1. `resource="modifier_group"` `action="create"` — selection rules (`min_select` / `max_select`).
+     2. `resource="modifier_group_item"` `action="create"` — add option `catalog_item_id` to the group.
+     3. `resource="item_modifier_group"` `action="create"` — attach the group to the host product (`catalog_item_id` + `modifier_group_id`).
+     4. Inspect with `resource="item"` `action="get"` `include_modifiers=true`.
 
 2. **Quotation Workflow**
    - **Draft:** Create a quote tied to a `lead_id` (and optionally `price_list_id`). Status is initially `draft`.
@@ -42,6 +47,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
      - 1. Create a pending order using `checkout` (`action="create_order"` or `create_order_from_quotation`). Provide `site_id` and buyer details.
      - 2. Generate a Stripe link using `checkout` (`action="create_payment_link"`) with the `order_id` you just created.
      - 3. Reply sharing the Stripe URL.
+   - **Modifiers on order lines:** On `create_order`, each host line may include `modifiers: [{ catalogItemId, quantity, unitPriceOverride? }]`. Children are stored as nested `sale_order_items` (`parent_sale_order_item_id`) and are billed as separate Stripe lines.
    - You CANNOT charge credit cards directly. You MUST provide the Stripe URL.
    - The order stays `pending` until the commerce Stripe webhook confirms payment. Do not invent grants or orders.
    - **Avoid legacy sales tools:** Do NOT use the `sales` or `sales-order` tools for creating purchasable checkouts. Use `checkout`.
@@ -56,7 +62,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 | Tool | Usage |
 | --- | --- |
-| `catalog_commerce` | Create items, list/get, update name/pricing/listing flags (`is_marketplace_listed`, `is_reservation`, `is_purchasable`, `is_recurring`), or read pass configurations. |
+| `catalog_commerce` | Create items, list/get, update name/pricing/listing flags; manage modifiers via `resource` (`modifier_group`, `modifier_group_item`, `item_modifier_group`); `get` + `include_modifiers=true` to inspect. |
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |
 | `reservations` | Find available slots (`get_available_slots`), or book admin slots consuming `entitlement_id`. |

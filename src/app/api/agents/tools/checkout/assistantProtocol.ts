@@ -52,7 +52,7 @@ export function checkoutTool(current_site_id?: string) {
         lines: {
           type: 'string',
           description:
-            'JSON string of order lines. Each line needs: catalogItemId, quantity, and optionally unitPriceOverride. For reservable items (is_reservation=true), you MUST include reservationStart and reservationEnd (ISO dates; these are catalog capacity slots, not scheduling meetings).',
+            'JSON string of order lines. Each line needs: catalogItemId, quantity, and optionally unitPriceOverride. Optional modifiers: [{ catalogItemId, quantity, unitPriceOverride? }] — billed as child sale_order_items. For reservable items (is_reservation=true), you MUST include reservationStart and reservationEnd (ISO dates; these are catalog capacity slots, not scheduling meetings).',
         },
         order_id: {
           type: 'string',
