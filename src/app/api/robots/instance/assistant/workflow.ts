@@ -2,6 +2,7 @@
 
 import { prepareAssistantContext, processAssistantTurn } from './steps';
 import { getActiveInstancePlan, executePlanStep } from './plan-steps';
+import { persistUserMessageStep, markAssistantFailedStep } from './persist-and-fail-steps';
 
 // Define the workflow step
 export async function runAssistantWorkflow(
@@ -19,7 +20,12 @@ export async function runAssistantWorkflow(
   contextString?: string
 ) {
   'use workflow';
-  
+
+  try {
+    await persistUserMessageStep(instanceId, message, siteId, userId, {
+      prompt_source: 'assistant_workflow',
+    });
+
   // Step 1: Prepare context
   const context = await prepareAssistantContext(
     instanceId,
@@ -149,4 +155,10 @@ export async function runAssistantWorkflow(
     usage: finalResult.usage,
     instance_node_id: instanceNodeId,
   };
+  } catch (error: any) {
+    const errMsg = error instanceof Error ? error.message : String(error);
+    console.error(`[Workflow] Assistant failed after retries for instance ${instanceId}:`, errMsg);
+    await markAssistantFailedStep(instanceId, siteId, userId, errMsg.slice(0, 500));
+    throw error;
+  }
 }

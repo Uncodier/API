@@ -13,6 +13,7 @@ import {
 } from './utils';
 import { InstanceAssetsService } from '@/lib/services/robot-instance/InstanceAssetsService';
 import { executeAssistant } from '@/lib/services/robot-instance/assistant-executor';
+import { insertUserActionLog, withRetries } from './user-message-log';
 
 // ------------------------------------------------------------------------------------
 // POST /api/robots/instance/assistant
@@ -120,19 +121,13 @@ export async function POST(request: NextRequest) {
 
       console.log(`₍ᐢ•(ܫ)•ᐢ₎ Created uninstantiated instance: ${newInstance.id}`);
 
-      // Log user prompt
-      await supabaseAdmin.from('instance_logs').insert({
-        log_type: 'user_action',
-        level: 'info',
-        message: message,
-        details: {
-          prompt_source: 'assistant_route',
-          is_creation: true,
-        },
-        instance_id: newInstance.id,
-        site_id: providedSiteId,
-        user_id: userId,
-      });
+      await withRetries(() => insertUserActionLog({
+        instanceId: newInstance.id,
+        siteId: providedSiteId,
+        userId,
+        message,
+        details: { is_creation: true },
+      }));
 
       // Prepare context for immediate execution (avoiding workflow overhead for initial creation response if speed is preferred, 
       // but to be consistent with "use workflow", we could also use the workflow here. 
@@ -186,7 +181,7 @@ export async function POST(request: NextRequest) {
     // Get instance to verify existence and ownership
     const { data: instance, error: instanceError } = await supabaseAdmin
       .from('remote_instances')
-      .select('site_id, user_id')
+      .select('site_id, user_id, status')
       .eq('id', providedInstanceId)
       .single();
 
@@ -197,19 +192,13 @@ export async function POST(request: NextRequest) {
     const site_id = providedSiteId || instance.site_id;
     const user_id = providedUserId || instance.user_id;
 
-    // Log user prompt
-    await supabaseAdmin.from('instance_logs').insert({
-      log_type: 'user_action',
-      level: 'info',
-      message: message,
-      details: {
-        prompt_source: 'assistant_route',
-        instance_status: 'running', // Will be checked in workflow
-      },
-      instance_id: providedInstanceId,
-      site_id: site_id,
-      user_id: user_id,
-    });
+    await withRetries(() => insertUserActionLog({
+      instanceId: providedInstanceId,
+      siteId: site_id,
+      userId: user_id,
+      message,
+      details: { instance_status: instance.status || 'running' },
+    }));
     
     // Async unblock the requirement (reset cron_attempts and set to in-progress)
     resetRequirementOnUserAction(providedInstanceId).catch(console.error);
