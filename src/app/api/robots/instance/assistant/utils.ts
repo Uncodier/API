@@ -20,6 +20,7 @@ import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantP
 import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
 import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
+import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
 import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantProtocol';
 import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
 import { entitlementsTool } from '@/app/api/agents/tools/entitlements/assistantProtocol';
@@ -165,20 +166,23 @@ export const ICP_CATEGORY_IDS_INSTRUCTION = `
  */
 export const BOOKING_ROUTING_INSTRUCTION = `
 📅 BOOKINGS, CALENDARS & RESERVATIONS (STRICT ROUTING):
+Start with \`tool_lookup\` → \`calendars\` \`action="list"\` (optional \`query\` like "Mauricio"). That single call returns team members + personal working hours, round-robin team calendars, company business_hours, and reservable catalog services. Use it BEFORE scheduling or reservation_schedules.
+
 There are TWO completely separate booking stacks. You MUST use the correct one:
 
 1. PEOPLE & TEAM MEETINGS (Calendars):
-- Use for: Booking a meeting, consultation, or demo with a team member or person.
-- Tools: Use \`tool_lookup\` → \`scheduling\` (for availability and appointments) and/or \`tasks\` with \`type: "meeting"\`.
-- Rule: NEVER use \`reservations\`, \`reservation_schedules\`, or catalog checkout slots for people/meetings.
-- Storage: Individual calendars are in \`profiles.settings->calendar\`. Team calendars are in \`settings.calendars\`. All appointments are injected directly into the \`tasks\` table with \`type: "meeting"\`.
+- Configure hours: \`calendars\` \`action="update_member_calendar"\` (person) or \`update_team_calendar\` (round-robin). Times are 24h HH:mm (8pm = 20:00). Lunch is \`breaks: [{ start: "15:00", end: "16:00" }]\`.
+- Book a specific appointment: \`scheduling\` (availability/appointments) and/or \`tasks\` with \`type: "meeting"\`.
+- Rule: NEVER use \`scheduling\` to change weekly hours. NEVER use \`reservations\`, \`reservation_schedules\`, or catalog checkout slots for people/meetings.
+- Storage: Individual calendars are in \`profiles.settings->calendar\`. Team calendars are in \`settings.calendars\`. Appointments are \`tasks\` with \`type: "meeting"\`.
 
 2. CATALOG RESERVABLE ITEMS (Capacity/Products/Services):
 - Use for: Booking a service, product, or capacity slot from the catalog (where \`is_reservation=true\`).
-- Tools: Follow the \`makinari-commerce\` skill playbook: \`reservations.get_available_slots\` then \`checkout\` with \`reservationStart\`/\`reservationEnd\`.
+- Configure weekly windows: \`calendars\` \`action="update_service_schedule"\` or \`reservation_schedules\`.
+- Book a slot: follow the \`makinari-commerce\` skill: \`reservations.get_available_slots\` then \`checkout\` with \`reservationStart\`/\`reservationEnd\`.
 - Rule: NEVER use the \`scheduling\` tool or \`tasks\` for catalog capacity reservations.
 
-Ambiguous "book a service" requests: If it names a person/team, use stack #1. If it names a catalog item/capacity/pass, use stack #2. Ask ONE clarifying question only if both are plausible.`;
+Ambiguous "book a service" / "set hours" requests: If it names a person/team, use stack #1. If it names a catalog item/capacity/pass, use stack #2. Ask ONE clarifying question only if both are plausible.`;
 
 /**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
@@ -291,6 +295,7 @@ export const getAssistantTools = (
     dealsTool(siteId),
     catalogCommerceTool(siteId),
     reservationSchedulesTool(siteId),
+    calendarsTool(siteId),
     reservationsTool(siteId),
     checkoutTool(siteId),
     entitlementsTool(siteId),

@@ -11,6 +11,7 @@ import {
   eachDayOfInterval,
   format,
 } from 'date-fns';
+import { slotOverlapsBreaks } from '@/lib/reservations/weekly-hours';
 
 export async function getBookedSeats(
   catalogItemId: string,
@@ -79,7 +80,14 @@ export async function getAvailableSlots(
     while (isBefore(current, dayEnd)) {
       const slotEnd = addMinutes(current, duration);
       if (isAfter(slotEnd, dayEnd)) break;
-      
+
+      const slotStartMin = current.getHours() * 60 + current.getMinutes();
+      const slotEndMin = slotEnd.getHours() * 60 + slotEnd.getMinutes() || 24 * 60;
+      if (slotOverlapsBreaks(slotStartMin, slotEndMin, dayConfig.breaks)) {
+        current = slotEnd;
+        continue;
+      }
+
       // Calculate booked seats
       const booked = (reservations || []).filter((r: any) => {
         const rStart = new Date(r.start_time);
@@ -149,6 +157,12 @@ export async function assertReservationSlot(
 
   if (isBefore(start, dayStart) || isAfter(end, dayEnd)) {
     throw new Error('Slot is outside of available schedule hours');
+  }
+
+  const slotStartMin = start.getHours() * 60 + start.getMinutes();
+  const slotEndMin = end.getHours() * 60 + end.getMinutes() || 24 * 60;
+  if (slotOverlapsBreaks(slotStartMin, slotEndMin, dayConfig.breaks)) {
+    throw new Error('Slot overlaps a break (e.g. lunch) in the schedule');
   }
 
   const booked = await getBookedSeats(catalogItemId, start, end);

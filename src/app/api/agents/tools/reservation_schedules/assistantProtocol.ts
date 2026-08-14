@@ -39,7 +39,7 @@ export function reservationSchedulesTool(current_site_id?: string) {
         name: { type: 'string', description: 'Schedule name (optional)' },
         days: { 
           type: 'string', 
-          description: 'JSON string for weekly windows. e.g. {"monday": {"enabled": true, "start": "09:00", "end": "17:00"}}. Keys must be lowercase english days: monday, tuesday, wednesday, thursday, friday, saturday, sunday.' 
+          description: 'JSON string for weekly windows. e.g. {"monday": {"enabled": true, "start": "09:00", "end": "17:00", "breaks": [{"start": "15:00", "end": "16:00"}]}}. Keys must be lowercase english days: monday, tuesday, wednesday, thursday, friday, saturday, sunday. Optional breaks skip lunch/blocked windows.' 
         },
         limit: { type: 'number', description: 'Limit results for list' },
         offset: { type: 'number', description: 'Offset results for list' },

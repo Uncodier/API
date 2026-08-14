@@ -70,6 +70,7 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   price_lists: 'commerce',
   pass_redeemable_items: 'commerce',
   reservation_schedules: 'commerce',
+  calendars: 'crm',
   reservations: 'commerce',
   catalog_commerce: 'commerce',
   checkout: 'commerce',

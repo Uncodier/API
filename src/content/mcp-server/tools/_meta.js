@@ -36,6 +36,7 @@ export default {
   entitlements: { title: withPost('Entitlements') },
   subscription_plan_items: { title: withPost('Subscription Plan Items') },
   catalog_commerce: { title: withPost('Catalog Commerce') },
+  calendars: { title: withPost('Calendars') },
   reservation_schedules: { title: withPost('Reservation Schedules') },
   reservations: { title: withPost('Reservations') },
   checkout: { title: withPost('Checkout') },

@@ -382,7 +382,8 @@ Most capabilities (media, messaging, CRM, commerce, social, content, infra, rese
 - Use \`tool_lookup({ action: "list" })\` to see every routed tool grouped by category.
 - Use \`tool_lookup({ action: "describe", name: "<tool>" })\` to get the exact parameters schema + expected_use for a specific tool before calling it.
 - Use \`tool_lookup({ action: "call", name: "<tool>", args: { ... } })\` to execute it. If args are invalid the error includes the parameters schema so you can auto-correct and retry.
-- Examples: catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
+- Examples: calendars, catalog_commerce, checkout, quotations, generate_image, sendEmail, leads, sales, socialMediaPublish, content, webSearch — ALL live behind tool_lookup. The router is the only way to reach them.
+- To find people, working hours, team calendars, or reservable services: \`tool_lookup\` → \`calendars\` \`action="list"\`. Do not guess tool names for horarios.
 - Core tools like instance_plan, requirement_status, requirements, and skill_lookup are directly available and NOT routed.`;
 
   const skillLookupInstruction = `

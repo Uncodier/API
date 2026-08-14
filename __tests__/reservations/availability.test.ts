@@ -80,6 +80,33 @@ describe('Reservations Availability Lib', () => {
       expect(new Date(slots[1].start).getHours()).toBe(10);
     });
 
+    it('skips slots that overlap a lunch break', async () => {
+      const scheduleData = {
+        catalog_item_id: catalogItemId,
+        site_id: siteId,
+        duration_minutes: 60,
+        capacity: 1,
+        days: {
+          ...getDayConfig(),
+          monday: {
+            enabled: true,
+            start: '11:00',
+            end: '14:00',
+            breaks: [{ start: '12:00', end: '13:00' }],
+          },
+        },
+      };
+
+      const q = mockQuery(scheduleData);
+      q.gte.mockReturnValueOnce({
+        lte: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const hours = slots.map((slot) => new Date(slot.start).getHours());
+      expect(hours).toEqual([11, 13]);
+    });
+
     it('reduces remaining seats for overlapping bookings', async () => {
       const scheduleData = {
         catalog_item_id: catalogItemId,

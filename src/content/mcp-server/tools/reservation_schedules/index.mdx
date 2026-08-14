@@ -18,7 +18,7 @@ Manage reservation schedules for catalog items. A catalog item must have `is_res
 | duration_minutes | number | Length of a single slot in minutes (default 60) |
 | capacity | number | Maximum seats per slot (default 1) |
 | timezone | string | Timezone for the schedule (e.g. America/Mexico_City) |
-| days | string | JSON string for weekly windows. e.g. `{"monday": {"enabled": true, "start": "09:00", "end": "17:00"}}` |
+| days | string | JSON weekly windows. e.g. `{"monday": {"enabled": true, "start": "09:00", "end": "17:00", "breaks": [{"start": "13:00", "end": "14:00"}]}}`. Optional `breaks` skip lunch/blocked slots. |
 | limit | number | Limit results for list |
 | offset | number | Offset results for list |
 
@@ -27,6 +27,7 @@ Manage reservation schedules for catalog items. A catalog item must have `is_res
 - At least one day in the `days` object must be `enabled: true`.
 - The target `catalog_item` must have `is_reservation = true`.
 - The `days` object expects lowercase day names (`monday`, `tuesday`, etc.).
+- Optional `breaks` on a day (`[{ "start": "15:00", "end": "16:00" }]`) are excluded from bookable slots.
 
 ## Example
 

@@ -1,0 +1,70 @@
+---
+title: Calendars
+description: Find team members, personal and round-robin calendars, and reservable catalog services. Update working hours and lunch breaks.
+---
+
+# Calendars
+
+Directory + configuration for people, calendars, and bookable catalog services. Use this when the user names a person (e.g. Mauricio) and asks to set hours, lunch, or find who/what can be booked.
+
+`scheduling` only books a specific appointment. It does **not** change weekly hours.
+
+## Actions
+
+| Action | Purpose |
+| :--- | :--- |
+| `list` | Returns team members (with personal calendars), round-robin team calendars, company `business_hours`, and reservable catalog services. Optional `query` filters by name/email. |
+| `get` | Lookup by `query`, `user_id`, `catalog_item_id`, or `calendar_id`. |
+| `update_member_calendar` | Set a person's working hours on `profiles.settings.calendar`. |
+| `update_team_calendar` | Upsert a round-robin calendar on `settings.calendars`. |
+| `update_service_schedule` | Upsert weekly windows for a catalog item with `is_reservation=true`. |
+
+## Input Schema
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| action | string | list, get, update_member_calendar, update_team_calendar, update_service_schedule |
+| query | string | Name or email search (e.g. Mauricio) |
+| user_id | string | Team member UUID |
+| calendar_id | string | Round-robin calendar UUID |
+| catalog_item_id | string | Reservable catalog item UUID |
+| timezone | string | IANA timezone (e.g. America/Mexico_City) |
+| availability | string | JSON weekly hours. 24h `HH:mm`. Lunch uses `breaks`. |
+| days | string | Alias of availability |
+| enabled | boolean | Whether the calendar is bookable |
+| name | string | Team calendar or service schedule name |
+| member_ids | array | User IDs in a round-robin calendar |
+| duration_minutes | number | Catalog slot length (default 60) |
+| capacity | number | Catalog seats per slot (default 1) |
+
+## Availability format
+
+Times are 24h. `8pm` is `20:00`.
+
+```json
+{
+  "monday": {
+    "enabled": true,
+    "start": "11:00",
+    "end": "20:00",
+    "breaks": [{ "start": "15:00", "end": "16:00" }]
+  },
+  "saturday": { "enabled": true, "start": "11:00", "end": "16:00" },
+  "sunday": { "enabled": false }
+}
+```
+
+## Example — Find Mauricio and set hours
+
+```json
+{ "action": "list", "query": "Mauricio" }
+```
+
+```json
+{
+  "action": "update_member_calendar",
+  "user_id": "USER_UUID",
+  "timezone": "America/Mexico_City",
+  "availability": "{\"monday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"20:00\",\"breaks\":[{\"start\":\"15:00\",\"end\":\"16:00\"}]},\"tuesday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"20:00\",\"breaks\":[{\"start\":\"15:00\",\"end\":\"16:00\"}]},\"wednesday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"20:00\",\"breaks\":[{\"start\":\"15:00\",\"end\":\"16:00\"}]},\"thursday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"20:00\",\"breaks\":[{\"start\":\"15:00\",\"end\":\"16:00\"}]},\"friday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"20:00\",\"breaks\":[{\"start\":\"15:00\",\"end\":\"16:00\"}]},\"saturday\":{\"enabled\":true,\"start\":\"11:00\",\"end\":\"16:00\"},\"sunday\":{\"enabled\":false}}"
+}
+```

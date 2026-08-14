@@ -33,7 +33,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - **Convert to Order:** To let a client pay for a sent quote, use `checkout` with `action="create_order_from_quotation"`, then generate a payment link.
 
 3. **Reservation Schedules & Slots (Catalog Capacity)**
-   - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to book a meeting, consultation, or demo with a **team member**, do NOT use these tools—use the \`scheduling\` tool instead. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`scheduling\`.
+   - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to find a person, set working hours, or book a meeting/consultation/demo with a **team member**, use the \`calendars\` tool (list / update_member_calendar) and \`scheduling\` for a specific appointment. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`calendars\` + \`scheduling\`.
    - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`).
    - Before a reservable item can be sold, it MUST have a schedule configured via \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
    - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
@@ -64,6 +64,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | --- | --- |
 | `catalog_commerce` | Create items, list/get, update name/pricing/listing flags; manage modifiers via `resource` (`modifier_group`, `modifier_group_item`, `item_modifier_group`); `get` + `include_modifiers=true` to inspect. |
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
+| `calendars` | Directory of team members, personal/team calendars, and reservable services. Set working hours here. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |
 | `reservations` | Find available slots (`get_available_slots`), or book admin slots consuming `entitlement_id`. |
 | `pass_redeemable_items` | Map which reservable items a pass can be used for. |
