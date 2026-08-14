@@ -3,6 +3,8 @@
  * Keeps large data URLs out of Vercel Workflow step serialization.
  */
 
+import { fetchTwilioMedia, isTwilioMediaUrl } from '@/lib/services/twilio/fetchTwilioMedia';
+
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -19,16 +21,7 @@ function mimeFromHint(fileTypeHint?: string): string {
   return MIME_BY_EXT[(fileTypeHint || 'png').toLowerCase()] || 'image/png';
 }
 
-export async function downloadUrlAsDataImage(
-  url: string,
-  fileTypeHint?: string
-): Promise<string> {
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`HTTP error ${response.status} when downloading image`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
+function toDataImage(arrayBuffer: ArrayBuffer, headerMime?: string | null, fileTypeHint?: string): string {
   if (arrayBuffer.byteLength === 0) {
     throw new Error('Downloaded image is empty');
   }
@@ -36,13 +29,42 @@ export async function downloadUrlAsDataImage(
     throw new Error('Image exceeds 20MB limit');
   }
 
-  const headerMime = response.headers.get('content-type');
   const mimeType =
     headerMime && headerMime.startsWith('image/')
       ? headerMime.split(';')[0]!.trim()
       : mimeFromHint(fileTypeHint);
   const base64Content = Buffer.from(arrayBuffer).toString('base64');
   return `data:${mimeType};base64,${base64Content}`;
+}
+
+export async function downloadUrlAsDataImage(
+  url: string,
+  fileTypeHint?: string
+): Promise<string> {
+  if (isTwilioMediaUrl(url)) {
+    const downloaded = await fetchTwilioMedia(url);
+    return toDataImage(downloaded.buffer, downloaded.contentType, fileTypeHint);
+  }
+
+  const response = await fetch(url);
+  if (!response.ok) {
+    throw new Error(`HTTP error ${response.status} when downloading image`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  return toDataImage(arrayBuffer, response.headers.get('content-type'), fileTypeHint);
+}
+
+function imagePartUrl(part: any): string | undefined {
+  const raw = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+  return typeof raw === 'string' ? raw : undefined;
+}
+
+function withImageUrl(part: any, dataUrl: string): any {
+  if (typeof part.image_url === 'string') {
+    return { ...part, image_url: dataUrl };
+  }
+  return { ...part, image_url: { ...part.image_url, url: dataUrl } };
 }
 
 export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
@@ -53,11 +75,18 @@ export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
   for (const msg of messages) {
     if (!msg || !Array.isArray(msg.content)) continue;
 
+    const nextContent: any[] = [];
     for (const part of msg.content) {
-      if (part?.type !== 'image_url') continue;
-      const raw = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
-      if (typeof raw !== 'string') continue;
-      if (!raw.startsWith('http://') && !raw.startsWith('https://')) continue;
+      if (part?.type !== 'image_url') {
+        nextContent.push(part);
+        continue;
+      }
+
+      const raw = imagePartUrl(part);
+      if (typeof raw !== 'string' || (!raw.startsWith('http://') && !raw.startsWith('https://'))) {
+        nextContent.push(part);
+        continue;
+      }
 
       try {
         let dataUrl = cache.get(raw);
@@ -65,15 +94,14 @@ export async function hydrateMessageImages(messages: any[]): Promise<any[]> {
           dataUrl = await downloadUrlAsDataImage(raw);
           cache.set(raw, dataUrl);
         }
-        if (typeof part.image_url === 'string') {
-          part.image_url = dataUrl;
-        } else {
-          part.image_url = { ...part.image_url, url: dataUrl };
-        }
+        nextContent.push(withImageUrl(part, dataUrl));
       } catch (error) {
+        // Leave auth-protected URLs out of the Azure payload. Azure fetches
+        // image_url itself and cannot send Twilio Basic Auth.
         console.error(`❌ [vision-message-images] Failed to hydrate ${raw}:`, error);
       }
     }
+    msg.content = nextContent;
   }
 
   if (cache.size > 0) {
@@ -92,7 +120,9 @@ export function dehydrateMessageImages(messages: any[]): any[] {
     const textPart = msg.content.find((p: any) => p?.type === 'text' && typeof p.text === 'string');
     if (textPart?.text) {
       const matches = textPart.text.match(/https?:\/\/[^\s)]+/g);
-      if (matches) publicUrls.push(...matches);
+      if (matches) {
+        publicUrls.push(...matches.filter((candidate: string) => !isTwilioMediaUrl(candidate)));
+      }
     }
 
     let httpIdx = 0;
@@ -102,7 +132,7 @@ export function dehydrateMessageImages(messages: any[]): any[] {
         nextContent.push(part);
         continue;
       }
-      const raw = typeof part.image_url === 'string' ? part.image_url : part.image_url?.url;
+      const raw = imagePartUrl(part);
       if (typeof raw === 'string' && raw.startsWith('data:image/')) {
         const replacement = publicUrls[httpIdx++];
         if (replacement) {

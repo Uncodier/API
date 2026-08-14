@@ -14,6 +14,7 @@ jest.mock('@/lib/agentbase/adapters/AgentService', () => ({
 
 describe('InstanceAssetsService + vision-message-images', () => {
   let originalFetch: typeof global.fetch;
+  const originalTwilioToken = process.env.GEAR_TWILIO_AUTH_TOKEN;
 
   beforeEach(() => {
     originalFetch = global.fetch;
@@ -22,6 +23,8 @@ describe('InstanceAssetsService + vision-message-images', () => {
 
   afterEach(() => {
     global.fetch = originalFetch;
+    if (originalTwilioToken === undefined) delete process.env.GEAR_TWILIO_AUTH_TOKEN;
+    else process.env.GEAR_TWILIO_AUTH_TOKEN = originalTwilioToken;
   });
 
   describe('processAssetContent / MIME detection', () => {
@@ -113,6 +116,45 @@ describe('InstanceAssetsService + vision-message-images', () => {
         downloadUrlAsDataImage('https://example.com/fail.png')
       ).rejects.toThrow('HTTP error 404');
     });
+
+    it('downloads Twilio media with Basic Auth and does not forward it to S3', async () => {
+      const twilioUrl =
+        'https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Messages/MM1/Media/ME1';
+      const s3Url = 'https://s3.amazonaws.com/bucket/image.jpg';
+      const mockBuffer = Buffer.from('twilio-image');
+      process.env.GEAR_TWILIO_AUTH_TOKEN = 'secret-token';
+
+      global.fetch = jest
+        .fn()
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 307,
+          headers: new Headers({ location: s3Url }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          arrayBuffer: jest.fn().mockResolvedValue(mockBuffer),
+          headers: new Headers({ 'content-type': 'image/jpeg' }),
+        });
+
+      const dataUrl = await downloadUrlAsDataImage(twilioUrl);
+
+      expect(dataUrl).toBe(`data:image/jpeg;base64,${mockBuffer.toString('base64')}`);
+      expect(global.fetch).toHaveBeenNthCalledWith(
+        1,
+        twilioUrl,
+        expect.objectContaining({
+          redirect: 'manual',
+          headers: expect.any(Headers),
+        })
+      );
+      const firstHeaders = (global.fetch as jest.Mock).mock.calls[0][1].headers as Headers;
+      expect(firstHeaders.get('Authorization')).toBe(
+        `Basic ${Buffer.from('ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:secret-token').toString('base64')}`
+      );
+      expect(global.fetch).toHaveBeenNthCalledWith(2, s3Url);
+    });
   });
 
   describe('hydrateMessageImages / dehydrateMessageImages', () => {
@@ -146,6 +188,53 @@ describe('InstanceAssetsService + vision-message-images', () => {
 
       const dehydrated = dehydrateMessageImages(hydrated);
       expect(dehydrated[0].content[1].image_url.url).toBe('https://example.com/image.png');
+    });
+
+    it('drops image_url parts that cannot be hydrated so Azure never fetches them', async () => {
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: new Headers(),
+      });
+
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'photo' },
+            {
+              type: 'image_url',
+              image_url: {
+                url: 'https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Messages/MM1/Media/ME1',
+              },
+            },
+          ],
+        },
+      ];
+
+      const hydrated = await hydrateMessageImages(messages);
+      expect(hydrated[0].content).toEqual([{ type: 'text', text: 'photo' }]);
+    });
+
+    it('dehydrate prefers public URLs over Twilio media URLs', () => {
+      const messages = [
+        {
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: 'See https://api.twilio.com/2010-04-01/Accounts/ACaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/Messages/MM1/Media/ME1 and https://cdn.example.com/photo.jpg',
+            },
+            {
+              type: 'image_url',
+              image_url: { url: 'data:image/jpeg;base64,abc' },
+            },
+          ],
+        },
+      ];
+
+      const dehydrated = dehydrateMessageImages(messages);
+      expect(dehydrated[0].content[1].image_url.url).toBe('https://cdn.example.com/photo.jpg');
     });
   });
 });

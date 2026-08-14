@@ -6,6 +6,8 @@ import { resetRequirementOnUserAction } from '@/lib/services/requirement-cron-re
 
 import { normalizePhoneForSearch, normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 import { handleTwilioMediaAndCreateTask, TwilioMediaDownload } from '@/lib/services/twilio/TwilioMediaTaskService';
+import { replaceTwilioMediaUrls } from '@/lib/services/twilio/fetchTwilioMedia';
+import { fetchAudioBuffer, transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
 
 // Helper para extraer número
 function extractPhoneNumber(twilioPhoneFormat: string): string {
@@ -97,87 +99,19 @@ export async function POST(request: NextRequest) {
           if (media.contentType && media.contentType.toLowerCase().startsWith('audio/')) {
             try {
               console.log(`🎙️ Transcribiendo audio adjunto: ${media.url}`);
-              const headers = new Headers();
-              headers.set('Authorization', `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`);
-              
-              // Usar manual redirect para evitar pasar el token de Twilio al bucket S3 (donde redirecciona Twilio)
-              let resp = await fetch(media.url, { headers, redirect: 'manual' });
-              
-              if (resp.status >= 300 && resp.status < 400 && resp.headers.has('location')) {
-                 const redirectUrl = resp.headers.get('location')!;
-                 resp = await fetch(redirectUrl);
-              }
-              
-              if (resp.ok) {
-                const buffer = await resp.arrayBuffer();
-                const OpenAI = (await import('openai')).default;
-                const { Portkey } = require('portkey-ai');
-                
-                const directApiKey = process.env.OPENAI_API_KEY;
-                const portkeyApiKey = process.env.PORTKEY_API_KEY;
-                const baseURL = 'https://api.portkey.ai/v1';
-                const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-                
-                const file = await OpenAI.toFile(Buffer.from(buffer), 'audio.ogg', { type: media.contentType });
-                let success = false;
-                
-                // 1. Intentar con OpenAI Directo primero
-                if (directApiKey && !success) {
-                   try {
-                     const directOpenai = new OpenAI({ 
-                       apiKey: directApiKey,
-                       baseURL: 'https://api.openai.com/v1' // Forzar URL nativa de OpenAI
-                     });
-                     
-                     // Usamos any para evitar conflicto con los tipos de typescript 
-                     // si se rechaza mandar model undefined
-                     const transcriptionOptions: any = {
-                       file: file,
-                       model: 'whisper-1' // Se debe mandar explicitamente 'whisper-1' a OpenAI para transcripciones
-                     };
-                     
-                     const directTranscription = await directOpenai.audio.transcriptions.create(transcriptionOptions);
-                     if (directTranscription && directTranscription.text) {
-                        console.log(`✅ Transcripción directa exitosa: "${directTranscription.text.substring(0, 50)}..."`);
-                        messageContent += `\n\n[Mensaje de voz transcrito]: "${directTranscription.text}"`;
-                        success = true;
-                     }
-                   } catch (directErr: any) {
-                     console.warn(`⚠️ Error al transcribir audio en OpenAI directo: ${directErr.message}`);
-                   }
-                }
-                
-                // 2. Fallback a Portkey
-                if (!success && portkeyApiKey) {
-                  const portkeyOptions: any = {
-                     apiKey: portkeyApiKey,
-                     baseURL: baseURL,
-                     provider: 'openai',
-                  };
-                  
-                  if (virtualKey) {
-                    portkeyOptions.virtualKey = virtualKey;
-                  }
-
-                  const portkey = new Portkey(portkeyOptions);
-                  
-                  try {
-                    const transcription = await portkey.audio.transcriptions.create({
-                      file: file,
-                      model: 'whisper-1',
-                    });
-                    
-                    if (transcription && transcription.text) {
-                       console.log(`✅ Transcripción exitosa (Portkey): "${transcription.text.substring(0, 50)}..."`);
-                       messageContent += `\n\n[Mensaje de voz transcrito]: "${transcription.text}"`;
-                       success = true;
-                    }
-                  } catch (portkeyErr: any) {
-                     console.warn(`⚠️ Error en Portkey audio/transcriptions: ${portkeyErr.message}`);
-                  }
-                }
+              const { buffer, contentType } = await fetchAudioBuffer(media.url, {
+                twilioAccountSid: accountSid,
+                twilioAuthToken: authToken,
+              });
+              const result = await transcribeAudioBuffer({
+                buffer,
+                contentType: contentType || media.contentType,
+              });
+              if (result.success && result.text) {
+                console.log(`✅ Transcripción exitosa (${result.provider}): "${result.text.substring(0, 50)}..."`);
+                messageContent += `\n\n[Mensaje de voz transcrito]: "${result.text}"`;
               } else {
-                console.warn(`⚠️ Failed to download Twilio audio for transcription: ${resp.status}`);
+                console.warn(`⚠️ Error al transcribir audio: ${result.error}`);
               }
             } catch (err: any) {
               console.warn(`⚠️ Error al transcribir audio en el webhook:`, err.message);
@@ -499,8 +433,10 @@ export async function POST(request: NextRequest) {
           });
           
           if (mediaResult.success) {
+            if ('files' in mediaResult && Array.isArray(mediaResult.files)) {
+              messageContent = replaceTwilioMediaUrls(messageContent, mediaDownloads, mediaResult.files);
+            }
             console.log(`✅ ${mediaDownloads.length} archivos procesados y guardados exitosamente como assets de la instancia`);
-            // Agregar al contenido del mensaje que se ha subido el archivo exitosamente para que la IA lo sepa
             messageContent += `\n[System Note: User has successfully uploaded ${mediaDownloads.length} media file(s). They have been attached to your instance context.]`;
           } else {
             console.warn(`⚠️ Error procesando archivos: ${mediaResult.error}`);

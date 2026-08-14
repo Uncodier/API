@@ -22,6 +22,13 @@ export async function GET(request: Request) {
   if (!projectId) {
     return new NextResponse('VERCEL_PROJECT_ID not set', { status: 500 });
   }
+  if (!teamId) {
+    return new NextResponse('VERCEL_TEAM_ID not set', { status: 500 });
+  }
+
+  // @vercel/sandbox getCredentials is all-or-nothing: passing projectId/teamId
+  // without token throws "Missing credentials parameters ... token".
+  const credentials = { token: vercelToken, projectId, teamId };
 
   try {
     const results = {
@@ -59,33 +66,28 @@ export async function GET(request: Request) {
     // 2. Fetch all running sandboxes
     console.log(`[SandboxHousekeeping] Fetched ${activeSandboxIds.size} active sandbox IDs and ${activeSnapshotIds.size} active snapshot IDs from DB.`);
     
-    let page = 1;
-    let hasMore = true;
     const thirtyMinutesAgo = Date.now() - 30 * 60 * 1000;
-    
-    while (hasMore) {
-      // Vercel SDK currently has limited pagination, we'll hit the API directly if needed,
-      // but let's try the SDK first (it limits to ~100 by default or handles it internally)
-      let list: any;
+    let until: number | undefined;
+    let sandboxPages = 0;
+
+    while (sandboxPages < 100) {
+      sandboxPages++;
+      let list: Awaited<ReturnType<typeof Sandbox.list>>;
       try {
-        list = await Sandbox.list({ projectId, teamId });
-        hasMore = false; // The SDK list() might not paginate well, so we assume 1 page for now
+        list = await Sandbox.list({ ...credentials, ...(until ? { until } : {}) });
       } catch (e: unknown) {
         console.error('[SandboxHousekeeping] Failed to list sandboxes:', e);
         break;
       }
-      
-      const sandboxesArray = list?.json?.sandboxes || list?.sandboxes || [];
+
+      const sandboxesArray = list.json?.sandboxes ?? [];
       for (const sb of sandboxesArray) {
-        // Stop sandboxes that are NOT active in DB AND are older than 30 minutes
         if (!activeSandboxIds.has(sb.id)) {
-          // createdAt is usually a timestamp. If not available, we assume it's old enough
-          // depending on Vercel Sandbox API
           const createdAt = sb.createdAt ? new Date(sb.createdAt).getTime() : 0;
           if (createdAt < thirtyMinutesAgo) {
             console.log(`[SandboxHousekeeping] Stopping orphaned sandbox ${sb.id} (created ${new Date(createdAt).toISOString()})`);
             try {
-              const sandboxInstance = await Sandbox.get({ sandboxId: sb.id });
+              const sandboxInstance = await Sandbox.get({ sandboxId: sb.id, ...credentials });
               await Promise.race([
                 sandboxInstance.stop({ blocking: false }),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
@@ -98,6 +100,10 @@ export async function GET(request: Request) {
           }
         }
       }
+
+      const next = list.json?.pagination?.next;
+      if (!next || sandboxesArray.length === 0) break;
+      until = next;
     }
 
     // 3. Clean up orphaned snapshots

@@ -106,6 +106,10 @@ export function normalizeOrDropAzureVisionImageUrl(url: string): { ok: true; url
   if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
     try {
       const u = new URL(trimmed);
+      const host = u.hostname.toLowerCase();
+      if (host === 'api.twilio.com' || host.endsWith('.api.twilio.com')) {
+        return { ok: false, reason: 'auth_protected_twilio_media' };
+      }
       const path = u.pathname.toLowerCase();
       if (path.endsWith('.svg') || path.endsWith('.svgz')) {
         return { ok: false, reason: 'unsupported_remote_svg' };

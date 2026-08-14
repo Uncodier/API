@@ -1,6 +1,8 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { createTask } from '@/lib/database/task-db';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
+import { fetchTwilioMedia } from '@/lib/services/twilio/fetchTwilioMedia';
 
 const MAX_FILE_SIZE_MB = 25;
 const MAX_FILE_SIZE = MAX_FILE_SIZE_MB * 1024 * 1024;
@@ -37,27 +39,12 @@ export type TwilioMediaDownload = {
 };
 
 async function downloadTwilioMedia(url: string, accountSid: string, authToken: string): Promise<{ buffer: ArrayBuffer; contentType?: string } | null> {
-  const headers = new Headers();
-  headers.set('Authorization', `Basic ${Buffer.from(`${accountSid}:${authToken}`).toString('base64')}`);
-  
-  // Usamos redirect: 'manual' para evitar que se envíe el header de Authorization al bucket S3 al que Twilio redirige
-  let resp = await fetch(url, { headers, redirect: 'manual' });
-  
-  // Si Twilio redirige (307 Temporary Redirect)
-  if (resp.status >= 300 && resp.status < 400 && resp.headers.has('location')) {
-    const redirectUrl = resp.headers.get('location')!;
-    // Descargamos de S3 *sin* el header de Authorization
-    resp = await fetch(redirectUrl);
-  }
-  
-  if (!resp.ok) {
-    console.warn(`Twilio media download failed: ${resp.status} ${resp.statusText} for URL: ${url}`);
+  try {
+    return await fetchTwilioMedia(url, { accountSid, authToken });
+  } catch (error: any) {
+    console.warn(`Twilio media download failed: ${error?.message || error} for URL: ${url}`);
     return null;
   }
-  
-  const buffer = await resp.arrayBuffer();
-  const contentType = resp.headers.get('content-type') || undefined;
-  return { buffer, contentType };
 }
 
 export async function handleTwilioMediaAndCreateTask(params: {
@@ -212,78 +199,16 @@ export async function handleTwilioMediaAndCreateTask(params: {
     if (isAudio) {
       try {
         log(`Audio detected, attempting transcription for ${url}...`);
-        
-        // Importación dinámica para no afectar otras partes si no se usa
-        const OpenAI = (await import('openai')).default;
-        
-        // Use Portkey integration instead of Vercel AI Gateway directly
-        const { Portkey } = require('portkey-ai');
-        
-        const directApiKey = process.env.OPENAI_API_KEY;
-        const portkeyApiKey = process.env.PORTKEY_API_KEY;
-        const baseURL = 'https://api.portkey.ai/v1'; // Default Portkey URL
-        const virtualKey = process.env.AZURE_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-        
-        // Crear un file object a partir del buffer para OpenAI
-        // Whisper soporta mp3, mp4, mpeg, mpga, m4a, wav, y webm (y ogg si se especifica)
         const fileContentType = item.contentType || dl.contentType || 'audio/ogg';
-        const fileName = `audio.${ext}`;
-        
-        const file = await OpenAI.toFile(Buffer.from(dl.buffer), fileName, { type: fileContentType });
-        
-        let success = false;
-        
-        // 1. Intentar con OpenAI Directo primero (como en assistant)
-        if (directApiKey && !success) {
-           try {
-               const directOpenai = new OpenAI({ 
-                 apiKey: directApiKey,
-                 baseURL: 'https://api.openai.com/v1' // Forzar URL nativa de OpenAI
-               });
-               
-               const transcriptionOptions: any = {
-                 file: file,
-                 model: 'whisper-1' // Se debe mandar explicitamente 'whisper-1' a OpenAI para transcripciones
-               };
-               
-               const directTranscription = await directOpenai.audio.transcriptions.create(transcriptionOptions);
-               if (directTranscription && directTranscription.text) {
-                  transcriptionText = directTranscription.text;
-                  success = true;
-                  log(`Direct Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
-               }
-           } catch (directErr: any) {
-               warn(`Direct OpenAI transcription failed: ${directErr.message}`);
-           }
-        }
-        
-        // 2. Fallback a Portkey
-        if (!success && portkeyApiKey) {
-           const portkeyOptions: any = {
-             apiKey: portkeyApiKey,
-             baseURL: baseURL,
-             provider: 'openai',
-           };
-           
-           if (virtualKey) {
-             portkeyOptions.virtualKey = virtualKey;
-           }
-
-           const portkey = new Portkey(portkeyOptions);
-           try {
-              const transcription = await portkey.audio.transcriptions.create({
-                file: file,
-                model: 'whisper-1',
-              });
-              
-              if (transcription && transcription.text) {
-                 transcriptionText = transcription.text;
-                 success = true;
-                 log(`Portkey Transcription successful: "${transcriptionText.substring(0, 50)}..."`);
-              }
-           } catch (portkeyErr: any) {
-              warn(`Portkey transcription failed: ${portkeyErr.message}`);
-           }
+        const result = await transcribeAudioBuffer({
+          buffer: Buffer.from(dl.buffer),
+          contentType: fileContentType,
+        });
+        if (result.success && result.text) {
+          transcriptionText = result.text;
+          log(`Transcription successful via ${result.provider}: "${transcriptionText.substring(0, 50)}..."`);
+        } else {
+          warn(`Transcription failed: ${result.error}`);
         }
       } catch (transcriptionErr: any) {
         warn(`Transcription failed: ${transcriptionErr.message}`);
