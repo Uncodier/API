@@ -1,6 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getSchemaCore } from '../schema/route';
+import {
+  DATE_PERIODS,
+  computeAppliedRange,
+  resolveClientTimezone,
+  type AppliedRange,
+  type DatePeriod,
+} from '@/lib/timezone';
 
 // Tables the agent is allowed to query
 const ALLOWED_TABLES = [
@@ -35,6 +42,10 @@ export interface ReportQueryParams {
   limit?: number;
   offset?: number;
   count_only?: boolean;     // return just the total count
+  period?: DatePeriod;
+  date_from?: string;
+  date_to?: string;
+  date_column?: string;
 }
 
 export interface ReportQueryResult {
@@ -43,6 +54,7 @@ export interface ReportQueryResult {
   total?: number;
   has_more?: boolean;
   error?: string;
+  applied_range?: AppliedRange;
 }
 
 function isAllowedTable(t: string): t is AllowedTable {
@@ -58,14 +70,19 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
   const {
     table,
     site_id,
+    user_id,
     columns,
-    filters = [],
     order_by = 'created_at',
     order_dir = 'desc',
     limit = 50,
     offset = 0,
     count_only = false,
+    period,
+    date_from,
+    date_to,
+    date_column = 'created_at',
   } = params;
+  const filters: FilterCondition[] = [...(params.filters ?? [])];
 
   if (!isAllowedTable(table)) {
     return { success: false, error: `Table "${table}" is not allowed. Allowed: ${ALLOWED_TABLES.join(', ')}` };
@@ -102,6 +119,35 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
   }
   if (validColumns && !validColumns.has(order_by)) {
     return { success: false, error: `Order by column "${order_by}" does not exist in table "${table}".` };
+  }
+
+  if (period && !(DATE_PERIODS as readonly string[]).includes(period)) {
+    return { success: false, error: `Invalid period "${period}". Allowed: ${DATE_PERIODS.join(', ')}` };
+  }
+
+  let applied_range: AppliedRange | undefined;
+  if (period || date_from || date_to) {
+    if (!isSimpleColumn(date_column)) {
+      return { success: false, error: `Invalid date_column: "${date_column}"` };
+    }
+    if (validColumns && !validColumns.has(date_column)) {
+      return { success: false, error: `date_column "${date_column}" does not exist in table "${table}".` };
+    }
+
+    try {
+      const timezone = await resolveClientTimezone({ userId: user_id, siteId: site_id });
+      const range = computeAppliedRange(timezone, { period, date_from, date_to });
+      if (range) {
+        applied_range = range;
+        filters.push(
+          { column: date_column, operator: 'gte', value: range.start_utc },
+          { column: date_column, operator: 'lt', value: range.end_utc },
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Invalid date range';
+      return { success: false, error: message };
+    }
   }
 
   const safeLimit = Math.min(Math.max(1, limit), 100);
@@ -166,7 +212,7 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
     const total = count ?? 0;
 
     if (count_only) {
-      return { success: true, total };
+      return { success: true, total, applied_range };
     }
 
     // Strip the join relation key from rows (it was only needed for scoping)
@@ -187,6 +233,7 @@ export async function runReportQuery(params: ReportQueryParams): Promise<ReportQ
       rows,
       total,
       has_more: offset + safeLimit < total,
+      applied_range,
     };
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';

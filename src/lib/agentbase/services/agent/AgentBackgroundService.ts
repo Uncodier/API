@@ -6,6 +6,7 @@ import { AgentCacheService } from './AgentCacheService';
 import { FileProcessingService } from '../FileProcessingService';
 import { BackgroundBuilder, CapabilitiesExtractor, DataFetcher } from './BackgroundServices';
 import { DatabaseAdapter } from '../../adapters/DatabaseAdapter';
+import { resolveClientTimezone } from '@/lib/timezone';
 
 export class AgentBackgroundService {
   private agentCache: AgentCacheService;
@@ -124,6 +125,7 @@ export class AgentBackgroundService {
         console.log(`🔍 [AgentBackgroundService] *** LLAMANDO A BackgroundBuilder.buildAgentPrompt ***`);
         console.log(`🔍 [AgentBackgroundService] SiteInfo antes de BackgroundBuilder:`, siteInfo);
         console.log(`🔍 [AgentBackgroundService] SiteInfo.copywriting:`, (siteInfo as any)?.copywriting);
+        const timezone = await resolveClientTimezone({ siteId: siteId || undefined });
         let background = BackgroundBuilder.buildAgentPrompt(
           agentId,
           agentData.name,
@@ -133,7 +135,8 @@ export class AgentBackgroundService {
           agentData.systemPrompt,
           agentData.agentPrompt,
           siteInfo,
-          activeCampaigns
+          activeCampaigns,
+          timezone
         );
         
         // Añadir archivos al background si están disponibles
@@ -227,6 +230,9 @@ export class AgentBackgroundService {
 
       // Construir el background final
       console.log(`🧩 [AgentBackgroundService] Construyendo agentPrompt final para ${id}`);
+      const timezone = await resolveClientTimezone({
+        siteId: siteInfo?.site?.id || (id?.startsWith('site_') ? id.replace('site_', '') : undefined),
+      });
       const finalBackground = BackgroundBuilder.buildAgentPrompt(
         id, 
         processorData.name, 
@@ -236,7 +242,8 @@ export class AgentBackgroundService {
         processorData.systemPrompt,
         processorData.agentPrompt,
         siteInfo,
-        activeCampaigns
+        activeCampaigns,
+        timezone
       );
       
       // Registrar para debugging
@@ -302,6 +309,7 @@ export class AgentBackgroundService {
             }
 
             // Construir el background con toda la información
+            const timezone = await resolveClientTimezone({ siteId });
             let background = BackgroundBuilder.buildAgentPrompt(
               agentId,
               enhancedAgentData.formattedData.name,
@@ -311,7 +319,8 @@ export class AgentBackgroundService {
               enhancedAgentData.formattedData.systemPrompt,
               enhancedAgentData.formattedData.agentPrompt,
               enhancedAgentData.siteInfo,
-              activeCampaigns
+              activeCampaigns,
+              timezone
             );
             
             // Añadir archivos al background si están disponibles
@@ -354,6 +363,7 @@ export class AgentBackgroundService {
       }
 
       // Construir el background con la información del processor y el sitio
+      const timezone = await resolveClientTimezone({ siteId });
       const background = BackgroundBuilder.buildAgentPrompt(
         processor.getId() || 'generic',
         processorData.name,
@@ -363,7 +373,8 @@ export class AgentBackgroundService {
         processorData.systemPrompt,
         processorData.agentPrompt,
         siteInfo,
-        activeCampaigns
+        activeCampaigns,
+        timezone
       );
       
       console.log(`✅ [AgentBackgroundService] Background generado desde processor con sitio: ${siteId} (${background.length} caracteres)`);

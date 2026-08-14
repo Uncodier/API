@@ -295,7 +295,7 @@ export async function prepareAssistantContext(
   const hasLinkedRequirement = !!(requirementStatuses && requirementStatuses.length > 0);
 
   // Generate prompts
-  const agentBackground = await generateAgentBackground(siteId);
+  const agentBackground = await generateAgentBackground(siteId, userId);
   const memoriesContext = await fetchMemoriesContext(siteId, userId, instanceId);
   
   // Get tools list just for counting/prompt purposes here

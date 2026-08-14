@@ -20,6 +20,10 @@ export interface ReportToolParams {
   order_dir?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  period?: 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month';
+  date_from?: string;
+  date_to?: string;
+  date_column?: string;
 }
 
 // Compact schema summary injected into every response.
@@ -42,7 +46,7 @@ const NO_DIRECT_SITE_ID = new Set(['messages', 'agent_memories', 'audience_leads
 
 export function reportTool(site_id: string, user_id: string) {
   const execute = async (args: ReportToolParams) => {
-    const { action, table, columns, filters, order_by, order_dir, limit, offset } = args;
+    const { action, table, columns, filters, order_by, order_dir, limit, offset, period, date_from, date_to, date_column } = args;
 
     if (action !== 'list' && action !== 'count') {
       return { success: false, error: `Invalid action "${action}". Use "list" or "count".` };
@@ -72,6 +76,10 @@ export function reportTool(site_id: string, user_id: string) {
         limit: limit ?? 50,
         offset: offset ?? 0,
         count_only: action === 'count',
+        period,
+        date_from,
+        date_to,
+        date_column,
       });
 
       // Always attach the table's column list so the agent can self-correct
@@ -109,7 +117,10 @@ Rules:
 - Never add a site_id filter — it is applied automatically.
 - Use "count" first to know the total before paginating.
 - Increment offset by limit to get the next page. Stop when has_more=false.
-- If you get a column error, check table_schema in the response and retry with correct column names.`,
+- If you get a column error, check table_schema in the response and retry with correct column names.
+- For "today" / "this week" / "last month" (client local time), pass period. Do NOT invent UTC ISO bounds.
+- For a custom local calendar range, pass date_from and date_to as YYYY-MM-DD in the client's timezone.
+- applied_range in the response is the UTC window that was applied — quote local_start/local_end to the user, never raw Zulu times.`,
     parameters: {
       type: 'object',
       properties: {
@@ -152,6 +163,23 @@ Rules:
         order_dir: { type: 'string', enum: ['asc', 'desc'], description: 'Default: desc.' },
         limit: { type: 'number', description: 'Max rows (1–50). Default: 50.' },
         offset: { type: 'number', description: 'Pagination offset. Start at 0.' },
+        period: {
+          type: 'string',
+          enum: ['today', 'yesterday', 'this_week', 'last_week', 'this_month', 'last_month'],
+          description: 'Client-timezone relative range. Converted to UTC on created_at (or date_column). Prefer this over hand-written ISO filters.',
+        },
+        date_from: {
+          type: 'string',
+          description: 'Inclusive local calendar start (YYYY-MM-DD) in the user timezone. Overrides period when set.',
+        },
+        date_to: {
+          type: 'string',
+          description: 'Inclusive local calendar end (YYYY-MM-DD) in the user timezone. Defaults to date_from.',
+        },
+        date_column: {
+          type: 'string',
+          description: 'Timestamp column for period/date_from. Default: created_at.',
+        },
       },
       required: ['action', 'table'],
     },

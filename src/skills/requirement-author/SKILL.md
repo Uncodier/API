@@ -108,11 +108,14 @@ Bullet list of ambiguities the human must resolve. Block Definition of Ready if 
 - **Primary**: the `instructions` field on the requirement row. Update it via the `requirements` tool with `action="update"`. This is the only authoritative source.
 - **Optional snapshot**: write `REQUIREMENT.md` at the repo root with `sandbox_write_file` for humans browsing the repo.
 
+### 3.1 Client time
+Deadlines, windows, and "today / this week" in Goals, Acceptance Criteria, and Revisions are the **client's local time** (`profiles.timezone` in the prompt). Always name the IANA zone next to a wall-clock time (`due Friday 18:00 America/Mexico_City`). Storage and cron stay UTC — convert local hours to UTC before writing a `cron` expression.
+
 ### 4. When updating an existing requirement
 1. Read the current `instructions` first. Never overwrite blindly.
 2. Preserve completed checkboxes (`[x]`) in the Execution Plan — they represent real prior progress.
 3. Append new sections or refine existing ones. Do not re-order required sections.
-4. If the client feedback changes the Contract (API shape, test-ids), add an entry to a `## Revisions` section at the bottom with date and summary so downstream skills can diff.
+4. If the client feedback changes the Contract (API shape, test-ids), add an entry to a `## Revisions` section at the bottom with date and summary so downstream skills can diff. Write that date in the client timezone (IANA from the prompt, e.g. `2026-08-14 15:26 America/Mexico_City`), never as a UTC `Z` timestamp.
 
 ### 4.1. Requirements and Repositories (1:1 Relationship)
 **CRITICAL:** Every requirement has its own unique, isolated repository.

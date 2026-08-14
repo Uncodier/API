@@ -55,6 +55,7 @@ Pendiente (si aplica):
 - Keep it under ~10 lines. The platform UI truncates long messages.
 - No internal jargon: avoid "sandbox", "checkpoint", "gate". Translate to client-facing verbs.
 - If the deliverable has a known gap (from `qa_results.json` or a Non-Goal), state it plainly.
+- Dates in `message` must use the client's local timezone from the prompt (Client timezone / Client local now). Never show raw ISO `Z` / UTC timestamps to the client. Example: `viernes 14 ago 2026, 15:26` not `2026-08-14T21:26:00.000Z`.
 
 ### 5. Archive
 The workspace archive is uploaded automatically on each `sandbox_push_checkpoint` (and after `sandbox_restore_checkpoint`). You do NOT need to call these manually.

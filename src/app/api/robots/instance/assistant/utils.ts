@@ -4,6 +4,7 @@ import { normalizePhoneForStorage } from '@/lib/utils/phone-normalizer';
 import { getContextMemories } from '@/lib/services/agent-memory-tools-service';
 import { BackgroundBuilder } from '@/lib/agentbase/services/agent/BackgroundServices/BackgroundBuilder';
 import { DataFetcher } from '@/lib/agentbase/services/agent/BackgroundServices/DataFetcher';
+import { resolveClientTimezone } from '@/lib/timezone';
 
 // Tool imports
 import { generateImageTool } from '@/app/api/agents/tools/generateImage/assistantProtocol';
@@ -100,7 +101,7 @@ export async function fetchMemoriesContext(
 /**
  * Generate agent background using BackgroundBuilder service
  */
-export async function generateAgentBackground(siteId: string): Promise<string> {
+export async function generateAgentBackground(siteId: string, userId?: string): Promise<string> {
   try {
     console.log(`🧩 [Assistant] Generating agent background for site: ${siteId}`);
     
@@ -132,7 +133,7 @@ export async function generateAgentBackground(siteId: string): Promise<string> {
     console.log(`🔍 [Assistant] Site info available: ${siteInfo ? 'YES' : 'NO'}`);
     console.log(`🔍 [Assistant] Active campaigns: ${activeCampaigns?.length || 0}`);
     
-    // Generate background using BackgroundBuilder
+    const timezone = await resolveClientTimezone({ userId, siteId });
     const background = BackgroundBuilder.buildAgentPrompt(
       agentData.id,
       agentData.name,
@@ -142,7 +143,8 @@ export async function generateAgentBackground(siteId: string): Promise<string> {
       agentData.system_prompt,
       agentData.agent_prompt,
       siteInfo,
-      activeCampaigns
+      activeCampaigns,
+      timezone
     );
     
     console.log(`✅ [Assistant] Generated agent background (${background.length} characters)`);

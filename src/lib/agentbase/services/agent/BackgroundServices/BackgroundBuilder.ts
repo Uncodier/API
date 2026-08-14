@@ -4,6 +4,7 @@
  */
 
 import { z } from 'zod';
+import { buildDateContextSection } from '@/lib/timezone';
 
 // Esquema base para direcciones/locaciones (estructura común)
 const BaseLocationSchema = z.object({
@@ -112,7 +113,8 @@ export class BackgroundBuilder {
     activeCampaigns?: Array<{
       title: string;
       description?: string;
-    }>
+    }>,
+    timezone?: string
   ): string {
     // Reduced verbosity - only log essentials
     console.log(`🧩 [BackgroundBuilder] Building prompt for ${name}`);
@@ -121,7 +123,7 @@ export class BackgroundBuilder {
     
     // Construir el prompt de forma estructurada por bloques
     const sections = [
-      this.createServerDateSection(),
+      this.createServerDateSection(timezone),
       this.createIdentitySection(id, name),
       this.createBackstorySection(backstory),
       this.createDescriptionSection(description),
@@ -149,11 +151,10 @@ export class BackgroundBuilder {
   }
   
   /**
-   * Crea la sección con la fecha del servidor
+   * Injects server UTC plus the client's local clock and precomputed UTC filter bounds.
    */
-  private static createServerDateSection(): string {
-    const serverDate = new Date().toISOString();
-    return `# Current Server Date & Time\nServer UTC: ${serverDate}`;
+  private static createServerDateSection(timezone?: string): string {
+    return buildDateContextSection(timezone);
   }
   
   /**
