@@ -1,0 +1,43 @@
+# Categories Tool
+
+The `categories` tool allows you to read, create, update, and delete generic site categories from the database. It is primarily used to discover the correct `category_id` UUIDs required by the `catalog_commerce` and `tasks` tools, allowing agents to correctly group products and tasks without asking the user to manually provide the IDs.
+
+## Capabilities
+
+- List all categories (with optional search filter)
+- Retrieve a single category by ID
+- Create new categories
+- Update existing categories
+- Delete categories
+
+## Parameters
+
+| Parameter | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `action` | string | Yes | The operation to perform: `list`, `get`, `create`, `update`, `delete`. |
+| `id` | string | Optional | UUID of the category. Required for `get`, `update`, and `delete`. |
+| `name` | string | Optional | Name of the category. Required for `create`. |
+| `description` | string | Optional | Description of the category. |
+| `icon` | string | Optional | Icon identifier. |
+| `color` | string | Optional | Color hex code. |
+| `is_active` | boolean | Optional | Whether the category is active. Defaults to `true` on creation. |
+| `search` | string | Optional | Filter categories by name during `list`. |
+
+## Common Usage
+
+### Listing categories to find an ID
+```json
+{
+  "action": "list",
+  "search": "Bebidas"
+}
+```
+
+### Creating a new category
+```json
+{
+  "action": "create",
+  "name": "Cuidado y Barbería",
+  "description": "Productos para el cuidado personal"
+}
+```

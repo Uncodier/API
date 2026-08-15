@@ -43,6 +43,7 @@ import { createIcpMiningTool } from '@/app/api/agents/tools/createIcpMining/assi
 import { getFinderCategoryIdsTool } from '@/app/api/agents/tools/getFinderCategoryIds/assistantProtocol';
 import { searchRegionVenuesTool } from '@/app/api/agents/tools/searchRegionVenues/assistantProtocol';
 import { webhooksTool } from '@/app/api/agents/tools/webhooks/assistantProtocol';
+import { categoriesTool } from '@/app/api/agents/tools/categories/assistantProtocol';
 import { urlToMarkdownTool } from '@/app/api/agents/tools/urlToMarkdown/assistantProtocol';
 import { urlToSitemapTool } from '@/app/api/agents/tools/urlToSitemap/assistantProtocol';
 import { segmentsTool } from '@/app/api/agents/tools/segments/assistantProtocol';
@@ -318,6 +319,7 @@ export const getAssistantTools = (
     segmentsTool(siteId, userId),
     campaignsTool(siteId, userId),
     assetsTool(siteId, userId),
+    categoriesTool(siteId, userId),
     instancePlanTool(siteId, instanceId, userId),
     workflowsTool(siteId, userId),
     copywritingTool(siteId, userId),

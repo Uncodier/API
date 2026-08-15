@@ -54,7 +54,7 @@ export function catalogCommerceTool(current_site_id?: string) {
   return {
     name: 'catalog_commerce',
     description:
-      'Create, search, and manage catalog items and product modifiers. Default resource="item": use action="create"/"list"/"get"/"update" for products. For modifiers: resource="modifier_group" (selection rules), resource="modifier_group_item" (options = catalog items in a group), resource="item_modifier_group" (attach a group to a host product). Use get on an item with include_modifiers=true to read attached groups and options.',
+      'Create, search, and manage catalog items and product modifiers. Default resource="item": use action="create"/"list"/"get"/"update" for products. For modifiers: resource="modifier_group" (selection rules), resource="modifier_group_item" (options = catalog items in a group), resource="item_modifier_group" (attach a group to a host product). Use get on an item with include_modifiers=true to read attached groups and options. If you need a category_id, use the "categories" tool to list and find the correct UUID.',
     parameters: {
       type: 'object',
       properties: {

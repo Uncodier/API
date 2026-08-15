@@ -81,6 +81,7 @@ const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   createIcpMining: 'crm',
   getFinderCategoryIds: 'crm',
   search_region_venues: 'crm',
+  categories: 'content',
 
   // social
   social_media_accounts: 'social',
