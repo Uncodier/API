@@ -16,7 +16,7 @@ Directory + configuration for people, calendars, and bookable catalog services. 
 | `list` | Returns team members (with personal calendars), round-robin team calendars, company `business_hours`, and reservable catalog services. Optional `query` filters by name/email. |
 | `get` | Lookup by `query`, `user_id`, `catalog_item_id`, or `calendar_id`. |
 | `update_member_calendar` | Set a person's working hours on `profiles.settings.calendar`. |
-| `update_team_calendar` | Upsert a round-robin calendar on `settings.calendars`. |
+| `update_team_calendar` | Upsert a round-robin calendar on `settings.calendars`. DO NOT use for catalog services. |
 | `update_service_schedule` | Upsert weekly windows for a catalog item with `is_reservation=true`. |
 
 ## Input Schema

@@ -34,8 +34,8 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 3. **Reservation Schedules & Slots (Catalog Capacity)**
    - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to find a person, set working hours, or book a meeting/consultation/demo with a **team member**, use the \`calendars\` tool (list / update_member_calendar) and \`scheduling\` for a specific appointment. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`calendars\` + \`scheduling\`.
-   - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`).
-   - Before a reservable item can be sold, it MUST have a schedule configured via \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
+   - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`). If the user asks to create a new bookable service, DO NOT use update_team_calendar. You MUST create the catalog item first, then use update_service_schedule.
+   - Before a reservable item can be sold, it MUST have a schedule configured via \`calendars\` (\`action="update_service_schedule"\`) or \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
    - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
 
 4. **Passes & Subscriptions**

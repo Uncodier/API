@@ -25,7 +25,7 @@ export function calendarsTool(current_site_id?: string) {
   return {
     name: 'calendars',
     description:
-      'Find and configure team members, personal calendars/working hours, round-robin team calendars, and reservable catalog services in one tool. Use action="list" first (optional query="Mauricio") to see people, their weekly hours, team calendars, company business_hours, and bookable services. Use action="update_member_calendar" to set a person\'s hours and lunch breaks. Use action="update_team_calendar" for shared round-robin calendars. Use action="update_service_schedule" for catalog items with is_reservation=true. Do NOT use scheduling to change weekly hours — scheduling only books a specific appointment.',
+      'Find and configure team members, personal calendars/working hours, round-robin team calendars, and reservable catalog services in one tool. Use action="list" first (optional query="Mauricio") to see people, their weekly hours, team calendars, company business_hours, and bookable services. Use action="update_member_calendar" to set a person\'s hours and lunch breaks. Use action="update_team_calendar" ONLY for shared round-robin calendars. DO NOT use update_team_calendar for catalog services or individuals. Use action="update_service_schedule" for catalog items with is_reservation=true. Do NOT use scheduling to change weekly hours — scheduling only books a specific appointment.',
     parameters: {
       type: 'object',
       properties: {
@@ -33,7 +33,7 @@ export function calendarsTool(current_site_id?: string) {
           type: 'string',
           enum: ['list', 'get', 'update_member_calendar', 'update_team_calendar', 'update_service_schedule'],
           description:
-            'list: directory of members+calendars+reservable services. get: lookup by query/user_id/catalog_item_id/calendar_id. update_member_calendar: set a person\'s working hours. update_team_calendar: upsert a round-robin calendar. update_service_schedule: upsert a catalog reservation schedule.',
+            'list: directory of members+calendars+reservable services. get: lookup by query/user_id/catalog_item_id/calendar_id. update_member_calendar: set a person\'s working hours. update_team_calendar: upsert a round-robin group calendar. DO NOT use for catalog services. update_service_schedule: upsert a catalog reservation schedule.',
         },
         query: {
           type: 'string',

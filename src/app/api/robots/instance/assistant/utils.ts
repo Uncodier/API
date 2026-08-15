@@ -176,13 +176,14 @@ There are TWO completely separate booking stacks. You MUST use the correct one:
 - Configure hours: \`calendars\` \`action="update_member_calendar"\` (person) or \`update_team_calendar\` (round-robin). Times are 24h HH:mm (8pm = 20:00). Lunch is \`breaks: [{ start: "15:00", end: "16:00" }]\`.
 - Book a specific appointment: \`scheduling\` (availability/appointments) and/or \`tasks\` with \`type: "meeting"\`.
 - Rule: NEVER use \`scheduling\` to change weekly hours. NEVER use \`reservations\`, \`reservation_schedules\`, or catalog checkout slots for people/meetings.
+- CRITICAL: NEVER use \`update_team_calendar\` for catalog services or individual people. \`team_calendars\` are strictly for Round-Robin groups. For new reservable services, FIRST create them with \`catalog_commerce\` (\`is_reservation=true\`), then use \`update_service_schedule\`.
 - Storage: Individual calendars are in \`profiles.settings->calendar\`. Team calendars are in \`settings.calendars\`. Appointments are \`tasks\` with \`type: "meeting"\`.
 
 2. CATALOG RESERVABLE ITEMS (Capacity/Products/Services):
 - Use for: Booking a service, product, or capacity slot from the catalog (where \`is_reservation=true\`).
 - Configure weekly windows: \`calendars\` \`action="update_service_schedule"\` or \`reservation_schedules\`.
 - Book a slot: follow the \`makinari-commerce\` skill: \`reservations.get_available_slots\` then \`checkout\` with \`reservationStart\`/\`reservationEnd\`.
-- Rule: NEVER use the \`scheduling\` tool or \`tasks\` for catalog capacity reservations.
+- Rule: NEVER use the \`scheduling\` tool or \`tasks\` for catalog capacity reservations. NEVER use \`update_team_calendar\` for services.
 
 Ambiguous "book a service" / "set hours" requests: If it names a person/team, use stack #1. If it names a catalog item/capacity/pass, use stack #2. Ask ONE clarifying question only if both are plausible.`;
 

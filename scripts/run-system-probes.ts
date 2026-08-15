@@ -6,8 +6,8 @@
  * CI (STATUS_PROBE_CI_LENIENT=true): fails only on database_main + env_core.
  * Strict (default for cron/manual): all CRITICAL_SYSTEM_KEYS including AI.
  */
-import { persistProbeRun } from '../src/lib/status/persist-status.ts';
-import { runChecksOnly, validateCriticalSystems } from '../src/lib/status/run-probes.ts';
+import { persistProbeRun } from '../src/lib/status/persist-status';
+import { runChecksOnly, validateCriticalSystems } from '../src/lib/status/run-probes';
 
 const trigger = (process.env.STATUS_PROBE_TRIGGER as 'github_push' | 'cron_hourly' | 'manual') || 'github_push';
 const ciLenient = process.env.STATUS_PROBE_CI_LENIENT === 'true' || process.env.CI === 'true';
