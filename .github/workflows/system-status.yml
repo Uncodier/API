@@ -6,6 +6,13 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Two jobs — not the full Jest suite (legacy failures elsewhere).
+# status-tests: unit only in src/lib/status/__tests__
+#   (registry, SLA, timelines, sanitization, AI evaluate, publish/webhook).
+#   No live HTTP.
+# system-probes: live npm run status:probe against STATUS_PROBE_BASE_URL.
+#   CI lenient: only database_main + env_core fail the job.
+#   Persists via service_role; public reads are webhook + Realtime broadcast.
 jobs:
   status-tests:
     runs-on: ubuntu-latest

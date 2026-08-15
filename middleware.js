@@ -50,6 +50,10 @@ export default async function middleware(request) {
   const isVercelWebhook =
     request.nextUrl.pathname === '/api/integrations/vercel/webhook';
 
+  // Public system-status webhook (DB is service_role only; this is the HTTP surface)
+  const isStatusWebhook =
+    request.nextUrl.pathname === '/api/status/webhook';
+
   // Supabase Auth Send Email Hook: Standard Webhooks signature verified in route
   const isSupabaseAuthEmailHook =
     request.nextUrl.pathname === '/api/auth/send-email-hook';
@@ -98,6 +102,7 @@ export default async function middleware(request) {
     isAgentMailWebhook,
     isOutstandWebhook,
     isVercelWebhook,
+    isStatusWebhook,
     isSupabaseAuthEmailHook,
     headers: {
       'x-api-key': request.headers.get('x-api-key') ? 'PRESENT' : 'ABSENT',
@@ -148,6 +153,15 @@ export default async function middleware(request) {
     const response = safeNext();
     response.headers.set('X-Middleware-Executed', 'true');
     response.headers.set('X-Vercel-Webhook', 'true');
+    return response;
+  }
+
+  // Public status webhook (GET/POST). Tables stay closed; no API key.
+  if (isStatusWebhook) {
+    console.log('[Middleware] Status webhook detected - skipping origin/API validation');
+    const response = safeNext();
+    response.headers.set('X-Middleware-Executed', 'true');
+    response.headers.set('X-Status-Webhook', 'true');
     return response;
   }
 

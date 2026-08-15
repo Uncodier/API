@@ -1,6 +1,6 @@
--- System status tables for SLA monitoring and public /status page.
+-- System status tables for SLA monitoring. Tables are service_role only.
+-- Public reads: GET/POST /api/status/webhook + Realtime broadcast `system-status`.
 -- Rollback:
---   DROP VIEW IF EXISTS public.system_status_public;
 --   DROP TABLE IF EXISTS public.system_status;
 --   DROP TABLE IF EXISTS public.system_status_runs;
 
@@ -68,22 +68,6 @@ CREATE POLICY "system_status service only"
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 
--- Public read view (sanitized columns only; health_payload should already be sanitized by app)
-CREATE OR REPLACE VIEW public.system_status_public AS
-SELECT
-  s.id,
-  s.run_id,
-  s.system_key,
-  s.status,
-  s.summary,
-  s.latency_ms,
-  s.health_payload,
-  s.created_at,
-  r.overall_status AS run_overall_status,
-  r.trigger AS run_trigger
-FROM public.system_status s
-JOIN public.system_status_runs r ON r.id = s.run_id;
-
-GRANT SELECT ON public.system_status_public TO anon, authenticated;
+DROP VIEW IF EXISTS public.system_status_public;
 
 COMMIT;

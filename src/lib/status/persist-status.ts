@@ -1,11 +1,44 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { computeOverallSla, computeSlaBySystem } from '@/lib/status/compute-sla';
+import type { PublicStatusSummary } from '@/lib/status/get-public-summary';
+import { publishSystemStatus } from '@/lib/status/publish-status';
+import { SYSTEM_LABELS } from '@/lib/status/system-labels';
 import {
   sanitizePublicPayload,
   type ProbeRunResult,
   type ProbeTrigger,
   type SystemHealthResponse,
 } from '@/lib/status/types';
-import { computeSlaBySystem } from '@/lib/status/compute-sla';
+
+function toPublicSummary(
+  trigger: ProbeTrigger,
+  overallStatus: 'healthy' | 'degraded' | 'down',
+  systems: SystemHealthResponse[],
+  slaSnapshot: Record<string, { uptime24h: number; uptime7d: number; uptime30d: number }>,
+): PublicStatusSummary {
+  const overallMap = {
+    healthy: 'operational',
+    degraded: 'degraded',
+    down: 'down',
+  } as const;
+  return {
+    overall: overallMap[overallStatus],
+    overallSla24h: computeOverallSla(slaSnapshot),
+    lastRunAt: new Date().toISOString(),
+    lastTrigger: trigger,
+    systems: systems.map((s) => ({
+      systemKey: s.systemKey,
+      label: s.label || SYSTEM_LABELS[s.systemKey] || s.systemKey,
+      status: s.status,
+      summary: s.summary,
+      latencyMs: s.latencyMs,
+      checkedAt: s.checkedAt,
+      checks: sanitizePublicPayload(s.checks ?? {}),
+      sla: slaSnapshot[s.systemKey],
+    })),
+    slaBySystem: slaSnapshot,
+  };
+}
 
 function overallFromSystems(
   systems: SystemHealthResponse[],
@@ -68,7 +101,7 @@ export async function persistProbeRun(
     throw new Error(`Failed to persist system_status: ${checksError.message}`);
   }
 
-  return {
+  const result: ProbeRunResult = {
     runId: run.id,
     trigger,
     overallStatus,
@@ -76,4 +109,12 @@ export async function persistProbeRun(
     systems,
     slaSnapshot,
   };
+
+  try {
+    await publishSystemStatus(toPublicSummary(trigger, overallStatus, systems, slaSnapshot));
+  } catch (error) {
+    console.warn('[system-status] broadcast after persist failed:', error);
+  }
+
+  return result;
 }
