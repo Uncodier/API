@@ -7,12 +7,8 @@ export interface CategoriesToolParams {
   action: 'create' | 'list' | 'get' | 'update' | 'delete';
   id?: string;
   site_id?: string;
-  user_id?: string;
   name?: string;
   description?: string;
-  icon?: string;
-  color?: string;
-  is_active?: boolean;
   search?: string;
   limit?: number;
   offset?: number;
@@ -22,7 +18,7 @@ export function categoriesTool(current_site_id?: string, current_user_id?: strin
   return {
     name: 'categories',
     description:
-      'Manage site categories. Used to retrieve category UUIDs for assigning to catalog items (category_id) or task categories. Action "list" can filter by search. Returns id, name, and description.',
+      'Manage catalog categories. Used to retrieve category UUIDs for assigning to catalog items (category_id). Action "list" can filter by search. Returns id, name, and description.',
     parameters: {
       type: 'object',
       properties: {
@@ -38,9 +34,6 @@ export function categoriesTool(current_site_id?: string, current_user_id?: strin
         site_id: { type: 'string', description: 'Site UUID' },
         name: { type: 'string', description: 'Name of the category (required for create)' },
         description: { type: 'string', description: 'Description of the category' },
-        icon: { type: 'string', description: 'Icon identifier' },
-        color: { type: 'string', description: 'Color hex code' },
-        is_active: { type: 'boolean', description: 'Whether the category is active' },
         search: { type: 'string', description: 'Search term to filter categories by name' },
         limit: { type: 'number', description: 'Pagination limit' },
         offset: { type: 'number', description: 'Pagination offset' },
@@ -55,8 +48,7 @@ export function categoriesTool(current_site_id?: string, current_user_id?: strin
       
       const payload = {
         ...args,
-        site_id,
-        user_id: args.user_id || current_user_id,
+        site_id
       };
       
       return await fetchApiTool('/api/agents/tools/categories', payload, 'Failed to perform category operation');
