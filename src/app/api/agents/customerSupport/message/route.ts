@@ -4,6 +4,12 @@ import { getCommandById as dbGetCommandById } from '@/lib/database/command-db';
 import { DatabaseAdapter } from '@/lib/agentbase/adapters/DatabaseAdapter';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-tool';
+import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
+import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantProtocol';
+import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
+import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
+import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
+import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
@@ -1490,6 +1496,14 @@ export async function POST(request: Request) {
     contextMessage += `- converted → payment received or contract signed (only if verified).\n`;
     contextMessage += `- lost → explicit rejection, competitor chosen, or no response after agreed cadence.\n`;
     contextMessage += `Use QUALIFY_LEAD with: site_id, status, and one identifier (lead_id | email | phone). Add notes briefly explaining the change.\n`;
+    
+    // Commerce & Reservations Policy
+    contextMessage += `\n\n=== COMMERCE & RESERVATIONS ===\n`;
+    contextMessage += `When a user asks to buy or book a product/service:\n`;
+    contextMessage += `1. Use catalog_commerce to find the item (use include_modifiers=true when getting an item to check for variants).\n`;
+    contextMessage += `2. CRITICAL: If the item has modifiers or variants, YOU MUST ask the user to choose them before proceeding.\n`;
+    contextMessage += `3. For catalog item reservations, use the reservations tool to check slots, and checkout tool to complete the order.\n`;
+    contextMessage += `4. For team/person meetings, use calendars tool to find team members and scheduling tool to book them.\n`;
 
     const command = CommandFactory.createCommand({
       task: 'create message',
@@ -1524,6 +1538,30 @@ export async function POST(request: Request) {
         {
           type: "function",
           function: skillLookupTool()
+        },
+        {
+          type: "function",
+          function: catalogCommerceTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: reservationsTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: reservationSchedulesTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: calendarsTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: schedulingTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: checkoutTool(effectiveSiteId)
         },
         {
           type: "function",
