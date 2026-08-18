@@ -64,6 +64,15 @@ export async function getAvailableSlots(
     .gte('start_time', startOfDay(parseISO(startDateStr)).toISOString())
     .lte('end_time', endOfDay(parseISO(endDateStr)).toISOString());
 
+  // 3. Get calendar blocks
+  const { data: calendarBlocks } = await supabaseAdmin
+    .from('calendar_blocks')
+    .select('start_time, end_time, entity_type, entity_id')
+    .eq('site_id', schedule.site_id)
+    .in('entity_type', ['global', 'catalog_item'])
+    .lte('start_time', endOfDay(parseISO(endDateStr)).toISOString())
+    .gte('end_time', startOfDay(parseISO(startDateStr)).toISOString());
+
   for (const dateObj of days) {
     const dayOfWeek = format(dateObj, 'eeee').toLowerCase();
     const dayConfig = schedule.days[dayOfWeek];
@@ -95,7 +104,18 @@ export async function getAvailableSlots(
         return isBefore(current, rEnd) && isAfter(slotEnd, rStart);
       }).reduce((acc: number, r: any) => acc + (r.quantity || 1), 0);
 
-      const available = capacity - booked;
+      // Check calendar blocks overlap
+      const isBlocked = (calendarBlocks || []).some((b: any) => {
+        // Block is valid if global or if catalog_item matches
+        const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
+        if (!applies) return false;
+
+        const bStart = new Date(b.start_time);
+        const bEnd = new Date(b.end_time);
+        return isBefore(current, bEnd) && isAfter(slotEnd, bStart);
+      });
+
+      const available = isBlocked ? 0 : capacity - booked;
 
       if (available >= qty && isAfter(current, new Date())) {
         result.push({
@@ -163,6 +183,28 @@ export async function assertReservationSlot(
   const slotEndMin = end.getHours() * 60 + end.getMinutes() || 24 * 60;
   if (slotOverlapsBreaks(slotStartMin, slotEndMin, dayConfig.breaks)) {
     throw new Error('Slot overlaps a break (e.g. lunch) in the schedule');
+  }
+
+  // Check calendar blocks
+  const { data: calendarBlocks } = await supabaseAdmin
+    .from('calendar_blocks')
+    .select('start_time, end_time, entity_type, entity_id')
+    .eq('site_id', siteId)
+    .in('entity_type', ['global', 'catalog_item'])
+    .lte('start_time', endIso)
+    .gte('end_time', startIso);
+
+  const isBlocked = (calendarBlocks || []).some((b: any) => {
+    const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
+    if (!applies) return false;
+
+    const bStart = new Date(b.start_time);
+    const bEnd = new Date(b.end_time);
+    return isBefore(start, bEnd) && isAfter(end, bStart);
+  });
+
+  if (isBlocked) {
+    throw new Error('Slot overlaps with a calendar block');
   }
 
   const booked = await getBookedSeats(catalogItemId, start, end);

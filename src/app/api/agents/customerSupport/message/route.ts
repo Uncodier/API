@@ -7,6 +7,7 @@ import { skillLookupTool } from '@/app/api/agents/tools/sandbox/skill-lookup-too
 import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
 import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantProtocol';
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
+import { calendarBlocksTool } from '@/app/api/agents/tools/calendar_blocks/assistantProtocol';
 import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
 import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
 import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
@@ -1550,6 +1551,10 @@ export async function POST(request: Request) {
         {
           type: "function",
           function: reservationSchedulesTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: calendarBlocksTool(effectiveSiteId)
         },
         {
           type: "function",

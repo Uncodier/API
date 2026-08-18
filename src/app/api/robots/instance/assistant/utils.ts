@@ -21,6 +21,7 @@ import { requirementsTool } from '@/app/api/agents/tools/requirements/assistantP
 import { leadsTool } from '@/app/api/agents/tools/leads/assistantProtocol';
 import { catalogCommerceTool } from '@/app/api/agents/tools/catalog_commerce/assistantProtocol';
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
+import { calendarBlocksTool } from '@/app/api/agents/tools/calendar_blocks/assistantProtocol';
 import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
 import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantProtocol';
 import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
@@ -299,6 +300,7 @@ export const getAssistantTools = (
     dealsTool(siteId),
     catalogCommerceTool(siteId),
     reservationSchedulesTool(siteId),
+    calendarBlocksTool(siteId),
     calendarsTool(siteId),
     reservationsTool(siteId),
     checkoutTool(siteId),
