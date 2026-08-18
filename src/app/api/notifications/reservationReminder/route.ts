@@ -109,9 +109,6 @@ function generateReservationHtml(data: { siteName: string; subject: string; mess
   `;
 }
 
-import { NextResponse } from 'next/server';
-import { NextRequest } from 'next/server';
-
 export async function OPTIONS() {
   const headers = new Headers();
   headers.set('Access-Control-Allow-Origin', '*');
