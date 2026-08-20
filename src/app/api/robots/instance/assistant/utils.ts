@@ -61,6 +61,7 @@ import { reportTool } from '@/app/api/agents/tools/report/assistantProtocol';
 import { createAccountTool, verifyAccountTool } from '@/app/api/agents/gear/whatsapp/tools';
 import { instanceProjectTool } from '@/app/api/agents/tools/instance_project/assistantProtocol';
 import { createProjectTool } from '@/app/api/agents/tools/createProject/assistantProtocol';
+import { companiesTool } from '@/app/api/agents/tools/companies/assistantProtocol';
 import { systemNotificationTool } from '@/app/api/agents/tools/system_notification/assistantProtocol';
 import { requirementStatusTool } from '@/app/api/agents/tools/requirement_status/assistantProtocol';
 import { requirementBacklogTool } from '@/app/api/agents/tools/requirement_backlog/assistantProtocol';
@@ -188,6 +189,13 @@ There are TWO completely separate booking stacks. You MUST use the correct one:
 - Rule: NEVER use the \`scheduling\` tool or \`tasks\` for catalog capacity reservations. NEVER use \`update_team_calendar\` for services.
 
 Ambiguous "book a service" / "set hours" requests: If it names a person/team, use stack #1. If it names a catalog item/capacity/pass, use stack #2. Ask ONE clarifying question only if both are plausible.`;
+
+export const EXPENSES_VS_PURCHASES_INSTRUCTION = `
+💵 EXPENSES VS PURCHASES:
+When the user asks to register a salary ("salario") or a general expense, you MUST treat it as an expense, not a purchase of goods.
+To differentiate:
+- Clearly mark the title or notes indicating it is an expense (e.g., "Salary - [Month]").
+- Use the appropriate category or name ("Salaries & Benefits") rather than linking to physical catalog items.`;
 
 /**
  * Primes the assistant to tie sandbox-backed deliverables to requirements + status,
@@ -333,6 +341,7 @@ export const getAssistantTools = (
     systemNotificationTool(siteId),
     requirementStatusTool(siteId, instanceId),
     requirementBacklogTool(siteId),
+    companiesTool(),
     instanceLogsTool(siteId, userId ?? '', instanceId),
     createProjectTool(userId ?? ''),
     audioToTextTool(siteId),
