@@ -237,6 +237,14 @@ Whenever the user asks for a web app, site, landing page, presentation or deck (
 - If you need to rework or rewrite something that is already "done", you MUST either reopen the existing item (\`set_status\` to \`in_progress\` with \`confirm_reopen: true\`) or \`upsert\` a new \`core\` tier item. Only then can you create a new \`instance_plan\` for it.`;
 }
 
+export const GEAR_PROJECT_SWITCH_INSTRUCTION = `
+🔄 PROJECT SWITCHING (GEAR ONLY):
+If the user asks to change or switch their active project (e.g. "cambia mi proyecto", "quiero usar otro proyecto"), you MUST follow these steps strictly using \`tool_lookup\`:
+1. First, call \`tool_lookup({ action: "call", name: "instance_project", args: { action: "list" } })\` to get the list of their available projects.
+2. Show them the list and ask which one they want to manage.
+3. Once they reply with their choice, call \`tool_lookup({ action: "call", name: "instance_project", args: { action: "set", site_id: "<selected_id>" } })\` to change the active project.
+Do not perform any other actions or guess the project ID until they confirm.`;
+
 /**
  * Determine the instance type and available tools based on instance data and environment
  */

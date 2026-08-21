@@ -16,6 +16,7 @@ import {
   getRequirementWorkflowInstruction,
   BOOKING_ROUTING_INSTRUCTION,
   EXPENSES_VS_PURCHASES_INSTRUCTION,
+  GEAR_PROJECT_SWITCH_INSTRUCTION,
 } from './utils';
 
 import type { AssistantContext } from './types';
@@ -423,6 +424,7 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \
     ICP_CATEGORY_IDS_INSTRUCTION,
     BOOKING_ROUTING_INSTRUCTION,
     EXPENSES_VS_PURCHASES_INSTRUCTION,
+    agentType === 'gear' ? GEAR_PROJECT_SWITCH_INSTRUCTION : '',
     renameInstruction,
     toolsWithImageGeneration.length > 0 ? `\n\n🔧 CUSTOM TOOLS: ${toolsWithImageGeneration.length} additional tool(s)` : ''
   ].filter(Boolean).join('\n');
