@@ -192,6 +192,16 @@ export async function createTask(taskData: CreateTaskParams): Promise<DbTask> {
       throw new Error(`Error creating task: ${error.message}`);
     }
 
+    if (data?.site_id) {
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({
+        table: 'tasks',
+        op: 'insert',
+        row: data as unknown as Record<string, unknown>,
+        site_id: data.site_id,
+      });
+    }
+
     return removeNullValues(data) || data;
   } catch (error: any) {
     console.error('Error in createTask:', error);

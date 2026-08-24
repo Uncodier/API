@@ -11,6 +11,8 @@ export interface AssistantContext {
     instance_id: string;
     site_id: string;
     user_id: string;
+    plan_id?: string;
+    step_id?: string;
     /** Optional LLM provider override (gemini | azure | openai). Defaults to env AI_PROVIDER. */
     ai_provider?: 'gemini' | 'azure' | 'openai';
     /** Optional LLM model override. Defaults to env AI_MODEL / provider default. */

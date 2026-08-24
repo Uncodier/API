@@ -226,6 +226,16 @@ export async function createContent(params: CreateContentParams): Promise<DbCont
     throw new Error(`Error creating content: ${error.message}`);
   }
 
+  if (data?.site_id) {
+    const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+    fireWorkflowDispatch({
+      table: 'content',
+      op: 'insert',
+      row: data as unknown as Record<string, unknown>,
+      site_id: data.site_id,
+    });
+  }
+
   return data as DbContent;
 }
 
@@ -253,6 +263,16 @@ export async function updateContent(id: string, params: UpdateContentParams): Pr
 
   if (error) {
     throw new Error(`Error updating content: ${error.message}`);
+  }
+
+  if (data?.site_id) {
+    const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+    fireWorkflowDispatch({
+      table: 'content',
+      op: 'update',
+      row: data as unknown as Record<string, unknown>,
+      site_id: data.site_id,
+    });
   }
 
   return data as DbContent;

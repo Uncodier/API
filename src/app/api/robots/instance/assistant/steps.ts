@@ -400,7 +400,16 @@ Follow the loaded SKILL.md playbooks before calling tools via \`tool_lookup\`. \
 - Purchasable flows use \`checkout\`, not legacy \`sales\` / \`sales_order\`.
 - When an uploaded image is attached, use the HTTP URLs from the CRITICAL list as product image fields / references.`;
 
-  const combinedSystemPrompt = [
+  const isWorkflowMode = (systemPrompt || '').includes('WORKFLOW MODE');
+
+  const combinedSystemPrompt = isWorkflowMode
+    ? [
+        systemPrompt || '',
+        instanceContext,
+        toolLookupInstruction,
+        skillLookupInstruction,
+      ].filter(Boolean).join('\n')
+    : [
     agentBackground,
     instanceContext,
     nodeModeInstruction,

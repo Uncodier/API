@@ -204,6 +204,15 @@ async function saveMessages(userId: string, userMessage: string, assistantMessag
         
         conversationId = conversation.id;
         console.log(`🗣️ Nueva conversación creada con ID: ${conversationId}`);
+        if (conversation.site_id) {
+          const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+          fireWorkflowDispatch({
+            table: 'conversations',
+            op: 'insert',
+            row: conversation as Record<string, unknown>,
+            site_id: conversation.site_id,
+          });
+        }
       } catch (createConvError) {
         console.error('Error al crear conversación (excepción):', createConvError);
         return null;

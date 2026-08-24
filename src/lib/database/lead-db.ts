@@ -179,6 +179,14 @@ export async function createLead(params: CreateLeadParams): Promise<DbLead> {
     throw new Error(`Error creating lead: ${error.message}`);
   }
 
+  const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+  fireWorkflowDispatch({
+    table: 'leads',
+    op: 'insert',
+    row: data as unknown as Record<string, unknown>,
+    site_id: data.site_id,
+  });
+
   return data as DbLead;
 }
 
@@ -208,6 +216,14 @@ export async function updateLead(id: string, params: UpdateLeadParams): Promise<
   if (error) {
     throw new Error(`Error updating lead: ${error.message}`);
   }
+
+  const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+  fireWorkflowDispatch({
+    table: 'leads',
+    op: 'update',
+    row: data as unknown as Record<string, unknown>,
+    site_id: data.site_id,
+  });
 
   return data as DbLead;
 }

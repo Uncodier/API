@@ -81,6 +81,10 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
+      if (data && site_id) {
+        const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+        fireWorkflowDispatch({ table: 'reservations', op: 'insert', row: data, site_id });
+      }
       return NextResponse.json({ success: true, reservation: data });
     }
 
@@ -154,6 +158,10 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
+      if (data && site_id) {
+        const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+        fireWorkflowDispatch({ table: 'reservations', op: 'update', row: data, site_id });
+      }
       return NextResponse.json({ success: true, reservation: data });
     }
 

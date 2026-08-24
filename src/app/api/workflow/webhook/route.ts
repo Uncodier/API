@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import { fireWorkflowDispatch } from '@/lib/services/workflow-robot/dispatch';
+import { DB_EVENT_TABLES } from '@/lib/services/workflow-robot/types';
 
 type TableRecord<T = any> = T & { id?: string };
 
@@ -77,6 +79,22 @@ export async function POST(request: NextRequest) {
 
     const eventsToCheck = [event, ...aliases];
     console.log('[webhook] site_id:', site_id, 'table:', body.table, 'type:', body.type, 'events:', eventsToCheck);
+
+    // Same realtime ingress Temporal uses (Supabase DB webhook → this route).
+    // Robot workflows subscribe here; they do not run as Temporal workflows.
+    const op =
+      body.type === 'INSERT' ? 'insert' : body.type === 'UPDATE' ? 'update' : 'delete';
+    if (
+      currentRecord &&
+      DB_EVENT_TABLES.includes(body.table as (typeof DB_EVENT_TABLES)[number])
+    ) {
+      fireWorkflowDispatch({
+        table: body.table,
+        op,
+        row: currentRecord as Record<string, unknown>,
+        site_id,
+      });
+    }
 
     // Attempt querying across potential table names to avoid naming mismatches
     const candidateTables = [

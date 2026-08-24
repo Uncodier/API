@@ -40,7 +40,7 @@ export type ToolLookupCategory =
 // Category assignment is best-effort metadata for the `list` action so the
 // model can filter/narrow (e.g. "show me all media tools"). Unknown names
 // fall back to "other".
-const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
+export const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   // media
   generate_image: 'media',
   generate_video: 'media',

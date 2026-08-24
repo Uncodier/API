@@ -52,10 +52,15 @@ export async function completeInProgressPlans(
       return result;
     }
 
-    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${activePlans.length} active plan(s) to complete`);
+    const closablePlans = activePlans.filter((plan) => {
+      const meta = (plan.metadata || {}) as { workflow_template?: boolean; workflow_run?: boolean };
+      return !meta.workflow_template && !meta.workflow_run;
+    });
+
+    console.log(`₍ᐢ•(ܫ)•ᐢ₎ Found ${closablePlans.length} active plan(s) to complete`);
 
     // Complete all active plans
-    for (const plan of activePlans) {
+    for (const plan of closablePlans) {
       const { error: updateError } = await supabaseAdmin
         .from('instance_plans')
         .update({

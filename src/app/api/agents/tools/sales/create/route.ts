@@ -81,6 +81,11 @@ export async function POST(request: NextRequest) {
       await supabaseAdmin.from('sale_items').insert(saleItems);
     }
 
+    if (sale && site_id) {
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({ table: 'sales', op: 'insert', row: sale, site_id });
+    }
+
     return NextResponse.json({ success: true, sale }, { status: 201 });
 
   } catch (error) {

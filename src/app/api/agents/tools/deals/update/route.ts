@@ -64,6 +64,16 @@ export async function POST(request: NextRequest) {
       .eq('id', deal_id)
       .single();
 
+    if (updatedDeal) {
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({
+        table: 'deals',
+        op: 'update',
+        row: updatedDeal as Record<string, unknown>,
+        site_id,
+      });
+    }
+
     return NextResponse.json({ success: true, deal: updatedDeal });
 
   } catch (error) {

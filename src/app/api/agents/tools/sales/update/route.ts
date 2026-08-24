@@ -52,6 +52,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, error: 'Failed to update sale' }, { status: 500 });
     }
 
+    if (data && site_id) {
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({ table: 'sales', op: 'update', row: data, site_id });
+    }
+
     return NextResponse.json({ success: true, sale: data }, { status: 200 });
 
   } catch (error) {

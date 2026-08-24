@@ -28,6 +28,10 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
+      if (data && site_id) {
+        const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+        fireWorkflowDispatch({ table: 'quotations', op: 'insert', row: data, site_id });
+      }
       return NextResponse.json({ success: true, quotation: data });
     }
 
@@ -72,6 +76,10 @@ export async function POST(request: NextRequest) {
         .single();
 
       if (error) throw new Error(error.message);
+      if (data && site_id) {
+        const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+        fireWorkflowDispatch({ table: 'quotations', op: 'update', row: data, site_id });
+      }
       return NextResponse.json({ success: true, quotation: data });
     }
 

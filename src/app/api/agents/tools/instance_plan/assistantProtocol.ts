@@ -253,6 +253,17 @@ export function instancePlanTool(site_id: string, instance_id: string, user_id?:
         if (!params.instance_id) {
              throw new Error('Missing required field: instance_id');
         }
+        const { data: workflowRun } = await supabaseAdmin
+          .from('instance_plans')
+          .select('id')
+          .eq('instance_id', params.instance_id)
+          .eq('status', 'in_progress')
+          .contains('metadata', { workflow_run: true })
+          .limit(1)
+          .maybeSingle();
+        if (workflowRun) {
+          throw new Error('WORKFLOW MODE: do not create instance_plans. Execute the current step only.');
+        }
         const body = {
           ...params,
           site_id: params.site_id || site_id,
