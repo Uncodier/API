@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { CommandFactory, ProcessorInitializer } from '@/lib/agentbase';
 
+export const maxDuration = 300;
+
 // Initialize the agent processor
 const processorInitializer = ProcessorInitializer.getInstance();
 processorInitializer.initialize();

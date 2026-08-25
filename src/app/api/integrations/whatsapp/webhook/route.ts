@@ -1,7 +1,9 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+
+export const maxDuration = 300;
 
 // Util function to validate UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -289,18 +291,21 @@ async function processWhatsAppMessage(
     if (agentId && isValidUUID(agentId)) {
       console.log(`🤖 Solicitando respuesta del agente ${agentId}`);
       
-      // Trigger agent processing asynchronously - don't await to avoid delaying the response
-      triggerAgentProcessing(savedMessage.conversationId, savedMessage.messageId)
-        .then(success => {
-          if (success) {
-            console.log(`✅ Procesamiento con agente iniciado correctamente`);
-          } else {
-            console.error(`❌ Error al iniciar procesamiento con agente`);
-          }
-        })
-        .catch(error => {
-          console.error(`❌ Excepción al iniciar procesamiento con agente:`, error);
-        });
+      // Keep the serverless process alive after the 200 OK so Vercel does not
+      // freeze the agent work when the webhook returns.
+      after(() =>
+        triggerAgentProcessing(savedMessage.conversationId, savedMessage.messageId)
+          .then(success => {
+            if (success) {
+              console.log(`✅ Procesamiento con agente iniciado correctamente`);
+            } else {
+              console.error(`❌ Error al iniciar procesamiento con agente`);
+            }
+          })
+          .catch(error => {
+            console.error(`❌ Excepción al iniciar procesamiento con agente:`, error);
+          })
+      );
     } else {
       console.log(`⚠️ No se especificó agentId, no se procesará el mensaje automáticamente`);
     }
