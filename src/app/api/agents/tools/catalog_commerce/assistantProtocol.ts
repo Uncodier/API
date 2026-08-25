@@ -38,6 +38,7 @@ export interface CatalogCommerceToolParams {
   pass_validity_days?: number;
   search?: string;
   sort_order?: number;
+  metadata?: Record<string, unknown>;
 
   // Modifiers
   modifier_group_id?: string;
@@ -109,6 +110,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         pass_validity_days: { type: 'number', description: 'Days the pass is valid for' },
         search: { type: 'string', description: 'Search term for name/description' },
         sort_order: { type: 'number', description: 'Sort order for display' },
+        metadata: { type: 'object', description: 'JSON metadata for custom attributes like to-go / dine-in' },
         modifier_group_id: {
           type: 'string',
           description: 'Modifier group UUID (for modifier_group_item / item_modifier_group)',

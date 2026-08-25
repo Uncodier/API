@@ -27,6 +27,7 @@ const COMMERCE_FIELDS = [
   'availability_status',
   'pass_uses',
   'pass_validity_days',
+  'metadata',
 ] as const;
 
 function pickDefined(source: Record<string, unknown>, keys: readonly string[]) {

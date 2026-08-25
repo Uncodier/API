@@ -116,4 +116,36 @@ describe('catalog_commerce create action', () => {
     expect(json.success).toBe(false);
     expect(json.error).toMatch(/site_id/i);
   });
+
+  it('creates an item with metadata', async () => {
+    const metadata = { para_llevar: true, consumir_aqui: true };
+    const created = {
+      id: 'cat-2',
+      site_id: siteId,
+      name: 'Burger',
+      metadata,
+    };
+    const chain = mockInsert({ data: created });
+
+    const req = new NextRequest('http://localhost/api/agents/tools/catalog_commerce', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'create',
+        site_id: siteId,
+        name: 'Burger',
+        metadata,
+      }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata,
+      })
+    );
+  });
 });
