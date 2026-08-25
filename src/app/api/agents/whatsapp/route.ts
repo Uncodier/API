@@ -66,8 +66,11 @@ export async function POST(request: NextRequest) {
     const businessPhoneNumber = extractPhoneNumber(webhookData.To);
     console.log(`🏢 Número de negocio: ${businessPhoneNumber}`);
     
-    // Buscar la configuración de WhatsApp basada en el número de negocio
-    const configResult = await findWhatsAppConfiguration(businessPhoneNumber);
+    // Resolve site from To number (MX +52 vs WhatsApp +521) or AccountSid
+    const configResult = await findWhatsAppConfiguration(
+      businessPhoneNumber,
+      webhookData.AccountSid
+    );
     
     if (!configResult.success) {
       console.error('❌ No se pudo encontrar la configuración de WhatsApp:', configResult.error);

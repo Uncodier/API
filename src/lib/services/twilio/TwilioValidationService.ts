@@ -5,6 +5,7 @@
 import crypto from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { decryptToken } from '@/lib/utils/token-decryption';
+import { pickMatchingWhatsAppToken } from '@/lib/services/twilio/whatsapp-number-match';
 
 interface TwilioValidationResult {
   isValid: boolean;
@@ -74,13 +75,13 @@ export class TwilioValidationService {
     try {
       console.log('[TwilioValidation] Buscando auth token para número:', whatsappNumber);
       
-      // Buscar en secure_tokens donde identifier contenga el número de WhatsApp
+      // Site already resolved. Match identifier with MX +52/+521 variants;
+      // if the site has a single WhatsApp token, use it even when formats differ.
       const { data: tokens, error } = await supabaseAdmin
         .from('secure_tokens')
         .select('*')
         .eq('site_id', siteId)
-        .eq('token_type', 'twilio_whatsapp')
-        .like('identifier', `%${whatsappNumber}%`);
+        .eq('token_type', 'twilio_whatsapp');
 
       if (error) {
         console.error('[TwilioValidation] Error en consulta a base de datos:', error);
@@ -90,16 +91,14 @@ export class TwilioValidationService {
         };
       }
 
-      if (!tokens || tokens.length === 0) {
+      const tokenRecord = pickMatchingWhatsAppToken(tokens || [], whatsappNumber);
+      if (!tokenRecord) {
         console.log('[TwilioValidation] No se encontró token para este número');
         return {
           success: false,
           error: `No Twilio auth token found for WhatsApp number ${whatsappNumber} in site ${siteId}`
         };
       }
-
-      // Tomar el primer token encontrado
-      const tokenRecord = tokens[0];
       console.log('[TwilioValidation] Token encontrado, desencriptando...');
 
       // Desencriptar el token

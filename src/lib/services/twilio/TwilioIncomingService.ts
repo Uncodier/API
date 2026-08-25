@@ -1,5 +1,9 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WorkflowService } from '@/lib/services/workflow-service';
+import {
+  pickMatchingWhatsAppToken,
+  whatsappIdentifierSearchKeys,
+} from '@/lib/services/twilio/whatsapp-number-match';
 
 export interface TwilioWhatsAppWebhook {
   MessageSid: string;
@@ -81,54 +85,102 @@ export async function findWhatsAppConversation(leadId: string): Promise<string |
   }
 }
 
-export async function findWhatsAppConfiguration(businessPhoneNumber: string): Promise<{
+async function findAgentForSite(
+  siteId: string,
+  tokenRecord?: { metadata?: { agent_id?: string } | null }
+): Promise<string | undefined> {
+  if (tokenRecord?.metadata && typeof tokenRecord.metadata === 'object') {
+    const fromToken = tokenRecord.metadata.agent_id;
+    if (fromToken) return fromToken;
+  }
+
+  const { data: customerSupportAgent } = await supabaseAdmin
+    .from('agents')
+    .select('id')
+    .eq('site_id', siteId)
+    .eq('status', 'active')
+    .eq('role', 'Customer Support')
+    .limit(1)
+    .maybeSingle();
+  if (customerSupportAgent?.id) return customerSupportAgent.id;
+
+  const { data: configRoleAgent } = await supabaseAdmin
+    .from('agents')
+    .select('id')
+    .eq('site_id', siteId)
+    .eq('status', 'active')
+    .contains('configuration', { role: 'Customer Support' })
+    .limit(1)
+    .maybeSingle();
+  if (configRoleAgent?.id) return configRoleAgent.id;
+
+  const { data: fallbackAgent } = await supabaseAdmin
+    .from('agents')
+    .select('id')
+    .eq('site_id', siteId)
+    .eq('status', 'active')
+    .limit(1)
+    .maybeSingle();
+  return fallbackAgent?.id;
+}
+
+async function findSiteByWhatsAppAccountSid(accountSid: string): Promise<string | null> {
+  const { data: settings } = await supabaseAdmin
+    .from('settings')
+    .select('site_id, channels')
+    .contains('channels', { whatsapp: { account_sid: accountSid } })
+    .limit(1)
+    .maybeSingle();
+  return settings?.site_id || null;
+}
+
+export async function findWhatsAppConfiguration(
+  businessPhoneNumber: string,
+  accountSid?: string
+): Promise<{
   success: boolean;
   siteId?: string;
   agentId?: string;
   error?: string;
 }> {
   try {
-    const { data: tokens, error } = await supabaseAdmin
-      .from('secure_tokens')
-      .select('*')
-      .eq('token_type', 'twilio_whatsapp')
-      .like('identifier', `%${businessPhoneNumber}%`);
-    if (error) {
-      return { success: false, error: `Database error: ${error.message}` };
-    }
-    if (!tokens || tokens.length === 0) {
-      return { success: false, error: `No WhatsApp configuration found for business number ${businessPhoneNumber}` };
-    }
-    const tokenRecord = tokens[0];
-    const siteId = tokenRecord.site_id;
-    if (!siteId) return { success: false, error: 'No site_id found in WhatsApp configuration' };
+    const searchKeys = whatsappIdentifierSearchKeys(businessPhoneNumber);
+    const orFilter = searchKeys
+      .slice(0, 12)
+      .map((key) => `identifier.ilike."%${key}%"`)
+      .join(',');
 
-    let agentId: string | undefined;
-    if (tokenRecord.metadata && typeof tokenRecord.metadata === 'object') {
-      agentId = tokenRecord.metadata.agent_id;
+    let tokens: Array<{ site_id?: string; identifier?: string | null; metadata?: { agent_id?: string } | null }> = [];
+    if (orFilter) {
+      const { data, error } = await supabaseAdmin
+        .from('secure_tokens')
+        .select('*')
+        .eq('token_type', 'twilio_whatsapp')
+        .or(orFilter);
+      if (error) {
+        return { success: false, error: `Database error: ${error.message}` };
+      }
+      tokens = data || [];
     }
-    if (!agentId) {
-      const { data: customerSupportAgent } = await supabaseAdmin
-        .from('agents')
-        .select('id')
-        .eq('site_id', siteId)
-        .eq('status', 'active')
-        .contains('configuration', { role: 'Customer Support' })
-        .limit(1)
-        .single();
-      if (customerSupportAgent) {
-        agentId = customerSupportAgent.id;
-      } else {
-        const { data: fallbackAgent } = await supabaseAdmin
-          .from('agents')
-          .select('id')
-          .eq('site_id', siteId)
-          .eq('status', 'active')
-          .limit(1)
-          .single();
-        if (fallbackAgent) agentId = fallbackAgent.id;
+
+    const tokenRecord = pickMatchingWhatsAppToken(tokens, businessPhoneNumber);
+    let siteId = tokenRecord?.site_id || null;
+
+    if (!siteId && accountSid) {
+      siteId = await findSiteByWhatsAppAccountSid(accountSid);
+      if (siteId) {
+        console.log(`✅ WhatsApp config resolved by AccountSid ${accountSid} → site ${siteId}`);
       }
     }
+
+    if (!siteId) {
+      return {
+        success: false,
+        error: `No WhatsApp configuration found for business number ${businessPhoneNumber}`,
+      };
+    }
+
+    const agentId = await findAgentForSite(siteId, tokenRecord || undefined);
     if (!agentId) return { success: false, error: `No active agent found for site ${siteId}` };
     return { success: true, siteId, agentId };
   } catch (error) {
