@@ -34,6 +34,39 @@ export interface EmailConfig {
 }
 
 export class EmailService {
+
+  /**
+   * Cierra de forma segura la conexión IMAP usando un timeout para evitar cuelgues.
+   * Envía el comando LOGOUT para liberar la conexión en el servidor y prevenir
+   * el error "Too many simultaneous connections".
+   */
+  private static async safeLogout(client: ImapFlow | undefined, contextName: string = ''): Promise<void> {
+    if (!client) return;
+    
+    try {
+      // 1. Intentar hacer un logout ordenado con timeout corto
+      const logoutPromise = client.logout();
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Logout timeout')), 2500);
+      });
+      
+      await Promise.race([logoutPromise, timeoutPromise]);
+      if (contextName) console.log(`[EmailService] 👋 Desconectado ordenadamente del servidor IMAP (${contextName})`);
+    } catch (e) {
+      if (contextName) console.warn(`[EmailService] ⚠️ Error/timeout durante logout IMAP (${contextName}), forzando cierre...`);
+      // 2. Si falla o da timeout, forzar cierre del socket
+      try {
+        if (typeof (client as any).close === 'function') {
+          (client as any).close();
+        } else if (typeof (client as any).destroy === 'function') {
+          (client as any).destroy();
+        }
+      } catch (closeError) {
+        // Ignorar
+      }
+    }
+  }
+
   /**
    * Lista todas las carpetas disponibles del servidor IMAP y las normaliza.
    */
@@ -71,12 +104,7 @@ export class EmailService {
       console.warn(`[EmailService] ⚠️ No se pudo listar mailboxes:`, e);
       return [];
     } finally {
-      if (client) {
-        try {
-          if (typeof (client as any).close === 'function') (client as any).close();
-          else if (typeof (client as any).destroy === 'function') (client as any).destroy();
-        } catch {}
-      }
+      await EmailService.safeLogout(client, 'listAllMailboxes');
     }
   }
   /**
@@ -447,24 +475,7 @@ export class EmailService {
       
       throw new Error(`Email fetch error: ${errorMessage}`);
     } finally {
-      // Clean up connection - OPTIMIZADO para velocidad máxima
-      if (client) {
-        try {
-          // NO HACER logout() - se cuelga. Forzar cierre directo.
-
-          
-          if (typeof (client as any).close === 'function') {
-            (client as any).close();
-          } else if (typeof (client as any).destroy === 'function') {
-            (client as any).destroy();
-          }
-          
-
-        } catch (closeError) {
-          // Ignorar errores de cierre - no es crítico
-
-        }
-      }
+      await EmailService.safeLogout(client, 'fetchEmails');
     }
   }
 
@@ -686,15 +697,7 @@ export class EmailService {
       console.error(`[EmailService] 💥 Error crítico en fetchEmailsInRange:`, error);
       throw error instanceof Error ? error : new Error(String(error));
     } finally {
-      if (client) {
-        try {
-          if (typeof (client as any).close === 'function') {
-            (client as any).close();
-          } else if (typeof (client as any).destroy === 'function') {
-            (client as any).destroy();
-          }
-        } catch {}
-      }
+      await EmailService.safeLogout(client, 'fetchEmailsInRange');
     }
   }
 
@@ -896,15 +899,7 @@ export class EmailService {
         try { lock.release(); } catch {}
       }
     } finally {
-      if (client) {
-        try {
-          if (typeof (client as any).close === 'function') {
-            (client as any).close();
-          } else if (typeof (client as any).destroy === 'function') {
-            (client as any).destroy();
-          }
-        } catch {}
-      }
+      await EmailService.safeLogout(client, 'fetchEmailsInRangeFromMailbox');
     }
   }
   /**
@@ -1088,15 +1083,7 @@ export class EmailService {
       
       throw new Error(`Email delete error: ${errorMessage}`);
     } finally {
-      // Clean up connection
-      if (client) {
-        try {
-          await client.logout();
-          console.log(`[EmailService] 👋 Desconectado del servidor IMAP (eliminación)`);
-        } catch (logoutError) {
-          console.warn(`[EmailService] ⚠️ Error durante logout IMAP (eliminación):`, logoutError);
-        }
-      }
+      await EmailService.safeLogout(client, 'deleteEmail');
     }
   }
 
@@ -1186,13 +1173,7 @@ export class EmailService {
       console.error(`[EmailService] ❌ Error en eliminación específica:`, error);
       return { success: 0, failed: uids.length, results: uids.map(uid => ({ uid, success: false, error: error instanceof Error ? error.message : String(error) })) };
     } finally {
-      if (client) {
-        try {
-          await client.logout();
-        } catch (logoutError) {
-          // Ignorar errores de logout
-        }
-      }
+      await EmailService.safeLogout(client, 'deleteSpecificBounces');
     }
   }
 
@@ -1321,13 +1302,7 @@ export class EmailService {
         error: error instanceof Error ? error.message : String(error)
       });
     } finally {
-      if (client) {
-        try {
-          await client.logout();
-        } catch (logoutError) {
-          console.warn(`[EmailService] ⚠️ Error en logout:`, logoutError);
-        }
-      }
+      await EmailService.safeLogout(client, 'deleteBouncesBySearch');
     }
 
     console.log(`[EmailService] ✅ Eliminación de bounces completada: ${successCount} exitosos, ${failedCount} fallidos`);
@@ -1729,15 +1704,7 @@ export class EmailService {
       
       throw new Error(`Sent email fetch error: ${errorMessage}`);
     } finally {
-      // Clean up connection
-      if (client) {
-        try {
-          await client.logout();
-          console.log(`[EmailService] 👋 Desconectado del servidor IMAP (emails enviados)`);
-        } catch (logoutError) {
-          console.warn(`[EmailService] ⚠️ Error durante logout IMAP (emails enviados):`, logoutError);
-        }
-      }
+      await EmailService.safeLogout(client, 'fetchSentEmails');
     }
   }
 } 

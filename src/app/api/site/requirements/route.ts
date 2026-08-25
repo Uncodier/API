@@ -581,22 +581,23 @@ export async function GET(request: NextRequest) {
     const includeScreenshot = request.nextUrl.searchParams.get('includeScreenshot') !== 'false'; // Por defecto true
     
     // Construir el objeto de parámetros
-    const params = {
+    const params: any = {
       url,
       segment_id,
-      requirement_types,
-      limit,
-      user_id,
-      site_id,
-      priority_level,
-      device_type,
-      provider,
-      modelId,
-      timeout,
-      include_implementation,
-      include_conformity,
-      includeScreenshot
     };
+
+    if (requirement_types) params.requirement_types = requirement_types;
+    if (limit !== undefined) params.limit = limit;
+    if (user_id) params.user_id = user_id;
+    if (site_id) params.site_id = site_id;
+    if (priority_level) params.priority_level = priority_level;
+    if (device_type) params.device_type = device_type;
+    if (provider) params.provider = provider;
+    if (modelId) params.modelId = modelId;
+    if (timeout !== undefined) params.timeout = timeout;
+    if (request.nextUrl.searchParams.has('include_implementation')) params.include_implementation = include_implementation;
+    if (request.nextUrl.searchParams.has('include_conformity')) params.include_conformity = include_conformity;
+    if (request.nextUrl.searchParams.has('includeScreenshot')) params.includeScreenshot = includeScreenshot;
     
     // Validar los parámetros
     const validationResult = RequestSchema.safeParse(params);
