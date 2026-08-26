@@ -61,13 +61,13 @@ async function collectLeadIds(
   userId: string,
   params: AudienceToolParams,
 ): Promise<{ leadIds: string[]; total: number }> {
-  const leadIds: string[] = [];
+  const leadIdSet = new Set<string>();
   let offset = 0;
   let total = 0;
 
   const maxLimit = params.limit ? Math.min(params.limit, MAX_LEADS) : MAX_LEADS;
 
-  while (leadIds.length < maxLimit) {
+  while (leadIdSet.size < maxLimit) {
     const filters: LeadFilters = {
       site_id: siteId,
       user_id: userId,
@@ -78,7 +78,7 @@ async function collectLeadIds(
       search: params.search,
       search_include_notes: params.search_include_notes === true,
       channels: params.channels,
-      limit: Math.min(COLLECT_BATCH, maxLimit - leadIds.length),
+      limit: Math.min(COLLECT_BATCH, maxLimit - leadIdSet.size),
       offset,
       sort_by: 'created_at',
       sort_order: 'desc',
@@ -88,15 +88,15 @@ async function collectLeadIds(
     total = result.total; // Note: total returned by getLeads is the total matching ignoring limit/offset
 
     for (const lead of result.leads) {
-      if (leadIds.length >= maxLimit) break;
-      leadIds.push(lead.id);
+      if (leadIdSet.size >= maxLimit) break;
+      leadIdSet.add(lead.id);
     }
 
     if (!result.hasMore || result.leads.length === 0) break;
     offset += COLLECT_BATCH;
   }
 
-  return { leadIds, total };
+  return { leadIds: Array.from(leadIdSet), total };
 }
 
 // ---------------------------------------------------------------------------

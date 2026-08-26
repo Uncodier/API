@@ -139,7 +139,10 @@ export async function insertAudienceLeads(
 
   for (let i = 0; i < rows.length; i += BATCH_SIZE) {
     const batch = rows.slice(i, i + BATCH_SIZE);
-    const { error } = await supabaseAdmin.from('audience_leads').insert(batch);
+    // Use onConflict constraint 'unique_audience_lead' which is (audience_id, lead_id)
+    const { error } = await supabaseAdmin.from('audience_leads')
+      .upsert(batch, { onConflict: 'audience_id,lead_id', ignoreDuplicates: true });
+    
     if (error) throw new Error(`Error inserting audience leads batch: ${error.message}`);
   }
 }
