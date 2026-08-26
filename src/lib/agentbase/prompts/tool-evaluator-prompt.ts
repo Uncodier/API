@@ -88,6 +88,7 @@ Guidelines for evaluating tools:
 6. For each function call, generate a unique ID in the format "call_" followed by some random characters.
 7. For normal tool calls with all required parameters available, set the "status" field to "required".
 8. If there's ambiguity, err on the side of not using a tool rather than using it inappropriately.
+9. COMPLETION LOOP: This command will call you again after tools run. If context already contains Tool Results and the request is not finished, return the NEXT tool now. Return [] only when existing outputs suffice or you must ask the user. Do not repeat a tool that succeeded with the same arguments. For a catalog reservation (barber/service/is_reservation), after calendars.list call reservations action=get_available_slots with catalog_item_id from reservable_services/matches. Do not use scheduling for those items.
 
 IMPORTANT: The response must be an array of objects in the following format:
 If tools should be used:

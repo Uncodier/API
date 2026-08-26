@@ -10,6 +10,7 @@ import { TargetProcessor } from '../agents/TargetProcessor';
 import { ComposioConfiguration } from '../utils/composioIntegration';
 import { enrichWithComposioTools } from '../utils/composioIntegration';
 import { CommandCache } from './command/CommandCache';
+import { runToolCompletionLoop } from './command/tool-completion-loop';
 
 export class EventHandlerService {
   private static instance: EventHandlerService;
@@ -282,7 +283,11 @@ export class EventHandlerService {
       
       // Ejecutar la evaluación
       console.log(`🔄 Iniciando evaluación de herramientas para: ${command.id}`);
-      const toolResult = await toolEvaluator.executeCommand(command);
+      const toolResult = await runToolCompletionLoop({
+        toolEvaluator,
+        command,
+        commandService: this.commandService,
+      });
       
       if (toolResult.status === 'completed' && toolResult.results) {
         console.log(`✅ Evaluación de herramientas completada para: ${command.id}`);

@@ -17,6 +17,7 @@ import { CommandCache } from './CommandCache';
 import { CommandStore } from './CommandStore';
 import { AgentBackgroundService } from '../agent/AgentBackgroundService';
 import { CreditService } from '../../../services/billing/CreditService';
+import { runToolCompletionLoop } from './tool-completion-loop';
 
 // Importar utilidades de Composio
 import { ComposioConfiguration, enrichWithComposioTools, isComposioEnabled } from '../../utils/composioIntegration';
@@ -298,8 +299,12 @@ export class CommandProcessor {
         command = await enrichWithComposioTools(command);
       }
       
-      // Evaluar herramientas
-      const toolResult = await toolEvaluator.executeCommand(command);
+      // Completion loop: keep evaluating tools until [] / possible_match / cap
+      const toolResult = await runToolCompletionLoop({
+        toolEvaluator,
+        command,
+        commandService: this.commandService,
+      });
       
       // Actualizar el comando con los resultados y functions
       let updatedCommand = toolResult.updatedCommand || command;

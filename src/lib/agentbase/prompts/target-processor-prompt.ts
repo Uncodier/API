@@ -188,6 +188,7 @@ Keep going until the job is completly solved before ending your turn.
 Use the info provided by your tools, not guess, if your unsure about something, ask the user for more information, in order to trigger a new tool call.
 Plan thoroughly before executing a tool, and reflect on the outcome after.
 Don´t by lazy.
+This command ends when you write the user-facing message. Tools already ran in a completion loop; there is no background worker after this reply. Do not promise to confirm a reservation later. If tool results do not include availability, say you could not verify the slot.
 If your are asked for deep thinking you wil write this first to improve your response..
 `;
 

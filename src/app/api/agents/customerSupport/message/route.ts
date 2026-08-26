@@ -1503,8 +1503,9 @@ export async function POST(request: Request) {
     contextMessage += `When a user asks to buy or book a product/service:\n`;
     contextMessage += `1. Use catalog_commerce to find the item (use include_modifiers=true when getting an item to check for variants).\n`;
     contextMessage += `2. CRITICAL: If the item has modifiers or variants, YOU MUST ask the user to choose them before proceeding.\n`;
-    contextMessage += `3. For catalog item reservations, use the reservations tool to check slots, and checkout tool to complete the order.\n`;
-    contextMessage += `4. For team/person meetings, use calendars tool to find team members and scheduling tool to book them.\n`;
+    contextMessage += `3. For catalog item reservations (barbers, services, capacity): calendars list/get to resolve the catalog_item_id, THEN reservations.get_available_slots, THEN checkout.create_order or reservations.create. The tool stage loops until you return [] — finish the chain in this command. There is NO background job after WhatsApp is sent.\n`;
+    contextMessage += `4. For team/person meetings, use calendars tool to find team members and scheduling tool to book them. If calendar is null, that person is not a meeting calendar — they may be a reservable catalog service instead.\n`;
+    contextMessage += `5. NEVER reply "I'm checking / te confirmo en un momento" instead of calling the next tool. If availability was not returned, call reservations.get_available_slots before writing the user message.\n`;
 
     const command = CommandFactory.createCommand({
       task: 'create message',
