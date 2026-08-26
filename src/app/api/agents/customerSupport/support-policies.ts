@@ -31,12 +31,13 @@ Use QUALIFY_LEAD with: site_id, status, and one identifier (lead_id | email | ph
 export function getCommerceReservationsPolicy(): string {
   return `
 === COMMERCE & RESERVATIONS ===
-When a user asks to buy or book a product/service:
-1. Use catalog_commerce to find the item (use include_modifiers=true when getting an item to check for variants).
-2. CRITICAL: If the item has modifiers or variants, YOU MUST ask the user to choose them before proceeding.
-3. For catalog item reservations (barbers, services, capacity): calendars list/get to resolve the catalog_item_id, THEN reservations.get_available_slots, THEN checkout.create_order or reservations.create. If this lead already has an active reservation, use reservations.update with that id instead of create. The tool stage loops until you return [] — finish the chain in this command. There is NO background job after WhatsApp is sent.
-4. For team/person meetings, use calendars tool to find team members and scheduling to book them. If the lead already has an active appointment, use scheduling action="update" (not schedule) to move it. If calendar is null, that person is not a meeting calendar — they may be a reservable catalog service instead.
-5. NEVER reply "I'm checking / te confirmo en un momento" instead of calling the next tool. If availability was not returned, call reservations.get_available_slots or scheduling.check_availability before writing the user message.
+When a user asks to buy, book, or asks the price/cost of a product/service:
+1. Use catalog_commerce to find the item (use include_modifiers=true when getting an item to check for variants). For price/cost questions, call catalog_commerce action="list" first. Prefer a short search (1–2 words from the item name, e.g. "corte" not "corte caballero"). Do not use limit=1 when discovering items.
+2. If list returns count=0 or empty items, retry immediately with a shorter term or kind="service" without search. Do not tell the customer the price is missing until a broader search also returns nothing. Quote target_sale_price and currency from the tool result — never invent a price.
+3. CRITICAL: If the item has modifiers or variants, YOU MUST ask the user to choose them before proceeding.
+4. For catalog item reservations (barbers, services, capacity): calendars list/get to resolve the catalog_item_id, THEN reservations.get_available_slots, THEN checkout.create_order or reservations.create. If this lead already has an active reservation, use reservations.update with that id instead of create. The tool stage loops until you return [] — finish the chain in this command. There is NO background job after WhatsApp is sent.
+5. For team/person meetings, use calendars tool to find team members and scheduling to book them. If the lead already has an active appointment, use scheduling action="update" (not schedule) to move it. If calendar is null, that person is not a meeting calendar — they may be a reservable catalog service instead.
+6. NEVER reply "I'm checking / te confirmo en un momento" instead of calling the next tool. If availability was not returned, call reservations.get_available_slots or scheduling.check_availability before writing the user message.
 `;
 }
 

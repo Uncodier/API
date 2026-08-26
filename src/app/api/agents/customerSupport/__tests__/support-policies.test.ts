@@ -21,4 +21,12 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('Do not invent a promotion');
     expect(policies).toContain('Checkout does not apply promo codes');
   });
+
+  it('requires catalog lookup for price questions and retry when list is empty', () => {
+    expect(policies).toContain('price/cost');
+    expect(policies).toContain('catalog_commerce action="list"');
+    expect(policies).toContain('Do not use limit=1');
+    expect(policies).toContain('retry immediately with a shorter term');
+    expect(policies).toContain('never invent a price');
+  });
 });

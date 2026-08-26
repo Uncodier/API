@@ -108,7 +108,11 @@ export function catalogCommerceTool(current_site_id?: string) {
         parent_id: { type: 'string', description: 'Parent catalog item UUID (for variants)' },
         pass_uses: { type: 'number', description: 'Number of uses if this is a pass (null = unlimited)' },
         pass_validity_days: { type: 'number', description: 'Days the pass is valid for' },
-        search: { type: 'string', description: 'Search term for name/description' },
+        search: {
+          type: 'string',
+          description:
+            'Search term for name/description. Prefer 1–2 words from the item name (e.g. "corte" not "corte caballero"). Extra words reduce exact matches; if results are empty, retry with a shorter term.',
+        },
         sort_order: { type: 'number', description: 'Sort order for display' },
         metadata: { type: 'object', description: 'JSON metadata for custom attributes like to-go / dine-in' },
         modifier_group_id: {

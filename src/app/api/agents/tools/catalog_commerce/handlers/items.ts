@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import {
+  buildCatalogSearchClauses,
+  catalogSearchFallbackHint,
+} from './catalog-search';
 
 const CONTENT_FIELDS = [
   'name',
@@ -36,6 +40,25 @@ function pickDefined(source: Record<string, unknown>, keys: readonly string[]) {
     if (source[key] !== undefined) payload[key] = source[key];
   }
   return payload;
+}
+
+function applyItemListFilters(query: any, site_id: string | undefined, updates: Record<string, unknown>) {
+  if (site_id) query = query.eq('site_id', site_id);
+  if (updates.kind) query = query.eq('kind', updates.kind);
+  if (updates.digital_subtype) query = query.eq('digital_subtype', updates.digital_subtype);
+  if (updates.status) query = query.eq('status', updates.status);
+  if (updates.availability_status) query = query.eq('availability_status', updates.availability_status);
+  if (updates.currency) query = query.eq('currency', updates.currency);
+  if (updates.category_id) query = query.eq('category_id', updates.category_id);
+  if (updates.parent_id) query = query.eq('parent_id', updates.parent_id);
+  if (updates.is_reservation !== undefined) query = query.eq('is_reservation', updates.is_reservation);
+  if (updates.is_purchasable !== undefined) query = query.eq('is_purchasable', updates.is_purchasable);
+  if (updates.is_recurring !== undefined) query = query.eq('is_recurring', updates.is_recurring);
+  if (updates.is_pos_available !== undefined) query = query.eq('is_pos_available', updates.is_pos_available);
+  if (updates.is_marketplace_listed !== undefined) {
+    query = query.eq('is_marketplace_listed', updates.is_marketplace_listed);
+  }
+  return query;
 }
 
 async function reservationHint(itemId: string, isReservation?: boolean) {
@@ -183,34 +206,39 @@ export async function handleItemAction(body: Record<string, unknown>) {
   }
 
   if (action === 'list') {
-    let query = supabaseAdmin.from('catalog_items').select('*', { count: 'exact' });
+    const clauses =
+      typeof updates.search === 'string' ? buildCatalogSearchClauses(updates.search) : null;
+    const rangeFrom = Number(offset);
+    const rangeTo = rangeFrom + Number(limit) - 1;
 
-    if (site_id) query = query.eq('site_id', site_id);
-    if (updates.kind) query = query.eq('kind', updates.kind);
-    if (updates.digital_subtype) query = query.eq('digital_subtype', updates.digital_subtype);
-    if (updates.status) query = query.eq('status', updates.status);
-    if (updates.availability_status) query = query.eq('availability_status', updates.availability_status);
-    if (updates.currency) query = query.eq('currency', updates.currency);
-    if (updates.category_id) query = query.eq('category_id', updates.category_id);
-    if (updates.parent_id) query = query.eq('parent_id', updates.parent_id);
-    if (updates.is_reservation !== undefined) query = query.eq('is_reservation', updates.is_reservation);
-    if (updates.is_purchasable !== undefined) query = query.eq('is_purchasable', updates.is_purchasable);
-    if (updates.is_recurring !== undefined) query = query.eq('is_recurring', updates.is_recurring);
-    if (updates.is_pos_available !== undefined) query = query.eq('is_pos_available', updates.is_pos_available);
-    if (updates.is_marketplace_listed !== undefined) {
-      query = query.eq('is_marketplace_listed', updates.is_marketplace_listed);
-    }
+    const runList = async (searchFilter?: string | null) => {
+      let query = supabaseAdmin.from('catalog_items').select('*', { count: 'exact' });
+      query = applyItemListFilters(query, site_id, updates);
+      if (searchFilter) query = query.or(searchFilter);
+      return query.range(rangeFrom, rangeTo).order('created_at', { ascending: false });
+    };
 
-    if (updates.search) {
-      query = query.or(`name.ilike.%${updates.search}%,description.ilike.%${updates.search}%`);
-    }
-
-    const { data, error, count } = await query
-      .range(Number(offset), Number(offset) + Number(limit) - 1)
-      .order('created_at', { ascending: false });
+    let { data, error, count } = await runList(clauses?.phraseFilter);
 
     if (error) throw new Error(error.message);
-    return NextResponse.json({ success: true, items: data, count });
+
+    let search_hint: string | undefined;
+    if (clauses?.tokenFilter && (count === 0 || !data?.length)) {
+      const fallback = await runList(clauses.tokenFilter);
+      if (fallback.error) throw new Error(fallback.error.message);
+      if (fallback.data?.length) {
+        data = fallback.data;
+        count = fallback.count;
+        search_hint = catalogSearchFallbackHint(clauses.phrase, clauses.tokens);
+      }
+    }
+
+    return NextResponse.json({
+      success: true,
+      items: data,
+      count,
+      ...(search_hint ? { search_hint } : {}),
+    });
   }
 
   return NextResponse.json({ success: false, error: 'Invalid action for resource item' }, { status: 400 });
