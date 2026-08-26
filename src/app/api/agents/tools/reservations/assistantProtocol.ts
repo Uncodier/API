@@ -29,7 +29,7 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). get/update require the reservation UUID in id (alias: reservation_id) — never catalog_item_id. catalog_item_id is only for create, get_available_slots, and list. lead_id is required on create and can be reassigned on update. If get_available_slots fails, retry with the catalog_item_id from the error, then update with id and new times. Slot start/end are UTC ISO instants — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z). On update, keep quantity as the real seat count (usually 1); do not send 0 to bypass capacity — the current reservation is already excluded from the slot check.'
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). get/update require the reservation UUID in id (alias: reservation_id) — never catalog_item_id. catalog_item_id is only for create, get_available_slots, and list. lead_id is required on create and can be reassigned on update. If get_available_slots fails, retry with the catalog_item_id from the error, then update with id and new times. Slot start/end are UTC ISO instants — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z). On update, keep quantity as the real seat count (usually 1); do not send 0 to bypass capacity — the current reservation is already excluded from the slot check.',
     parameters: {
       type: 'object',
       properties: {
