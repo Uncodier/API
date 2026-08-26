@@ -73,6 +73,7 @@ export const TOOL_CATEGORIES: Record<string, ToolLookupCategory> = {
   calendars: 'crm',
   reservations: 'commerce',
   catalog_commerce: 'commerce',
+  promotions: 'commerce',
   checkout: 'commerce',
   audience: 'crm',
   segments: 'crm',

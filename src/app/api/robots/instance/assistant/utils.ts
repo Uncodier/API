@@ -49,6 +49,7 @@ import { urlToMarkdownTool } from '@/app/api/agents/tools/urlToMarkdown/assistan
 import { urlToSitemapTool } from '@/app/api/agents/tools/urlToSitemap/assistantProtocol';
 import { segmentsTool } from '@/app/api/agents/tools/segments/assistantProtocol';
 import { campaignsTool } from '@/app/api/agents/tools/campaigns/assistantProtocol';
+import { promotionsTool } from '@/app/api/agents/tools/promotions/assistantProtocol';
 import { assetsTool } from '@/app/api/agents/tools/assets/assistantProtocol';
 import { instancePlanTool } from '@/app/api/agents/tools/instance_plan/assistantProtocol';
 import { workflowsTool } from '@/app/api/agents/tools/workflows/assistantProtocol';
@@ -315,6 +316,7 @@ export const getAssistantTools = (
     salesTool(siteId),
     dealsTool(siteId),
     catalogCommerceTool(siteId),
+    promotionsTool(siteId, userId),
     reservationSchedulesTool(siteId),
     calendarBlocksTool(siteId),
     calendarsTool(siteId),

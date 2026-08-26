@@ -9,10 +9,12 @@ import { reservationsTool } from '@/app/api/agents/tools/reservations/assistantP
 import { reservationSchedulesTool } from '@/app/api/agents/tools/reservation_schedules/assistantProtocol';
 import { calendarBlocksTool } from '@/app/api/agents/tools/calendar_blocks/assistantProtocol';
 import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
+import { promotionsTool } from '@/app/api/agents/tools/promotions/assistantProtocol';
 import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
 import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
 import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
 import { appendLeadRecordToContext } from '@/app/api/agents/customerSupport/lead-record';
+import { appendActivePromotionsToContext } from '@/lib/promotions/context';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
@@ -1491,6 +1493,10 @@ export async function POST(request: Request) {
         console.log(`⚠️ No se encontró historial para la conversación: ${effectiveConversationId}`);
       }
     }
+
+    if (effectiveSiteId) {
+      contextMessage = await appendActivePromotionsToContext(contextMessage, effectiveSiteId);
+    }
     
     contextMessage += getCustomerSupportPolicies();
 
@@ -1531,6 +1537,10 @@ export async function POST(request: Request) {
         {
           type: "function",
           function: catalogCommerceTool(effectiveSiteId)
+        },
+        {
+          type: "function",
+          function: promotionsTool(effectiveSiteId)
         },
         {
           type: "function",

@@ -21,6 +21,8 @@ const MCP_NATIVE_TOOL_LOADERS: Record<string, () => Promise<McpToolFactory>> = {
     (await import('@/app/api/agents/tools/calendar_blocks/assistantProtocol')).calendarBlocksTool,
   catalog_commerce: async () =>
     (await import('@/app/api/agents/tools/catalog_commerce/assistantProtocol')).catalogCommerceTool,
+  promotions: async () =>
+    (await import('@/app/api/agents/tools/promotions/assistantProtocol')).promotionsTool,
   checkout: async () => (await import('@/app/api/agents/tools/checkout/assistantProtocol')).checkoutTool,
   scheduling: async () => {
     const { schedulingTool } = await import('@/app/api/agents/tools/scheduling/assistantProtocol');
@@ -37,6 +39,7 @@ const MCP_NATIVE_ALIASES: Record<string, string> = {
   reservation: 'reservations',
   reservation_schedule: 'reservation_schedules',
   calendar_block: 'calendar_blocks',
+  promotion: 'promotions',
   skillLookup: 'skill_lookup',
 };
 

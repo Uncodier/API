@@ -34,7 +34,7 @@ export interface WorkflowsToolParams {
 export const workflowsTool = (siteId: string, userId?: string) => {
   return {
     name: 'workflows',
-    description: 'Execute business and data workflows. Use this tool to trigger complex backend processes like lead research, campaign building, content generation, sending emails/whatsapp, etc.',
+    description: 'Start business and data workflows. sendEmailFromAgent and sendWhatsappFromAgent queue delivery in Temporal and return running/workflowId; they do not wait until the message is delivered. Other actions trigger research, campaigns, content generation, etc.',
     parameters: {
       type: 'object',
       properties: {

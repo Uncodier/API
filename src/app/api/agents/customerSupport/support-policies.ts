@@ -2,7 +2,7 @@
  * Operational policies injected into every Customer Support command context.
  */
 export function getCustomerSupportPolicies(): string {
-  return `${getLeadRecordVerificationPolicy()}${getLeadQualificationPolicy()}${getCommerceReservationsPolicy()}`;
+  return `${getLeadRecordVerificationPolicy()}${getLeadQualificationPolicy()}${getCommerceReservationsPolicy()}${getPromotionsPolicy()}`;
 }
 
 export function getLeadRecordVerificationPolicy(): string {
@@ -37,5 +37,15 @@ When a user asks to buy or book a product/service:
 3. For catalog item reservations (barbers, services, capacity): calendars list/get to resolve the catalog_item_id, THEN reservations.get_available_slots, THEN checkout.create_order or reservations.create. If this lead already has an active reservation, use reservations.update with that id instead of create. The tool stage loops until you return [] — finish the chain in this command. There is NO background job after WhatsApp is sent.
 4. For team/person meetings, use calendars tool to find team members and scheduling to book them. If the lead already has an active appointment, use scheduling action="update" (not schedule) to move it. If calendar is null, that person is not a meeting calendar — they may be a reservable catalog service instead.
 5. NEVER reply "I'm checking / te confirmo en un momento" instead of calling the next tool. If availability was not returned, call reservations.get_available_slots or scheduling.check_availability before writing the user message.
+`;
+}
+
+export function getPromotionsPolicy(): string {
+  return `
+=== PROMOTIONS ===
+The ACTIVE PROMOTIONS snapshot is a hint, not the full catalog.
+1. If the customer asks about discounts, promo codes, 2x1/BOGO, or whether an item is on sale, call promotions.list (status="active") or promotions.get before answering. Do not invent a promotion that is not in the snapshot or tool result.
+2. Prefer list/get with customers. create/update/delete only if the merchant explicitly asks to change a promo (requires campaign_id from the campaigns tool).
+3. Checkout does not apply promo codes yet — never invent a discounted total or tell the customer the order was reduced unless a tool result shows it.
 `;
 }

@@ -16,6 +16,7 @@ const ACTION_HINTS: Record<string, string[]> = {
   sendEmail: ['send'],
   sendWhatsApp: ['send'],
   campaigns: ['create', 'update', 'list'],
+  promotions: ['create', 'list', 'get', 'update', 'delete'],
   segments: ['create', 'update', 'list'],
   assets: ['create', 'list'],
   memories: ['list', 'save'],

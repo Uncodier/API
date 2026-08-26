@@ -1,6 +1,6 @@
 ---
 name: makinari-commerce
-description: Use this when the user wants to list/manage products in the marketplace, create/send quotes to clients, generate payment links, or manage subscriptions, passes, and digital entitlements.
+description: Use this when the user wants to list/manage products in the marketplace, create promotions or discount codes, create/send quotes to clients, generate payment links, or manage subscriptions, passes, and digital entitlements.
 types: ['automation', 'task', 'integration']
 ---
 
@@ -25,25 +25,32 @@ Equip the agent with operational protocols to manage the entire commercial lifec
      3. `resource="item_modifier_group"` `action="create"` — attach the group to the host product (`catalog_item_id` + `modifier_group_id`).
      4. Inspect with `resource="item"` `action="get"` `include_modifiers=true`.
 
-2. **Quotation Workflow**
+2. **Promotions**
+   - Every promotion belongs to a campaign. Call `campaigns.list` or `campaigns.create` first to get `campaign_id`.
+   - Create with `promotions` `action="create"` (`name`, `discount_type` = `percent` | `fixed` | `bogo`, `discount_value`, `campaign_id`). Default `status` is `draft`; set `status="active"` when it should run.
+   - If `applies_to="selected_items"`, pass `catalog_item_ids` and/or `catalog_category_ids`. For BOGO, `required_items` / `required_categories` are the buy-side; `catalog_*` ids are the get-side.
+   - Use `list`/`get` to inspect. `update`/`delete` need `id` (alias `promotion_id`). Junction arrays are replace-if-provided on update.
+   - Checkout does **not** apply promo codes yet — do not invent a discounted total or Stripe coupon.
+
+3. **Quotation Workflow**
    - **Draft:** Create a quote tied to a `lead_id` (and optionally `price_list_id`). Status is initially `draft`.
    - **Items:** Add items with `quotation_items`.
    - **Send:** Once items are ready, update the quote status to `sent`.
    - **Never auto-accept:** Do NOT change the status directly to `accepted`. 
    - **Convert to Order:** To let a client pay for a sent quote, use `checkout` with `action="create_order_from_quotation"`, then generate a payment link.
 
-3. **Reservation Schedules & Slots (Catalog Capacity)**
+4. **Reservation Schedules & Slots (Catalog Capacity)**
    - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to find a person, set working hours, or book a meeting/consultation/demo with a **team member**, use the \`calendars\` tool (list / update_member_calendar) and \`scheduling\` for a specific appointment. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`calendars\` + \`scheduling\`.
    - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`). If the user asks to create a new bookable service, DO NOT use update_team_calendar. You MUST create the catalog item first, then use update_service_schedule.
    - Before a reservable item can be sold, it MUST have a schedule configured via \`calendars\` (\`action="update_service_schedule"\`) or \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
    - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
    - **Reschedule / cancel / reassign**: Use \`reservations\` \`action="update"\` with the reservation UUID in \`id\` (alias: \`reservation_id\`) plus at least one of \`status\`, \`start_time\`, \`end_time\`, \`quantity\`, \`notes\`, \`lead_id\`. Keep \`quantity\` as the real seat count when rescheduling (usually 1) — the current reservation is excluded from capacity. To attach a real client, send \`lead_id\` on update; do not encode the client in \`notes\`.
 
-4. **Passes & Subscriptions**
+5. **Passes & Subscriptions**
    - **Passes:** A catalog item with `digital_subtype="pass"` grants uses. Map what it can book using `pass_redeemable_items`. When a buyer books using a pass, provide the `entitlement_id` to `reservations` `create` to consume a use.
    - **Subscriptions:** Managed by the backend. Use `subscriptions` to list/read them. Use `subscription_plan_items` to map a recurring plan to the digital assets it unlocks.
 
-5. **Checkout & Payment Links (Stripe)**
+6. **Checkout & Payment Links (Stripe)**
    - When charging a client:
      - 1. Create a pending order using `checkout` (`action="create_order"` or `create_order_from_quotation`). Provide `site_id` and buyer details.
      - 2. Generate a Stripe link using `checkout` (`action="create_payment_link"`) with the `order_id` you just created.
@@ -54,7 +61,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - **Avoid legacy sales tools:** Do NOT use the `sales` or `sales-order` tools for creating purchasable checkouts. Use `checkout`.
    - **Vendor bills / PO are not commerce:** For supplier invoices, purchase orders, or accounts payable, use the `makinari-purchases` skill (`purchases` + `purchase_items`). Do NOT use `checkout` for money owed to vendors.
 
-6. **Entitlements (Digital Rights)**
+7. **Entitlements (Digital Rights)**
    - Entitlements represent access to digital assets. They are granted automatically by webhooks upon purchase or active subscription.
    - Use `entitlements` to query a buyer's library.
    - You can mark an entitlement as `used` or `revoked`, or check its `uses_remaining`, but NEVER manually invent a grant without a real order.
@@ -64,6 +71,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | Tool | Usage |
 | --- | --- |
 | `catalog_commerce` | Create items, list/get, update name/pricing/listing flags; manage modifiers via `resource` (`modifier_group`, `modifier_group_item`, `item_modifier_group`); `get` + `include_modifiers=true` to inspect. |
+| `promotions` | CRUD for percent/fixed/BOGO promotions. Requires `campaign_id`. Use `catalog_item_ids` when `applies_to="selected_items"`. Checkout does not apply codes yet. |
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `calendars` | Directory of team members, personal/team calendars, and reservable services. Set working hours here. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |

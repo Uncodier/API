@@ -161,6 +161,24 @@ export class BusinessWorkflowService extends BaseWorkflowService {
 
       console.log(`📧 Iniciando workflow de envío de email: ${workflowId}`);
 
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('sendEmailFromAgentWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de envío de email iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      }
+
       const result = await client.workflow.execute('sendEmailFromAgentWorkflow', {
         args: [args],
         taskQueue,
@@ -209,6 +227,24 @@ export class BusinessWorkflowService extends BaseWorkflowService {
       const taskQueue = options?.taskQueue || process.env.WORKFLOW_TASK_QUEUE || 'default';
 
       console.log(`📱 Iniciando workflow de envío de WhatsApp: ${workflowId}`);
+
+      if (options?.async !== false) {
+        const handle = await client.workflow.start('sendWhatsappFromAgentWorkflow', {
+          args: [args],
+          taskQueue,
+          workflowId,
+        });
+
+        console.log(`✅ Workflow de envío de WhatsApp iniciado: ${handle.workflowId}, runId: ${handle.firstExecutionRunId}`);
+
+        return {
+          success: true,
+          executionId: handle.firstExecutionRunId,
+          workflowId: handle.workflowId,
+          runId: handle.firstExecutionRunId,
+          status: 'running'
+        };
+      }
 
       const result = await client.workflow.execute('sendWhatsappFromAgentWorkflow', {
         args: [args],

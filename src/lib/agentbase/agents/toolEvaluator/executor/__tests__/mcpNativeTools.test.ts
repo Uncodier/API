@@ -19,7 +19,9 @@ describe('mcpNativeTools', () => {
     expect(hasMcpNativeTool('calendars')).toBe(true);
     expect(hasMcpNativeTool('checkout')).toBe(true);
     expect(hasMcpNativeTool('skill_lookup')).toBe(true);
+    expect(hasMcpNativeTool('promotions')).toBe(true);
     expect(resolveMcpNativeToolName('reservation')).toBe('reservations');
+    expect(resolveMcpNativeToolName('promotion')).toBe('promotions');
     expect(hasMcpNativeTool('GOOGLECALENDAR_LIST_EVENTS')).toBe(false);
   });
 
@@ -44,5 +46,26 @@ describe('mcpNativeTools', () => {
       expect.any(String)
     );
     expect(result).toEqual({ success: true, slots: [{ start: '2026-08-26T17:00:00Z' }] });
+  });
+
+  it('executes promotions through the MCP API helper, not Composio', async () => {
+    mockedFetch.mockResolvedValue({ success: true, promotions: [] });
+
+    const result = await executeMcpNativeTool('promotion', {
+      action: 'list',
+      site_id: 'site-1',
+      status: 'active',
+    });
+
+    expect(mockedFetch).toHaveBeenCalledWith(
+      '/api/agents/tools/promotions',
+      expect.objectContaining({
+        action: 'list',
+        site_id: 'site-1',
+        status: 'active',
+      }),
+      expect.any(String)
+    );
+    expect(result).toEqual({ success: true, promotions: [] });
   });
 });

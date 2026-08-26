@@ -12,6 +12,7 @@ Allows a human team member to intervene in a chat conversation. This sends a mes
   "user_id": "123e4567-e89b-12d3-a456-426614174000",
   "conversationId": "123e4567-e89b-12d3-a456-426614174000",
   "conversation_id": "123e4567-e89b-12d3-a456-426614174000",
+  "message_id": "optional-existing-message-uuid",
   "agentId": "optional-uuid",
   "site_id": "optional-uuid"
 }
@@ -23,6 +24,7 @@ Allows a human team member to intervene in a chat conversation. This sends a mes
 | `user_id` | `string` | Yes | The UUID of the team member performing the intervention. |
 | `conversationId` | `string` | No | The UUID of the conversation. Alias of `conversation_id`. |
 | `conversation_id` | `string` | No | Same UUID as `conversationId`. Forwarded to `sendWhatsappFromAgent`. |
+| `message_id` | `string` | No | Existing message UUID for retry. Skips insert and reuses that row. |
 | `agentId` | `string` | No | The UUID of the agent. |
 | `site_id` | `string` | No | The UUID of the site. |
 

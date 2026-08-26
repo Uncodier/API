@@ -14,4 +14,11 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('scheduling action="update"');
     expect(policies).toContain('reservations.update');
   });
+
+  it('requires looking up promotions before answering about discounts', () => {
+    expect(policies).toContain('PROMOTIONS');
+    expect(policies).toContain('promotions.list');
+    expect(policies).toContain('Do not invent a promotion');
+    expect(policies).toContain('Checkout does not apply promo codes');
+  });
 });
