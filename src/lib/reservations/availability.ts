@@ -2,6 +2,12 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { addMinutes, isAfter, isBefore } from 'date-fns';
 import { slotOverlapsBreaks } from '@/lib/reservations/weekly-hours';
 import {
+  availableSeatsForSlot,
+  countBookedSeats,
+  loadOccupancyContext,
+  resolveReservationFamily,
+} from '@/lib/reservations/family-occupancy';
+import {
   formatInTimezone,
   isLocalDateString,
   localDateBoundsToUtc,
@@ -10,6 +16,8 @@ import {
   normalizeTimezone,
   parseInstantOrWallClock,
 } from '@/lib/timezone';
+
+export { intervalsOverlap } from '@/lib/reservations/family-occupancy';
 
 const WEEKDAY_FROM_UTC_DAY = [
   'sunday',
@@ -21,21 +29,17 @@ const WEEKDAY_FROM_UTC_DAY = [
   'saturday',
 ] as const;
 
-/** Half-open [start, end): back-to-back slots (10:00-11:00 and 11:00-12:00) do not overlap. */
-export function intervalsOverlap(startA: Date, endA: Date, startB: Date, endB: Date): boolean {
-  return startA < endB && endA > startB;
-}
-
 export async function getBookedSeats(
   catalogItemId: string,
   start: Date,
   end: Date,
   excludeReservationId?: string
 ) {
+  const family = await resolveReservationFamily(catalogItemId);
   let query = supabaseAdmin
     .from('reservations')
-    .select('quantity, status')
-    .eq('catalog_item_id', catalogItemId)
+    .select('catalog_item_id, quantity, status, start_time, end_time')
+    .in('catalog_item_id', family.familyIds)
     .in('status', ['pending', 'confirmed'])
     .gt('end_time', start.toISOString())
     .lt('start_time', end.toISOString());
@@ -51,7 +55,7 @@ export async function getBookedSeats(
     return 0;
   }
 
-  return (reservations || []).reduce((acc: number, res: any) => acc + (res.quantity || 1), 0);
+  return countBookedSeats(reservations || [], start, end, family.familyIds);
 }
 
 export class ReservableCatalogItemError extends Error {
@@ -194,22 +198,8 @@ export async function getAvailableSlots(
 
   const duration = schedule.duration_minutes || 60;
   const capacity = schedule.capacity || 1;
-
-  const { data: reservations } = await supabaseAdmin
-    .from('reservations')
-    .select('start_time, end_time, quantity, status')
-    .eq('catalog_item_id', resolvedId)
-    .in('status', ['pending', 'confirmed'])
-    .lt('start_time', range.end_utc)
-    .gt('end_time', range.start_utc);
-
-  const { data: calendarBlocks } = await supabaseAdmin
-    .from('calendar_blocks')
-    .select('start_time, end_time, entity_type, entity_id')
-    .eq('site_id', schedule.site_id)
-    .in('entity_type', ['global', 'catalog_item'])
-    .lte('start_time', range.end_utc)
-    .gte('end_time', range.start_utc);
+  const family = await resolveReservationFamily(resolvedId);
+  const occupancy = await loadOccupancyContext(family, range.start_utc, range.end_utc);
 
   for (const ymd of eachYmdInclusive(range.local_start, range.local_end)) {
     const dayConfig = schedule.days[weekdayFromYmd(ymd)];
@@ -231,17 +221,7 @@ export async function getAvailableSlots(
         continue;
       }
 
-      const booked = (reservations || []).filter((r: any) => {
-        return intervalsOverlap(current, slotEnd, new Date(r.start_time), new Date(r.end_time));
-      }).reduce((acc: number, r: any) => acc + (r.quantity || 1), 0);
-
-      const isBlocked = (calendarBlocks || []).some((b: any) => {
-        const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === resolvedId);
-        if (!applies) return false;
-        return intervalsOverlap(current, slotEnd, new Date(b.start_time), new Date(b.end_time));
-      });
-
-      const available = isBlocked ? 0 : capacity - booked;
+      const { available } = availableSeatsForSlot(occupancy, current, slotEnd, capacity);
 
       if (available >= qty && isAfter(current, new Date())) {
         result.push({
@@ -322,31 +302,22 @@ export async function assertReservationSlot(
     throw new Error('Slot overlaps a break (e.g. lunch) in the schedule');
   }
 
-  const { data: calendarBlocks } = await supabaseAdmin
-    .from('calendar_blocks')
-    .select('start_time, end_time, entity_type, entity_id')
-    .eq('site_id', siteId)
-    .in('entity_type', ['global', 'catalog_item'])
-    .lte('start_time', end.toISOString())
-    .gte('end_time', start.toISOString());
+  const family = await resolveReservationFamily(catalogItemId);
+  const occupancy = await loadOccupancyContext(
+    family,
+    start.toISOString(),
+    end.toISOString(),
+    excludeReservationId
+  );
 
-  const isBlocked = (calendarBlocks || []).some((b: any) => {
-    const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
-    if (!applies) return false;
-
-    return intervalsOverlap(start, end, new Date(b.start_time), new Date(b.end_time));
-  });
-
+  const capacity = schedule.capacity || 1;
+  const { available, isBlocked } = availableSeatsForSlot(occupancy, start, end, capacity);
   if (isBlocked) {
     throw new Error('Slot overlaps with a calendar block');
   }
-
-  const capacity = schedule.capacity || 1;
-  const booked = await getBookedSeats(catalogItemId, start, end, excludeReservationId);
-  const remaining = capacity - booked;
-  if (remaining < quantity) {
+  if (available < quantity) {
     throw new Error(
-      `Not enough capacity for this slot (requested ${quantity}, remaining ${remaining}, capacity ${capacity})`
+      `Not enough capacity for this slot (requested ${quantity}, remaining ${available}, capacity ${capacity})`
     );
   }
 

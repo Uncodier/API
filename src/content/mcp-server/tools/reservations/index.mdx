@@ -31,7 +31,7 @@ Use `action="get_available_slots"` to query inventory for a date range (requires
 
 ## Validation
 
-- `get_available_slots` checks the `reservation_schedules` for the target catalog item and calculates available capacity by subtracting overlapping `pending` and `confirmed` reservations.
+- `get_available_slots` uses the target item's `reservation_schedules` for the slot grid, then subtracts overlapping `pending`/`confirmed` reservations across the parent and all variants of that resource. When the parent `redeem_assignment_mode` is `round_robin`, available seats are the number of free `user_choice` peer families (named barbers) on the same site.
 - `create` will use the availability engine to assert the slot is valid before inserting.
 - `update` requires at least one of `status`, `start_time`, `end_time`, `quantity`, `notes`, `lead_id`. Capacity on reschedule excludes the reservation being updated (`WHERE id != reservation_id`). Cancelling (status=`cancelled`) frees capacity in the slots.
 

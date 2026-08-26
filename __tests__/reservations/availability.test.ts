@@ -45,9 +45,18 @@ describe('Reservations Availability Lib', () => {
         return {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockReturnThis(),
+          in: jest.fn().mockReturnThis(),
+          is: jest.fn().mockReturnThis(),
           maybeSingle: jest.fn().mockResolvedValue({
-            data: { id: catalogItemId, is_reservation: true },
+            data: {
+              id: catalogItemId,
+              is_reservation: true,
+              parent_id: null,
+              site_id: siteId,
+              redeem_assignment_mode: 'user_choice',
+            },
           }),
+          then: (resolve: (value: unknown) => unknown) => resolve({ data: [] }),
         };
       }
       return chain;
@@ -302,9 +311,12 @@ describe('Reservations Availability Lib', () => {
     it('fails if quantity > remaining capacity', async () => {
       const q = mockQuery(scheduleOf({ capacity: 2 }));
 
-      q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({
           data: [{
+            catalog_item_id: catalogItemId,
+            start_time: '2026-07-29T15:00:00.000Z',
+            end_time: '2026-07-29T16:00:00.000Z',
             quantity: 1,
             status: 'confirmed'
           }]
@@ -318,8 +330,8 @@ describe('Reservations Availability Lib', () => {
     it('succeeds with valid slot and capacity', async () => {
       const q = mockQuery(scheduleOf({ capacity: 5 }));
 
-      q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({
           data: []
         }),
       });
@@ -334,9 +346,15 @@ describe('Reservations Availability Lib', () => {
     it('counts the existing reservation when no exclude id is passed', async () => {
       const q = mockQuery(scheduleOf({ capacity: 1 }));
 
-      q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({
-          data: [{ quantity: 1, status: 'confirmed' }],
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({
+          data: [{
+            catalog_item_id: catalogItemId,
+            start_time: '2026-07-29T15:00:00.000Z',
+            end_time: '2026-07-29T16:00:00.000Z',
+            quantity: 1,
+            status: 'confirmed',
+          }],
         }),
       });
 
@@ -350,8 +368,8 @@ describe('Reservations Availability Lib', () => {
       const q = mockQuery(scheduleOf({ capacity: 1 }));
 
       const neq = jest.fn().mockResolvedValue({ data: [] });
-      q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockReturnValue({ neq }),
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockReturnValue({ neq }),
       });
 
       await expect(
@@ -375,8 +393,8 @@ describe('Reservations Availability Lib', () => {
     it('treats naive 12:00 as CDMX wall-clock and stores 18:00Z', async () => {
       const q = mockQuery(scheduleOf({ capacity: 5 }));
 
-      q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({
           data: []
         }),
       });
@@ -391,15 +409,15 @@ describe('Reservations Availability Lib', () => {
     it('queries booked seats with exclusive overlap bounds', async () => {
       const q = mockQuery(scheduleOf());
 
-      const lt = jest.fn().mockResolvedValue({ data: [] });
-      q.gt.mockReturnValueOnce({ lt });
+      const gt = jest.fn().mockResolvedValue({ data: [] });
+      q.lt.mockReturnValueOnce({ gt });
 
       const startIso = '2026-07-29T19:00:00.000Z';
       const endIso = '2026-07-29T20:00:00.000Z';
       await assertReservationSlot(siteId, catalogItemId, startIso, endIso, 1);
 
-      expect(q.gt).toHaveBeenCalledWith('end_time', startIso);
-      expect(lt).toHaveBeenCalledWith('start_time', endIso);
+      expect(q.lt).toHaveBeenCalledWith('start_time', endIso);
+      expect(gt).toHaveBeenCalledWith('end_time', startIso);
     });
   });
 });
