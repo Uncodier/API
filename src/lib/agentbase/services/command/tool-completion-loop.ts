@@ -12,7 +12,7 @@ Do not repeat a tool that succeeded with the same arguments.
 
 export const TOOL_CORRECTION_TURN_INSTRUCTION = `
 === TOOL CORRECTION TURN ===
-The last tool failed because its parameters were wrong. Call that tool again NOW with better arguments taken from the error (for example a corrected catalog_item_id). Do not reuse the same args. Do not return [] and do not write the user-facing reply yet. Return [] only if the error cannot be fixed without asking the user.
+The last tool failed because its name or parameters were wrong. Call that tool again NOW with the exact available tool name and better arguments taken from the error (for example a corrected catalog_item_id). If the error says the tool does not exist, use name="reservations" with action="create" — never reservations.create. Do not reuse the same args. Do not return [] and do not write the user-facing reply yet. Return [] only if the error cannot be fixed without asking the user.
 `;
 
 export type ToolCompletionDecision = 'continue' | 'stop_empty' | 'stop_possible_match' | 'stop_cap';

@@ -11,12 +11,11 @@ import { TOOL_EVALUATOR_SYSTEM_PROMPT } from '../../prompts/tool-evaluator-promp
 import { extractTokenUsage } from './tokenUtils';
 import { processToolEvaluationResponse, generateFunctions, prepareToolsForExecution } from './responseProcessor';
 import { prepareMessagesFromCommand, validateAndNormalizeTools } from './messageFormatter';
-import { FunctionCall, ToolExecutionResult } from './types';
+import { FunctionCall } from './types';
 import { CommandCache } from '../../services/command/CommandCache';
-// Importar directamente CommandService para evitar imports dinámicos
 import { CommandService } from '../../services/command/CommandService';
-// Importar desde las nuevas ubicaciones refactorizadas
-import { runToolExecution } from './executor/runner';
+import { executeSelectedTools } from './executor/runner';
+import { rewriteOrRejectRawFunctions } from './executor/dottedToolName';
 
 export class ToolEvaluator extends Base {
   private connector: PortkeyConnector;
@@ -343,10 +342,15 @@ export class ToolEvaluator extends Base {
         
         // Loguear el resultado del parsing
         console.log(`[ToolEvaluator] Parsed ${Array.isArray(functions) ? functions.length : 0} functions from response`);
+
+        if (Array.isArray(functions)) {
+          rewriteOrRejectRawFunctions(functions, command.tools);
+        }
         
-        // Preparar las llamadas a funciones basadas en la respuesta del LLM
-        const functionCalls = prepareToolsForExecution(functions, command.tools);
-        console.log(`[ToolEvaluator] Generated ${functionCalls.length} function calls from ${Array.isArray(functions) ? functions.length : 0} functions`);
+        const preparedCalls = prepareToolsForExecution(functions, command.tools);
+        const functionCalls = preparedCalls.executable;
+        const rejectedFunctionCalls = preparedCalls.rejected;
+        console.log(`[ToolEvaluator] Generated ${functionCalls.length} function calls from ${Array.isArray(functions) ? functions.length : 0} functions (${rejectedFunctionCalls.length} rejected)`);
         
         // Extract possible_match function calls
         let possibleMatchCalls: FunctionCall[] = [];
@@ -393,6 +397,9 @@ export class ToolEvaluator extends Base {
             console.log(`[ToolEvaluator] Corrigiendo inconsistencia en función ${func.name}: possible_match con required_arguments vacío -> cambiando a required`);
             correctedStatus = 'required';
           }
+          if (func.error && correctedStatus !== 'possible_match') {
+            correctedStatus = 'failed';
+          }
           
           // Estructura completamente plana, sin nodos anidados
           return {
@@ -403,7 +410,8 @@ export class ToolEvaluator extends Base {
             arguments: args,
             critical: func.critical || false,
             description: func.description || '',
-            required_arguments: requiredArgs
+            required_arguments: requiredArgs,
+            error: func.error || null
           };
         });
         
@@ -412,13 +420,19 @@ export class ToolEvaluator extends Base {
         const evaluatedFunctions = functions;
         
         // Ejecutar las herramientas seleccionadas pasando el ID del comando
-        if (functionCalls && functionCalls.length > 0) {
+        if (functionCalls.length > 0 || rejectedFunctionCalls.length > 0) {
           console.log(`[ToolEvaluator] Ejecutando ${functionCalls.length} herramientas seleccionadas`);
-          await this.executeSelectedTools(functionCalls, command.tools, command.id, possibleMatchCalls, command.site_id);
+          await executeSelectedTools(
+            functionCalls,
+            command.tools,
+            command.id,
+            possibleMatchCalls,
+            command.site_id,
+            rejectedFunctionCalls
+          );
         } else if (possibleMatchCalls && possibleMatchCalls.length > 0) {
           console.log(`[ToolEvaluator] No hay herramientas para ejecutar, pero sí ${possibleMatchCalls.length} possible_match`);
-          // Pasar un array vacío como functionCalls para solo actualizar el contexto
-          await this.executeSelectedTools([], command.tools, command.id, possibleMatchCalls, command.site_id);
+          await executeSelectedTools([], command.tools, command.id, possibleMatchCalls, command.site_id);
         } else {
           console.log(`[ToolEvaluator] No se seleccionaron herramientas para ejecutar`);
         }
@@ -496,61 +510,6 @@ export class ToolEvaluator extends Base {
         status: 'failed',
         error: error.message
       };
-    }
-  }
-
-  /**
-   * Execute selected tools from LLM response
-   * @param functionCalls - Array of function calls to execute
-   * @param tools - Array of available tools
-   * @param commandId - ID of the command that initiated these function calls
-   * @param possibleMatchFunctions - Optional array of functions with possible_match status
-   * @returns Results of tool execution
-   */
-  async executeSelectedTools(
-    functionCalls: FunctionCall[], 
-    tools: any[],
-    commandId: string,
-    possibleMatchFunctions?: FunctionCall[],
-    site_id?: string
-  ): Promise<ToolExecutionResult[]> {
-    console.log(`[ToolEvaluator] Starting execution of ${functionCalls.length} selected tools for command: ${commandId}`);
-    
-    try {
-      // Filter out possible_match functions as they should not be executed
-      const executableCalls = functionCalls.filter(call => call.status !== 'possible_match');
-      
-      if (executableCalls.length < functionCalls.length) {
-        console.log(`[ToolEvaluator] Skipping ${functionCalls.length - executableCalls.length} possible_match functions`);
-      }
-      
-      if (executableCalls.length === 0) {
-        console.log(`[ToolEvaluator] No executable functions remain after filtering possible_match status`);
-        
-        // Even if there are no executable calls, still update context with possible_match functions
-        if (possibleMatchFunctions && possibleMatchFunctions.length > 0) {
-          console.log(`[ToolEvaluator] Still adding ${possibleMatchFunctions.length} possible_match functions to context`);
-          await runToolExecution([], tools, commandId, possibleMatchFunctions, { site_id });
-        }
-        
-        return [];
-      }
-      
-      // Use our new tool executor to run the tools with the command ID
-      const results = await runToolExecution(executableCalls, tools, commandId, possibleMatchFunctions, { site_id });
-      console.log(`[ToolEvaluator] Tool execution completed with ${results.length} results`);
-      return results;
-    } catch (error: any) {
-      console.error(`[ToolEvaluator] Error executing tools (non-fatal):`, error);
-      // DON'T throw - return error as result so command can continue
-      return [{
-        id: 'tool_execution_error',
-        function_name: 'tool_execution',
-        status: 'error',
-        error: error.message || 'Unknown tool execution error',
-        output: null,
-        arguments: '{}'
-      }];
     }
   }
 }

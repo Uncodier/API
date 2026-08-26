@@ -16,6 +16,7 @@ import {
   normalizeTimezone,
   parseInstantOrWallClock,
 } from '@/lib/timezone';
+import { isItemBookable, loadParentForBookableCheck } from '@/lib/helpers/catalog-bookable';
 
 export { intervalsOverlap } from '@/lib/reservations/family-occupancy';
 
@@ -139,7 +140,7 @@ function wallClockMinutes(date: Date, timezone: string): number {
 export async function resolveReservableCatalogItemId(candidateId: string): Promise<ResolvedReservableCatalogItem> {
   const { data: item } = await supabaseAdmin
     .from('catalog_items')
-    .select('id, is_reservation')
+    .select('id, is_reservation, name, status, availability_status, parent_id')
     .eq('id', candidateId)
     .maybeSingle();
 
@@ -147,6 +148,12 @@ export async function resolveReservableCatalogItemId(candidateId: string): Promi
     if (item.is_reservation === false) {
       throw new ReservableCatalogItemError(
         `catalog_item_id=${candidateId} is not a reservable catalog item`
+      );
+    }
+    const parent = item.parent_id ? await loadParentForBookableCheck(item.parent_id) : null;
+    if (!isItemBookable({ ...item, parent })) {
+      throw new ReservableCatalogItemError(
+        `catalog_item_id=${candidateId} (${item.name || 'item'}) or its parent is archived or unavailable`
       );
     }
     return { catalog_item_id: item.id };

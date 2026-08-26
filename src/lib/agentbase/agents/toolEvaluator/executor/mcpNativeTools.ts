@@ -54,6 +54,21 @@ export function hasMcpNativeTool(toolName: string): boolean {
   return resolveMcpNativeToolName(toolName) !== null;
 }
 
+export function resolveDottedMcpCall(
+  toolName: string,
+  args: Record<string, any> = {}
+): { name: string; args: Record<string, any> } | null {
+  const key = String(toolName || '').trim();
+  if (!key.includes('.')) return null;
+  const parts = key.split('.');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  const resolved = resolveMcpNativeToolName(parts[0]);
+  if (!resolved) return null;
+  const nextArgs = { ...args };
+  if (!nextArgs.action) nextArgs.action = parts[1];
+  return { name: resolved, args: nextArgs };
+}
+
 export async function executeMcpNativeTool(toolName: string, args: any = {}): Promise<any> {
   const resolved = resolveMcpNativeToolName(toolName);
   if (!resolved) {

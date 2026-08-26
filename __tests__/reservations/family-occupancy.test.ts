@@ -173,7 +173,7 @@ describe('family occupancy via getAvailableSlots', () => {
 
   const item = (id: string, overrides: Record<string, unknown> = {}) => ({
     id,
-    is_reservation: true,
+    is_reservation: true, status: "active", availability_status: "available",
     parent_id: null,
     site_id: siteId,
     redeem_assignment_mode: 'user_choice',

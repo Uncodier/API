@@ -50,10 +50,12 @@ describe('Reservations Availability Lib', () => {
           maybeSingle: jest.fn().mockResolvedValue({
             data: {
               id: catalogItemId,
-              is_reservation: true,
+              is_reservation: true, status: "active", availability_status: "available",
               parent_id: null,
               site_id: siteId,
               redeem_assignment_mode: 'user_choice',
+              status: 'active',
+              availability_status: 'available',
             },
           }),
           then: (resolve: (value: unknown) => unknown) => resolve({ data: [] }),
@@ -244,6 +246,48 @@ describe('Reservations Availability Lib', () => {
   });
 
   describe('resolveReservableCatalogItemId', () => {
+    it('fails when the catalog item is unavailable', async () => {
+      const rows: Record<string, any> = {
+        'child-item': {
+          id: 'child-item',
+          name: 'Corte',
+          is_reservation: true,
+          status: 'active',
+          availability_status: 'available',
+          parent_id: 'parent-item',
+        },
+        'parent-item': {
+          id: 'parent-item',
+          name: 'CARLOS',
+          status: 'archived',
+          availability_status: 'unavailable',
+        },
+      };
+      (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+        if (table === 'catalog_items') {
+          const state: { id?: string } = {};
+          const api: any = {
+            select: () => api,
+            eq: (col: string, val: string) => {
+              if (col === 'id') state.id = val;
+              return api;
+            },
+            maybeSingle: async () => ({ data: (state.id && rows[state.id]) || null }),
+          };
+          return api;
+        }
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: null }),
+        };
+      });
+
+      await expect(resolveReservableCatalogItemId('child-item')).rejects.toThrow(
+        'catalog_item_id=child-item (Corte) or its parent is archived or unavailable'
+      );
+    });
+
     it('fails a reservation folio so the model can retry with catalog_item_id', async () => {
       (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
         if (table === 'catalog_items') {

@@ -93,11 +93,11 @@ describe('reservations.create creates a sale_order', () => {
         chain.single.mockResolvedValue({
           data: {
             id: catalogItemId,
-            name: 'Haircut',
+            name: "Haircut", status: "active", availability_status: "available",
             description: null,
             target_sale_price: opts.catalogPrice,
             site_id: siteId,
-            is_reservation: true,
+            is_reservation: true, status: "active", availability_status: "available",
             currency: opts.catalogCurrency === undefined ? 'USD' : opts.catalogCurrency,
           },
           error: null,

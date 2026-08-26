@@ -322,13 +322,32 @@ export async function prepareAssistantContext(
   const instanceContext = `\n\n🆔 INSTANCE CONTEXT:\n- Instance ID: ${instanceId}\n- Site ID: ${siteId}\n- User ID: ${userId}${instance_plan_id ? `\n- Current Plan ID: ${instance_plan_id}` : ''}${allStepsContext}${activeStepContext}${lastCompletedPlanContext}${activeRequirementId ? `\n- Current Requirement ID: ${activeRequirementId}` : ''}\n`;
 
   let extraContextInstruction = '';
+  let isAudienceGeneration = false;
+  
   if (contextString) {
     try {
       const parsedContext = JSON.parse(contextString);
+      
+      if (parsedContext.mediaType === 'audience' || parsedContext.output_type === 'audience') {
+        isAudienceGeneration = true;
+      }
+      
       if (parsedContext.parameters) {
         extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT PARAMETERS (YOU MUST RESPECT THESE IN YOUR TOOL CALLS):\n${JSON.stringify(parsedContext.parameters, null, 2)}\nIf you are generating media, YOU MUST use these exact parameters (duration, aspect_ratio, etc).`;
       } else {
         extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;
+      }
+      
+      if (isAudienceGeneration) {
+        const channelsStr = Array.isArray(parsedContext.audience_channels) && parsedContext.audience_channels.length > 0
+          ? `\nREQUIRED FILTERS: You must apply these channel filters to the audience tool using the 'channels' array parameter: ${JSON.stringify(parsedContext.audience_channels)}.`
+          : '';
+          
+        extraContextInstruction += `\n\n🎯 AUDIENCE GENERATION TASK:
+CRITICAL: Your primary task is to CREATE a persistent audience.
+1. You MUST use the \`audience\` tool via \`tool_lookup\` with action='create'.
+2. Do NOT use the \`leads\` tool to simply list or display leads. You must CREATE the audience.
+3. You MUST return the resulting \`audience_id\` in your final response.${channelsStr}`;
       }
     } catch {
       extraContextInstruction = `\n\n⚠️ IMPORTANT CONTEXT:\n${contextString}`;

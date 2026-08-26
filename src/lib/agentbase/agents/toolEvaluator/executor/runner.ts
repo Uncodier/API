@@ -6,11 +6,12 @@
  */
 import { FunctionCall, ToolExecutionResult } from '../types';
 import { executeTools } from './executeTools';
-import { createToolsMap, ToolsMap } from './toolsMap';
+import { createToolsMap } from './toolsMap';
 import { updateFunctionStatuses } from '../updater/functionStatusUpdater';
 import { updateCommandStatus } from '../updater/commandStatusUpdater';
 import { updateCommandContext } from '../updater/contextUpdater';
 import { coerceToolArgs } from '@/lib/custom-automation/coerce-tool-args';
+import { unknownToolError } from './dottedToolName';
 
 /**
  * Main function to execute tools from the tool evaluator
@@ -20,12 +21,23 @@ import { coerceToolArgs } from '@/lib/custom-automation/coerce-tool-args';
  * @param possibleMatchFunctions - Optional array of possible_match functions to include in the context
  * @returns Results of tool execution
  */
+function rejectedAsResults(rejectedCalls: FunctionCall[] = []): ToolExecutionResult[] {
+  return rejectedCalls.map((call) => ({
+    id: call.id,
+    function_name: call.name,
+    arguments: call.arguments,
+    status: 'error' as const,
+    error: typeof call.error === 'string' ? call.error : unknownToolError(call.name),
+    output: null,
+  }));
+}
+
 export async function runToolExecution(
   functionCalls: FunctionCall[],
   tools: any[],
   commandId: string | null = null,
   possibleMatchFunctions?: FunctionCall[],
-  context?: { site_id?: string }
+  context?: { site_id?: string; rejectedCalls?: FunctionCall[] }
 ): Promise<ToolExecutionResult[]> {
   console.log(`[ToolExecutor] Starting tool execution for ${functionCalls.length} function calls`);
   
@@ -58,8 +70,10 @@ export async function runToolExecution(
   // Crear el mapa solo con las herramientas requeridas, no todas las disponibles
   const toolsMap = createToolsMap(tools, requiredToolNames);
   
-  // Execute the tools
-  const results = await executeTools(functionCalls, toolsMap, context);
+  const executed = functionCalls.length > 0
+    ? await executeTools(functionCalls, toolsMap, context)
+    : [];
+  const results = [...executed, ...rejectedAsResults(context?.rejectedCalls)];
   
   console.log(`[ToolExecutor] Tool execution completed with ${results.length} results`);
   
@@ -86,4 +100,52 @@ export async function runToolExecution(
   }
   
   return results;
+}
+
+export async function executeSelectedTools(
+  functionCalls: FunctionCall[],
+  tools: any[],
+  commandId: string,
+  possibleMatchFunctions?: FunctionCall[],
+  site_id?: string,
+  rejectedFunctionCalls?: FunctionCall[]
+): Promise<ToolExecutionResult[]> {
+  console.log(`[ToolEvaluator] Starting execution of ${functionCalls.length} selected tools for command: ${commandId}`);
+
+  try {
+    const executableCalls = functionCalls.filter((call) => call.status !== 'possible_match');
+    const rejectedCalls = rejectedFunctionCalls || [];
+
+    if (executableCalls.length < functionCalls.length) {
+      console.log(`[ToolEvaluator] Skipping ${functionCalls.length - executableCalls.length} possible_match functions`);
+    }
+
+    if (executableCalls.length === 0 && rejectedCalls.length === 0) {
+      console.log(`[ToolEvaluator] No executable functions remain after filtering possible_match status`);
+
+      if (possibleMatchFunctions && possibleMatchFunctions.length > 0) {
+        console.log(`[ToolEvaluator] Still adding ${possibleMatchFunctions.length} possible_match functions to context`);
+        await runToolExecution([], tools, commandId, possibleMatchFunctions, { site_id });
+      }
+
+      return [];
+    }
+
+    const results = await runToolExecution(executableCalls, tools, commandId, possibleMatchFunctions, {
+      site_id,
+      rejectedCalls,
+    });
+    console.log(`[ToolEvaluator] Tool execution completed with ${results.length} results`);
+    return results;
+  } catch (error: any) {
+    console.error(`[ToolEvaluator] Error executing tools (non-fatal):`, error);
+    return [{
+      id: 'tool_execution_error',
+      function_name: 'tool_execution',
+      status: 'error',
+      error: error.message || 'Unknown tool execution error',
+      output: null,
+      arguments: '{}',
+    }];
+  }
 } 

@@ -11,6 +11,7 @@ jest.mock('../customToolsMap', () => ({
 jest.mock('../mcpNativeTools', () => ({
   hasMcpNativeTool: jest.fn(() => false),
   executeMcpNativeTool: jest.fn(),
+  resolveDottedMcpCall: jest.fn(() => null),
 }));
 
 describe('executeTools MCP routing', () => {
@@ -100,6 +101,33 @@ describe('executeTools MCP routing', () => {
     expect(mcpNativeTools.executeMcpNativeTool).toHaveBeenCalledWith(
       'calendars',
       expect.objectContaining({ action: 'list', query: 'Emmanuel', site_id: 'site-from-command' })
+    );
+  });
+
+  it('rewrites reservations.create before calling the MCP tool', async () => {
+    (mcpNativeTools.hasMcpNativeTool as jest.Mock).mockReturnValue(false);
+    (mcpNativeTools.resolveDottedMcpCall as jest.Mock).mockReturnValue({
+      name: 'reservations',
+      args: { action: 'create', catalog_item_id: 'item-1' },
+    });
+    (mcpNativeTools.executeMcpNativeTool as jest.Mock).mockResolvedValue({ success: true });
+
+    await executeTools(
+      [
+        {
+          id: 'res-create',
+          type: 'function',
+          status: FunctionCallStatus.INITIALIZED,
+          name: 'reservations.create',
+          arguments: JSON.stringify({ catalog_item_id: 'item-1' }),
+        },
+      ],
+      {}
+    );
+
+    expect(mcpNativeTools.executeMcpNativeTool).toHaveBeenCalledWith(
+      'reservations',
+      expect.objectContaining({ action: 'create', catalog_item_id: 'item-1' })
     );
   });
 });

@@ -29,7 +29,7 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). create books the slot AND creates a pending sale_order (same commercial path as checkout for a single reservable line); the result includes order_id and sale_id. Do not also call checkout.create_order for that same slot — use checkout.create_payment_link with the returned order_id to charge. Mixed carts (product + slot) still use checkout.create_order. get/update require the reservation UUID in id (alias: reservation_id) — never catalog_item_id. catalog_item_id is only for create, get_available_slots, and list. lead_id is required on create and can be reassigned on update. If get_available_slots fails, retry with the catalog_item_id from the error, then update with id and new times. Slot start/end are UTC ISO instants — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z). On update, keep quantity as the real seat count (usually 1); do not send 0 to bypass capacity — the current reservation is already excluded from the slot check. Occupancy crosses the parent and all variants of the same resource. If the parent redeem_assignment_mode is round_robin, a slot is free only when at least one user_choice peer (named barber) is free.',
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). To check availability, you MUST ALWAYS use get_available_slots first. Do not assume availability based on business hours. create books the slot AND creates a pending sale_order (same commercial path as checkout for a single reservable line); the result includes order_id and sale_id. Do not also call checkout.create_order for that same slot — use checkout.create_payment_link with the returned order_id to charge. Mixed carts (product + slot) still use checkout.create_order. get/update require the reservation UUID in id (alias: reservation_id) — never catalog_item_id. catalog_item_id is only for create, get_available_slots, and list. lead_id is required on create and can be reassigned on update. If get_available_slots fails, retry with the catalog_item_id from the error, then update with id and new times. Slot start/end are UTC ISO instants — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z). On update, keep quantity as the real seat count (usually 1); do not send 0 to bypass capacity — the current reservation is already excluded from the slot check. Occupancy crosses the parent and all variants of the same resource. If the parent redeem_assignment_mode is round_robin, a slot is free only when at least one user_choice peer (named barber) is free.',
     parameters: {
       type: 'object',
       properties: {
@@ -68,6 +68,15 @@ export function reservationsTool(current_site_id?: string) {
 
       if (action === 'create' && (!params.catalog_item_id || !params.lead_id || !params.start_time || !params.end_time)) {
         throw new Error('Missing required fields for create: catalog_item_id, lead_id, start_time, end_time');
+      }
+
+      if (
+        typeof params.catalog_item_id === 'string' &&
+        /^(unknown|n\/?a|none|null|undefined|tbd|placeholder)$/i.test(params.catalog_item_id.trim())
+      ) {
+        throw new Error(
+          'catalog_item_id must be a UUID from calendars or catalog_commerce. Do not send "unknown" or a placeholder.'
+        );
       }
       
       if ((action === 'update' || action === 'get') && !id) {

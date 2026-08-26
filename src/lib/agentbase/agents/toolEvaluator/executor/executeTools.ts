@@ -7,7 +7,7 @@
 import { FunctionCall, ToolExecutionResult } from '../types';
 import { ToolsMap } from './toolsMap';
 import { hasCustomTool, getCustomToolDefinition } from './customToolsMap';
-import { hasMcpNativeTool, executeMcpNativeTool } from './mcpNativeTools';
+import { hasMcpNativeTool, executeMcpNativeTool, resolveDottedMcpCall } from './mcpNativeTools';
 import { OpenAIToolSet } from "composio-core";
 import { WorkflowService } from '../../../../services/workflow-service';
 
@@ -375,12 +375,14 @@ export async function executeTools(
           success = true;
         }
         // 4. Internal MCP tools (calendars, reservations, checkout, ...) — never Composio
-        else if (hasMcpNativeTool(functionName)) {
-          const mcpArgs = { ...(parsedArgs as Record<string, any>) };
+        else if (hasMcpNativeTool(functionName) || resolveDottedMcpCall(functionName, parsedArgs)) {
+          const dotted = resolveDottedMcpCall(functionName, parsedArgs);
+          const mcpName = dotted?.name || functionName;
+          const mcpArgs = { ...(dotted?.args || parsedArgs as Record<string, any>) };
           if (!mcpArgs.site_id && context?.site_id) {
             mcpArgs.site_id = context.site_id;
           }
-          output = await executeMcpNativeTool(functionName, mcpArgs);
+          output = await executeMcpNativeTool(mcpName, mcpArgs);
           success = true;
         }
         // 5. External Composio apps only (Gmail, Slack, ...). Internal names 410 on v2.

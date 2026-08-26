@@ -146,6 +146,7 @@ describe('tool-completion-loop', () => {
     expect(executeCommand.mock.calls[1][0].context).toContain('TOOL CORRECTION TURN');
     expect(executeCommand.mock.calls[1][0].context).toContain('better arguments taken from the error');
     expect(TOOL_CORRECTION_TURN_INSTRUCTION).toContain('Do not return []');
+    expect(TOOL_CORRECTION_TURN_INSTRUCTION).toContain('never reservations.create');
   });
 
   it('still asks the model for better params if the evaluator status is failed but a tool failed', async () => {

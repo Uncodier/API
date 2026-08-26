@@ -1,4 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { isItemBookable, loadParentForBookableCheck } from '@/lib/helpers/catalog-bookable';
 import { assertReservationSlot } from '@/lib/reservations/availability';
 import { resolveLineCurrency, resolveSiteCurrency } from './resolve-currency';
 
@@ -45,7 +46,7 @@ export type ProcessedHostLine = {
 async function resolveCatalogItem(catalogItemId: string, siteId: string) {
   const { data: catItem, error: catErr } = await supabaseAdmin
     .from('catalog_items')
-    .select('id, name, description, target_sale_price, site_id, is_reservation, currency')
+    .select('id, name, description, target_sale_price, site_id, is_reservation, currency, status, availability_status, parent_id')
     .eq('id', catalogItemId)
     .single();
 
@@ -55,6 +56,12 @@ async function resolveCatalogItem(catalogItemId: string, siteId: string) {
   if (catItem.site_id !== siteId) {
     throw new Error(`Catalog item ${catalogItemId} does not belong to site ${siteId}`);
   }
+
+  const parent = catItem.parent_id ? await loadParentForBookableCheck(catItem.parent_id) : null;
+  if (!isItemBookable({ ...catItem, parent })) {
+    throw new Error(`Catalog item ${catItem.name || catalogItemId} or its parent is archived or unavailable`);
+  }
+
   return catItem;
 }
 

@@ -1,4 +1,4 @@
-import { executeMcpNativeTool, hasMcpNativeTool, resolveMcpNativeToolName } from '../mcpNativeTools';
+import { executeMcpNativeTool, hasMcpNativeTool, resolveMcpNativeToolName, resolveDottedMcpCall } from '../mcpNativeTools';
 import { fetchApiTool } from '@/app/api/agents/tools/utils/fetch-helper';
 
 jest.mock('@/app/api/agents/tools/utils/fetch-helper', () => ({
@@ -23,6 +23,18 @@ describe('mcpNativeTools', () => {
     expect(resolveMcpNativeToolName('reservation')).toBe('reservations');
     expect(resolveMcpNativeToolName('promotion')).toBe('promotions');
     expect(hasMcpNativeTool('GOOGLECALENDAR_LIST_EVENTS')).toBe(false);
+  });
+
+  it('rewrites reservations.create into the reservations MCP tool', () => {
+    expect(resolveDottedMcpCall('reservations.create', { catalog_item_id: 'item-1' })).toEqual({
+      name: 'reservations',
+      args: { catalog_item_id: 'item-1', action: 'create' },
+    });
+    expect(resolveDottedMcpCall('reservation.create', {})).toEqual({
+      name: 'reservations',
+      args: { action: 'create' },
+    });
+    expect(resolveDottedMcpCall('reservations', { action: 'list' })).toBeNull();
   });
 
   it('executes reservations through the MCP API helper, not Composio', async () => {

@@ -3,6 +3,7 @@
  */
 
 import { supabaseAdmin } from './supabase-server';
+import { normalizeChannels, getLeadIdsWithDeals, buildChannelFilterOrClause } from './lead-channel-filters';
 
 export const LEAD_STATUSES = ['new', 'contacted', 'qualified', 'converted', 'lost'] as const;
 
@@ -52,6 +53,7 @@ export interface LeadFilters {
   sort_order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
+  channels?: string[];
 }
 
 export interface CreateLeadParams {
@@ -89,6 +91,24 @@ export async function getLeads(filters: LeadFilters): Promise<{
   total: number;
   hasMore: boolean;
 }> {
+  if (filters.channels && filters.channels.length > 0 && filters.site_id) {
+    const norms = normalizeChannels(filters.channels);
+    if (norms.length > 0) {
+      const dealIds = norms.includes('deals') ? await getLeadIdsWithDeals(filters.site_id) : new Set<string>();
+      const { orClause, isEmptyMatch } = buildChannelFilterOrClause(norms, dealIds);
+      
+      if (isEmptyMatch) {
+        return { leads: [], total: 0, hasMore: false };
+      }
+      
+      if (orClause) {
+        // We temporarily attach it to the filters object so it can be applied after the base query is initialized.
+        // But it's cleaner to handle it here
+        (filters as any)._resolvedChannelOr = orClause;
+      }
+    }
+  }
+
   let query = supabaseAdmin
     .from('leads')
     .select('*', { count: 'exact' });
@@ -100,6 +120,10 @@ export async function getLeads(filters: LeadFilters): Promise<{
   if (filters.campaign_id) query = query.eq('campaign_id', filters.campaign_id);
   if (filters.assignee_id) query = query.eq('assignee_id', filters.assignee_id);
   if (filters.origin) query = query.eq('origin', filters.origin);
+
+  if ((filters as any)._resolvedChannelOr) {
+    query = query.or((filters as any)._resolvedChannelOr);
+  }
 
   if (filters.search) {
     const term = filters.search;

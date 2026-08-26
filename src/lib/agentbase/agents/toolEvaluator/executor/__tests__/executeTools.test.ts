@@ -13,6 +13,7 @@ jest.mock('../customToolsMap', () => ({
 jest.mock('../mcpNativeTools', () => ({
   hasMcpNativeTool: jest.fn(() => false),
   executeMcpNativeTool: jest.fn(),
+  resolveDottedMcpCall: jest.fn(() => null),
 }));
 
 // Mock process.env

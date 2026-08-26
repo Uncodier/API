@@ -66,7 +66,7 @@ describe('Checkout Tool Route Handlers', () => {
     const catalogById: Record<string, any> = {
       'cat-product': {
         id: 'cat-product',
-        name: 'Product',
+        name: "Product", status: "active", availability_status: "available",
         target_sale_price: 10,
         site_id: siteId,
         is_reservation: false,
@@ -77,7 +77,7 @@ describe('Checkout Tool Route Handlers', () => {
         name: 'Reservable',
         target_sale_price: 10,
         site_id: siteId,
-        is_reservation: true,
+        is_reservation: true, status: "active", availability_status: "available",
         currency: 'USD',
       },
     };
@@ -99,7 +99,7 @@ describe('Checkout Tool Route Handlers', () => {
         chain.single.mockImplementation(async () => ({
           data: catalogById[lookupId] || {
             id: lookupId,
-            name: 'Item',
+            name: "Item", status: "active", availability_status: "available",
             target_sale_price: 10,
             site_id: siteId,
             is_reservation: false,
@@ -187,7 +187,7 @@ describe('Checkout Tool Route Handlers', () => {
       } else if (table === 'sites') {
         chain.single.mockResolvedValueOnce({ data: { user_id: userId } });
       } else if (table === 'catalog_items') {
-        chain.single.mockResolvedValueOnce({ data: { name: 'Item', target_sale_price: 10, site_id: siteId, currency: 'MXN' } });
+        chain.single.mockResolvedValueOnce({ data: { name: "Item", status: "active", availability_status: "available", target_sale_price: 10, site_id: siteId, currency: 'MXN' } });
       } else if (table === 'sales' || table === 'sale_orders') {
         chain.single.mockResolvedValueOnce({ data: { id: 'obj-123' } });
       } else if (table === 'sale_order_items') {

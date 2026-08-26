@@ -3,6 +3,12 @@
  */
 import { v4 as uuidv4 } from 'uuid';
 import { ToolDecision, ToolExclusion, FunctionCall } from './types';
+import { rewriteDottedToolCall, unknownToolError } from './executor/dottedToolName';
+
+export type PreparedToolCalls = {
+  executable: FunctionCall[];
+  rejected: FunctionCall[];
+};
 
 /**
  * Process tool evaluation response from LLM
@@ -288,7 +294,7 @@ export function generateFunctions(decisions: ToolDecision[]): FunctionCall[] {
  * @param tools - Available tools
  * @returns Array of function calls ready for execution
  */
-export function prepareToolsForExecution(response: any, tools: any[]): FunctionCall[] {
+export function prepareToolsForExecution(response: any, tools: any[]): PreparedToolCalls {
   console.log(`[ToolEvaluator] Preparing tools for execution`);
   
   // First process the evaluation response
@@ -300,19 +306,36 @@ export function prepareToolsForExecution(response: any, tools: any[]): FunctionC
   // Create a set of valid tool names for efficient lookup
   const validToolNames = new Set(tools.map(tool => typeof tool === 'string' ? tool : tool.name));
   console.log(`[ToolEvaluator] Valid tool names: ${Array.from(validToolNames).join(', ')}`);
+
+  const rejected: FunctionCall[] = [];
+
+  for (const call of functionCalls) {
+    if (!call.name || call.name === 'unknown_function') continue;
+    const rewritten = rewriteDottedToolCall(call.name, call.arguments, validToolNames, tools);
+    if (rewritten.rewritten) {
+      console.log(`[ToolEvaluator] Rewrote dotted tool name ${call.name} -> ${rewritten.name}`);
+      call.name = rewritten.name;
+      call.arguments = rewritten.arguments;
+    }
+  }
   
   // Filter function calls to only include those with valid tool names and status 'required'
   const validatedFunctionCalls = functionCalls.filter(call => {
-    // Obtener el nombre de la función 
     const functionName = call.name;
     
     if (!functionName || functionName === 'unknown_function') {
       console.warn(`[ToolEvaluator] Skipping function call with missing or unknown name`);
+      call.status = 'failed';
+      call.error = 'Tool missing or unknown name.';
+      rejected.push(call);
       return false;
     }
     
     if (!validToolNames.has(functionName)) {
       console.warn(`[ToolEvaluator] Skipping function call with invalid tool name: ${functionName}`);
+      call.status = 'failed';
+      call.error = unknownToolError(functionName);
+      rejected.push(call);
       return false;
     }
     
@@ -335,6 +358,6 @@ export function prepareToolsForExecution(response: any, tools: any[]): FunctionC
     console.warn(`[ToolEvaluator] Filtered out ${functionCalls.length - validatedFunctionCalls.length} invalid function calls`);
   }
   
-  console.log(`[ToolEvaluator] Prepared ${validatedFunctionCalls.length} tools for execution`);
-  return validatedFunctionCalls;
+  console.log(`[ToolEvaluator] Prepared ${validatedFunctionCalls.length} tools for execution (${rejected.length} rejected)`);
+  return { executable: validatedFunctionCalls, rejected };
 } 

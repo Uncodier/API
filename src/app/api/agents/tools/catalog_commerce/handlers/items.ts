@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { resolveSiteCurrency } from '@/app/api/agents/tools/checkout/resolve-currency';
+import { isItemBookable, loadParentForBookableCheck, loadUnbookableParentIds } from '@/lib/helpers/catalog-bookable';
 import {
   buildCatalogSearchClauses,
   catalogSearchFallbackHint,
@@ -202,6 +203,14 @@ export async function handleItemAction(body: Record<string, unknown>) {
 
     if (error) throw new Error(error.message);
 
+    const enforceBookable = !updates.status && !updates.availability_status;
+    if (enforceBookable) {
+      const parent = data.parent_id ? await loadParentForBookableCheck(data.parent_id) : null;
+      if (!isItemBookable({ ...data, parent })) {
+        throw new Error(`Catalog item ${data.name || id} or its parent is archived or unavailable`);
+      }
+    }
+
     if (include_modifiers) {
       const modifiers = await loadItemModifiers(data.site_id, data.id);
       return NextResponse.json({ success: true, item: data, modifiers });
@@ -216,9 +225,18 @@ export async function handleItemAction(body: Record<string, unknown>) {
     const rangeFrom = Number(offset);
     const rangeTo = rangeFrom + Number(limit) - 1;
 
+    const enforceBookable = !updates.status && !updates.availability_status;
+
     const runList = async (searchFilter?: string | null) => {
       let query = supabaseAdmin.from('catalog_items').select('*', { count: 'exact' });
       query = applyItemListFilters(query, site_id, updates);
+      if (enforceBookable) {
+        query = query.eq('status', 'active').eq('availability_status', 'available');
+        const blockedParentIds = await loadUnbookableParentIds(typeof site_id === 'string' ? site_id : undefined);
+        if (blockedParentIds.length) {
+          query = query.or(`parent_id.is.null,parent_id.not.in.(${blockedParentIds.join(',')})`);
+        }
+      }
       if (searchFilter) query = query.or(searchFilter);
       return query.range(rangeFrom, rangeTo).order('created_at', { ascending: false });
     };

@@ -34,6 +34,7 @@ export interface AudienceToolParams {
   search?: string;
   /** Only pass true when the user explicitly asks to search inside lead notes. */
   search_include_notes?: boolean;
+  channels?: string[];
   origin?: string;
   limit?: number;
   page_size?: number;
@@ -76,6 +77,7 @@ async function collectLeadIds(
       assignee_id: params.assignee_id,
       search: params.search,
       search_include_notes: params.search_include_notes === true,
+      channels: params.channels,
       limit: Math.min(COLLECT_BATCH, maxLimit - leadIds.length),
       offset,
       sort_by: 'created_at',
@@ -119,6 +121,10 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
       if (args.campaign_id) sqlQuery += ` AND campaign_id = '${args.campaign_id}'`;
       if (args.assignee_id) sqlQuery += ` AND assignee_id = '${args.assignee_id}'`;
       if (args.origin) sqlQuery += ` AND origin = '${args.origin}'`;
+      if (args.channels && args.channels.length > 0) {
+        // Just for logging/recording. The real DB filter handles the logic.
+        sqlQuery += ` AND (channels in ${args.channels.join(',')})`;
+      }
       if (args.search) {
         const safeSearch = args.search.replace(/'/g, "''");
         if (args.search_include_notes === true) {
@@ -143,6 +149,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
           assignee_id: args.assignee_id,
           search: args.search,
           search_include_notes: args.search_include_notes === true,
+          channels: args.channels,
           origin: args.origin,
           limit: args.limit,
           sql: sqlQuery,
@@ -262,7 +269,7 @@ export function audienceTool(siteId: string, userId: string, instanceId: string)
 
 Actions:
 • create — query leads by filters and store the result as a named audience.
-  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search (name and email only unless search_include_notes is true), origin, limit (e.g. 10 to only add 10 leads), page_size (default 50).
+  Required: name. Optional filters: status, segment_id, campaign_id, assignee_id, search (name and email only unless search_include_notes is true), origin, channels (array of: phone, email, web, deals), limit (e.g. 10 to only add 10 leads), page_size (default 50).
   Returns audience_id, total_count, total_pages, and example_leads (up to 5 leads).
 • list — list all audiences for this site.
 • get — retrieve a specific page of leads from an audience.
@@ -298,6 +305,11 @@ Usage tips:
           type: 'boolean',
           description:
             'Set true only when the user explicitly requests searching inside lead notes. Default behavior excludes notes.',
+        },
+        channels: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'Filter leads that have at least one of these channels: phone, email, web, deals. (Uses OR semantics).',
         },
         origin: { type: 'string', description: 'Filter leads by origin.' },
         limit: { type: 'number', description: 'Maximum number of total leads to add to the audience.' },

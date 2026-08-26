@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { filterBookableFamily } from '@/lib/helpers/catalog-bookable';
 import { normalizeWeeklyAvailability, type WeeklyAvailability } from '@/lib/reservations/weekly-hours';
 
 export type CalendarsAction =
@@ -112,7 +113,7 @@ async function loadReservableServices(siteId: string, query?: string) {
   const [itemsRes, schedulesRes] = await Promise.all([
     supabaseAdmin
       .from('catalog_items')
-      .select('id, name, kind, status, availability_status, is_reservation, target_sale_price, currency')
+      .select('id, name, kind, status, availability_status, is_reservation, target_sale_price, currency, parent_id')
       .eq('site_id', siteId)
       .eq('is_reservation', true),
     supabaseAdmin
@@ -126,7 +127,7 @@ async function loadReservableServices(siteId: string, query?: string) {
 
   const schedulesByItem = new Map((schedulesRes.data || []).map((row: any) => [row.catalog_item_id, row]));
 
-  return (itemsRes.data || [])
+  return filterBookableFamily(itemsRes.data || [])
     .filter((item: any) => matchesQuery(query, item.name))
     .map((item: any) => ({
       catalog_item_id: item.id,

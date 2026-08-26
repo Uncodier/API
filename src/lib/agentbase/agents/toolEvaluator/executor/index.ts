@@ -5,6 +5,6 @@
  * y funciones desde el evaluador de herramientas.
  */
 
-export { runToolExecution } from './runner';
+export { runToolExecution, executeSelectedTools } from './runner';
 export { executeTools } from './executeTools';
 export { createToolsMap } from './toolsMap'; 
