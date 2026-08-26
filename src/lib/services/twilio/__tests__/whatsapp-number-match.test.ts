@@ -2,6 +2,7 @@ import {
   lastTenPhoneDigits,
   pickMatchingWhatsAppToken,
   storedWhatsAppIdentifierMatches,
+  twilioWhatsAppFromCandidates,
   whatsappIdentifierSearchKeys,
 } from '../whatsapp-number-match';
 
@@ -31,5 +32,11 @@ describe('whatsapp-number-match', () => {
 
   it('does not match a different last-10 number', () => {
     expect(storedWhatsAppIdentifierMatches('+524611051101', '+5214611721870')).toBe(false);
+  });
+
+  it('builds Twilio From candidates with WhatsApp MX +521 first', () => {
+    expect(twilioWhatsAppFromCandidates(storedNumber)).toEqual([twilioTo, storedNumber]);
+    expect(twilioWhatsAppFromCandidates(twilioTo)).toEqual([twilioTo, storedNumber]);
+    expect(twilioWhatsAppFromCandidates('+14155552671')).toEqual(['+14155552671']);
   });
 });

@@ -68,3 +68,26 @@ export function pickMatchingWhatsAppToken<T extends { identifier?: string | null
   );
   return matched[0] || (tokens.length === 1 ? tokens[0] : null);
 }
+
+/**
+ * Twilio WhatsApp From candidates for a stored business number.
+ * Mexican numbers are stored as +52XXXXXXXXXX but the WhatsApp sender is +521XXXXXXXXXX.
+ * Prefer the +521 form first so outbound does not hit Twilio 63007.
+ */
+export function twilioWhatsAppFromCandidates(storedNumber: string | null | undefined): string[] {
+  const stored = String(storedNumber || '').replace(/^whatsapp:/i, '').replace(/[\s\-()]/g, '').trim();
+  if (!stored) return [];
+
+  const last10 = lastTenPhoneDigits(stored);
+  const candidates: string[] = [];
+
+  if (last10 && /^\+52\d{10}$/.test(stored)) {
+    candidates.push(`+521${last10}`);
+  }
+  candidates.push(stored);
+  if (last10 && /^\+521\d{10}$/.test(stored)) {
+    candidates.push(`+52${last10}`);
+  }
+
+  return Array.from(new Set(candidates));
+}
