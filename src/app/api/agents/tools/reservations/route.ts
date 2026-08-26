@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getAvailableSlots, assertReservationSlot, ReservableCatalogItemError } from '@/lib/reservations/availability';
+import { createSaleOrderFromLines } from '@/app/api/agents/tools/checkout/create-order';
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,10 +49,6 @@ export async function POST(request: NextRequest) {
 
       const quantity = updates.quantity ?? 1;
 
-      // Validate capacity and schedule
-      const slot = await assertReservationSlot(site_id, catalog_item_id, updates.start_time, updates.end_time, quantity, true);
-
-      // If entitlement_id is provided, validate it
       if (entitlement_id) {
         const { data: ent, error: entErr } = await supabaseAdmin
           .from('entitlements')
@@ -66,7 +63,6 @@ export async function POST(request: NextRequest) {
           throw new Error(`Entitlement ${entitlement_id} does not have enough uses remaining`);
         }
 
-        // Validate pass_redeemable_items relation
         const { data: passRedeem, error: passErr } = await supabaseAdmin
           .from('pass_redeemable_items')
           .select('id')
@@ -81,32 +77,41 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      const payload = {
-        catalog_item_id,
-        lead_id,
+      const result = await createSaleOrderFromLines({
         site_id,
-        buyer_user_id: buyer_user_id || null,
-        owner_site_id: owner_site_id || null,
-        entitlement_id: entitlement_id || null,
-        start_time: slot.start_utc,
-        end_time: slot.end_utc,
-        quantity,
-        status: updates.status || 'pending',
-        notes: updates.notes || null,
-      };
+        lead_id,
+        buyer_user_id,
+        owner_site_id,
+        lines: [
+          {
+            catalogItemId: catalog_item_id,
+            quantity,
+            reservationStart: updates.start_time,
+            reservationEnd: updates.end_time,
+            ...(entitlement_id ? { unitPriceOverride: 0 } : {}),
+          },
+        ],
+        reservationExtras: {
+          entitlement_id: entitlement_id || null,
+          status: updates.status || 'pending',
+          notes: updates.notes || null,
+        },
+      });
 
-      const { data, error } = await supabaseAdmin
-        .from('reservations')
-        .insert(payload)
-        .select()
-        .single();
-
-      if (error) throw new Error(error.message);
-      if (data && site_id) {
-        const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
-        fireWorkflowDispatch({ table: 'reservations', op: 'insert', row: data, site_id });
+      const reservation = result.reservations[0];
+      if (!reservation) {
+        throw new Error('Failed to create capacity reservation for order');
       }
-      return NextResponse.json({ success: true, reservation: data });
+
+      const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
+      fireWorkflowDispatch({ table: 'reservations', op: 'insert', row: reservation, site_id });
+
+      return NextResponse.json({
+        success: true,
+        reservation,
+        order_id: result.order.id,
+        sale_id: result.sale.id,
+      });
     }
 
     if (action === 'get') {

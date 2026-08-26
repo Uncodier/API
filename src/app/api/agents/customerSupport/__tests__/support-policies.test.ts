@@ -36,4 +36,10 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('korte de cabalero');
     expect(policies).toContain('search="corte"');
   });
+
+  it('books catalog capacity via reservations.create then payment link, not a second create_order', () => {
+    expect(policies).toContain('THEN reservations.create (creates the pending sale_order)');
+    expect(policies).toContain('Do not also call checkout.create_order for that same slot');
+    expect(policies).toContain('checkout.create_payment_link');
+  });
 });

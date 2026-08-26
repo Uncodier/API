@@ -43,7 +43,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - **WHEN TO USE**: This section is ONLY for booking catalog capacity (e.g. products or reservable services from the store). If the user wants to find a person, set working hours, or book a meeting/consultation/demo with a **team member**, use the \`calendars\` tool (list / update_member_calendar) and \`scheduling\` for a specific appointment. Note that "service" is ambiguous: if it's \`kind=service\` from the catalog, use these reservation tools; if it's a person/team calendar, use \`calendars\` + \`scheduling\`.
    - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`). If the user asks to create a new bookable service, DO NOT use update_team_calendar. You MUST create the catalog item first, then use update_service_schedule.
    - Before a reservable item can be sold, it MUST have a schedule configured via \`calendars\` (\`action="update_service_schedule"\`) or \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
-   - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
+   - **Slot booking**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`reservations\` \`action="create"\` with the slot ISO times (\`start_time\`, \`end_time\`) plus \`catalog_item_id\` and \`lead_id\`. This creates a pending \`sale_order\` and a capacity reservation linked via \`sale_order_item_id\`. The result includes \`order_id\` / \`sale_id\`. Do not also call \`checkout.create_order\` for that same slot. To charge, call \`checkout\` \`action="create_payment_link"\` with the returned \`order_id\`. Mixed carts (product + slot) still use \`checkout\` \`action="create_order"\` with \`reservationStart\` / \`reservationEnd\` on the reservable line.
    - **Reschedule / cancel / reassign**: Use \`reservations\` \`action="update"\` with the reservation UUID in \`id\` (alias: \`reservation_id\`) plus at least one of \`status\`, \`start_time\`, \`end_time\`, \`quantity\`, \`notes\`, \`lead_id\`. Keep \`quantity\` as the real seat count when rescheduling (usually 1) — the current reservation is excluded from capacity. To attach a real client, send \`lead_id\` on update; do not encode the client in \`notes\`.
 
 5. **Passes & Subscriptions**
@@ -52,8 +52,8 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 
 6. **Checkout & Payment Links (Stripe)**
    - When charging a client:
-     - 1. Create a pending order using `checkout` (`action="create_order"` or `create_order_from_quotation`). Provide `site_id` and buyer details.
-     - 2. Generate a Stripe link using `checkout` (`action="create_payment_link"`) with the `order_id` you just created.
+     - 1. Create a pending order using `checkout` (`action="create_order"` or `create_order_from_quotation`), or use the `order_id` returned by `reservations` `action="create"`. Provide `site_id` and buyer details.
+     - 2. Generate a Stripe link using `checkout` (`action="create_payment_link"`) with that `order_id`.
      - 3. Reply sharing the Stripe URL.
    - **Modifiers on order lines:** On `create_order`, each host line may include `modifiers: [{ catalogItemId, quantity, unitPriceOverride? }]`. Children are stored as nested `sale_order_items` (`parent_sale_order_item_id`) and are billed as separate Stripe lines.
    - You CANNOT charge credit cards directly. You MUST provide the Stripe URL.
@@ -75,7 +75,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `calendars` | Directory of team members, personal/team calendars, and reservable services. Set working hours here. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |
-| `reservations` | Find available slots (`get_available_slots`), book admin slots (`create` + `entitlement_id`), or reschedule/cancel (`update` with `id` or `reservation_id`). |
+| `reservations` | Find available slots (`get_available_slots`), book a slot (`create` creates a pending sale_order + reservation; pass `entitlement_id` to redeem a pass at $0), or reschedule/cancel (`update` with `id` or `reservation_id`). |
 | `pass_redeemable_items` | Map which reservable items a pass can be used for. |
 | `quotations` & `quotation_items` | Create quotes (`draft` -> `sent`). |
 | `checkout` | Create pending orders (from lines or `quotation_id`), then generate payment links. |
