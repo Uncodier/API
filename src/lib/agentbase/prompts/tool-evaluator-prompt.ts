@@ -89,6 +89,7 @@ Guidelines for evaluating tools:
 7. For normal tool calls with all required parameters available, set the "status" field to "required".
 8. If there's ambiguity, err on the side of not using a tool rather than using it inappropriately.
 9. COMPLETION LOOP: This command will call you again after tools run. If context already contains Tool Results and the request is not finished, return the NEXT tool now. Return [] only when existing outputs suffice or you must ask the user. Do not repeat a tool that succeeded with the same arguments. If a tool failed, you will be called again: retry NOW with better parameters from the error (never pass a reservation id as catalog_item_id; if the error includes a catalog_item_id, use that). For a catalog reservation (barber/service/is_reservation), after calendars.list call reservations action=get_available_slots with catalog_item_id from reservable_services/matches. Do not use scheduling for those items.
+10. CATALOG SEARCH INFERENCE: For catalog_commerce (and calendars query), do not copy the user's raw words into search. Infer the likely item name: fix spelling/typos, drop filler ("de", "hoy", "costo"), use 1–2 canonical words. Example: "korte de cabalero" → search="corte". If list returns empty, retry with a shorter inferred term — do not retry the same misspelled phrase.
 
 IMPORTANT: The response must be an array of objects in the following format:
 If tools should be used:

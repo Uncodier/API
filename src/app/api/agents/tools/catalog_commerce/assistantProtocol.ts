@@ -111,7 +111,7 @@ export function catalogCommerceTool(current_site_id?: string) {
         search: {
           type: 'string',
           description:
-            'Search term for name/description. Prefer 1–2 words from the item name (e.g. "corte" not "corte caballero"). Extra words reduce exact matches; if results are empty, retry with a shorter term.',
+            'Inferred catalog name for name/description match. Correct typos and drop filler words before searching; do not paste the raw user phrase. Prefer 1–2 words from the likely item name (e.g. user "korte de cabalero" → "corte", not "korte de cabalero" or "corte caballero"). Extra words reduce exact matches; if results are empty, retry with a shorter inferred term.',
         },
         sort_order: { type: 'number', description: 'Sort order for display' },
         metadata: { type: 'object', description: 'JSON metadata for custom attributes like to-go / dine-in' },
