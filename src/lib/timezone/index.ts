@@ -14,6 +14,7 @@ export {
   localDateBoundsToUtc,
   localWallTimeToUtc,
   localYmd,
+  parseInstantOrWallClock,
   resolvePeriodBounds,
 } from './periodBounds';
 

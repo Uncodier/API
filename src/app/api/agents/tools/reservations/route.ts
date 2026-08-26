@@ -22,8 +22,7 @@ export async function POST(request: NextRequest) {
       const availability = await getAvailableSlots(catalog_item_id, from_date, to_date, quantity);
       return NextResponse.json({
         success: true,
-        slots: availability.slots,
-        catalog_item_id: availability.catalog_item_id,
+        ...availability,
       });
     }
 
@@ -36,7 +35,7 @@ export async function POST(request: NextRequest) {
       const quantity = updates.quantity ?? 1;
 
       // Validate capacity and schedule
-      await assertReservationSlot(site_id, catalog_item_id, updates.start_time, updates.end_time, quantity, true); // true = isAdmin
+      const slot = await assertReservationSlot(site_id, catalog_item_id, updates.start_time, updates.end_time, quantity, true);
 
       // If entitlement_id is provided, validate it
       if (entitlement_id) {
@@ -75,8 +74,8 @@ export async function POST(request: NextRequest) {
         buyer_user_id: buyer_user_id || null,
         owner_site_id: owner_site_id || null,
         entitlement_id: entitlement_id || null,
-        start_time: updates.start_time,
-        end_time: updates.end_time,
+        start_time: slot.start_utc,
+        end_time: slot.end_utc,
         quantity,
         status: updates.status || 'pending',
         notes: updates.notes || null,
@@ -135,27 +134,40 @@ export async function POST(request: NextRequest) {
 
     if (action === 'update') {
       if (!id) throw new Error('Missing id');
-      
+
+      const { data: existing, error: getErr } = await supabaseAdmin
+        .from('reservations')
+        .select('id, catalog_item_id, start_time, end_time, quantity, catalog_items!inner(site_id)')
+        .eq('id', id)
+        .single();
+
+      if (getErr || !existing) throw new Error('Reservation not found');
+      const existingSiteId = (existing.catalog_items as any).site_id;
+      if (site_id && existingSiteId !== site_id) {
+        throw new Error('Reservation not found or does not belong to site');
+      }
+
       const payload: any = {};
       if (updates.status !== undefined) payload.status = updates.status;
       if (updates.quantity !== undefined) payload.quantity = updates.quantity;
       if (updates.start_time !== undefined) payload.start_time = updates.start_time;
       if (updates.end_time !== undefined) payload.end_time = updates.end_time;
-      
-      if (Object.keys(payload).length > 0) {
-        payload.updated_at = new Date().toISOString();
+
+      if (updates.start_time !== undefined || updates.end_time !== undefined) {
+        const slot = await assertReservationSlot(
+          existingSiteId,
+          existing.catalog_item_id,
+          updates.start_time ?? existing.start_time,
+          updates.end_time ?? existing.end_time,
+          updates.quantity ?? existing.quantity ?? 1,
+          true
+        );
+        payload.start_time = slot.start_utc;
+        payload.end_time = slot.end_utc;
       }
 
-      // First check if it belongs to site
-      if (site_id) {
-         const { data: existing, error: getErr } = await supabaseAdmin
-            .from('reservations')
-            .select('catalog_items!inner(site_id)')
-            .eq('id', id)
-            .single();
-         if (getErr || !existing || (existing.catalog_items as any).site_id !== site_id) {
-            throw new Error('Reservation not found or does not belong to site');
-         }
+      if (Object.keys(payload).length > 0) {
+        payload.updated_at = new Date().toISOString();
       }
 
       const { data, error } = await supabaseAdmin

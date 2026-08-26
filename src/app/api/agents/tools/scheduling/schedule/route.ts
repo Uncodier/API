@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
-import { isValid, parseISO, addMinutes, formatISO, isPast } from 'date-fns';
+import { isValid, addMinutes, isPast } from 'date-fns';
+import { parseInstantOrWallClock } from '@/lib/timezone';
 
 /**
  * Endpoint para programar una cita o fecha para un evento específico
@@ -78,8 +79,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Validar formato de fecha
-    const startDate = parseISO(start_datetime);
+    const startDate = parseInstantOrWallClock(start_datetime, timezone);
     if (!isValid(startDate)) {
       return NextResponse.json(
         { 
@@ -101,12 +101,12 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Calcular fecha y hora de fin
     const endDate = addMinutes(startDate, duration);
-    const end_datetime = formatISO(endDate);
+    const startUtc = startDate.toISOString();
+    const end_datetime = endDate.toISOString();
     
     // Verificar disponibilidad de horario
-    const isAvailable = await checkAvailability(start_datetime, end_datetime, site_id, participants);
+    const isAvailable = await checkAvailability(startUtc, end_datetime, site_id, participants);
     
     if (!isAvailable) {
       return NextResponse.json(
@@ -126,7 +126,7 @@ export async function POST(request: NextRequest) {
     const appointmentData = {
       id: appointment_id,
       title,
-      start_datetime,
+      start_datetime: startUtc,
       end_datetime,
       duration,
       timezone,

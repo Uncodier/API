@@ -1,3 +1,4 @@
+import { parseISO } from 'date-fns';
 import { formatInTimeZone, fromZonedTime } from 'date-fns-tz';
 import {
   DEFAULT_TIMEZONE,
@@ -6,6 +7,8 @@ import {
   isLocalDateString,
   normalizeTimezone,
 } from './constants';
+
+const TZ_OFFSET_RE = /(?:[zZ]|[+-]\d{2}:?\d{2})$/;
 
 function addDaysYmd(ymd: string, days: number): string {
   const [year, month, day] = ymd.split('-').map(Number);
@@ -27,6 +30,30 @@ function startOfMonthYmd(ymd: string): string {
 
 export function localWallTimeToUtc(ymd: string, timezone: string, time = '00:00:00'): Date {
   return fromZonedTime(`${ymd}T${time}`, normalizeTimezone(timezone));
+}
+
+/**
+ * Offset/Z strings are UTC instants. Naive date-times are wall-clock in `timezone`
+ * (12:00 America/Mexico_City → 18:00Z, not 12:00Z).
+ */
+export function parseInstantOrWallClock(value: string, timezone: string): Date {
+  const trimmed = String(value || '').trim();
+  if (!trimmed) return new Date(NaN);
+
+  if (TZ_OFFSET_RE.test(trimmed)) {
+    return parseISO(trimmed);
+  }
+
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2})[T ](\d{1,2}:\d{2}(?::\d{2})?)/);
+  if (!match) return parseISO(trimmed);
+
+  const [, ymd, clock] = match;
+  const [hours = '00', minutes = '00', seconds = '00'] = clock.split(':');
+  return localWallTimeToUtc(
+    ymd,
+    timezone,
+    `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:${seconds.padStart(2, '0')}`
+  );
 }
 
 export function localDateBoundsToUtc(

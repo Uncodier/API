@@ -1,5 +1,5 @@
 import { buildDateContextSection } from '../dateContext';
-import { localDateBoundsToUtc, resolvePeriodBounds } from '../periodBounds';
+import { parseInstantOrWallClock, localDateBoundsToUtc, resolvePeriodBounds } from '../periodBounds';
 import { computeAppliedRange, coerceDateOnlyBound } from '../queryRange';
 
 const MX = 'America/Mexico_City';
@@ -119,5 +119,12 @@ describe('buildDateContextSection', () => {
     expect(text).toContain('Client timezone: America/Mexico_City');
     expect(text).toContain('gte 2026-08-14T06:00:00.000Z');
     expect(text).toContain('CLIENT local time');
+  });
+});
+
+describe('parseInstantOrWallClock', () => {
+  it('treats naive 12:00 as CDMX wall-clock (18:00Z), not 12:00Z', () => {
+    expect(parseInstantOrWallClock('2026-07-27T12:00:00', MX).toISOString()).toBe('2026-07-27T18:00:00.000Z');
+    expect(parseInstantOrWallClock('2026-07-27T18:00:00.000Z', MX).toISOString()).toBe('2026-07-27T18:00:00.000Z');
   });
 });

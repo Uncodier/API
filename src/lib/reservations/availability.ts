@@ -1,17 +1,25 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import {
-  addMinutes,
-  parseISO,
-  startOfDay,
-  endOfDay,
-  isAfter,
-  isBefore,
-  setHours,
-  setMinutes,
-  eachDayOfInterval,
-  format,
-} from 'date-fns';
+import { addMinutes, isAfter, isBefore } from 'date-fns';
 import { slotOverlapsBreaks } from '@/lib/reservations/weekly-hours';
+import {
+  formatInTimezone,
+  isLocalDateString,
+  localDateBoundsToUtc,
+  localWallTimeToUtc,
+  localYmd,
+  normalizeTimezone,
+  parseInstantOrWallClock,
+} from '@/lib/timezone';
+
+const WEEKDAY_FROM_UTC_DAY = [
+  'sunday',
+  'monday',
+  'tuesday',
+  'wednesday',
+  'thursday',
+  'friday',
+  'saturday',
+] as const;
 
 /** Half-open [start, end): back-to-back slots (10:00-11:00 and 11:00-12:00) do not overlap. */
 export function intervalsOverlap(startA: Date, endA: Date, startB: Date, endB: Date): boolean {
@@ -61,6 +69,57 @@ export type ResolvedReservableCatalogItem = {
   reservation_id?: string;
 };
 
+export type AvailableSlot = {
+  start: string;
+  end: string;
+  start_local: string;
+  end_local: string;
+  timezone: string;
+  available: number;
+};
+
+function toLocalYmd(value: string): string {
+  const prefix = String(value || '').slice(0, 10);
+  if (!isLocalDateString(prefix)) {
+    throw new ReservableCatalogItemError('from_date and to_date must be YYYY-MM-DD local calendar dates');
+  }
+  return prefix;
+}
+
+function addCalendarDays(ymd: string, days: number): string {
+  const [year, month, day] = ymd.split('-').map(Number);
+  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10);
+}
+
+function eachYmdInclusive(fromYmd: string, toYmd: string): string[] {
+  const start = fromYmd <= toYmd ? fromYmd : toYmd;
+  const end = fromYmd <= toYmd ? toYmd : fromYmd;
+  const out: string[] = [];
+  for (let ymd = start; ymd <= end; ymd = addCalendarDays(ymd, 1)) {
+    out.push(ymd);
+  }
+  return out;
+}
+
+function weekdayFromYmd(ymd: string): string {
+  const [year, month, day] = ymd.split('-').map(Number);
+  return WEEKDAY_FROM_UTC_DAY[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+}
+
+function toClockTime(hhmm: string): string {
+  const [hours = '00', minutes = '00'] = hhmm.split(':');
+  return `${hours.padStart(2, '0')}:${minutes.padStart(2, '0')}:00`;
+}
+
+function wallClockToUtc(ymd: string, timezone: string, hhmm: string): Date {
+  return localWallTimeToUtc(ymd, timezone, toClockTime(hhmm));
+}
+
+function wallClockMinutes(date: Date, timezone: string): number {
+  const [hours, minutes] = formatInTimezone(date, timezone, 'HH:mm').split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
 /**
  * catalog_item_id must be a reservable catalog item.
  * A reservation folio is a failed param: the error includes the real catalog_item_id
@@ -107,7 +166,6 @@ export async function getAvailableSlots(
   const resolved = await resolveReservableCatalogItemId(catalogItemId);
   const resolvedId = resolved.catalog_item_id;
 
-  // 1. Get schedule
   const { data: schedule } = await supabaseAdmin
     .from('reservation_schedules')
     .select('*')
@@ -121,52 +179,46 @@ export async function getAvailableSlots(
     );
   }
 
-  const days = eachDayOfInterval({ start: parseISO(startDateStr), end: parseISO(endDateStr) });
-  const result: { start: string; end: string; available: number }[] = [];
+  const tz = normalizeTimezone(schedule.timezone);
+  const fromYmd = toLocalYmd(startDateStr);
+  const toYmd = toLocalYmd(endDateStr);
+  const range = localDateBoundsToUtc(tz, fromYmd, toYmd);
+  const result: AvailableSlot[] = [];
 
   const duration = schedule.duration_minutes || 60;
   const capacity = schedule.capacity || 1;
-
-  // 2. Get reservations
-  const rangeStart = startOfDay(parseISO(startDateStr));
-  const rangeEnd = endOfDay(parseISO(endDateStr));
 
   const { data: reservations } = await supabaseAdmin
     .from('reservations')
     .select('start_time, end_time, quantity, status')
     .eq('catalog_item_id', resolvedId)
     .in('status', ['pending', 'confirmed'])
-    .lt('start_time', rangeEnd.toISOString())
-    .gt('end_time', rangeStart.toISOString());
+    .lt('start_time', range.end_utc)
+    .gt('end_time', range.start_utc);
 
-  // 3. Get calendar blocks
   const { data: calendarBlocks } = await supabaseAdmin
     .from('calendar_blocks')
     .select('start_time, end_time, entity_type, entity_id')
     .eq('site_id', schedule.site_id)
     .in('entity_type', ['global', 'catalog_item'])
-    .lte('start_time', rangeEnd.toISOString())
-    .gte('end_time', rangeStart.toISOString());
+    .lte('start_time', range.end_utc)
+    .gte('end_time', range.start_utc);
 
-  for (const dateObj of days) {
-    const dayOfWeek = format(dateObj, 'eeee').toLowerCase();
-    const dayConfig = schedule.days[dayOfWeek];
+  for (const ymd of eachYmdInclusive(range.local_start, range.local_end)) {
+    const dayConfig = schedule.days[weekdayFromYmd(ymd)];
 
     if (!dayConfig?.enabled || !dayConfig.start || !dayConfig.end) continue;
 
-    const [startH, startM] = dayConfig.start.split(':').map(Number);
-    const [endH, endM] = dayConfig.end.split(':').map(Number);
-
-    const dayStart = setMinutes(setHours(dateObj, startH), startM);
-    const dayEnd = setMinutes(setHours(dateObj, endH), endM);
+    const dayStart = wallClockToUtc(ymd, tz, dayConfig.start);
+    const dayEnd = wallClockToUtc(ymd, tz, dayConfig.end);
 
     let current = dayStart;
     while (isBefore(current, dayEnd)) {
       const slotEnd = addMinutes(current, duration);
       if (isAfter(slotEnd, dayEnd)) break;
 
-      const slotStartMin = current.getHours() * 60 + current.getMinutes();
-      const slotEndMin = slotEnd.getHours() * 60 + slotEnd.getMinutes() || 24 * 60;
+      const slotStartMin = wallClockMinutes(current, tz);
+      const slotEndMin = wallClockMinutes(slotEnd, tz) || 24 * 60;
       if (slotOverlapsBreaks(slotStartMin, slotEndMin, dayConfig.breaks)) {
         current = slotEnd;
         continue;
@@ -188,10 +240,13 @@ export async function getAvailableSlots(
         result.push({
           start: current.toISOString(),
           end: slotEnd.toISOString(),
+          start_local: formatInTimezone(current, tz, 'HH:mm'),
+          end_local: formatInTimezone(slotEnd, tz, 'HH:mm'),
+          timezone: tz,
           available
         });
       }
-      
+
       current = slotEnd;
     }
   }
@@ -199,9 +254,15 @@ export async function getAvailableSlots(
   return {
     slots: result,
     catalog_item_id: resolvedId,
+    timezone: tz,
     ...(resolved.reservation_id ? { reservation_id: resolved.reservation_id } : {}),
   };
 }
+
+export type AssertedReservationSlot = {
+  start_utc: string;
+  end_utc: string;
+};
 
 export async function assertReservationSlot(
   siteId: string,
@@ -210,7 +271,7 @@ export async function assertReservationSlot(
   endIso: string,
   quantity: number,
   isAdmin: boolean = false
-) {
+): Promise<AssertedReservationSlot> {
   const { data: schedule } = await supabaseAdmin
     .from('reservation_schedules')
     .select('*')
@@ -221,49 +282,45 @@ export async function assertReservationSlot(
     throw new Error('Item is reservable but has no schedule configured');
   }
 
-  // Validate siteId matches
   if (schedule.site_id !== siteId) {
     throw new Error('Reservation schedule does not belong to the specified site');
   }
 
-  const start = parseISO(startIso);
-  const end = parseISO(endIso);
-  
+  const tz = normalizeTimezone(schedule.timezone);
+  const start = parseInstantOrWallClock(startIso, tz);
+  const end = parseInstantOrWallClock(endIso, tz);
+
   if (isBefore(start, new Date()) && !isAdmin) {
     throw new Error('Cannot book in the past');
   }
 
-  const dayOfWeek = format(start, 'eeee').toLowerCase();
-  const dayConfig = schedule.days[dayOfWeek];
+  const ymd = localYmd(start, tz);
+  const dayConfig = schedule.days[weekdayFromYmd(ymd)];
 
   if (!dayConfig?.enabled || !dayConfig.start || !dayConfig.end) {
     throw new Error('Slot is outside of available schedule days');
   }
 
-  const [startH, startM] = dayConfig.start.split(':').map(Number);
-  const [endH, endM] = dayConfig.end.split(':').map(Number);
-
-  const dayStart = setMinutes(setHours(start, startH), startM);
-  const dayEnd = setMinutes(setHours(start, endH), endM);
+  const dayStart = wallClockToUtc(ymd, tz, dayConfig.start);
+  const dayEnd = wallClockToUtc(ymd, tz, dayConfig.end);
 
   if (isBefore(start, dayStart) || isAfter(end, dayEnd)) {
     throw new Error('Slot is outside of available schedule hours');
   }
 
-  const slotStartMin = start.getHours() * 60 + start.getMinutes();
-  const slotEndMin = end.getHours() * 60 + end.getMinutes() || 24 * 60;
+  const slotStartMin = wallClockMinutes(start, tz);
+  const slotEndMin = wallClockMinutes(end, tz) || 24 * 60;
   if (slotOverlapsBreaks(slotStartMin, slotEndMin, dayConfig.breaks)) {
     throw new Error('Slot overlaps a break (e.g. lunch) in the schedule');
   }
 
-  // Check calendar blocks
   const { data: calendarBlocks } = await supabaseAdmin
     .from('calendar_blocks')
     .select('start_time, end_time, entity_type, entity_id')
     .eq('site_id', siteId)
     .in('entity_type', ['global', 'catalog_item'])
-    .lte('start_time', endIso)
-    .gte('end_time', startIso);
+    .lte('start_time', end.toISOString())
+    .gte('end_time', start.toISOString());
 
   const isBlocked = (calendarBlocks || []).some((b: any) => {
     const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
@@ -285,5 +342,8 @@ export async function assertReservationSlot(
     );
   }
 
-  return true;
+  return {
+    start_utc: start.toISOString(),
+    end_utc: end.toISOString(),
+  };
 }

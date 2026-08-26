@@ -1,6 +1,5 @@
-import { getAvailableSlots, getBookedSeats, assertReservationSlot, intervalsOverlap, ReservableCatalogItemError, resolveReservableCatalogItemId } from '../../src/lib/reservations/availability';
+import { getAvailableSlots, assertReservationSlot, intervalsOverlap, ReservableCatalogItemError, resolveReservableCatalogItemId } from '../../src/lib/reservations/availability';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
-import { addDays, setHours, startOfDay, addMinutes } from 'date-fns';
 
 jest.mock('../../src/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -12,6 +11,7 @@ describe('Reservations Availability Lib', () => {
   const mockDate = new Date('2026-07-27T10:00:00Z');
   const catalogItemId = 'cat-123';
   const siteId = 'site-123';
+  const CDMX = 'America/Mexico_City';
 
   beforeAll(() => {
     jest.useFakeTimers();
@@ -64,6 +64,16 @@ describe('Reservations Availability Lib', () => {
     sunday: { enabled: false },
   });
 
+  const scheduleOf = (overrides: Record<string, unknown> = {}) => ({
+    catalog_item_id: catalogItemId,
+    site_id: siteId,
+    timezone: CDMX,
+    duration_minutes: 60,
+    capacity: 1,
+    days: getDayConfig(),
+    ...overrides,
+  });
+
   describe('intervalsOverlap', () => {
     it('treats back-to-back slots as free (half-open)', () => {
       const ten = new Date('2026-08-26T10:00:00Z');
@@ -84,39 +94,53 @@ describe('Reservations Availability Lib', () => {
 
   describe('generateSlots & capacity', () => {
     it('generates slots based on days and duration', async () => {
-      // Setup mock schedule (duration 60, capacity 2)
-      // Monday 09:00-11:00 => 2 slots
-      const scheduleData = {
-        catalog_item_id: catalogItemId,
-        site_id: siteId,
-        duration_minutes: 60,
+      const q = mockQuery(scheduleOf({
         capacity: 2,
         days: {
           ...getDayConfig(),
           monday: { enabled: true, start: '09:00', end: '11:00' },
         },
-      };
+      }));
 
-      const q = mockQuery(scheduleData);
-      
       q.lt.mockReturnValueOnce({
         gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
-      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
-      
+      const { slots, timezone } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
+
+      expect(timezone).toBe(CDMX);
       expect(slots).toHaveLength(2);
       expect(slots[0].available).toBe(2);
-      expect(new Date(slots[0].start).getHours()).toBe(9);
-      expect(new Date(slots[1].start).getHours()).toBe(10);
+      expect(slots[0].start).toBe('2026-07-27T15:00:00.000Z');
+      expect(slots[0].start_local).toBe('09:00');
+      expect(slots[1].start).toBe('2026-07-27T16:00:00.000Z');
+      expect(slots[1].start_local).toBe('10:00');
+    });
+
+    it('serializes 12:00 CDMX as 18:00Z, not 12:00Z', async () => {
+      const q = mockQuery(scheduleOf({
+        days: {
+          ...getDayConfig(),
+          monday: { enabled: true, start: '12:00', end: '13:00' },
+        },
+      }));
+
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
+
+      expect(slots).toHaveLength(1);
+      expect(slots[0].start).toBe('2026-07-27T18:00:00.000Z');
+      expect(slots[0].end).toBe('2026-07-27T19:00:00.000Z');
+      expect(slots[0].start_local).toBe('12:00');
+      expect(slots[0].timezone).toBe(CDMX);
+      expect(slots[0].start).not.toBe('2026-07-27T12:00:00.000Z');
     });
 
     it('skips slots that overlap a lunch break', async () => {
-      const scheduleData = {
-        catalog_item_id: catalogItemId,
-        site_id: siteId,
-        duration_minutes: 60,
-        capacity: 1,
+      const q = mockQuery(scheduleOf({
         days: {
           ...getDayConfig(),
           monday: {
@@ -126,104 +150,85 @@ describe('Reservations Availability Lib', () => {
             breaks: [{ start: '12:00', end: '13:00' }],
           },
         },
-      };
+      }));
 
-      const q = mockQuery(scheduleData);
       q.lt.mockReturnValueOnce({
         gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
-      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
-      const hours = slots.map((slot) => new Date(slot.start).getHours());
-      expect(hours).toEqual([11, 13]);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
+      expect(slots.map((slot) => slot.start)).toEqual([
+        '2026-07-27T17:00:00.000Z',
+        '2026-07-27T19:00:00.000Z',
+      ]);
+      expect(slots.map((slot) => slot.start_local)).toEqual(['11:00', '13:00']);
     });
 
     it('reduces remaining seats for overlapping bookings', async () => {
-      const scheduleData = {
-        catalog_item_id: catalogItemId,
-        site_id: siteId,
-        duration_minutes: 60,
+      const q = mockQuery(scheduleOf({
         capacity: 3,
         days: {
           ...getDayConfig(),
           monday: { enabled: true, start: '09:00', end: '10:00' },
         },
-      };
+      }));
 
-      const q = mockQuery(scheduleData);
-      
-      // Mock one reservation consuming 2 seats for the 09:00-10:00 slot
-      // 2026-07-27 is a Monday
-      const d = startOfDay(mockDate);
-      const startIso = setHours(d, 9).toISOString();
-      const endIso = setHours(d, 10).toISOString();
       q.lt.mockReturnValueOnce({
-        gt: jest.fn().mockResolvedValue({ 
+        gt: jest.fn().mockResolvedValue({
           data: [{
-            start_time: startIso,
-            end_time: endIso,
+            start_time: '2026-07-27T15:00:00.000Z',
+            end_time: '2026-07-27T16:00:00.000Z',
             quantity: 2,
             status: 'confirmed'
           }]
         }),
       });
 
-      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
-      
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
+
       expect(slots).toHaveLength(1);
-      // capacity 3 - 2 booked = 1 available
       expect(slots[0].available).toBe(1);
     });
 
     it('keeps a slot available when the only booking is adjacent', async () => {
-      const scheduleData = {
-        catalog_item_id: catalogItemId,
-        site_id: siteId,
-        duration_minutes: 60,
-        capacity: 1,
+      const q = mockQuery(scheduleOf({
         days: {
           ...getDayConfig(),
           monday: { enabled: true, start: '09:00', end: '11:00' },
         },
-      };
+      }));
 
-      const q = mockQuery(scheduleData);
-      const d = startOfDay(mockDate);
       q.lt.mockReturnValueOnce({
         gt: jest.fn().mockResolvedValue({
           data: [{
-            start_time: setHours(d, 9).toISOString(),
-            end_time: setHours(d, 10).toISOString(),
+            start_time: '2026-07-27T15:00:00.000Z',
+            end_time: '2026-07-27T16:00:00.000Z',
             quantity: 1,
             status: 'pending',
           }],
         }),
       });
 
-      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
       expect(slots).toHaveLength(1);
-      expect(new Date(slots[0].start).getHours()).toBe(10);
+      expect(slots[0].start).toBe('2026-07-27T16:00:00.000Z');
+      expect(slots[0].start_local).toBe('10:00');
       expect(slots[0].available).toBe(1);
     });
 
     it('returns no slots when the item and schedule are valid but the day is closed', async () => {
-      const scheduleData = {
-        catalog_item_id: catalogItemId,
-        site_id: siteId,
-        duration_minutes: 60,
-        capacity: 1,
+      const q = mockQuery(scheduleOf({
         days: {
           ...getDayConfig(),
           monday: { enabled: false },
         },
-      };
+      }));
 
-      const q = mockQuery(scheduleData);
       q.lt.mockReturnValueOnce({
         gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
-      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1);
       expect(slots).toEqual([]);
     });
   });
@@ -266,57 +271,38 @@ describe('Reservations Availability Lib', () => {
     it('fails getAvailableSlots when the item has no schedule', async () => {
       mockQuery(null);
       await expect(
-        getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1)
+        getAvailableSlots(catalogItemId, '2026-07-27', '2026-07-27', 1)
       ).rejects.toThrow('no schedule configured');
     });
   });
 
   describe('assertReservationSlot', () => {
     it('fails when booking in the past for non-admin', async () => {
-      mockQuery({
-        site_id: siteId,
-        days: getDayConfig()
-      });
-      
-      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-26T09:00:00Z', '2026-07-26T10:00:00Z', 1))
+      mockQuery(scheduleOf());
+
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-26T15:00:00.000Z', '2026-07-26T16:00:00.000Z', 1))
         .rejects.toThrow('Cannot book in the past');
     });
 
     it('fails if outside hours', async () => {
-      mockQuery({
-        site_id: siteId,
-        days: getDayConfig()
-      });
+      mockQuery(scheduleOf());
 
-      // Wednesday (enabled), but 08:00 is outside 09:00-17:00
-      await expect(assertReservationSlot(siteId, catalogItemId, setHours(wednesdayLocal, 8).toISOString(), setHours(wednesdayLocal, 9).toISOString(), 1))
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-29T14:00:00.000Z', '2026-07-29T15:00:00.000Z', 1))
         .rejects.toThrow('Slot is outside of available schedule hours');
     });
 
     it('fails if disabled day', async () => {
-      mockQuery({
-        site_id: siteId,
-        days: getDayConfig()
-      });
+      mockQuery(scheduleOf());
 
-      // Tuesday is disabled
-      const tuesdayLocal = startOfDay(new Date('2026-07-28T12:00:00'));
-      await expect(assertReservationSlot(siteId, catalogItemId, setHours(tuesdayLocal, 9).toISOString(), setHours(tuesdayLocal, 10).toISOString(), 1))
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-28T15:00:00.000Z', '2026-07-28T16:00:00.000Z', 1))
         .rejects.toThrow('Slot is outside of available schedule days');
     });
 
-    const wednesdayLocal = startOfDay(new Date('2026-07-29T12:00:00')); // local timezone
-    
     it('fails if quantity > remaining capacity', async () => {
-      const q = mockQuery({
-        site_id: siteId,
-        capacity: 2,
-        days: getDayConfig()
-      });
+      const q = mockQuery(scheduleOf({ capacity: 2 }));
 
-      // Mock getBookedSeats query response
       q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({ 
+        lt: jest.fn().mockResolvedValue({
           data: [{
             quantity: 1,
             status: 'confirmed'
@@ -324,40 +310,50 @@ describe('Reservations Availability Lib', () => {
         }),
       });
 
-      // Requesting 2 seats, but only 1 available (2 total - 1 booked)
-      await expect(assertReservationSlot(siteId, catalogItemId, setHours(wednesdayLocal, 9).toISOString(), setHours(wednesdayLocal, 10).toISOString(), 2))
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-29T15:00:00.000Z', '2026-07-29T16:00:00.000Z', 2))
         .rejects.toThrow('Not enough capacity for this slot');
     });
 
     it('succeeds with valid slot and capacity', async () => {
-      const q = mockQuery({
-        site_id: siteId,
-        capacity: 5,
-        days: getDayConfig()
-      });
+      const q = mockQuery(scheduleOf({ capacity: 5 }));
 
       q.gt.mockReturnValueOnce({
-        lt: jest.fn().mockResolvedValue({ 
+        lt: jest.fn().mockResolvedValue({
           data: []
         }),
       });
 
-      await expect(assertReservationSlot(siteId, catalogItemId, setHours(wednesdayLocal, 9).toISOString(), setHours(wednesdayLocal, 10).toISOString(), 1))
-        .resolves.toBe(true);
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-29T15:00:00.000Z', '2026-07-29T16:00:00.000Z', 1))
+        .resolves.toEqual({
+          start_utc: '2026-07-29T15:00:00.000Z',
+          end_utc: '2026-07-29T16:00:00.000Z',
+        });
+    });
+
+    it('treats naive 12:00 as CDMX wall-clock and stores 18:00Z', async () => {
+      const q = mockQuery(scheduleOf({ capacity: 5 }));
+
+      q.gt.mockReturnValueOnce({
+        lt: jest.fn().mockResolvedValue({
+          data: []
+        }),
+      });
+
+      await expect(assertReservationSlot(siteId, catalogItemId, '2026-07-29T12:00:00', '2026-07-29T13:00:00', 1))
+        .resolves.toEqual({
+          start_utc: '2026-07-29T18:00:00.000Z',
+          end_utc: '2026-07-29T19:00:00.000Z',
+        });
     });
 
     it('queries booked seats with exclusive overlap bounds', async () => {
-      const q = mockQuery({
-        site_id: siteId,
-        capacity: 1,
-        days: getDayConfig()
-      });
+      const q = mockQuery(scheduleOf());
 
       const lt = jest.fn().mockResolvedValue({ data: [] });
       q.gt.mockReturnValueOnce({ lt });
 
-      const startIso = setHours(wednesdayLocal, 13).toISOString();
-      const endIso = setHours(wednesdayLocal, 14).toISOString();
+      const startIso = '2026-07-29T19:00:00.000Z';
+      const endIso = '2026-07-29T20:00:00.000Z';
       await assertReservationSlot(siteId, catalogItemId, startIso, endIso, 1);
 
       expect(q.gt).toHaveBeenCalledWith('end_time', startIso);

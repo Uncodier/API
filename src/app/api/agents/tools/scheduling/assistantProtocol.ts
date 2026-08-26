@@ -32,7 +32,7 @@ export function schedulingTool(site_id: string, instance_id?: string) {
   return {
     name: 'scheduling',
     description:
-      'Book a specific team/person appointment (not weekly hours, not catalog inventory). To find people or SET working hours/lunch, use the calendars tool instead. Use action="check_availability" to get available slots (requires date, duration, timezone, team_id). Use action="schedule" to schedule an appointment (requires title, start_datetime, duration, timezone, context_id).',
+      'Book a specific team/person appointment (not weekly hours, not catalog inventory). To find people or SET working hours/lunch, use the calendars tool instead. Use action="check_availability" to get available slots (requires date, duration, timezone, team_id). Use action="schedule" to schedule an appointment (requires title, start_datetime, duration, timezone, context_id). Slot start_utc/end_utc are UTC instants — copy start_utc as start_datetime; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z).',
     parameters: {
       type: 'object',
       properties: {
@@ -58,7 +58,7 @@ export function schedulingTool(site_id: string, instance_id?: string) {
         },
         // schedule params
         title: { type: 'string', description: 'Appointment title' },
-        start_datetime: { type: 'string', description: 'Start datetime ISO 8601' },
+        start_datetime: { type: 'string', description: 'Start as UTC ISO from check_availability.start_utc, or naive wall-clock in timezone (do not stamp Z onto a local hour)' },
         context_id: { type: 'string', description: 'Context ID (lead_id, site_id, or similar)' },
         location: { type: 'string', description: 'Location' },
         description: { type: 'string', description: 'Description' },

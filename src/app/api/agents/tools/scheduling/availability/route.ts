@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { parse, format, isValid, addMinutes } from 'date-fns';
-import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { parse, isValid } from 'date-fns';
+import { generateAvailableSlots } from '@/lib/scheduling/availability-slots';
+import { localDateBoundsToUtc, localYmd, normalizeTimezone } from '@/lib/timezone';
 
 /**
  * Endpoint para obtener los horarios disponibles para programar citas o reuniones
@@ -107,7 +108,8 @@ export async function GET(request: NextRequest) {
       );
     }
     
-    // Validar formato de fecha (YYYY-MM-DD)
+    const tz = normalizeTimezone(timezone);
+
     const dateObj = parse(date, 'yyyy-MM-dd', new Date());
     if (!isValid(dateObj)) {
       return NextResponse.json(
@@ -118,9 +120,8 @@ export async function GET(request: NextRequest) {
         { status: 422 }
       );
     }
-    
-    // Verificar si la fecha es en el pasado
-    if (dateObj < new Date()) {
+
+    if (date < localYmd(new Date(), tz)) {
       return NextResponse.json(
         { 
           success: false, 
@@ -160,14 +161,14 @@ export async function GET(request: NextRequest) {
 
     const teamMembersData: any[] = Array.isArray(teamData.members) ? teamData.members : [];
 
-    // Obtener tareas de tipo "meeting" para la fecha especificada
-    const dateStr = format(dateObj, 'yyyy-MM-dd');
+    const range = localDateBoundsToUtc(tz, date, date);
     const { data: existingMeetings, error: meetingsError } = await supabaseAdmin
       .from('tasks')
       .select('id, start_datetime, end_datetime, assignees, resources')
       .eq('type', 'meeting')
       .eq('site_id', site_id)
-      .ilike('start_datetime', `${dateStr}%`);
+      .lt('start_datetime', range.end_utc)
+      .gt('end_datetime', range.start_utc);
     
     if (meetingsError) {
       console.error('Error al obtener reuniones existentes:', meetingsError);
@@ -190,7 +191,7 @@ export async function GET(request: NextRequest) {
       participants,
       resources,
       teamMembersData,
-      timezone
+      tz
     );
     
     // Determinar participantes y recursos no disponibles
@@ -207,7 +208,7 @@ export async function GET(request: NextRequest) {
       {
         success: true,
         date,
-        timezone,
+        timezone: tz,
         available_slots: availableSlots,
         unavailable_participants: unavailableParticipants,
         unavailable_resources: unavailableResources,
@@ -226,157 +227,4 @@ export async function GET(request: NextRequest) {
       { status: 500 }
     );
   }
-}
-
-/**
- * Genera slots de tiempo disponibles basado en los criterios
- * 
- * @param date Fecha en formato YYYY-MM-DD
- * @param startTimeStr Hora de inicio en formato HH:MM
- * @param endTimeStr Hora de fin en formato HH:MM
- * @param duration Duración del slot en minutos
- * @param existingMeetings Lista de reuniones existentes
- * @param requestedParticipants Lista de IDs de participantes requeridos
- * @param requestedResources Lista de recursos requeridos
- * @param teamMembers Lista de miembros del equipo con información detallada
- * @param timezone Zona horaria
- * @returns Lista de slots disponibles
- */
-function generateAvailableSlots(
-  date: string,
-  startTimeStr: string,
-  endTimeStr: string,
-  duration: number,
-  existingMeetings: any[],
-  requestedParticipants: string[],
-  requestedResources: string[],
-  teamMembers: any[],
-  timezone: string
-) {
-  const slots = [];
-  const dateObj = parse(date, 'yyyy-MM-dd', new Date());
-  
-  // Convertir horas locales a UTC basadas en la zona horaria
-  const startTimeLocal = parse(startTimeStr, 'HH:mm', dateObj);
-  const endTimeLocal = parse(endTimeStr, 'HH:mm', dateObj);
-  
-  const startTime = toZonedTime(startTimeLocal, timezone);
-  const endTime = toZonedTime(endTimeLocal, timezone);
-  
-  // Generar slots con intervalos del tamaño de la duración requerida
-  let currentSlotStart = startTime;
-  
-  while (addMinutes(currentSlotStart, duration) <= endTime) {
-    const slotEnd = addMinutes(currentSlotStart, duration);
-    
-    // Verificar si el slot está disponible
-    const { 
-      isAvailable, 
-      availableParticipants, 
-      availableResources 
-    } = checkSlotAvailability(
-      currentSlotStart,
-      slotEnd,
-      existingMeetings,
-      requestedParticipants,
-      requestedResources,
-      teamMembers
-    );
-    
-    // Crear el slot con información de zona horaria
-    const startFormatted = formatInTimeZone(currentSlotStart, timezone, 'HH:mm');
-    const endFormatted = formatInTimeZone(slotEnd, timezone, 'HH:mm');
-    
-    // Incluir slots aunque no estén todos los participantes disponibles
-    // para que el agente pueda decidir basado en los roles
-    if (isAvailable || availableParticipants.length > 0) {
-      slots.push({
-        start: startFormatted,
-        end: endFormatted,
-        start_utc: currentSlotStart.toISOString(),
-        end_utc: slotEnd.toISOString(),
-        timezone,
-        available_participants: availableParticipants,
-        available_resources: availableResources,
-        all_participants_available: isAvailable
-      });
-    }
-    
-    // Avanzar al siguiente slot
-    currentSlotStart = addMinutes(currentSlotStart, 30); // Intervalos de 30 minutos
-  }
-  
-  return slots;
-}
-
-/**
- * Verifica la disponibilidad de un slot específico
- * 
- * @param slotStart Fecha/hora de inicio del slot
- * @param slotEnd Fecha/hora de fin del slot
- * @param existingMeetings Lista de reuniones existentes
- * @param requestedParticipants Lista de IDs de participantes requeridos
- * @param requestedResources Lista de recursos requeridos
- * @param teamMembers Lista de miembros del equipo con información detallada
- * @returns Objeto con la disponibilidad, participantes disponibles y recursos disponibles
- */
-function checkSlotAvailability(
-  slotStart: Date,
-  slotEnd: Date,
-  existingMeetings: any[],
-  requestedParticipants: string[],
-  requestedResources: string[],
-  teamMembers: any[]
-) {
-  // Inicializar con todos los miembros del equipo
-  const availableParticipants = [...teamMembers];
-  const availableResources = [...requestedResources];
-  
-  // Verificar conflictos con reuniones existentes
-  for (const meeting of existingMeetings) {
-    const meetingStart = new Date(meeting.start_datetime);
-    const meetingEnd = new Date(meeting.end_datetime);
-    
-    // Verificar si hay solapamiento de horarios
-    const overlaps = (
-      slotStart < meetingEnd && 
-      slotEnd > meetingStart
-    );
-    
-    if (overlaps) {
-      // Verificar participantes no disponibles
-      const meetingParticipants = meeting.assignees || [];
-      
-      // Remover participantes que están ocupados en ese horario
-      availableParticipants.forEach((participant, index) => {
-        if (meetingParticipants.includes(participant.id)) {
-          availableParticipants.splice(index, 1);
-        }
-      });
-      
-      // Remover recursos que están ocupados en ese horario
-      const meetingResources = meeting.resources || [];
-      meetingResources.forEach((resource: string) => {
-        const index = availableResources.indexOf(resource);
-        if (index !== -1) {
-          availableResources.splice(index, 1);
-        }
-      });
-    }
-  }
-  
-  // El slot es disponible si todos los participantes y recursos requeridos están disponibles
-  const allParticipantsAvailable = requestedParticipants.every(p => 
-    availableParticipants.some(ap => ap.id === p)
-  );
-  
-  const allResourcesAvailable = requestedResources.every(r => 
-    availableResources.includes(r)
-  );
-  
-  return {
-    isAvailable: allParticipantsAvailable && allResourcesAvailable,
-    availableParticipants,
-    availableResources
-  };
 } 

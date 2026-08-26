@@ -9,7 +9,10 @@ jest.mock('../../src/lib/database/supabase-client', () => ({
 }));
 
 jest.mock('../../src/lib/reservations/availability', () => ({
-  assertReservationSlot: jest.fn().mockResolvedValue(true),
+  assertReservationSlot: jest.fn().mockImplementation(async (_site, _id, start, end) => ({
+    start_utc: start,
+    end_utc: end,
+  })),
 }));
 
 describe('checkout nested modifiers', () => {

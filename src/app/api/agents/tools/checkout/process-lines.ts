@@ -114,7 +114,7 @@ export async function processCheckoutLines(params: {
       if (!finalLeadId) {
         throw new Error('lead_id or customer_email is required for reservable items');
       }
-      await assertReservationSlot(
+      const slot = await assertReservationSlot(
         siteId,
         line.catalogItemId,
         line.reservationStart,
@@ -122,6 +122,8 @@ export async function processCheckoutLines(params: {
         quantity,
         true
       );
+      line.reservationStart = slot.start_utc;
+      line.reservationEnd = slot.end_utc;
     }
 
     const unitPrice =

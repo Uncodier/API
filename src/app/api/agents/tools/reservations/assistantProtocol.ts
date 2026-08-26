@@ -28,7 +28,7 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). catalog_item_id is a catalog UUID only — never a reservation folio. Reservation UUID goes in id (get/update). If get_available_slots fails, retry with the catalog_item_id from the error, then update with the reservation id and new times.',
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). catalog_item_id is a catalog UUID only — never a reservation folio. Reservation UUID goes in id (get/update). If get_available_slots fails, retry with the catalog_item_id from the error, then update with the reservation id and new times. Slot start/end are UTC ISO instants in the schedule timezone — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z).',
     parameters: {
       type: 'object',
       properties: {
@@ -44,10 +44,10 @@ export function reservationsTool(current_site_id?: string) {
         buyer_user_id: { type: 'string', description: 'Buyer user UUID' },
         owner_site_id: { type: 'string', description: 'Owner site UUID' },
         entitlement_id: { type: 'string', description: 'Entitlement UUID to consume when booking with a pass' },
-        from_date: { type: 'string', description: 'Start date for slot query (ISO string, e.g. 2026-07-27)' },
-        to_date: { type: 'string', description: 'End date for slot query (ISO string)' },
-        start_time: { type: 'string', description: 'Start time of the reservation (ISO datetime string)' },
-        end_time: { type: 'string', description: 'End time of the reservation (ISO datetime string)' },
+        from_date: { type: 'string', description: 'Start calendar date for slot query (YYYY-MM-DD in the schedule timezone)' },
+        to_date: { type: 'string', description: 'End calendar date for slot query (YYYY-MM-DD in the schedule timezone)' },
+        start_time: { type: 'string', description: 'Reservation start as UTC ISO from get_available_slots.start (do not stamp Z onto a local hour)' },
+        end_time: { type: 'string', description: 'Reservation end as UTC ISO from get_available_slots.end (do not stamp Z onto a local hour)' },
         quantity: { type: 'number', description: 'Number of seats/capacity to reserve (default 1)' },
         status: { type: 'string', description: 'Status (e.g. pending, confirmed, cancelled)' },
         notes: { type: 'string', description: 'Notes' },
