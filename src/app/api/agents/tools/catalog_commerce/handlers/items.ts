@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
+import { resolveSiteCurrency } from '@/app/api/agents/tools/checkout/resolve-currency';
 import {
   buildCatalogSearchClauses,
   catalogSearchFallbackHint,
@@ -152,6 +153,10 @@ export async function handleItemAction(body: Record<string, unknown>) {
       is_purchasable: updates.is_purchasable !== undefined ? updates.is_purchasable : true,
       ...pickDefined(updates, [...CONTENT_FIELDS.filter((k) => k !== 'name'), ...COMMERCE_FIELDS]),
     };
+
+    if (!payload.currency) {
+      payload.currency = await resolveSiteCurrency(site_id);
+    }
 
     const { data, error } = await supabaseAdmin.from('catalog_items').insert(payload).select().single();
 

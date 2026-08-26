@@ -128,6 +128,7 @@ describe('checkout nested modifiers', () => {
 
     expect(json.success).toBe(true);
     expect(salePayload.amount).toBe(65); // 45 + 10*2
+    expect(salePayload.currency).toBe('MXN');
     expect(hostInserts).toHaveLength(1);
     expect(hostInserts[0].catalog_item_id).toBe('cat-host');
     expect(hostInserts[0].parent_sale_order_item_id).toBeNull();

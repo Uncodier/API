@@ -15,7 +15,7 @@ describe('catalog_commerce create action', () => {
     jest.clearAllMocks();
   });
 
-  function mockInsert(result: { data?: unknown; error?: { message: string } | null }) {
+  function mockInsert(result: { data?: unknown; error?: { message: string } | null }, siteCurrency = 'USD') {
     const chain = {
       insert: jest.fn().mockReturnThis(),
       select: jest.fn().mockReturnThis(),
@@ -31,6 +31,13 @@ describe('catalog_commerce create action', () => {
         return {
           select: jest.fn().mockReturnThis(),
           eq: jest.fn().mockResolvedValue({ count: 0 }),
+        };
+      }
+      if (table === 'settings') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({ data: { currency: siteCurrency }, error: null }),
         };
       }
       return chain;
@@ -145,6 +152,39 @@ describe('catalog_commerce create action', () => {
     expect(chain.insert).toHaveBeenCalledWith(
       expect.objectContaining({
         metadata,
+      })
+    );
+  });
+
+  it('inherits site currency when create omits currency', async () => {
+    const created = {
+      id: 'cat-3',
+      site_id: siteId,
+      name: 'Corte',
+      currency: 'MXN',
+    };
+    const chain = mockInsert({ data: created }, 'MXN');
+
+    const req = new NextRequest('http://localhost/api/agents/tools/catalog_commerce', {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'create',
+        site_id: siteId,
+        name: 'Corte',
+        is_reservation: true,
+      }),
+    });
+
+    const res = await POST(req);
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(chain.insert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'Corte',
+        is_reservation: true,
+        currency: 'MXN',
       })
     );
   });

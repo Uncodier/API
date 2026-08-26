@@ -45,6 +45,8 @@ describe('reservations.create creates a sale_order', () => {
 
   function mockCommerceTables(opts: {
     catalogPrice: number;
+    catalogCurrency?: string | null;
+    siteCurrency?: string;
     entitlement?: { id: string; passCatalogItemId: string };
     capture: {
       sale?: Record<string, unknown>;
@@ -82,6 +84,11 @@ describe('reservations.create creates a sale_order', () => {
         });
       } else if (table === 'sites') {
         chain.single.mockResolvedValue({ data: { user_id: 'user-1' }, error: null });
+      } else if (table === 'settings') {
+        chain.maybeSingle.mockResolvedValue({
+          data: { currency: opts.siteCurrency || 'USD' },
+          error: null,
+        });
       } else if (table === 'catalog_items') {
         chain.single.mockResolvedValue({
           data: {
@@ -91,7 +98,7 @@ describe('reservations.create creates a sale_order', () => {
             target_sale_price: opts.catalogPrice,
             site_id: siteId,
             is_reservation: true,
-            currency: 'USD',
+            currency: opts.catalogCurrency === undefined ? 'USD' : opts.catalogCurrency,
           },
           error: null,
         });
@@ -139,7 +146,7 @@ describe('reservations.create creates a sale_order', () => {
       orderItem?: Record<string, unknown>;
       reservations?: Record<string, unknown>[];
     } = {};
-    mockCommerceTables({ catalogPrice: 25, capture });
+    mockCommerceTables({ catalogPrice: 25, catalogCurrency: 'MXN', siteCurrency: 'USD', capture });
 
     const res = await post({
       action: 'create',
@@ -159,13 +166,29 @@ describe('reservations.create creates a sale_order', () => {
     expect(json.reservation.id).toBe('res-1');
     expect(json.reservation.sale_order_item_id).toBe('soi-res');
 
-    expect(capture.sale).toMatchObject({ site_id: siteId, lead_id: leadId, amount: 25, status: 'pending' });
-    expect(capture.order).toMatchObject({ sale_id: 'sale-1', site_id: siteId, total: 25, status: 'pending' });
+    expect(capture.sale).toMatchObject({
+      site_id: siteId,
+      lead_id: leadId,
+      amount: 25,
+      status: 'pending',
+      currency: 'MXN',
+    });
+    expect(capture.order).toMatchObject({
+      sale_id: 'sale-1',
+      site_id: siteId,
+      total: 25,
+      status: 'pending',
+      currency: 'MXN',
+    });
+    expect(capture.order?.items).toEqual([
+      expect.objectContaining({ id: catalogItemId, unitPrice: 25, currency: 'MXN' }),
+    ]);
     expect(capture.orderItem).toMatchObject({
       catalog_item_id: catalogItemId,
       unit_price: 25,
       quantity: 1,
       sale_order_id: 'order-1',
+      metadata: { currency: 'MXN' },
     });
     expect(capture.reservations).toHaveLength(1);
     expect(capture.reservations?.[0]).toMatchObject({
@@ -218,5 +241,36 @@ describe('reservations.create creates a sale_order', () => {
       entitlement_id: 'ent-1',
       sale_order_item_id: 'soi-res',
     });
+  });
+
+  it('falls back to site currency when the catalog item has none', async () => {
+    const capture: {
+      sale?: Record<string, unknown>;
+      order?: Record<string, unknown>;
+      orderItem?: Record<string, unknown>;
+      reservations?: Record<string, unknown>[];
+    } = {};
+    mockCommerceTables({
+      catalogPrice: 25,
+      catalogCurrency: null,
+      siteCurrency: 'MXN',
+      capture,
+    });
+
+    const res = await post({
+      action: 'create',
+      site_id: siteId,
+      catalog_item_id: catalogItemId,
+      lead_id: leadId,
+      start_time: start,
+      end_time: end,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(capture.sale).toMatchObject({ currency: 'MXN' });
+    expect(capture.order).toMatchObject({ currency: 'MXN' });
+    expect(capture.orderItem).toMatchObject({ metadata: { currency: 'MXN' } });
   });
 });

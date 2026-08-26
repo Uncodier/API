@@ -1,5 +1,6 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { assertReservationSlot } from '@/lib/reservations/availability';
+import { resolveLineCurrency, resolveSiteCurrency } from './resolve-currency';
 
 export type CheckoutModifierLine = {
   catalogItemId: string;
@@ -93,6 +94,7 @@ export async function processCheckoutLines(params: {
   finalLeadId: string | null;
 }): Promise<{ processedLines: ProcessedHostLine[]; subtotal: number }> {
   const { siteId, lines, finalLeadId } = params;
+  const siteCurrency = await resolveSiteCurrency(siteId);
   let subtotal = 0;
   const processedLines: ProcessedHostLine[] = [];
 
@@ -158,7 +160,7 @@ export async function processCheckoutLines(params: {
         quantity: modQty,
         unit_price: modUnit,
         subtotal: modSubtotal,
-        currency: modItem.currency || 'USD',
+        currency: resolveLineCurrency(modItem.currency, siteCurrency),
       });
     }
 
@@ -170,7 +172,7 @@ export async function processCheckoutLines(params: {
       quantity,
       unit_price: unitPrice,
       subtotal: lineSubtotal,
-      currency: catItem.currency || 'USD',
+      currency: resolveLineCurrency(catItem.currency, siteCurrency),
       reservationStart: line.reservationStart,
       reservationEnd: line.reservationEnd,
       modifiers,
@@ -187,12 +189,14 @@ export function buildOrderItemsJson(processedLines: ProcessedHostLine[]) {
     quantity: pl.quantity,
     unitPrice: pl.unit_price,
     subtotal: pl.subtotal,
+    currency: pl.currency,
     modifiers: pl.modifiers.map((m) => ({
       id: m.catalog_item_id,
       name: m.name,
       quantity: m.quantity,
       unitPrice: m.unit_price,
       subtotal: m.subtotal,
+      currency: m.currency,
     })),
   }));
 }
@@ -216,6 +220,7 @@ export async function insertOrderItemsWithModifiers(
         subtotal: pl.subtotal,
         sale_order_id: orderId,
         parent_sale_order_item_id: null,
+        metadata: { currency: pl.currency },
       })
       .select('id, catalog_item_id')
       .single();
@@ -236,6 +241,7 @@ export async function insertOrderItemsWithModifiers(
         subtotal: m.subtotal,
         sale_order_id: orderId,
         parent_sale_order_item_id: host.id,
+        metadata: { currency: m.currency },
       }));
 
       const { error: childErr } = await supabaseAdmin.from('sale_order_items').insert(children);
