@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { getAvailableSlots, assertReservationSlot } from '@/lib/reservations/availability';
+import { getAvailableSlots, assertReservationSlot, ReservableCatalogItemError } from '@/lib/reservations/availability';
 
 export async function POST(request: NextRequest) {
   try {
@@ -13,10 +13,18 @@ export async function POST(request: NextRequest) {
 
         if (action === 'get_available_slots') {
       const { from_date, to_date, quantity = 1 } = updates;
-      if (!catalog_item_id || !from_date || !to_date) throw new Error('Missing required fields for get_available_slots: catalog_item_id, from_date, to_date');
+      if (!catalog_item_id || !from_date || !to_date) {
+        throw new ReservableCatalogItemError(
+          'Missing required fields for get_available_slots: catalog_item_id, from_date, to_date'
+        );
+      }
 
-      const slots = await getAvailableSlots(catalog_item_id, from_date, to_date, quantity);
-      return NextResponse.json({ success: true, slots });
+      const availability = await getAvailableSlots(catalog_item_id, from_date, to_date, quantity);
+      return NextResponse.json({
+        success: true,
+        slots: availability.slots,
+        catalog_item_id: availability.catalog_item_id,
+      });
     }
 
     if (action === 'create') {
@@ -168,6 +176,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });
   } catch (error: any) {
     console.error('Reservations tool error:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    const status =
+      error instanceof ReservableCatalogItemError || error?.name === 'ReservableCatalogItemError' || error?.statusCode === 400
+        ? 400
+        : 500;
+    return NextResponse.json(
+      {
+        success: false,
+        error: error.message,
+        ...(error.catalog_item_id ? { catalog_item_id: error.catalog_item_id } : {}),
+        ...(error.reservation_id ? { reservation_id: error.reservation_id } : {}),
+      },
+      { status }
+    );
   }
 }

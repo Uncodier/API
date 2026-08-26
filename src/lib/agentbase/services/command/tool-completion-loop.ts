@@ -10,6 +10,11 @@ Return the NEXT tool(s) needed to finish the request, or [] if existing outputs 
 Do not repeat a tool that succeeded with the same arguments.
 `;
 
+export const TOOL_CORRECTION_TURN_INSTRUCTION = `
+=== TOOL CORRECTION TURN ===
+The last tool failed because its parameters were wrong. Call that tool again NOW with better arguments taken from the error (for example a corrected catalog_item_id). Do not reuse the same args. Do not return [] and do not write the user-facing reply yet. Return [] only if the error cannot be fixed without asking the user.
+`;
+
 export type ToolCompletionDecision = 'continue' | 'stop_empty' | 'stop_possible_match' | 'stop_cap';
 
 type ToolFn = {
@@ -67,6 +72,18 @@ export function classifyToolTurn(before: ToolFn[] = [], after: ToolFn[] = []): T
   return 'stop_empty';
 }
 
+export function turnHadFailedTool(before: ToolFn[] = [], after: ToolFn[] = []): boolean {
+  const beforeMap = new Map(before.map((fn) => [functionKey(fn), fn]));
+  for (const fn of after) {
+    if (String(fn?.status || '') !== 'failed') continue;
+    const prev = beforeMap.get(functionKey(fn));
+    if (!prev || prev.status !== 'failed' || resultSignature(prev) !== resultSignature(fn)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function shouldContinueToolCompletion(params: {
   turn: number;
   maxTurns: number;
@@ -100,18 +117,22 @@ export async function runToolCompletionLoop(params: {
   let lastResult: CommandExecutionResult | null = null;
   let inputTokens = 0;
   let outputTokens = 0;
+  let previousTurnFailed = false;
 
   for (let turn = 1; turn <= MAX_TOOL_TURNS; turn++) {
     if (turn > 1) {
       const fromDb = await commandService.getCommandById(command.id);
+      const followUp = previousTurnFailed
+        ? `${TOOL_COMPLETION_TURN_INSTRUCTION}\n${TOOL_CORRECTION_TURN_INSTRUCTION}`
+        : TOOL_COMPLETION_TURN_INSTRUCTION;
       current = {
         ...current,
         ...(fromDb || {}),
         tools: originalTools,
         agent_background: command.agent_background || fromDb?.agent_background,
-        context: `${fromDb?.context || current.context || ''}\n${TOOL_COMPLETION_TURN_INSTRUCTION}`,
+        context: `${fromDb?.context || current.context || ''}\n${followUp}`,
       };
-      console.log(`[ToolCompletion] turn ${turn}/${MAX_TOOL_TURNS} for command ${command.id}`);
+      console.log(`[ToolCompletion] turn ${turn}/${MAX_TOOL_TURNS} for command ${command.id}${previousTurnFailed ? ' (correction)' : ''}`);
     } else {
       console.log(`[ToolCompletion] turn ${turn}/${MAX_TOOL_TURNS} for command ${command.id}`);
     }
@@ -128,11 +149,15 @@ export async function runToolCompletionLoop(params: {
       current.functions = fromDb.functions;
     }
 
-    if (lastResult.status === 'failed') {
+    const afterFunctions = current.functions || [];
+    previousTurnFailed = turnHadFailedTool(beforeFunctions, afterFunctions);
+
+    // A failed evaluator still continues if a tool failed — ask the model for better params.
+    if (lastResult.status === 'failed' && !previousTurnFailed) {
       break;
     }
 
-    const decision = classifyToolTurn(beforeFunctions, current.functions || []);
+    const decision = classifyToolTurn(beforeFunctions, afterFunctions);
     if (decision !== 'continue') {
       console.log(`[ToolCompletion] stop (${decision}) after turn ${turn} for command ${command.id}`);
     }

@@ -28,7 +28,7 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). Use action="get_available_slots" to query inventory for a date range (requires catalog_item_id, from_date, to_date). Use action="create" for manual admin bookings (requires catalog_item_id, lead_id, start_time, end_time, and quantity). Use action="update" to change a reservation status (e.g. to cancelled). Note: checkout flow normally creates pending reservations automatically.',
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). catalog_item_id is a catalog UUID only — never a reservation folio. Reservation UUID goes in id (get/update). If get_available_slots fails, retry with the catalog_item_id from the error, then update with the reservation id and new times.',
     parameters: {
       type: 'object',
       properties: {
@@ -37,9 +37,9 @@ export function reservationsTool(current_site_id?: string) {
           enum: ['list', 'get', 'get_available_slots', 'create', 'update'],
           description: 'Action to perform.'
         },
-        id: { type: 'string', description: 'Reservation UUID' },
+        id: { type: 'string', description: 'Reservation UUID (folio). Use for get and update. Never pass this as catalog_item_id.' },
         site_id: { type: 'string', description: 'Seller site UUID (defaults to current site)' },
-        catalog_item_id: { type: 'string', description: 'Catalog item UUID' },
+        catalog_item_id: { type: 'string', description: 'Reservable catalog item UUID (not a reservation id)' },
         lead_id: { type: 'string', description: 'Lead UUID attached to the reservation' },
         buyer_user_id: { type: 'string', description: 'Buyer user UUID' },
         owner_site_id: { type: 'string', description: 'Owner site UUID' },

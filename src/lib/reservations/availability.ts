@@ -39,20 +39,87 @@ export async function getBookedSeats(
   return (reservations || []).reduce((acc: number, res: any) => acc + (res.quantity || 1), 0);
 }
 
+export class ReservableCatalogItemError extends Error {
+  readonly statusCode = 400;
+  readonly catalog_item_id?: string;
+  readonly reservation_id?: string;
+
+  constructor(
+    message: string,
+    extra?: { catalog_item_id?: string; reservation_id?: string }
+  ) {
+    super(message);
+    this.name = 'ReservableCatalogItemError';
+    this.catalog_item_id = extra?.catalog_item_id;
+    this.reservation_id = extra?.reservation_id;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+export type ResolvedReservableCatalogItem = {
+  catalog_item_id: string;
+  reservation_id?: string;
+};
+
+/**
+ * catalog_item_id must be a reservable catalog item.
+ * A reservation folio is a failed param: the error includes the real catalog_item_id
+ * so the completion loop can ask the model to retry.
+ */
+export async function resolveReservableCatalogItemId(candidateId: string): Promise<ResolvedReservableCatalogItem> {
+  const { data: item } = await supabaseAdmin
+    .from('catalog_items')
+    .select('id, is_reservation')
+    .eq('id', candidateId)
+    .maybeSingle();
+
+  if (item?.id) {
+    if (item.is_reservation === false) {
+      throw new ReservableCatalogItemError(
+        `catalog_item_id=${candidateId} is not a reservable catalog item`
+      );
+    }
+    return { catalog_item_id: item.id };
+  }
+
+  const { data: reservation } = await supabaseAdmin
+    .from('reservations')
+    .select('id, catalog_item_id')
+    .eq('id', candidateId)
+    .maybeSingle();
+
+  if (reservation?.catalog_item_id) {
+    throw new ReservableCatalogItemError(
+      `catalog_item_id is a reservation id; use catalog_item_id=${reservation.catalog_item_id} and pass the reservation as id for update`,
+      { catalog_item_id: reservation.catalog_item_id, reservation_id: reservation.id }
+    );
+  }
+
+  throw new ReservableCatalogItemError(`catalog item not found: ${candidateId}`);
+}
+
 export async function getAvailableSlots(
   catalogItemId: string,
   startDateStr: string,
   endDateStr: string,
   qty: number = 1
 ) {
+  const resolved = await resolveReservableCatalogItemId(catalogItemId);
+  const resolvedId = resolved.catalog_item_id;
+
   // 1. Get schedule
   const { data: schedule } = await supabaseAdmin
     .from('reservation_schedules')
     .select('*')
-    .eq('catalog_item_id', catalogItemId)
+    .eq('catalog_item_id', resolvedId)
     .single();
 
-  if (!schedule) return [];
+  if (!schedule) {
+    throw new ReservableCatalogItemError(
+      `Item is reservable but has no schedule configured (catalog_item_id=${resolvedId})`,
+      { catalog_item_id: resolvedId }
+    );
+  }
 
   const days = eachDayOfInterval({ start: parseISO(startDateStr), end: parseISO(endDateStr) });
   const result: { start: string; end: string; available: number }[] = [];
@@ -67,7 +134,7 @@ export async function getAvailableSlots(
   const { data: reservations } = await supabaseAdmin
     .from('reservations')
     .select('start_time, end_time, quantity, status')
-    .eq('catalog_item_id', catalogItemId)
+    .eq('catalog_item_id', resolvedId)
     .in('status', ['pending', 'confirmed'])
     .lt('start_time', rangeEnd.toISOString())
     .gt('end_time', rangeStart.toISOString());
@@ -110,7 +177,7 @@ export async function getAvailableSlots(
       }).reduce((acc: number, r: any) => acc + (r.quantity || 1), 0);
 
       const isBlocked = (calendarBlocks || []).some((b: any) => {
-        const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
+        const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === resolvedId);
         if (!applies) return false;
         return intervalsOverlap(current, slotEnd, new Date(b.start_time), new Date(b.end_time));
       });
@@ -129,7 +196,11 @@ export async function getAvailableSlots(
     }
   }
 
-  return result;
+  return {
+    slots: result,
+    catalog_item_id: resolvedId,
+    ...(resolved.reservation_id ? { reservation_id: resolved.reservation_id } : {}),
+  };
 }
 
 export async function assertReservationSlot(

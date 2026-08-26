@@ -4,6 +4,7 @@ import {
   runToolCompletionLoop,
   shouldContinueToolCompletion,
   TOOL_COMPLETION_TURN_INSTRUCTION,
+  TOOL_CORRECTION_TURN_INSTRUCTION,
 } from '../tool-completion-loop';
 import type { CommandExecutionResult, DbCommand } from '../../../models/types';
 
@@ -115,6 +116,64 @@ describe('tool-completion-loop', () => {
     });
 
     expect(executeCommand).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks the next turn to correct params after a failed tool', async () => {
+    const failedFn = {
+      name: 'reservations',
+      status: 'failed',
+      arguments: '{"action":"get_available_slots","catalog_item_id":"folio"}',
+      result: { error: 'catalog_item_id is a reservation id; use catalog_item_id=item-1' },
+    };
+    let storedFunctions: any[] = [];
+    const executeCommand = jest.fn(async (current: DbCommand): Promise<CommandExecutionResult> => {
+      if (executeCommand.mock.calls.length === 1) {
+        storedFunctions = [failedFn];
+        return { status: 'completed', updatedCommand: { ...current, functions: storedFunctions } };
+      }
+      return { status: 'completed', updatedCommand: { ...current, functions: storedFunctions } };
+    });
+
+    await runToolCompletionLoop({
+      toolEvaluator: { executeCommand },
+      command: commandFixture(),
+      commandService: {
+        getCommandById: async () => commandFixture(storedFunctions),
+      },
+    });
+
+    expect(executeCommand).toHaveBeenCalledTimes(2);
+    expect(executeCommand.mock.calls[1][0].context).toContain('TOOL CORRECTION TURN');
+    expect(executeCommand.mock.calls[1][0].context).toContain('better arguments taken from the error');
+    expect(TOOL_CORRECTION_TURN_INSTRUCTION).toContain('Do not return []');
+  });
+
+  it('still asks the model for better params if the evaluator status is failed but a tool failed', async () => {
+    const failedFn = {
+      name: 'reservations',
+      status: 'failed',
+      arguments: '{"action":"get_available_slots","catalog_item_id":"folio"}',
+      result: { error: 'catalog_item_id is a reservation id; use catalog_item_id=item-1' },
+    };
+    let storedFunctions: any[] = [];
+    const executeCommand = jest.fn(async (current: DbCommand): Promise<CommandExecutionResult> => {
+      if (executeCommand.mock.calls.length === 1) {
+        storedFunctions = [failedFn];
+        return { status: 'failed', error: 'tool failed', updatedCommand: { ...current, functions: storedFunctions } };
+      }
+      return { status: 'completed', updatedCommand: { ...current, functions: storedFunctions } };
+    });
+
+    await runToolCompletionLoop({
+      toolEvaluator: { executeCommand },
+      command: commandFixture(),
+      commandService: {
+        getCommandById: async () => commandFixture(storedFunctions),
+      },
+    });
+
+    expect(executeCommand).toHaveBeenCalledTimes(2);
+    expect(executeCommand.mock.calls[1][0].context).toContain('TOOL CORRECTION TURN');
   });
 
   it('does not loop forever when every turn executes a new tool', async () => {

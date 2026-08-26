@@ -1,4 +1,4 @@
-import { getAvailableSlots, getBookedSeats, assertReservationSlot, intervalsOverlap } from '../../src/lib/reservations/availability';
+import { getAvailableSlots, getBookedSeats, assertReservationSlot, intervalsOverlap, ReservableCatalogItemError, resolveReservableCatalogItemId } from '../../src/lib/reservations/availability';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
 import { addDays, setHours, startOfDay, addMinutes } from 'date-fns';
 
@@ -36,9 +36,21 @@ describe('Reservations Availability Lib', () => {
       gte: jest.fn().mockReturnThis(),
       lte: jest.fn().mockReturnThis(),
       single: jest.fn().mockResolvedValue({ data }),
+      maybeSingle: jest.fn().mockResolvedValue({ data: null }),
       then: jest.fn((callback) => callback({ data: [] })),
     };
-    (supabaseAdmin.from as jest.Mock).mockReturnValue(chain);
+    (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+      if (table === 'catalog_items') {
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { id: catalogItemId, is_reservation: true },
+          }),
+        };
+      }
+      return chain;
+    });
     return chain;
   };
 
@@ -91,7 +103,7 @@ describe('Reservations Availability Lib', () => {
         gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
-      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
       
       expect(slots).toHaveLength(2);
       expect(slots[0].available).toBe(2);
@@ -121,7 +133,7 @@ describe('Reservations Availability Lib', () => {
         gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
-      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
       const hours = slots.map((slot) => new Date(slot.start).getHours());
       expect(hours).toEqual([11, 13]);
     });
@@ -156,7 +168,7 @@ describe('Reservations Availability Lib', () => {
         }),
       });
 
-      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
       
       expect(slots).toHaveLength(1);
       // capacity 3 - 2 booked = 1 available
@@ -188,10 +200,74 @@ describe('Reservations Availability Lib', () => {
         }),
       });
 
-      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
       expect(slots).toHaveLength(1);
       expect(new Date(slots[0].start).getHours()).toBe(10);
       expect(slots[0].available).toBe(1);
+    });
+
+    it('returns no slots when the item and schedule are valid but the day is closed', async () => {
+      const scheduleData = {
+        catalog_item_id: catalogItemId,
+        site_id: siteId,
+        duration_minutes: 60,
+        capacity: 1,
+        days: {
+          ...getDayConfig(),
+          monday: { enabled: false },
+        },
+      };
+
+      const q = mockQuery(scheduleData);
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({ data: [] }),
+      });
+
+      const { slots } = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      expect(slots).toEqual([]);
+    });
+  });
+
+  describe('resolveReservableCatalogItemId', () => {
+    it('fails a reservation folio so the model can retry with catalog_item_id', async () => {
+      (supabaseAdmin.from as jest.Mock).mockImplementation((table: string) => {
+        if (table === 'catalog_items') {
+          return {
+            select: jest.fn().mockReturnThis(),
+            eq: jest.fn().mockReturnThis(),
+            maybeSingle: jest.fn().mockResolvedValue({ data: null }),
+          };
+        }
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq: jest.fn().mockReturnThis(),
+          maybeSingle: jest.fn().mockResolvedValue({
+            data: { id: '1aea4bd8-folio', catalog_item_id: '54040381-emmanuel' },
+          }),
+        };
+      });
+
+      await expect(resolveReservableCatalogItemId('1aea4bd8-folio')).rejects.toThrow(ReservableCatalogItemError);
+      await expect(resolveReservableCatalogItemId('1aea4bd8-folio')).rejects.toThrow(
+        'use catalog_item_id=54040381-emmanuel'
+      );
+    });
+
+    it('rejects an unknown UUID', async () => {
+      (supabaseAdmin.from as jest.Mock).mockImplementation(() => ({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null }),
+      }));
+
+      await expect(resolveReservableCatalogItemId('missing-id')).rejects.toThrow('catalog item not found: missing-id');
+    });
+
+    it('fails getAvailableSlots when the item has no schedule', async () => {
+      mockQuery(null);
+      await expect(
+        getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1)
+      ).rejects.toThrow('no schedule configured');
     });
   });
 
