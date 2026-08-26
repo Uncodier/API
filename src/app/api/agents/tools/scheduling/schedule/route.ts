@@ -1,133 +1,138 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { v4 as uuidv4 } from 'uuid';
-import { isValid, addMinutes, isPast } from 'date-fns';
-import { parseInstantOrWallClock } from '@/lib/timezone';
+import {
+  appointmentPublicFields,
+  createAppointment,
+  listAppointments,
+  updateAppointment,
+} from '@/lib/scheduling/appointments';
+
+function httpError(error: unknown, fallback: string) {
+  const err = error as { message?: string; status?: number; code?: string };
+  const status = err.status || 500;
+  const body: Record<string, unknown> = {
+    success: false,
+    error: err.message || fallback,
+  };
+  if (err.code) body.status = err.code;
+  return NextResponse.json(body, { status });
+}
 
 /**
- * Endpoint para programar una cita o fecha para un evento específico
- * 
- * @param request Solicitud entrante con los datos de la cita
- * @returns Respuesta con la información de la cita programada
+ * Schedule, list, or update team/person appointments.
+ * Default action is "schedule" for backward compatibility.
  */
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    
-    // Extraer parámetros requeridos
-    const { 
+    const action = body.action || 'schedule';
+    const site_id = body.site_id;
+
+    if (!site_id) {
+      return NextResponse.json(
+        { success: false, error: 'El ID del sitio es requerido' },
+        { status: 400 }
+      );
+    }
+
+    if (action === 'list') {
+      const context_id = body.context_id || body.lead_id;
+      const appointments = await listAppointments({
+        site_id,
+        context_id,
+        status: body.status,
+        date: body.date,
+        timezone: body.timezone,
+        limit: body.limit,
+      });
+      return NextResponse.json({
+        success: true,
+        appointments: appointments.map(appointmentPublicFields),
+        count: appointments.length,
+      });
+    }
+
+    if (action === 'update') {
+      const appointment_id = body.appointment_id || body.id;
+      if (!appointment_id) {
+        return NextResponse.json(
+          { success: false, error: 'appointment_id is required for update' },
+          { status: 400 }
+        );
+      }
+
+      const appointment = await updateAppointment({
+        appointment_id,
+        site_id,
+        title: body.title,
+        start_datetime: body.start_datetime,
+        duration: body.duration,
+        timezone: body.timezone,
+        status: body.status,
+        location: body.location,
+        description: body.description,
+        reminder: body.reminder,
+        participants: Array.isArray(body.participants) ? body.participants : undefined,
+      });
+
+      return NextResponse.json({
+        success: true,
+        ...appointmentPublicFields(appointment),
+      });
+    }
+
+    if (action !== 'schedule') {
+      return NextResponse.json(
+        { success: false, error: `Invalid action: ${action}. Use schedule, list, or update.` },
+        { status: 400 }
+      );
+    }
+
+    const {
       title,
       start_datetime,
       duration,
       timezone,
       context_id,
-      site_id,
       participants = [],
       location,
       description,
-      reminder
+      reminder,
     } = body;
-    
-    // Validar parámetros requeridos
-    if (!title || !site_id) {
+
+    if (!title) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'El título y el ID del sitio son requeridos'
-        },
+        { success: false, error: 'El título y el ID del sitio son requeridos' },
         { status: 400 }
       );
     }
-    
     if (!start_datetime) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'La fecha y hora de inicio son requeridas'
-        },
+        { success: false, error: 'La fecha y hora de inicio son requeridas' },
         { status: 400 }
       );
     }
-    
     if (!duration || duration < 5) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'La duración debe ser de al menos 5 minutos'
-        },
+        { success: false, error: 'La duración debe ser de al menos 5 minutos' },
         { status: 400 }
       );
     }
-    
     if (!timezone) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'La zona horaria es requerida'
-        },
+        { success: false, error: 'La zona horaria es requerida' },
         { status: 400 }
       );
     }
-    
     if (!context_id) {
       return NextResponse.json(
-        { 
-          success: false, 
-          error: 'El ID de contexto es requerido'
-        },
+        { success: false, error: 'El ID de contexto es requerido' },
         { status: 400 }
       );
     }
-    
-    const startDate = parseInstantOrWallClock(start_datetime, timezone);
-    if (!isValid(startDate)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'El formato de fecha y hora no es válido. Usar formato ISO 8601'
-        },
-        { status: 422 }
-      );
-    }
-    
-    // Verificar si la fecha es en el pasado
-    if (isPast(startDate)) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'No se puede programar una cita en el pasado'
-        },
-        { status: 422 }
-      );
-    }
-    
-    const endDate = addMinutes(startDate, duration);
-    const startUtc = startDate.toISOString();
-    const end_datetime = endDate.toISOString();
-    
-    // Verificar disponibilidad de horario
-    const isAvailable = await checkAvailability(startUtc, end_datetime, site_id, participants);
-    
-    if (!isAvailable) {
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'El horario solicitado no está disponible',
-          status: 'conflict'
-        },
-        { status: 409 }
-      );
-    }
-    
-    // Crear registro de cita
-    const appointment_id = uuidv4();
-    const calendarLink = generateCalendarLink(appointment_id);
-    
-    const appointmentData = {
-      id: appointment_id,
+
+    const appointment = await createAppointment({
       title,
-      start_datetime: startUtc,
-      end_datetime,
+      start_datetime,
       duration,
       timezone,
       context_id,
@@ -136,97 +141,17 @@ export async function POST(request: NextRequest) {
       location,
       description,
       reminder,
-      status: 'confirmed',
-      calendar_link: calendarLink,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-    
-    const { data: appointment, error: insertError } = await supabaseAdmin
-      .from('appointments')
-      .insert([appointmentData])
-      .select()
-      .single();
-    
-    if (insertError) {
-      console.error('Error al crear la cita:', insertError);
-      return NextResponse.json(
-        { 
-          success: false, 
-          error: 'Error al programar la cita'
-        },
-        { status: 500 }
-      );
-    }
-    
-    // Respuesta exitosa
+    });
+
     return NextResponse.json(
       {
         success: true,
-        appointment_id: appointment.id,
-        title: appointment.title,
-        start_datetime: appointment.start_datetime,
-        end_datetime: appointment.end_datetime,
-        timezone: appointment.timezone,
-        status: appointment.status,
-        calendar_link: appointment.calendar_link
+        ...appointmentPublicFields(appointment),
       },
       { status: 201 }
     );
-    
   } catch (error) {
     console.error('Error al procesar la programación de cita:', error);
-    return NextResponse.json(
-      { 
-        success: false, 
-        error: 'Error al procesar la solicitud de programación'
-      },
-      { status: 500 }
-    );
+    return httpError(error, 'Error al procesar la solicitud de programación');
   }
 }
-
-/**
- * Verifica la disponibilidad de horario para la cita
- */
-async function checkAvailability(start: string, end: string, site_id: string, participants: string[]) {
-  // Verificar si hay conflictos con citas existentes
-  const { data: existingAppointments, error } = await supabaseAdmin
-    .from('appointments')
-    .select('id, start_datetime, end_datetime, participants')
-    .eq('site_id', site_id)
-    .or(`start_datetime.gte.${start},end_datetime.lte.${end}`)
-    .eq('status', 'confirmed');
-  
-  if (error) {
-    console.error('Error al verificar disponibilidad:', error);
-    // En caso de error, asumimos que no hay disponibilidad
-    return false;
-  }
-  
-  // Si no hay participantes, solo verificamos si hay citas en ese horario
-  if (participants.length === 0) {
-    return existingAppointments.length === 0;
-  }
-  
-  // Verificar si alguno de los participantes ya tiene una cita en ese horario
-  for (const appointment of existingAppointments) {
-    const appointmentParticipants = appointment.participants || [];
-    const hasConflict = participants.some(participant => 
-      appointmentParticipants.includes(participant)
-    );
-    
-    if (hasConflict) {
-      return false;
-    }
-  }
-  
-  return true;
-}
-
-/**
- * Genera un enlace para el calendario
- */
-function generateCalendarLink(appointmentId: string) {
-  return `https://cal.example.com/event/${appointmentId}`;
-} 

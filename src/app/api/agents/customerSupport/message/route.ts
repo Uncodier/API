@@ -11,6 +11,8 @@ import { calendarBlocksTool } from '@/app/api/agents/tools/calendar_blocks/assis
 import { checkoutTool } from '@/app/api/agents/tools/checkout/assistantProtocol';
 import { calendarsTool } from '@/app/api/agents/tools/calendars/assistantProtocol';
 import { schedulingTool } from '@/app/api/agents/tools/scheduling/assistantProtocol';
+import { getCustomerSupportPolicies } from '@/app/api/agents/customerSupport/support-policies';
+import { appendLeadRecordToContext } from '@/app/api/agents/customerSupport/lead-record';
 import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import { manageLeadCreation } from '@/lib/services/leads/lead-service';
@@ -1450,6 +1452,8 @@ export async function POST(request: Request) {
         if (email) contextMessage += `\nEmail: ${email}`;
         if (phone) contextMessage += `\nPhone: ${phone}`;
       }
+
+      contextMessage = await appendLeadRecordToContext(contextMessage, effectiveLeadId, effectiveSiteId);
     } else if (name || email || phone) {
       // Si no tenemos effectiveLeadId pero sí información de contacto de la request
       console.log(`📋 No hay lead_id efectivo, pero usando información de contacto disponible de la request`);
@@ -1488,24 +1492,7 @@ export async function POST(request: Request) {
       }
     }
     
-    // Create the command using CommandFactory with the conversation history in the context
-    // Lead Qualification Policy & Tool Usage (for support):
-    contextMessage += `\n\n=== LEAD QUALIFICATION POLICY ===\n`;
-    contextMessage += `Customer Support can update lead status when conversations clearly change the sales stage.\n`;
-    contextMessage += `- contacted → first meaningful two-way interaction.\n`;
-    contextMessage += `- qualified → ICP fit + explicit interest or handoff to sales after a successful discovery.\n`;
-    contextMessage += `- converted → payment received or contract signed (only if verified).\n`;
-    contextMessage += `- lost → explicit rejection, competitor chosen, or no response after agreed cadence.\n`;
-    contextMessage += `Use QUALIFY_LEAD with: site_id, status, and one identifier (lead_id | email | phone). Add notes briefly explaining the change.\n`;
-    
-    // Commerce & Reservations Policy
-    contextMessage += `\n\n=== COMMERCE & RESERVATIONS ===\n`;
-    contextMessage += `When a user asks to buy or book a product/service:\n`;
-    contextMessage += `1. Use catalog_commerce to find the item (use include_modifiers=true when getting an item to check for variants).\n`;
-    contextMessage += `2. CRITICAL: If the item has modifiers or variants, YOU MUST ask the user to choose them before proceeding.\n`;
-    contextMessage += `3. For catalog item reservations (barbers, services, capacity): calendars list/get to resolve the catalog_item_id, THEN reservations.get_available_slots, THEN checkout.create_order or reservations.create. The tool stage loops until you return [] — finish the chain in this command. There is NO background job after WhatsApp is sent.\n`;
-    contextMessage += `4. For team/person meetings, use calendars tool to find team members and scheduling tool to book them. If calendar is null, that person is not a meeting calendar — they may be a reservable catalog service instead.\n`;
-    contextMessage += `5. NEVER reply "I'm checking / te confirmo en un momento" instead of calling the next tool. If availability was not returned, call reservations.get_available_slots before writing the user message.\n`;
+    contextMessage += getCustomerSupportPolicies();
 
     const command = CommandFactory.createCommand({
       task: 'create message',
