@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { POST } from '../../src/app/api/agents/tools/reservations/route';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
+import { assertReservationSlot } from '../../src/lib/reservations/availability';
 
 jest.mock('../../src/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -87,7 +88,49 @@ describe('Reservations tool route — id aliases', () => {
     expect(lookedUpIds).toContain(reservationId);
   });
 
-  it('rejects update with only lead_id (no mutable fields)', async () => {
+  it('rejects update with no mutable fields', async () => {
+    const res = await post({
+      action: 'update',
+      reservation_id: reservationId,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.success).toBe(false);
+    expect(json.error).toContain('No fields to update');
+    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+  });
+
+  it('updates lead_id on the reservation', async () => {
+    const lookedUpIds: string[] = [];
+    let fromCalls = 0;
+    let updatePayload: Record<string, unknown> | null = null;
+
+    (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+      fromCalls += 1;
+      const chain: any = {
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updatePayload = payload;
+          return chain;
+        }),
+        eq: jest.fn().mockImplementation((_col: string, val: string) => {
+          lookedUpIds.push(val);
+          return chain;
+        }),
+        single: jest.fn(),
+      };
+      if (fromCalls === 1) {
+        chain.single.mockResolvedValue({ data: existing, error: null });
+      } else {
+        chain.single.mockResolvedValue({
+          data: { ...existing, lead_id: leadId },
+          error: null,
+        });
+      }
+      return chain;
+    });
+
     const res = await post({
       action: 'update',
       reservation_id: reservationId,
@@ -95,11 +138,77 @@ describe('Reservations tool route — id aliases', () => {
     });
     const json = await res.json();
 
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.reservation.lead_id).toBe(leadId);
+    expect(updatePayload).toMatchObject({ lead_id: leadId });
+    expect(lookedUpIds).toContain(reservationId);
+  });
+
+  it('excludes the current reservation when revalidating capacity on reschedule', async () => {
+    let fromCalls = 0;
+
+    (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+      fromCalls += 1;
+      const chain: any = {
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        single: jest.fn(),
+      };
+      if (fromCalls === 1) {
+        chain.single.mockResolvedValue({ data: existing, error: null });
+      } else {
+        chain.single.mockResolvedValue({
+          data: { ...existing, quantity: 1 },
+          error: null,
+        });
+      }
+      return chain;
+    });
+
+    const res = await post({
+      action: 'update',
+      reservation_id: reservationId,
+      start_time: existing.start_time,
+      end_time: existing.end_time,
+      quantity: 1,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(assertReservationSlot).toHaveBeenCalledWith(
+      existing.catalog_items.site_id,
+      existing.catalog_item_id,
+      existing.start_time,
+      existing.end_time,
+      1,
+      true,
+      reservationId
+    );
+  });
+
+  it('rejects quantity below 1 on update', async () => {
+    const chain: any = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: existing, error: null }),
+    };
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(chain);
+
+    const res = await post({
+      action: 'update',
+      reservation_id: reservationId,
+      start_time: existing.start_time,
+      end_time: existing.end_time,
+      quantity: 0,
+    });
+    const json = await res.json();
+
     expect(res.status).toBe(400);
     expect(json.success).toBe(false);
-    expect(json.error).toContain('No fields to update');
-    expect(json.error).toContain('lead_id is create-only');
-    expect(supabaseAdmin.from).not.toHaveBeenCalled();
+    expect(json.error).toContain('quantity must be at least 1');
   });
 
   it('gets a reservation by reservation_id', async () => {

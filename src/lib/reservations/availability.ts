@@ -29,15 +29,22 @@ export function intervalsOverlap(startA: Date, endA: Date, startB: Date, endB: D
 export async function getBookedSeats(
   catalogItemId: string,
   start: Date,
-  end: Date
+  end: Date,
+  excludeReservationId?: string
 ) {
-  const { data: reservations, error } = await supabaseAdmin
+  let query = supabaseAdmin
     .from('reservations')
     .select('quantity, status')
     .eq('catalog_item_id', catalogItemId)
     .in('status', ['pending', 'confirmed'])
     .gt('end_time', start.toISOString())
     .lt('start_time', end.toISOString());
+
+  if (excludeReservationId) {
+    query = query.neq('id', excludeReservationId);
+  }
+
+  const { data: reservations, error } = await query;
 
   if (error) {
     console.error('Error fetching booked seats:', error);
@@ -270,7 +277,8 @@ export async function assertReservationSlot(
   startIso: string,
   endIso: string,
   quantity: number,
-  isAdmin: boolean = false
+  isAdmin: boolean = false,
+  excludeReservationId?: string
 ): Promise<AssertedReservationSlot> {
   const { data: schedule } = await supabaseAdmin
     .from('reservation_schedules')
@@ -334,7 +342,7 @@ export async function assertReservationSlot(
   }
 
   const capacity = schedule.capacity || 1;
-  const booked = await getBookedSeats(catalogItemId, start, end);
+  const booked = await getBookedSeats(catalogItemId, start, end, excludeReservationId);
   const remaining = capacity - booked;
   if (remaining < quantity) {
     throw new Error(

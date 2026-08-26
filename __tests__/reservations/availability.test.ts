@@ -31,6 +31,7 @@ describe('Reservations Availability Lib', () => {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
+      neq: jest.fn().mockReturnThis(),
       gt: jest.fn().mockReturnThis(),
       lt: jest.fn().mockReturnThis(),
       gte: jest.fn().mockReturnThis(),
@@ -328,6 +329,47 @@ describe('Reservations Availability Lib', () => {
           start_utc: '2026-07-29T15:00:00.000Z',
           end_utc: '2026-07-29T16:00:00.000Z',
         });
+    });
+
+    it('counts the existing reservation when no exclude id is passed', async () => {
+      const q = mockQuery(scheduleOf({ capacity: 1 }));
+
+      q.gt.mockReturnValueOnce({
+        lt: jest.fn().mockResolvedValue({
+          data: [{ quantity: 1, status: 'confirmed' }],
+        }),
+      });
+
+      await expect(
+        assertReservationSlot(siteId, catalogItemId, '2026-07-29T15:00:00.000Z', '2026-07-29T16:00:00.000Z', 1)
+      ).rejects.toThrow('Not enough capacity for this slot (requested 1, remaining 0, capacity 1)');
+    });
+
+    it('excludes the reservation being updated from booked capacity', async () => {
+      const reservationId = 'res-being-updated';
+      const q = mockQuery(scheduleOf({ capacity: 1 }));
+
+      const neq = jest.fn().mockResolvedValue({ data: [] });
+      q.gt.mockReturnValueOnce({
+        lt: jest.fn().mockReturnValue({ neq }),
+      });
+
+      await expect(
+        assertReservationSlot(
+          siteId,
+          catalogItemId,
+          '2026-07-29T15:00:00.000Z',
+          '2026-07-29T16:00:00.000Z',
+          1,
+          true,
+          reservationId
+        )
+      ).resolves.toEqual({
+        start_utc: '2026-07-29T15:00:00.000Z',
+        end_utc: '2026-07-29T16:00:00.000Z',
+      });
+
+      expect(neq).toHaveBeenCalledWith('id', reservationId);
     });
 
     it('treats naive 12:00 as CDMX wall-clock and stores 18:00Z', async () => {

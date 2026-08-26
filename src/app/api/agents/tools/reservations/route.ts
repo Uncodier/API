@@ -158,10 +158,11 @@ export async function POST(request: NextRequest) {
         updates.quantity !== undefined ||
         updates.start_time !== undefined ||
         updates.end_time !== undefined ||
-        updates.notes !== undefined;
+        updates.notes !== undefined ||
+        lead_id !== undefined;
       if (!hasUpdate) {
         throw new ReservableCatalogItemError(
-          'No fields to update. Pass at least one of: status, start_time, end_time, quantity, notes. lead_id is create-only.'
+          'No fields to update. Pass at least one of: status, start_time, end_time, quantity, notes, lead_id.'
         );
       }
 
@@ -179,19 +180,31 @@ export async function POST(request: NextRequest) {
 
       const payload: any = {};
       if (updates.status !== undefined) payload.status = updates.status;
-      if (updates.quantity !== undefined) payload.quantity = updates.quantity;
+      if (updates.quantity !== undefined) {
+        const qty = Number(updates.quantity);
+        if (!Number.isFinite(qty) || qty < 1) {
+          throw new ReservableCatalogItemError('quantity must be at least 1');
+        }
+        payload.quantity = qty;
+      }
       if (updates.start_time !== undefined) payload.start_time = updates.start_time;
       if (updates.end_time !== undefined) payload.end_time = updates.end_time;
       if (updates.notes !== undefined) payload.notes = updates.notes;
+      if (lead_id !== undefined) payload.lead_id = lead_id;
 
-      if (updates.start_time !== undefined || updates.end_time !== undefined) {
+      const timesOrQuantityChange =
+        updates.start_time !== undefined ||
+        updates.end_time !== undefined ||
+        updates.quantity !== undefined;
+      if (timesOrQuantityChange) {
         const slot = await assertReservationSlot(
           existingSiteId,
           existing.catalog_item_id,
           updates.start_time ?? existing.start_time,
           updates.end_time ?? existing.end_time,
           updates.quantity ?? existing.quantity ?? 1,
-          true
+          true,
+          reservationId
         );
         payload.start_time = slot.start_utc;
         payload.end_time = slot.end_utc;
