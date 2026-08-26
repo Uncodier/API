@@ -5,7 +5,21 @@ import { getAvailableSlots, assertReservationSlot, ReservableCatalogItemError } 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, id, catalog_item_id, lead_id, site_id, limit = 50, offset = 0, entitlement_id, buyer_user_id, owner_site_id, ...updates } = body;
+    const {
+      action,
+      id,
+      reservation_id,
+      catalog_item_id,
+      lead_id,
+      site_id,
+      limit = 50,
+      offset = 0,
+      entitlement_id,
+      buyer_user_id,
+      owner_site_id,
+      ...updates
+    } = body;
+    const reservationId = id || reservation_id;
 
     if (!action) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
@@ -96,12 +110,14 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'get') {
-      if (!id) throw new Error('Missing id');
+      if (!reservationId) {
+        throw new ReservableCatalogItemError('Missing reservation UUID for get. Pass id (alias: reservation_id).');
+      }
 
       const { data, error } = await supabaseAdmin
         .from('reservations')
         .select('*, catalog_item:catalog_items(name, site_id)')
-        .eq('id', id)
+        .eq('id', reservationId)
         .single();
 
       if (error) throw new Error(error.message);
@@ -133,12 +149,26 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'update') {
-      if (!id) throw new Error('Missing id');
+      if (!reservationId) {
+        throw new ReservableCatalogItemError('Missing reservation UUID for update. Pass id (alias: reservation_id).');
+      }
+
+      const hasUpdate =
+        updates.status !== undefined ||
+        updates.quantity !== undefined ||
+        updates.start_time !== undefined ||
+        updates.end_time !== undefined ||
+        updates.notes !== undefined;
+      if (!hasUpdate) {
+        throw new ReservableCatalogItemError(
+          'No fields to update. Pass at least one of: status, start_time, end_time, quantity, notes. lead_id is create-only.'
+        );
+      }
 
       const { data: existing, error: getErr } = await supabaseAdmin
         .from('reservations')
         .select('id, catalog_item_id, start_time, end_time, quantity, catalog_items!inner(site_id)')
-        .eq('id', id)
+        .eq('id', reservationId)
         .single();
 
       if (getErr || !existing) throw new Error('Reservation not found');
@@ -152,6 +182,7 @@ export async function POST(request: NextRequest) {
       if (updates.quantity !== undefined) payload.quantity = updates.quantity;
       if (updates.start_time !== undefined) payload.start_time = updates.start_time;
       if (updates.end_time !== undefined) payload.end_time = updates.end_time;
+      if (updates.notes !== undefined) payload.notes = updates.notes;
 
       if (updates.start_time !== undefined || updates.end_time !== undefined) {
         const slot = await assertReservationSlot(
@@ -166,14 +197,12 @@ export async function POST(request: NextRequest) {
         payload.end_time = slot.end_utc;
       }
 
-      if (Object.keys(payload).length > 0) {
-        payload.updated_at = new Date().toISOString();
-      }
+      payload.updated_at = new Date().toISOString();
 
       const { data, error } = await supabaseAdmin
         .from('reservations')
         .update(payload)
-        .eq('id', id)
+        .eq('id', reservationId)
         .select()
         .single();
 

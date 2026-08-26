@@ -37,6 +37,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - **Reservable catalog**: Mark an item as reservable via \`catalog_commerce\` (\`is_reservation=true\`). If the user asks to create a new bookable service, DO NOT use update_team_calendar. You MUST create the catalog item first, then use update_service_schedule.
    - Before a reservable item can be sold, it MUST have a schedule configured via \`calendars\` (\`action="update_service_schedule"\`) or \`reservation_schedules\` with at least one enabled day. Keys must be lowercase english days.
    - **Slot checkout**: To book, first query \`reservations\` (\`action="get_available_slots"\`). Then call \`checkout\` with the slot ISO times (\`reservationStart\`, \`reservationEnd\`) on the line item. You must also provide \`customer_email\` or \`lead_id\`.
+   - **Reschedule / cancel**: Use \`reservations\` \`action="update"\` with the reservation UUID in \`id\` (alias: \`reservation_id\`) plus at least one of \`status\`, \`start_time\`, \`end_time\`, \`quantity\`, \`notes\`. \`lead_id\` is create-only.
 
 4. **Passes & Subscriptions**
    - **Passes:** A catalog item with `digital_subtype="pass"` grants uses. Map what it can book using `pass_redeemable_items`. When a buyer books using a pass, provide the `entitlement_id` to `reservations` `create` to consume a use.
@@ -66,7 +67,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `calendars` | Directory of team members, personal/team calendars, and reservable services. Set working hours here. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |
-| `reservations` | Find available slots (`get_available_slots`), or book admin slots consuming `entitlement_id`. |
+| `reservations` | Find available slots (`get_available_slots`), book admin slots (`create` + `entitlement_id`), or reschedule/cancel (`update` with `id` or `reservation_id`). |
 | `pass_redeemable_items` | Map which reservable items a pass can be used for. |
 | `quotations` & `quotation_items` | Create quotes (`draft` -> `sent`). |
 | `checkout` | Create pending orders (from lines or `quotation_id`), then generate payment links. |

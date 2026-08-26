@@ -4,6 +4,7 @@ export interface ReservationsToolParams {
   action: 'list' | 'get' | 'get_available_slots' | 'create' | 'update';
   
   id?: string;
+  reservation_id?: string;
   site_id?: string;
   catalog_item_id?: string;
   lead_id?: string;
@@ -28,19 +29,20 @@ export function reservationsTool(current_site_id?: string) {
   return {
     name: 'reservations',
     description:
-      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). catalog_item_id is a catalog UUID only — never a reservation folio. Reservation UUID goes in id (get/update). If get_available_slots fails, retry with the catalog_item_id from the error, then update with the reservation id and new times. Slot start/end are UTC ISO instants in the schedule timezone — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z).',
+      'Manage capacity slots for catalog items with is_reservation=true (not for team meetings). get/update require the reservation UUID in id (alias: reservation_id) — never catalog_item_id. catalog_item_id is only for create, get_available_slots, and list. lead_id is create-only. If get_available_slots fails, retry with the catalog_item_id from the error, then update with id and new times. Slot start/end are UTC ISO instants — copy them as-is; never append Z to a wall-clock hour (12:00 CDMX is not 12:00Z).',
     parameters: {
       type: 'object',
       properties: {
         action: {
           type: 'string',
           enum: ['list', 'get', 'get_available_slots', 'create', 'update'],
-          description: 'Action to perform.'
+          description: 'Action to perform. get/update need id (or reservation_id). create needs catalog_item_id, lead_id, start_time, end_time. get_available_slots needs catalog_item_id, from_date, to_date.'
         },
-        id: { type: 'string', description: 'Reservation UUID (folio). Use for get and update. Never pass this as catalog_item_id.' },
+        id: { type: 'string', description: 'Reservation UUID (folio). Required for get and update. Alias of reservation_id. Never pass a catalog item UUID here.' },
+        reservation_id: { type: 'string', description: 'Alias of id. Same reservation UUID. Either id or reservation_id is accepted for get/update.' },
         site_id: { type: 'string', description: 'Seller site UUID (defaults to current site)' },
-        catalog_item_id: { type: 'string', description: 'Reservable catalog item UUID (not a reservation id)' },
-        lead_id: { type: 'string', description: 'Lead UUID attached to the reservation' },
+        catalog_item_id: { type: 'string', description: 'Reservable catalog item UUID. Use for create, get_available_slots, and list filters. Never a reservation folio.' },
+        lead_id: { type: 'string', description: 'Lead UUID. Required for create only — ignored on update.' },
         buyer_user_id: { type: 'string', description: 'Buyer user UUID' },
         owner_site_id: { type: 'string', description: 'Owner site UUID' },
         entitlement_id: { type: 'string', description: 'Entitlement UUID to consume when booking with a pass' },
@@ -57,7 +59,8 @@ export function reservationsTool(current_site_id?: string) {
       required: ['action'],
     },
     execute: async (args: ReservationsToolParams) => {
-      const { action, ...params } = args;
+      const { action, reservation_id, ...params } = args;
+      const id = params.id || reservation_id;
 
       if (action === 'get_available_slots' && (!params.catalog_item_id || !params.from_date || !params.to_date)) {
         throw new Error('Missing required fields for get_available_slots: catalog_item_id, from_date, to_date');
@@ -67,13 +70,14 @@ export function reservationsTool(current_site_id?: string) {
         throw new Error('Missing required fields for create: catalog_item_id, lead_id, start_time, end_time');
       }
       
-      if ((action === 'update' || action === 'get') && !params.id) {
-        throw new Error(`Missing required field id for action ${action}`);
+      if ((action === 'update' || action === 'get') && !id) {
+        throw new Error(`Missing reservation UUID for ${action}. Pass id (alias: reservation_id).`);
       }
 
       const body = {
         action,
         ...params,
+        id,
         site_id: params.site_id || current_site_id,
       };
 
