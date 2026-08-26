@@ -7,6 +7,7 @@
 import { FunctionCall, ToolExecutionResult } from '../types';
 import { ToolsMap } from './toolsMap';
 import { hasCustomTool, getCustomToolDefinition } from './customToolsMap';
+import { hasMcpNativeTool, executeMcpNativeTool } from './mcpNativeTools';
 import { OpenAIToolSet } from "composio-core";
 import { WorkflowService } from '../../../../services/workflow-service';
 
@@ -303,7 +304,8 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
  */
 export async function executeTools(
   functionCalls: FunctionCall[],
-  toolsMap: ToolsMap
+  toolsMap: ToolsMap,
+  context?: { site_id?: string }
 ): Promise<ToolExecutionResult[]> {
   const executionStartTime = Date.now();
   
@@ -372,7 +374,16 @@ export async function executeTools(
           output = await executeCustomApiTool(functionName, parsedArgs);
           success = true;
         }
-        // 4. Si ninguna de las anteriores, intentar con Composio
+        // 4. Internal MCP tools (calendars, reservations, checkout, ...) — never Composio
+        else if (hasMcpNativeTool(functionName)) {
+          const mcpArgs = { ...(parsedArgs as Record<string, any>) };
+          if (!mcpArgs.site_id && context?.site_id) {
+            mcpArgs.site_id = context.site_id;
+          }
+          output = await executeMcpNativeTool(functionName, mcpArgs);
+          success = true;
+        }
+        // 5. External Composio apps only (Gmail, Slack, ...). Internal names 410 on v2.
         else {
           try {
             output = await executeComposioAction(functionName, parsedArgs);

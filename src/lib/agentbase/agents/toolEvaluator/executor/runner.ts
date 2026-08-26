@@ -24,7 +24,8 @@ export async function runToolExecution(
   functionCalls: FunctionCall[],
   tools: any[],
   commandId: string | null = null,
-  possibleMatchFunctions?: FunctionCall[]
+  possibleMatchFunctions?: FunctionCall[],
+  context?: { site_id?: string }
 ): Promise<ToolExecutionResult[]> {
   console.log(`[ToolExecutor] Starting tool execution for ${functionCalls.length} function calls`);
   
@@ -58,7 +59,7 @@ export async function runToolExecution(
   const toolsMap = createToolsMap(tools, requiredToolNames);
   
   // Execute the tools
-  const results = await executeTools(functionCalls, toolsMap);
+  const results = await executeTools(functionCalls, toolsMap, context);
   
   console.log(`[ToolExecutor] Tool execution completed with ${results.length} results`);
   

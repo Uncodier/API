@@ -10,6 +10,10 @@ jest.mock('../customToolsMap', () => ({
   hasCustomTool: jest.fn(),
   getCustomToolDefinition: jest.fn()
 }));
+jest.mock('../mcpNativeTools', () => ({
+  hasMcpNativeTool: jest.fn(() => false),
+  executeMcpNativeTool: jest.fn(),
+}));
 
 // Mock process.env
 const originalEnv = process.env;

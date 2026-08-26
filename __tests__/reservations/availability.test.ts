@@ -1,4 +1,4 @@
-import { getAvailableSlots, getBookedSeats, assertReservationSlot } from '../../src/lib/reservations/availability';
+import { getAvailableSlots, getBookedSeats, assertReservationSlot, intervalsOverlap } from '../../src/lib/reservations/availability';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
 import { addDays, setHours, startOfDay, addMinutes } from 'date-fns';
 
@@ -31,10 +31,12 @@ describe('Reservations Availability Lib', () => {
       select: jest.fn().mockReturnThis(),
       eq: jest.fn().mockReturnThis(),
       in: jest.fn().mockReturnThis(),
+      gt: jest.fn().mockReturnThis(),
+      lt: jest.fn().mockReturnThis(),
       gte: jest.fn().mockReturnThis(),
       lte: jest.fn().mockReturnThis(),
       single: jest.fn().mockResolvedValue({ data }),
-      then: jest.fn((callback) => callback({ data })),
+      then: jest.fn((callback) => callback({ data: [] })),
     };
     (supabaseAdmin.from as jest.Mock).mockReturnValue(chain);
     return chain;
@@ -48,6 +50,24 @@ describe('Reservations Availability Lib', () => {
     friday: { enabled: true, start: '09:00', end: '17:00' },
     saturday: { enabled: false },
     sunday: { enabled: false },
+  });
+
+  describe('intervalsOverlap', () => {
+    it('treats back-to-back slots as free (half-open)', () => {
+      const ten = new Date('2026-08-26T10:00:00Z');
+      const eleven = new Date('2026-08-26T11:00:00Z');
+      const twelve = new Date('2026-08-26T12:00:00Z');
+      expect(intervalsOverlap(ten, eleven, eleven, twelve)).toBe(false);
+      expect(intervalsOverlap(eleven, twelve, ten, eleven)).toBe(false);
+    });
+
+    it('detects exact and partial overlaps', () => {
+      const ten = new Date('2026-08-26T10:00:00Z');
+      const eleven = new Date('2026-08-26T11:00:00Z');
+      const twelve = new Date('2026-08-26T12:00:00Z');
+      expect(intervalsOverlap(ten, eleven, ten, eleven)).toBe(true);
+      expect(intervalsOverlap(ten, twelve, eleven, twelve)).toBe(true);
+    });
   });
 
   describe('generateSlots & capacity', () => {
@@ -67,9 +87,8 @@ describe('Reservations Availability Lib', () => {
 
       const q = mockQuery(scheduleData);
       
-      // We also mock reservations returning an empty array for the second query
-      q.gte.mockReturnValueOnce({
-        lte: jest.fn().mockResolvedValue({ data: [] }),
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
       const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
@@ -98,8 +117,8 @@ describe('Reservations Availability Lib', () => {
       };
 
       const q = mockQuery(scheduleData);
-      q.gte.mockReturnValueOnce({
-        lte: jest.fn().mockResolvedValue({ data: [] }),
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({ data: [] }),
       });
 
       const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
@@ -126,8 +145,8 @@ describe('Reservations Availability Lib', () => {
       const d = startOfDay(mockDate);
       const startIso = setHours(d, 9).toISOString();
       const endIso = setHours(d, 10).toISOString();
-      q.gte.mockReturnValueOnce({
-        lte: jest.fn().mockResolvedValue({ 
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({ 
           data: [{
             start_time: startIso,
             end_time: endIso,
@@ -141,6 +160,37 @@ describe('Reservations Availability Lib', () => {
       
       expect(slots).toHaveLength(1);
       // capacity 3 - 2 booked = 1 available
+      expect(slots[0].available).toBe(1);
+    });
+
+    it('keeps a slot available when the only booking is adjacent', async () => {
+      const scheduleData = {
+        catalog_item_id: catalogItemId,
+        site_id: siteId,
+        duration_minutes: 60,
+        capacity: 1,
+        days: {
+          ...getDayConfig(),
+          monday: { enabled: true, start: '09:00', end: '11:00' },
+        },
+      };
+
+      const q = mockQuery(scheduleData);
+      const d = startOfDay(mockDate);
+      q.lt.mockReturnValueOnce({
+        gt: jest.fn().mockResolvedValue({
+          data: [{
+            start_time: setHours(d, 9).toISOString(),
+            end_time: setHours(d, 10).toISOString(),
+            quantity: 1,
+            status: 'pending',
+          }],
+        }),
+      });
+
+      const slots = await getAvailableSlots(catalogItemId, '2026-07-27T00:00:00Z', '2026-07-27T23:59:59Z', 1);
+      expect(slots).toHaveLength(1);
+      expect(new Date(slots[0].start).getHours()).toBe(10);
       expect(slots[0].available).toBe(1);
     });
   });
@@ -189,8 +239,8 @@ describe('Reservations Availability Lib', () => {
       });
 
       // Mock getBookedSeats query response
-      q.gte.mockReturnValueOnce({
-        lte: jest.fn().mockResolvedValue({ 
+      q.gt.mockReturnValueOnce({
+        lt: jest.fn().mockResolvedValue({ 
           data: [{
             quantity: 1,
             status: 'confirmed'
@@ -210,14 +260,32 @@ describe('Reservations Availability Lib', () => {
         days: getDayConfig()
       });
 
-      q.gte.mockReturnValueOnce({
-        lte: jest.fn().mockResolvedValue({ 
+      q.gt.mockReturnValueOnce({
+        lt: jest.fn().mockResolvedValue({ 
           data: []
         }),
       });
 
       await expect(assertReservationSlot(siteId, catalogItemId, setHours(wednesdayLocal, 9).toISOString(), setHours(wednesdayLocal, 10).toISOString(), 1))
         .resolves.toBe(true);
+    });
+
+    it('queries booked seats with exclusive overlap bounds', async () => {
+      const q = mockQuery({
+        site_id: siteId,
+        capacity: 1,
+        days: getDayConfig()
+      });
+
+      const lt = jest.fn().mockResolvedValue({ data: [] });
+      q.gt.mockReturnValueOnce({ lt });
+
+      const startIso = setHours(wednesdayLocal, 13).toISOString();
+      const endIso = setHours(wednesdayLocal, 14).toISOString();
+      await assertReservationSlot(siteId, catalogItemId, startIso, endIso, 1);
+
+      expect(q.gt).toHaveBeenCalledWith('end_time', startIso);
+      expect(lt).toHaveBeenCalledWith('start_time', endIso);
     });
   });
 });

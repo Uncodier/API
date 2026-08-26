@@ -13,6 +13,11 @@ import {
 } from 'date-fns';
 import { slotOverlapsBreaks } from '@/lib/reservations/weekly-hours';
 
+/** Half-open [start, end): back-to-back slots (10:00-11:00 and 11:00-12:00) do not overlap. */
+export function intervalsOverlap(startA: Date, endA: Date, startB: Date, endB: Date): boolean {
+  return startA < endB && endA > startB;
+}
+
 export async function getBookedSeats(
   catalogItemId: string,
   start: Date,
@@ -23,8 +28,8 @@ export async function getBookedSeats(
     .select('quantity, status')
     .eq('catalog_item_id', catalogItemId)
     .in('status', ['pending', 'confirmed'])
-    .gte('end_time', start.toISOString())
-    .lte('start_time', end.toISOString());
+    .gt('end_time', start.toISOString())
+    .lt('start_time', end.toISOString());
 
   if (error) {
     console.error('Error fetching booked seats:', error);
@@ -56,13 +61,16 @@ export async function getAvailableSlots(
   const capacity = schedule.capacity || 1;
 
   // 2. Get reservations
+  const rangeStart = startOfDay(parseISO(startDateStr));
+  const rangeEnd = endOfDay(parseISO(endDateStr));
+
   const { data: reservations } = await supabaseAdmin
     .from('reservations')
     .select('start_time, end_time, quantity, status')
     .eq('catalog_item_id', catalogItemId)
     .in('status', ['pending', 'confirmed'])
-    .gte('start_time', startOfDay(parseISO(startDateStr)).toISOString())
-    .lte('end_time', endOfDay(parseISO(endDateStr)).toISOString());
+    .lt('start_time', rangeEnd.toISOString())
+    .gt('end_time', rangeStart.toISOString());
 
   // 3. Get calendar blocks
   const { data: calendarBlocks } = await supabaseAdmin
@@ -70,8 +78,8 @@ export async function getAvailableSlots(
     .select('start_time, end_time, entity_type, entity_id')
     .eq('site_id', schedule.site_id)
     .in('entity_type', ['global', 'catalog_item'])
-    .lte('start_time', endOfDay(parseISO(endDateStr)).toISOString())
-    .gte('end_time', startOfDay(parseISO(startDateStr)).toISOString());
+    .lte('start_time', rangeEnd.toISOString())
+    .gte('end_time', rangeStart.toISOString());
 
   for (const dateObj of days) {
     const dayOfWeek = format(dateObj, 'eeee').toLowerCase();
@@ -97,22 +105,14 @@ export async function getAvailableSlots(
         continue;
       }
 
-      // Calculate booked seats
       const booked = (reservations || []).filter((r: any) => {
-        const rStart = new Date(r.start_time);
-        const rEnd = new Date(r.end_time);
-        return isBefore(current, rEnd) && isAfter(slotEnd, rStart);
+        return intervalsOverlap(current, slotEnd, new Date(r.start_time), new Date(r.end_time));
       }).reduce((acc: number, r: any) => acc + (r.quantity || 1), 0);
 
-      // Check calendar blocks overlap
       const isBlocked = (calendarBlocks || []).some((b: any) => {
-        // Block is valid if global or if catalog_item matches
         const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
         if (!applies) return false;
-
-        const bStart = new Date(b.start_time);
-        const bEnd = new Date(b.end_time);
-        return isBefore(current, bEnd) && isAfter(slotEnd, bStart);
+        return intervalsOverlap(current, slotEnd, new Date(b.start_time), new Date(b.end_time));
       });
 
       const available = isBlocked ? 0 : capacity - booked;
@@ -198,18 +198,20 @@ export async function assertReservationSlot(
     const applies = b.entity_type === 'global' || (b.entity_type === 'catalog_item' && b.entity_id === catalogItemId);
     if (!applies) return false;
 
-    const bStart = new Date(b.start_time);
-    const bEnd = new Date(b.end_time);
-    return isBefore(start, bEnd) && isAfter(end, bStart);
+    return intervalsOverlap(start, end, new Date(b.start_time), new Date(b.end_time));
   });
 
   if (isBlocked) {
     throw new Error('Slot overlaps with a calendar block');
   }
 
+  const capacity = schedule.capacity || 1;
   const booked = await getBookedSeats(catalogItemId, start, end);
-  if (schedule.capacity - booked < quantity) {
-    throw new Error('Not enough capacity for this slot');
+  const remaining = capacity - booked;
+  if (remaining < quantity) {
+    throw new Error(
+      `Not enough capacity for this slot (requested ${quantity}, remaining ${remaining}, capacity ${capacity})`
+    );
   }
 
   return true;

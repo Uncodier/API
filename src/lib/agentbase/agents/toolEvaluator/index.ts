@@ -414,11 +414,11 @@ export class ToolEvaluator extends Base {
         // Ejecutar las herramientas seleccionadas pasando el ID del comando
         if (functionCalls && functionCalls.length > 0) {
           console.log(`[ToolEvaluator] Ejecutando ${functionCalls.length} herramientas seleccionadas`);
-          await this.executeSelectedTools(functionCalls, command.tools, command.id, possibleMatchCalls);
+          await this.executeSelectedTools(functionCalls, command.tools, command.id, possibleMatchCalls, command.site_id);
         } else if (possibleMatchCalls && possibleMatchCalls.length > 0) {
           console.log(`[ToolEvaluator] No hay herramientas para ejecutar, pero sí ${possibleMatchCalls.length} possible_match`);
           // Pasar un array vacío como functionCalls para solo actualizar el contexto
-          await this.executeSelectedTools([], command.tools, command.id, possibleMatchCalls);
+          await this.executeSelectedTools([], command.tools, command.id, possibleMatchCalls, command.site_id);
         } else {
           console.log(`[ToolEvaluator] No se seleccionaron herramientas para ejecutar`);
         }
@@ -511,7 +511,8 @@ export class ToolEvaluator extends Base {
     functionCalls: FunctionCall[], 
     tools: any[],
     commandId: string,
-    possibleMatchFunctions?: FunctionCall[]
+    possibleMatchFunctions?: FunctionCall[],
+    site_id?: string
   ): Promise<ToolExecutionResult[]> {
     console.log(`[ToolEvaluator] Starting execution of ${functionCalls.length} selected tools for command: ${commandId}`);
     
@@ -529,14 +530,14 @@ export class ToolEvaluator extends Base {
         // Even if there are no executable calls, still update context with possible_match functions
         if (possibleMatchFunctions && possibleMatchFunctions.length > 0) {
           console.log(`[ToolEvaluator] Still adding ${possibleMatchFunctions.length} possible_match functions to context`);
-          await runToolExecution([], tools, commandId, possibleMatchFunctions);
+          await runToolExecution([], tools, commandId, possibleMatchFunctions, { site_id });
         }
         
         return [];
       }
       
       // Use our new tool executor to run the tools with the command ID
-      const results = await runToolExecution(executableCalls, tools, commandId, possibleMatchFunctions);
+      const results = await runToolExecution(executableCalls, tools, commandId, possibleMatchFunctions, { site_id });
       console.log(`[ToolEvaluator] Tool execution completed with ${results.length} results`);
       return results;
     } catch (error: any) {

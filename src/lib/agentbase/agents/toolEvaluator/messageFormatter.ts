@@ -130,12 +130,17 @@ export function validateAndNormalizeTools(tools: any[]): any[] {
     // Handle nested function format (like OpenAI format)
     if (tool.type === 'function' && tool.function) {
       console.log(`[ToolEvaluator] Converting nested function format for tool #${index+1}`);
+      const nested = tool.function;
       const normalizedTool = {
-        name: tool.function.name,
-        description: tool.function.description,
-        parameters: tool.function.parameters || {},
+        name: nested.name,
+        description: nested.description,
+        parameters: nested.parameters || {},
         type: 'synchronous',
-        status: 'not_initialized'
+        status: 'not_initialized',
+        // Keep native MCP execute(); dropping it sends the call to Composio (410 Gone).
+        execute: nested.execute,
+        handler: nested.handler,
+        implementation: nested.implementation,
       };
       console.log(`[ToolEvaluator] Normalized tool #${index+1}:`, 
         JSON.stringify({
