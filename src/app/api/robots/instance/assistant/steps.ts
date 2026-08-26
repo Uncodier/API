@@ -323,6 +323,7 @@ export async function prepareAssistantContext(
 
   let extraContextInstruction = '';
   let isAudienceGeneration = false;
+  let isTextNodeOnly = false;
   
   if (contextString) {
     try {
@@ -330,6 +331,10 @@ export async function prepareAssistantContext(
       
       if (parsedContext.mediaType === 'audience' || parsedContext.output_type === 'audience') {
         isAudienceGeneration = true;
+      }
+      
+      if (parsedContext.mediaType === 'text' || parsedContext.output_type === 'text') {
+        isTextNodeOnly = true;
       }
       
       if (parsedContext.parameters) {
@@ -355,8 +360,11 @@ CRITICAL: Your primary task is to CREATE a persistent audience.
   }
 
   const nodeModeInstruction = instanceNodeId
-    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.
-CRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).${extraContextInstruction}`
+    ? `\n\n⚠️ VISUAL NODE MODE (IMPRENTA): You are executing inside a visual node graph. Users expect IMMEDIATE media/asset generation results. DO NOT update or create \`instance_plan\` or \`requirements\`.${
+        isTextNodeOnly
+          ? `\nCRITICAL: This is a TEXT-ONLY node (output_type: text). Your goal is ONLY to generate, brainstorm, or write text. DO NOT call any generation, publishing, or messaging tools (like sendBulkMessages, publish, or whatsappTemplate). Just return the requested text directly.`
+          : `\nCRITICAL: Even if the user asks you to "improve the prompt", "write a script", or "rewrite", you MUST NOT stop at just returning text. You MUST take that improved text and IMMEDIATELY pass it into the appropriate generation tool (via \`tool_lookup\`) within this exact same response. Your final output MUST include calling the tool to generate the actual asset (video, image, audio, etc).`
+      }${extraContextInstruction}`
     : extraContextInstruction;
 
   // When system prompt is "plan", instruct the assistant to always use instance_plan (indication only, not deterministic code)
