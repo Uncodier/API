@@ -18,6 +18,7 @@ interface WhatsAppWorkflowArgs {
   site_id: string;          // ✅ REQUERIDO - ID del sitio
   from?: string;            // 🔸 OPCIONAL - Remitente (default: "AI Assistant")
   agent_id?: string;        // 🔸 OPCIONAL - ID del agente
+  conversation_id?: string; // 🔸 OPCIONAL - ID de la conversación (24h window)
   lead_id?: string;         // 🔸 OPCIONAL - ID del lead
   message_id?: string;      // 🔸 OPCIONAL - ID del mensaje original
 }

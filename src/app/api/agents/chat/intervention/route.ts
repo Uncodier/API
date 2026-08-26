@@ -320,6 +320,7 @@ async function sendMessageByChannel(
         from: 'Equipo de Soporte',
         site_id: siteId,
         agent_id: agentId || undefined, // Handle null/undefined agentId
+        conversation_id: conversationId,
         lead_id: leadId,
         message_id: effectiveMessageId
       });
@@ -386,7 +387,18 @@ export async function POST(request: Request) {
     const body = await request.json();
     
     // Extract parameters from the request
-    const { conversationId, message, agentId, user_id, conversation_title, lead_id, visitor_id, site_id: requestSiteId } = body;
+    const {
+      conversationId: conversationIdCamel,
+      conversation_id: conversationIdSnake,
+      message,
+      agentId,
+      user_id,
+      conversation_title,
+      lead_id,
+      visitor_id,
+      site_id: requestSiteId
+    } = body;
+    const conversationId = conversationIdCamel || conversationIdSnake;
     
     // Validate required parameters
     if (!message) {
