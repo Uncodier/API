@@ -336,7 +336,7 @@ export function sendBulkMessagesTool(siteId: string) {
               role: 'assistant',
               lead_id: leadId,
               custom_data: {
-                status: 'approved',
+                status: 'accepted',
                 channel: 'whatsapp',
                 audience_id,
                 template_sid: templateSid,
@@ -389,7 +389,7 @@ export function sendBulkMessagesTool(siteId: string) {
 
     // -------------------------------------------------------------------------
     // Email `mail` mode (default): pre-merge body/subject per lead and queue
-    // an approved message row for the background email delivery worker.
+    // an accepted message row for the background email delivery worker.
     // -------------------------------------------------------------------------
     for (let page = 1; page <= totalPages; page++) {
       const { leads } = await getAudiencePageForSending(audience_id, page);
@@ -453,14 +453,14 @@ export function sendBulkMessagesTool(siteId: string) {
             continue;
           }
 
-          // 2. Crear Mensaje con estado 'approved'
+          // 2. Crear Mensaje con estado 'accepted'
           const messageData: any = {
             conversation_id: conversation.id,
             content: perLeadMessage,
             role: 'assistant',
             lead_id: leadId,
             custom_data: {
-              status: 'approved',
+              status: 'accepted',
               channel: 'email',
               audience_id: audience_id,
               subject: perLeadSubject,
@@ -523,11 +523,11 @@ The tool iterates through every lead in the audience:
 
 WhatsApp delivery:
 - Creates (or reuses) ONE Twilio Content Template per campaign whose body uses numeric placeholders ({{1}}, {{2}}, ...). Merge tokens in the message are mapped to those placeholders.
-- For each lead, queues one conversation + approved message row that stores template_sid and the per-lead content_variables map; a background worker delivers via ContentVariables so a single approved template serves the whole audience.
+- For each lead, queues one conversation + accepted message row that stores template_sid and the per-lead content_variables map; a background worker delivers via ContentVariables so a single approved template serves the whole audience.
 - Returns template_sid, template_status, and placeholder_map alongside the counters.
 
 Email delivery modes:
-- mail (default): queues one conversation plus an approved message per lead (body/subject personalized per lead); a background workflow delivers and tracks. total_sent counts queued handoffs.
+- mail (default): queues one conversation plus an accepted message per lead (body/subject personalized per lead); a background workflow delivers and tracks. total_sent counts queued handoffs.
 - newsletter: sends immediately via sendEmail (open/click tracking), **no** HTML signature appended, no conversation rows. Large audiences may hit server timeouts — prefer smaller batches if needed.
 
 Each lead's send_status is tracked (sent, failed, skipped) so the tool can be re-run safely — already processed leads are not re-queued.

@@ -18,6 +18,7 @@ interface SendTemplateRequest {
   site_id: string;
   message_id?: string; // Para tracking opcional
   original_message?: string; // Mensaje original para logging
+  content_variables?: Record<string, string>; // Variables dinámicas para el template
 }
 
 interface SendTemplateResponse {
@@ -152,7 +153,7 @@ export async function POST(request: NextRequest) {
     console.log('📤 [SendTemplate] Iniciando envío con plantilla...');
     
     const body: SendTemplateRequest = await request.json();
-    const { template_id, phone_number, site_id, message_id, original_message } = body;
+    const { template_id, phone_number, site_id, message_id, original_message, content_variables } = body;
 
     // Validar campos requeridos
     if (!template_id || !phone_number || !site_id) {
@@ -280,7 +281,8 @@ export async function POST(request: NextRequest) {
       config.authToken,
       config.fromNumber,
       original_message || 'Template message',
-      messagingServiceSidOverride
+      messagingServiceSidOverride,
+      content_variables
     );
 
     console.log(`📊 [SendTemplate] Resultado del envío:`, {
