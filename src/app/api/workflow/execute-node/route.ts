@@ -26,8 +26,9 @@ function extractImageUrls(field: any): string[] {
   if (!parsed?.outputs || !Array.isArray(parsed.outputs)) return [];
 
   return parsed.outputs
-    .filter((o: any) => o.type === 'image' && o.data?.url)
-    .map((o: any) => o.data.url as string);
+    .filter((o: any) => o?.type === 'image')
+    .map((o: any) => (typeof o.data?.url === 'string' ? o.data.url : o.url) as string)
+    .filter((url: string) => typeof url === 'string' && url.length > 0);
 }
 
 function buildContextContent(

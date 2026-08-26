@@ -17,6 +17,7 @@ import {
   failNode,
 } from './assistant-logging';
 import { buildNodeResult, buildInitialNodeResult } from './node-result-collector';
+import { hydrateMessageImages } from './vision-message-images';
 
 /**
  * Extract text from a node based on what the context type asks for.
@@ -64,8 +65,9 @@ function extractNodeImageUrls(node: any): string[] {
 
     if (parsed?.outputs && Array.isArray(parsed.outputs)) {
       const outputUrls = parsed.outputs
-        .filter((o: any) => o.type === 'image' && o.data?.url)
-        .map((o: any) => o.data.url as string);
+        .filter((o: any) => o?.type === 'image')
+        .map((o: any) => (typeof o.data?.url === 'string' ? o.data.url : o.url) as string)
+        .filter((url: string) => typeof url === 'string' && url.length > 0);
       urls.push(...outputUrls);
     }
   }
@@ -343,6 +345,10 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           provider: options?.ai_provider,
           model: options?.ai_model,
         });
+        // Hydrate once before fan-out. hydrateMessageImages mutates content in
+        // place; running it inside each parallel call races on shared objects
+        // and re-downloads the same images N times.
+        const hydratedMessages = await hydrateMessageImages(messages);
         const parallelPromises = responseNodeIds.map(async (nodeId: string, index: number) => {
           let accumulatedText = '';
           let lastUpdate = Date.now();
@@ -352,7 +358,7 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
             const result = await parallelExecutor.act({
               tools: prepared.tools,
               system: activeSystemPrompt,
-              messages: [...messages],
+              messages: [...hydratedMessages],
               onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
               stream: true,
               onStreamStart: async () => {
@@ -379,12 +385,23 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           } catch (err: any) {
             await failNode(nodeId, err.message || 'Unknown error');
             console.error(`[Node Executor] Response node ${index + 1}/${expectedResults} failed: ${nodeId}`, err);
-            return null;
+            throw err; // Re-throw so Promise.allSettled can catch it
           }
         });
 
-        const results = await Promise.all(parallelPromises);
-        const firstValid = results.find(r => r !== null);
+        // Use Promise.allSettled so we don't abort all if one fails
+        const resultsSettled = await Promise.allSettled(parallelPromises);
+        const successfulResults = resultsSettled
+          .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled')
+          .map(r => r.value);
+          
+        if (successfulResults.length === 0) {
+          // If all failed, throw the first error to trigger standard workflow failure handling
+          const firstError = resultsSettled.find((r): r is PromiseRejectedResult => r.status === 'rejected')?.reason;
+          throw firstError || new Error('All parallel LLM executions failed.');
+        }
+
+        const firstValid = successfulResults[0];
 
         // Also run the primary instance_log streaming for the first result
         if (streamingCallbacks && firstValid) {
@@ -393,7 +410,7 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
         }
 
         // Return the first valid result to maintain compatibility
-        executionResult = firstValid || { text: '', output: null, usage: {}, steps: [], messages, isDone: true };
+        executionResult = firstValid;
 
       // --- SINGLE OUTPUT: N = 1 -> original behavior ---
       } else {
@@ -429,10 +446,13 @@ Do NOT use general conversational history to infer which image/asset to edit. Us
           }
         } : undefined;
 
+        // HYDRATE MESSAGES BEFORE ACTING
+        const hydratedMessages = await hydrateMessageImages(messages);
+
         executionResult = await executor.act({
                 tools: prepared.tools,
                 system: activeSystemPrompt,
-                messages: messages,
+                messages: hydratedMessages,
                 onStep: createAssistantOnStepHandler(instance_id, site_id, user_id, provider, options?.plan_id, options?.step_id, options?.requirement_id),
                 stream: !!streamingCallbacks || !!nodeCallbacks,
                 onStreamStart: wrappedOnStreamStart,
