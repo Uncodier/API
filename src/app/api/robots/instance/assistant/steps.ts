@@ -329,6 +329,9 @@ export async function prepareAssistantContext(
     try {
       const parsedContext = JSON.parse(contextString);
       
+      // Fallback: If parsedContext doesn't have nodeType, but we know it's a publish node because it has publish_destinations
+      const isPublishNode = parsedContext.nodeType === 'publish' || (parsedContext.publish_destinations && Array.isArray(parsedContext.publish_destinations));
+      
       if (parsedContext.mediaType === 'audience' || parsedContext.output_type === 'audience') {
         isAudienceGeneration = true;
       }
@@ -337,7 +340,7 @@ export async function prepareAssistantContext(
         // Exclude the 'publish' node from being treated as text-only generation.
         // A publish node often has media_type: 'text' to indicate what kind of asset to publish, 
         // but it is an action node that MUST use tools.
-        if (parsedContext.nodeType !== 'publish') {
+        if (!isPublishNode) {
           isTextNodeOnly = true;
         }
       }

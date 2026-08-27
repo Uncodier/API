@@ -2,6 +2,9 @@ import { NextRequest, NextResponse, after } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
 import crypto from 'crypto';
+import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
+import { CreditService } from '@/lib/services/billing/CreditService';
+import { transcribeAudioBuffer } from '@/lib/services/ai/transcribeAudio';
 
 export const maxDuration = 300;
 
@@ -13,26 +16,100 @@ function isValidUUID(uuid: string): boolean {
 
 // Process a media message from WhatsApp
 async function processMediaMessage(
+  mediaType: string,
   mediaObject: any,
   messageId: string,
   phoneNumber: string,
-  businessAccountId: string
+  businessAccountId: string,
+  siteId?: string
 ): Promise<string | null> {
   try {
-    console.log(`📷 Procesando mensaje con media de tipo ${mediaObject.type}`);
+    console.log(`📷 Procesando mensaje con media de tipo ${mediaType}`);
     
     // Store media metadata in Supabase and return content with media reference
     const mediaId = `whatsapp_media_${messageId}`;
     
     // Media types: image, video, audio, document, sticker...
-    let mediaContent = `[${mediaObject.type}]`;
+    let mediaContent = `[${mediaType}]`;
     
     if (mediaObject.caption) {
       mediaContent += `: ${mediaObject.caption}`;
     }
     
-    // TODO: Implement media download if required
-    // Requires access to WhatsApp Business API or Meta Graph API with appropriate tokens
+    if (mediaType === 'audio' && siteId && mediaObject.id) {
+      try {
+        console.log(`🎙️ Descargando y transcribiendo audio (ID: ${mediaObject.id})`);
+        
+        // Ensure sufficient credits before doing the work
+        const requiredCredits = CreditService.PRICING.AUDIO_TRANSCRIPTION;
+        const hasCredits = await CreditService.validateCredits(siteId, requiredCredits);
+        
+        if (hasCredits) {
+          // Get WhatsApp token for this site
+          const waConfig = await WhatsAppSendService.getWhatsAppConfig(siteId);
+          
+          if (waConfig && waConfig.accessToken) {
+            const token = waConfig.accessToken;
+            
+            // 1. Get the media URL from Meta Graph API
+            const mediaRes = await fetch(`https://graph.facebook.com/v17.0/${mediaObject.id}`, {
+              headers: { Authorization: `Bearer ${token}` }
+            });
+            
+            if (mediaRes.ok) {
+              const mediaData = await mediaRes.json();
+              if (mediaData.url) {
+                // 2. Download the media file
+                const downloadRes = await fetch(mediaData.url, {
+                  headers: { Authorization: `Bearer ${token}` }
+                });
+                
+                if (downloadRes.ok) {
+                  const arrayBuffer = await downloadRes.arrayBuffer();
+                  const buffer = Buffer.from(arrayBuffer);
+                  const contentType = downloadRes.headers.get('content-type') || mediaObject.mime_type || 'audio/ogg';
+                  
+                  // 3. Transcribe using AI service
+                  const transcriptionResult = await transcribeAudioBuffer({ buffer, contentType });
+                  
+                  if (transcriptionResult.success && transcriptionResult.text) {
+                    // 4. Deduct credits and update message content
+                    await CreditService.deductCredits(
+                      siteId, 
+                      requiredCredits, 
+                      'audio_transcription', 
+                      'Audio transcription via AI (WhatsApp webhook)', 
+                      { media_id: mediaObject.id, message_id: messageId }
+                    );
+                    
+                    mediaContent = `[Nota de voz transcrita]: "${transcriptionResult.text}"`;
+                    console.log(`✅ Audio transcrito correctamente`);
+                  } else {
+                    console.error('❌ Error en transcripción:', transcriptionResult.error);
+                    mediaContent = `[Audio recibido: error en transcripción]`;
+                  }
+                } else {
+                  console.error('❌ Error al descargar el archivo de audio:', downloadRes.statusText);
+                  mediaContent = `[Audio recibido: error de descarga]`;
+                }
+              }
+            } else {
+              console.error('❌ Error al obtener URL del media:', mediaRes.statusText);
+              mediaContent = `[Audio recibido: no se pudo obtener de Meta]`;
+            }
+          } else {
+            console.warn('⚠️ No se encontró configuración de WhatsApp para descargar el audio');
+            mediaContent = `[Audio recibido: falta configuración de token]`;
+          }
+        } else {
+          console.warn('⚠️ Sin créditos para transcripción de audio');
+          mediaContent = `[Audio recibido: sin créditos para transcripción]`;
+        }
+      } catch (audioErr) {
+        console.error('❌ Error general procesando audio:', audioErr);
+        mediaContent = `[Audio recibido: error interno]`;
+      }
+    }
     
     return mediaContent;
   } catch (error) {
@@ -242,15 +319,15 @@ async function processWhatsAppMessage(
     if (message.text) {
       messageContent = message.text.body;
     } else if (message.image) {
-      messageContent = await processMediaMessage(message.image, messageId, phoneNumber, businessAccountId);
+      messageContent = await processMediaMessage('image', message.image, messageId, phoneNumber, businessAccountId, siteId);
     } else if (message.audio) {
-      messageContent = await processMediaMessage(message.audio, messageId, phoneNumber, businessAccountId);
+      messageContent = await processMediaMessage('audio', message.audio, messageId, phoneNumber, businessAccountId, siteId);
     } else if (message.video) {
-      messageContent = await processMediaMessage(message.video, messageId, phoneNumber, businessAccountId);
+      messageContent = await processMediaMessage('video', message.video, messageId, phoneNumber, businessAccountId, siteId);
     } else if (message.document) {
-      messageContent = await processMediaMessage(message.document, messageId, phoneNumber, businessAccountId);
+      messageContent = await processMediaMessage('document', message.document, messageId, phoneNumber, businessAccountId, siteId);
     } else if (message.sticker) {
-      messageContent = await processMediaMessage(message.sticker, messageId, phoneNumber, businessAccountId);
+      messageContent = await processMediaMessage('sticker', message.sticker, messageId, phoneNumber, businessAccountId, siteId);
     } else if (message.reaction) {
       messageContent = `[reacción: ${message.reaction.emoji}]`;
     } else if (message.location) {
