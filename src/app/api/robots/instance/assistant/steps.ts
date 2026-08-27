@@ -334,7 +334,12 @@ export async function prepareAssistantContext(
       }
       
       if (parsedContext.mediaType === 'text' || parsedContext.output_type === 'text') {
-        isTextNodeOnly = true;
+        // Exclude the 'publish' node from being treated as text-only generation.
+        // A publish node often has media_type: 'text' to indicate what kind of asset to publish, 
+        // but it is an action node that MUST use tools.
+        if (parsedContext.nodeType !== 'publish') {
+          isTextNodeOnly = true;
+        }
       }
       
       if (parsedContext.parameters) {
