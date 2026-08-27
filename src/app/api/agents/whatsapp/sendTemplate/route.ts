@@ -3,6 +3,7 @@ import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplat
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
+import { resolveContentVariables } from '@/lib/services/whatsapp/resolveTemplateContentVariables';
 
 /**
  * Ruta para enviar mensajes usando plantillas de WhatsApp previamente creadas
@@ -19,6 +20,7 @@ interface SendTemplateRequest {
   message_id?: string; // Para tracking opcional
   original_message?: string; // Mensaje original para logging
   content_variables?: Record<string, string>; // Variables dinámicas para el template
+  lead_id?: string; // Used to auto-resolve content_variables from placeholder_map
 }
 
 interface SendTemplateResponse {
@@ -153,7 +155,7 @@ export async function POST(request: NextRequest) {
     console.log('📤 [SendTemplate] Iniciando envío con plantilla...');
     
     const body: SendTemplateRequest = await request.json();
-    const { template_id, phone_number, site_id, message_id, original_message, content_variables } = body;
+    const { template_id, phone_number, site_id, message_id, original_message, content_variables, lead_id } = body;
 
     // Validar campos requeridos
     if (!template_id || !phone_number || !site_id) {
@@ -273,6 +275,26 @@ export async function POST(request: NextRequest) {
       }
     } catch {}
 
+    const resolved = await resolveContentVariables({
+      templateSid: template_id,
+      siteId: site_id,
+      explicitVariables: content_variables,
+      leadId: lead_id,
+      messageId: message_id,
+    });
+    if (!resolved.success) {
+      const errorMsg = resolved.error || 'Failed to resolve template content variables';
+      if (message_id) {
+        await updateTemplateTracking(message_id, template_id, 'failed', undefined, errorMsg);
+      }
+      return NextResponse.json({
+        success: false,
+        error: errorMsg,
+        template_id,
+        status: 'failed'
+      } as SendTemplateResponse, { status: 400 });
+    }
+
     // Enviar mensaje usando la plantilla
     const sendResult = await WhatsAppTemplateService.sendMessageWithTemplate(
       normalizedPhone,
@@ -282,7 +304,7 @@ export async function POST(request: NextRequest) {
       config.fromNumber,
       original_message || 'Template message',
       messagingServiceSidOverride,
-      content_variables
+      resolved.variables
     );
 
     console.log(`📊 [SendTemplate] Resultado del envío:`, {

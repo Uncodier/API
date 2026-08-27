@@ -34,6 +34,8 @@ interface CreateTemplateResponse {
   error?: string;
   fallback_mode?: boolean;
   note?: string;
+  placeholder_map?: string[];
+  has_variables?: boolean;
 }
 
 // Función auxiliar para validar UUID
@@ -193,6 +195,7 @@ export async function POST(request: NextRequest) {
 
     if (existingTemplate?.templateSid) {
       console.log(`♻️ [CreateTemplate] Plantilla existente encontrada: ${existingTemplate.templateSid}`);
+      const placeholderMap = existingTemplate.placeholderMap ?? [];
       
       return NextResponse.json({
         success: true,
@@ -201,7 +204,9 @@ export async function POST(request: NextRequest) {
         template_id: existingTemplate.templateSid,
         template_status: 'approved',
         within_window: false,
-        window_hours_elapsed: windowCheck.hoursElapsed
+        window_hours_elapsed: windowCheck.hoursElapsed,
+        placeholder_map: placeholderMap,
+        has_variables: placeholderMap.length > 0,
       } as CreateTemplateResponse);
     }
 
@@ -297,6 +302,7 @@ export async function POST(request: NextRequest) {
       console.warn('⚠️ [CreateTemplate] Error guardando tracking (no crítico):', trackingError);
     }
 
+    const placeholderMap = templateResult.placeholderMap ?? [];
     return NextResponse.json({
       success: true,
       message_id: messageId,
@@ -304,7 +310,9 @@ export async function POST(request: NextRequest) {
       template_id: templateResult.templateSid,
       template_status: 'created',
       within_window: false,
-      window_hours_elapsed: windowCheck.hoursElapsed
+      window_hours_elapsed: windowCheck.hoursElapsed,
+      placeholder_map: placeholderMap,
+      has_variables: placeholderMap.length > 0,
     } as CreateTemplateResponse);
 
   } catch (error) {

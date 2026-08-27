@@ -217,6 +217,29 @@ export function extractMergeTokens(text: string): { templated: string; tokens: s
   return { templated, tokens };
 }
 
+const TOKEN_SAMPLE_VALUES: Record<string, string> = {
+  'lead.name': 'Cliente',
+  'lead.first_name': 'Cliente',
+  'lead.email': 'cliente@example.com',
+  'lead.phone': '+5215550000000',
+  'lead.position': 'Director',
+  'lead.company': 'Acme',
+  'lead.notes': 'Nota',
+  'site.name': 'Negocio',
+};
+
+/**
+ * Sample values for Twilio Content API `variables` (required by Meta when the
+ * body contains {{1}}, {{2}}, ...). Keys are "1", "2", ... matching placeholder order.
+ */
+export function sampleVariablesFromTokens(tokens: string[]): Record<string, string> {
+  const variables: Record<string, string> = {};
+  tokens.forEach((canonical, i) => {
+    variables[String(i + 1)] = TOKEN_SAMPLE_VALUES[canonical] ?? 'Ejemplo';
+  });
+  return variables;
+}
+
 /**
  * Resolves a single canonical merge token for a given lead.
  * Returns undefined when the token is unknown (caller applies policy).

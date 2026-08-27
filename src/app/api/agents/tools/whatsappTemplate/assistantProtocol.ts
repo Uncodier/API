@@ -12,6 +12,7 @@ import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService
 import { WhatsAppTemplateService } from '@/lib/services/whatsapp/WhatsAppTemplateService';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getLeadById } from '@/lib/database/lead-db';
+import { loadTemplatePlaceholderMap } from '@/lib/services/whatsapp/resolveTemplateContentVariables';
 import {
   buildContentVariablesForLead,
   fetchSiteNameForMerge,
@@ -33,17 +34,6 @@ export interface WhatsAppTemplateToolParams {
   lead_id?: string;
   /** Policy when a lead is missing a merge field value (default: strip_tokens). */
   placeholder_policy?: ContentPlaceholderPolicy;
-}
-
-async function loadTemplatePlaceholderMap(templateSid: string): Promise<string[] | undefined> {
-  const { data, error } = await supabaseAdmin
-    .from('whatsapp_templates')
-    .select('placeholder_map')
-    .eq('template_sid', templateSid)
-    .maybeSingle();
-  if (error || !data) return undefined;
-  const raw = (data as { placeholder_map?: unknown }).placeholder_map;
-  return Array.isArray(raw) ? (raw as string[]) : undefined;
 }
 
 async function formatMessageForTemplate(

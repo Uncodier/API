@@ -1,5 +1,5 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { extractMergeTokens } from '@/lib/messaging/lead-merge-fields';
+import { extractMergeTokens, sampleVariablesFromTokens } from '@/lib/messaging/lead-merge-fields';
 
 export interface WhatsAppTemplateResult {
   success: boolean;
@@ -124,8 +124,9 @@ export class WhatsAppTemplateService {
       // Crear las credenciales de autenticación básica
       const credentials = Buffer.from(`${accountSid}:${authToken}`).toString('base64');
       
-      // Preparar el contenido del template para Content API específico para WhatsApp
-      const templateBody = {
+      // Preparar el contenido del template para Content API específico para WhatsApp.
+      // Meta requires sample `variables` whenever the body contains {{1}}, {{2}}, ...
+      const templateBody: Record<string, unknown> = {
         friendly_name: templateName,
         language: 'es',
         types: {
@@ -134,6 +135,9 @@ export class WhatsAppTemplateService {
           }
         }
       };
+      if (tokens.length > 0) {
+        templateBody.variables = sampleVariablesFromTokens(tokens);
+      }
       
       console.log('📋 [WhatsAppTemplateService] Template body preparado:', JSON.stringify(templateBody, null, 2));
       
@@ -720,7 +724,7 @@ export class WhatsAppTemplateService {
       // Preparar el cuerpo de la solicitud
       const approvalBody = {
         name: templateName.toLowerCase(), // WhatsApp requiere lowercase
-        category: 'UTILITY' // Categoría por defecto para mensajes automáticos
+        category: 'MARKETING' // Categoría por defecto para mensajes creados por el agente (evita rechazos por contenido promocional)
       };
       
       console.log('🔐 [WhatsAppTemplateService] Datos de aprobación:', {

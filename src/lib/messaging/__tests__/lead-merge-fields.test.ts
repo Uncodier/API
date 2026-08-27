@@ -1,10 +1,13 @@
 import type { DbLead } from '@/lib/database/lead-db';
 import {
+  buildContentVariablesForLead,
   buildMergeMapFromLead,
+  extractMergeTokens,
   normalizeMergeTokenSyntax,
   personalizeMergeTemplate,
   placeholderPolicyToMergePolicy,
-} from './lead-merge-fields';
+  sampleVariablesFromTokens,
+} from '../lead-merge-fields';
 
 function sampleLead(overrides: Partial<DbLead> = {}): DbLead {
   return {
@@ -101,5 +104,53 @@ describe('personalizeMergeTemplate', () => {
     expect(placeholderPolicyToMergePolicy('strip_tokens')).toBe('strip_unresolved');
     expect(placeholderPolicyToMergePolicy('skip_recipient')).toBe('abort_if_unresolved');
     expect(placeholderPolicyToMergePolicy(undefined)).toBe('strip_unresolved');
+  });
+});
+
+describe('extractMergeTokens', () => {
+  it('rewrites canonical tokens to numbered placeholders and dedupes', () => {
+    const { templated, tokens } = extractMergeTokens(
+      'Hola {{lead.name}}, de {{site.name}}. Gracias {{lead.name}}.',
+    );
+    expect(templated).toBe('Hola {{1}}, de {{2}}. Gracias {{1}}.');
+    expect(tokens).toEqual(['lead.name', 'site.name']);
+  });
+});
+
+describe('sampleVariablesFromTokens', () => {
+  it('maps known tokens to Meta sample values with 1-based keys', () => {
+    expect(sampleVariablesFromTokens(['lead.name', 'lead.company', 'site.name'])).toEqual({
+      '1': 'Cliente',
+      '2': 'Acme',
+      '3': 'Negocio',
+    });
+  });
+
+  it('uses Ejemplo for unknown or metadata paths', () => {
+    expect(sampleVariablesFromTokens(['lead.metadata.promo_code', 'lead.unknown'])).toEqual({
+      '1': 'Ejemplo',
+      '2': 'Ejemplo',
+    });
+  });
+
+  it('returns empty object when there are no tokens', () => {
+    expect(sampleVariablesFromTokens([])).toEqual({});
+  });
+});
+
+describe('buildContentVariablesForLead', () => {
+  it('builds Twilio ContentVariables from placeholder_map order', () => {
+    const r = buildContentVariablesForLead(
+      ['lead.first_name', 'lead.company', 'site.name'],
+      sampleLead(),
+      'Barberia',
+      'strip_unresolved',
+    );
+    expect(r.aborted).toBe(false);
+    expect(r.variables).toEqual({
+      '1': 'Jane',
+      '2': 'Acme Inc',
+      '3': 'Barberia',
+    });
   });
 });
