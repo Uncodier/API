@@ -57,6 +57,19 @@ export async function POST(request: NextRequest) {
       if (updates.status) query = query.eq('status', updates.status);
       if (updates.source_type) query = query.eq('source_type', updates.source_type);
 
+      if (updates.lead_id) {
+        const { data: lead, error: leadErr } = await supabaseAdmin
+          .from('leads')
+          .select('user_id')
+          .eq('id', updates.lead_id)
+          .maybeSingle();
+        if (leadErr) throw new Error(leadErr.message);
+        if (!lead?.user_id) {
+          return NextResponse.json({ success: true, entitlements: [], count: 0 });
+        }
+        query = query.eq('buyer_user_id', lead.user_id);
+      }
+
       const { data, error, count } = await query
         .range(offset, offset + limit - 1)
         .order('created_at', { ascending: false });

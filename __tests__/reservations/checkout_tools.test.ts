@@ -15,6 +15,15 @@ jest.mock('../../src/lib/reservations/availability', () => ({
   })),
 }));
 
+jest.mock('../../src/lib/reservations/round-robin-assign', () => ({
+  resolveRoundRobinCatalogItem: jest.fn(async ({ catalogItemId }: { catalogItemId: string }) => ({
+    catalog_item_id: catalogItemId,
+    assigned_from: catalogItemId,
+    peer_root_id: catalogItemId,
+    role: 'named',
+  })),
+}));
+
 describe('Checkout Tool Route Handlers', () => {
   const siteId = 'test-site';
   const userId = 'user-123';

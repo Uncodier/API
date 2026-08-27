@@ -91,6 +91,19 @@ export function slotHasBlock(
   });
 }
 
+export function listFreePeers(
+  peers: PeerFamily[],
+  peerReservations: OccupancyReservation[],
+  blocks: OccupancyBlock[],
+  start: Date,
+  end: Date
+): PeerFamily[] {
+  return peers.filter((peer) => {
+    if (slotHasBlock(blocks, start, end, peer.familyIds)) return false;
+    return countBookedSeats(peerReservations, start, end, peer.familyIds) < peer.capacity;
+  });
+}
+
 export function countRoundRobinAvailable(
   peers: PeerFamily[],
   peerReservations: OccupancyReservation[],
@@ -100,10 +113,7 @@ export function countRoundRobinAvailable(
   start: Date,
   end: Date
 ): number {
-  const freePeers = peers.filter((peer) => {
-    if (slotHasBlock(blocks, start, end, peer.familyIds)) return false;
-    return countBookedSeats(peerReservations, start, end, peer.familyIds) < peer.capacity;
-  }).length;
+  const freePeers = listFreePeers(peers, peerReservations, blocks, start, end).length;
   const anonymous = countBookedSeats(ownFamilyReservations, start, end, ownFamilyIds);
   return Math.max(0, freePeers - anonymous);
 }

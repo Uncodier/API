@@ -2,6 +2,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getAvailableSlots, assertReservationSlot, ReservableCatalogItemError } from '@/lib/reservations/availability';
 import { createSaleOrderFromLines } from '@/app/api/agents/tools/checkout/create-order';
+import {
+  classifyRoundRobinRole,
+  resolveReservationUpdateTarget,
+  resolveRoundRobinCatalogItem,
+} from '@/lib/reservations/round-robin-assign';
+import { resolveReservationEntitlement } from '@/lib/reservations/pass-redemption';
+import { resolveReservationFamily } from '@/lib/reservations/family-occupancy';
 
 export async function POST(request: NextRequest) {
   try {
@@ -48,34 +55,21 @@ export async function POST(request: NextRequest) {
       if (!updates.start_time || !updates.end_time) throw new Error('Missing start/end times');
 
       const quantity = updates.quantity ?? 1;
-
-      if (entitlement_id) {
-        const { data: ent, error: entErr } = await supabaseAdmin
-          .from('entitlements')
-          .select('id, status, uses_remaining, catalog_item_id')
-          .eq('id', entitlement_id)
-          .eq('site_id', site_id)
-          .single();
-
-        if (entErr || !ent) throw new Error(`Entitlement not found: ${entitlement_id}`);
-        if (ent.status !== 'active') throw new Error(`Entitlement ${entitlement_id} is not active`);
-        if (ent.uses_remaining !== null && ent.uses_remaining < quantity) {
-          throw new Error(`Entitlement ${entitlement_id} does not have enough uses remaining`);
-        }
-
-        const { data: passRedeem, error: passErr } = await supabaseAdmin
-          .from('pass_redeemable_items')
-          .select('id')
-          .eq('pass_catalog_item_id', ent.catalog_item_id)
-          .eq('reservable_catalog_item_id', catalog_item_id)
-          .eq('site_id', site_id)
-          .maybeSingle();
-
-        if (passErr) throw new Error(passErr.message);
-        if (!passRedeem) {
-          throw new Error(`Catalog item ${catalog_item_id} is not redeemable with pass ${ent.catalog_item_id}`);
-        }
-      }
+      const assignment = await resolveRoundRobinCatalogItem({
+        catalogItemId: catalog_item_id,
+        start: updates.start_time,
+        end: updates.end_time,
+        quantity,
+      });
+      const resolvedCatalogItemId = assignment.catalog_item_id;
+      const resolvedEntitlementId = await resolveReservationEntitlement({
+        siteId: site_id,
+        leadId: lead_id,
+        quantity,
+        catalogItemId: resolvedCatalogItemId,
+        originalCatalogItemId: catalog_item_id,
+        requestedEntitlementId: entitlement_id,
+      });
 
       const result = await createSaleOrderFromLines({
         site_id,
@@ -84,15 +78,15 @@ export async function POST(request: NextRequest) {
         owner_site_id,
         lines: [
           {
-            catalogItemId: catalog_item_id,
+            catalogItemId: resolvedCatalogItemId,
             quantity,
             reservationStart: updates.start_time,
             reservationEnd: updates.end_time,
-            ...(entitlement_id ? { unitPriceOverride: 0 } : {}),
+            ...(resolvedEntitlementId ? { unitPriceOverride: 0 } : {}),
           },
         ],
         reservationExtras: {
-          entitlement_id: entitlement_id || null,
+          entitlement_id: resolvedEntitlementId,
           status: updates.status || 'pending',
           notes: updates.notes || null,
         },
@@ -109,6 +103,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         success: true,
         reservation,
+        assignment,
         order_id: result.order.id,
         sale_id: result.sale.id,
       });
@@ -158,19 +153,6 @@ export async function POST(request: NextRequest) {
         throw new ReservableCatalogItemError('Missing reservation UUID for update. Pass id (alias: reservation_id).');
       }
 
-      const hasUpdate =
-        updates.status !== undefined ||
-        updates.quantity !== undefined ||
-        updates.start_time !== undefined ||
-        updates.end_time !== undefined ||
-        updates.notes !== undefined ||
-        lead_id !== undefined;
-      if (!hasUpdate) {
-        throw new ReservableCatalogItemError(
-          'No fields to update. Pass at least one of: status, start_time, end_time, quantity, notes, lead_id.'
-        );
-      }
-
       const { data: existing, error: getErr } = await supabaseAdmin
         .from('reservations')
         .select('id, catalog_item_id, start_time, end_time, quantity, catalog_items!inner(site_id)')
@@ -181,6 +163,29 @@ export async function POST(request: NextRequest) {
       const existingSiteId = (existing.catalog_items as any).site_id;
       if (site_id && existingSiteId !== site_id) {
         throw new Error('Reservation not found or does not belong to site');
+      }
+
+      const existingFamily = await resolveReservationFamily(existing.catalog_item_id);
+      const existingRole = classifyRoundRobinRole(existingFamily);
+      const requestedCatalogItemId =
+        catalog_item_id && catalog_item_id !== existing.catalog_item_id ? catalog_item_id : undefined;
+      const isCancel = updates.status === 'cancelled';
+      const shouldAssignRoundRobin =
+        existingRole !== 'named' && !requestedCatalogItemId && !isCancel;
+
+      const hasUpdate =
+        updates.status !== undefined ||
+        updates.quantity !== undefined ||
+        updates.start_time !== undefined ||
+        updates.end_time !== undefined ||
+        updates.notes !== undefined ||
+        lead_id !== undefined ||
+        Boolean(requestedCatalogItemId) ||
+        shouldAssignRoundRobin;
+      if (!hasUpdate) {
+        throw new ReservableCatalogItemError(
+          'No fields to update. Pass at least one of: status, start_time, end_time, quantity, notes, lead_id, catalog_item_id.'
+        );
       }
 
       const payload: any = {};
@@ -197,17 +202,33 @@ export async function POST(request: NextRequest) {
       if (updates.notes !== undefined) payload.notes = updates.notes;
       if (lead_id !== undefined) payload.lead_id = lead_id;
 
+      let nextCatalogItemId = existing.catalog_item_id;
+      let assignment = null;
+      if (requestedCatalogItemId || shouldAssignRoundRobin) {
+        assignment = await resolveReservationUpdateTarget({
+          existingCatalogItemId: existing.catalog_item_id,
+          requestedCatalogItemId: requestedCatalogItemId,
+          start: updates.start_time ?? existing.start_time,
+          end: updates.end_time ?? existing.end_time,
+          quantity: payload.quantity ?? existing.quantity ?? 1,
+          excludeReservationId: reservationId,
+        });
+        nextCatalogItemId = assignment.catalog_item_id;
+        payload.catalog_item_id = nextCatalogItemId;
+      }
+
       const timesOrQuantityChange =
         updates.start_time !== undefined ||
         updates.end_time !== undefined ||
-        updates.quantity !== undefined;
+        updates.quantity !== undefined ||
+        payload.catalog_item_id !== undefined;
       if (timesOrQuantityChange) {
         const slot = await assertReservationSlot(
           existingSiteId,
-          existing.catalog_item_id,
+          nextCatalogItemId,
           updates.start_time ?? existing.start_time,
           updates.end_time ?? existing.end_time,
-          updates.quantity ?? existing.quantity ?? 1,
+          payload.quantity ?? existing.quantity ?? 1,
           true,
           reservationId
         );
@@ -229,7 +250,11 @@ export async function POST(request: NextRequest) {
         const { fireWorkflowDispatch } = await import('@/lib/services/workflow-robot/dispatch');
         fireWorkflowDispatch({ table: 'reservations', op: 'update', row: data, site_id });
       }
-      return NextResponse.json({ success: true, reservation: data });
+      return NextResponse.json({
+        success: true,
+        reservation: data,
+        ...(assignment ? { assignment } : {}),
+      });
     }
 
     return NextResponse.json({ success: false, error: 'Invalid action' }, { status: 400 });

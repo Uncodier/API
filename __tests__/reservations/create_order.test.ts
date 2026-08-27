@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { POST } from '../../src/app/api/agents/tools/reservations/route';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
 import { fireWorkflowDispatch } from '../../src/lib/services/workflow-robot/dispatch';
+import { resolveRoundRobinCatalogItem } from '../../src/lib/reservations/round-robin-assign';
 
 jest.mock('../../src/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -22,6 +23,25 @@ jest.mock('../../src/lib/reservations/availability', () => ({
 
 jest.mock('../../src/lib/services/workflow-robot/dispatch', () => ({
   fireWorkflowDispatch: jest.fn(),
+}));
+
+jest.mock('../../src/lib/reservations/round-robin-assign', () => ({
+  classifyRoundRobinRole: jest.fn(() => 'named'),
+  resolveRoundRobinCatalogItem: jest.fn(async ({ catalogItemId }: { catalogItemId: string }) => ({
+    catalog_item_id: catalogItemId,
+    assigned_from: catalogItemId,
+    peer_root_id: catalogItemId,
+    role: 'named',
+  })),
+  resolveReservationUpdateTarget: jest.fn(),
+}));
+
+jest.mock('../../src/lib/reservations/pass-redemption', () => ({
+  resolveReservationEntitlement: jest.fn(
+    async ({ requestedEntitlementId }: { requestedEntitlementId?: string | null }) =>
+      requestedEntitlementId || null
+  ),
+  catalogItemCoveredByPass: jest.fn(),
 }));
 
 describe('reservations.create creates a sale_order', () => {
@@ -272,5 +292,37 @@ describe('reservations.create creates a sale_order', () => {
     expect(capture.sale).toMatchObject({ currency: 'MXN' });
     expect(capture.order).toMatchObject({ currency: 'MXN' });
     expect(capture.orderItem).toMatchObject({ metadata: { currency: 'MXN' } });
+  });
+
+  it('stores the assigned named catalog item from round-robin resolve', async () => {
+    const assignedId = 'cesar-corte';
+    (resolveRoundRobinCatalogItem as jest.Mock).mockResolvedValueOnce({
+      catalog_item_id: assignedId,
+      assigned_from: catalogItemId,
+      peer_root_id: 'cesar',
+      role: 'round_robin_parent',
+    });
+    const capture: {
+      sale?: Record<string, unknown>;
+      order?: Record<string, unknown>;
+      orderItem?: Record<string, unknown>;
+      reservations?: Record<string, unknown>[];
+    } = {};
+    mockCommerceTables({ catalogPrice: 25, capture });
+
+    const res = await post({
+      action: 'create',
+      site_id: siteId,
+      catalog_item_id: catalogItemId,
+      lead_id: leadId,
+      start_time: start,
+      end_time: end,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.assignment.catalog_item_id).toBe(assignedId);
+    expect(capture.reservations?.[0]).toMatchObject({ catalog_item_id: assignedId });
+    expect(capture.orderItem).toMatchObject({ catalog_item_id: assignedId });
   });
 });

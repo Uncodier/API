@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { POST } from '../../src/app/api/agents/tools/reservations/route';
 import { supabaseAdmin } from '../../src/lib/database/supabase-client';
 import { assertReservationSlot } from '../../src/lib/reservations/availability';
+import { classifyRoundRobinRole, resolveReservationUpdateTarget } from '../../src/lib/reservations/round-robin-assign';
 
 jest.mock('../../src/lib/database/supabase-client', () => ({
   supabaseAdmin: {
@@ -22,6 +23,22 @@ jest.mock('../../src/lib/reservations/availability', () => {
 
 jest.mock('../../src/lib/services/workflow-robot/dispatch', () => ({
   fireWorkflowDispatch: jest.fn(),
+}));
+
+jest.mock('../../src/lib/reservations/family-occupancy', () => ({
+  resolveReservationFamily: jest.fn(async (id: string) => ({
+    catalogItemId: id,
+    rootId: id,
+    familyIds: [id],
+    mode: 'user_choice',
+    siteId: 'site-1',
+  })),
+}));
+
+jest.mock('../../src/lib/reservations/round-robin-assign', () => ({
+  classifyRoundRobinRole: jest.fn(() => 'named'),
+  resolveRoundRobinCatalogItem: jest.fn(),
+  resolveReservationUpdateTarget: jest.fn(),
 }));
 
 describe('Reservations tool route — id aliases', () => {
@@ -89,6 +106,13 @@ describe('Reservations tool route — id aliases', () => {
   });
 
   it('rejects update with no mutable fields', async () => {
+    const chain: any = {
+      select: jest.fn().mockReturnThis(),
+      eq: jest.fn().mockReturnThis(),
+      single: jest.fn().mockResolvedValue({ data: existing, error: null }),
+    };
+    (supabaseAdmin.from as jest.Mock).mockReturnValue(chain);
+
     const res = await post({
       action: 'update',
       reservation_id: reservationId,
@@ -98,7 +122,6 @@ describe('Reservations tool route — id aliases', () => {
     expect(res.status).toBe(400);
     expect(json.success).toBe(false);
     expect(json.error).toContain('No fields to update');
-    expect(supabaseAdmin.from).not.toHaveBeenCalled();
   });
 
   it('updates lead_id on the reservation', async () => {
@@ -229,5 +252,97 @@ describe('Reservations tool route — id aliases', () => {
     expect(json.success).toBe(true);
     expect(json.reservation.id).toBe(reservationId);
     expect(chain.eq).toHaveBeenCalledWith('id', reservationId);
+  });
+
+  it('reassigns catalog_item_id onto a named peer', async () => {
+    (resolveReservationUpdateTarget as jest.Mock).mockResolvedValue({
+      catalog_item_id: 'cesar-corte',
+      assigned_from: existing.catalog_item_id,
+      peer_root_id: 'cesar',
+      role: 'named',
+    });
+    let updatePayload: Record<string, unknown> | null = null;
+    let fromCalls = 0;
+    (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+      fromCalls += 1;
+      const chain: any = {
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updatePayload = payload;
+          return chain;
+        }),
+        eq: jest.fn().mockReturnThis(),
+        single: jest.fn(),
+      };
+      if (fromCalls === 1) {
+        chain.single.mockResolvedValue({ data: existing, error: null });
+      } else {
+        chain.single.mockResolvedValue({
+          data: { ...existing, catalog_item_id: 'cesar-corte' },
+          error: null,
+        });
+      }
+      return chain;
+    });
+
+    const res = await post({
+      action: 'update',
+      reservation_id: reservationId,
+      catalog_item_id: 'cesar-corte',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.reservation.catalog_item_id).toBe('cesar-corte');
+    expect(updatePayload).toMatchObject({ catalog_item_id: 'cesar-corte' });
+    expect(assertReservationSlot).toHaveBeenCalledWith(
+      existing.catalog_items.site_id,
+      'cesar-corte',
+      existing.start_time,
+      existing.end_time,
+      1,
+      true,
+      reservationId
+    );
+  });
+
+  it('does not assign a barber when cancelling a round-robin folio', async () => {
+    (classifyRoundRobinRole as jest.Mock).mockReturnValueOnce('round_robin_parent');
+    let updatePayload: Record<string, unknown> | null = null;
+    let fromCalls = 0;
+    (supabaseAdmin.from as jest.Mock).mockImplementation(() => {
+      fromCalls += 1;
+      const chain: any = {
+        select: jest.fn().mockReturnThis(),
+        update: jest.fn().mockImplementation((payload: Record<string, unknown>) => {
+          updatePayload = payload;
+          return chain;
+        }),
+        eq: jest.fn().mockReturnThis(),
+        single: jest.fn(),
+      };
+      if (fromCalls === 1) {
+        chain.single.mockResolvedValue({ data: existing, error: null });
+      } else {
+        chain.single.mockResolvedValue({
+          data: { ...existing, status: 'cancelled' },
+          error: null,
+        });
+      }
+      return chain;
+    });
+
+    const res = await post({
+      action: 'update',
+      reservation_id: reservationId,
+      status: 'cancelled',
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.reservation.status).toBe('cancelled');
+    expect(resolveReservationUpdateTarget).not.toHaveBeenCalled();
+    expect(updatePayload).toMatchObject({ status: 'cancelled' });
+    expect(updatePayload?.catalog_item_id).toBeUndefined();
   });
 });

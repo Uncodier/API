@@ -8,6 +8,7 @@ export interface EntitlementsToolParams {
   
   id?: string;
   site_id?: string;
+  lead_id?: string;
   buyer_user_id?: string;
   owner_site_id?: string;
   catalog_item_id?: string;
@@ -36,6 +37,7 @@ export function entitlementsTool(current_site_id?: string) {
         },
         id: { type: 'string', description: 'Entitlement UUID (required for get, update)' },
         site_id: { type: 'string', description: 'Seller site UUID' },
+        lead_id: { type: 'string', description: 'Lead UUID. list resolves the lead buyer and filters by buyer_user_id.' },
         buyer_user_id: { type: 'string', description: 'Buyer user UUID' },
         owner_site_id: { type: 'string', description: 'Destination owner site UUID' },
         catalog_item_id: { type: 'string', description: 'Catalog item UUID' },

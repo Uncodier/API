@@ -32,9 +32,9 @@ Use `action="get_available_slots"` to query inventory for a date range (requires
 
 ## Validation
 
-- `get_available_slots` uses the target item's `reservation_schedules` for the slot grid, then subtracts overlapping `pending`/`confirmed` reservations across the parent and all variants of that resource. When the parent `redeem_assignment_mode` is `round_robin`, available seats are the number of free `user_choice` peer families (named barbers) on the same site.
-- `create` asserts the slot, then inserts `sales`, `sale_orders`, `sale_order_items`, and `reservations` (with `sale_order_item_id`). Pass redemptions (`entitlement_id`) still create the order at unit price 0.
-- `update` requires at least one of `status`, `start_time`, `end_time`, `quantity`, `notes`, `lead_id`. Capacity on reschedule excludes the reservation being updated (`WHERE id != reservation_id`). Cancelling (status=`cancelled`) frees capacity in the slots.
+- `get_available_slots` uses the target item's `reservation_schedules` for the slot grid, then subtracts overlapping `pending`/`confirmed` reservations across the parent and all variants of that resource. When the parent `redeem_assignment_mode` is `round_robin`, available seats are the number of free `user_choice` peer families (named barbers) on the same site. `create` / `update` auto-assign a free named peer when `catalog_item_id` is that round-robin parent or a sibling service under it; the reservation is never stored on the pool item. Pass redemptions match the assigned barber root or its children.
+- `create` asserts the slot, then inserts `sales`, `sale_orders`, `sale_order_items`, and `reservations` (with `sale_order_item_id`). Pass redemptions (`entitlement_id`, or an active lead pass) still create the order at unit price 0.
+- `update` requires at least one of `status`, `start_time`, `end_time`, `quantity`, `notes`, `lead_id`, `catalog_item_id`. Capacity on reschedule excludes the reservation being updated (`WHERE id != reservation_id`). Cancelling (status=`cancelled`) frees capacity in the slots. A folio still on a round-robin parent is assigned to a named peer.
 
 ## Example
 

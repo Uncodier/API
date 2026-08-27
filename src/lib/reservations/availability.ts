@@ -7,6 +7,7 @@ import {
   loadOccupancyContext,
   resolveReservationFamily,
 } from '@/lib/reservations/family-occupancy';
+import { classifyRoundRobinRole } from '@/lib/reservations/round-robin-assign';
 import {
   formatInTimezone,
   isLocalDateString,
@@ -245,10 +246,14 @@ export async function getAvailableSlots(
     }
   }
 
+  const assignmentRole = classifyRoundRobinRole(family);
+
   return {
     slots: result,
     catalog_item_id: resolvedId,
     timezone: tz,
+    assignment_role: assignmentRole,
+    round_robin_pool: assignmentRole !== 'named',
     ...(resolved.reservation_id ? { reservation_id: resolved.reservation_id } : {}),
   };
 }

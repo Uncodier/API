@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { isItemBookable, loadParentForBookableCheck } from '@/lib/helpers/catalog-bookable';
 import { assertReservationSlot } from '@/lib/reservations/availability';
+import { resolveRoundRobinCatalogItem } from '@/lib/reservations/round-robin-assign';
 import { resolveLineCurrency, resolveSiteCurrency } from './resolve-currency';
 
 export type CheckoutModifierLine = {
@@ -112,7 +113,7 @@ export async function processCheckoutLines(params: {
       throw new Error(`Invalid quantity for catalogItemId=${line.catalogItemId}`);
     }
 
-    const catItem = await resolveCatalogItem(line.catalogItemId, siteId);
+    let catItem = await resolveCatalogItem(line.catalogItemId, siteId);
 
     if (catItem.is_reservation) {
       if (!line.reservationStart || !line.reservationEnd) {
@@ -122,6 +123,16 @@ export async function processCheckoutLines(params: {
       }
       if (!finalLeadId) {
         throw new Error('lead_id or customer_email is required for reservable items');
+      }
+      const assignment = await resolveRoundRobinCatalogItem({
+        catalogItemId: line.catalogItemId,
+        start: line.reservationStart,
+        end: line.reservationEnd,
+        quantity,
+      });
+      if (assignment.catalog_item_id !== line.catalogItemId) {
+        line.catalogItemId = assignment.catalog_item_id;
+        catItem = await resolveCatalogItem(line.catalogItemId, siteId);
       }
       const slot = await assertReservationSlot(
         siteId,
