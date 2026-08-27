@@ -4,6 +4,14 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { attemptPhoneRescue } from '@/lib/utils/phone-normalizer';
 import { resolveContentVariables } from '@/lib/services/whatsapp/resolveTemplateContentVariables';
+import {
+  getStoredWhatsAppTemplateStatus,
+  handleRejectedWhatsAppTemplate,
+} from '@/lib/services/whatsapp/handleRejectedWhatsAppTemplate';
+import {
+  isTerminalWhatsAppApprovalStatus,
+  TEMPLATE_REJECTED_ERROR_TYPE,
+} from '@/lib/services/whatsapp/whatsappTemplateApproval';
 
 /**
  * Ruta para enviar mensajes usando plantillas de WhatsApp previamente creadas
@@ -177,6 +185,23 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`📝 [SendTemplate] Enviando plantilla: ${template_id} a ${phone_number.substring(0, 6)}***`);
+
+    const storedStatus = await getStoredWhatsAppTemplateStatus(template_id);
+    if (isTerminalWhatsAppApprovalStatus(storedStatus)) {
+      const rejected = await handleRejectedWhatsAppTemplate({
+        templateSid: template_id,
+        reason: `WhatsApp template approval is terminal (${storedStatus}). Do not retry this template.`,
+      });
+      console.warn(`🚨 [SendTemplate] Stored template is terminal (${storedStatus}); fan-out`, rejected);
+      return NextResponse.json({
+        success: false,
+        message_id,
+        template_id,
+        status: 'failed',
+        error: `WhatsApp template approval is terminal (${storedStatus}). Do not retry this template.`,
+        error_type: TEMPLATE_REJECTED_ERROR_TYPE,
+      } as SendTemplateResponse, { status: 400 });
+    }
 
     // Obtener configuración de WhatsApp
     const configResult = await getWhatsAppConfig(site_id);
@@ -365,6 +390,14 @@ export async function POST(request: NextRequest) {
       } as SendTemplateResponse);
     } else {
       console.error(`❌ [SendTemplate] Error enviando mensaje:`, sendResult.error);
+
+      if (sendResult.errorType === TEMPLATE_REJECTED_ERROR_TYPE) {
+        const fanout = await handleRejectedWhatsAppTemplate({
+          templateSid: template_id,
+          reason: sendResult.error,
+        });
+        console.warn(`🚨 [SendTemplate] TEMPLATE_REJECTED fan-out:`, fanout);
+      }
       
       return NextResponse.json({
         success: false,

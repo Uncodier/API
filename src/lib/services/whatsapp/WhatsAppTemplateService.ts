@@ -1,5 +1,14 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { extractMergeTokens, sampleVariablesFromTokens } from '@/lib/messaging/lead-merge-fields';
+import {
+  getStoredWhatsAppTemplateStatus,
+  handleRejectedWhatsAppTemplate,
+} from './handleRejectedWhatsAppTemplate';
+import {
+  isTerminalWhatsAppApprovalStatus,
+  pickReusableWhatsAppTemplates,
+  templateRejectedError,
+} from './whatsappTemplateApproval';
 
 export interface WhatsAppTemplateResult {
   success: boolean;
@@ -303,6 +312,16 @@ export class WhatsAppTemplateService {
   ): Promise<{ success: boolean; messageId?: string; error?: string; errorCode?: number; errorType?: string; suggestion?: string }> {
     try {
       console.log(`📤 [WhatsAppTemplateService] Enviando mensaje con Content Template: ${templateSid}`);
+
+      const storedStatus = await getStoredWhatsAppTemplateStatus(templateSid);
+      if (isTerminalWhatsAppApprovalStatus(storedStatus)) {
+        console.warn(`🚨 [WhatsAppTemplateService] Stored template status is terminal (${storedStatus}); skipping Twilio`);
+        await handleRejectedWhatsAppTemplate({
+          templateSid,
+          reason: `WhatsApp template approval is terminal (${storedStatus}). Do not retry this template.`,
+        });
+        return templateRejectedError(storedStatus);
+      }
       
       // URL de la API de Twilio para enviar mensajes
       const apiUrl = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;
@@ -380,6 +399,15 @@ export class WhatsAppTemplateService {
               console.log(`✅ [WhatsAppTemplateService] Template aprobado en check ${i + 1}!`);
               break;
             }
+
+            if (isTerminalWhatsAppApprovalStatus(retryApprovalStatus.status)) {
+              console.warn(`🚨 [WhatsAppTemplateService] Template became terminal during wait: ${retryApprovalStatus.status}`);
+              await handleRejectedWhatsAppTemplate({
+                templateSid,
+                reason: `WhatsApp template approval is terminal (${retryApprovalStatus.status}). Do not retry this template.`,
+              });
+              return templateRejectedError(retryApprovalStatus.status);
+            }
           }
           
           console.log('📊 [WhatsAppTemplateService] Estado después de retry:', {
@@ -392,6 +420,12 @@ export class WhatsAppTemplateService {
           if (retryApprovalStatus.approved) {
             console.log('✅ [WhatsAppTemplateService] Template aprobado después de espera, continuando...');
             // Continúa con el envío
+          } else if (isTerminalWhatsAppApprovalStatus(retryApprovalStatus.status)) {
+            await handleRejectedWhatsAppTemplate({
+              templateSid,
+              reason: `WhatsApp template approval is terminal (${retryApprovalStatus.status}). Do not retry this template.`,
+            });
+            return templateRejectedError(retryApprovalStatus.status);
           } else {
             console.warn('⏰ [WhatsAppTemplateService] Template aún no aprobado después de 60s');
             return {
@@ -399,8 +433,13 @@ export class WhatsAppTemplateService {
               error: `Template not approved after waiting 60s. Status: ${retryApprovalStatus.status}. Please try again in a few minutes.`
             };
           }
+        } else if (isTerminalWhatsAppApprovalStatus(approvalStatus.status)) {
+          await handleRejectedWhatsAppTemplate({
+            templateSid,
+            reason: `WhatsApp template approval is terminal (${approvalStatus.status}). Do not retry this template.`,
+          });
+          return templateRejectedError(approvalStatus.status);
         } else {
-          // Para otros estados (rejected, etc.), no esperar
           return {
             success: false,
             error: `Template not approved for WhatsApp. Status: ${approvalStatus.status}. Please wait for approval or use a pre-approved template.`
@@ -514,23 +553,24 @@ export class WhatsAppTemplateService {
         .eq('site_id', siteId)
         .eq('account_sid', accountSid)
         .order('created_at', { ascending: false })
-        .limit(10);
+        .limit(25);
       
       if (error) {
         console.warn(`⚠️ [WhatsAppTemplateService] Error buscando templates en BD:`, error);
         return {};
       }
       
-      if (!templates || templates.length === 0) {
-        console.log(`📝 [WhatsAppTemplateService] No se encontraron templates previos`);
+      const reusableTemplates = pickReusableWhatsAppTemplates(templates || []);
+      if (reusableTemplates.length === 0) {
+        console.log(`📝 [WhatsAppTemplateService] No se encontraron templates reutilizables`);
         return {};
       }
       
-      const exactMatch = templates.find(t =>
+      const exactMatch = reusableTemplates.find(t =>
         typeof t.templated_body === 'string' && t.templated_body === preparedTemplated,
       );
       
-      const similarTemplate = exactMatch ?? templates.find(template => {
+      const similarTemplate = exactMatch ?? reusableTemplates.find(template => {
         const candidate = (template.templated_body as string | undefined) ?? template.content ?? template.original_message ?? '';
         const similarity = this.calculateSimilarity(preparedTemplated, candidate);
         return similarity > 0.8;
