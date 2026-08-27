@@ -59,6 +59,7 @@ export async function handleTwilioMediaAndCreateTask(params: {
   media: Array<TwilioMediaDownload>;
   twilioAuth: { accountSid: string; authToken: string };
   logPrefix?: string;
+  skipCustomerSupportWorkflow?: boolean;
 }) {
   const traceId = crypto.randomUUID();
   const log = (msg: string, extra?: any) => console.log(`[TwilioMediaTask:${traceId}] ${msg}`, extra ?? '');
@@ -297,29 +298,31 @@ export async function handleTwilioMediaAndCreateTask(params: {
 
   // Start customerSupport workflow for parity with upload
   try {
-    const workflowService = WorkflowService.getInstance();
-    const directWorkflowId = `customer-support-message-${siteId || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-    const wfResult = await workflowService.customerSupportMessage(
-      {
-        conversationId: conversationId || undefined,
-        userId: userId || undefined,
-        message: userMessage,
-        agentId: agentId || undefined,
-        site_id: siteId || undefined,
-        lead_id: leadId || undefined,
-        origin: workflowOrigin,
-      },
-      {
-        priority: 'high',
-        async: false,
-        retryAttempts: 3,
-        taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
-        workflowId: directWorkflowId,
-      }
-    );
-    const data = (wfResult as any)?.data || {};
-    workflowTitle = data?.title || data?.ticket_title || data?.subject || null;
-    workflowId = (wfResult as any)?.workflowId || data?.workflowId || data?.workflow_id || directWorkflowId;
+    if (!params.skipCustomerSupportWorkflow) {
+      const workflowService = WorkflowService.getInstance();
+      const directWorkflowId = `customer-support-message-${siteId || 'nosid'}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const wfResult = await workflowService.customerSupportMessage(
+        {
+          conversationId: conversationId || undefined,
+          userId: userId || undefined,
+          message: userMessage,
+          agentId: agentId || undefined,
+          site_id: siteId || undefined,
+          lead_id: leadId || undefined,
+          origin: workflowOrigin,
+        },
+        {
+          priority: 'high',
+          async: false,
+          retryAttempts: 3,
+          taskQueue: process.env.WORKFLOW_TASK_QUEUE || 'default',
+          workflowId: directWorkflowId,
+        }
+      );
+      const data = (wfResult as any)?.data || {};
+      workflowTitle = data?.title || data?.ticket_title || data?.subject || null;
+      workflowId = (wfResult as any)?.workflowId || data?.workflowId || data?.workflow_id || directWorkflowId;
+    }
   } catch {}
 
   if (!isReplyOnly) {

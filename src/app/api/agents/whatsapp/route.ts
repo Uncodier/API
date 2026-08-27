@@ -54,7 +54,11 @@ export async function POST(request: NextRequest) {
     console.log(`📄 Datos del webhook:`, JSON.stringify(webhookData, null, 2));
     
     // Validar que tenemos los datos mínimos necesarios
-    if (!webhookData.MessageSid || !webhookData.From || !webhookData.To || !webhookData.Body) {
+    const numMediaCount = parseInt(String((webhookData as any).NumMedia || '0'), 10) || 0;
+    const hasBody = !!webhookData.Body;
+    const hasMedia = numMediaCount > 0;
+    
+    if (!webhookData.MessageSid || !webhookData.From || !webhookData.To || (!hasBody && !hasMedia)) {
       console.error('❌ Datos incompletos en el webhook de Twilio');
       return NextResponse.json(
         { success: false, error: 'Missing required webhook data' },
@@ -124,11 +128,10 @@ export async function POST(request: NextRequest) {
     
     console.log('✅ Validación de Twilio exitosa');
 
-    // First, process the text workflow (existing behavior)
-    const result = await processIncomingMessage(webhookData as TwilioWhatsAppWebhook, siteId!, agentId!);
-
-    // Then, best-effort media handling mirroring @visitors/upload
+    // Procesar contenido multimedia primero para extraer transcripciones si las hay
+    let additionalBodyContent = '';
     const numMedia = parseInt(String((webhookData as any).NumMedia || '0'), 10) || 0;
+    
     if (numMedia > 0) {
       try {
         const userId = await getUserIdFromSite(siteId!);
@@ -149,17 +152,32 @@ export async function POST(request: NextRequest) {
           if (media.length) {
             const authToken = validationResult.authToken as string | undefined;
             if (authToken) {
-              await handleTwilioMediaAndCreateTask({
+              const mediaResult = await handleTwilioMediaAndCreateTask({
                 siteId: siteId!,
                 userId,
                 agentId,
                 leadId: existingLeadId || undefined,
                 conversationId: conversationId || undefined,
-                messageText: webhookData.Body,
+                messageText: webhookData.Body || '',
                 workflowOrigin: 'whatsapp',
                 media,
                 twilioAuth: { accountSid: webhookData.AccountSid, authToken },
+                skipCustomerSupportWorkflow: true // PREVENT DUPLICATE WORKFLOW (handled by processIncomingMessage)
               });
+              
+              if (mediaResult.success && mediaResult.files) {
+                 for (const file of mediaResult.files) {
+                    if (file.transcription) {
+                       additionalBodyContent += `\n[Mensaje de voz transcrito]: "${file.transcription}"`;
+                    } else if (file.type.startsWith('image/')) {
+                       additionalBodyContent += `\n[Imagen adjunta]`;
+                    } else if (file.type.startsWith('video/')) {
+                       additionalBodyContent += `\n[Video adjunto]`;
+                    } else {
+                       additionalBodyContent += `\n[Archivo adjunto]`;
+                    }
+                 }
+              }
             } else {
               console.warn('⚠️ Missing Twilio auth token; cannot download media');
             }
@@ -169,6 +187,15 @@ export async function POST(request: NextRequest) {
         console.warn('⚠️ Error handling media upload/task creation:', mediaErr);
       }
     }
+    
+    // Si no había Body, o si hay transcripciones, combinamos todo
+    webhookData.Body = (webhookData.Body || '') + additionalBodyContent;
+    if (!webhookData.Body.trim()) {
+      webhookData.Body = '[Mensaje multimedia sin texto]';
+    }
+
+    // Then, process the text workflow (existing behavior, but now with transcriptions included)
+    const result = await processIncomingMessage(webhookData as TwilioWhatsAppWebhook, siteId!, agentId!);
     
     if (result.success) {
       console.log(`✅ Webhook procesado exitosamente. Workflow ID: ${result.workflowId}`);
