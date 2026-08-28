@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { NotificationCategory } from '@/lib/services/notification-service';
 import { z } from 'zod';
 
 // Configurar timeout máximo a 2 minutos
@@ -765,7 +766,7 @@ export async function POST(request: NextRequest) {
             replyEmail: replyEmail || undefined,
             locale
           }),
-          categories: ['lead-attention', 'team-notification', 'priority-' + priority],
+          categories: [NotificationCategory.LEAD_MANAGEMENT],
           customArgs: {
             siteId: siteId,
             leadId: leadId,

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { createTask } from '@/lib/database/task-db';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
-import { NotificationService, NotificationType, NotificationPriority } from '@/lib/services/notification-service';
+import { NotificationService, NotificationType, NotificationPriority, NotificationCategory } from '@/lib/services/notification-service';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { generateTaskTeamEmailHtml as sharedTeamTemplate, generateTaskUserNotificationHtml as sharedUserTemplate } from '@/lib/services/templates/task-email-templates';
 
@@ -839,7 +839,7 @@ export async function POST(request: NextRequest) {
         }),
         priority: newTask.priority >= 10 ? 'high' : newTask.priority >= 5 ? 'normal' : 'low',
         type: NotificationType.INFO,
-        categories: ['task-notification', 'task-created'],
+        categories: [NotificationCategory.TASKS_REMINDERS],
         customArgs: {
           taskId: newTask.id,
           taskType: newTask.type,
@@ -894,7 +894,7 @@ export async function POST(request: NextRequest) {
           to: recipientEmail,
           subject,
           html,
-          categories: ['task-notification', 'task-created', 'transactional'],
+          categories: [NotificationCategory.TASKS_REMINDERS],
           customArgs: {
             taskId: newTask.id,
             taskType: newTask.type,

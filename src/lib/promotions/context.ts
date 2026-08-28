@@ -60,7 +60,7 @@ export function formatActivePromotionsForContext(rows: ActivePromotionRow[]): st
     return text;
   }
 
-  text += `Snapshot of current active promotions. Treat as a hint — call promotions.list / promotions.get (status=active) if the customer asks about a discount, promo code, BOGO, or a specific item.\n`;
+  text += `Snapshot of current active promotions. Treat as a hint — call promotions.list / promotions.get (status=active) if the customer asks about a discount, promo code, BOGO, or a specific item. checkout.create_order and reservations.create auto-apply the best compatible percent/fixed promotion; tell the customer the total from that tool result.\n`;
   for (const row of rows) {
     const code = row.code ? ` code=${row.code}` : '';
     const window = ` window=${row.starts_at || 'open'}→${row.ends_at || 'open'}`;

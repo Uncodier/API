@@ -44,7 +44,7 @@ export interface SalesOrderToolParams {
 export function salesOrderTool(current_site_id?: string) {
   return {
     name: 'sales_order',
-    description: 'Legacy CRM transaction recording tool. Do not use for checkouts, Stripe payment links, catalog purchases, or new commerce flows. For creating orders with payment links, use the `checkout` tool instead.',
+    description: 'Legacy CRM transaction recording tool. Do not use for checkouts, Stripe payment links, catalog purchases, or new commerce flows. For creating orders with payment links, use the `checkout` tool instead. Note: compatible discounts are applied automatically; you will receive any automatically applied discounts in the tool result, which you must communicate to the customer.',
     parameters: {
       type: 'object',
       properties: {

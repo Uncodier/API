@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { z } from 'zod';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 
@@ -843,7 +843,7 @@ export async function POST(request: NextRequest) {
           }),
           priority: priority as any,
           type: notificationType,
-          categories: ['task-reminder', 'cta-reminder'],
+          categories: [NotificationCategory.TASKS_REMINDERS],
           customArgs: {
             taskId: task_id,
             leadId: lead_id,
@@ -899,7 +899,7 @@ export async function POST(request: NextRequest) {
             reminderContext,
             replyEmail: replyEmail || undefined
           }),
-          categories: ['task-reminder', 'cta-reminder', 'lead-notification', 'transactional'],
+          categories: [NotificationCategory.TASKS_REMINDERS],
           customArgs: {
             siteId: site_id,
             leadId: lead_id,

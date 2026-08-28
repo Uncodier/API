@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 import { z } from 'zod';
 
@@ -561,7 +561,7 @@ export async function POST(request: NextRequest) {
         }),
         priority: priority as any,
         type: NotificationType.WARNING,
-        categories: ['new-leads-alert', 'lead-assignment', 'automatic-outreach-warning'],
+        categories: [NotificationCategory.LEAD_MANAGEMENT],
         customArgs: {
           siteId: site_id,
           totalUnassignedLeads: unassignedLeads.length.toString(),

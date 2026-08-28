@@ -5,7 +5,7 @@ description: Manage capacity reservations, find available slots, and book slots 
 
 # Reservations
 
-Manage capacity reservations and find available slots for reservable items. `action="create"` books the slot **and** creates a pending `sale_order` (same commercial path as checkout for a single reservable line), linked via `sale_order_item_id`. The response includes `order_id` and `sale_id` so you can charge with `checkout.create_payment_link`. Do not also call `checkout.create_order` for the same slot. Mixed carts (product + slot) still use checkout.
+Manage capacity reservations and find available slots for reservable items. `action="create"` books the slot **and** creates a pending `sale_order` (same commercial path as checkout for a single reservable line), linked via `sale_order_item_id`. The response includes `order_id` and `sale_id` so you can charge with `checkout.create_payment_link`. Compatible discounts are applied automatically; you will receive any automatically applied discounts in the tool result, which you must communicate to the customer. Do not also call `checkout.create_order` for the same slot. Mixed carts (product + slot) still use checkout.
 
 Use `action="get_available_slots"` to query inventory for a date range (requires `catalog_item_id`, `from_date`, `to_date`). Use `action="create"` to book (requires `catalog_item_id`, `lead_id`, `start_time`, `end_time`). Use `action="update"` to reschedule, change status (e.g. to `cancelled`), or reassign `lead_id`. `get`/`update` require the reservation UUID in `id` (alias: `reservation_id`). On update, the current reservation is excluded from the capacity check — keep `quantity` as the real seat count.
 

@@ -130,4 +130,29 @@ describe('executeTools MCP routing', () => {
       expect.objectContaining({ action: 'create', catalog_item_id: 'item-1' })
     );
   });
+
+  it('injects command_id into MCP tool args', async () => {
+    (mcpNativeTools.hasMcpNativeTool as jest.Mock).mockReturnValue(true);
+    (mcpNativeTools.resolveDottedMcpCall as jest.Mock).mockReturnValue(null);
+    (mcpNativeTools.executeMcpNativeTool as jest.Mock).mockResolvedValue({ success: true });
+
+    await executeTools(
+      [
+        {
+          id: 'res-idemp',
+          type: 'function',
+          status: FunctionCallStatus.INITIALIZED,
+          name: 'reservations',
+          arguments: JSON.stringify({ action: 'create', catalog_item_id: 'item-1' }),
+        },
+      ],
+      {},
+      { command_id: 'cmd-uuid-1' }
+    );
+
+    expect(mcpNativeTools.executeMcpNativeTool).toHaveBeenCalledWith(
+      'reservations',
+      expect.objectContaining({ action: 'create', catalog_item_id: 'item-1', command_id: 'cmd-uuid-1' })
+    );
+  });
 });

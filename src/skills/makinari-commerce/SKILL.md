@@ -30,7 +30,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
    - Create with `promotions` `action="create"` (`name`, `discount_type` = `percent` | `fixed` | `bogo`, `discount_value`, `campaign_id`). Default `status` is `draft`; set `status="active"` when it should run.
    - If `applies_to="selected_items"`, pass `catalog_item_ids` and/or `catalog_category_ids`. For BOGO, `required_items` / `required_categories` are the buy-side; `catalog_*` ids are the get-side.
    - Use `list`/`get` to inspect. `update`/`delete` need `id` (alias `promotion_id`). Junction arrays are replace-if-provided on update.
-   - Checkout does **not** apply promo codes yet — do not invent a discounted total or Stripe coupon.
+   - `checkout.create_order` and `reservations.create` automatically apply the best compatible active percent/fixed promotion. Tell the customer the discounted total from the tool result (`applied_promotions` / `notification`). Do not invent a discount or a Stripe coupon.
 
 3. **Quotation Workflow**
    - **Draft:** Create a quote tied to a `lead_id` (and optionally `price_list_id`). Status is initially `draft`.
@@ -71,7 +71,7 @@ Equip the agent with operational protocols to manage the entire commercial lifec
 | Tool | Usage |
 | --- | --- |
 | `catalog_commerce` | Create items, list/get, update name/pricing/listing flags; manage modifiers via `resource` (`modifier_group`, `modifier_group_item`, `item_modifier_group`); `get` + `include_modifiers=true` to inspect. |
-| `promotions` | CRUD for percent/fixed/BOGO promotions. Requires `campaign_id`. Use `catalog_item_ids` when `applies_to="selected_items"`. Checkout does not apply codes yet. |
+| `promotions` | CRUD for percent/fixed/BOGO promotions. Requires `campaign_id`. Use `catalog_item_ids` when `applies_to="selected_items"`. Checkout/reservations auto-apply compatible active percent/fixed promotions. |
 | `price_lists` | Discover custom pricing applied to specific leads/deals. |
 | `calendars` | Directory of team members, personal/team calendars, and reservable services. Set working hours here. |
 | `reservation_schedules` | Configure capacity and weekly windows for reservable items. |

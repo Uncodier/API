@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
 import { z } from 'zod';
 
@@ -538,7 +538,7 @@ export async function POST(request: NextRequest) {
         }),
         priority: 'normal',
         type: NotificationType.INFO,
-        categories: ['daily-standup', 'team-update', 'automated-report'],
+        categories: [NotificationCategory.ANALYSIS_INSIGHTS],
         customArgs: {
           siteId: site_id,
           reportType: 'daily_standup',

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { NotificationCategory } from '@/lib/services/notification-service';
 import { z } from 'zod';
 
 export const maxDuration = 120;
@@ -156,7 +157,7 @@ export async function POST(request: NextRequest) {
         email: 'no-reply@makinari.com',
         name: siteInfo?.name || 'Makinari'
       },
-      categories: ['subscription', 'receipt', 'billing'],
+      categories: [NotificationCategory.SYSTEM_ALERTS],
       customArgs: { siteId: site_id }
     });
 

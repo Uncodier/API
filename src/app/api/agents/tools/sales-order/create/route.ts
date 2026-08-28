@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { v4 as uuidv4 } from 'uuid';
+import { calculateAutoDiscount, formatAppliedPromotionsNotification } from '@/lib/promotions/apply';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -165,6 +166,24 @@ export async function POST(request: NextRequest) {
       );
     }
     
+    // Calcular descuento automático
+    const discountLines = productsData.map(product => ({
+      id: product.id,
+      quantity: 1,
+      subtotal: Number(product.price || 0)
+    }));
+
+    const { discountAmount, appliedPromotions } = await calculateAutoDiscount(site_id, discountLines);
+
+    let finalDiscount = discount;
+    let finalTotalAmount = total_amount;
+
+    if (discountAmount > 0) {
+      finalDiscount = discountAmount;
+      const rawSubtotal = discountLines.reduce((acc, line) => acc + line.subtotal, 0);
+      finalTotalAmount = Math.max(0, rawSubtotal - discountAmount);
+    }
+
     // Crear venta
     const sale_id = uuidv4();
     const now = new Date().toISOString();
@@ -174,10 +193,10 @@ export async function POST(request: NextRequest) {
       customer_id,
       product_ids,
       payment_method,
-      total_amount,
+      total_amount: finalTotalAmount,
       status,
       notes,
-      discount,
+      discount: finalDiscount,
       tax,
       shipping_address,
       location_id,
@@ -260,6 +279,13 @@ export async function POST(request: NextRequest) {
       console.log('Continuando con la respuesta de la venta...');
     }
     
+    const notification = formatAppliedPromotionsNotification(
+      appliedPromotions,
+      discountLines.reduce((acc, line) => acc + line.subtotal, 0),
+      discountAmount,
+      finalTotalAmount
+    );
+
     // Respuesta exitosa
     return NextResponse.json(
       {
@@ -284,7 +310,9 @@ export async function POST(request: NextRequest) {
           product_id: p.id,
           name: p.name,
           price: p.price
-        }))
+        })),
+        applied_promotions: appliedPromotions,
+        notification
       },
       { status: 201 }
     );

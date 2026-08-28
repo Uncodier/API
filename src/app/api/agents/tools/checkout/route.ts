@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { createSaleOrderFromLines, resolveSiteUserId } from './create-order';
+import { createSaleOrderFromLines, discountFieldsForToolResult, resolveSiteUserId } from './create-order';
 import { type CheckoutLine } from './process-lines';
+import { buildWriteIdempotencyKey } from '@/lib/agentbase/utils/write-idempotency';
 
 /** Find or create a lead so Stripe can receive customer_email via lead.email */
 async function resolveLeadId(params: {
@@ -63,7 +64,7 @@ function commerceAppBaseUrl(): string {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { action, order_id, site_id, ...params } = body;
+    const { action, order_id, site_id, command_id, ...params } = body;
 
     if (!action) {
       return NextResponse.json({ success: false, error: 'Missing action' }, { status: 400 });
@@ -136,6 +137,20 @@ export async function POST(request: NextRequest) {
           ? `Created from quotation ${params.quotation_id}`
           : null;
 
+      const writeAction = action === 'create_order_from_quotation' ? 'create_order_from_quotation' : 'create_order';
+      const idempotency_key = command_id
+        ? buildWriteIdempotencyKey(String(command_id), 'checkout', writeAction, {
+            site_id,
+            lines,
+            lead_id: finalLeadId,
+            quotation_id: params.quotation_id,
+            buyer_user_id,
+            owner_site_id,
+            source,
+            location_id,
+          })
+        : null;
+
       const result = await createSaleOrderFromLines({
         site_id,
         lines,
@@ -146,6 +161,8 @@ export async function POST(request: NextRequest) {
         location_id,
         order_notes: orderNotes,
         user_id: siteOwnerId,
+        command_id: command_id || null,
+        idempotency_key,
       });
 
       return NextResponse.json({
@@ -155,10 +172,26 @@ export async function POST(request: NextRequest) {
         lead_id: result.lead_id,
         status: result.order.status,
         customer_email: customer_email || null,
+        ...discountFieldsForToolResult(result),
       });
     }
 
     if (action === 'create_payment_link') {
+      const { findExistingPaymentLink, storePaymentLinkIdempotency } = await import('./order-idempotency');
+      const paymentKey = command_id
+        ? buildWriteIdempotencyKey(String(command_id), 'checkout', 'create_payment_link', {
+            order_id,
+            site_id,
+            return_url: params.return_url,
+          })
+        : null;
+      if (paymentKey) {
+        const existingLink = await findExistingPaymentLink(paymentKey);
+        if (existingLink) {
+          return NextResponse.json({ success: true, url: existingLink.url, order_id: existingLink.order_id });
+        }
+      }
+
       const returnUrl = params.return_url || `${commerceAppBaseUrl()}/buyer/orders`;
 
       if (!process.env.STRIPE_SECRET_KEY) {
@@ -180,21 +213,24 @@ export async function POST(request: NextRequest) {
       if (orderError || !order) throw new Error('Order not found');
 
       let customerEmail = params.customer_email as string | undefined;
-      if (!customerEmail) {
-        const { data: sale } = await supabaseAdmin
-          .from('sales')
-          .select('lead_id')
-          .eq('id', order.sale_id)
+      const { data: sale } = await supabaseAdmin
+        .from('sales')
+        .select('lead_id, payment_details')
+        .eq('id', order.sale_id)
+        .single();
+
+      if (!customerEmail && sale?.lead_id) {
+        const { data: lead } = await supabaseAdmin
+          .from('leads')
+          .select('email')
+          .eq('id', sale.lead_id)
           .single();
-        if (sale?.lead_id) {
-          const { data: lead } = await supabaseAdmin
-            .from('leads')
-            .select('email')
-            .eq('id', sale.lead_id)
-            .single();
-          customerEmail = lead?.email || undefined;
-        }
+        customerEmail = lead?.email || undefined;
       }
+
+      const existingPaymentDetails = (sale?.payment_details && typeof sale.payment_details === 'object') 
+        ? (sale.payment_details as Record<string, unknown>) 
+        : {};
 
       // Prefer relational sale_order_items (includes modifier children as separate priced lines).
       let lineSource: any[] = Array.isArray(order.items) ? order.items : [];
@@ -233,7 +269,7 @@ export async function POST(request: NextRequest) {
         quantity: Number(item.quantity || 1),
       }));
 
-      const session = await stripe.checkout.sessions.create({
+      const sessionPayload: Record<string, unknown> = {
         payment_method_types: ['card'],
         line_items: lineItems,
         mode: 'payment',
@@ -246,7 +282,36 @@ export async function POST(request: NextRequest) {
           order_id: order_id,
           sale_id: order.sale_id,
         },
-      });
+      };
+
+      const discountTotal = Number(order.discount_total || 0);
+      const discountCents = Math.round(discountTotal * 100);
+      const lineCents = lineItems.reduce(
+        (sum: number, item: { price_data: { unit_amount: number }; quantity: number }) =>
+          sum + item.price_data.unit_amount * item.quantity,
+        0
+      );
+      if (discountCents > 0 && lineCents > 0) {
+        const coupon = await stripe.coupons.create({
+          amount_off: Math.min(discountCents, lineCents),
+          currency: (order.currency || 'usd').toLowerCase(),
+          duration: 'once',
+          name: 'Compatible promotion',
+        });
+        sessionPayload.discounts = [{ coupon: coupon.id }];
+      }
+
+      const session = await stripe.checkout.sessions.create(sessionPayload as any);
+
+      if (paymentKey && session.url) {
+        await storePaymentLinkIdempotency({
+          saleId: order.sale_id,
+          key: paymentKey,
+          url: session.url,
+          orderId: order_id,
+          existingDetails: existingPaymentDetails,
+        });
+      }
 
       return NextResponse.json({ success: true, url: session.url, order_id });
     }

@@ -96,7 +96,7 @@ export async function waitForCommandCompletion(commandId: string, maxAttempts = 
         
         // Luego obtener desde BD para estado actualizado
         const commandService = getCommandService();
-        executedCommand = await commandService.getCommandById(commandId);
+        executedCommand = await commandService.getCommandById(commandId, { fresh: true });
         
         // Reset consecutive errors on successful fetch
         consecutiveErrors = 0;

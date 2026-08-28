@@ -37,7 +37,7 @@ export async function runToolExecution(
   tools: any[],
   commandId: string | null = null,
   possibleMatchFunctions?: FunctionCall[],
-  context?: { site_id?: string; rejectedCalls?: FunctionCall[] }
+  context?: { site_id?: string; command_id?: string; rejectedCalls?: FunctionCall[] }
 ): Promise<ToolExecutionResult[]> {
   console.log(`[ToolExecutor] Starting tool execution for ${functionCalls.length} function calls`);
   
@@ -71,7 +71,10 @@ export async function runToolExecution(
   const toolsMap = createToolsMap(tools, requiredToolNames);
   
   const executed = functionCalls.length > 0
-    ? await executeTools(functionCalls, toolsMap, context)
+    ? await executeTools(functionCalls, toolsMap, {
+        ...context,
+        command_id: commandId || context?.command_id,
+      })
     : [];
   const results = [...executed, ...rejectedAsResults(context?.rejectedCalls)];
   

@@ -1,10 +1,18 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import {
+  calculateAutoDiscount,
+  formatAppliedPromotionsNotification,
+  type AppliedPromotion,
+  type DiscountLineItem,
+} from '@/lib/promotions/apply';
+import {
   buildOrderItemsJson,
   insertOrderItemsWithModifiers,
   processCheckoutLines,
   type CheckoutLine,
 } from './process-lines';
+import { findExistingCreatedOrder } from './order-idempotency';
+import { IDEMPOTENCY_KEY_FIELD, isUuid } from '@/lib/agentbase/utils/write-idempotency';
 
 export type ReservationExtras = {
   entitlement_id?: string | null;
@@ -23,6 +31,8 @@ export type CreateSaleOrderFromLinesParams = {
   order_notes?: string | null;
   user_id?: string;
   reservationExtras?: ReservationExtras;
+  command_id?: string | null;
+  idempotency_key?: string | null;
 };
 
 export type CreatedSaleOrder = {
@@ -30,7 +40,22 @@ export type CreatedSaleOrder = {
   order: Record<string, any>;
   lead_id: string | null;
   reservations: Record<string, any>[];
+  subtotal: number;
+  discount_total: number;
+  total: number;
+  applied_promotions: AppliedPromotion[];
+  notification?: string;
 };
+
+export function discountFieldsForToolResult(result: CreatedSaleOrder) {
+  return {
+    subtotal: result.subtotal,
+    discount_total: result.discount_total,
+    total: result.total,
+    applied_promotions: result.applied_promotions,
+    ...(result.notification ? { notification: result.notification } : {}),
+  };
+}
 
 export async function resolveSiteUserId(siteId: string): Promise<string> {
   const { data: site, error } = await supabaseAdmin
@@ -59,7 +84,17 @@ export async function createSaleOrderFromLines(
     order_notes,
     user_id,
     reservationExtras,
+    command_id,
+    idempotency_key,
   } = params;
+
+  if (idempotency_key) {
+    const existing = await findExistingCreatedOrder(idempotency_key);
+    if (existing) {
+      console.log(`[checkout] Replaying existing sale ${existing.sale.id} for key ${idempotency_key}`);
+      return existing;
+    }
+  }
 
   const resolvedUserId = user_id || (await resolveSiteUserId(site_id));
   const { processedLines, subtotal } = await processCheckoutLines({
@@ -71,6 +106,25 @@ export async function createSaleOrderFromLines(
   const saleDate = new Date().toISOString().split('T')[0];
   const primaryCurrency = processedLines[0]?.currency || 'USD';
 
+  const discountLines: DiscountLineItem[] = [];
+  for (const pl of processedLines) {
+    discountLines.push({
+      id: pl.catalog_item_id,
+      quantity: pl.quantity,
+      subtotal: pl.subtotal,
+    });
+    for (const mod of pl.modifiers) {
+      discountLines.push({
+        id: mod.catalog_item_id,
+        quantity: mod.quantity,
+        subtotal: mod.subtotal,
+      });
+    }
+  }
+
+  const { discountAmount, appliedPromotions } = await calculateAutoDiscount(site_id, discountLines);
+  const amount_due = Math.max(0, subtotal - discountAmount);
+
   const { data: sale, error: saleErr } = await supabaseAdmin
     .from('sales')
     .insert({
@@ -81,13 +135,17 @@ export async function createSaleOrderFromLines(
       title: `Order - ${saleDate}`,
       status: 'pending',
       amount: subtotal,
-      amount_due: subtotal,
+      amount_due: amount_due,
       currency: primaryCurrency,
       user_id: resolvedUserId,
       sale_date: saleDate,
       source,
       location_id: location_id || null,
       notes: order_notes || null,
+      ...(isUuid(command_id) ? { command_id } : {}),
+      ...(idempotency_key
+        ? { product_details: { [IDEMPOTENCY_KEY_FIELD]: idempotency_key } }
+        : {}),
     })
     .select()
     .single();
@@ -105,9 +163,9 @@ export async function createSaleOrderFromLines(
       status: 'pending',
       order_number: `ORD-${Date.now().toString().slice(-6)}`,
       user_id: resolvedUserId,
-      total: subtotal,
+      total: amount_due,
       subtotal,
-      discount_total: 0,
+      discount_total: discountAmount,
       currency: primaryCurrency,
       notes: order_notes || null,
       items: orderItemsJson,
@@ -151,5 +209,23 @@ export async function createSaleOrderFromLines(
     reservations = createdReservations || [];
   }
 
-  return { sale, order, lead_id, reservations };
+  const notification = formatAppliedPromotionsNotification(
+    appliedPromotions,
+    subtotal,
+    discountAmount,
+    amount_due,
+    primaryCurrency
+  );
+
+  return {
+    sale,
+    order,
+    lead_id,
+    reservations,
+    subtotal,
+    discount_total: discountAmount,
+    total: amount_due,
+    applied_promotions: appliedPromotions,
+    notification,
+  };
 }

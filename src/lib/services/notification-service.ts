@@ -13,6 +13,17 @@ export enum NotificationType {
 }
 
 /**
+ * Categorías de alto nivel para notificaciones (usadas para las preferencias de usuario por sitio)
+ */
+export enum NotificationCategory {
+  LEAD_MANAGEMENT = 'lead_management',
+  TASKS_REMINDERS = 'tasks_reminders',
+  ANALYSIS_INSIGHTS = 'analysis_insights',
+  HUMAN_INTERVENTION = 'human_intervention',
+  SYSTEM_ALERTS = 'system_alerts',
+}
+
+/**
  * Prioridad de las notificaciones
  */
 export enum NotificationPriority {

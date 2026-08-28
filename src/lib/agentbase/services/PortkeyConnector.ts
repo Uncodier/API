@@ -4,6 +4,12 @@
 import { PortkeyModelOptions, PortkeyConfig } from '../models/types';
 import Portkey from 'portkey-ai';
 import { AIGatewayService } from './AIGatewayService';
+import {
+  isRateLimitError,
+  isTimeoutOrConnectError,
+  tryNonStreamModelFallback,
+  tryStreamingGpt55Fallback,
+} from './llm-fallback';
 
 export class PortkeyConnector {
   private portkeyConfig: PortkeyConfig;
@@ -368,173 +374,67 @@ export class PortkeyConnector {
           } catch (retryError: any) {
             lastError = retryError;
             console.error(`[PortkeyConnector] Intento ${attempt}/${maxRetries} falló:`, retryError.message);
-            
-            // Check if it's a 429 rate limit error
-            const isRateLimitError = retryError.status === 429 || 
-                                   retryError.message?.includes('rate limit') ||
-                                   retryError.message?.includes('exceeded token rate limit') ||
-                                   retryError.message?.includes('AIServices S0 pricing tier');
-            
-            // Check if it's a connection/timeout error that we should retry
-            const isRetryableError = retryError.message?.includes('timeout') || 
-                                   retryError.message?.includes('Connect Timeout') ||
-                                   retryError.message?.includes('fetch failed') ||
-                                   retryError.code === 'UND_ERR_CONNECT_TIMEOUT' ||
-                                   isRateLimitError;
-            
-            if (!isRetryableError || attempt === maxRetries) {
-              // If it's not retryable or we've exhausted retries, throw the error
+
+            const isRateLimit = isRateLimitError(retryError);
+            const isRetryableError =
+              isTimeoutOrConnectError(retryError) || isRateLimit;
+
+            // Non-stream 429/timeout should fall through to gpt-4o / AI Gateway instead of waiting 60s.
+            if (isRateLimit && stream !== true) {
               throw retryError;
             }
-            
-            // Calculate wait time based on error type
-            let waitTime;
-            if (isRateLimitError) {
-              // For rate limit errors, wait longer (60 seconds as suggested in the error message)
-              waitTime = 60 * 1000; // 60 seconds
-              console.log(`[PortkeyConnector] Rate limit error detected, waiting ${waitTime/1000}s as suggested by API...`);
-            } else {
-              // For other retryable errors, use exponential backoff
-              waitTime = Math.pow(2, attempt - 1) * 1000; // 1s, 2s, 4s
-              console.log(`[PortkeyConnector] Esperando ${waitTime}ms antes del siguiente intento...`);
+
+            if (!isRetryableError || attempt === maxRetries) {
+              throw retryError;
             }
-            
-            await new Promise(resolve => setTimeout(resolve, waitTime));
+
+            const waitTime = isRateLimit ? 60 * 1000 : Math.pow(2, attempt - 1) * 1000;
+            console.log(`[PortkeyConnector] Esperando ${waitTime / 1000}s antes del siguiente intento...`);
+            await new Promise((resolve) => setTimeout(resolve, waitTime));
           }
         }
       } catch (apiCallError: any) {
         const duration = Date.now() - startTime;
         console.error(`[PortkeyConnector] Error calling provider API después de ${duration}ms:`, apiCallError);
-        
-        // Check if it's a 429 rate limit error from the response structure
-        const isRateLimitError = apiCallError.status === 429 || 
-                               apiCallError.body?.error?.message?.includes('exceeded token rate limit') ||
-                               apiCallError.body?.error?.message?.includes('AIServices S0 pricing tier') ||
-                               apiCallError.body?.error?.param?.error?.includes('exceeded token rate limit') ||
-                               apiCallError.body?.error?.param?.error?.includes('AIServices S0 pricing tier') ||
-                               apiCallError.message?.includes('rate limit') ||
-                               apiCallError.message?.includes('exceeded token rate limit') ||
-                               apiCallError.message?.includes('AIServices S0 pricing tier');
-        
-        if (isRateLimitError) {
+
+        const nonStreamFallback = await tryNonStreamModelFallback({
+          error: apiCallError,
+          stream,
+          provider,
+          usedModel,
+          messages,
+          modelOptions,
+          customHeaders,
+          portkey,
+          aiGateway: this.aiGateway,
+        });
+        if (nonStreamFallback) {
+          return nonStreamFallback;
+        }
+
+        if (isRateLimitError(apiCallError)) {
           console.warn(`🔄 [PortkeyConnector] Rate limit error detected (429), this should have been handled by retry logic`);
-          
-          // Extract the specific error message from the nested structure
-          const errorMessage = apiCallError.body?.error?.message || 
+          const errorMessage = apiCallError.body?.error?.message ||
                               apiCallError.body?.error?.param?.error ||
                               apiCallError.message ||
                               'Rate limit exceeded';
-          
           throw new Error(`Rate limit exceeded: ${errorMessage}`);
         }
         
-        // Check if it's a streaming error with GPT-5 that we can fallback from
-        const isStreamingError = stream === true && (
-          apiCallError.message?.includes('Stream hung after role-only first chunk') ||
-          apiCallError.message?.includes('Chunk timeout') ||
-          apiCallError.message?.includes('timeout')
-        );
-        
-        // Check if it's a Portkey connection error and we can fallback to direct OpenAI
-        const isPortkeyConnectionError = apiCallError.message?.includes('Could not instantiate the Portkey client') ||
-                                       apiCallError.message?.includes('Connect Timeout') ||
-                                       apiCallError.message?.includes('fetch failed') ||
-                                       apiCallError.code === 'UND_ERR_CONNECT_TIMEOUT';
-        
-        // Try fallback for streaming errors with GPT-5.5
-        if (isStreamingError && provider === 'openai' && modelOptions.model === 'gpt-5.5') {
-          console.warn(`🔄 [PortkeyConnector] GPT-5.5 streaming failed, trying fallback to GPT-4o...`);
-          
-          try {
-            // Retry with GPT-4o which has more stable streaming
-            const fallbackModelOptions: any = {
-              ...modelOptions,
-              model: 'gpt-4o'
-            };
-            // Only set max_tokens if an explicit limit existed
-            if (modelOptions.max_completion_tokens != null) {
-              fallbackModelOptions.max_tokens = modelOptions.max_completion_tokens;
-            } else if (modelOptions.max_tokens != null) {
-              fallbackModelOptions.max_tokens = modelOptions.max_tokens;
-            }
-            delete fallbackModelOptions.max_completion_tokens; // GPT-4o uses max_tokens
-            
-            const fallbackResponse = await portkey.chat.completions.create({
-              messages,
-              ...fallbackModelOptions,
-              stream: true,
-              stream_options: { include_usage: true }
-            }, { headers: customHeaders });
-            
-            // Check if the fallback response contains an error
-            if (fallbackResponse && typeof fallbackResponse === 'object' && fallbackResponse.body?.error) {
-              const errorBody = fallbackResponse.body;
-              if (errorBody.status === 429 || 
-                  errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
-                  errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
-                throw {
-                  status: 429,
-                  body: errorBody.body,
-                  message: errorBody.body?.error?.message || 'Rate limit exceeded'
-                };
-              }
-            }
-            
-            console.log(`✅ [PortkeyConnector] GPT-4o fallback successful`);
-            return {
-              stream: fallbackResponse,
-              isStream: true,
-              modelInfo: {
-                model: 'gpt-4o',
-                provider: provider,
-                fallbackFrom: 'gpt-5.5'
-              }
-            };
-          } catch (fallbackError: any) {
-            console.error(`❌ [PortkeyConnector] GPT-4o fallback also failed:`, fallbackError.message);
-            // Try non-streaming as final fallback for streaming issues
-            console.warn(`🔄 [PortkeyConnector] Trying non-streaming fallback for original model...`);
-            
-            try {
-              const nonStreamingResponse = await portkey.chat.completions.create({
-                messages,
-                ...modelOptions,
-                stream: false // Disable streaming
-              }, { headers: customHeaders });
-              
-              // Check if the non-streaming fallback response contains an error
-              if (nonStreamingResponse && typeof nonStreamingResponse === 'object' && nonStreamingResponse.body?.error) {
-                const errorBody = nonStreamingResponse.body;
-                if (errorBody.status === 429 || 
-                    errorBody.body?.error?.message?.includes('exceeded token rate limit') ||
-                    errorBody.body?.error?.message?.includes('AIServices S0 pricing tier')) {
-                  throw {
-                    status: 429,
-                    body: errorBody.body,
-                    message: errorBody.body?.error?.message || 'Rate limit exceeded'
-                  };
-                }
-              }
-              
-              console.log(`✅ [PortkeyConnector] Non-streaming fallback successful`);
-              return {
-                stream: nonStreamingResponse,
-                isStream: false,
-                modelInfo: {
-                  model: modelOptions.model,
-                  provider: provider,
-                  fallbackFrom: 'streaming',
-                  fallbackType: 'non-streaming'
-                }
-              };
-            } catch (nonStreamingError: any) {
-              console.error(`❌ [PortkeyConnector] Non-streaming fallback also failed:`, nonStreamingError.message);
-              // Continue to other fallback mechanisms below
-            }
-          }
+        const streamingFallback = await tryStreamingGpt55Fallback({
+          error: apiCallError,
+          stream,
+          provider,
+          messages,
+          modelOptions,
+          customHeaders,
+          portkey,
+        });
+        if (streamingFallback) {
+          return streamingFallback;
         }
         
-        if (isPortkeyConnectionError && provider === 'openai') {
+        if (isTimeoutOrConnectError(apiCallError) && provider === 'openai') {
           console.warn(`🔄 [PortkeyConnector] Portkey falló, intentando fallback con AI Gateway...`);
           
           if (!this.aiGateway.isAvailable()) {

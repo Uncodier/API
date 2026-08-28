@@ -1,6 +1,7 @@
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from './sendgrid-service';
-import { NotificationService, NotificationType, NotificationPriority } from './notification-service';
+import { NotificationService, NotificationType, NotificationPriority, NotificationCategory } from './notification-service';
+import { shouldDeliverSiteNotification } from './site-notification-policy';
 import { EmailSendService } from './email/EmailSendService';
 import {
   type EmailLocale,
@@ -20,6 +21,8 @@ export interface TeamMember {
   name?: string;
   role: string;
   language?: string | null;
+  emailEnabled?: boolean;
+  pushEnabled?: boolean;
   notifications?: {
     email?: boolean;
     [key: string]: any;
@@ -69,7 +72,7 @@ export class TeamNotificationService {
   /**
    * Obtiene todos los miembros del equipo de un sitio con notificaciones habilitadas
    */
-  static async getTeamMembersWithEmailNotifications(siteId: string): Promise<TeamMember[]> {
+  static async getEligibleTeamMembers(siteId: string, categories?: string[]): Promise<TeamMember[]> {
     try {
       console.log(`🔍 Obteniendo miembros del equipo para el sitio: ${siteId}`);
       
@@ -162,51 +165,87 @@ export class TeamNotificationService {
       if (profilesError) {
         console.warn('Error al obtener perfiles, continuando sin datos de perfil:', profilesError);
       }
+
+      // Obtener configuraciones de notificaciones por sitio
+      const { data: siteNotifications, error: siteNotifError } = await supabaseAdmin
+        .from('user_site_notifications')
+        .select('user_id, email_enabled, push_enabled, categories')
+        .eq('site_id', siteId)
+        .in('user_id', userIds);
+      
+      if (siteNotifError) {
+        console.warn('Error al obtener user_site_notifications:', siteNotifError);
+      }
+
       
       console.log(`👥 Encontrados ${relevantAuthUsers.length} usuarios relevantes`);
       console.log(`📊 Encontrados ${profiles?.length || 0} perfiles con configuraciones`);
       
-      // Combinar la información y filtrar por notificaciones de email habilitadas
       const teamMembers: TeamMember[] = [];
       
       for (const userInfo of totalUniqueUsers) {
         const authUser = relevantAuthUsers.find(user => user.id === userInfo.user_id);
         const profile = profiles?.find(p => p.id === userInfo.user_id);
+        const siteNotif = siteNotifications?.find(n => n.user_id === userInfo.user_id) ?? null;
         
         if (!authUser || !authUser.email) {
           console.warn(`Usuario sin email encontrado: ${userInfo.user_id}`);
           continue;
         }
-        
-        // Verificar si las notificaciones por email están habilitadas
-        const notifications = profile?.notifications || {};
-        const emailNotificationsEnabled = notifications.email === true;
-        
-        // Si no hay configuración de notificaciones, asumir que están habilitadas para owners y admins
-        const shouldInclude = emailNotificationsEnabled || 
-                             (!profile?.notifications && (userInfo.role === 'admin' || userInfo.role === 'owner'));
-        
-        if (shouldInclude) {
-          teamMembers.push({
-            user_id: userInfo.user_id,
-            email: authUser.email,
-            name: profile?.name || authUser.user_metadata?.name || authUser.email,
-            role: userInfo.role,
-            language: profile?.language ?? null,
-            notifications: notifications
-          });
-        } else {
-          console.log(`🔇 Usuario ${authUser.email} (${userInfo.role}) tiene notificaciones por email deshabilitadas`);
+
+        const sitePreferences = siteNotif
+          ? {
+              email_enabled: siteNotif.email_enabled,
+              push_enabled: siteNotif.push_enabled,
+              categories: (siteNotif.categories as Record<string, boolean>) || {},
+            }
+          : null
+        const profileNotifications = (profile?.notifications as { email?: boolean; push?: boolean } | null) ?? null
+
+        const emailEnabled = shouldDeliverSiteNotification({
+          sitePreferences,
+          profileNotifications,
+          role: userInfo.role,
+          channel: 'email',
+          notificationCategories: categories,
+        })
+        const pushEnabled = shouldDeliverSiteNotification({
+          sitePreferences,
+          profileNotifications,
+          role: userInfo.role,
+          channel: 'push',
+          notificationCategories: categories,
+        })
+
+        if (!emailEnabled && !pushEnabled) {
+          console.log(`🔇 Usuario ${authUser.email} (${userInfo.role}) tiene notificaciones deshabilitadas para este sitio/categoría`);
+          continue
         }
+
+        teamMembers.push({
+          user_id: userInfo.user_id,
+          email: authUser.email,
+          name: profile?.name || authUser.user_metadata?.name || authUser.email,
+          role: userInfo.role,
+          language: profile?.language ?? null,
+          emailEnabled,
+          pushEnabled,
+          notifications: profileNotifications || {}
+        });
       }
       
-      console.log(`✅ ${teamMembers.length} miembros con notificaciones por email habilitadas`);
+      console.log(`✅ ${teamMembers.length} miembros con notificaciones habilitadas`);
       return teamMembers;
       
     } catch (error) {
       console.error('Error al obtener miembros del equipo:', error);
       throw error;
     }
+  }
+
+  static async getTeamMembersWithEmailNotifications(siteId: string, categories?: string[]): Promise<TeamMember[]> {
+    const members = await this.getEligibleTeamMembers(siteId, categories);
+    return members.filter(member => member.emailEnabled !== false);
   }
   
   /**
@@ -221,7 +260,7 @@ export class TeamNotificationService {
       buildEmail,
       priority = 'normal',
       type = NotificationType.WARNING,
-      categories = ['team-notification'],
+      categories = [],
       customArgs = {},
       relatedEntityType,
       relatedEntityId,
@@ -239,13 +278,15 @@ export class TeamNotificationService {
     try {
       console.log(`📢 Iniciando notificación al equipo del sitio: ${siteId}`);
       
-      const teamMembers = await this.getTeamMembersWithEmailNotifications(siteId);
+      const teamMembers = await this.getEligibleTeamMembers(siteId, categories);
+      const emailRecipients = teamMembers.filter(member => member.emailEnabled !== false);
+      const pushRecipients = teamMembers.filter(member => member.pushEnabled !== false);
       
       result.totalMembers = teamMembers.length;
-      result.membersWithEmailEnabled = teamMembers.length;
+      result.membersWithEmailEnabled = emailRecipients.length;
       
       if (teamMembers.length === 0) {
-        console.warn('No hay miembros con notificaciones por email habilitadas');
+        console.warn('No hay miembros con notificaciones habilitadas');
         result.success = true;
         return result;
       }
@@ -265,7 +306,7 @@ export class TeamNotificationService {
           notificationPriority = NotificationPriority.NORMAL;
       }
       
-      const notificationPromises = teamMembers.map(member =>
+      const notificationPromises = pushRecipients.map(member =>
         NotificationService.createNotification({
           user_id: member.user_id,
           site_id: siteId,
@@ -286,17 +327,17 @@ export class TeamNotificationService {
       
       notificationResults.forEach((notifResult, index) => {
         if (notifResult.status === 'rejected') {
-          const error = `Error en notificación para ${teamMembers[index].email}: ${notifResult.reason}`;
+          const error = `Error en notificación para ${pushRecipients[index].email}: ${notifResult.reason}`;
           console.error(error);
           result.errors?.push(error);
         }
       });
       
-      if (htmlContent || buildEmail || result.notificationsSent > 0) {
+      if (emailRecipients.length > 0) {
         const siteLocale = await resolveEmailLocale({ siteId });
         const groups = new Map<EmailLocale, TeamMember[]>();
 
-        for (const member of teamMembers) {
+        for (const member of emailRecipients) {
           const memberLocale =
             tryNormalizeEmailLocale(member.language) ?? siteLocale ?? DEFAULT_EMAIL_LOCALE;
           const list = groups.get(memberLocale) || [];
@@ -440,7 +481,7 @@ export class TeamNotificationService {
       },
       priority: params.priority as any,
       type: NotificationType.WARNING,
-      categories: ['human-intervention', 'team-notification'],
+      categories: [NotificationCategory.HUMAN_INTERVENTION],
       customArgs: {
         conversationId: params.conversationId,
         agentName: params.agentName || 'Sistema'

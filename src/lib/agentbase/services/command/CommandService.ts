@@ -17,7 +17,7 @@ import {
 import { CommandStore } from './CommandStore';
 import { CommandSubmitService } from './CommandSubmitService';
 import { CommandUpdateService } from './CommandUpdateService';
-import { CommandQueryService } from './CommandQueryService';
+import { CommandQueryService, GetCommandByIdOptions } from './CommandQueryService';
 import { CommandStatusService } from './CommandStatusService';
 import { CommandResultService } from './CommandResultService';
 import { SupervisionService } from '../SupervisionService';
@@ -78,9 +78,9 @@ export class CommandService {
   /**
    * Get a command by ID (supports both legacy IDs and UUIDs)
    */
-  async getCommandById(commandId: string): Promise<DbCommand | null> {
-    console.log(`🔍 [CommandService] Obteniendo comando: ${commandId}`);
-    const command = await this.commandQueryService.getCommandById(commandId);
+  async getCommandById(commandId: string, options?: GetCommandByIdOptions): Promise<DbCommand | null> {
+    console.log(`🔍 [CommandService] Obteniendo comando: ${commandId}${options?.fresh ? ' (fresh)' : ''}`);
+    const command = await this.commandQueryService.getCommandById(commandId, options);
     
     // Verificar si el comando recuperado tiene agent_background
     if (command && command.agent_background) {

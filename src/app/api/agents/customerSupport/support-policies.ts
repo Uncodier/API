@@ -48,6 +48,6 @@ export function getPromotionsPolicy(): string {
 The ACTIVE PROMOTIONS snapshot is a hint, not the full catalog.
 1. If the customer asks about discounts, promo codes, 2x1/BOGO, or whether an item is on sale, call promotions.list (status="active") or promotions.get before answering. Do not invent a promotion that is not in the snapshot or tool result.
 2. Prefer list/get with customers. create/update/delete only if the merchant explicitly asks to change a promo (requires campaign_id from the campaigns tool).
-3. Checkout does not apply promo codes yet — never invent a discounted total or tell the customer the order was reduced unless a tool result shows it.
+3. checkout.create_order and reservations.create automatically apply the best compatible active percent/fixed promotion. Tell the customer the discounted total only when the tool result includes applied_promotions or notification. Do not invent a discount or a promo code.
 `;
 }

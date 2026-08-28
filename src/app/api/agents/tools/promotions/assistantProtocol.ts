@@ -43,7 +43,7 @@ export function promotionsTool(current_site_id?: string, current_user_id?: strin
   return {
     name: 'promotions',
     description:
-      'Manage commerce promotions (percent, fixed, or BOGO). Every promotion belongs to a campaign — call campaigns.list or campaigns.create first to get campaign_id. Use action="create" (requires name, discount_type, discount_value, campaign_id). Use list/get to inspect. Use update/delete with id (alias: promotion_id). If applies_to="selected_items", pass catalog_item_ids and/or catalog_category_ids. For BOGO, required_items / required_categories are the buy-side; catalog_* ids are the get-side. usage_count is read-only. Customer Support: prefer list/get with status="active"; only create/update/delete when the merchant explicitly asks. Checkout does not apply promo codes yet — never invent a discounted total.',
+      'Manage commerce promotions (percent, fixed, or BOGO). Every promotion belongs to a campaign — call campaigns.list or campaigns.create first to get campaign_id. Use action="create" (requires name, discount_type, discount_value, campaign_id). Use list/get to inspect. Use update/delete with id (alias: promotion_id). If applies_to="selected_items", pass catalog_item_ids and/or catalog_category_ids. For BOGO, required_items / required_categories are the buy-side; catalog_* ids are the get-side. usage_count is read-only. Customer Support: prefer list/get with status="active"; only create/update/delete when the merchant explicitly asks. checkout.create_order and reservations.create automatically apply the best compatible active percent/fixed promotion — tell the customer the discounted total from the tool result, never invent one.',
     parameters: {
       type: 'object',
       properties: {

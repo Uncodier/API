@@ -11,15 +11,12 @@ import { extractTokenUsage } from './toolEvaluator/tokenUtils';
 import { CommandCache } from '../services/command/CommandCache';
 import { DatabaseAdapter } from '../adapters/DatabaseAdapter';
 import { StreamingResponseProcessor } from './streaming/StreamingResponseProcessor';
-// Importamos la función de validación como JavaScript
-import { validateResults } from './targetEvaluator/validateResults.js';
-
-// Definir el tipo de retorno de validateResults para TypeScript
-interface ValidationResult {
-  isValid: boolean;
-  error?: string;
-  correctedResults?: any[]; // Resultados corregidos si se detectó una estructura malformada
-}
+import { parseTargetResponseContent } from './targetEvaluator/parseTargetResponse';
+import {
+  applyTargetSchemaValidation,
+  MAX_PARSE_RETRIES,
+  schemaRetryUserMessage,
+} from './targetEvaluator/schemaRetry';
 
 export class TargetProcessor extends Base {
   private connector: PortkeyConnector;
@@ -171,8 +168,7 @@ export class TargetProcessor extends Base {
       console.log(`[TargetProcessor] Using model: ${modelOptions.modelId}`);
       console.log(`[TargetProcessor] Calling LLM with ${messages.length} messages - STREAMING ${modelOptions.stream ? 'ENABLED' : 'DISABLED'}`);
 
-      // Retry loop for malformed LLM responses
-      const MAX_PARSE_RETRIES = 2;
+      const workingMessages = [...messages];
       let parseAttempt = 0;
       let results: any[] | null = null;
       let tokenUsage = { inputTokens: 0, outputTokens: 0 };
@@ -180,17 +176,19 @@ export class TargetProcessor extends Base {
 
       while (parseAttempt < MAX_PARSE_RETRIES && !results) {
         parseAttempt++;
-        
-        if (parseAttempt > 1) {
-          console.log(`[TargetProcessor] Reintento ${parseAttempt}/${MAX_PARSE_RETRIES} por respuesta malformada del LLM`);
+
+        if (parseAttempt > 1 && lastError) {
+          console.log(`[TargetProcessor] Schema retry ${parseAttempt}/${MAX_PARSE_RETRIES}: ${lastError.message}`);
+          workingMessages.push({
+            role: 'user',
+            content: schemaRetryUserMessage(lastError.message),
+          });
         }
 
-        // Call LLM to process target
         let llmResponse;
         try {
-          llmResponse = await this.connector.callAgent(messages, modelOptions);
+          llmResponse = await this.connector.callAgent(workingMessages, modelOptions);
         } catch (error: any) {
-          // Check if it's a rate limit error
           if (error.message?.includes('Rate limit exceeded') ||
             error.message?.includes('exceeded token rate limit') ||
             error.message?.includes('AIServices S0 pricing tier')) {
@@ -200,10 +198,9 @@ export class TargetProcessor extends Base {
               error: `Rate limit exceeded: ${error.message}. Please try again later.`
             };
           }
-          throw error; // Re-throw other errors
+          throw error;
         }
 
-        // Guard against error-shaped responses mistakenly returned as success
         if (llmResponse && typeof llmResponse === 'object' && (llmResponse.error || (typeof llmResponse.content === 'string' && llmResponse.content.startsWith('Error calling LLM:')))) {
           const errMsg = llmResponse.error || llmResponse.content;
           console.error(`[TargetProcessor] Connector returned error-shaped response: ${errMsg}`);
@@ -213,7 +210,6 @@ export class TargetProcessor extends Base {
           };
         }
 
-        // Handle streaming response
         if (llmResponse.isStream) {
           console.log(`[TargetProcessor] Processing streaming response...`);
           return await StreamingResponseProcessor.processStreamingResponse(
@@ -224,123 +220,46 @@ export class TargetProcessor extends Base {
           );
         }
 
-        // Extract token usage and accumulate across retries
         const currentTokenUsage = extractTokenUsage(llmResponse);
         tokenUsage.inputTokens += currentTokenUsage.inputTokens;
         tokenUsage.outputTokens += currentTokenUsage.outputTokens;
 
-        // Extract content from response
         const responseContent = typeof llmResponse === 'object' && llmResponse.content
           ? llmResponse.content
           : llmResponse;
 
-        console.log(`[TargetProcessor] Response received: ${typeof responseContent === 'string' ? responseContent.substring(0, 100) + '...' : 'non-string'}`);
-
-        // Procesar el contenido del LLM para obtener el results
-        try {
-          if (typeof responseContent === 'string') {
-            // Intenta parsear el string como JSON si tiene formato de arreglo JSON
-            if (responseContent.trim().startsWith('[') && responseContent.trim().endsWith(']')) {
-              try {
-                results = JSON.parse(responseContent);
-                console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON: ${results?.length || 0} elementos`);
-              } catch (e) {
-                // Si falla el parsing de array, intentar extraer JSON embebido que coincida con targets
-                console.log(`[TargetProcessor] Error parsing array JSON, intentando extraer JSON embebido`);
-                const extractedJson = this.extractEmbeddedJsonMatchingTargets(responseContent, command.targets);
-                
-                if (extractedJson) {
-                  results = extractedJson;
-                  console.log(`[TargetProcessor] Usando JSON extraido del texto: ${results.length} elementos`);
-                } else {
-                  // Si no se puede extraer JSON valido, lanzar error para trigger retry
-                  console.error(`[TargetProcessor] No se pudo extraer JSON valido que coincida con targets`);
-                  throw new Error(`Invalid LLM response: Could not extract JSON matching target structure. Response started with: "${responseContent.substring(0, 100)}..."`);
-                }
-              }
-            } else {
-              // Intentar parsear como JSON simple (objeto o array) antes de usar como texto
-              try {
-                const parsedContent = JSON.parse(responseContent);
-                // Si se parsea correctamente, usar la estructura original
-                if (Array.isArray(parsedContent)) {
-                  results = parsedContent;
-                  console.log(`[TargetProcessor] Respuesta parseada como arreglo JSON válido: ${results.length} elementos`);
-                } else if (typeof parsedContent === 'object' && parsedContent !== null) {
-                  results = [parsedContent];
-                  console.log(`[TargetProcessor] Respuesta parseada como objeto JSON válido y envuelta en array`);
-                } else {
-                  // Si es un valor primitivo parseado, lanzar error - no es estructura valida
-                  throw new Error(`Invalid LLM response: Expected JSON array or object, got primitive value`);
-                }
-              } catch (parseError) {
-                // Intentar extraer JSON embebido que coincida con la estructura de targets
-                const extractedJson = this.extractEmbeddedJsonMatchingTargets(responseContent, command.targets);
-                
-                if (extractedJson) {
-                  results = extractedJson;
-                  console.log(`[TargetProcessor] Usando JSON extraido del texto: ${results.length} elementos`);
-                } else {
-                  // Si no se puede extraer JSON valido, lanzar error para trigger retry
-                  console.error(`[TargetProcessor] No se pudo extraer JSON valido que coincida con targets`);
-                  throw new Error(`Invalid LLM response: Could not extract JSON matching target structure. Response started with: "${responseContent.substring(0, 100)}..."`);
-                }
-              }
-            }
-          } else if (Array.isArray(responseContent)) {
-            // Si ya es un arreglo, usarlo directamente
-            results = responseContent;
-            console.log(`[TargetProcessor] Respuesta ya es un arreglo: ${results.length} elementos`);
-          } else if (typeof responseContent === 'object') {
-            // Si es un objeto pero no un arreglo, envolverlo en un arreglo
-            results = [responseContent];
-            console.log(`[TargetProcessor] Respuesta envuelta en arreglo: objeto simple`);
-          } else {
-            // Tipo de respuesta no esperado, lanzar error para retry
-            throw new Error(`Invalid LLM response: Expected JSON array or object, got ${typeof responseContent}`);
-          }
-
-          // Log para verificar estructura de resultados
-          if (results) {
-            console.log(`[TargetProcessor] ESTRUCTURA DE RESULTADOS: ${results.map((r: any, i: number) => {
-              return `Resultado ${i}: ${Object.keys(r).join(',')}`;
-            }).join(' | ')}`);
-          }
-
-        } catch (error: any) {
-          console.error(`[TargetProcessor] Error procesando respuesta (intento ${parseAttempt}/${MAX_PARSE_RETRIES}):`, error.message);
-          lastError = error;
-          results = null; // Reset results to trigger retry
-          
-          // Si es el ultimo intento, no continuamos el loop
-          if (parseAttempt >= MAX_PARSE_RETRIES) {
-            console.error(`[TargetProcessor] Todos los reintentos agotados, fallando comando`);
-          }
+        const parsed = parseTargetResponseContent(responseContent, command.targets);
+        if (!parsed.ok) {
+          lastError = new Error(parsed.error);
+          console.error(`[TargetProcessor] Parse failed (attempt ${parseAttempt}/${MAX_PARSE_RETRIES}):`, parsed.error);
+          continue;
         }
+
+        console.log(`[TargetProcessor] ESTRUCTURA DE RESULTADOS: ${parsed.results.map((r: any, i: number) => {
+          return `Resultado ${i}: ${Object.keys(r || {}).join(',')}`;
+        }).join(' | ')}`);
+
+        const validation = applyTargetSchemaValidation(parsed.results, command.targets);
+        if (validation.correctedResults) {
+          console.log(`[TargetProcessor] Using correctedResults from validation (${validation.correctedResults.length} items)`);
+          results = validation.correctedResults;
+          break;
+        }
+        if (!validation.isValid) {
+          lastError = new Error(validation.error || 'Target schema validation failed');
+          console.warn(`[TargetProcessor] Schema validation failed (attempt ${parseAttempt}/${MAX_PARSE_RETRIES}): ${lastError.message}`);
+          continue;
+        }
+
+        results = validation.results || parsed.results;
       }
 
-      // Si no se pudieron obtener resultados despues de todos los reintentos, fallar
       if (!results) {
         return {
           status: 'failed',
-          results: null as any, // TypeScript hack
+          results: null as any,
           error: `Could not extract valid JSON from LLM response after ${MAX_PARSE_RETRIES} retries. Last error: ${lastError?.message || 'Unknown error'}`
         };
-      }
-
-      // Validar los resultados usando el servicio validateResults
-      const validation = validateResults((results as any) || [], command.targets) as ValidationResult;
-
-      if (!validation.isValid) {
-        console.warn(`[TargetProcessor] Validación de resultados falló: ${validation.error}`);
-        throw new Error(`Validación de resultados falló: ${validation.error}`);
-      }
-
-      // 🔧 Si la validación devolvió resultados corregidos (estructura malformada detectada y corregida),
-      // usar esos resultados en lugar de los originales
-      if (validation.correctedResults) {
-        console.log(`[TargetProcessor] ✅ Usando resultados corregidos de la validación (${validation.correctedResults.length} elementos)`);
-        results = validation.correctedResults;
       }
 
       // Log detailed results summary
@@ -496,87 +415,4 @@ export class TargetProcessor extends Base {
 
     return result;
   }
-
-  /**
-   * Finds all balanced JSON arrays in a text string
-   * Uses bracket counting to find properly balanced arrays
-   * @param text The text to search for JSON arrays
-   * @returns Array of JSON array strings, sorted by length (longest first)
-   */
-  private findAllJsonArrays(text: string): string[] {
-    const candidates: string[] = [];
-    let depth = 0;
-    let start = -1;
-    
-    for (let i = 0; i < text.length; i++) {
-      if (text[i] === '[') {
-        if (depth === 0) start = i;
-        depth++;
-      } else if (text[i] === ']') {
-        depth--;
-        if (depth === 0 && start !== -1) {
-          candidates.push(text.substring(start, i + 1));
-          start = -1;
-        }
-      }
-    }
-    
-    // Sort by length descending - longer arrays are more likely to be complete
-    return candidates.sort((a, b) => b.length - a.length);
-  }
-
-  /**
-   * Extracts embedded JSON from text that matches the expected target structure
-   * @param text The text that may contain embedded JSON
-   * @param targets The expected targets to validate against
-   * @returns The parsed JSON array if found and matching, null otherwise
-   */
-  private extractEmbeddedJsonMatchingTargets(text: string, targets: any[]): any[] | null {
-    if (!text || typeof text !== 'string' || !targets || targets.length === 0) {
-      return null;
-    }
-
-    // Get expected keys from each target
-    const expectedKeys = targets.map(t => Object.keys(t));
-    const candidates = this.findAllJsonArrays(text);
-    
-    console.log(`[TargetProcessor] Buscando JSON embebido en ${candidates.length} candidatos`);
-    
-    for (const candidate of candidates) {
-      try {
-        const parsed = JSON.parse(candidate);
-        
-        // Must be an array with same number of elements as targets
-        if (!Array.isArray(parsed) || parsed.length !== targets.length) {
-          continue;
-        }
-        
-        // Validate that each element has at least one matching key with corresponding target
-        let allMatch = true;
-        for (let i = 0; i < parsed.length; i++) {
-          const elementKeys = Object.keys(parsed[i] || {});
-          const targetKeys = expectedKeys[i];
-          
-          // Check if at least one primary key matches
-          const hasMatchingKey = targetKeys.some(key => elementKeys.includes(key));
-          if (!hasMatchingKey) {
-            allMatch = false;
-            break;
-          }
-        }
-        
-        if (allMatch) {
-          console.log(`[TargetProcessor] JSON extraido coincide con estructura de targets (${parsed.length} elementos)`);
-          return parsed;
-        }
-      } catch (e) {
-        // Continue to next candidate
-        continue;
-      }
-    }
-    
-    console.log(`[TargetProcessor] No se encontro JSON embebido que coincida con targets`);
-    return null;
-  }
-
 } 

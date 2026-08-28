@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { getAvailableSlots, assertReservationSlot, ReservableCatalogItemError } from '@/lib/reservations/availability';
-import { createSaleOrderFromLines } from '@/app/api/agents/tools/checkout/create-order';
+import { createSaleOrderFromLines, discountFieldsForToolResult } from '@/app/api/agents/tools/checkout/create-order';
+import { buildWriteIdempotencyKey } from '@/lib/agentbase/utils/write-idempotency';
 import {
   classifyRoundRobinRole,
   resolveReservationUpdateTarget,
@@ -25,6 +26,7 @@ export async function POST(request: NextRequest) {
       entitlement_id,
       buyer_user_id,
       owner_site_id,
+      command_id,
       ...updates
     } = body;
     const reservationId = id || reservation_id;
@@ -55,6 +57,36 @@ export async function POST(request: NextRequest) {
       if (!updates.start_time || !updates.end_time) throw new Error('Missing start/end times');
 
       const quantity = updates.quantity ?? 1;
+      const idempotency_key = command_id
+        ? buildWriteIdempotencyKey(String(command_id), 'reservations', 'create', {
+            catalog_item_id,
+            lead_id,
+            start_time: updates.start_time,
+            end_time: updates.end_time,
+            quantity,
+            entitlement_id: entitlement_id || null,
+            site_id,
+          })
+        : null;
+
+      if (idempotency_key) {
+        const { findExistingCreatedOrder } = await import('@/app/api/agents/tools/checkout/order-idempotency');
+        const existing = await findExistingCreatedOrder(idempotency_key);
+        if (existing?.reservations?.[0]) {
+          return NextResponse.json({
+            success: true,
+            reservation: existing.reservations[0],
+            assignment: {
+              catalog_item_id: existing.reservations[0].catalog_item_id,
+              source: 'idempotent_replay',
+            },
+            order_id: existing.order.id,
+            sale_id: existing.sale.id,
+            ...discountFieldsForToolResult(existing),
+          });
+        }
+      }
+
       const assignment = await resolveRoundRobinCatalogItem({
         catalogItemId: catalog_item_id,
         start: updates.start_time,
@@ -90,6 +122,8 @@ export async function POST(request: NextRequest) {
           status: updates.status || 'pending',
           notes: updates.notes || null,
         },
+        command_id: command_id || null,
+        idempotency_key,
       });
 
       const reservation = result.reservations[0];
@@ -106,6 +140,7 @@ export async function POST(request: NextRequest) {
         assignment,
         order_id: result.order.id,
         sale_id: result.sale.id,
+        ...discountFieldsForToolResult(result),
       });
     }
 

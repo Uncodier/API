@@ -1,4 +1,4 @@
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { supabaseAdmin } from '@/lib/database/supabase-server';
 import { generateTaskTeamEmailHtml } from '@/lib/services/templates/task-email-templates';
@@ -82,7 +82,7 @@ export class TaskNotifier {
       message: `A new ${task.type} task has been created${leadInfo?.name ? ` for lead ${leadInfo.name}` : ''}.`,
       htmlContent: html,
       type: NotificationType.INFO,
-      categories: ['task-notification', 'task-created'],
+      categories: [NotificationCategory.TASKS_REMINDERS],
       customArgs: {
         taskId: task.id,
         taskType: task.type,

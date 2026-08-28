@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory } from '@/lib/services/notification-service';
 import { generateAssigneeNotificationHtml, generateTeamNotificationHtml, formatLeadOrigin } from '@/lib/emails/lead-assignment';
 import { z } from 'zod';
 import { resolveEmailLocale } from '@/lib/i18n/email-locale';
@@ -394,7 +394,7 @@ export async function POST(request: NextRequest) {
           replyEmail: replyEmail || undefined,
           locale: assigneeLocale
         }),
-        categories: ['lead-assignment', 'assignee-notification', 'transactional'],
+        categories: [NotificationCategory.LEAD_MANAGEMENT],
         customArgs: {
           siteId: leadInfo.site_id,
           leadId: lead_id,
@@ -448,7 +448,7 @@ export async function POST(request: NextRequest) {
           }),
           priority,
           type: NotificationType.INFO,
-          categories: ['lead-assignment', 'team-notification'],
+          categories: [NotificationCategory.LEAD_MANAGEMENT],
           customArgs: {
             leadId: lead_id,
             assigneeId: assignee_id,

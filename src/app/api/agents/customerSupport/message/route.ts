@@ -235,7 +235,7 @@ async function waitForCommandCompletion(commandId: string, maxAttempts = 100, de
       attempts++;
       
       try {
-        executedCommand = await commandService.getCommandById(commandId);
+        executedCommand = await commandService.getCommandById(commandId, { fresh: true });
         
         if (!executedCommand) {
           console.log(`⚠️ No se pudo encontrar el comando ${commandId}`);

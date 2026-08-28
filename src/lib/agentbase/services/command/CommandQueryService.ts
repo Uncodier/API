@@ -8,6 +8,17 @@ import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { EventEmitter } from 'events';
 import { CommandCache } from './CommandCache';
 
+export type GetCommandByIdOptions = {
+  /** Always read Postgres. Use from pollers so isolate cache cannot hide DB status. */
+  fresh?: boolean;
+};
+
+function shouldReadDatabase(cachedCommand: DbCommand | null, options?: GetCommandByIdOptions): boolean {
+  if (options?.fresh) return true;
+  if (!cachedCommand) return true;
+  return cachedCommand.status === 'pending' || cachedCommand.status === 'running';
+}
+
 export class CommandQueryService {
   private eventEmitter: EventEmitter | null = null;
   
@@ -20,76 +31,56 @@ export class CommandQueryService {
   }
   
   /**
-   * Obtiene un comando por su ID
-   * 
-   * @param commandId ID del comando
-   * @returns Comando encontrado o null si no existe
+   * Get a command by ID. Cache is for the executing isolate only.
+   * Pollers must pass `{ fresh: true }` so a `running` cache cannot hide DB `completed`.
    */
-  async getCommandById(commandId: string): Promise<DbCommand | null> {
+  async getCommandById(commandId: string, options?: GetCommandByIdOptions): Promise<DbCommand | null> {
     try {
-      // 1. Primero intentar obtener de la caché para el mismo hilo de ejecución
       const cachedCommand = CommandCache.getCachedCommand(commandId);
-      
-      // 2. Si no está en caché, o si está en caché pero está en estado 'pending', 
-      // verificar también en la base de datos para tener la información más actualizada
-      if (!cachedCommand || cachedCommand.status === 'pending') {
-        // Si no está en caché, verificar si necesitamos traducir el ID
-        const dbId = CommandStore.getMappedId(commandId) || commandId;
-        
-        // Intentar obtener el comando de la base de datos
-        const command = await DatabaseAdapter.getCommandById(dbId);
-        
-        if (command) {
-          // Si encontramos el comando, necesitamos devolverlo con el ID solicitado
-          const resultCommand = { ...command };
-          if (commandId !== dbId) {
-            resultCommand.id = commandId; // Usar el ID solicitado (formato antiguo)
-          }
-          
-          // CRUCIAL: Si hay comando en caché con agent_background, preservarlo
-          if (cachedCommand?.agent_background && !resultCommand.agent_background) {
-            console.log(`🔄 [CommandQueryService] Preservando agent_background desde caché (${cachedCommand.agent_background.length} caracteres)`);
-            resultCommand.agent_background = cachedCommand.agent_background;
-          }
-          
-          // Update memory store with latest data
-          CommandStore.setCommand(commandId, resultCommand);
-          
-          // Guardar en caché para futuras consultas en este flujo
-          CommandCache.cacheCommand(commandId, resultCommand);
-          
-          return resultCommand;
-        }
-        
-        // Si tenemos un comando en caché, devolver ese
-        if (cachedCommand) {
-          return cachedCommand;
-        }
-        
-        // 4. If not found in database or cache, try memory store
-        const memoryCommand = CommandStore.getCommand(commandId);
-        if (memoryCommand) {
-          // También guardar en caché para futuras consultas
-          CommandCache.cacheCommand(commandId, memoryCommand);
-          return memoryCommand;
-        }
-        
-        return null;
-      } else {
-        // Si el comando está en caché y no está en estado 'pending', podemos devolver la versión en caché
+
+      if (!shouldReadDatabase(cachedCommand, options)) {
         return cachedCommand;
       }
-    } catch (error: any) {
-      console.error(`Error getting command ${commandId} from database:`, error);
-      
-      // Fallback to in-memory storage
+
+      const dbId = CommandStore.getMappedId(commandId) || commandId;
+      const command = await DatabaseAdapter.getCommandById(dbId);
+
+      if (command) {
+        const resultCommand = { ...command };
+        if (commandId !== dbId) {
+          resultCommand.id = commandId;
+        }
+
+        if (cachedCommand?.agent_background && !resultCommand.agent_background) {
+          console.log(`🔄 [CommandQueryService] Preserving agent_background from cache (${cachedCommand.agent_background.length} characters)`);
+          resultCommand.agent_background = cachedCommand.agent_background;
+        }
+
+        CommandStore.setCommand(commandId, resultCommand);
+        CommandCache.cacheCommand(commandId, resultCommand);
+        return resultCommand;
+      }
+
+      if (cachedCommand) {
+        return cachedCommand;
+      }
+
       const memoryCommand = CommandStore.getCommand(commandId);
       if (memoryCommand) {
-        // También guardar en caché para futuras consultas
         CommandCache.cacheCommand(commandId, memoryCommand);
         return memoryCommand;
       }
-      
+
+      return null;
+    } catch (error: any) {
+      console.error(`Error getting command ${commandId} from database:`, error);
+
+      const memoryCommand = CommandStore.getCommand(commandId);
+      if (memoryCommand) {
+        CommandCache.cacheCommand(commandId, memoryCommand);
+        return memoryCommand;
+      }
+
       return null;
     }
   }

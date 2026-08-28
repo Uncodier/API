@@ -179,7 +179,7 @@ export class SupervisorService {
         attempts++;
         
         try {
-          executedCommand = await this.commandService.getCommandById(commandId);
+          executedCommand = await this.commandService.getCommandById(commandId, { fresh: true });
           
           if (!executedCommand) {
             console.log(`[SupervisorService] Command ${commandId} not found`);

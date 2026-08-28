@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { NotificationCategory } from '@/lib/services/notification-service';
 import { resolveEmailLocale } from '@/lib/i18n/email-locale';
 import { platformT } from '@/lib/i18n/email-messages/platform';
 
@@ -490,7 +491,7 @@ export async function POST(request: NextRequest) {
         to: siteOwner.email,
         subject,
         html: emailHtml,
-        categories: ['email-sync-failure', 'system-notification', 'transactional'],
+        categories: [NotificationCategory.SYSTEM_ALERTS],
         customArgs: {
           siteId: site_id,
           notificationType: 'email_sync_failure',

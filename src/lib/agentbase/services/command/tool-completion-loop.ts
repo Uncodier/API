@@ -1,6 +1,8 @@
 import type { CommandExecutionResult, DbCommand } from '../../models/types';
+import { buildToolTurnContext } from './tool-loop-context';
 
 export const MAX_TOOL_TURNS = 8;
+export const DEFAULT_TOOL_LOOP_BUDGET_MS = 90_000;
 
 export const TOOL_COMPLETION_TURN_INSTRUCTION = `
 === TOOL COMPLETION TURN ===
@@ -98,21 +100,33 @@ type ToolEvaluatorLike = {
 };
 
 type CommandReader = {
-  getCommandById: (id: string) => Promise<DbCommand | null>;
+  getCommandById: (id: string, options?: { fresh?: boolean }) => Promise<DbCommand | null>;
 };
+
+export function getToolLoopBudgetMs(override?: number): number {
+  if (typeof override === 'number' && override > 0) return override;
+  const n = Number(process.env.TOOL_LOOP_BUDGET_MS);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_TOOL_LOOP_BUDGET_MS;
+}
 
 /**
  * Assistant-style completion loop for Agentbase tools.
- * Re-runs ToolEvaluator until the model returns [], only possible_match, or MAX_TOOL_TURNS.
+ * Re-runs ToolEvaluator until the model returns [], only possible_match, MAX_TOOL_TURNS, or the time budget.
  * TargetProcessor still runs once after this loop.
  */
 export async function runToolCompletionLoop(params: {
   toolEvaluator: ToolEvaluatorLike;
   command: DbCommand;
   commandService: CommandReader;
+  now?: () => number;
+  budgetMs?: number;
 }): Promise<CommandExecutionResult> {
   const { toolEvaluator, commandService, command } = params;
   const originalTools = command.tools;
+  const originalContext = command.context || '';
+  const now = params.now || (() => Date.now());
+  const budgetMs = getToolLoopBudgetMs(params.budgetMs);
+  const startedAt = now();
   let current: DbCommand = command;
   let lastResult: CommandExecutionResult | null = null;
   let inputTokens = 0;
@@ -120,17 +134,27 @@ export async function runToolCompletionLoop(params: {
   let previousTurnFailed = false;
 
   for (let turn = 1; turn <= MAX_TOOL_TURNS; turn++) {
+    if (turn > 1 && now() - startedAt > budgetMs) {
+      console.log(`[ToolCompletion] stop (stop_cap) budget ${budgetMs}ms exceeded after turn ${turn - 1} for command ${command.id}`);
+      break;
+    }
+
     if (turn > 1) {
       const fromDb = await commandService.getCommandById(command.id);
-      const followUp = previousTurnFailed
+      const instruction = previousTurnFailed
         ? `${TOOL_COMPLETION_TURN_INSTRUCTION}\n${TOOL_CORRECTION_TURN_INSTRUCTION}`
         : TOOL_COMPLETION_TURN_INSTRUCTION;
+      const functions = fromDb?.functions || current.functions || [];
       current = {
         ...current,
         ...(fromDb || {}),
         tools: originalTools,
         agent_background: command.agent_background || fromDb?.agent_background,
-        context: `${fromDb?.context || current.context || ''}\n${followUp}`,
+        context: buildToolTurnContext({
+          originalContext,
+          instruction,
+          functions,
+        }),
       };
       console.log(`[ToolCompletion] turn ${turn}/${MAX_TOOL_TURNS} for command ${command.id}${previousTurnFailed ? ' (correction)' : ''}`);
     } else {

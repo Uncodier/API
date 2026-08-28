@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { NotificationType, NotificationPriority, NotificationService } from '@/lib/services/notification-service';
+import { NotificationType, NotificationPriority, NotificationService, NotificationCategory } from '@/lib/services/notification-service';
 import { sendGridService } from '@/lib/services/sendgrid-service';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { EmailSendService } from '@/lib/services/email/EmailSendService';
@@ -11,7 +11,10 @@ export async function listSystemNotificationCore(site_id: string) {
   if (!site_id) {
     throw new Error('site_id is required for listing team members');
   }
-  const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(site_id);
+  const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(
+    site_id,
+    [NotificationCategory.SYSTEM_ALERTS]
+  );
   return teamMembers;
 }
 

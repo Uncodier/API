@@ -19,7 +19,8 @@ describe('getCustomerSupportPolicies', () => {
     expect(policies).toContain('PROMOTIONS');
     expect(policies).toContain('promotions.list');
     expect(policies).toContain('Do not invent a promotion');
-    expect(policies).toContain('Checkout does not apply promo codes');
+    expect(policies).toContain('automatically apply the best compatible');
+    expect(policies).toContain('Tell the customer the discounted total only when the tool result');
   });
 
   it('requires catalog lookup for price questions and retry when list is empty', () => {

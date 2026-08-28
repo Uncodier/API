@@ -68,6 +68,7 @@ describe('reservations.create creates a sale_order', () => {
     catalogCurrency?: string | null;
     siteCurrency?: string;
     entitlement?: { id: string; passCatalogItemId: string };
+    promotions?: Record<string, unknown>[];
     capture: {
       sale?: Record<string, unknown>;
       order?: Record<string, unknown>;
@@ -81,6 +82,9 @@ describe('reservations.create creates a sale_order', () => {
         insert: jest.fn().mockReturnThis(),
         update: jest.fn().mockReturnThis(),
         eq: jest.fn().mockReturnThis(),
+        in: jest.fn().mockReturnThis(),
+        or: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
         maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
         single: jest.fn().mockResolvedValue({ data: {}, error: null }),
       };
@@ -104,6 +108,13 @@ describe('reservations.create creates a sale_order', () => {
         });
       } else if (table === 'sites') {
         chain.single.mockResolvedValue({ data: { user_id: 'user-1' }, error: null });
+      } else if (table === 'promotions') {
+        const result = { data: opts.promotions ?? [], error: null };
+        chain.then = (onFulfilled: unknown, onRejected?: unknown) =>
+          Promise.resolve(result).then(
+            onFulfilled as (value: unknown) => unknown,
+            onRejected as (reason: unknown) => unknown
+          );
       } else if (table === 'settings') {
         chain.maybeSingle.mockResolvedValue({
           data: { currency: opts.siteCurrency || 'USD' },
@@ -324,5 +335,51 @@ describe('reservations.create creates a sale_order', () => {
     expect(json.assignment.catalog_item_id).toBe(assignedId);
     expect(capture.reservations?.[0]).toMatchObject({ catalog_item_id: assignedId });
     expect(capture.orderItem).toMatchObject({ catalog_item_id: assignedId });
+  });
+
+  it('applies the best compatible promotion and returns it for the agent to relay', async () => {
+    const capture: {
+      sale?: Record<string, unknown>;
+      order?: Record<string, unknown>;
+      orderItem?: Record<string, unknown>;
+      reservations?: Record<string, unknown>[];
+    } = {};
+    mockCommerceTables({
+      catalogPrice: 25,
+      catalogCurrency: 'MXN',
+      capture,
+      promotions: [
+        {
+          id: 'promo-20',
+          name: '20% off',
+          discount_type: 'percent',
+          discount_value: 20,
+          applies_to: 'all',
+        },
+      ],
+    });
+
+    const res = await post({
+      action: 'create',
+      site_id: siteId,
+      catalog_item_id: catalogItemId,
+      lead_id: leadId,
+      start_time: start,
+      end_time: end,
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.success).toBe(true);
+    expect(json.subtotal).toBe(25);
+    expect(json.discount_total).toBe(5);
+    expect(json.total).toBe(20);
+    expect(json.applied_promotions).toEqual([
+      expect.objectContaining({ id: 'promo-20', name: '20% off', discount_amount: 5 }),
+    ]);
+    expect(json.notification).toContain('20% off');
+    expect(json.notification).toContain('Tell the customer this discounted total');
+    expect(capture.sale).toMatchObject({ amount: 25, amount_due: 20 });
+    expect(capture.order).toMatchObject({ subtotal: 25, discount_total: 5, total: 20 });
   });
 });

@@ -305,7 +305,7 @@ async function executeCustomApiTool(toolName: string, args: any): Promise<any> {
 export async function executeTools(
   functionCalls: FunctionCall[],
   toolsMap: ToolsMap,
-  context?: { site_id?: string }
+  context?: { site_id?: string; command_id?: string }
 ): Promise<ToolExecutionResult[]> {
   const executionStartTime = Date.now();
   
@@ -336,7 +336,7 @@ export async function executeTools(
       }
       
       // Parse arguments if they are in string format
-      let parsedArgs = {};
+      let parsedArgs: Record<string, any> = {};
       try {
         if (typeof functionArgs === 'string') {
           parsedArgs = JSON.parse(functionArgs);
@@ -354,6 +354,10 @@ export async function executeTools(
           arguments: functionArgs // Preservar argumentos originales
         });
         continue;
+      }
+
+      if (context?.command_id && !parsedArgs.command_id) {
+        parsedArgs.command_id = context.command_id;
       }
       
       let output: any = null;
@@ -381,6 +385,9 @@ export async function executeTools(
           const mcpArgs = { ...(dotted?.args || parsedArgs as Record<string, any>) };
           if (!mcpArgs.site_id && context?.site_id) {
             mcpArgs.site_id = context.site_id;
+          }
+          if (!mcpArgs.command_id && context?.command_id) {
+            mcpArgs.command_id = context.command_id;
           }
           output = await executeMcpNativeTool(mcpName, mcpArgs);
           success = true;

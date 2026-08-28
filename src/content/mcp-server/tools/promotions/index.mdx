@@ -7,7 +7,7 @@ description: Create, list, get, update, and delete commerce promotions, includin
 
 Manage commerce promotions (`percent`, `fixed`, or `BOGO`). Every promotion belongs to a campaign — use the `campaigns` tool first to obtain `campaign_id`.
 
-Use `action="create"` (requires `name`, `discount_type`, `discount_value`, `campaign_id`). Use `list`/`get` to inspect. Use `update`/`delete` with `id` (alias: `promotion_id`). If `applies_to="selected_items"`, pass `catalog_item_ids` and/or `catalog_category_ids`. For BOGO, `required_items` / `required_categories` are the buy-side; `catalog_*` ids are the get-side. `usage_count` is read-only. Checkout does not apply promo codes yet.
+Use `action="create"` (requires `name`, `discount_type`, `discount_value`, `campaign_id`). Use `list`/`get` to inspect. Use `update`/`delete` with `id` (alias: `promotion_id`). If `applies_to="selected_items"`, pass `catalog_item_ids` and/or `catalog_category_ids`. For BOGO, `required_items` / `required_categories` are the buy-side; `catalog_*` ids are the get-side. `usage_count` is read-only. `checkout.create_order` and `reservations.create` automatically apply the best compatible active percent/fixed promotion and return it in the tool result.
 
 ## Input Schema
 

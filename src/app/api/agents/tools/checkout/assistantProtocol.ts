@@ -18,13 +18,14 @@ export interface CheckoutToolParams {
 
   order_id?: string;
   return_url?: string;
+  command_id?: string;
 }
 
 export function checkoutTool(current_site_id?: string) {
   return {
     name: 'checkout',
     description:
-      'Manage checkouts. Use action="create_order_from_quotation" to convert a sent quotation into a pending order. Use action="create_order" to build an order from scratch. Use action="create_payment_link" to generate a Stripe Checkout URL for a pending order. Share this URL with the buyer so they can pay. Payment completion and entitlement grants happen via the commerce Stripe webhook (market-fit), not this tool. Use action="get_order" to check order status.',
+      'Manage checkouts. Use action="create_order_from_quotation" to convert a sent quotation into a pending order. Use action="create_order" to build an order from scratch. Compatible discounts are applied automatically; you will receive any automatically applied discounts in the tool result, which you must communicate to the customer. Use action="create_payment_link" to generate a Stripe Checkout URL for a pending order. Share this URL with the buyer so they can pay. Payment completion and entitlement grants happen via the commerce Stripe webhook (market-fit), not this tool. Use action="get_order" to check order status.',
     parameters: {
       type: 'object',
       properties: {

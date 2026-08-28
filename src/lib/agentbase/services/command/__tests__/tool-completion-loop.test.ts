@@ -202,4 +202,64 @@ describe('tool-completion-loop', () => {
 
     expect(executeCommand).toHaveBeenCalledTimes(MAX_TOOL_TURNS);
   });
+
+  it('does not stack TOOL COMPLETION TURN copies on later turns', async () => {
+    let storedFunctions: any[] = [];
+    const executeCommand = jest.fn(async (current: DbCommand): Promise<CommandExecutionResult> => {
+      storedFunctions = [
+        ...storedFunctions,
+        {
+          name: `tool_${storedFunctions.length}`,
+          status: 'completed',
+          arguments: `{"n":${storedFunctions.length}}`,
+          result: storedFunctions.length,
+        },
+      ];
+      return { status: 'completed', updatedCommand: { ...current, functions: storedFunctions } };
+    });
+
+    await runToolCompletionLoop({
+      toolEvaluator: { executeCommand },
+      command: commandFixture(),
+      commandService: {
+        getCommandById: async () => commandFixture(storedFunctions),
+      },
+    });
+
+    const turn3Context = String(executeCommand.mock.calls[2][0].context);
+    expect((turn3Context.match(/TOOL COMPLETION TURN/g) || []).length).toBe(1);
+    expect(turn3Context).toContain('TOOL RESULTS SUMMARY:');
+    expect(turn3Context).toContain('Se pudo?');
+  });
+
+  it('stops before turn 2 when the time budget is exceeded and does not fail', async () => {
+    const calendarsFn = {
+      name: 'calendars',
+      status: 'completed',
+      arguments: '{"action":"list"}',
+      result: { ok: true },
+    };
+    let storedFunctions: any[] = [];
+    const executeCommand = jest.fn(async (current: DbCommand): Promise<CommandExecutionResult> => {
+      storedFunctions = [calendarsFn];
+      return {
+        status: 'completed',
+        updatedCommand: { ...current, functions: storedFunctions },
+      };
+    });
+
+    const result = await runToolCompletionLoop({
+      toolEvaluator: { executeCommand },
+      command: commandFixture(),
+      commandService: {
+        getCommandById: async () => commandFixture(storedFunctions),
+      },
+      now: () => (executeCommand.mock.calls.length >= 1 ? 91_000 : 0),
+      budgetMs: 90_000,
+    });
+
+    expect(executeCommand).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('completed');
+    expect(result.updatedCommand?.functions).toEqual([calendarsFn]);
+  });
 });

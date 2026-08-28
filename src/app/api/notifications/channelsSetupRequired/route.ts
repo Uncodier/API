@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
 import { sendGridService } from '@/lib/services/sendgrid-service';
+import { NotificationCategory } from '@/lib/services/notification-service';
+import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { z } from 'zod';
 
 // Configurar timeout máximo a 2 minutos
@@ -19,106 +21,10 @@ function isValidUUID(uuid: string): boolean {
 
 // Función para obtener team members del sitio con notificaciones habilitadas
 async function getTeamMembersWithEmailNotifications(siteId: string): Promise<any[]> {
-  try {
-    console.log(`🔍 [ChannelsSetup] Obteniendo miembros del equipo para el sitio: ${siteId}`);
-    
-    // Obtener propietarios del sitio (site_ownership)
-    const { data: siteOwners, error: siteOwnersError } = await supabaseAdmin
-      .from('site_ownership')
-      .select('user_id')
-      .eq('site_id', siteId);
-    
-    if (siteOwnersError) {
-      console.error('Error al obtener site_owners:', siteOwnersError);
-      return [];
-    }
-    
-    // Obtener miembros del sitio (site_members)
-    const { data: siteMembers, error: siteMembersError } = await supabaseAdmin
-      .from('site_members')
-      .select('user_id, role')
-      .eq('site_id', siteId)
-      .eq('status', 'active');
-    
-    if (siteMembersError) {
-      console.error('Error al obtener site_members:', siteMembersError);
-      return [];
-    }
-    
-    // Combinar propietarios y miembros, evitando duplicados
-    const allUsers = new Map<string, { user_id: string; role: string }>();
-    
-    // Agregar propietarios con rol 'owner'
-    if (siteOwners) {
-      siteOwners.forEach(owner => {
-        allUsers.set(owner.user_id, {
-          user_id: owner.user_id,
-          role: 'owner'
-        });
-      });
-      console.log(`🔑 [ChannelsSetup] Encontrados ${siteOwners.length} propietarios en site_ownership`);
-    }
-    
-    // Agregar miembros (si ya existe como propietario, no sobrescribir)
-    if (siteMembers) {
-      siteMembers.forEach(member => {
-        if (!allUsers.has(member.user_id)) {
-          allUsers.set(member.user_id, {
-            user_id: member.user_id,
-            role: member.role
-          });
-        }
-      });
-      console.log(`👥 [ChannelsSetup] Encontrados ${siteMembers.length} miembros en site_members`);
-    }
-    
-    const totalUniqueUsers = Array.from(allUsers.values());
-    
-    if (totalUniqueUsers.length === 0) {
-      console.warn(`[ChannelsSetup] No se encontraron miembros ni propietarios para el sitio: ${siteId}`);
-      return [];
-    }
-    
-    console.log(`📋 [ChannelsSetup] Total de usuarios únicos: ${totalUniqueUsers.length}`);
-    
-    // Obtener información de los usuarios de auth
-    const teamMembers = [];
-    for (const userInfo of totalUniqueUsers) {
-      try {
-        const { data: userData, error: userError } = await supabaseAdmin.auth.admin.getUserById(userInfo.user_id);
-        
-        if (!userError && userData.user && userData.user.email) {
-          // Obtener perfil para verificar notificaciones
-          const { data: profile } = await supabaseAdmin
-            .from('profiles')
-            .select('notifications')
-            .eq('id', userInfo.user_id)
-            .single();
-          
-          const notifications = profile?.notifications || {};
-          const emailNotificationsEnabled = notifications.email !== false; // Por defecto habilitadas
-          
-          if (emailNotificationsEnabled) {
-            teamMembers.push({
-              user_id: userInfo.user_id,
-              email: userData.user.email,
-              name: userData.user.user_metadata?.name || userData.user.user_metadata?.full_name || userData.user.email,
-              role: userInfo.role
-            });
-          }
-        }
-      } catch (error) {
-        console.warn(`[ChannelsSetup] Error obteniendo usuario ${userInfo.user_id}:`, error);
-      }
-    }
-    
-    console.log(`✅ [ChannelsSetup] ${teamMembers.length} miembros con notificaciones por email habilitadas`);
-    return teamMembers;
-    
-  } catch (error) {
-    console.error('[ChannelsSetup] Error al obtener miembros del equipo:', error);
-    return [];
-  }
+  return TeamNotificationService.getTeamMembersWithEmailNotifications(
+    siteId,
+    [NotificationCategory.SYSTEM_ALERTS]
+  );
 }
 
 // Función para obtener información del sitio
@@ -601,7 +507,7 @@ export async function POST(request: NextRequest) {
             settingsUrl: settingsUrl,
             locale
           }),
-          categories: ['channels-setup', 'team-notification', 'configuration-required'],
+          categories: [NotificationCategory.SYSTEM_ALERTS],
           customArgs: {
             siteId: site_id,
             teamMemberId: member.user_id,

@@ -1,14 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { supabaseAdmin } from '@/lib/database/supabase-client';
-import { NotificationType } from '@/lib/services/notification-service';
+import { NotificationType, NotificationCategory, NotificationPriority } from '@/lib/services/notification-service';
 import { TeamNotificationService } from '@/lib/services/team-notification-service';
 import { VisitorNotificationService } from '@/lib/services/visitor-notification-service';
 import { WhatsAppSendService } from '@/lib/services/whatsapp/WhatsAppSendService';
 import { v4 as uuidv4 } from 'uuid';
 import { createHash } from 'crypto';
-import { 
-  NotificationPriority 
-} from '@/lib/services/notification-service';
 
 // Función para validar UUIDs
 function isValidUUID(uuid: string): boolean {
@@ -506,7 +503,10 @@ export async function POST(request: NextRequest) {
     });
 
     // Obtener lista de correos de los miembros notificados
-    const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(siteId);
+    const teamMembers = await TeamNotificationService.getTeamMembersWithEmailNotifications(
+      siteId,
+      [NotificationCategory.HUMAN_INTERVENTION]
+    );
     const notifiedEmails = teamMembers.map(member => member.email);
 
     // Variables para tracking de respuestas automáticas
